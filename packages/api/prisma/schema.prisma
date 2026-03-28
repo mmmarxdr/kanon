@@ -1,0 +1,290 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────────
+
+enum IssueType {
+  feature
+  bug
+  task
+  spike
+}
+
+enum IssuePriority {
+  critical
+  high
+  medium
+  low
+}
+
+enum IssueState {
+  backlog
+  explore
+  propose
+  design
+  spec
+  tasks
+  apply
+  verify
+  archived
+}
+
+enum MemberRole {
+  owner
+  admin
+  member
+  viewer
+}
+
+enum SprintStatus {
+  planning
+  active
+  completed
+}
+
+enum ActivityAction {
+  created
+  state_changed
+  assigned
+  commented
+  sprint_changed
+  edited
+  engram_synced
+}
+
+enum CommentSource {
+  human
+  mcp
+  engram_sync
+  system
+}
+
+enum Horizon {
+  now
+  next
+  later
+  someday
+}
+
+enum RoadmapStatus {
+  idea
+  planned
+  in_progress
+  done
+}
+
+enum DependencyType {
+  blocks
+}
+
+// ─── Models ─────────────────────────────────────────────────────────────────
+
+model Workspace {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  projects Project[]
+  members  Member[]
+
+  @@map("workspaces")
+}
+
+model Project {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @db.VarChar(6)
+  name        String
+  description String?
+  archived         Boolean  @default(false)
+  engramNamespace  String?  @map("engram_namespace")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  workspaceId String    @map("workspace_id") @db.Uuid
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  issues       Issue[]
+  sprints      Sprint[]
+  roadmapItems RoadmapItem[]
+
+  @@unique([workspaceId, key])
+  @@index([workspaceId])
+  @@map("projects")
+}
+
+model Issue {
+  id          String        @id @default(uuid()) @db.Uuid
+  key         String        @unique
+  sequenceNum Int           @map("sequence_num")
+  title       String
+  description String?
+  type        IssueType     @default(task)
+  priority    IssuePriority @default(medium)
+  state       IssueState    @default(backlog)
+  labels      String[]      @default([])
+  dueDate     DateTime?     @map("due_date")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  // Grouping key for SDD change aggregation (derived from topic_key prefix)
+  groupKey    String?       @map("group_key")
+
+  // JSON fields for extensibility
+  engramContext Json? @map("engram_context")
+  specArtifacts Json? @map("spec_artifacts")
+
+  // Relations
+  projectId  String  @map("project_id") @db.Uuid
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  assigneeId String? @map("assignee_id") @db.Uuid
+  assignee   Member? @relation("AssignedIssues", fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  sprintId String? @map("sprint_id") @db.Uuid
+  sprint   Sprint? @relation(fields: [sprintId], references: [id], onDelete: SetNull)
+
+  parentId String? @map("parent_id") @db.Uuid
+  parent   Issue?  @relation("SubIssues", fields: [parentId], references: [id], onDelete: SetNull)
+  children Issue[] @relation("SubIssues")
+
+  roadmapItemId String?      @map("roadmap_item_id") @db.Uuid
+  roadmapItem   RoadmapItem? @relation(fields: [roadmapItemId], references: [id], onDelete: SetNull)
+
+  activityLogs ActivityLog[]
+  comments     Comment[]
+
+  @@unique([projectId, key])
+  @@index([projectId, state])
+  @@index([projectId, groupKey])
+  @@index([sprintId])
+  @@index([assigneeId])
+  @@index([parentId])
+  @@map("issues")
+}
+
+model Sprint {
+  id        String       @id @default(uuid()) @db.Uuid
+  name      String
+  goal      String?
+  status    SprintStatus @default(planning)
+  startDate DateTime?    @map("start_date")
+  endDate   DateTime?    @map("end_date")
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  projectId String  @map("project_id") @db.Uuid
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  issues Issue[]
+
+  @@index([projectId, status])
+  @@map("sprints")
+}
+
+model Member {
+  id           String     @id @default(uuid()) @db.Uuid
+  email        String
+  username     String
+  passwordHash String     @map("password_hash")
+  role         MemberRole @default(member)
+  apiKeyHash   String?    @map("api_key_hash")
+  displayName  String?    @map("display_name")
+  avatarUrl    String?    @map("avatar_url")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  workspaceId String    @map("workspace_id") @db.Uuid
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  assignedIssues Issue[]       @relation("AssignedIssues")
+  activityLogs   ActivityLog[]
+  comments       Comment[]
+
+  @@unique([workspaceId, email])
+  @@unique([workspaceId, username])
+  @@map("members")
+}
+
+model ActivityLog {
+  id        String         @id @default(uuid()) @db.Uuid
+  action    ActivityAction
+  details   Json?
+  createdAt DateTime       @default(now()) @map("created_at")
+
+  issueId String @map("issue_id") @db.Uuid
+  issue   Issue  @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  memberId String @map("member_id") @db.Uuid
+  member   Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([issueId, createdAt])
+  @@map("activity_logs")
+}
+
+model Comment {
+  id        String        @id @default(uuid()) @db.Uuid
+  body      String
+  source    CommentSource @default(human)
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
+
+  issueId String @map("issue_id") @db.Uuid
+  issue   Issue  @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  authorId String @map("author_id") @db.Uuid
+  author   Member @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([issueId, createdAt])
+  @@map("comments")
+}
+
+model RoadmapItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  title       String
+  description String?
+  horizon     Horizon  @default(later)
+  effort      Int?
+  impact      Int?
+  labels      String[] @default([])
+  targetDate  DateTime? @map("target_date")
+  sortOrder   Float         @default(0) @map("sort_order")
+  promoted    Boolean       @default(false)
+  status      RoadmapStatus @default(idea)
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  projectId String  @map("project_id") @db.Uuid
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  issues Issue[]
+
+  dependencySource RoadmapDependency[] @relation("DependencySource")
+  dependencyTarget RoadmapDependency[] @relation("DependencyTarget")
+
+  @@index([projectId, horizon])
+  @@map("roadmap_items")
+}
+
+model RoadmapDependency {
+  id        String         @id @default(uuid()) @db.Uuid
+  type      DependencyType @default(blocks)
+  createdAt DateTime       @default(now()) @map("created_at")
+
+  sourceId String      @map("source_id") @db.Uuid
+  source   RoadmapItem @relation("DependencySource", fields: [sourceId], references: [id], onDelete: Cascade)
+
+  targetId String      @map("target_id") @db.Uuid
+  target   RoadmapItem @relation("DependencyTarget", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceId, targetId])
+  @@index([targetId])
+  @@map("roadmap_dependencies")
+}

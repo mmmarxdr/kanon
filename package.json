@@ -1,0 +1,27 @@
+{
+  "name": "kanon",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter @kanon/api dev",
+    "build": "pnpm --filter @kanon/api build",
+    "db:generate": "pnpm --filter @kanon/api db:generate",
+    "db:migrate": "pnpm --filter @kanon/api db:migrate",
+    "db:seed": "pnpm --filter @kanon/api db:seed",
+    "db:studio": "pnpm --filter @kanon/api db:studio",
+    "smoke-test": "pnpm --filter @kanon/api smoke-test",
+    "dev:web": "pnpm --filter @kanon/web dev",
+    "build:web": "pnpm --filter @kanon/web build",
+    "e2e": "pnpm --filter @kanon/e2e test",
+    "e2e:ui": "pnpm --filter @kanon/e2e test:ui",
+    "test:all": "pnpm --filter @kanon/api test && pnpm --filter @kanon/web test && pnpm e2e",
+    "dev:start": "bash scripts/dev-start.sh",
+    "dev:stop": "bash scripts/dev-stop.sh",
+    "setup:mcp": "bash scripts/setup-mcp.sh",
+    "kanon": "pnpm --filter @kanon/cli build && node packages/cli/dist/index.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

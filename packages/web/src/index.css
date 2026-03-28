@@ -1,0 +1,109 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #FAFAFA;
+  --color-foreground: #1A1C1C;
+  --color-muted: #F3F3F3;
+  --color-muted-foreground: #767586;
+  --color-card: #FFFFFF;
+  --color-card-foreground: #1A1C1C;
+  --color-popover: #FFFFFF;
+  --color-popover-foreground: #1A1C1C;
+  --color-primary: #0D9488;
+  --color-primary-foreground: #FFFFFF;
+  --color-secondary: #F3F3F3;
+  --color-secondary-foreground: #464554;
+  --color-accent: #CCFBF1;
+  --color-accent-foreground: #0D9488;
+  --color-destructive: #BA1A1A;
+  --color-destructive-foreground: #FFFFFF;
+  --color-success: #059669;
+  --color-warning: #D97706;
+  --color-border: #E5E7EB;
+  --color-input: #E5E7EB;
+  --color-ring: #0D9488;
+  --color-primary-hover: #0F766E;
+  --color-primary-light: #CCFBF1;
+  --color-primary-fixed: #CCFBF1;
+  --color-surface: #F9F9F9;
+  --color-surface-container-low: #F3F3F3;
+  --color-surface-container-lowest: #FFFFFF;
+  --color-surface-container-high: #E8E8E8;
+  --color-on-surface: #1A1C1C;
+  --color-on-primary-container: #0D9488;
+  --color-primary-container: #CCFBF1;
+  --color-outline: #767586;
+  --color-outline-variant: #bcc9c6;
+  --radius: 0.375rem;
+
+  --shadow-drag: 0px 4px 12px rgba(26,28,28,0.04), 0px 20px 40px rgba(26,28,28,0.08);
+  --shadow-float: 0px 8px 20px rgba(26,28,28,0.04), 0px 20px 40px rgba(26,28,28,0.06);
+
+  --animate-slide-in-right: slide-in-right 0.25s ease-out;
+  --animate-card-hover: card-hover 0.2s ease-out forwards;
+  --animate-fade-in: fade-in 0.2s ease-out;
+  --animate-slide-up: slide-up 0.25s ease-out;
+  --animate-command-palette-in: command-palette-in 0.15s ease-out;
+}
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+code, pre, kbd, samp {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes card-hover {
+  from {
+    background-color: #ffffff;
+  }
+  to {
+    background-color: rgba(204, 251, 241, 0.20);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Thin transparent scrollbar for kanban board */
+.kanban-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+.kanban-scroll::-webkit-scrollbar-track { background: transparent; }
+.kanban-scroll::-webkit-scrollbar-thumb { background: #e2e2e2; border-radius: 10px; }
+
+@keyframes command-palette-in {
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes slide-up {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}

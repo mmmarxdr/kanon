@@ -1,0 +1,108 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kanon
+      POSTGRES_PASSWORD: kanon
+      POSTGRES_DB: kanon
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kanon"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  kanon-api:
+    build:
+      context: .
+      dockerfile: packages/api/Dockerfile
+    restart: unless-stopped
+    profiles:
+      - full
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql://kanon:kanon@postgres:5432/kanon?schema=public"
+      JWT_SECRET: "dev-jwt-secret-change-in-production"
+      JWT_REFRESH_SECRET: "dev-jwt-refresh-secret-change-in-production"
+      PORT: "3000"
+      HOST: "0.0.0.0"
+      NODE_ENV: "production"
+      CORS_ORIGIN: "http://localhost:5173"
+    ports:
+      - "3000:3000"
+    command: >
+      sh -c "prisma generate --schema=prisma/schema.prisma && prisma migrate deploy --schema=prisma/schema.prisma && node dist/index.js"
+
+  kanon-web:
+    build:
+      context: .
+      dockerfile: packages/web/Dockerfile
+    restart: unless-stopped
+    profiles:
+      - full
+    depends_on:
+      - kanon-api
+    environment:
+      NODE_ENV: "development"
+    ports:
+      - "5173:5173"
+
+  engram:
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM golang:1.25-alpine AS builder
+        RUN apk add --no-cache git gcc musl-dev
+        RUN git clone --depth 1 https://github.com/Gentleman-Programming/engram.git /src
+        WORKDIR /src
+        RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /engram ./cmd/engram
+        FROM alpine:3.21
+        COPY --from=builder /engram /usr/local/bin/engram
+        RUN mkdir -p /data
+        ENV ENGRAM_DB_PATH=/data/engram.db
+        EXPOSE 7437
+        ENTRYPOINT ["engram"]
+        CMD ["serve"]
+    restart: unless-stopped
+    profiles:
+      - engram
+    ports:
+      - "7437:7437"
+    volumes:
+      - engram_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:7437/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  postgres-test:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    profiles:
+      - test
+    environment:
+      POSTGRES_USER: kanon
+      POSTGRES_PASSWORD: kanon
+      POSTGRES_DB: kanon_e2e
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata_test:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kanon"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  pgdata_test:
+  engram_data:

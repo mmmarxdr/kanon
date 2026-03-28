@@ -1,0 +1,44 @@
+# Dependencies - will be installed inside the container
+node_modules
+**/node_modules
+
+# Git
+.git
+.gitignore
+
+# Build outputs - will be built inside the container
+**/dist
+**/build
+
+# IDE and editor files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Documentation and specs
+*.md
+LICENSE
+
+# Test files
+**/coverage
+**/__tests__
+**/*.test.*
+**/*.spec.*
+
+# Misc
+.claude
+.agent
+openspec
+scripts
+skills-lock.json

@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "outDir": "./dist",
+    "rootDir": ".",
+    "strict": true,
+    "noEmit": true
+  },
+  "include": [
+    "playwright.config.ts",
+    "global-setup.ts",
+    "helpers/**/*.ts",
+    "tests/**/*.ts"
+  ]
+}
