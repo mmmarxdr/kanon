@@ -98,11 +98,13 @@ FLAG_ALL=false
 FLAG_REMOVE=false
 FLAG_TOOL=""
 FLAG_HELP=false
+FLAG_WSL=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --all)    FLAG_ALL=true; shift ;;
     --remove) FLAG_REMOVE=true; shift ;;
+    --wsl)    FLAG_WSL=true; shift ;;
     --tool)
       [[ -z "${2:-}" ]] && fail "--tool requires a tool name. Run with --help for usage."
       FLAG_TOOL="$2"; shift 2 ;;
@@ -123,6 +125,8 @@ show_help() {
   echo "  --tool <name>    Configure a specific tool by name"
   echo "  --remove         Remove kanon config instead of adding it"
   echo "                   (combine with --all or --tool)"
+  echo "  --wsl            Configure Windows-native tools from WSL"
+  echo "                   (auto-detected, uses wsl node command)"
   echo "  --help, -h       Show this help message"
   echo ""
   echo -e "${BOLD}SUPPORTED TOOLS${NC}"
@@ -142,10 +146,77 @@ show_help() {
   echo "  pnpm setup:mcp --remove --all     # Remove kanon from all tool configs"
   echo "  pnpm setup:mcp --remove --tool zed  # Remove kanon from Zed only"
   echo ""
+  echo -e "${BOLD}WSL SUPPORT${NC}"
+  echo "  WSL is auto-detected. Windows-native tools (Cursor, Windsurf,"
+  echo "  Antigravity) will be configured at their Windows-side paths."
+  echo "  The MCP entry uses 'wsl node' as the command so Windows apps"
+  echo "  can invoke the server running inside WSL."
+  echo "  Skills and workflows are also installed to Windows-side paths."
+  echo ""
   exit 0
 }
 
 [[ "$FLAG_HELP" == true ]] && show_help
+
+# ── WSL Mode Setup ───────────────────────────────────────────────────────────
+WSL_MODE=false
+WIN_USER=""
+WIN_HOME=""
+
+if [[ "$FLAG_WSL" == true ]]; then
+  if [[ "$IS_WSL" != true ]]; then
+    fail "--wsl flag requires running inside WSL."
+  fi
+  WSL_MODE=true
+elif [[ "$IS_WSL" == true ]]; then
+  if [[ "$FLAG_ALL" == true ]]; then
+    # In --all mode, auto-enable WSL mode when detected
+    WSL_MODE=true
+  else
+    # Interactive prompt
+    echo ""
+    echo -en "${YELLOW}WSL detected.${NC} Configure Windows-native tools? (y/N) "
+    read -r WSL_ANSWER
+    if [[ "$WSL_ANSWER" =~ ^[Yy]$ ]]; then
+      WSL_MODE=true
+    fi
+  fi
+fi
+
+if [[ "$WSL_MODE" == true ]]; then
+  WIN_USER=$(cmd.exe /c "echo %USERNAME%" 2>/dev/null | tr -d '\r\n')
+  if [[ -z "$WIN_USER" ]]; then
+    fail "Could not detect Windows username. Is cmd.exe accessible from WSL?"
+  fi
+  WIN_HOME="/mnt/c/Users/$WIN_USER"
+  if [[ ! -d "$WIN_HOME" ]]; then
+    fail "Windows home directory not found: $WIN_HOME"
+  fi
+  info "WSL mode enabled — Windows user: ${BOLD}${WIN_USER}${NC}, home: ${CYAN}${WIN_HOME}${NC}"
+fi
+
+# Helper: check if a tool is Windows-native
+is_windows_native() {
+  [[ " $WINDOWS_NATIVE_TOOLS " == *" $1 "* ]]
+}
+
+# Helper: resolve config path (WSL override for Windows-native tools)
+resolve_config_path() {
+  local name="$1"
+  local default_path="$2"
+
+  if [[ "$WSL_MODE" == true ]] && is_windows_native "$name"; then
+    case "$name" in
+      antigravity) echo "$WIN_HOME/.gemini/antigravity/mcp_config.json" ;;
+      cursor)      echo "$WIN_HOME/.cursor/mcp.json" ;;
+      windsurf)    echo "$WIN_HOME/.codeium/windsurf/mcp_config.json" ;;
+      vscode)      echo "$default_path" ;; # project-local, stays same
+      *)           echo "$default_path" ;;
+    esac
+  else
+    echo "$default_path"
+  fi
+}
 
 # ── Prerequisites ─────────────────────────────────────────────────────────────
 command -v node >/dev/null 2>&1 || fail "node is required but not installed."
@@ -154,10 +225,27 @@ NODE_MAJOR=$(node -e "process.stdout.write(String(process.versions.node.split('.
 [[ "$NODE_MAJOR" -ge 20 ]] || fail "Node >= 20 required (found v$(node -v))"
 
 # ── Detection ─────────────────────────────────────────────────────────────────
+# WSL-aware detection for Windows-native tools
+wsl_detect() {
+  local name="$1"
+  case "$name" in
+    antigravity) test -d "$WIN_HOME/.gemini" ;;
+    cursor)      test -d "$WIN_HOME/.cursor" ;;
+    windsurf)    test -d "$WIN_HOME/.codeium/windsurf" ;;
+    vscode)      command -v code.exe >/dev/null 2>&1 || command -v code >/dev/null 2>&1 ;;
+    *)           return 1 ;;
+  esac
+}
+
 detect_tools() {
   DETECTED_INDICES=()
   for (( i=0; i<TOOL_COUNT; i++ )); do
-    if eval "${TOOL_DETECTS[$i]}" >/dev/null 2>&1; then
+    local name="${TOOL_NAMES[$i]}"
+    if [[ "$WSL_MODE" == true ]] && is_windows_native "$name"; then
+      if wsl_detect "$name" >/dev/null 2>&1; then
+        DETECTED_INDICES+=("$i")
+      fi
+    elif eval "${TOOL_DETECTS[$i]}" >/dev/null 2>&1; then
       DETECTED_INDICES+=("$i")
     fi
   done
@@ -294,11 +382,13 @@ fi
 
 # ── Config functions ──────────────────────────────────────────────────────────
 
-# merge_config <file> <root_key>
+# merge_config <file> <root_key> [wsl]
 # Merges the kanon-mcp entry into the tool's JSON config under the given root key.
+# If third arg is "wsl", uses "wsl" as command with "node" prepended to args.
 merge_config() {
   local file="$1"
   local root_key="$2"
+  local use_wsl="${3:-}"
 
   node -e "
     const fs = require('fs');
@@ -309,24 +399,20 @@ merge_config() {
     const mcpPkg = process.argv[3];
     const apiUrl = process.argv[4];
     const apiKey = process.argv[5];
+    const useWsl = process.argv[6] === 'wsl';
 
     let config = {};
     try { config = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
 
     if (!config[rootKey]) config[rootKey] = {};
-    config[rootKey]['kanon-mcp'] = {
-      command: 'node',
-      args: [mcpPkg],
-      env: {
-        KANON_API_URL: apiUrl,
-        KANON_API_KEY: apiKey
-      }
-    };
+    config[rootKey]['kanon-mcp'] = useWsl
+      ? { command: 'wsl', args: ['node', mcpPkg], env: { KANON_API_URL: apiUrl, KANON_API_KEY: apiKey } }
+      : { command: 'node', args: [mcpPkg], env: { KANON_API_URL: apiUrl, KANON_API_KEY: apiKey } };
 
     const dir = path.dirname(file);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n');
-  " "$file" "$root_key" "$MCP_PKG" "$API_URL" "$API_KEY"
+  " "$file" "$root_key" "$MCP_PKG" "$API_URL" "$API_KEY" "$use_wsl"
 }
 
 # merge_zed_config <file>
@@ -412,8 +498,14 @@ inc_fail() { FAIL_COUNT=$((FAIL_COUNT + 1)); }
 
 for idx in "${SELECTED_INDICES[@]}"; do
   name="${TOOL_NAMES[$idx]}"
-  config_file="${TOOL_CONFIGS[$idx]}"
+  config_file=$(resolve_config_path "$name" "${TOOL_CONFIGS[$idx]}")
   root_key="${TOOL_ROOT_KEYS[$idx]}"
+
+  # Determine if this tool needs WSL command override
+  wsl_arg=""
+  if [[ "$WSL_MODE" == true ]] && is_windows_native "$name"; then
+    wsl_arg="wsl"
+  fi
 
   if [[ "$FLAG_REMOVE" == true ]]; then
     result=$(remove_config "$config_file" "$root_key") || true
@@ -435,7 +527,7 @@ for idx in "${SELECTED_INDICES[@]}"; do
         inc_fail
       fi
     else
-      if merge_config "$config_file" "$root_key"; then
+      if merge_config "$config_file" "$root_key" "$wsl_arg"; then
         ok "Configured ${BOLD}${name}${NC} (${config_file})"
         inc_success
       else
@@ -457,8 +549,18 @@ WORKFLOWS_SRC="$ROOT_DIR/packages/mcp/workflows"
 skill_dest() {
   case "$1" in
     claude-code)    echo "$HOME/.claude/skills" ;;
-    antigravity)    echo "$HOME/.gemini/antigravity/skills" ;;
-    cursor)         echo "$HOME/.cursor/skills" ;;
+    antigravity)
+      if [[ "$WSL_MODE" == true && -n "$WIN_HOME" ]]; then
+        echo "$WIN_HOME/.gemini/antigravity/skills"
+      else
+        echo "$HOME/.gemini/antigravity/skills"
+      fi ;;
+    cursor)
+      if [[ "$WSL_MODE" == true && -n "$WIN_HOME" ]]; then
+        echo "$WIN_HOME/.cursor/skills"
+      else
+        echo "$HOME/.cursor/skills"
+      fi ;;
     opencode)       echo "$HOME/.config/opencode/skills" ;;
     *)              echo "" ;;
   esac
@@ -467,9 +569,24 @@ skill_dest() {
 # workflow_dest <tool-name> → prints the global workflows directory (empty = not supported)
 workflow_dest() {
   case "$1" in
-    antigravity)    echo "$HOME/.gemini/antigravity/global_workflows" ;;
-    cursor)         echo "$HOME/.cursor/commands" ;;
-    windsurf)       echo "$HOME/.codeium/windsurf/global_workflows" ;;
+    antigravity)
+      if [[ "$WSL_MODE" == true && -n "$WIN_HOME" ]]; then
+        echo "$WIN_HOME/.gemini/antigravity/global_workflows"
+      else
+        echo "$HOME/.gemini/antigravity/global_workflows"
+      fi ;;
+    cursor)
+      if [[ "$WSL_MODE" == true && -n "$WIN_HOME" ]]; then
+        echo "$WIN_HOME/.cursor/commands"
+      else
+        echo "$HOME/.cursor/commands"
+      fi ;;
+    windsurf)
+      if [[ "$WSL_MODE" == true && -n "$WIN_HOME" ]]; then
+        echo "$WIN_HOME/.codeium/windsurf/global_workflows"
+      else
+        echo "$HOME/.codeium/windsurf/global_workflows"
+      fi ;;
     *)              echo "" ;;
   esac
 }
@@ -588,26 +705,17 @@ else
         break
       fi
     done
-    if [[ "$HAS_WIN_TOOL" == true ]]; then
+    if [[ "$HAS_WIN_TOOL" == true && "$WSL_MODE" == true ]]; then
       echo ""
-      echo -e "${YELLOW}  WSL detected.${NC} For Windows-native tools (Antigravity, Cursor, Windsurf, VS Code):"
+      echo -e "${GREEN}  WSL mode:${NC} Windows-native tools were configured at Windows-side paths"
+      echo "  using 'wsl node' as the MCP command. Skills/workflows were also installed"
+      echo "  to Windows-side directories. No manual steps needed."
       echo ""
-      echo "  The configs above were written to Linux paths (~/.cursor, ~/.gemini, etc.)."
-      echo "  Windows-native tools read from Windows paths instead."
+    elif [[ "$HAS_WIN_TOOL" == true ]]; then
       echo ""
-      echo "  To configure manually for Windows-native tools:"
-      echo "  1. Find your Windows config path, e.g.:"
-      echo "     Antigravity: C:\\Users\\<username>\\.gemini\\antigravity\\mcp_config.json"
-      echo "     Cursor:      C:\\Users\\<username>\\.cursor\\mcp.json"
-      echo ""
-      echo "  2. Use this MCP entry (note 'wsl' as command):"
-      echo "     {"
-      echo "       \"command\": \"wsl\","
-      echo "       \"args\": [\"node\", \"$MCP_PKG\"],"
-      echo "       \"env\": { \"KANON_API_URL\": \"$API_URL\", \"KANON_API_KEY\": \"<your-key>\" }"
-      echo "     }"
-      echo ""
-      echo "  3. Copy skills from .agent/skills/ to your Windows tool's skill directory."
+      echo -e "${YELLOW}  WSL detected${NC} but WSL mode was not enabled."
+      echo "  Windows-native tools (Antigravity, Cursor, Windsurf) were configured at"
+      echo "  Linux paths. Re-run with ${BOLD}--wsl${NC} or ${BOLD}--all${NC} to auto-configure Windows paths."
       echo ""
     fi
   fi
