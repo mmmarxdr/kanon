@@ -79,10 +79,11 @@ describe("LoginPage", () => {
       avatarUrl: null,
     };
 
-    // First call: login, second call: /me
-    mockFetchApi
-      .mockResolvedValueOnce({ success: true })
-      .mockResolvedValueOnce(meResponse);
+    // Login uses direct fetch(), /me uses fetchApi
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ success: true }), { status: 200 }),
+    );
+    mockFetchApi.mockResolvedValueOnce(meResponse);
 
     renderLogin();
 
@@ -91,11 +92,12 @@ describe("LoginPage", () => {
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
     await waitFor(() => {
-      expect(mockFetchApi).toHaveBeenCalledTimes(2);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(mockFetchApi).toHaveBeenCalledTimes(1);
     });
 
-    // First call should be login
-    const [loginUrl, loginInit] = mockFetchApi.mock.calls[0] as [string, RequestInit];
+    // Login call via fetch()
+    const [loginUrl, loginInit] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(loginUrl).toBe("/api/auth/login");
     expect(loginInit.method).toBe("POST");
 
@@ -105,8 +107,8 @@ describe("LoginPage", () => {
     // Must NOT have workspaceId
     expect(body).not.toHaveProperty("workspaceId");
 
-    // Second call should be /me
-    const [meUrl] = mockFetchApi.mock.calls[1] as [string];
+    // /me call via fetchApi
+    const [meUrl] = mockFetchApi.mock.calls[0] as [string];
     expect(meUrl).toBe("/api/auth/me");
 
     // Should have set user in the auth store with User-level fields
@@ -118,14 +120,19 @@ describe("LoginPage", () => {
 
     // Should navigate to /workspaces
     expect(mockNavigate).toHaveBeenCalledWith({ to: "/workspaces" });
+
+    fetchSpy.mockRestore();
   });
 
   it("displays error message on failed login", async () => {
     const user = userEvent.setup();
 
-    const { ApiError } = await import("@/lib/api-client");
-    mockFetchApi.mockRejectedValue(
-      new ApiError(401, "INVALID_CREDENTIALS", "Invalid email or password"),
+    // Login uses direct fetch() — mock a 401 response with JSON body
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ code: "INVALID_CREDENTIALS", message: "Invalid email or password" }),
+        { status: 401, headers: { "Content-Type": "application/json" } },
+      ),
     );
 
     renderLogin();
@@ -137,5 +144,7 @@ describe("LoginPage", () => {
     await waitFor(() => {
       expect(screen.getByText("Invalid email or password")).toBeInTheDocument();
     });
+
+    fetchSpy.mockRestore();
   });
 });
