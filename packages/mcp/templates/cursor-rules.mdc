@@ -1,0 +1,18 @@
+---
+description: Kanon project management — use kanon_* MCP tools for issue tracking, roadmap, and project onboarding
+alwaysApply: true
+---
+
+# Kanon MCP Integration
+
+Kanon MCP tools are available for project management. Use the installed skills:
+
+- `/kanon-init` — Scan codebase, create project, seed issues and roadmap items
+- `/kanon-create-issue` — Create an issue from natural language description
+- kanon-mcp skill — Issue management, board updates, state transitions
+- kanon-roadmap skill — Capture deferred work as roadmap items
+
+When creating issues, follow these conventions:
+- Title format: `[Area] Verb phrase` (e.g., `[API] Add authentication middleware`)
+- Always check available groups before creating: call `kanon_list_groups(projectKey)`
+- Assign groupKey when a matching group exists

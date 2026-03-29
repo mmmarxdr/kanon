@@ -5,8 +5,7 @@ set -euo pipefail
 # Kanon MCP Setup — Multi-Tool Integration
 #
 # Configures the Kanon MCP server for AI coding tools.
-# Supports: Claude Code, Cursor, Windsurf, VS Code, Continue, Zed, OpenCode,
-#           Antigravity
+# Supports: Claude Code, Cursor, Antigravity
 #
 # Usage:
 #   pnpm setup:mcp              # Interactive mode — detect & select tools
@@ -38,22 +37,12 @@ fail()  { echo -e "${RED}  ✗${NC} $*"; exit 1; }
 TOOL_NAMES=(
   "claude-code"
   "cursor"
-  "windsurf"
-  "vscode"
-  "continue"
-  "zed"
-  "opencode"
   "antigravity"
 )
 
 TOOL_CONFIGS=(
   "$HOME/.claude.json"
   "$HOME/.cursor/mcp.json"
-  "$HOME/.codeium/windsurf/mcp_config.json"
-  "$ROOT_DIR/.vscode/mcp.json"
-  "$HOME/.continue/config.json"
-  "$HOME/.config/zed/settings.json"
-  "$ROOT_DIR/opencode.json"
   "$HOME/.gemini/antigravity/mcp_config.json"
 )
 
@@ -61,21 +50,11 @@ TOOL_ROOT_KEYS=(
   "mcpServers"
   "mcpServers"
   "mcpServers"
-  "servers"
-  "mcpServers"
-  "context_servers"
-  "mcp"
-  "mcpServers"
 )
 
 TOOL_DETECTS=(
   "command -v claude >/dev/null 2>&1 || test -d \$HOME/.claude"
   "test -d \$HOME/.cursor"
-  "test -d \$HOME/.codeium/windsurf"
-  "command -v code >/dev/null 2>&1"
-  "test -f \$HOME/.continue/config.json || test -d \$HOME/.continue"
-  "test -d \$HOME/.config/zed"
-  "true"
   "test -d \$HOME/.gemini"
 )
 
@@ -91,7 +70,7 @@ if grep -qi microsoft /proc/version 2>/dev/null; then
 fi
 
 # Windows-native tools that need special MCP command when running from WSL
-WINDOWS_NATIVE_TOOLS="cursor windsurf vscode antigravity"
+WINDOWS_NATIVE_TOOLS="cursor antigravity"
 
 # ── Flag parsing ──────────────────────────────────────────────────────────────
 FLAG_ALL=false
@@ -132,11 +111,6 @@ show_help() {
   echo -e "${BOLD}SUPPORTED TOOLS${NC}"
   echo "  claude-code      ~/.claude.json"
   echo "  cursor           ~/.cursor/mcp.json"
-  echo "  windsurf         ~/.codeium/windsurf/mcp_config.json"
-  echo "  vscode           .vscode/mcp.json (project-local)"
-  echo "  continue         ~/.continue/config.json"
-  echo "  zed              ~/.config/zed/settings.json"
-  echo "  opencode         opencode.json (project-local)"
   echo "  antigravity      ~/.gemini/antigravity/mcp_config.json"
   echo ""
   echo -e "${BOLD}EXAMPLES${NC}"
@@ -147,7 +121,7 @@ show_help() {
   echo "  pnpm setup:mcp --remove --tool zed  # Remove kanon from Zed only"
   echo ""
   echo -e "${BOLD}WSL SUPPORT${NC}"
-  echo "  WSL is auto-detected. Windows-native tools (Cursor, Windsurf,"
+  echo "  WSL is auto-detected. Windows-native tools (Cursor,"
   echo "  Antigravity) will be configured at their Windows-side paths."
   echo "  The MCP entry uses 'wsl node' as the command so Windows apps"
   echo "  can invoke the server running inside WSL."
@@ -209,8 +183,6 @@ resolve_config_path() {
     case "$name" in
       antigravity) echo "$WIN_HOME/.gemini/antigravity/mcp_config.json" ;;
       cursor)      echo "$WIN_HOME/.cursor/mcp.json" ;;
-      windsurf)    echo "$WIN_HOME/.codeium/windsurf/mcp_config.json" ;;
-      vscode)      echo "$default_path" ;; # project-local, stays same
       *)           echo "$default_path" ;;
     esac
   else
@@ -231,8 +203,6 @@ wsl_detect() {
   case "$name" in
     antigravity) test -d "$WIN_HOME/.gemini" ;;
     cursor)      test -d "$WIN_HOME/.cursor" ;;
-    windsurf)    test -d "$WIN_HOME/.codeium/windsurf" ;;
-    vscode)      command -v code.exe >/dev/null 2>&1 || command -v code >/dev/null 2>&1 ;;
     *)           return 1 ;;
   esac
 }
@@ -418,45 +388,6 @@ merge_config() {
   " "$file" "$root_key" "$MCP_PKG" "$API_URL" "$API_KEY" "$use_wsl" "$node_bin"
 }
 
-# merge_zed_config <file>
-# Zed uses a nested context_servers structure with command.path instead of command + args.
-merge_zed_config() {
-  local file="$1"
-  local node_bin
-  node_bin="$(which node)"
-
-  node -e "
-    const fs = require('fs');
-    const path = require('path');
-
-    const file = process.argv[1];
-    const mcpPkg = process.argv[2];
-    const apiUrl = process.argv[3];
-    const apiKey = process.argv[4];
-    const nodeBin = process.argv[5];
-
-    let config = {};
-    try { config = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
-
-    if (!config.context_servers) config.context_servers = {};
-    config.context_servers['kanon-mcp'] = {
-      command: {
-        path: nodeBin,
-        args: [mcpPkg],
-        env: {
-          KANON_API_URL: apiUrl,
-          KANON_API_KEY: apiKey
-        }
-      },
-      settings: {}
-    };
-
-    const dir = path.dirname(file);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n');
-  " "$file" "$MCP_PKG" "$API_URL" "$API_KEY" "$node_bin"
-}
-
 # remove_config <file> <root_key>
 # Removes the kanon-mcp entry from the tool's config.
 remove_config() {
@@ -524,22 +455,12 @@ for idx in "${SELECTED_INDICES[@]}"; do
       warn "Config file not found for ${name}"
     fi
   else
-    if [[ "$name" == "zed" ]]; then
-      if merge_zed_config "$config_file"; then
-        ok "Configured ${BOLD}${name}${NC} (${config_file})"
-        inc_success
-      else
-        echo -e "${RED}  ✗${NC} Failed to configure ${name}"
-        inc_fail
-      fi
+    if merge_config "$config_file" "$root_key" "$wsl_arg"; then
+      ok "Configured ${BOLD}${name}${NC} (${config_file})"
+      inc_success
     else
-      if merge_config "$config_file" "$root_key" "$wsl_arg"; then
-        ok "Configured ${BOLD}${name}${NC} (${config_file})"
-        inc_success
-      else
-        echo -e "${RED}  ✗${NC} Failed to configure ${name}"
-        inc_fail
-      fi
+      echo -e "${RED}  ✗${NC} Failed to configure ${name}"
+      inc_fail
     fi
   fi
 done
@@ -567,7 +488,6 @@ skill_dest() {
       else
         echo "$HOME/.cursor/skills"
       fi ;;
-    opencode)       echo "$HOME/.config/opencode/skills" ;;
     *)              echo "" ;;
   esac
 }
@@ -582,12 +502,6 @@ workflow_dest() {
         echo "$HOME/.gemini/antigravity/global_workflows"
       fi ;;
     cursor)         echo "" ;; # Cursor has no global workflows — only project-level .cursor/rules/
-    windsurf)
-      if [[ "$WSL_MODE" == true && -n "$WIN_HOME" ]]; then
-        echo "$WIN_HOME/.codeium/windsurf/global_workflows"
-      else
-        echo "$HOME/.codeium/windsurf/global_workflows"
-      fi ;;
     *)              echo "" ;;
   esac
 }
@@ -657,11 +571,147 @@ remove_skills_and_workflows() {
   fi
 }
 
+# ── Router template install/remove ──────────────────────────────────────────
+# Installs tool-specific instruction snippets (CLAUDE.md, .mdc rules, GEMINI.md)
+TEMPLATES_DIR="$ROOT_DIR/packages/mcp/templates"
+MARKER_START="<!-- kanon-mcp-start -->"
+MARKER_END="<!-- kanon-mcp-end -->"
+
+# append_or_replace_section <target_file> <snippet_file>
+# Idempotent: if markers exist, replace the section; otherwise append.
+append_or_replace_section() {
+  local target="$1"
+  local snippet="$2"
+
+  if [[ -f "$target" ]] && grep -q "$MARKER_START" "$target"; then
+    # Replace existing section between markers
+    node -e "
+      const fs = require('fs');
+      const target = process.argv[1];
+      const snippet = fs.readFileSync(process.argv[2], 'utf8');
+      let content = fs.readFileSync(target, 'utf8');
+      const startMarker = '$MARKER_START';
+      const endMarker = '$MARKER_END';
+      const startIdx = content.indexOf(startMarker);
+      const endIdx = content.indexOf(endMarker);
+      if (startIdx !== -1 && endIdx !== -1) {
+        content = content.substring(0, startIdx) + snippet.trim() + content.substring(endIdx + endMarker.length);
+      }
+      fs.writeFileSync(target, content);
+    " "$target" "$snippet"
+  else
+    # Append snippet
+    mkdir -p "$(dirname "$target")"
+    [[ -f "$target" ]] && echo "" >> "$target"
+    cat "$snippet" >> "$target"
+  fi
+}
+
+# remove_section <target_file>
+# Removes everything between markers (inclusive).
+remove_section() {
+  local target="$1"
+  if [[ ! -f "$target" ]]; then
+    return 0
+  fi
+  if ! grep -q "$MARKER_START" "$target"; then
+    return 0
+  fi
+  node -e "
+    const fs = require('fs');
+    const target = process.argv[1];
+    let content = fs.readFileSync(target, 'utf8');
+    const startMarker = '$MARKER_START';
+    const endMarker = '$MARKER_END';
+    const startIdx = content.indexOf(startMarker);
+    const endIdx = content.indexOf(endMarker);
+    if (startIdx !== -1 && endIdx !== -1) {
+      // Remove section and any trailing blank line
+      const before = content.substring(0, startIdx).replace(/\n+$/, '\n');
+      const after = content.substring(endIdx + endMarker.length).replace(/^\n+/, '\n');
+      content = before + after;
+      // Trim trailing whitespace
+      content = content.replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
+    }
+    fs.writeFileSync(target, content);
+  " "$target"
+}
+
+install_router() {
+  local name="$1"
+
+  case "$name" in
+    claude-code)
+      local target="$HOME/.claude/CLAUDE.md"
+      local snippet="$TEMPLATES_DIR/claude-code-snippet.md"
+      mkdir -p "$(dirname "$target")"
+      append_or_replace_section "$target" "$snippet"
+      ok "Installed router instructions for ${BOLD}${name}${NC} (${target})"
+      ;;
+    cursor)
+      local target
+      if [[ "$WSL_MODE" == true && -n "$WIN_HOME" ]]; then
+        target="$WIN_HOME/.cursor/rules/kanon.mdc"
+      else
+        target="$HOME/.cursor/rules/kanon.mdc"
+      fi
+      mkdir -p "$(dirname "$target")"
+      cp "$TEMPLATES_DIR/cursor-rules.mdc" "$target"
+      ok "Installed router instructions for ${BOLD}${name}${NC} (${target})"
+      ;;
+    antigravity)
+      local target
+      if [[ "$WSL_MODE" == true && -n "$WIN_HOME" ]]; then
+        target="$WIN_HOME/.gemini/GEMINI.md"
+      else
+        target="$HOME/.gemini/GEMINI.md"
+      fi
+      mkdir -p "$(dirname "$target")"
+      append_or_replace_section "$target" "$TEMPLATES_DIR/gemini-instructions.md"
+      ok "Installed router instructions for ${BOLD}${name}${NC} (${target})"
+      ;;
+  esac
+}
+
+remove_router() {
+  local name="$1"
+
+  case "$name" in
+    claude-code)
+      local target="$HOME/.claude/CLAUDE.md"
+      remove_section "$target"
+      ok "Removed router instructions from ${BOLD}${name}${NC} (${target})"
+      ;;
+    cursor)
+      local target
+      if [[ "$WSL_MODE" == true && -n "$WIN_HOME" ]]; then
+        target="$WIN_HOME/.cursor/rules/kanon.mdc"
+      else
+        target="$HOME/.cursor/rules/kanon.mdc"
+      fi
+      if [[ -f "$target" ]]; then
+        rm "$target"
+        ok "Removed router instructions from ${BOLD}${name}${NC} (${target})"
+      fi
+      ;;
+    antigravity)
+      local target
+      if [[ "$WSL_MODE" == true && -n "$WIN_HOME" ]]; then
+        target="$WIN_HOME/.gemini/GEMINI.md"
+      else
+        target="$HOME/.gemini/GEMINI.md"
+      fi
+      remove_section "$target"
+      ok "Removed router instructions from ${BOLD}${name}${NC} (${target})"
+      ;;
+  esac
+}
+
 echo ""
 if [[ "$FLAG_REMOVE" == true ]]; then
-  echo -e "${BOLD}Removing Kanon skills and workflows...${NC}"
+  echo -e "${BOLD}Removing Kanon skills, workflows, and router instructions...${NC}"
 else
-  echo -e "${BOLD}Installing Kanon skills and workflows...${NC}"
+  echo -e "${BOLD}Installing Kanon skills, workflows, and router instructions...${NC}"
 fi
 echo ""
 
@@ -669,8 +719,10 @@ for idx in "${SELECTED_INDICES[@]}"; do
   name="${TOOL_NAMES[$idx]}"
   if [[ "$FLAG_REMOVE" == true ]]; then
     remove_skills_and_workflows "$name"
+    remove_router "$name"
   else
     install_skills_and_workflows "$name"
+    install_router "$name"
   fi
 done
 
@@ -715,7 +767,7 @@ else
     elif [[ "$HAS_WIN_TOOL" == true ]]; then
       echo ""
       echo -e "${YELLOW}  WSL detected${NC} but WSL mode was not enabled."
-      echo "  Windows-native tools (Antigravity, Cursor, Windsurf) were configured at"
+      echo "  Windows-native tools (Antigravity, Cursor) were configured at"
       echo "  Linux paths. Re-run with ${BOLD}--wsl${NC} or ${BOLD}--all${NC} to auto-configure Windows paths."
       echo ""
     fi

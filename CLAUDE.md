@@ -13,8 +13,6 @@ Kanon is an opinionated, AI-native project management platform. Monorepo with pn
 | bridge | packages/bridge | Bridge service |
 | e2e | packages/e2e | End-to-end tests |
 
-Also read AGENTS.md for cross-tool project instructions.
-
 ## Tech Stack
 
 TypeScript, Node 20+, pnpm workspaces. See individual package.json files for framework details.
@@ -23,14 +21,8 @@ TypeScript, Node 20+, pnpm workspaces. See individual package.json files for fra
 
 pnpm install && pnpm dev
 
-## Project Skills
+## Kanon MCP Tools
 
-Load these skills ON-DEMAND when their trigger matches. Do NOT load all skills upfront.
+Kanon skills are installed globally via `pnpm setup:mcp`. They are available in any project. Run the setup script to configure your AI tool.
 
-| Skill | Trigger | Path |
-|-------|---------|------|
-| kanon-roadmap | User defers work: "later", "someday", "down the road", "eventually", "not now"; out-of-scope items identified in any analysis | .claude/skills/kanon-roadmap/SKILL.md |
-| kanon-init | "init project", "/kanon-init", new project onboarding; supports batch mode (sub-agent) with zero interaction | .claude/skills/kanon-init/SKILL.md |
-| kanon-mcp | Issue creation, updates, board management, state transitions, SDD phase issue tracking | .claude/skills/kanon-mcp/SKILL.md |
-| kanon-nl-create | Natural language issue description: "create an issue", "track this", "log a bug" | .claude/skills/kanon-nl-create/SKILL.md |
-| kanon-orchestrator-hooks | Launching SDD phases (sdd-explore, sdd-propose, sdd-design, sdd-spec); processing phase results with deferred_items | .claude/skills/kanon-orchestrator-hooks/SKILL.md |
+The `_shared/kanon-phase-common.md` in `.claude/skills/` is kanon-development-specific and is NOT part of the global install.
