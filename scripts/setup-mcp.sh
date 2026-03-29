@@ -389,6 +389,8 @@ merge_config() {
   local file="$1"
   local root_key="$2"
   local use_wsl="${3:-}"
+  local node_bin
+  node_bin="$(which node)"
 
   node -e "
     const fs = require('fs');
@@ -400,25 +402,28 @@ merge_config() {
     const apiUrl = process.argv[4];
     const apiKey = process.argv[5];
     const useWsl = process.argv[6] === 'wsl';
+    const nodeBin = process.argv[7];
 
     let config = {};
     try { config = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
 
     if (!config[rootKey]) config[rootKey] = {};
     config[rootKey]['kanon-mcp'] = useWsl
-      ? { command: 'wsl', args: ['node', mcpPkg], env: { KANON_API_URL: apiUrl, KANON_API_KEY: apiKey } }
-      : { command: 'node', args: [mcpPkg], env: { KANON_API_URL: apiUrl, KANON_API_KEY: apiKey } };
+      ? { command: 'wsl', args: [nodeBin, mcpPkg], env: { KANON_API_URL: apiUrl, KANON_API_KEY: apiKey } }
+      : { command: nodeBin, args: [mcpPkg], env: { KANON_API_URL: apiUrl, KANON_API_KEY: apiKey } };
 
     const dir = path.dirname(file);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n');
-  " "$file" "$root_key" "$MCP_PKG" "$API_URL" "$API_KEY" "$use_wsl"
+  " "$file" "$root_key" "$MCP_PKG" "$API_URL" "$API_KEY" "$use_wsl" "$node_bin"
 }
 
 # merge_zed_config <file>
 # Zed uses a nested context_servers structure with command.path instead of command + args.
 merge_zed_config() {
   local file="$1"
+  local node_bin
+  node_bin="$(which node)"
 
   node -e "
     const fs = require('fs');
@@ -428,6 +433,7 @@ merge_zed_config() {
     const mcpPkg = process.argv[2];
     const apiUrl = process.argv[3];
     const apiKey = process.argv[4];
+    const nodeBin = process.argv[5];
 
     let config = {};
     try { config = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
@@ -435,7 +441,7 @@ merge_zed_config() {
     if (!config.context_servers) config.context_servers = {};
     config.context_servers['kanon-mcp'] = {
       command: {
-        path: 'node',
+        path: nodeBin,
         args: [mcpPkg],
         env: {
           KANON_API_URL: apiUrl,
@@ -448,7 +454,7 @@ merge_zed_config() {
     const dir = path.dirname(file);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n');
-  " "$file" "$MCP_PKG" "$API_URL" "$API_KEY"
+  " "$file" "$MCP_PKG" "$API_URL" "$API_KEY" "$node_bin"
 }
 
 # remove_config <file> <root_key>
