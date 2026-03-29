@@ -57,7 +57,7 @@ export default defineConfig({
       stderr: "pipe",
     },
     {
-      command: `pnpm --filter @kanon/web dev -- --port ${WEB_PORT}`,
+      command: `pnpm --filter @kanon/web dev --port ${WEB_PORT}`,
       port: Number(WEB_PORT),
       env: {
         API_URL: `http://localhost:${API_PORT}`,
