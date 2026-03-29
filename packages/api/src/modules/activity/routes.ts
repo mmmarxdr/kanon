@@ -46,7 +46,7 @@ export default async function activityRoutes(
       // Transform DB shape → frontend ActivityLog shape:
       // - member → actor (id + username)
       // - details JSON → top-level field, oldValue, newValue
-      return logs.map((log) => {
+      return (logs ?? []).map((log) => {
         const details =
           log.details && typeof log.details === "object" && !Array.isArray(log.details)
             ? (log.details as Record<string, unknown>)
@@ -58,10 +58,9 @@ export default async function activityRoutes(
           field: typeof details["field"] === "string" ? details["field"] : undefined,
           oldValue: typeof details["oldValue"] === "string" ? details["oldValue"] : undefined,
           newValue: typeof details["newValue"] === "string" ? details["newValue"] : undefined,
-          actor: {
-            id: log.member.id,
-            username: log.member.username,
-          },
+          actor: log.member
+            ? { id: log.member.id, username: log.member.username }
+            : { id: "unknown", username: "unknown" },
           createdAt: log.createdAt,
         };
       });

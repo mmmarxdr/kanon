@@ -69,8 +69,8 @@ test.describe("Issue Comments", () => {
     const commentTextarea = page.getByLabel("New comment");
     await commentTextarea.fill("This is a test comment from E2E");
 
-    // Submit the comment
-    const submitButton = page.getByRole("button", { name: "Comment" });
+    // Submit the comment — use exact match to avoid matching the "Comments" tab button
+    const submitButton = panel.getByRole("button", { name: "Comment", exact: true });
     await submitButton.click();
 
     // Wait for the comment to appear in the list

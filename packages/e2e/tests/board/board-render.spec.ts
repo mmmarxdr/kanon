@@ -1,7 +1,21 @@
 import { test, expect } from "@playwright/test";
 import { navigateToBoard } from "../../helpers/nav.js";
+import { apiPost, getAuthToken } from "../../helpers/api.js";
 
 test.describe("Board rendering", () => {
+  // Seed a few issues so the board has cards to render
+  test.beforeAll(async () => {
+    const token = await getAuthToken();
+    const issues = [
+      { title: "Board test issue 1", type: "task", priority: "medium" },
+      { title: "Board test issue 2", type: "bug", priority: "high" },
+      { title: "Board test issue 3", type: "feature", priority: "low" },
+    ];
+    for (const issue of issues) {
+      await apiPost("/api/projects/KAN/issues", issue, token);
+    }
+  });
+
   test.beforeEach(async ({ page }) => {
     await navigateToBoard(page, "KAN");
 

@@ -26,11 +26,28 @@ function LoginPage() {
     setLoading(true);
 
     try {
-      // Login — server sets cookies automatically
-      await fetchApi("/api/auth/login", {
+      // Login — use direct fetch (not fetchApi) to avoid the 401 auto-refresh
+      // interceptor which would redirect back to /login before we can show an error.
+      const loginRes = await fetch("/api/auth/login", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ email, password }),
       });
+
+      if (!loginRes.ok) {
+        let body: Record<string, unknown> = {};
+        try {
+          body = (await loginRes.json()) as Record<string, unknown>;
+        } catch {
+          // Response may not be JSON
+        }
+        throw new ApiError(
+          loginRes.status,
+          (body.code as string) ?? "UNKNOWN_ERROR",
+          (body.message as string) ?? loginRes.statusText,
+        );
+      }
 
       // Fetch user info from /me (using the cookies just set)
       const user = await fetchApi<AuthUser>("/api/auth/me");
