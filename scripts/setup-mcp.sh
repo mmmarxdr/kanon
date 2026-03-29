@@ -397,6 +397,9 @@ echo ""
 
 SUCCESS_COUNT=0
 FAIL_COUNT=0
+# shellcheck disable=SC2317 — arithmetic increment helper avoids set -e trap on (( 0++ ))
+inc_success() { SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); }
+inc_fail() { FAIL_COUNT=$((FAIL_COUNT + 1)); }
 
 for idx in "${SELECTED_INDICES[@]}"; do
   name="${TOOL_NAMES[$idx]}"
@@ -407,7 +410,7 @@ for idx in "${SELECTED_INDICES[@]}"; do
     result=$(remove_config "$config_file" "$root_key") || true
     if [[ "$result" == "removed" ]]; then
       ok "Removed kanon-mcp from ${BOLD}${name}${NC} (${config_file})"
-      (( SUCCESS_COUNT++ ))
+      inc_success
     elif [[ "$result" == "not_found" ]]; then
       warn "kanon-mcp not found in ${name} config — nothing to remove"
     else
@@ -417,18 +420,18 @@ for idx in "${SELECTED_INDICES[@]}"; do
     if [[ "$name" == "zed" ]]; then
       if merge_zed_config "$config_file"; then
         ok "Configured ${BOLD}${name}${NC} (${config_file})"
-        (( SUCCESS_COUNT++ ))
+        inc_success
       else
         echo -e "${RED}  ✗${NC} Failed to configure ${name}"
-        (( FAIL_COUNT++ ))
+        inc_fail
       fi
     else
       if merge_config "$config_file" "$root_key"; then
         ok "Configured ${BOLD}${name}${NC} (${config_file})"
-        (( SUCCESS_COUNT++ ))
+        inc_success
       else
         echo -e "${RED}  ✗${NC} Failed to configure ${name}"
-        (( FAIL_COUNT++ ))
+        inc_fail
       fi
     fi
   fi
