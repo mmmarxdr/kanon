@@ -561,7 +561,12 @@ skill_dest() {
       else
         echo "$HOME/.gemini/antigravity/skills"
       fi ;;
-    cursor)         echo "" ;; # Cursor has no global skills — only project-level .cursor/rules/
+    cursor)
+      if [[ "$IS_WSL" == true && -n "$WIN_HOME" ]]; then
+        echo "$WIN_HOME/.cursor/skills"
+      else
+        echo "$HOME/.cursor/skills"
+      fi ;;
     opencode)       echo "$HOME/.config/opencode/skills" ;;
     *)              echo "" ;;
   esac
