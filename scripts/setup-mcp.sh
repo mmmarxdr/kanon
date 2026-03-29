@@ -562,7 +562,7 @@ skill_dest() {
         echo "$HOME/.gemini/antigravity/skills"
       fi ;;
     cursor)
-      if [[ "$IS_WSL" == true && -n "$WIN_HOME" ]]; then
+      if [[ "$WSL_MODE" == true && -n "$WIN_HOME" ]]; then
         echo "$WIN_HOME/.cursor/skills"
       else
         echo "$HOME/.cursor/skills"
