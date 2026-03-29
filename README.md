@@ -240,6 +240,26 @@ Kanon supports multiple AI coding tools via standardized instruction files:
 
 Run `pnpm setup:mcp` to configure the Kanon MCP server for your AI coding tool.
 
+### Slash Commands / Workflows
+
+Kanon provides portable slash commands across AI coding tools. Each triggers the same underlying skill:
+
+| Command | What it does |
+|---------|-------------|
+| `kanon-init` | Scan codebase, create project, seed issues and roadmap items |
+| `kanon-create-issue` | Create a Kanon issue from a natural language description |
+
+These are available in tool-specific locations:
+
+| Tool | Location | Format |
+|------|----------|--------|
+| Antigravity | `.agent/workflows/` | Markdown with YAML frontmatter |
+| Cursor | `.cursor/commands/` | Plain markdown |
+| Windsurf | `.windsurf/workflows/` | Markdown with YAML frontmatter |
+| VS Code (Copilot) | `.github/prompts/` | `.prompt.md` with YAML frontmatter |
+| OpenCode | `.opencode/agents/` | Markdown with YAML frontmatter |
+| Claude Code | `.claude/skills/` | SKILL.md (loaded via semantic matching or `/skill-name`) |
+
 ## Contributing
 
 1. Create a feature branch from `main`

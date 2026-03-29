@@ -50,3 +50,14 @@ Skills provide specialized AI agent capabilities. They live in `.claude/skills/`
 | kanon-nl-create | Natural language issue creation ("create an issue", "log a bug") |
 | kanon-roadmap | Capturing deferred work and future ideas |
 | kanon-orchestrator-hooks | SDD phase orchestration with Kanon integration |
+
+## Slash Commands
+
+Portable slash commands are available across AI tools. Each triggers an underlying skill:
+
+| Command | Description | Skill |
+|---------|-------------|-------|
+| `kanon-init` | Scan codebase, create project, seed issues and roadmap | kanon-init |
+| `kanon-create-issue` | Create an issue from natural language | kanon-nl-create |
+
+Locations by tool: `.agent/workflows/` (Antigravity), `.cursor/commands/` (Cursor), `.windsurf/workflows/` (Windsurf), `.github/prompts/` (VS Code Copilot), `.opencode/agents/` (OpenCode).
