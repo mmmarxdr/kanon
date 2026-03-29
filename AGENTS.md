@@ -39,25 +39,18 @@ This project has a Kanon MCP server (`packages/mcp`). Use `kanon_*` tools for pr
 
 Run `pnpm setup:mcp` to configure MCP for your AI coding tool.
 
+## MCP Tools
+
+Kanon MCP tools (`kanon_*`) are available for project management: creating/updating issues, managing boards, tracking roadmap items, and querying project state. These are configured globally via `pnpm setup:mcp` and work from any project.
+
 ## Skills
 
-Skills provide specialized AI agent capabilities. They live in `.claude/skills/` (Claude Code) and `.agent/skills/` (Antigravity/Codex). Load on-demand when relevant:
+Kanon provides portable skills installed globally by `pnpm setup:mcp`. These work from any project where the Kanon MCP server is configured:
 
 | Skill | When to use |
 |-------|-------------|
 | kanon-init | Project onboarding, scanning codebase, seeding issues |
-| kanon-mcp | Issue creation, board management, state transitions |
-| kanon-nl-create | Natural language issue creation ("create an issue", "log a bug") |
+| kanon-create-issue | Natural language issue creation ("create an issue", "log a bug") |
 | kanon-roadmap | Capturing deferred work and future ideas |
-| kanon-orchestrator-hooks | SDD phase orchestration with Kanon integration |
 
-## Slash Commands
-
-Portable slash commands are available across AI tools. Each triggers an underlying skill:
-
-| Command | Description | Skill |
-|---------|-------------|-------|
-| `kanon-init` | Scan codebase, create project, seed issues and roadmap | kanon-init |
-| `kanon-create-issue` | Create an issue from natural language | kanon-nl-create |
-
-Locations by tool: `.agent/workflows/` (Antigravity), `.cursor/commands/` (Cursor), `.windsurf/workflows/` (Windsurf), `.github/prompts/` (VS Code Copilot), `.opencode/agents/` (OpenCode).
+Skills are installed to each tool's global directory (e.g., `~/.claude/skills/kanon-*/` for Claude Code, `~/.cursor/skills/kanon-*/` for Cursor). Workflow triggers are installed where supported.

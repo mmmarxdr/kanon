@@ -234,31 +234,32 @@ The script bumps versions across all packages, updates `CHANGELOG.md`, creates a
 Kanon supports multiple AI coding tools via standardized instruction files:
 
 - **AGENTS.md** -- project instructions for tools that support it (Codex, OpenCode, Gemini CLI, and others)
-- **GEMINI.md** -- Gemini CLI and Antigravity
-- **CLAUDE.md** -- Claude Code
-- **.agent/skills/** -- skill definitions for Antigravity/Codex (symlinked from `.claude/skills/`)
+- **CLAUDE.md** -- Claude Code project instructions and development skills
+- **.claude/skills/** -- Claude Code skills for kanon development
 
-Run `pnpm setup:mcp` to configure the Kanon MCP server for your AI coding tool.
+Run `pnpm setup:mcp` to configure both the MCP server and global skills/workflows for your AI coding tool.
 
-### Slash Commands / Workflows
+### Skills and Workflows
 
-Kanon provides portable slash commands across AI coding tools. Each triggers the same underlying skill:
+`pnpm setup:mcp` installs Kanon skills and workflow triggers globally for each configured tool. This means the kanon MCP tools are available from any project, not just this repo.
 
-| Command | What it does |
-|---------|-------------|
+| Skill | What it does |
+|-------|-------------|
 | `kanon-init` | Scan codebase, create project, seed issues and roadmap items |
 | `kanon-create-issue` | Create a Kanon issue from a natural language description |
+| `kanon-roadmap` | Capture deferred work as roadmap items |
 
-These are available in tool-specific locations:
+Global install locations per tool:
 
-| Tool | Location | Format |
-|------|----------|--------|
-| Antigravity | `.agent/workflows/` | Markdown with YAML frontmatter |
-| Cursor | `.cursor/commands/` | Plain markdown |
-| Windsurf | `.windsurf/workflows/` | Markdown with YAML frontmatter |
-| VS Code (Copilot) | `.github/prompts/` | `.prompt.md` with YAML frontmatter |
-| OpenCode | `.opencode/agents/` | Markdown with YAML frontmatter |
-| Claude Code | `.claude/skills/` | SKILL.md (loaded via semantic matching or `/skill-name`) |
+| Tool | Skills | Workflows |
+|------|--------|-----------|
+| Claude Code | `~/.claude/skills/kanon-*/` | (skills are the commands) |
+| Antigravity | `~/.gemini/antigravity/skills/kanon-*/` | `~/.gemini/antigravity/global_workflows/kanon-*.md` |
+| Cursor | `~/.cursor/skills/kanon-*/` | `~/.cursor/commands/kanon-*.md` |
+| Windsurf | (not supported) | `~/.codeium/windsurf/global_workflows/kanon-*.md` |
+| OpenCode | `~/.config/opencode/skills/kanon-*/` | (skills are discoverable) |
+
+To remove skills and workflows along with MCP config: `pnpm setup:mcp --remove --all`
 
 ## Contributing
 

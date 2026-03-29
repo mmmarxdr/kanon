@@ -437,6 +437,116 @@ for idx in "${SELECTED_INDICES[@]}"; do
   fi
 done
 
+# ── Install / Remove Kanon skills and workflows ─────────────────────────────
+# Portable skills live in packages/mcp/skills/ and workflows in packages/mcp/workflows/.
+# Each tool has its own global directory structure for skills and workflows.
+
+SKILLS_SRC="$ROOT_DIR/packages/mcp/skills"
+WORKFLOWS_SRC="$ROOT_DIR/packages/mcp/workflows"
+
+# skill_dest <tool-name> → prints the global skills directory (empty = not supported)
+skill_dest() {
+  case "$1" in
+    claude-code)    echo "$HOME/.claude/skills" ;;
+    antigravity)    echo "$HOME/.gemini/antigravity/skills" ;;
+    cursor)         echo "$HOME/.cursor/skills" ;;
+    opencode)       echo "$HOME/.config/opencode/skills" ;;
+    *)              echo "" ;;
+  esac
+}
+
+# workflow_dest <tool-name> → prints the global workflows directory (empty = not supported)
+workflow_dest() {
+  case "$1" in
+    antigravity)    echo "$HOME/.gemini/antigravity/global_workflows" ;;
+    cursor)         echo "$HOME/.cursor/commands" ;;
+    windsurf)       echo "$HOME/.codeium/windsurf/global_workflows" ;;
+    *)              echo "" ;;
+  esac
+}
+
+install_skills_and_workflows() {
+  local name="$1"
+  local s_dest w_dest
+  s_dest=$(skill_dest "$name")
+  w_dest=$(workflow_dest "$name")
+
+  local installed=false
+
+  # Install skills
+  if [[ -n "$s_dest" && -d "$SKILLS_SRC" ]]; then
+    for skill_dir in "$SKILLS_SRC"/kanon-*/; do
+      [[ -d "$skill_dir" ]] || continue
+      local skill_name
+      skill_name=$(basename "$skill_dir")
+      local dest_dir="$s_dest/$skill_name"
+      mkdir -p "$dest_dir"
+      cp "$skill_dir"SKILL.md "$dest_dir/SKILL.md" 2>/dev/null && installed=true
+    done
+  fi
+
+  # Install workflows
+  if [[ -n "$w_dest" && -d "$WORKFLOWS_SRC" ]]; then
+    mkdir -p "$w_dest"
+    for wf_file in "$WORKFLOWS_SRC"/kanon-*.md; do
+      [[ -f "$wf_file" ]] || continue
+      cp "$wf_file" "$w_dest/" 2>/dev/null && installed=true
+    done
+  fi
+
+  if [[ "$installed" == true ]]; then
+    ok "Installed Kanon skills/workflows for ${BOLD}${name}${NC}"
+    [[ -n "$s_dest" ]] && echo -e "      Skills:    ${CYAN}${s_dest}/kanon-*/${NC}"
+    [[ -n "$w_dest" ]] && echo -e "      Workflows: ${CYAN}${w_dest}/kanon-*.md${NC}"
+  fi
+}
+
+remove_skills_and_workflows() {
+  local name="$1"
+  local s_dest w_dest
+  s_dest=$(skill_dest "$name")
+  w_dest=$(workflow_dest "$name")
+
+  local removed=false
+
+  # Remove skills
+  if [[ -n "$s_dest" ]]; then
+    for skill_dir in "$s_dest"/kanon-*/; do
+      [[ -d "$skill_dir" ]] || continue
+      rm -rf "$skill_dir" && removed=true
+    done
+  fi
+
+  # Remove workflows
+  if [[ -n "$w_dest" ]]; then
+    for wf_file in "$w_dest"/kanon-*.md; do
+      [[ -f "$wf_file" ]] || continue
+      rm "$wf_file" && removed=true
+    done
+  fi
+
+  if [[ "$removed" == true ]]; then
+    ok "Removed Kanon skills/workflows from ${BOLD}${name}${NC}"
+  fi
+}
+
+echo ""
+if [[ "$FLAG_REMOVE" == true ]]; then
+  echo -e "${BOLD}Removing Kanon skills and workflows...${NC}"
+else
+  echo -e "${BOLD}Installing Kanon skills and workflows...${NC}"
+fi
+echo ""
+
+for idx in "${SELECTED_INDICES[@]}"; do
+  name="${TOOL_NAMES[$idx]}"
+  if [[ "$FLAG_REMOVE" == true ]]; then
+    remove_skills_and_workflows "$name"
+  else
+    install_skills_and_workflows "$name"
+  fi
+done
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 if [[ "$FLAG_REMOVE" == true ]]; then
