@@ -11,7 +11,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: Number(process.env.KANON_WEB_PORT) || 5173,
     proxy: {
       "/api": {
         target: process.env.API_URL ?? "http://localhost:3000",

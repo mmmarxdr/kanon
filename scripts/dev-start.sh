@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# ── Port configuration (override via env or .env) ────────────────────────────
+API_PORT="${KANON_API_PORT:-3000}"
+WEB_PORT="${KANON_WEB_PORT:-5173}"
+ENGRAM_URL="${ENGRAM_URL:-http://localhost:7437}"
+
 # ── Colors ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -99,10 +104,10 @@ if [[ ! -f "$ENV_FILE" ]]; then
 DATABASE_URL="postgresql://kanon:kanon@localhost:5432/kanon?schema=public"
 JWT_SECRET="dev-jwt-secret-change-in-production"
 JWT_REFRESH_SECRET="dev-jwt-refresh-secret-change-in-production"
-PORT=3000
+PORT=${API_PORT}
 HOST=0.0.0.0
 NODE_ENV=development
-CORS_ORIGIN=http://localhost:5173
+CORS_ORIGIN=http://localhost:${WEB_PORT}
 EOF
   fi
   ok ".env created"
@@ -131,15 +136,15 @@ ENGRAM_STARTED_BY_US=false
 ENGRAM_SOURCE=""
 if [[ "$WITH_ENGRAM" == "true" ]]; then
   # Check if engram is already running (e.g., installed locally on the host)
-  if curl -sf --max-time 2 http://localhost:7437/health >/dev/null 2>&1; then
-    ok "Using existing Engram instance (already running on :7437)"
+  if curl -sf --max-time 2 "${ENGRAM_URL}/health" >/dev/null 2>&1; then
+    ok "Using existing Engram instance (already running at ${ENGRAM_URL})"
     ENGRAM_SOURCE="existing"
   else
     info "Starting Engram via docker compose (profile: engram)..."
     if docker compose -f "$ROOT_DIR/docker-compose.yml" --profile engram up -d engram 2>/dev/null; then
       info "Waiting for Engram to be healthy..."
       ENGRAM_RETRIES=10
-      until curl -sf --max-time 2 http://localhost:7437/health >/dev/null 2>&1; do
+      until curl -sf --max-time 2 "${ENGRAM_URL}/health" >/dev/null 2>&1; do
         ENGRAM_RETRIES=$((ENGRAM_RETRIES - 1))
         if [[ "$ENGRAM_RETRIES" -le 0 ]]; then
           warn "Engram did not become healthy — continuing without it"
@@ -206,7 +211,7 @@ if [[ -z "$WORKSPACE_ID" || "$WORKSPACE_ID" == "unknown" ]]; then
 fi
 
 # ── 6. Start API server in background ────────────────────────────────────────
-info "Starting API server (port 3000)..."
+info "Starting API server (port ${API_PORT})..."
 pnpm --filter @kanon/api dev > "$ROOT_DIR/.dev-api.log" 2>&1 &
 API_PID=$!
 echo "$API_PID" >> "$PID_FILE"
@@ -219,7 +224,7 @@ fi
 ok "API server started (PID $API_PID)"
 
 # ── 7. Start web dev server in background ────────────────────────────────────
-info "Starting web dev server (port 5173)..."
+info "Starting web dev server (port ${WEB_PORT})..."
 pnpm --filter @kanon/web dev > "$ROOT_DIR/.dev-web.log" 2>&1 &
 WEB_PID=$!
 echo "$WEB_PID" >> "$PID_FILE"
@@ -236,17 +241,17 @@ echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}  Kanon Dev Environment Ready${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
-echo -e "  API:           ${CYAN}http://localhost:3000${NC}"
-echo -e "  Web:           ${CYAN}http://localhost:5173${NC}"
+echo -e "  API:           ${CYAN}http://localhost:${API_PORT}${NC}"
+echo -e "  Web:           ${CYAN}http://localhost:${WEB_PORT}${NC}"
 if [[ "$WITH_ENGRAM" == "true" ]]; then
   if [[ "$ENGRAM_SOURCE" == "existing" ]]; then
-    echo -e "  Engram:        ${CYAN}http://localhost:7437${NC} ${GREEN}(existing instance)${NC}"
+    echo -e "  Engram:        ${CYAN}${ENGRAM_URL}${NC} ${GREEN}(existing instance)${NC}"
   else
-    echo -e "  Engram:        ${CYAN}http://localhost:7437${NC} ${GREEN}(Docker)${NC}"
+    echo -e "  Engram:        ${CYAN}${ENGRAM_URL}${NC} ${GREEN}(Docker)${NC}"
   fi
 else
   ENGRAM_STATUS="not started"
-  if curl -sf --max-time 1 http://localhost:7437/health >/dev/null 2>&1; then
+  if curl -sf --max-time 1 "${ENGRAM_URL}/health" >/dev/null 2>&1; then
     ENGRAM_STATUS="detected (external)"
   fi
   echo -e "  Engram:        ${YELLOW}${ENGRAM_STATUS}${NC}"

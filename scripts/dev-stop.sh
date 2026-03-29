@@ -28,7 +28,7 @@ if [[ -f "$PID_FILE" ]]; then
 else
   info "No PID file found — killing any pnpm dev processes..."
   # Fallback: find processes by port
-  for port in 3000 5173; do
+  for port in "${KANON_API_PORT:-3000}" "${KANON_WEB_PORT:-5173}"; do
     pid=$(lsof -ti ":$port" 2>/dev/null || true)
     if [[ -n "$pid" ]]; then
       kill "$pid" 2>/dev/null || true

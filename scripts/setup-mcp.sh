@@ -81,7 +81,7 @@ TOOL_DETECTS=(
 
 TOOL_COUNT=${#TOOL_NAMES[@]}
 
-API_URL="${KANON_API_URL:-http://localhost:3001}"
+API_URL="${KANON_API_URL:-http://localhost:${KANON_API_PORT:-3000}}"
 MCP_PKG="$ROOT_DIR/packages/mcp/dist/index.js"
 
 # ── Flag parsing ──────────────────────────────────────────────────────────────

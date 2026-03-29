@@ -30,12 +30,12 @@ services:
       DATABASE_URL: "postgresql://kanon:kanon@postgres:5432/kanon?schema=public"
       JWT_SECRET: "dev-jwt-secret-change-in-production"
       JWT_REFRESH_SECRET: "dev-jwt-refresh-secret-change-in-production"
-      PORT: "3000"
+      PORT: "${KANON_API_PORT:-3000}"
       HOST: "0.0.0.0"
       NODE_ENV: "production"
-      CORS_ORIGIN: "http://localhost:5173"
+      CORS_ORIGIN: "http://localhost:${KANON_WEB_PORT:-5173}"
     ports:
-      - "3000:3000"
+      - "${KANON_API_PORT:-3000}:${KANON_API_PORT:-3000}"
     command: >
       sh -c "prisma generate --schema=prisma/schema.prisma && prisma migrate deploy --schema=prisma/schema.prisma && node dist/index.js"
 
@@ -51,7 +51,7 @@ services:
     environment:
       NODE_ENV: "development"
     ports:
-      - "5173:5173"
+      - "${KANON_WEB_PORT:-5173}:${KANON_WEB_PORT:-5173}"
 
   engram:
     build:
@@ -73,7 +73,7 @@ services:
     profiles:
       - engram
     ports:
-      - "7437:7437"
+      - "${ENGRAM_PORT:-7437}:7437"
     volumes:
       - engram_data:/data
     healthcheck:
