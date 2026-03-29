@@ -585,7 +585,7 @@ export async function getIssueContext(
       type: "session_summary",
       limit: 5,
     });
-    const sessions = parseSessionSummaries(results);
+    const sessions = parseSessionSummaries(results ?? []);
     return { sessions, sessionCount: sessions.length };
   } catch (err) {
     if (logger) {

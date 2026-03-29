@@ -112,7 +112,7 @@ async function searchEngram(
     created_at: string;
   }>;
 
-  return results.map(parseSessionSummary);
+  return (results ?? []).map(parseSessionSummary);
 }
 
 /**
