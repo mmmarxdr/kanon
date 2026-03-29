@@ -561,12 +561,7 @@ skill_dest() {
       else
         echo "$HOME/.gemini/antigravity/skills"
       fi ;;
-    cursor)
-      if [[ "$WSL_MODE" == true && -n "$WIN_HOME" ]]; then
-        echo "$WIN_HOME/.cursor/skills"
-      else
-        echo "$HOME/.cursor/skills"
-      fi ;;
+    cursor)         echo "" ;; # Cursor has no global skills — only project-level .cursor/rules/
     opencode)       echo "$HOME/.config/opencode/skills" ;;
     *)              echo "" ;;
   esac
@@ -581,12 +576,7 @@ workflow_dest() {
       else
         echo "$HOME/.gemini/antigravity/global_workflows"
       fi ;;
-    cursor)
-      if [[ "$WSL_MODE" == true && -n "$WIN_HOME" ]]; then
-        echo "$WIN_HOME/.cursor/commands"
-      else
-        echo "$HOME/.cursor/commands"
-      fi ;;
+    cursor)         echo "" ;; # Cursor has no global workflows — only project-level .cursor/rules/
     windsurf)
       if [[ "$WSL_MODE" == true && -n "$WIN_HOME" ]]; then
         echo "$WIN_HOME/.codeium/windsurf/global_workflows"
