@@ -185,22 +185,11 @@ if [[ "$WITH_MCP" == "true" ]]; then
   fi
 fi
 
-# ── 4. Install dependencies ──────────────────────────────────────────────────
-if [[ ! -d "$ROOT_DIR/node_modules" ]] || [[ "$ROOT_DIR/pnpm-lock.yaml" -nt "$ROOT_DIR/node_modules/.pnpm/lock.yaml" ]] 2>/dev/null; then
-  info "Installing dependencies..."
-  pnpm install
-  ok "Dependencies installed"
-else
-  ok "Dependencies up to date"
-fi
+# ── 4. Run upgrade script (deps + prisma generate + migrate + env check) ────
+info "Running upgrade script..."
+"$ROOT_DIR/scripts/upgrade.sh" --quiet
 
-# ── 5. Prisma generate + migrate + seed ──────────────────────────────────────
-info "Running prisma generate..."
-pnpm --filter @kanon/api db:generate
-
-info "Running prisma migrate deploy..."
-pnpm --filter @kanon/api db:migrate
-
+# ── 5. Seed database ────────────────────────────────────────────────────────
 info "Running seed (idempotent upserts for structural data)..."
 SEED_OUTPUT=$(pnpm --filter @kanon/api db:seed 2>&1) || true
 echo "$SEED_OUTPUT"

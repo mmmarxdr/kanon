@@ -24,7 +24,6 @@ export function errorResult(err: unknown): ToolResult {
         {
           type: "text",
           text: JSON.stringify({
-            success: false,
             error: `${err.statusCode}: ${err.message}`,
             code: err.code,
           }),
@@ -39,7 +38,6 @@ export function errorResult(err: unknown): ToolResult {
       {
         type: "text",
         text: JSON.stringify({
-          success: false,
           error: `Unexpected error: ${err instanceof Error ? err.message : String(err)}`,
         }),
       },
@@ -49,15 +47,19 @@ export function errorResult(err: unknown): ToolResult {
 }
 
 /**
- * Wraps a successful result into an MCP CallToolResult.
+ * Returns data directly as JSON text in an MCP CallToolResult.
+ * No wrapper object — the MCP SDK's `isError` flag handles error signaling.
+ */
+export function dataResult(data: unknown): ToolResult {
+  return {
+    content: [{ type: "text", text: JSON.stringify(data) }],
+  };
+}
+
+/**
+ * @deprecated Use `dataResult` instead. This wrapper adds unnecessary tokens.
+ * Kept temporarily for backward compatibility — internally delegates to `dataResult`.
  */
 export function successResult(data: unknown): ToolResult {
-  return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify({ success: true, data }),
-      },
-    ],
-  };
+  return dataResult(data);
 }

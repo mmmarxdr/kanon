@@ -27,11 +27,10 @@ describe("useAuthStore", () => {
   describe("setUser", () => {
     it("stores the user object and sets isAuthenticated", () => {
       const user: AuthUser = {
-        memberId: "m-1",
+        id: "user-1",
         email: "alice@example.com",
-        username: "alice",
-        workspaceId: "ws-1",
-        role: "member",
+        displayName: "Alice",
+        avatarUrl: null,
       };
 
       useAuthStore.getState().setUser(user);
@@ -46,11 +45,10 @@ describe("useAuthStore", () => {
   describe("clearUser", () => {
     it("clears user and sets isAuthenticated to false", () => {
       useAuthStore.getState().setUser({
-        memberId: "m-1",
+        id: "user-1",
         email: "test@test.com",
-        username: "tester",
-        workspaceId: "ws-1",
-        role: "admin",
+        displayName: "Tester",
+        avatarUrl: null,
       });
 
       useAuthStore.getState().clearUser();
@@ -74,11 +72,10 @@ describe("useAuthStore", () => {
       fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
 
       useAuthStore.getState().setUser({
-        memberId: "m-1",
+        id: "user-1",
         email: "test@test.com",
-        username: "tester",
-        workspaceId: "ws-1",
-        role: "admin",
+        displayName: "Tester",
+        avatarUrl: null,
       });
 
       await useAuthStore.getState().logout();
@@ -97,11 +94,10 @@ describe("useAuthStore", () => {
       fetchMock.mockRejectedValueOnce(new Error("Network error"));
 
       useAuthStore.getState().setUser({
-        memberId: "m-1",
+        id: "user-1",
         email: "test@test.com",
-        username: "tester",
-        workspaceId: "ws-1",
-        role: "admin",
+        displayName: "Tester",
+        avatarUrl: null,
       });
 
       await useAuthStore.getState().logout();
@@ -115,11 +111,10 @@ describe("useAuthStore", () => {
   describe("bootstrap", () => {
     it("populates user on successful /me response", async () => {
       const user: AuthUser = {
-        memberId: "m-1",
+        id: "user-1",
         email: "test@test.com",
-        username: "tester",
-        workspaceId: "ws-1",
-        role: "admin",
+        displayName: "Tester",
+        avatarUrl: null,
       };
       fetchMock.mockResolvedValueOnce(
         new Response(JSON.stringify(user), {

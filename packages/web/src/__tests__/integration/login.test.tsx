@@ -57,26 +57,26 @@ describe("LoginPage", () => {
     return render(<captured.LoginComponent />);
   }
 
-  it("renders all form fields", () => {
+  it("renders email and password fields (no workspace field)", () => {
     renderLogin();
 
-    expect(screen.getByLabelText("Workspace")).toBeInTheDocument();
     expect(screen.getByLabelText("Email")).toBeInTheDocument();
     expect(screen.getByLabelText("Password")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Sign in" }),
     ).toBeInTheDocument();
+    // Workspace field should NOT exist
+    expect(screen.queryByLabelText("Workspace")).not.toBeInTheDocument();
   });
 
-  it("submits with correct payload on form submission", async () => {
+  it("submits with correct payload (email + password only, no workspace)", async () => {
     const user = userEvent.setup();
 
     const meResponse: AuthUser = {
-      memberId: "member-123",
+      id: "user-123",
       email: "test@example.com",
-      username: "tester",
-      workspaceId: "ws-456",
-      role: "admin",
+      displayName: "Tester",
+      avatarUrl: null,
     };
 
     // First call: login, second call: /me
@@ -86,7 +86,6 @@ describe("LoginPage", () => {
 
     renderLogin();
 
-    await user.type(screen.getByLabelText("Workspace"), "ws-456");
     await user.type(screen.getByLabelText("Email"), "test@example.com");
     await user.type(screen.getByLabelText("Password"), "password123");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
@@ -103,16 +102,18 @@ describe("LoginPage", () => {
     const body = JSON.parse(loginInit.body as string) as Record<string, string>;
     expect(body.email).toBe("test@example.com");
     expect(body.password).toBe("password123");
-    expect(body.workspaceId).toBe("ws-456");
+    // Must NOT have workspaceId
+    expect(body).not.toHaveProperty("workspaceId");
 
     // Second call should be /me
     const [meUrl] = mockFetchApi.mock.calls[1] as [string];
     expect(meUrl).toBe("/api/auth/me");
 
-    // Should have set user in the auth store
+    // Should have set user in the auth store with User-level fields
     await waitFor(() => {
       expect(useAuthStore.getState().isAuthenticated).toBe(true);
-      expect(useAuthStore.getState().user?.memberId).toBe("member-123");
+      expect(useAuthStore.getState().user?.id).toBe("user-123");
+      expect(useAuthStore.getState().user?.email).toBe("test@example.com");
     });
 
     // Should navigate to /workspaces
@@ -129,7 +130,6 @@ describe("LoginPage", () => {
 
     renderLogin();
 
-    await user.type(screen.getByLabelText("Workspace"), "ws-123");
     await user.type(screen.getByLabelText("Email"), "wrong@example.com");
     await user.type(screen.getByLabelText("Password"), "wrongpass");
     await user.click(screen.getByRole("button", { name: "Sign in" }));

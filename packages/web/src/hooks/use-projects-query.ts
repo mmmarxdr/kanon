@@ -1,12 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchApi } from "@/lib/api-client";
 import { projectKeys } from "@/lib/query-keys";
-import { useAuthStore } from "@/stores/auth-store";
 import type { Project } from "@/types/project";
 
-export function useProjectsQuery() {
-  const workspaceId = useAuthStore((s) => s.user?.workspaceId);
-
+/**
+ * Fetch projects for a given workspace.
+ * workspaceId comes from route params, not from auth store.
+ */
+export function useProjectsQuery(workspaceId: string | undefined) {
   return useQuery({
     queryKey: projectKeys.list(workspaceId ?? ""),
     queryFn: () =>

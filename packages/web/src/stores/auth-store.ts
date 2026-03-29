@@ -1,13 +1,10 @@
 import { create } from "zustand";
 
 export interface AuthUser {
-  memberId: string;
+  id: string;
   email: string;
-  username: string;
-  workspaceId: string;
-  role: string;
-  displayName?: string | null;
-  avatarUrl?: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
 }
 
 interface AuthState {

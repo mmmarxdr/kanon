@@ -26,7 +26,7 @@ export async function verifyPassword(
 }
 
 /**
- * Sign a JWT access + refresh token pair for a member.
+ * Sign a JWT access + refresh token pair for a user.
  */
 export function signTokens(payload: TokenPayload): {
   accessToken: string;
@@ -57,114 +57,55 @@ export function verifyRefreshToken(token: string): TokenPayload {
 }
 
 /**
- * Register a new member in a workspace.
+ * Register a new user (globally — no workspace).
  */
 export async function register(body: RegisterBody) {
-  // Check for duplicate email within workspace
-  const existingEmail = await prisma.member.findUnique({
-    where: {
-      workspaceId_email: {
-        workspaceId: body.workspaceId,
-        email: body.email,
-      },
-    },
+  // Check for duplicate email globally
+  const existingUser = await prisma.user.findUnique({
+    where: { email: body.email },
   });
-  if (existingEmail) {
-    throw new AppError(409, "DUPLICATE_EMAIL", "Email already registered in this workspace");
-  }
-
-  // Check for duplicate username within workspace
-  const existingUsername = await prisma.member.findUnique({
-    where: {
-      workspaceId_username: {
-        workspaceId: body.workspaceId,
-        username: body.username,
-      },
-    },
-  });
-  if (existingUsername) {
-    throw new AppError(
-      409,
-      "DUPLICATE_USERNAME",
-      "Username already taken in this workspace",
-    );
+  if (existingUser) {
+    throw new AppError(409, "DUPLICATE_EMAIL", "Email already registered");
   }
 
   const passwordHash = await hashPassword(body.password);
 
-  const member = await prisma.member.create({
+  const user = await prisma.user.create({
     data: {
       email: body.email,
-      username: body.username,
       passwordHash,
-      workspaceId: body.workspaceId,
+      displayName: body.displayName ?? null,
     },
     select: {
       id: true,
       email: true,
-      username: true,
+      displayName: true,
     },
   });
 
-  return member;
+  return user;
 }
 
 /**
- * UUID v4 regex for detecting whether workspaceId is a UUID or a slug.
- */
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/**
- * Resolve a workspace identifier (UUID or slug) to a workspace UUID.
- */
-async function resolveWorkspaceId(idOrSlug: string): Promise<string> {
-  if (UUID_RE.test(idOrSlug)) {
-    return idOrSlug;
-  }
-  // Treat as slug
-  const workspace = await prisma.workspace.findUnique({
-    where: { slug: idOrSlug },
-    select: { id: true },
-  });
-  if (!workspace) {
-    throw new AppError(
-      404,
-      "WORKSPACE_NOT_FOUND",
-      `Workspace "${idOrSlug}" not found`,
-    );
-  }
-  return workspace.id;
-}
-
-/**
- * Authenticate a member and return JWT tokens.
+ * Authenticate a user by email and password (no workspace).
  */
 export async function login(body: LoginBody) {
-  const workspaceId = await resolveWorkspaceId(body.workspaceId);
-
-  const member = await prisma.member.findUnique({
-    where: {
-      workspaceId_email: {
-        workspaceId,
-        email: body.email,
-      },
-    },
+  const user = await prisma.user.findUnique({
+    where: { email: body.email },
   });
 
-  if (!member) {
+  if (!user) {
     throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email or password");
   }
 
-  const valid = await verifyPassword(body.password, member.passwordHash);
+  const valid = await verifyPassword(body.password, user.passwordHash);
   if (!valid) {
     throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email or password");
   }
 
   const payload: TokenPayload = {
-    sub: member.id,
-    workspaceId: member.workspaceId,
-    role: member.role,
+    sub: user.id,
+    email: user.email,
   };
 
   return signTokens(payload);
@@ -176,9 +117,9 @@ export async function login(body: LoginBody) {
 export function refresh(refreshToken: string) {
   const payload = verifyRefreshToken(refreshToken);
 
-  // Sign a new access token only
+  // Sign a new access token only (with same user-level claims)
   const accessToken = jwt.sign(
-    { sub: payload.sub, workspaceId: payload.workspaceId, role: payload.role },
+    { sub: payload.sub, email: payload.email },
     env.JWT_SECRET,
     { expiresIn: TOKEN_EXPIRY.ACCESS },
   );
@@ -187,45 +128,45 @@ export function refresh(refreshToken: string) {
 }
 
 /**
- * Change a member's password.
+ * Change a user's password.
  * Verifies the current password before updating.
  */
 export async function changePassword(
-  memberId: string,
+  userId: string,
   currentPassword: string,
   newPassword: string,
 ): Promise<void> {
-  const member = await prisma.member.findUnique({
-    where: { id: memberId },
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
     select: { passwordHash: true },
   });
 
-  if (!member) {
+  if (!user) {
     throw new AppError(404, "USER_NOT_FOUND", "User not found");
   }
 
-  const valid = await verifyPassword(currentPassword, member.passwordHash);
+  const valid = await verifyPassword(currentPassword, user.passwordHash);
   if (!valid) {
     throw new AppError(400, "INVALID_PASSWORD", "Current password is incorrect");
   }
 
   const newHash = await hashPassword(newPassword);
-  await prisma.member.update({
-    where: { id: memberId },
+  await prisma.user.update({
+    where: { id: userId },
     data: { passwordHash: newHash },
   });
 }
 
 /**
- * Generate and store an API key for a member.
+ * Generate and store an API key for a user.
  * Returns the plain-text key (shown once).
  */
-export async function generateApiKey(memberId: string) {
+export async function generateApiKey(userId: string) {
   const rawKey = randomBytes(32).toString("hex");
   const hash = createHash("sha256").update(rawKey).digest("hex");
 
-  await prisma.member.update({
-    where: { id: memberId },
+  await prisma.user.update({
+    where: { id: userId },
     data: { apiKeyHash: hash },
   });
 

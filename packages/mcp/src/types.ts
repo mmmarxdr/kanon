@@ -24,8 +24,11 @@ export const ROADMAP_STATUSES = ["idea", "planned", "in_progress", "done"] as co
 
 // ─── Shared Optional Params ─────────────────────────────────────────────────
 
-export const FormatParam = z.enum(["slim", "full"]).default("slim")
-  .describe("Response format: slim (default, fewer tokens) or full (raw API response)");
+export const FormatParam = z.enum(["slim", "full", "compact"]).default("slim")
+  .describe("Response format: slim (default, fewer tokens), full (raw API response), or compact (markdown table)");
+
+export const ListFormatParam = z.enum(["slim", "full", "compact"]).default("compact")
+  .describe("Response format for lists: compact (default, markdown table), slim (JSON), or full (raw API response)");
 
 export const LimitParam = z.number().int().min(1).max(100).default(20)
   .describe("Max items to return (default 20, max 100)");
@@ -38,7 +41,7 @@ export const OffsetParam = z.number().int().min(0).default(0)
 /** kanon_list_projects */
 export const ListProjectsInput = z.object({
   workspaceId: z.string().describe("Workspace ID to list projects for"),
-  format: FormatParam.optional(),
+  format: ListFormatParam.optional(),
   limit: LimitParam.optional(),
   offset: OffsetParam.optional(),
 });
@@ -59,7 +62,7 @@ export const ListIssuesInput = z.object({
   sprintId: z.string().optional().describe("Filter by sprint ID"),
   label: z.string().optional().describe("Filter by label"),
   groupKey: z.string().optional().describe("Filter by group key"),
-  format: FormatParam.optional(),
+  format: ListFormatParam.optional(),
   limit: LimitParam.optional(),
   offset: OffsetParam.optional(),
 });
@@ -73,7 +76,7 @@ export const GetIssueInput = z.object({
 /** kanon_list_groups */
 export const ListGroupsInput = z.object({
   projectKey: z.string().describe("Project key (e.g. 'KAN')"),
-  format: FormatParam.optional(),
+  format: ListFormatParam.optional(),
   limit: LimitParam.optional(),
   offset: OffsetParam.optional(),
 });
@@ -95,6 +98,7 @@ export const CreateIssueInput = z.object({
     .enum(["bug-report", "feature-request", "task", "spike"])
     .optional()
     .describe("Issue template key to pre-fill type, priority, labels, and description"),
+  format: FormatParam.optional(),
 });
 
 /** kanon_update_issue */
@@ -108,12 +112,14 @@ export const UpdateIssueInput = z.object({
   sprintId: z.string().nullable().optional().describe("New sprint ID"),
   dueDate: z.string().nullable().optional().describe("New due date"),
   roadmapItemId: z.string().nullable().optional().describe("Roadmap item ID to link (UUID, null to unlink)"),
+  format: FormatParam.optional(),
 });
 
 /** kanon_transition_issue */
 export const TransitionIssueInput = z.object({
   issueKey: z.string().describe("Issue key (e.g. 'KAN-42')"),
   state: z.enum(ISSUE_STATES).describe("Target state"),
+  format: FormatParam.optional(),
 });
 
 /** kanon_batch_transition */
@@ -121,13 +127,14 @@ export const BatchTransitionInput = z.object({
   projectKey: z.string().describe("Project key"),
   groupKey: z.string().describe("Group key to transition"),
   state: z.enum(ISSUE_STATES).describe("Target state for all issues in group"),
+  format: FormatParam.optional(),
 });
 
 // ─── Workspace Tool Input Schemas ───────────────────────────────────────────
 
 /** kanon_list_workspaces */
 export const ListWorkspacesInput = z.object({
-  format: FormatParam.optional(),
+  format: ListFormatParam.optional(),
 });
 
 // ─── Project Creation / Update Schemas ─────────────────────────────────────
@@ -139,6 +146,7 @@ export const CreateProjectInput = z.object({
     .describe("Project key (uppercase, 1-6 chars, e.g. 'KAN')"),
   name: z.string().min(1).max(100).describe("Project name"),
   description: z.string().max(500).optional().describe("Project description"),
+  format: FormatParam.optional(),
 });
 
 /** kanon_update_project */
@@ -147,6 +155,7 @@ export const UpdateProjectInput = z.object({
   name: z.string().min(1).max(100).optional().describe("New name"),
   description: z.string().max(500).nullable().optional().describe("New description"),
   engramNamespace: z.string().max(100).nullable().optional().describe("Engram namespace"),
+  format: FormatParam.optional(),
 });
 
 // ─── Roadmap Tool Input Schemas ─────────────────────────────────────────────
@@ -157,7 +166,7 @@ export const ListRoadmapInput = z.object({
   horizon: z.enum(HORIZONS).optional().describe("Filter by horizon"),
   status: z.enum(ROADMAP_STATUSES).optional().describe("Filter by roadmap status"),
   label: z.string().optional().describe("Filter by label"),
-  format: FormatParam.optional(),
+  format: ListFormatParam.optional(),
   limit: LimitParam.optional(),
   offset: OffsetParam.optional(),
 });
@@ -174,6 +183,7 @@ export const CreateRoadmapItemInput = z.object({
   labels: z.array(z.string()).optional().describe("Labels to attach"),
   sortOrder: z.number().optional().describe("Sort order (float, default 0)"),
   targetDate: z.string().optional().describe("Target date (ISO 8601)"),
+  format: FormatParam.optional(),
 });
 
 /** kanon_update_roadmap_item */
@@ -189,6 +199,7 @@ export const UpdateRoadmapItemInput = z.object({
   labels: z.array(z.string()).optional().describe("New labels"),
   sortOrder: z.number().optional().describe("New sort order"),
   targetDate: z.string().nullable().optional().describe("New target date (ISO 8601)"),
+  format: FormatParam.optional(),
 });
 
 /** kanon_delete_roadmap_item */
@@ -251,4 +262,5 @@ export const SyncObservationInput = z.object({
     .describe("Engram observation ID — included in comment footer for traceability"),
   topicKey: z.string().optional()
     .describe("Engram topic key (e.g. 'sdd/my-change/design')"),
+  format: FormatParam.optional(),
 });

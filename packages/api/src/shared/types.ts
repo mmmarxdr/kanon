@@ -1,4 +1,3 @@
-import type { MemberRole } from "@prisma/client";
 import type { BridgeSyncService } from "../services/bridge-sync-service.js";
 
 /**
@@ -18,20 +17,21 @@ export class AppError extends Error {
 
 /**
  * Authenticated user context, attached to request by auth plugin.
+ * Contains only user-level identity — no workspace or role info.
+ * Workspace context comes from URL params for scoped endpoints.
  */
 export interface AuthUser {
-  memberId: string;
-  workspaceId: string;
-  role: MemberRole;
+  userId: string;
+  email: string;
 }
 
 /**
  * JWT token payload structure.
+ * Contains only user identity — no workspace or role claims.
  */
 export interface TokenPayload {
-  sub: string; // memberId
-  workspaceId: string;
-  role: MemberRole;
+  sub: string; // userId
+  email: string;
 }
 
 /**

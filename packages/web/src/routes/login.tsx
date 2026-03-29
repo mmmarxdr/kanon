@@ -17,7 +17,6 @@ function LoginPage() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [workspaceId, setWorkspaceId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -30,7 +29,7 @@ function LoginPage() {
       // Login — server sets cookies automatically
       await fetchApi("/api/auth/login", {
         method: "POST",
-        body: JSON.stringify({ email, password, workspaceId }),
+        body: JSON.stringify({ email, password }),
       });
 
       // Fetch user info from /me (using the cookies just set)
@@ -59,27 +58,6 @@ function LoginPage() {
         </div>
 
         <form onSubmit={handleSubmit} data-testid="login-form" className="space-y-4">
-          <div className="space-y-2">
-            <label
-              htmlFor="workspaceId"
-              className="text-sm font-medium text-card-foreground"
-            >
-              Workspace
-            </label>
-            <input
-              id="workspaceId"
-              type="text"
-              value={workspaceId}
-              onChange={(e) => setWorkspaceId(e.target.value)}
-              placeholder="kanon-dev"
-              required
-              className="w-full rounded-md border border-input bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
-            />
-            <p className="text-xs text-muted-foreground">
-              Enter workspace slug or UUID
-            </p>
-          </div>
-
           <div className="space-y-2">
             <label
               htmlFor="email"

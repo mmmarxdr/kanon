@@ -1,8 +1,10 @@
 import { createRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import { authenticatedRoute } from "../_authenticated";
 import { fetchApi } from "@/lib/api-client";
 import { useAuthStore } from "@/stores/auth-store";
+import { workspaceKeys } from "@/lib/query-keys";
 
 export const workspaceSelectRoute = createRoute({
   path: "/workspaces",
@@ -27,11 +29,57 @@ interface Project {
 function WorkspaceSelectPage() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
+  const didAutoRedirect = useRef(false);
 
   const workspacesQuery = useQuery({
-    queryKey: ["workspaces"],
+    queryKey: workspaceKeys.list(),
     queryFn: () => fetchApi<Workspace[]>("/api/workspaces"),
   });
+
+  // Auto-redirect: if user has exactly one workspace, skip the picker
+  // and go straight to its first project (or project list)
+  useEffect(() => {
+    if (didAutoRedirect.current) return;
+    if (!workspacesQuery.data) return;
+
+    if (workspacesQuery.data.length === 1) {
+      didAutoRedirect.current = true;
+      const workspace = workspacesQuery.data[0]!;
+      // Fetch projects for this workspace, then redirect to the first project's board
+      void fetchApi<Project[]>(`/api/workspaces/${workspace.id}/projects`).then(
+        (projects) => {
+          const firstProject = projects[0];
+          if (firstProject) {
+            void navigate({
+              to: "/board/$projectKey",
+              params: { projectKey: firstProject.key },
+            });
+          } else {
+            // No projects yet — go to project selection
+            void navigate({
+              to: "/workspaces/$workspaceId/projects",
+              params: { workspaceId: workspace.id },
+            });
+          }
+        },
+      );
+    }
+  }, [workspacesQuery.data, navigate]);
+
+  // While auto-redirecting, show a loading state instead of the picker
+  if (
+    workspacesQuery.isLoading ||
+    (workspacesQuery.data?.length === 1 && !didAutoRedirect.current)
+  ) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <p className="text-sm text-muted-foreground">Loading workspace...</p>
+        </div>
+      </div>
+    );
+  }
 
   function handleSelectWorkspace(workspace: Workspace) {
     // Navigate to project list for this workspace
@@ -65,12 +113,6 @@ function WorkspaceSelectPage() {
           </p>
         )}
 
-        {workspacesQuery.isLoading && (
-          <div className="py-8 text-center text-muted-foreground">
-            Loading workspaces...
-          </div>
-        )}
-
         {workspacesQuery.error && (
           <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             Failed to load workspaces. Please try again.
@@ -83,7 +125,7 @@ function WorkspaceSelectPage() {
           </div>
         )}
 
-        {workspacesQuery.data && workspacesQuery.data.length > 0 && (
+        {workspacesQuery.data && workspacesQuery.data.length > 1 && (
           <div className="space-y-2">
             {workspacesQuery.data.map((ws) => (
               <button

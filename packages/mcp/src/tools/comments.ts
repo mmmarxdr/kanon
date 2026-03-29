@@ -3,7 +3,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { KanonClient } from "../kanon-client.js";
 import { SyncObservationInput } from "../types.js";
-import { errorResult, successResult } from "../errors.js";
+import { errorResult, dataResult } from "../errors.js";
+import { formatEntity, type Format } from "../transforms.js";
 
 const MAX_BODY_CHARS = 9900;
 const FOOTER_RESERVE = 200; // chars reserved for header + footer template
@@ -61,6 +62,7 @@ export function registerCommentTools(
       observationType,
       observationId,
       topicKey,
+      format,
     }) => {
       try {
         const body = formatCommentBody({
@@ -71,7 +73,7 @@ export function registerCommentTools(
           topicKey,
         });
         const comment = await client.createComment(issueKey, body, "engram_sync");
-        return successResult(comment);
+        return dataResult(formatEntity(comment, "comment-write", (format ?? "slim") as Format));
       } catch (err) {
         return errorResult(err);
       }

@@ -11,8 +11,8 @@ import {
   AddDependencyInput,
   RemoveDependencyInput,
 } from "../types.js";
-import { errorResult, successResult } from "../errors.js";
-import { formatList, type Format } from "../transforms.js";
+import { errorResult, dataResult } from "../errors.js";
+import { formatList, formatEntity, type Format } from "../transforms.js";
 
 export function registerRoadmapTools(server: McpServer, client: KanonClient): void {
   server.tool(
@@ -30,11 +30,11 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
         const result = formatList(
           items as unknown[],
           "roadmap",
-          (format ?? "slim") as Format,
+          (format ?? "compact") as Format,
           limit ?? 20,
           offset ?? 0,
         );
-        return successResult(result);
+        return dataResult(result);
       } catch (err) {
         return errorResult(err);
       }
@@ -45,7 +45,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
     "kanon_create_roadmap_item",
     "Create a new roadmap item in a Kanon project",
     CreateRoadmapItemInput.shape,
-    async ({ projectKey, title, description, horizon, status, effort, impact, labels, sortOrder, targetDate }) => {
+    async ({ projectKey, title, description, horizon, status, effort, impact, labels, sortOrder, targetDate, format }) => {
       try {
         const body: Record<string, unknown> = { title };
         if (description !== undefined) body["description"] = description;
@@ -58,7 +58,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
         if (targetDate !== undefined) body["targetDate"] = targetDate;
 
         const item = await client.createRoadmapItem(projectKey, body);
-        return successResult(item);
+        return dataResult(formatEntity(item, "roadmap-write", (format ?? "slim") as Format));
       } catch (err) {
         return errorResult(err);
       }
@@ -71,7 +71,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
     "kanon_update_roadmap_item",
     "Update fields of an existing roadmap item",
     UpdateRoadmapItemInput.shape,
-    async ({ projectKey, itemId, title, description, horizon, status, effort, impact, labels, sortOrder, targetDate }) => {
+    async ({ projectKey, itemId, title, description, horizon, status, effort, impact, labels, sortOrder, targetDate, format }) => {
       try {
         const body: Record<string, unknown> = {};
         if (title !== undefined) body["title"] = title;
@@ -85,7 +85,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
         if (targetDate !== undefined) body["targetDate"] = targetDate;
 
         const item = await client.updateRoadmapItem(projectKey, itemId, body);
-        return successResult(item);
+        return dataResult(formatEntity(item, "roadmap-write", (format ?? "slim") as Format));
       } catch (err) {
         return errorResult(err);
       }
@@ -99,7 +99,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
     async ({ projectKey, itemId }) => {
       try {
         await client.deleteRoadmapItem(projectKey, itemId);
-        return successResult({ deleted: true, itemId });
+        return dataResult({ deleted: true, itemId });
       } catch (err) {
         return errorResult(err);
       }
@@ -120,7 +120,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
         if (groupKey !== undefined) body["groupKey"] = groupKey;
 
         const issue = await client.promoteRoadmapItem(projectKey, itemId, body);
-        return successResult(issue);
+        return dataResult(formatEntity(issue, "issue-write"));
       } catch (err) {
         return errorResult(err);
       }
@@ -139,7 +139,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
         if (type !== undefined) body["type"] = type;
 
         const dep = await client.addDependency(projectKey, sourceItemId, body);
-        return successResult(dep);
+        return dataResult({ id: (dep as Record<string, unknown>)["id"], type: (dep as Record<string, unknown>)["type"] ?? "blocks" });
       } catch (err) {
         return errorResult(err);
       }
@@ -153,7 +153,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
     async ({ projectKey, sourceItemId, dependencyId }) => {
       try {
         await client.removeDependency(projectKey, sourceItemId, dependencyId);
-        return successResult({ deleted: true, dependencyId });
+        return dataResult({ deleted: true, dependencyId });
       } catch (err) {
         return errorResult(err);
       }

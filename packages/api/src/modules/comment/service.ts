@@ -32,7 +32,11 @@ export async function createComment(
     },
     include: {
       author: {
-        select: { id: true, username: true, email: true },
+        select: {
+          id: true,
+          username: true,
+          user: { select: { email: true } },
+        },
       },
     },
   });
@@ -69,7 +73,11 @@ export async function listComments(issueKey: string) {
     orderBy: { createdAt: "asc" },
     include: {
       author: {
-        select: { id: true, username: true, email: true },
+        select: {
+          id: true,
+          username: true,
+          user: { select: { email: true } },
+        },
       },
     },
   });

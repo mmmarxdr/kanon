@@ -3,7 +3,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { KanonClient } from "../kanon-client.js";
 import { ListGroupsInput, BatchTransitionInput } from "../types.js";
-import { errorResult, successResult } from "../errors.js";
+import { errorResult, dataResult } from "../errors.js";
 import { formatList } from "../transforms.js";
 
 export function registerGroupTools(server: McpServer, client: KanonClient): void {
@@ -14,7 +14,7 @@ export function registerGroupTools(server: McpServer, client: KanonClient): void
     async ({ projectKey, format, limit, offset }) => {
       try {
         const groups = await client.listIssueGroups(projectKey);
-        return successResult(formatList(groups, "group", format, limit, offset));
+        return dataResult(formatList(groups, "group", (format ?? "compact"), limit, offset));
       } catch (err) {
         return errorResult(err);
       }
@@ -25,10 +25,12 @@ export function registerGroupTools(server: McpServer, client: KanonClient): void
     "kanon_batch_transition",
     "Batch-transition all issues in a group to a new state",
     BatchTransitionInput.shape,
-    async ({ projectKey, groupKey, state }) => {
+    async ({ projectKey, groupKey, state, format }) => {
       try {
         const result = await client.batchTransition(projectKey, groupKey, state);
-        return successResult(result);
+        if (format === "full") return dataResult(result);
+        const count = Array.isArray(result) ? result.length : (result as unknown as Record<string, unknown>)["count"] ?? 0;
+        return dataResult({ transitioned: count, state });
       } catch (err) {
         return errorResult(err);
       }

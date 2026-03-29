@@ -99,8 +99,8 @@ describe("KanbanBoard", () => {
 
     renderBoard(issues);
 
-    // The Apply column should show count (3) in parentheses
-    expect(screen.getByText("(3)")).toBeInTheDocument();
+    // The In Progress column should show count 3
+    expect(screen.getByText("3")).toBeInTheDocument();
   });
 
   it("filters issues by type", () => {

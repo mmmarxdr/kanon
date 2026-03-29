@@ -2,29 +2,29 @@ import { z } from "zod";
 
 /**
  * Registration request body.
+ * No workspace or username — users register globally.
  */
 export const RegisterBody = z.object({
   email: z.string().email("Invalid email address"),
-  username: z
-    .string()
-    .min(2, "Username must be at least 2 characters")
-    .max(50, "Username must be at most 50 characters"),
   password: z
     .string()
     .min(8, "Password must be at least 8 characters")
     .max(128, "Password must be at most 128 characters"),
-  workspaceId: z.string().uuid("Invalid workspace ID"),
+  displayName: z
+    .string()
+    .min(1, "Display name must be at least 1 character")
+    .max(100, "Display name must be at most 100 characters")
+    .optional(),
 });
 export type RegisterBody = z.infer<typeof RegisterBody>;
 
 /**
  * Login request body.
- * workspaceId accepts either a UUID or a workspace slug (e.g. "kanon-dev").
+ * No workspace — auth is workspace-independent.
  */
 export const LoginBody = z.object({
   email: z.string().email("Invalid email address"),
   password: z.string().min(1, "Password is required"),
-  workspaceId: z.string().min(1, "Workspace ID or slug is required"),
 });
 export type LoginBody = z.infer<typeof LoginBody>;
 
@@ -42,7 +42,7 @@ export type RefreshBody = z.infer<typeof RefreshBody>;
 export const RegisterResponse = z.object({
   id: z.string().uuid(),
   email: z.string(),
-  username: z.string(),
+  displayName: z.string().nullable(),
 });
 
 /**
@@ -69,13 +69,11 @@ export const ApiKeyResponse = z.object({
 
 /**
  * /me endpoint response — current authenticated user.
+ * Returns User-level data only, no workspace fields.
  */
 export const MeResponse = z.object({
-  memberId: z.string().uuid(),
+  userId: z.string().uuid(),
   email: z.string(),
-  username: z.string(),
-  workspaceId: z.string().uuid(),
-  role: z.string(),
   displayName: z.string().nullable(),
   avatarUrl: z.string().nullable(),
 });

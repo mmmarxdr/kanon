@@ -17,7 +17,6 @@ import {
  */
 describe("Cookie Auth Flow", () => {
   let app: FastifyInstance;
-  let workspaceId: string;
 
   beforeAll(async () => {
     app = await createTestApp();
@@ -31,34 +30,29 @@ describe("Cookie Auth Flow", () => {
 
   beforeEach(async () => {
     await cleanDatabase();
-    const ws = await seedTestWorkspace("cookie-test");
-    workspaceId = ws.id;
   });
 
   // ── Login sets cookies ────────────────────────────────────────
 
   describe("Login → Cookie flow", () => {
     it("login sets kanon_at, kanon_rt, and kanon_csrf cookies", async () => {
-      // Register
+      // Register (no workspace)
       await app.inject({
         method: "POST",
         url: "/api/auth/register",
         payload: {
           email: "cookie@kanon.io",
-          username: "cookieuser",
           password: "Secret123!",
-          workspaceId,
         },
       });
 
-      // Login
+      // Login (no workspace)
       const loginRes = await app.inject({
         method: "POST",
         url: "/api/auth/login",
         payload: {
           email: "cookie@kanon.io",
           password: "Secret123!",
-          workspaceId,
         },
       });
 
@@ -80,16 +74,15 @@ describe("Cookie Auth Flow", () => {
       expect(body).toHaveProperty("refreshToken");
     });
 
-    it("GET /me returns user info with valid access cookie", async () => {
-      // Register + Login
+    it("GET /me returns User-level info with valid access cookie", async () => {
+      // Register + Login (no workspace)
       await app.inject({
         method: "POST",
         url: "/api/auth/register",
         payload: {
           email: "me@kanon.io",
-          username: "meuser",
           password: "Secret123!",
-          workspaceId,
+          displayName: "Me User",
         },
       });
 
@@ -99,7 +92,6 @@ describe("Cookie Auth Flow", () => {
         payload: {
           email: "me@kanon.io",
           password: "Secret123!",
-          workspaceId,
         },
       });
 
@@ -118,10 +110,13 @@ describe("Cookie Auth Flow", () => {
       expect(meRes.statusCode).toBe(200);
       const me = meRes.json();
       expect(me.email).toBe("me@kanon.io");
-      expect(me.username).toBe("meuser");
-      expect(me).toHaveProperty("memberId");
-      expect(me).toHaveProperty("workspaceId");
-      expect(me).toHaveProperty("role");
+      expect(me.displayName).toBe("Me User");
+      expect(me).toHaveProperty("userId");
+      expect(me).toHaveProperty("avatarUrl");
+      // Must NOT have workspace-level fields
+      expect(me).not.toHaveProperty("memberId");
+      expect(me).not.toHaveProperty("workspaceId");
+      expect(me).not.toHaveProperty("role");
     });
 
     it("GET /me returns 401 without any auth", async () => {
@@ -144,9 +139,7 @@ describe("Cookie Auth Flow", () => {
         url: "/api/auth/register",
         payload: {
           email: "refresh@kanon.io",
-          username: "refreshuser",
           password: "Secret123!",
-          workspaceId,
         },
       });
 
@@ -156,7 +149,6 @@ describe("Cookie Auth Flow", () => {
         payload: {
           email: "refresh@kanon.io",
           password: "Secret123!",
-          workspaceId,
         },
       });
 
@@ -213,9 +205,7 @@ describe("Cookie Auth Flow", () => {
         url: "/api/auth/register",
         payload: {
           email: "logout@kanon.io",
-          username: "logoutuser",
           password: "Secret123!",
-          workspaceId,
         },
       });
 
@@ -225,7 +215,6 @@ describe("Cookie Auth Flow", () => {
         payload: {
           email: "logout@kanon.io",
           password: "Secret123!",
-          workspaceId,
         },
       });
 
@@ -241,9 +230,6 @@ describe("Cookie Auth Flow", () => {
       });
 
       // After logout, /me should return 401 (cookies are cleared server-side)
-      // In test, the old cookies would still be sent, but they should
-      // still work until they expire since they're JWT-based.
-      // However, a fresh request with NO cookies should fail.
       const meRes = await app.inject({
         method: "GET",
         url: "/api/auth/me",
@@ -264,9 +250,7 @@ describe("Cookie Auth Flow", () => {
         url: "/api/auth/register",
         payload: {
           email: "apikey@kanon.io",
-          username: "apikeyuser",
           password: "Secret123!",
-          workspaceId,
         },
       });
 
@@ -276,7 +260,6 @@ describe("Cookie Auth Flow", () => {
         payload: {
           email: "apikey@kanon.io",
           password: "Secret123!",
-          workspaceId,
         },
       });
 
@@ -314,9 +297,7 @@ describe("Cookie Auth Flow", () => {
         url: "/api/auth/register",
         payload: {
           email: "bearer@kanon.io",
-          username: "beareruser",
           password: "Secret123!",
-          workspaceId,
         },
       });
 
@@ -326,7 +307,6 @@ describe("Cookie Auth Flow", () => {
         payload: {
           email: "bearer@kanon.io",
           password: "Secret123!",
-          workspaceId,
         },
       });
 

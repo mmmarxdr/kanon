@@ -3,6 +3,8 @@ import {
   ListWorkspacesInput,
   CreateProjectInput,
   UpdateProjectInput,
+  ListIssuesInput,
+  ListRoadmapInput,
 } from "./types.js";
 
 // ─── ListWorkspacesInput ─────────────────────────────────────────────────────
@@ -198,5 +200,39 @@ describe("UpdateProjectInput", () => {
   it("rejects missing projectKey", () => {
     const result = UpdateProjectInput.safeParse({ name: "New Name" });
     expect(result.success).toBe(false);
+  });
+});
+
+// ─── Format Param (expanded to include "compact") ──────────────────────────
+
+describe("FormatParam — compact support", () => {
+  it("ListWorkspacesInput accepts format=compact", () => {
+    const result = ListWorkspacesInput.safeParse({ format: "compact" });
+    expect(result.success).toBe(true);
+  });
+
+  it("ListWorkspacesInput accepts format=slim", () => {
+    const result = ListWorkspacesInput.safeParse({ format: "slim" });
+    expect(result.success).toBe(true);
+  });
+
+  it("ListWorkspacesInput accepts format=full", () => {
+    const result = ListWorkspacesInput.safeParse({ format: "full" });
+    expect(result.success).toBe(true);
+  });
+
+  it("ListWorkspacesInput rejects format=xml", () => {
+    const result = ListWorkspacesInput.safeParse({ format: "xml" });
+    expect(result.success).toBe(false);
+  });
+
+  it("ListIssuesInput accepts format=compact", () => {
+    const result = ListIssuesInput.safeParse({ projectKey: "KAN", format: "compact" });
+    expect(result.success).toBe(true);
+  });
+
+  it("ListRoadmapInput accepts format=compact", () => {
+    const result = ListRoadmapInput.safeParse({ projectKey: "KAN", format: "compact" });
+    expect(result.success).toBe(true);
   });
 });

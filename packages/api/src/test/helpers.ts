@@ -20,16 +20,15 @@ export async function createTestApp(): Promise<FastifyInstance> {
 
 /**
  * Generate a valid JWT access token for testing.
+ * Token payload: { sub: userId, email }
  */
 export function generateTestToken(overrides?: {
-  memberId?: string;
-  workspaceId?: string;
-  role?: string;
+  userId?: string;
+  email?: string;
 }): string {
   const payload = {
-    sub: overrides?.memberId ?? randomUUID(),
-    workspaceId: overrides?.workspaceId ?? randomUUID(),
-    role: overrides?.role ?? "member",
+    sub: overrides?.userId ?? randomUUID(),
+    email: overrides?.email ?? `test-${randomUUID().slice(0, 8)}@kanon.test`,
   };
 
   return jwt.sign(payload, process.env["JWT_SECRET"]!, {
@@ -39,16 +38,15 @@ export function generateTestToken(overrides?: {
 
 /**
  * Generate a valid JWT refresh token for testing.
+ * Token payload: { sub: userId, email }
  */
 export function generateTestRefreshToken(overrides?: {
-  memberId?: string;
-  workspaceId?: string;
-  role?: string;
+  userId?: string;
+  email?: string;
 }): string {
   const payload = {
-    sub: overrides?.memberId ?? randomUUID(),
-    workspaceId: overrides?.workspaceId ?? randomUUID(),
-    role: overrides?.role ?? "member",
+    sub: overrides?.userId ?? randomUUID(),
+    email: overrides?.email ?? `test-${randomUUID().slice(0, 8)}@kanon.test`,
   };
 
   return jwt.sign(payload, process.env["JWT_REFRESH_SECRET"]!, {
@@ -80,33 +78,41 @@ export async function seedTestWorkspace(
 }
 
 /**
- * Seed a test member in a workspace and return member + auth token.
+ * Seed a test user + member in a workspace and return member + auth token.
  */
 export async function seedTestMember(workspaceId: string, overrides?: {
   email?: string;
   username?: string;
-}): Promise<{ id: string; email: string; token: string }> {
+}): Promise<{ id: string; email: string; token: string; userId: string }> {
   // Use bcrypt-compatible hash for "password123"
   // Pre-computed to avoid slow bcrypt in tests
   const bcrypt = await import("bcryptjs");
   const hash = await bcrypt.hash("password123", 4); // low cost for speed in tests
 
+  const email = overrides?.email ?? `test-${randomUUID().slice(0, 8)}@kanon.test`;
+
+  const user = await prisma.user.create({
+    data: {
+      email,
+      passwordHash: hash,
+      displayName: overrides?.username ?? `user-${randomUUID().slice(0, 8)}`,
+    },
+  });
+
   const member = await prisma.member.create({
     data: {
-      email: overrides?.email ?? `test-${randomUUID().slice(0, 8)}@kanon.test`,
       username: overrides?.username ?? `user-${randomUUID().slice(0, 8)}`,
-      passwordHash: hash,
+      userId: user.id,
       workspaceId,
     },
   });
 
   const token = generateTestToken({
-    memberId: member.id,
-    workspaceId,
-    role: member.role,
+    userId: user.id,
+    email,
   });
 
-  return { id: member.id, email: member.email, token };
+  return { id: member.id, email, token, userId: user.id };
 }
 
 /**
@@ -139,6 +145,7 @@ export async function cleanDatabase(): Promise<void> {
   await prisma.sprint.deleteMany();
   await prisma.project.deleteMany();
   await prisma.member.deleteMany();
+  await prisma.user.deleteMany();
   await prisma.workspace.deleteMany();
 }
 
@@ -188,33 +195,41 @@ export function buildCookieString(cookies: Record<string, string>): string {
 }
 
 /**
- * Seed a test member with a specific role.
+ * Seed a test user + member with a specific role.
  */
 export async function seedTestMemberWithRole(
   workspaceId: string,
   role: "owner" | "admin" | "member" | "viewer",
   overrides?: { email?: string; username?: string },
-): Promise<{ id: string; email: string; token: string }> {
+): Promise<{ id: string; email: string; token: string; userId: string }> {
   const bcrypt = await import("bcryptjs");
   const hash = await bcrypt.hash("password123", 4);
 
+  const email = overrides?.email ?? `test-${randomUUID().slice(0, 8)}@kanon.test`;
+
+  const user = await prisma.user.create({
+    data: {
+      email,
+      passwordHash: hash,
+      displayName: overrides?.username ?? `user-${randomUUID().slice(0, 8)}`,
+    },
+  });
+
   const member = await prisma.member.create({
     data: {
-      email: overrides?.email ?? `test-${randomUUID().slice(0, 8)}@kanon.test`,
       username: overrides?.username ?? `user-${randomUUID().slice(0, 8)}`,
-      passwordHash: hash,
       role,
+      userId: user.id,
       workspaceId,
     },
   });
 
   const token = generateTestToken({
-    memberId: member.id,
-    workspaceId,
-    role,
+    userId: user.id,
+    email,
   });
 
-  return { id: member.id, email: member.email, token };
+  return { id: member.id, email, token, userId: user.id };
 }
 
 /**

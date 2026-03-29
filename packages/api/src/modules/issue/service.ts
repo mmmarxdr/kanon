@@ -145,7 +145,11 @@ export async function listIssues(
     orderBy: { createdAt: "desc" },
     include: {
       assignee: {
-        select: { id: true, username: true, email: true },
+        select: {
+          id: true,
+          username: true,
+          user: { select: { email: true } },
+        },
       },
     },
   });
@@ -222,7 +226,11 @@ export async function getIssue(key: string) {
     where: { key },
     include: {
       assignee: {
-        select: { id: true, username: true, email: true },
+        select: {
+          id: true,
+          username: true,
+          user: { select: { email: true } },
+        },
       },
       project: {
         select: { id: true, key: true, name: true },

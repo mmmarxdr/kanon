@@ -19,28 +19,39 @@ async function main() {
   });
   console.log(`  Workspace: ${workspace.name} (${workspace.id})`);
 
-  // ── 2. Create member ─────────────────────────────────────────────────────
+  // ── 2. Create user ──────────────────────────────────────────────────────
   const passwordHash = await bcrypt.hash("Password1!", BCRYPT_COST);
 
+  const user = await prisma.user.upsert({
+    where: { email: "dev@kanon.io" },
+    update: {},
+    create: {
+      email: "dev@kanon.io",
+      passwordHash,
+      displayName: "Dev User",
+    },
+  });
+  console.log(`  User: ${user.email} (${user.id})`);
+
+  // ── 3. Create member (workspace membership) ─────────────────────────────
   const member = await prisma.member.upsert({
     where: {
-      workspaceId_email: {
+      userId_workspaceId: {
+        userId: user.id,
         workspaceId: workspace.id,
-        email: "dev@kanon.io",
       },
     },
     update: {},
     create: {
-      email: "dev@kanon.io",
       username: "dev",
-      passwordHash,
       role: "owner",
+      userId: user.id,
       workspaceId: workspace.id,
     },
   });
   console.log(`  Member: ${member.username} (${member.id})`);
 
-  // ── 3. Create project ────────────────────────────────────────────────────
+  // ── 4. Create project ────────────────────────────────────────────────────
   const project = await prisma.project.upsert({
     where: {
       workspaceId_key: {
@@ -58,7 +69,7 @@ async function main() {
   });
   console.log(`  Project: ${project.name} (${project.key})`);
 
-  console.log("\nSeed complete! Structural data (workspace, member, project) is ready.");
+  console.log("\nSeed complete! Structural data (workspace, user, member, project) is ready.");
   console.log(`\n  Login credentials:`);
   console.log(`    Email:    dev@kanon.io`);
   console.log(`    Password: Password1!`);

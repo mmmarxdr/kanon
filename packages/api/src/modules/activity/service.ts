@@ -29,7 +29,11 @@ export async function getActivityByIssue(issueId: string) {
     orderBy: { createdAt: "desc" },
     include: {
       member: {
-        select: { id: true, username: true, email: true },
+        select: {
+          id: true,
+          username: true,
+          user: { select: { email: true } },
+        },
       },
     },
   });

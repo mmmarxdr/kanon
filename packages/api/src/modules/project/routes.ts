@@ -7,7 +7,7 @@ import {
   ProjectKeyParam,
 } from "./schema.js";
 import * as projectService from "./service.js";
-import { requireRole } from "../../middleware/require-role.js";
+import { requireProjectRole } from "../../middleware/require-role.js";
 
 /**
  * Project routes plugin.
@@ -91,7 +91,7 @@ export default async function projectRoutes(
   app.delete(
     "/projects/:key",
     {
-      preHandler: [requireRole("owner")],
+      preHandler: [requireProjectRole("key", "owner")],
       schema: {
         params: ProjectKeyParam,
       },

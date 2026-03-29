@@ -7,13 +7,19 @@ describe("Auth Zod Schemas", () => {
   describe("RegisterBody", () => {
     const validData = {
       email: "test@kanon.io",
-      username: "testuser",
       password: "Secret123!",
-      workspaceId: "550e8400-e29b-41d4-a716-446655440000",
     };
 
-    it("accepts valid registration data", () => {
+    it("accepts valid registration data (email + password only)", () => {
       const result = RegisterBody.safeParse(validData);
+      expect(result.success).toBe(true);
+    });
+
+    it("accepts optional displayName", () => {
+      const result = RegisterBody.safeParse({
+        ...validData,
+        displayName: "Test User",
+      });
       expect(result.success).toBe(true);
     });
 
@@ -24,19 +30,6 @@ describe("Auth Zod Schemas", () => {
 
     it("rejects empty email", () => {
       const result = RegisterBody.safeParse({ ...validData, email: "" });
-      expect(result.success).toBe(false);
-    });
-
-    it("rejects username shorter than 2 chars", () => {
-      const result = RegisterBody.safeParse({ ...validData, username: "a" });
-      expect(result.success).toBe(false);
-    });
-
-    it("rejects username longer than 50 chars", () => {
-      const result = RegisterBody.safeParse({
-        ...validData,
-        username: "a".repeat(51),
-      });
       expect(result.success).toBe(false);
     });
 
@@ -53,16 +46,28 @@ describe("Auth Zod Schemas", () => {
       expect(result.success).toBe(false);
     });
 
-    it("rejects invalid workspace UUID", () => {
-      const result = RegisterBody.safeParse({
-        ...validData,
-        workspaceId: "not-a-uuid",
-      });
+    it("rejects missing fields", () => {
+      const result = RegisterBody.safeParse({});
       expect(result.success).toBe(false);
     });
 
-    it("rejects missing fields", () => {
-      const result = RegisterBody.safeParse({});
+    it("does not require workspaceId", () => {
+      // workspaceId is not part of the schema at all
+      const result = RegisterBody.safeParse(validData);
+      expect(result.success).toBe(true);
+    });
+
+    it("does not require username", () => {
+      // username is not part of the schema
+      const result = RegisterBody.safeParse(validData);
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects displayName longer than 100 chars", () => {
+      const result = RegisterBody.safeParse({
+        ...validData,
+        displayName: "a".repeat(101),
+      });
       expect(result.success).toBe(false);
     });
   });
@@ -73,10 +78,9 @@ describe("Auth Zod Schemas", () => {
     const validData = {
       email: "test@kanon.io",
       password: "Secret123!",
-      workspaceId: "550e8400-e29b-41d4-a716-446655440000",
     };
 
-    it("accepts valid login data", () => {
+    it("accepts valid login data (email + password only)", () => {
       const result = LoginBody.safeParse(validData);
       expect(result.success).toBe(true);
     });
@@ -91,20 +95,10 @@ describe("Auth Zod Schemas", () => {
       expect(result.success).toBe(false);
     });
 
-    it("accepts workspace slug instead of UUID", () => {
-      const result = LoginBody.safeParse({
-        ...validData,
-        workspaceId: "kanon-dev",
-      });
+    it("does not require workspaceId", () => {
+      // No workspace field in LoginBody
+      const result = LoginBody.safeParse(validData);
       expect(result.success).toBe(true);
-    });
-
-    it("rejects empty workspace identifier", () => {
-      const result = LoginBody.safeParse({
-        ...validData,
-        workspaceId: "",
-      });
-      expect(result.success).toBe(false);
     });
   });
 

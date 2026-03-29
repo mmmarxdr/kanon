@@ -12,10 +12,9 @@ export const registerRoute = createRoute({
 function RegisterPage() {
   const navigate = useNavigate();
 
-  const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [workspaceId, setWorkspaceId] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -27,7 +26,11 @@ function RegisterPage() {
     try {
       await fetchApi("/api/auth/register", {
         method: "POST",
-        body: JSON.stringify({ username, email, password, workspaceId }),
+        body: JSON.stringify({
+          email,
+          password,
+          displayName: displayName || undefined,
+        }),
       });
 
       // Registration successful — redirect to login
@@ -53,44 +56,6 @@ function RegisterPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <label
-              htmlFor="workspaceId"
-              className="text-sm font-medium text-card-foreground"
-            >
-              Workspace ID
-            </label>
-            <input
-              id="workspaceId"
-              type="text"
-              value={workspaceId}
-              onChange={(e) => setWorkspaceId(e.target.value)}
-              placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-              required
-              className="w-full rounded-md border border-input bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label
-              htmlFor="username"
-              className="text-sm font-medium text-card-foreground"
-            >
-              Username
-            </label>
-            <input
-              id="username"
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="johndoe"
-              required
-              minLength={2}
-              maxLength={50}
-              className="w-full rounded-md border border-input bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
-            />
-          </div>
-
           <div className="space-y-2">
             <label
               htmlFor="email"
@@ -125,6 +90,24 @@ function RegisterPage() {
               required
               minLength={8}
               maxLength={128}
+              className="w-full rounded-md border border-input bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label
+              htmlFor="displayName"
+              className="text-sm font-medium text-card-foreground"
+            >
+              Display Name
+            </label>
+            <input
+              id="displayName"
+              type="text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder="Your name (optional)"
+              maxLength={100}
               className="w-full rounded-md border border-input bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
             />
           </div>

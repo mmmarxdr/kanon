@@ -13,6 +13,7 @@ import {
 
 /**
  * Integration tests for RBAC (role-based access control) and profile endpoints.
+ * RBAC now resolves workspace from URL param and verifies membership via Member table.
  */
 describe("RBAC & Profile Integration", () => {
   let app: FastifyInstance;
@@ -211,15 +212,13 @@ describe("RBAC & Profile Integration", () => {
 
   describe("POST /api/auth/change-password", () => {
     it("changes password with correct current password", async () => {
-      // Register a user with known password
+      // Register a user with known password (no workspace)
       await app.inject({
         method: "POST",
         url: "/api/auth/register",
         payload: {
           email: "chgpwd@kanon.io",
-          username: "chgpwd",
           password: "OldPass123!",
-          workspaceId,
         },
       });
 
@@ -230,7 +229,6 @@ describe("RBAC & Profile Integration", () => {
         payload: {
           email: "chgpwd@kanon.io",
           password: "OldPass123!",
-          workspaceId,
         },
       });
 
@@ -261,7 +259,6 @@ describe("RBAC & Profile Integration", () => {
         payload: {
           email: "chgpwd@kanon.io",
           password: "NewPass456!",
-          workspaceId,
         },
       });
       expect(newLoginRes.statusCode).toBe(200);
@@ -273,9 +270,7 @@ describe("RBAC & Profile Integration", () => {
         url: "/api/auth/register",
         payload: {
           email: "wrongpwd@kanon.io",
-          username: "wrongpwd",
           password: "Correct123!",
-          workspaceId,
         },
       });
 
@@ -285,7 +280,6 @@ describe("RBAC & Profile Integration", () => {
         payload: {
           email: "wrongpwd@kanon.io",
           password: "Correct123!",
-          workspaceId,
         },
       });
 

@@ -11,6 +11,11 @@ vi.mock("@tanstack/react-router", () => ({
   useLocation: () => ({ pathname: mockPathname() }),
 }));
 
+// Mock useActiveWorkspaceId — not needed for these tests
+vi.mock("@/hooks/use-workspace-query", () => ({
+  useActiveWorkspaceId: () => "ws-1",
+}));
+
 // Mock useProjectsQuery
 const MOCK_PROJECTS: Project[] = [
   { id: "p-1", key: "KAN", name: "Kanon", description: null },

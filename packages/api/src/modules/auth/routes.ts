@@ -51,12 +51,11 @@ function clearAuthCookies(reply: any) {
 /**
  * Helper: manually authenticate a request under /api/auth/* (public prefix).
  * Checks cookie first, then Bearer header.
- * Returns the authenticated user or throws 401.
+ * Returns the authenticated user identity { userId, email }.
  */
 function manualAuth(request: any): {
-  memberId: string;
-  workspaceId: string;
-  role: string;
+  userId: string;
+  email: string;
 } {
   // Try cookie
   const cookieToken = request.cookies?.[COOKIE_NAMES.ACCESS];
@@ -64,9 +63,8 @@ function manualAuth(request: any): {
     try {
       const payload = jwt.verify(cookieToken, env.JWT_SECRET) as any;
       return {
-        memberId: payload.sub,
-        workspaceId: payload.workspaceId,
-        role: payload.role,
+        userId: payload.sub,
+        email: payload.email,
       };
     } catch {
       // fall through
@@ -79,9 +77,8 @@ function manualAuth(request: any): {
     try {
       const payload = jwt.verify(authHeader.slice(7), env.JWT_SECRET) as any;
       return {
-        memberId: payload.sub,
-        workspaceId: payload.workspaceId,
-        role: payload.role,
+        userId: payload.sub,
+        email: payload.email,
       };
     } catch {
       // fall through
@@ -112,8 +109,8 @@ export default async function authRoutes(
       },
     },
     async (request, reply) => {
-      const member = await authService.register(request.body);
-      return reply.status(201).send(member);
+      const user = await authService.register(request.body);
+      return reply.status(201).send(user);
     },
   );
 
@@ -190,33 +187,27 @@ export default async function authRoutes(
       },
     },
     async (request, _reply) => {
-      const user = manualAuth(request);
+      const authUser = manualAuth(request);
 
-      const member = await prisma.member.findUnique({
-        where: { id: user.memberId },
+      const user = await prisma.user.findUnique({
+        where: { id: authUser.userId },
         select: {
           id: true,
           email: true,
-          username: true,
-          workspaceId: true,
-          role: true,
           displayName: true,
           avatarUrl: true,
         },
       });
 
-      if (!member) {
+      if (!user) {
         throw new AppError(401, "USER_NOT_FOUND", "User no longer exists");
       }
 
       return {
-        memberId: member.id,
-        email: member.email,
-        username: member.username,
-        workspaceId: member.workspaceId,
-        role: member.role,
-        displayName: member.displayName,
-        avatarUrl: member.avatarUrl,
+        userId: user.id,
+        email: user.email,
+        displayName: user.displayName,
+        avatarUrl: user.avatarUrl,
       };
     },
   );
@@ -242,9 +233,9 @@ export default async function authRoutes(
       },
     },
     async (request, reply) => {
-      const user = manualAuth(request);
+      const authUser = manualAuth(request);
       await authService.changePassword(
-        user.memberId,
+        authUser.userId,
         (request.body as any).currentPassword,
         (request.body as any).newPassword,
       );
@@ -266,10 +257,10 @@ export default async function authRoutes(
     },
     async (request, reply) => {
       // Manually authenticate since auth plugin skips /api/auth/* routes
-      const user = manualAuth(request);
-      request.user = user as any;
+      const authUser = manualAuth(request);
+      request.user = authUser;
 
-      const result = await authService.generateApiKey(user.memberId);
+      const result = await authService.generateApiKey(authUser.userId);
       return reply.status(201).send(result);
     },
   );

@@ -1,13 +1,19 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import {
   slimIssue,
   slimIssueDetail,
   slimRoadmapItem,
   slimProject,
   slimGroup,
+  slimPick,
   formatEntity,
   formatList,
+  toCompactTable,
   DEFAULT_LIMIT,
+  ISSUE_WRITE_FIELDS,
+  ROADMAP_WRITE_FIELDS,
+  PROJECT_WRITE_FIELDS,
+  COMMENT_WRITE_FIELDS,
 } from "./transforms.js";
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -185,9 +191,13 @@ describe("slimRoadmapItem", () => {
     expect(result).toHaveProperty("targetDate", "2026-06-01");
   });
 
-  it("strips id, projectId, createdAt, updatedAt, description, sortOrder", () => {
+  it("includes id (needed for update/delete)", () => {
     const result = slimRoadmapItem(makeRoadmapItem() as any);
-    expect(result).not.toHaveProperty("id");
+    expect(result).toHaveProperty("id", "rm_001");
+  });
+
+  it("strips projectId, createdAt, updatedAt, description, sortOrder", () => {
+    const result = slimRoadmapItem(makeRoadmapItem() as any);
     expect(result).not.toHaveProperty("projectId");
     expect(result).not.toHaveProperty("createdAt");
     expect(result).not.toHaveProperty("updatedAt");
@@ -259,7 +269,7 @@ describe("formatEntity", () => {
   });
 
   it("dispatches correctly for each entity type", () => {
-    expect(formatEntity(makeRoadmapItem(), "roadmap", "slim")).not.toHaveProperty("id");
+    expect(formatEntity(makeRoadmapItem(), "roadmap", "slim")).toHaveProperty("id");
     expect(formatEntity(makeGroup(), "group", "slim")).not.toHaveProperty("updatedAt");
     expect(formatEntity(makeIssue(), "issue-detail", "slim")).toHaveProperty("description");
   });
@@ -335,7 +345,7 @@ describe("formatList", () => {
 
   it("format='full' returns raw objects, still paginated", () => {
     const items = makeIssues(50);
-    const result = formatList(items, "issue", "full", 10, 0);
+    const result = formatList(items, "issue", "full", 10, 0) as any;
     expect(result.items).toHaveLength(10);
     expect(result.total).toBe(50);
     expect(result.hasMore).toBe(true);
@@ -344,5 +354,201 @@ describe("formatList", () => {
     expect(first).toHaveProperty("id");
     expect(first).toHaveProperty("engramContext");
     expect(first).toHaveProperty("key");
+  });
+
+  it("format='compact' returns CompactResult with table string", () => {
+    const items = makeIssues(3);
+    const result = formatList(items, "issue", "compact") as any;
+    expect(result).toHaveProperty("table");
+    expect(result).toHaveProperty("total", 3);
+    expect(result).toHaveProperty("hasMore", false);
+    expect(typeof result.table).toBe("string");
+    expect(result.table).toContain("| key |");
+    expect(result.table).toContain("KAN-1");
+  });
+
+  it("compact format with pagination returns hasMore and hint", () => {
+    const items = makeIssues(50);
+    const result = formatList(items, "issue", "compact", 10, 0) as any;
+    expect(result.total).toBe(50);
+    expect(result.hasMore).toBe(true);
+    expect(result.hint).toContain("offset=10");
+  });
+
+  it("compact format with empty list returns empty table", () => {
+    const result = formatList([], "issue", "compact") as any;
+    expect(result.table).toBe("");
+    expect(result.total).toBe(0);
+    expect(result.hasMore).toBe(false);
+  });
+});
+
+// ─── Write-Slim Transforms ────────────────────────────────────────────────────
+
+describe("write-slim transforms", () => {
+  it("issue-write keeps only key, title, state, type, priority", () => {
+    const raw = makeIssue();
+    const result = formatEntity(raw, "issue-write") as Record<string, unknown>;
+    expect(Object.keys(result).sort()).toEqual(
+      ["key", "priority", "state", "title", "type"],
+    );
+    expect(result).toEqual({
+      key: "KAN-1",
+      title: "Fix login bug",
+      state: "in_progress",
+      type: "bug",
+      priority: "high",
+    });
+  });
+
+  it("issue-write strips description, id, labels, assignee, timestamps", () => {
+    const raw = makeIssue();
+    const result = formatEntity(raw, "issue-write") as Record<string, unknown>;
+    expect(result).not.toHaveProperty("id");
+    expect(result).not.toHaveProperty("description");
+    expect(result).not.toHaveProperty("labels");
+    expect(result).not.toHaveProperty("assignee");
+    expect(result).not.toHaveProperty("createdAt");
+    expect(result).not.toHaveProperty("updatedAt");
+  });
+
+  it("roadmap-write keeps only id, title, horizon, status, promoted", () => {
+    const raw = makeRoadmapItem();
+    const result = formatEntity(raw, "roadmap-write") as Record<string, unknown>;
+    expect(Object.keys(result).sort()).toEqual(
+      ["horizon", "id", "promoted", "status", "title"],
+    );
+    expect(result).toEqual({
+      id: "rm_001",
+      title: "Roadmap feature",
+      horizon: "near",
+      status: "planned",
+      promoted: true,
+    });
+  });
+
+  it("roadmap-write strips description, effort, impact, timestamps", () => {
+    const raw = makeRoadmapItem();
+    const result = formatEntity(raw, "roadmap-write") as Record<string, unknown>;
+    expect(result).not.toHaveProperty("description");
+    expect(result).not.toHaveProperty("effort");
+    expect(result).not.toHaveProperty("impact");
+    expect(result).not.toHaveProperty("createdAt");
+  });
+
+  it("project-write keeps only key, name", () => {
+    const raw = makeProject();
+    const result = formatEntity(raw, "project-write") as Record<string, unknown>;
+    expect(Object.keys(result).sort()).toEqual(["key", "name"]);
+    expect(result).toEqual({ key: "KAN", name: "Kanon" });
+  });
+
+  it("project-write strips description, id, engramNamespace", () => {
+    const raw = makeProject();
+    const result = formatEntity(raw, "project-write") as Record<string, unknown>;
+    expect(result).not.toHaveProperty("id");
+    expect(result).not.toHaveProperty("description");
+    expect(result).not.toHaveProperty("engramNamespace");
+  });
+
+  it("comment-write keeps only id, issueKey, source", () => {
+    const raw = { id: "c1", issueKey: "KAN-1", source: "engram_sync", body: "long text", createdAt: "2026-01-01" };
+    const result = formatEntity(raw, "comment-write") as Record<string, unknown>;
+    expect(Object.keys(result).sort()).toEqual(["id", "issueKey", "source"]);
+    expect(result).not.toHaveProperty("body");
+    expect(result).not.toHaveProperty("createdAt");
+  });
+
+  it("write-slim with format='full' bypasses transform", () => {
+    const raw = makeIssue();
+    const result = formatEntity(raw, "issue-write", "full");
+    expect(result).toBe(raw); // same reference — no transform applied
+  });
+});
+
+// ─── toCompactTable ─────��───────────────────────────────────────────────────
+
+describe("toCompactTable", () => {
+  it("renders header, separator, and data rows", () => {
+    const items = [
+      { key: "KAN-1", title: "First", state: "todo" },
+      { key: "KAN-2", title: "Second", state: "done" },
+    ];
+    const table = toCompactTable(items);
+    const lines = table.split("\n");
+    expect(lines).toHaveLength(4); // header + separator + 2 data rows
+    expect(lines[0]).toBe("| key | title | state |");
+    expect(lines[1]).toBe("|---|---|---|");
+    expect(lines[2]).toBe("| KAN-1 | First | todo |");
+    expect(lines[3]).toBe("| KAN-2 | Second | done |");
+  });
+
+  it("escapes pipe characters in values", () => {
+    const items = [{ title: "A | B", count: 5 }];
+    const table = toCompactTable(items);
+    expect(table).toContain("A \\| B");
+    expect(table).not.toContain("A | B |");
+  });
+
+  it("handles null and undefined values as empty strings", () => {
+    const items = [{ a: null, b: undefined, c: "ok" }];
+    const table = toCompactTable(items);
+    expect(table).toContain("|  |  | ok |");
+  });
+
+  it("returns empty string for empty array", () => {
+    expect(toCompactTable([])).toBe("");
+  });
+
+  it("handles single item", () => {
+    const items = [{ x: 1 }];
+    const table = toCompactTable(items);
+    const lines = table.split("\n");
+    expect(lines).toHaveLength(3); // header + separator + 1 row
+    expect(lines[2]).toBe("| 1 |");
+  });
+});
+
+// ─── dataResult shape ─────────────────────────────────────────────────────────
+
+describe("dataResult", () => {
+  // Import here to keep test file focused — dataResult is in errors.ts
+  let dataResult: (data: unknown) => { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+  beforeAll(async () => {
+    const mod = await import("./errors.js");
+    dataResult = mod.dataResult;
+  });
+
+  it("returns JSON text content without success/data wrapper", () => {
+    const input = { key: "KAN-1", title: "Test" };
+    const result = dataResult(input);
+
+    expect(result.content).toHaveLength(1);
+    expect(result.content[0].type).toBe("text");
+
+    const parsed = JSON.parse(result.content[0].text);
+    // Data is returned directly — no wrapper
+    expect(parsed).toEqual(input);
+    expect(parsed).not.toHaveProperty("success");
+    expect(parsed).not.toHaveProperty("data");
+  });
+
+  it("does not set isError flag", () => {
+    const result = dataResult({ ok: true });
+    expect(result.isError).toBeUndefined();
+  });
+
+  it("handles arrays directly", () => {
+    const input = [1, 2, 3];
+    const result = dataResult(input);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed).toEqual([1, 2, 3]);
+  });
+
+  it("handles strings directly", () => {
+    const result = dataResult("hello");
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed).toBe("hello");
   });
 });

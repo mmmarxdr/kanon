@@ -39,9 +39,8 @@ describe("Auth Service — unit tests (no DB)", () => {
   describe("signTokens", () => {
     it("returns accessToken and refreshToken", () => {
       const result = signTokens({
-        sub: "member-1",
-        workspaceId: "ws-1",
-        role: "member" as any,
+        sub: "user-1",
+        email: "user@kanon.io",
       });
 
       expect(result).toHaveProperty("accessToken");
@@ -50,30 +49,33 @@ describe("Auth Service — unit tests (no DB)", () => {
       expect(typeof result.refreshToken).toBe("string");
     });
 
-    it("access token contains expected payload", () => {
+    it("access token contains expected payload (sub + email only)", () => {
       const { accessToken } = signTokens({
-        sub: "member-1",
-        workspaceId: "ws-1",
-        role: "member" as any,
+        sub: "user-1",
+        email: "user@kanon.io",
       });
 
       const decoded = jwt.decode(accessToken) as Record<string, unknown>;
-      expect(decoded["sub"]).toBe("member-1");
-      expect(decoded["workspaceId"]).toBe("ws-1");
-      expect(decoded["role"]).toBe("member");
+      expect(decoded["sub"]).toBe("user-1");
+      expect(decoded["email"]).toBe("user@kanon.io");
       expect(decoded).toHaveProperty("exp");
+      // Must NOT contain workspace or role
+      expect(decoded).not.toHaveProperty("workspaceId");
+      expect(decoded).not.toHaveProperty("role");
     });
 
     it("refresh token contains expected payload", () => {
       const { refreshToken } = signTokens({
-        sub: "member-1",
-        workspaceId: "ws-1",
-        role: "member" as any,
+        sub: "user-1",
+        email: "user@kanon.io",
       });
 
       const decoded = jwt.decode(refreshToken) as Record<string, unknown>;
-      expect(decoded["sub"]).toBe("member-1");
-      expect(decoded["workspaceId"]).toBe("ws-1");
+      expect(decoded["sub"]).toBe("user-1");
+      expect(decoded["email"]).toBe("user@kanon.io");
+      // Must NOT contain workspace or role
+      expect(decoded).not.toHaveProperty("workspaceId");
+      expect(decoded).not.toHaveProperty("role");
     });
   });
 
@@ -82,15 +84,13 @@ describe("Auth Service — unit tests (no DB)", () => {
   describe("verifyRefreshToken", () => {
     it("verifies a valid refresh token", () => {
       const { refreshToken } = signTokens({
-        sub: "member-1",
-        workspaceId: "ws-1",
-        role: "admin" as any,
+        sub: "user-1",
+        email: "user@kanon.io",
       });
 
       const payload = verifyRefreshToken(refreshToken);
-      expect(payload.sub).toBe("member-1");
-      expect(payload.workspaceId).toBe("ws-1");
-      expect(payload.role).toBe("admin");
+      expect(payload.sub).toBe("user-1");
+      expect(payload.email).toBe("user@kanon.io");
     });
 
     it("throws AppError for invalid token", () => {
@@ -107,7 +107,7 @@ describe("Auth Service — unit tests (no DB)", () => {
 
     it("throws AppError for token signed with wrong secret", () => {
       const fakeToken = jwt.sign(
-        { sub: "member-1", workspaceId: "ws-1", role: "member" },
+        { sub: "user-1", email: "user@kanon.io" },
         "wrong-secret-that-is-long-enough",
         { expiresIn: "7d" },
       );

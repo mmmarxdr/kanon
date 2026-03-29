@@ -52,7 +52,7 @@ function hashApiKey(key: string): string {
 /**
  * Auth preHandler hook.
  * Waterfall: cookie kanon_at -> Bearer header -> X-API-Key header.
- * Decorates request with `user: AuthUser`.
+ * Decorates request with `user: AuthUser` containing { userId, email }.
  */
 async function authHook(
   request: FastifyRequest,
@@ -69,9 +69,8 @@ async function authHook(
     const payload = tryVerifyAccessToken(cookieToken);
     if (payload) {
       request.user = {
-        memberId: payload.sub,
-        workspaceId: payload.workspaceId,
-        role: payload.role,
+        userId: payload.sub,
+        email: payload.email,
       };
       return;
     }
@@ -85,29 +84,27 @@ async function authHook(
     const payload = verifyAccessToken(token);
 
     request.user = {
-      memberId: payload.sub,
-      workspaceId: payload.workspaceId,
-      role: payload.role,
+      userId: payload.sub,
+      email: payload.email,
     };
     return;
   }
 
-  // 3. Try API key
+  // 3. Try API key — looks up User table
   const apiKey = request.headers["x-api-key"];
   if (typeof apiKey === "string" && apiKey.length > 0) {
     const hash = hashApiKey(apiKey);
-    const member = await prisma.member.findFirst({
+    const user = await prisma.user.findFirst({
       where: { apiKeyHash: hash },
     });
 
-    if (!member) {
+    if (!user) {
       throw new AppError(401, "INVALID_API_KEY", "Invalid API key");
     }
 
     request.user = {
-      memberId: member.id,
-      workspaceId: member.workspaceId,
-      role: member.role,
+      userId: user.id,
+      email: user.email,
     };
     return;
   }

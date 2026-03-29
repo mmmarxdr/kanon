@@ -10,6 +10,7 @@ import {
   AddDependencyBody,
   DependencyIdParam,
 } from "./schema.js";
+import { resolveMemberIdFromProject } from "../../shared/resolve-member.js";
 import * as roadmapService from "./service.js";
 
 /**
@@ -94,7 +95,7 @@ export default async function roadmapRoutes(
         request.params.key,
         request.params.id,
         request.body,
-        request.user.memberId,
+        await resolveMemberIdFromProject(request.user.userId, request.params.key),
       );
     },
   );
@@ -134,7 +135,7 @@ export default async function roadmapRoutes(
         request.params.key,
         request.params.id,
         request.body,
-        request.user.memberId,
+        await resolveMemberIdFromProject(request.user.userId, request.params.key),
       );
       return reply.status(201).send(issue);
     },

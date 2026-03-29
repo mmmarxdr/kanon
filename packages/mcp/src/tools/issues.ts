@@ -9,7 +9,7 @@ import {
   UpdateIssueInput,
   TransitionIssueInput,
 } from "../types.js";
-import { errorResult, successResult } from "../errors.js";
+import { errorResult, dataResult } from "../errors.js";
 import { formatList, formatEntity } from "../transforms.js";
 import type { Format } from "../transforms.js";
 
@@ -33,11 +33,11 @@ export function registerIssueTools(server: McpServer, client: KanonClient): void
         const result = formatList(
           issues as unknown[],
           "issue",
-          (format ?? "slim") as Format,
+          (format ?? "compact") as Format,
           limit ?? undefined,
           offset ?? undefined,
         );
-        return successResult(result);
+        return dataResult(result);
       } catch (err) {
         return errorResult(err);
       }
@@ -52,7 +52,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient): void
       try {
         const issue = await client.getIssue(issueKey);
         const result = formatEntity(issue, "issue-detail", (format ?? "slim") as Format);
-        return successResult(result);
+        return dataResult(result);
       } catch (err) {
         return errorResult(err);
       }
@@ -65,7 +65,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient): void
     "kanon_create_issue",
     "Create a new issue in a Kanon project",
     CreateIssueInput.shape,
-    async ({ projectKey, title, description, type, priority, labels, groupKey, assigneeId, sprintId, parentId, dueDate, template }) => {
+    async ({ projectKey, title, description, type, priority, labels, groupKey, assigneeId, sprintId, parentId, dueDate, template, format }) => {
       try {
         const body: Record<string, unknown> = { title };
         if (description !== undefined) body["description"] = description;
@@ -80,7 +80,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient): void
         if (template !== undefined) body["templateKey"] = template;
 
         const issue = await client.createIssue(projectKey, body);
-        return successResult(issue);
+        return dataResult(formatEntity(issue, "issue-write", (format ?? "slim") as Format));
       } catch (err) {
         return errorResult(err);
       }
@@ -91,7 +91,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient): void
     "kanon_update_issue",
     "Update fields of an existing Kanon issue",
     UpdateIssueInput.shape,
-    async ({ issueKey, title, description, priority, labels, assigneeId, sprintId, dueDate, roadmapItemId }) => {
+    async ({ issueKey, title, description, priority, labels, assigneeId, sprintId, dueDate, roadmapItemId, format }) => {
       try {
         const body: Record<string, unknown> = {};
         if (title !== undefined) body["title"] = title;
@@ -104,7 +104,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient): void
         if (roadmapItemId !== undefined) body["roadmapItemId"] = roadmapItemId;
 
         const issue = await client.updateIssue(issueKey, body);
-        return successResult(issue);
+        return dataResult(formatEntity(issue, "issue-write", (format ?? "slim") as Format));
       } catch (err) {
         return errorResult(err);
       }
@@ -115,10 +115,10 @@ export function registerIssueTools(server: McpServer, client: KanonClient): void
     "kanon_transition_issue",
     "Transition a Kanon issue to a new state",
     TransitionIssueInput.shape,
-    async ({ issueKey, state }) => {
+    async ({ issueKey, state, format }) => {
       try {
         const issue = await client.transitionIssue(issueKey, state);
-        return successResult(issue);
+        return dataResult(formatEntity(issue, "issue-write", (format ?? "slim") as Format));
       } catch (err) {
         return errorResult(err);
       }

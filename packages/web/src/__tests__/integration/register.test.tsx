@@ -52,26 +52,27 @@ describe("RegisterPage", () => {
   it("renders all form fields", () => {
     renderRegister();
 
-    expect(screen.getByLabelText("Workspace ID")).toBeInTheDocument();
-    expect(screen.getByLabelText("Username")).toBeInTheDocument();
     expect(screen.getByLabelText("Email")).toBeInTheDocument();
     expect(screen.getByLabelText("Password")).toBeInTheDocument();
+    expect(screen.getByLabelText("Display Name")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Create account" }),
     ).toBeInTheDocument();
+    // Workspace ID and Username fields should NOT be present
+    expect(screen.queryByLabelText("Workspace ID")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Username")).not.toBeInTheDocument();
   });
 
   it("submits with correct payload on form submission", async () => {
     const user = userEvent.setup();
 
-    mockFetchApi.mockResolvedValue({ id: "new-member-1" });
+    mockFetchApi.mockResolvedValue({ id: "new-user-1" });
 
     renderRegister();
 
-    await user.type(screen.getByLabelText("Workspace ID"), "ws-789");
-    await user.type(screen.getByLabelText("Username"), "johndoe");
     await user.type(screen.getByLabelText("Email"), "john@example.com");
     await user.type(screen.getByLabelText("Password"), "securepass123");
+    await user.type(screen.getByLabelText("Display Name"), "John Doe");
     await user.click(screen.getByRole("button", { name: "Create account" }));
 
     await waitFor(() => {
@@ -83,10 +84,12 @@ describe("RegisterPage", () => {
     expect(init.method).toBe("POST");
 
     const body = JSON.parse(init.body as string) as Record<string, string>;
-    expect(body.username).toBe("johndoe");
     expect(body.email).toBe("john@example.com");
     expect(body.password).toBe("securepass123");
-    expect(body.workspaceId).toBe("ws-789");
+    expect(body.displayName).toBe("John Doe");
+    // workspaceId and username should NOT be in payload
+    expect(body.workspaceId).toBeUndefined();
+    expect(body.username).toBeUndefined();
 
     await waitFor(() => {
       expect(mockNavigate).toHaveBeenCalledWith({ to: "/login" });
@@ -103,8 +106,6 @@ describe("RegisterPage", () => {
 
     renderRegister();
 
-    await user.type(screen.getByLabelText("Workspace ID"), "ws-789");
-    await user.type(screen.getByLabelText("Username"), "johndoe");
     await user.type(screen.getByLabelText("Email"), "existing@example.com");
     await user.type(screen.getByLabelText("Password"), "securepass123");
     await user.click(screen.getByRole("button", { name: "Create account" }));

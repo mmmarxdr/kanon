@@ -12,11 +12,8 @@ export const profileRoute = createRoute({
 });
 
 interface ProfileData {
-  memberId: string;
+  id: string;
   email: string;
-  username: string;
-  workspaceId: string;
-  role: string;
   displayName: string | null;
   avatarUrl: string | null;
 }
@@ -47,7 +44,7 @@ function ProfilePage() {
     setProfileSaving(true);
 
     try {
-      const updated = await fetchApi<ProfileData>("/api/members/me", {
+      const updated = await fetchApi<ProfileData>("/api/auth/me", {
         method: "PATCH",
         body: JSON.stringify({
           displayName: displayName || null,
@@ -116,7 +113,7 @@ function ProfilePage() {
 
   if (!user) return null;
 
-  const initials = (user.displayName ?? user.username ?? user.email)
+  const initials = (user.displayName ?? user.email)
     .split(" ")
     .map((w) => w[0])
     .join("")
@@ -144,12 +141,9 @@ function ProfilePage() {
             )}
             <div>
               <p className="text-lg font-medium text-foreground">
-                {user.displayName ?? user.username}
+                {user.displayName ?? user.email}
               </p>
               <p className="text-sm text-muted-foreground">{user.email}</p>
-              <p className="text-xs text-muted-foreground capitalize">
-                {user.role}
-              </p>
             </div>
           </div>
 

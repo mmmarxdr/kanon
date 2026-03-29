@@ -34,7 +34,7 @@ function createMockClient(overrides: Partial<KanonClient> = {}) {
   } as unknown as KanonClient;
 }
 
-function parseResult(result: unknown): { success: boolean; data?: unknown; error?: string; code?: string } {
+function parseResult(result: unknown): unknown {
   const r = result as { content: Array<{ text: string }>; isError?: boolean };
   return JSON.parse(r.content[0].text);
 }
@@ -67,7 +67,7 @@ describe("kanon_list_workspaces handler", () => {
     server = createMockServer();
   });
 
-  it("returns successResult with workspace data", async () => {
+  it("returns dataResult with workspace data (no success wrapper)", async () => {
     const workspaces = [
       { id: "ws1", name: "Acme", slug: "acme" },
       { id: "ws2", name: "Beta", slug: "beta" },
@@ -76,21 +76,23 @@ describe("kanon_list_workspaces handler", () => {
     registerProjectTools(server as any, client);
 
     const handler = server.getHandler("kanon_list_workspaces");
-    const result = parseResult(await handler({ format: "full" }));
+    const result = parseResult(await handler({ format: "full" })) as any;
 
-    expect(result.success).toBe(true);
-    expect(result.data).toBeDefined();
+    // New shape: data directly, no {success, data} wrapper
+    expect(result).toHaveProperty("items");
+    expect(result).toHaveProperty("total");
+    expect(result).not.toHaveProperty("success");
   });
 
-  it("returns successResult with empty array when no workspaces", async () => {
+  it("returns dataResult with empty items when no workspaces", async () => {
     const client = createMockClient({ listWorkspaces: vi.fn().mockResolvedValue([]) });
     registerProjectTools(server as any, client);
 
     const handler = server.getHandler("kanon_list_workspaces");
-    const result = parseResult(await handler({}));
+    const result = parseResult(await handler({ format: "full" })) as any;
 
-    expect(result.success).toBe(true);
-    expect((result.data as any).items).toEqual([]);
+    expect(result.items).toEqual([]);
+    expect(result).not.toHaveProperty("success");
   });
 
   it("returns errorResult on API error", async () => {
@@ -106,8 +108,9 @@ describe("kanon_list_workspaces handler", () => {
 
     expect(raw.isError).toBe(true);
     const parsed = JSON.parse(raw.content[0].text);
-    expect(parsed.success).toBe(false);
+    expect(parsed).not.toHaveProperty("success");
     expect(parsed.code).toBe("CONNECTION_ERROR");
+    expect(parsed.error).toBeDefined();
   });
 });
 
@@ -120,8 +123,8 @@ describe("kanon_create_project handler", () => {
     server = createMockServer();
   });
 
-  it("calls client.createProject with correct args and returns successResult", async () => {
-    const created = { id: "p1", key: "KAN", name: "Kanon", workspaceId: "ws1" };
+  it("calls client.createProject with correct args and returns project-write slim", async () => {
+    const created = { id: "p1", key: "KAN", name: "Kanon", workspaceId: "ws1", description: "Desc" };
     const createFn = vi.fn().mockResolvedValue(created);
     const client = createMockClient({ createProject: createFn });
     registerProjectTools(server as any, client);
@@ -131,9 +134,12 @@ describe("kanon_create_project handler", () => {
       workspaceId: "ws1",
       key: "KAN",
       name: "Kanon",
-    }));
+    })) as any;
 
-    expect(result.success).toBe(true);
+    // project-write slim: only key and name
+    expect(result).toEqual({ key: "KAN", name: "Kanon" });
+    expect(result).not.toHaveProperty("success");
+    expect(result).not.toHaveProperty("id");
     expect(createFn).toHaveBeenCalledWith("ws1", { key: "KAN", name: "Kanon" });
   });
 
@@ -187,8 +193,8 @@ describe("kanon_update_project handler", () => {
     server = createMockServer();
   });
 
-  it("calls client.updateProject with correct key and body", async () => {
-    const updateFn = vi.fn().mockResolvedValue({ id: "p1", key: "KAN", engramNamespace: "kanon" });
+  it("calls client.updateProject with correct key and body, returns project-write slim", async () => {
+    const updateFn = vi.fn().mockResolvedValue({ id: "p1", key: "KAN", name: "Kanon", engramNamespace: "kanon" });
     const client = createMockClient({ updateProject: updateFn });
     registerProjectTools(server as any, client);
 
@@ -196,9 +202,12 @@ describe("kanon_update_project handler", () => {
     const result = parseResult(await handler({
       projectKey: "KAN",
       engramNamespace: "kanon",
-    }));
+    })) as any;
 
-    expect(result.success).toBe(true);
+    // project-write slim: only key and name
+    expect(result).toEqual({ key: "KAN", name: "Kanon" });
+    expect(result).not.toHaveProperty("success");
+    expect(result).not.toHaveProperty("id");
     expect(updateFn).toHaveBeenCalledWith("KAN", { engramNamespace: "kanon" });
   });
 

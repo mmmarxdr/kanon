@@ -24,7 +24,7 @@ export default async function memberRoutes(
       },
     },
     async (request, _reply) => {
-      return memberService.getProfile(request.user.memberId);
+      return memberService.getProfile(request.user.userId);
     },
   );
 
@@ -42,7 +42,7 @@ export default async function memberRoutes(
     },
     async (request, _reply) => {
       return memberService.updateProfile(
-        request.user.memberId,
+        request.user.userId,
         request.body,
       );
     },

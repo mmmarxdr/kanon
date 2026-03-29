@@ -2,7 +2,7 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { GetIssueContextInput } from "../types.js";
-import { successResult } from "../errors.js";
+import { dataResult } from "../errors.js";
 
 const ENGRAM_TIMEOUT_MS = 2_000;
 
@@ -143,7 +143,7 @@ export function registerContextTools(server: McpServer): void {
       const sessionLimit = limit ?? 5;
 
       if (!engramUrl) {
-        return successResult({
+        return dataResult({
           sessions: [],
           sessionCount: 0,
           message: "Engram not configured — set ENGRAM_API_URL",
@@ -157,12 +157,12 @@ export function registerContextTools(server: McpServer): void {
           engramUrl,
           engramKey,
         );
-        return successResult({
+        return dataResult({
           sessions,
           sessionCount: sessions.length,
         });
       } catch {
-        return successResult({
+        return dataResult({
           sessions: [],
           sessionCount: 0,
         });

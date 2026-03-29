@@ -162,10 +162,13 @@ export function IssueDetailPanel({
 
   return (
     <FocusTrap
+      active={!issueLoading && !!issue}
       focusTrapOptions={{
         escapeDeactivates: false, // We handle Escape ourselves for URL cleanup
         allowOutsideClick: true,
         clickOutsideDeactivates: false,
+        initialFocus: false,
+        fallbackFocus: '[data-testid="issue-detail-panel"]',
       }}
     >
       <div
@@ -179,6 +182,7 @@ export function IssueDetailPanel({
         <div
           ref={panelRef}
           data-testid="issue-detail-panel"
+          tabIndex={-1}
           role="dialog"
           aria-modal="true"
           aria-labelledby="issue-detail-title"

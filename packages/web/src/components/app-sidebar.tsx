@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useSyncEvents } from "@/hooks/use-sync-events";
 import { SyncIndicator } from "@/components/sync-indicator";
 import { useProjectsQuery } from "@/hooks/use-projects-query";
+import { useActiveWorkspaceId } from "@/hooks/use-workspace-query";
 
 // ---------------------------------------------------------------------------
 // Inline SVG Icons (20x20)
@@ -234,7 +235,10 @@ export function AppSidebar() {
   const user = useAuthStore((s) => s.user);
   const logoutFn = useAuthStore((s) => s.logout);
   const location = useLocation();
-  const { data: projects, isLoading: projectsLoading } = useProjectsQuery();
+
+  // Workspace context: use the user's active workspace (first in list)
+  const workspaceId = useActiveWorkspaceId();
+  const { data: projects, isLoading: projectsLoading } = useProjectsQuery(workspaceId);
   const {
     status: syncStatus,
     lastSyncAt,
@@ -247,16 +251,13 @@ export function AppSidebar() {
   const projectKey = location.pathname.match(/^\/(board|backlog|roadmap)\/([^/]+)/)?.[2] ?? "";
   const navItems = buildNavItems(projectKey);
 
-  const initials = user?.username
-    ? user.username
-        .split(" ")
-        .map((w) => w[0])
-        .join("")
-        .toUpperCase()
-        .slice(0, 2)
-    : "U";
-
-  const displayName = user?.username ?? "User";
+  const displayName = user?.displayName ?? user?.email ?? "User";
+  const initials = displayName
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
 
   return (
     <aside
@@ -404,7 +405,7 @@ export function AppSidebar() {
                 {displayName}
               </p>
               <p className="text-xs text-muted-foreground truncate">
-                {user?.role ?? "Member"}
+                {user?.email}
               </p>
             </div>
           )}

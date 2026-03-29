@@ -316,7 +316,11 @@ export async function promoteToIssue(
     where: { id: issue.id },
     include: {
       assignee: {
-        select: { id: true, username: true, email: true },
+        select: {
+          id: true,
+          username: true,
+          user: { select: { email: true } },
+        },
       },
     },
   });

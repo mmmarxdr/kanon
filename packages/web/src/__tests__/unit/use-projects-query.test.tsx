@@ -11,13 +11,6 @@ vi.mock("@/lib/api-client", () => ({
   fetchApi: vi.fn(),
 }));
 
-// Mock auth store
-const mockWorkspaceId = vi.fn<() => string | undefined>(() => "ws-1");
-vi.mock("@/stores/auth-store", () => ({
-  useAuthStore: (selector: (s: { user: { workspaceId?: string } | null }) => unknown) =>
-    selector({ user: { workspaceId: mockWorkspaceId() } }),
-}));
-
 function createWrapper() {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -38,7 +31,6 @@ const MOCK_PROJECTS: Project[] = [
 describe("useProjectsQuery", () => {
   afterEach(() => {
     vi.restoreAllMocks();
-    mockWorkspaceId.mockReturnValue("ws-1");
   });
 
   it("calls fetchApi with correct workspace URL", async () => {
@@ -47,7 +39,7 @@ describe("useProjectsQuery", () => {
     mockFetchApi.mockResolvedValue(MOCK_PROJECTS);
 
     const { wrapper } = createWrapper();
-    const { result } = renderHook(() => useProjectsQuery(), { wrapper });
+    const { result } = renderHook(() => useProjectsQuery("ws-1"), { wrapper });
 
     await waitFor(() => {
       expect(result.current.isSuccess).toBe(true);
@@ -61,7 +53,7 @@ describe("useProjectsQuery", () => {
     vi.mocked(fetchApi).mockResolvedValue(MOCK_PROJECTS);
 
     const { queryClient, wrapper } = createWrapper();
-    const { result } = renderHook(() => useProjectsQuery(), { wrapper });
+    const { result } = renderHook(() => useProjectsQuery("ws-1"), { wrapper });
 
     await waitFor(() => {
       expect(result.current.isSuccess).toBe(true);
@@ -72,13 +64,11 @@ describe("useProjectsQuery", () => {
   });
 
   it("is disabled when workspaceId is undefined", async () => {
-    mockWorkspaceId.mockReturnValue(undefined);
-
     const { fetchApi } = await import("@/lib/api-client");
     const mockFetchApi = vi.mocked(fetchApi);
 
     const { wrapper } = createWrapper();
-    const { result } = renderHook(() => useProjectsQuery(), { wrapper });
+    const { result } = renderHook(() => useProjectsQuery(undefined), { wrapper });
 
     expect(result.current.fetchStatus).toBe("idle");
     expect(mockFetchApi).not.toHaveBeenCalled();
@@ -89,7 +79,7 @@ describe("useProjectsQuery", () => {
     vi.mocked(fetchApi).mockResolvedValue(MOCK_PROJECTS);
 
     const { wrapper } = createWrapper();
-    const { result } = renderHook(() => useProjectsQuery(), { wrapper });
+    const { result } = renderHook(() => useProjectsQuery("ws-1"), { wrapper });
 
     await waitFor(() => {
       expect(result.current.isSuccess).toBe(true);

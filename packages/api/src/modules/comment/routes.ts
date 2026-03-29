@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { CreateCommentBody, IssueKeyParam } from "./schema.js";
+import { resolveMemberIdFromIssue } from "../../shared/resolve-member.js";
 import * as commentService from "./service.js";
 
 /**
@@ -24,10 +25,14 @@ export default async function commentRoutes(
       },
     },
     async (request, reply) => {
+      const memberId = await resolveMemberIdFromIssue(
+        request.user.userId,
+        request.params.key,
+      );
       const comment = await commentService.createComment(
         request.params.key,
         request.body,
-        request.user.memberId,
+        memberId,
       );
       return reply.status(201).send(comment);
     },

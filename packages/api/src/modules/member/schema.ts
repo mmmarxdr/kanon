@@ -2,6 +2,7 @@ import { z } from "zod";
 
 /**
  * Profile response — returned by GET /api/members/me.
+ * Combines User-level identity with workspace-scoped Member fields.
  */
 export const ProfileResponse = z.object({
   id: z.string().uuid(),

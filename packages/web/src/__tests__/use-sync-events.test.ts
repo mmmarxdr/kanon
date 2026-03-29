@@ -45,11 +45,10 @@ import { useSyncEvents } from "@/hooks/use-sync-events";
 function setAuthenticated() {
   useAuthStore.setState({
     user: {
-      memberId: "m-1",
+      id: "user-1",
       email: "test@test.com",
-      username: "tester",
-      workspaceId: "ws-1",
-      role: "admin",
+      displayName: "Tester",
+      avatarUrl: null,
     },
     isAuthenticated: true,
     isLoading: false,

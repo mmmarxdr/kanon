@@ -15,7 +15,6 @@ import {
  */
 describe("Auth Integration", () => {
   let app: FastifyInstance;
-  let workspaceId: string;
 
   beforeAll(async () => {
     app = await createTestApp();
@@ -29,22 +28,19 @@ describe("Auth Integration", () => {
 
   beforeEach(async () => {
     await cleanDatabase();
-    const ws = await seedTestWorkspace("auth-test");
-    workspaceId = ws.id;
   });
 
   // ── Registration ─────────────────────────────────────────────────────
 
   describe("POST /api/auth/register", () => {
-    it("registers a new member", async () => {
+    it("registers a new user (no workspace required)", async () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/auth/register",
         payload: {
           email: "dev@kanon.io",
-          username: "dev",
           password: "Secret123!",
-          workspaceId,
+          displayName: "Dev User",
         },
       });
 
@@ -52,22 +48,23 @@ describe("Auth Integration", () => {
       const body = res.json();
       expect(body).toHaveProperty("id");
       expect(body.email).toBe("dev@kanon.io");
-      expect(body.username).toBe("dev");
+      expect(body.displayName).toBe("Dev User");
       // Password should NOT be in the response
       expect(body).not.toHaveProperty("password");
       expect(body).not.toHaveProperty("passwordHash");
+      // No workspace fields
+      expect(body).not.toHaveProperty("workspaceId");
+      expect(body).not.toHaveProperty("username");
     });
 
-    it("rejects duplicate email in same workspace", async () => {
+    it("rejects duplicate email", async () => {
       // Register first
       await app.inject({
         method: "POST",
         url: "/api/auth/register",
         payload: {
           email: "dev@kanon.io",
-          username: "dev1",
           password: "Secret123!",
-          workspaceId,
         },
       });
 
@@ -77,9 +74,7 @@ describe("Auth Integration", () => {
         url: "/api/auth/register",
         payload: {
           email: "dev@kanon.io",
-          username: "dev2",
           password: "Secret123!",
-          workspaceId,
         },
       });
 
@@ -88,43 +83,26 @@ describe("Auth Integration", () => {
       expect(body.code).toBe("DUPLICATE_EMAIL");
     });
 
-    it("rejects duplicate username in same workspace", async () => {
-      await app.inject({
-        method: "POST",
-        url: "/api/auth/register",
-        payload: {
-          email: "dev1@kanon.io",
-          username: "dev",
-          password: "Secret123!",
-          workspaceId,
-        },
-      });
-
-      const res = await app.inject({
-        method: "POST",
-        url: "/api/auth/register",
-        payload: {
-          email: "dev2@kanon.io",
-          username: "dev",
-          password: "Secret123!",
-          workspaceId,
-        },
-      });
-
-      expect(res.statusCode).toBe(409);
-      const body = res.json();
-      expect(body.code).toBe("DUPLICATE_USERNAME");
-    });
-
     it("rejects invalid email format", async () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/auth/register",
         payload: {
           email: "not-an-email",
-          username: "dev",
           password: "Secret123!",
-          workspaceId,
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it("rejects weak password (< 8 chars)", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/auth/register",
+        payload: {
+          email: "weak@kanon.io",
+          password: "short",
         },
       });
 
@@ -141,21 +119,18 @@ describe("Auth Integration", () => {
         url: "/api/auth/register",
         payload: {
           email: "dev@kanon.io",
-          username: "dev",
           password: "Secret123!",
-          workspaceId,
         },
       });
     });
 
-    it("returns tokens for valid credentials", async () => {
+    it("returns tokens for valid credentials (no workspace)", async () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/auth/login",
         payload: {
           email: "dev@kanon.io",
           password: "Secret123!",
-          workspaceId,
         },
       });
 
@@ -174,7 +149,6 @@ describe("Auth Integration", () => {
         payload: {
           email: "dev@kanon.io",
           password: "WrongPassword!",
-          workspaceId,
         },
       });
 
@@ -188,7 +162,6 @@ describe("Auth Integration", () => {
         payload: {
           email: "nobody@kanon.io",
           password: "Secret123!",
-          workspaceId,
         },
       });
 
@@ -206,9 +179,7 @@ describe("Auth Integration", () => {
         url: "/api/auth/register",
         payload: {
           email: "dev@kanon.io",
-          username: "dev",
           password: "Secret123!",
-          workspaceId,
         },
       });
 
@@ -218,7 +189,6 @@ describe("Auth Integration", () => {
         payload: {
           email: "dev@kanon.io",
           password: "Secret123!",
-          workspaceId,
         },
       });
 
@@ -247,6 +217,61 @@ describe("Auth Integration", () => {
     });
   });
 
+  // ── /me Endpoint ────────────────────────────────────────────────────
+
+  describe("GET /api/auth/me", () => {
+    it("returns user-level data with valid token", async () => {
+      // Register
+      const regRes = await app.inject({
+        method: "POST",
+        url: "/api/auth/register",
+        payload: {
+          email: "me@kanon.io",
+          password: "Secret123!",
+          displayName: "Me User",
+        },
+      });
+
+      // Login to get real token
+      const loginRes = await app.inject({
+        method: "POST",
+        url: "/api/auth/login",
+        payload: {
+          email: "me@kanon.io",
+          password: "Secret123!",
+        },
+      });
+
+      const { accessToken } = loginRes.json();
+
+      const meRes = await app.inject({
+        method: "GET",
+        url: "/api/auth/me",
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+
+      expect(meRes.statusCode).toBe(200);
+      const me = meRes.json();
+      expect(me.email).toBe("me@kanon.io");
+      expect(me.displayName).toBe("Me User");
+      expect(me).toHaveProperty("userId");
+      expect(me).toHaveProperty("avatarUrl");
+      // Must NOT contain workspace fields
+      expect(me).not.toHaveProperty("workspaceId");
+      expect(me).not.toHaveProperty("role");
+      expect(me).not.toHaveProperty("memberId");
+    });
+
+    it("returns 401 without any auth", async () => {
+      const meRes = await app.inject({
+        method: "GET",
+        url: "/api/auth/me",
+      });
+
+      expect(meRes.statusCode).toBe(401);
+    });
+  });
+
   // ── Route Protection ─────────────────────────────────────────────────
 
   describe("Route Protection", () => {
@@ -256,9 +281,7 @@ describe("Auth Integration", () => {
         url: "/api/auth/register",
         payload: {
           email: "dev@kanon.io",
-          username: "dev",
           password: "Secret123!",
-          workspaceId,
         },
       });
 
@@ -276,7 +299,7 @@ describe("Auth Integration", () => {
     });
 
     it("allows protected routes with valid token", async () => {
-      const token = generateTestToken({ workspaceId });
+      const token = generateTestToken();
 
       const res = await app.inject({
         method: "GET",

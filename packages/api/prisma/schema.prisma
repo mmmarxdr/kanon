@@ -85,6 +85,21 @@ enum DependencyType {
 
 // ─── Models ─────────────────────────────────────────────────────────────────
 
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  displayName  String?  @map("display_name")
+  avatarUrl    String?  @map("avatar_url")
+  apiKeyHash   String?  @map("api_key_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  members Member[]
+
+  @@map("users")
+}
+
 model Workspace {
   id        String   @id @default(uuid()) @db.Uuid
   name      String
@@ -190,17 +205,14 @@ model Sprint {
 }
 
 model Member {
-  id           String     @id @default(uuid()) @db.Uuid
-  email        String
-  username     String
-  passwordHash String     @map("password_hash")
-  role         MemberRole @default(member)
-  apiKeyHash   String?    @map("api_key_hash")
-  displayName  String?    @map("display_name")
-  avatarUrl    String?    @map("avatar_url")
-  createdAt    DateTime   @default(now()) @map("created_at")
-  updatedAt    DateTime   @updatedAt @map("updated_at")
+  id        String     @id @default(uuid()) @db.Uuid
+  username  String
+  role      MemberRole @default(member)
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
 
+  userId      String    @map("user_id") @db.Uuid
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   workspaceId String    @map("workspace_id") @db.Uuid
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
@@ -208,7 +220,7 @@ model Member {
   activityLogs   ActivityLog[]
   comments       Comment[]
 
-  @@unique([workspaceId, email])
+  @@unique([userId, workspaceId])
   @@unique([workspaceId, username])
   @@map("members")
 }

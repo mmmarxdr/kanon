@@ -4,6 +4,7 @@ import { env } from "../../config/env.js";
 import type { TokenPayload, AuthUser } from "../../shared/types.js";
 import type { SyncEvent } from "../../services/bridge-sync-service.js";
 import type { ForcePollResult } from "../../services/bridge-sync-service.js";
+import { COOKIE_NAMES } from "../../shared/constants.js";
 
 /**
  * Events routes plugin.
@@ -48,12 +49,20 @@ export default async function eventsRoutes(
       }
     }
 
+    // Fallback to cookie-based auth (matches auth plugin waterfall)
+    if (!token) {
+      const cookieToken = request.cookies?.[COOKIE_NAMES.ACCESS];
+      if (cookieToken) {
+        token = cookieToken;
+      }
+    }
+
     if (!token) {
       return reply.status(401).send({
         statusCode: 401,
         code: "UNAUTHORIZED",
         message:
-          "Authentication required. Provide a Bearer token or ?token= query param.",
+          "Authentication required. Provide a Bearer token, ?token= query param, or cookie.",
       });
     }
 
@@ -61,9 +70,8 @@ export default async function eventsRoutes(
     try {
       const payload = jwt.verify(token, env.JWT_SECRET) as TokenPayload;
       user = {
-        memberId: payload.sub,
-        workspaceId: payload.workspaceId,
-        role: payload.role,
+        userId: payload.sub,
+        email: payload.email,
       };
     } catch {
       return reply.status(401).send({
@@ -86,7 +94,7 @@ export default async function eventsRoutes(
     raw.flushHeaders();
 
     request.log.info(
-      { memberId: user.memberId },
+      { userId: user.userId },
       "SSE client connected to /api/events/sync",
     );
 
@@ -124,7 +132,7 @@ export default async function eventsRoutes(
       bridgeSyncService.off("heartbeat", onServiceHeartbeat);
 
       request.log.info(
-        { memberId: user.memberId },
+        { userId: user.userId },
         "SSE client disconnected from /api/events/sync",
       );
     });
@@ -157,11 +165,19 @@ export default async function eventsRoutes(
       token = authHeader.slice(7);
     }
 
+    // Fallback to cookie-based auth (matches auth plugin waterfall)
+    if (!token) {
+      const cookieToken = request.cookies?.[COOKIE_NAMES.ACCESS];
+      if (cookieToken) {
+        token = cookieToken;
+      }
+    }
+
     if (!token) {
       return reply.status(401).send({
         statusCode: 401,
         code: "UNAUTHORIZED",
-        message: "Authentication required. Provide a Bearer token.",
+        message: "Authentication required. Provide a Bearer token or cookie.",
       });
     }
 

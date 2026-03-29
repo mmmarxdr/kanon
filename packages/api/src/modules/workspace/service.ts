@@ -27,13 +27,13 @@ export async function createWorkspace(body: CreateWorkspaceBody) {
 }
 
 /**
- * List all workspaces for the authenticated member.
+ * List all workspaces for the authenticated user.
  */
-export async function listWorkspaces(memberId: string) {
+export async function listWorkspaces(userId: string) {
   return prisma.workspace.findMany({
     where: {
       members: {
-        some: { id: memberId },
+        some: { userId },
       },
     },
     orderBy: { createdAt: "asc" },

@@ -37,7 +37,7 @@ export default async function workspaceRoutes(
    * GET /api/workspaces
    */
   app.get("/", async (request, _reply) => {
-    return workspaceService.listWorkspaces(request.user.memberId);
+    return workspaceService.listWorkspaces(request.user.userId);
   });
 
   /**
@@ -46,7 +46,7 @@ export default async function workspaceRoutes(
   app.patch(
     "/:id",
     {
-      preHandler: [requireRole("owner", "admin")],
+      preHandler: [requireRole("id", "owner", "admin")],
       schema: {
         params: WorkspaceIdParam,
         body: UpdateWorkspaceBody,

@@ -1,6 +1,6 @@
 # Skill Registry — kanon
 
-Generated: 2026-03-22
+Generated: 2026-03-28
 
 ## User-Level Skills
 
@@ -27,7 +27,19 @@ Generated: 2026-03-22
 
 ## Project-Level Skills
 
-_None detected._
+| Name | Path | Trigger |
+|------|------|---------|
+| kanon-init | `.claude/skills/kanon-init/SKILL.md` | Automated project onboarding — scan a codebase, create a Kanon project, and seed initial issues from TODOs. Trigger: `/kanon-init` |
+| kanon-mcp | `.claude/skills/kanon-mcp/SKILL.md` | Human-facing project board integration — clean cards, meaningful titles, progressive enrichment from SDD and general work. Active during all SDD phases and issue management. |
+| kanon-nl-create | `.claude/skills/kanon-nl-create/SKILL.md` | Natural language issue creation — parse user descriptions of bugs, features, and tasks into well-structured Kanon issues. Trigger: user says "create an issue", "track this", "log a bug", or describes work to capture. |
+| kanon-roadmap | `.claude/skills/kanon-roadmap/SKILL.md` | Proactive roadmap capture — recognize future work during conversations and SDD workflows, create and enrich roadmap items. Trigger: user mentions deferred work, "someday", "eventually", or SDD phases surface out-of-scope items. |
+| kanon-orchestrator-hooks | `.claude/skills/kanon-orchestrator-hooks/SKILL.md` | Kanon-specific hooks for the SDD orchestrator — ROADMAP injection into sub-agent prompts and post-phase deferred_items processing. Active when launching SDD phases in the kanon project. |
+
+## Shared Configs
+
+| Name | Path | Purpose |
+|------|------|---------|
+| kanon-phase-common | `.claude/skills/_shared/kanon-phase-common.md` | Shared Kanon issue tracking protocol for all SDD phase sub-agents — state transitions, description enrichment, and engram references. |
 
 ## Project Conventions
 

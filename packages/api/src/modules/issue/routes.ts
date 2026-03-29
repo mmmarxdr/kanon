@@ -10,6 +10,7 @@ import {
   GroupKeyParam,
   IssueFilterQuery,
 } from "./schema.js";
+import { resolveMemberIdFromIssue, resolveMemberIdFromProject } from "../../shared/resolve-member.js";
 import * as issueService from "./service.js";
 
 /**
@@ -33,10 +34,14 @@ export default async function issueRoutes(
       },
     },
     async (request, reply) => {
+      const memberId = await resolveMemberIdFromProject(
+        request.user.userId,
+        request.params.key,
+      );
       const issue = await issueService.createIssue(
         request.params.key,
         request.body,
-        request.user.memberId,
+        memberId,
       );
       return reply.status(201).send(issue);
     },
@@ -85,10 +90,14 @@ export default async function issueRoutes(
       },
     },
     async (request, _reply) => {
+      const memberId = await resolveMemberIdFromIssue(
+        request.user.userId,
+        request.params.key,
+      );
       return issueService.updateIssue(
         request.params.key,
         request.body,
-        request.user.memberId,
+        memberId,
       );
     },
   );
@@ -105,10 +114,14 @@ export default async function issueRoutes(
       },
     },
     async (request, _reply) => {
+      const memberId = await resolveMemberIdFromIssue(
+        request.user.userId,
+        request.params.key,
+      );
       return issueService.transitionIssue(
         request.params.key,
         request.body.to_state,
-        request.user.memberId,
+        memberId,
       );
     },
   );
@@ -158,11 +171,15 @@ export default async function issueRoutes(
       },
     },
     async (request, _reply) => {
+      const memberId = await resolveMemberIdFromProject(
+        request.user.userId,
+        request.params.key,
+      );
       return issueService.transitionGroup(
         request.params.key,
         request.params.groupKey,
         request.body.to_state,
-        request.user.memberId,
+        memberId,
       );
     },
   );
