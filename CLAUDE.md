@@ -13,6 +13,8 @@ Kanon is an opinionated, AI-native project management platform. Monorepo with pn
 | bridge | packages/bridge | Bridge service |
 | e2e | packages/e2e | End-to-end tests |
 
+Also read AGENTS.md for cross-tool project instructions.
+
 ## Tech Stack
 
 TypeScript, Node 20+, pnpm workspaces. See individual package.json files for framework details.

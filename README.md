@@ -229,6 +229,17 @@ Maintainers can create releases using the release script:
 
 The script bumps versions across all packages, updates `CHANGELOG.md`, creates a git commit, and tags the release. It requires a clean working tree and passing tests.
 
+## AI Coding Tools
+
+Kanon supports multiple AI coding tools via standardized instruction files:
+
+- **AGENTS.md** -- project instructions for tools that support it (Codex, OpenCode, Gemini CLI, and others)
+- **GEMINI.md** -- Gemini CLI and Antigravity
+- **CLAUDE.md** -- Claude Code
+- **.agent/skills/** -- skill definitions for Antigravity/Codex (symlinked from `.claude/skills/`)
+
+Run `pnpm setup:mcp` to configure the Kanon MCP server for your AI coding tool.
+
 ## Contributing
 
 1. Create a feature branch from `main`
