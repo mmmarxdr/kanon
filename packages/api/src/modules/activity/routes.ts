@@ -55,9 +55,9 @@ export default async function activityRoutes(
         return {
           id: log.id,
           action: log.action,
-          field: typeof details.field === "string" ? details.field : undefined,
-          oldValue: typeof details.oldValue === "string" ? details.oldValue : undefined,
-          newValue: typeof details.newValue === "string" ? details.newValue : undefined,
+          field: typeof details["field"] === "string" ? details["field"] : undefined,
+          oldValue: typeof details["oldValue"] === "string" ? details["oldValue"] : undefined,
+          newValue: typeof details["newValue"] === "string" ? details["newValue"] : undefined,
           actor: {
             id: log.member.id,
             username: log.member.username,
