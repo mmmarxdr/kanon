@@ -75,22 +75,16 @@ export async function apiGet<T>(urlPath: string, token: string): Promise<T> {
 export async function getAuthToken(opts?: {
   email?: string;
   password?: string;
-  workspaceId?: string;
 }): Promise<string> {
   dotenv.config({ path: path.resolve(__dirname, "../.env.test") });
 
   const email = opts?.email ?? process.env["SEED_USER_EMAIL"] ?? "dev@kanon.io";
   const password =
     opts?.password ?? process.env["SEED_USER_PASSWORD"] ?? "Password1!";
-  const workspaceId =
-    opts?.workspaceId ??
-    process.env["SEED_WORKSPACE_SLUG"] ??
-    process.env["SEED_WORKSPACE_ID"] ??
-    "kanon-dev";
 
   const result = await apiPost<{ accessToken: string; refreshToken: string }>(
     "/api/auth/login",
-    { email, password, workspaceId },
+    { email, password },
   );
 
   return result.accessToken;

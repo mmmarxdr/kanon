@@ -4,8 +4,9 @@ import { login } from "./auth.js";
 /**
  * Navigate to the Kanban board for a given project.
  *
- * Logs in (if not already), selects the workspace, then navigates to the
- * board view for the specified project key.
+ * Logs in, then navigates directly to the board URL for the specified project key.
+ * The workspace-select page auto-redirects when there is a single workspace,
+ * so we skip manual workspace/project selection and go straight to the board.
  */
 export async function navigateToBoard(
   page: Page,
@@ -14,22 +15,11 @@ export async function navigateToBoard(
   // Ensure we're logged in first
   await login(page);
 
-  // After login we land on /workspaces — click into the workspace
-  await page.waitForURL("**/workspaces", { timeout: 5_000 });
+  // Navigate directly to the board URL for the target project
+  await page.goto(`/board/${projectKey}`);
 
-  // Click the workspace link (seed workspace is "Kanon Development")
-  const workspaceLink = page.getByText("Kanon Development").first();
-  await workspaceLink.click();
-
-  // Wait for project selection page
-  await page.waitForURL("**/projects**", { timeout: 5_000 });
-
-  // Click the project
-  const projectLink = page.getByText(projectKey).first();
-  await projectLink.click();
-
-  // Wait for board to load — look for a column container or status header
-  await page.waitForURL("**/board**", { timeout: 5_000 });
+  // Wait for board to load
+  await page.waitForURL(`**/board/${projectKey}**`, { timeout: 10_000 });
 }
 
 /**
