@@ -1,220 +1,318 @@
 ---
 name: kanon-init
-description: Automated project onboarding — scan a codebase, create a Kanon project, and seed initial issues from TODOs
-version: 1.0.0
-tags: [kanon, onboarding, project-setup, codebase-scan]
+description: Automated project onboarding — scan codebase, create Kanon project, seed initial issues, groups, and roadmap items from TODOs and architecture gaps
+version: 2.0.0
+tags: [kanon, onboarding, project-setup, codebase-scan, batch]
 ---
 
 # Kanon Init — Automated Project Onboarding
 
-Scan the current codebase, create a Kanon project, and optionally seed issues from TODO/FIXME comments. One command takes a repo from unknown to fully tracked.
+Scan the current codebase, resolve or create a Kanon project, seed issues and roadmap items from TODO/FIXME comments and architecture gaps, and report results. One command takes a repo from unknown to fully tracked.
+
+Supports two modes:
+- **Interactive** (user-invoked via `/kanon-init`): workspace selection + single confirmation before creation
+- **Batch** (sub-agent): zero interaction, workspace/project params passed as inputs
 
 ---
 
 ## Trigger
 
-`/kanon-init`
+`/kanon-init`, `init project`, new project onboarding
 
 ---
 
-## Step 1: Connectivity Check
+## Inputs
 
-Verify that the Kanon MCP server is available before doing anything else.
+The skill accepts optional inputs. When invoked by a sub-agent or orchestrator, these are passed directly. When invoked interactively, they are derived during execution.
 
-1. First, load the Kanon MCP tools via ToolSearch. Call ToolSearch with:
-   `select:mcp__kanon__kanon_list_workspaces,mcp__kanon__kanon_create_project,mcp__kanon__kanon_update_project,mcp__kanon__kanon_list_projects,mcp__kanon__kanon_get_project`
-   If ToolSearch returns no results, the Kanon MCP server is not configured. Stop and tell the user:
-   > "The Kanon MCP server is not configured in your Claude Code settings. Add the Kanon MCP server configuration and try again."
-2. Call `kanon_list_workspaces()` with no arguments.
-3. **If the call succeeds** — proceed to Step 2 with the returned workspaces.
-4. **If the call fails** — stop and tell the user:
-   > "The Kanon MCP server is not reachable. Make sure the Kanon API is running, the MCP server is configured in your Claude Code settings, and the `KANON_API_KEY` environment variable is set."
+| Input | Type | Required | Description |
+|-------|------|----------|-------------|
+| `workspaceId` | string | No | If provided, skip workspace selection (batch mode) |
+| `projectKey` | string | No | If provided, skip project creation and seed into existing project |
+| `projectName` | string | No | Override the derived project name |
 
-Do NOT proceed past this step if connectivity fails.
+**Mode detection**: If `workspaceId` is provided as input, run in **batch mode** (zero prompts). Otherwise, run in **interactive mode**.
 
 ---
 
-## Step 2: Workspace Selection
+## Prerequisites
 
-Use the workspaces returned from Step 1.
+Before starting, load the Kanon MCP tools via ToolSearch:
 
-- **If exactly one workspace exists**: Present it to the user and auto-select it.
-  > "Found workspace **{name}** (`{slug}`). I'll use this one. OK?"
-- **If multiple workspaces exist**: Present a numbered list and ask the user to choose.
-  > "Found {N} workspaces:
-  > 1. {name1} (`{slug1}`)
-  > 2. {name2} (`{slug2}`)
-  >
-  > Which workspace should this project be created in?"
-- **If no workspaces exist**: Stop and tell the user:
-  > "No workspaces found. Create a workspace first via the Kanon web UI or seed script, then re-run `/kanon-init`."
+```
+ToolSearch: select:mcp__kanon__kanon_list_workspaces,mcp__kanon__kanon_create_project,mcp__kanon__kanon_list_projects,mcp__kanon__kanon_list_issues,mcp__kanon__kanon_create_issue,mcp__kanon__kanon_list_roadmap,mcp__kanon__kanon_create_roadmap_item,mcp__kanon__kanon_get_project,mcp__kanon__kanon_list_groups
+```
 
-Store the selected `workspaceId` for later use.
+If ToolSearch returns no results, the Kanon MCP server is not configured. Stop and tell the user:
+> "The Kanon MCP server is not configured in your Claude Code settings. Add the Kanon MCP server configuration and try again."
+
+Call `kanon_list_workspaces()` to verify connectivity. If it fails, stop and tell the user:
+> "The Kanon MCP server is not reachable. Make sure the Kanon API is running, the MCP server is configured in your Claude Code settings, and the `KANON_API_KEY` environment variable is set."
+
+Do NOT proceed past this point if connectivity fails.
 
 ---
 
-## Step 3: Codebase Scan
+## Phase 1: Discover
 
-Analyze the current working directory to understand the project. Gather the following:
+Scan the codebase to understand its structure, tech stack, and areas of concern.
 
-### 3a: Package / Manifest Files
+### 1a: Directory Structure and Area Derivation
 
-Look for these files at the project root (read each if it exists):
+Scan top-level directories and workspace packages:
+
+```
+Glob("*")           → top-level dirs and files
+Glob("packages/*")  → monorepo packages (if packages/ exists)
+Glob("src/*")       → flat project subdirs (if no packages/)
+```
+
+Map directories to human-readable groups using this table. Apply in order, first match wins per directory. **Cap at 5 groups.**
+
+| Directory pattern | groupKey | Group name |
+|---|---|---|
+| `packages/api`, `api/`, `server/` | `api` | API |
+| `packages/web`, `web/`, `client/`, `frontend/` | `web` | Frontend |
+| `packages/mcp` | `mcp` | MCP |
+| `packages/cli`, `cli/` | `cli` | CLI |
+| `infra/`, `deploy/`, `docker/`, `.github/`, `terraform/`, `k8s/` | `infra` | Infrastructure |
+| `packages/{name}` (any other) | `{name}` | (Capitalize directory name) |
+| `src/{subdir}` (flat project) | `{subdir}` | (Capitalize subdir name) |
+
+**Priority when capping at 5**: API > Frontend > Infrastructure > others alphabetically.
+
+### 1b: Tech Stack Detection
+
+Read manifest files at the project root (and workspace package roots for monorepos):
 
 | File | Extract |
 |------|---------|
-| `package.json` | `name`, `description`, `scripts`, `dependencies`, `devDependencies`, `workspaces` |
-| `go.mod` | Module path, Go version, key dependencies |
-| `Cargo.toml` | Package name, version, dependencies |
-| `pyproject.toml` | Project name, dependencies, build system |
-| `pom.xml` | `groupId`, `artifactId`, dependencies |
-| `build.gradle` / `build.gradle.kts` | Project name, plugins, dependencies |
-| `mix.exs` | App name, deps |
-| `Gemfile` | Key gems |
-| `composer.json` | Name, require |
+| `package.json` | `name`, `description`, `dependencies`, `devDependencies`, `workspaces` |
+| `go.mod` | Module path, Go version |
+| `Cargo.toml` | Package name, dependencies |
+| `pyproject.toml` | Project name, dependencies |
 
-If a root `package.json` has a `workspaces` field, identify it as a monorepo and list the workspace packages.
+From dependencies, detect frameworks (Express, Fastify, React, Next.js, etc.), databases (Prisma, TypeORM, etc.), testing (Vitest, Jest, pytest, etc.), and build tools (Turbo, Nx, etc.).
 
-### 3b: Directory Structure
+### 1c: TODO/FIXME Scan
 
-List top-level directories and identify their purpose:
-
-| Directory pattern | Likely purpose |
-|-------------------|----------------|
-| `src/`, `lib/`, `app/` | Application source code |
-| `test/`, `tests/`, `__tests__/`, `spec/` | Test suites |
-| `docs/`, `documentation/` | Documentation |
-| `scripts/`, `tools/` | Build and utility scripts |
-| `packages/`, `libs/`, `modules/` | Monorepo packages |
-| `api/`, `server/` | Backend / API |
-| `web/`, `client/`, `frontend/` | Frontend |
-| `infra/`, `terraform/`, `k8s/`, `.github/` | Infrastructure / CI |
-| `prisma/`, `migrations/`, `db/` | Database |
-
-### 3c: Tech Stack Detection
-
-Based on files found, identify:
-- **Language(s)**: TypeScript, Go, Rust, Python, Java, etc.
-- **Framework(s)**: Next.js, Express, Gin, Actix, Django, Spring, etc.
-- **Database**: Prisma, TypeORM, GORM, SQLAlchemy, etc.
-- **Testing**: Vitest, Jest, Go test, pytest, etc.
-- **Build tools**: Turbo, Nx, Make, Gradle, etc.
-- **Monorepo**: Yes/No (based on workspaces field or packages directory)
-
-### 3d: README Content
-
-If `README.md` exists, read the first 50 lines to extract the project's stated purpose and any setup instructions.
-
----
-
-## Step 4: Present Findings
-
-Show the user a summary of what was discovered:
+Grep all source files for actionable comments:
 
 ```
-## Codebase Scan Results
-
-**Detected tech stack**: {language(s)}, {framework(s)}, {database}, {test framework}
-**Monorepo**: {Yes — N packages / No}
-**Key directories**: {list of top-level dirs and purposes}
-
-**Suggested project name**: {derived from package.json name, go.mod module, or directory name}
-**Suggested project key**: {uppercase, max 6 chars, derived from name — e.g. "kanon" -> "KAN", "my-cool-app" -> "MYCOOL" or "MCA"}
-
-**Description**: {from README first line or package.json description, or "No description found"}
+Grep(pattern: "TODO|FIXME|HACK|XXX", output_mode: "content", head_limit: 20)
 ```
 
----
+Collect each match with file path and line number. Filter out bare markers (lines where `TODO` or `FIXME` is the only content with no descriptive text). Keep entries that have meaningful text after the marker.
 
-## Step 5: User Confirmation
+### 1d: Architecture Gap Detection
 
-Ask the user to confirm or modify the project details before creating:
+Check for the existence of these paths. Missing = gap.
 
-> "Here is what I'll create:
->
->   **Project name**: {name}
->   **Project key**: {key}
->   **Workspace**: {workspace name}
->   **Description**: {description}
->
-> Want me to proceed? You can change the name, key, or description first."
+| Path to check | Gap if missing |
+|---|---|
+| `.github/workflows/` | CI/CD pipeline |
+| `Dockerfile` or `docker-compose.yml` | Containerization |
+| `.eslintrc*` or `eslint.config.*` | Linting configuration |
+| `vitest.config.*` or `jest.config.*` | Test configuration |
+| `README.md` | Project documentation |
+| `docs/` | Documentation directory |
 
-Wait for user confirmation. If the user provides changes, update accordingly.
+### 1e: README Content
 
-Before confirming, check for key conflicts:
-1. Call `kanon_list_projects(workspaceId: "{workspaceId}")`.
-2. If any existing project has the same key, inform the user and suggest an alternative.
+If `README.md` exists, read the first 50 lines to extract the project's stated purpose.
 
----
+### 1f: Derive Project Metadata
 
-## Step 6: Project Creation
-
-Once the user confirms:
-
-1. Call `kanon_create_project` with the confirmed details:
-   ```
-   kanon_create_project(
-     workspaceId: "{workspaceId}",
-     key: "{KEY}",
-     name: "{name}",
-     description: "{description}"
-   )
-   ```
-
-2. Report the created project key and ID to the user.
-
-3. If the user provided an engram project name, set it on the project:
-   ```
-   kanon_update_project(
-     projectKey: "{KEY}",
-     engramNamespace: "{engram-project-name}"
-   )
-   ```
+From the scan, derive:
+- **Project name**: from `package.json` `name` field, `go.mod` module, or directory name
+- **Project key**: uppercase, max 6 chars, derived from name (e.g., "kanon" -> "KAN", "my-cool-app" -> "MCA"). Must match `^[A-Z][A-Z0-9]*$`
+- **Description**: from README first line or `package.json` description, or "No description found"
 
 ---
 
-## Step 7: Optional TODO/FIXME Issue Seeding
+## Phase 2: Resolve Project
 
-After project creation, offer to scan for TODO and FIXME comments:
+Ensure the Kanon project exists without creating duplicates.
 
-> "Want me to scan the codebase for TODO/FIXME comments and create issues from them?"
+### 2a: Workspace Selection
 
-If the user agrees:
+- **Batch mode** (`workspaceId` provided): Use the provided `workspaceId`. No prompts.
+- **Interactive mode** (`workspaceId` not provided):
+  - Call `kanon_list_workspaces()`.
+  - If exactly one workspace: auto-select it, inform the user.
+  - If multiple: present a numbered list and ask the user to choose.
+  - If none: stop and tell the user to create a workspace first.
 
-1. Use the Grep tool to search for `TODO|FIXME` patterns across the codebase:
-   ```
-   Grep pattern: "TODO|FIXME" with output_mode: "content"
-   ```
+### 2b: Project Lookup
 
-2. **Cap at 20 results.** If more than 20 are found, pick the most informative ones (those with descriptive text after the TODO/FIXME marker).
+Call `kanon_list_projects(workspaceId)`.
 
-3. Present the findings as a numbered list:
-   ```
-   Found {N} TODO/FIXME comments (showing top 20):
+- **If a project with the derived key already exists**: Reuse it. Log:
+  > "Project **{KEY}** already exists. Reusing it for seeding."
+- **If no match**: Create the project:
+  ```
+  kanon_create_project(
+    workspaceId: "{workspaceId}",
+    key: "{KEY}",
+    name: "{projectName}",
+    description: "{description}"
+  )
+  ```
 
-   1. `src/api/auth.ts:42` — TODO: Add rate limiting to this endpoint
-   2. `src/db/queries.ts:108` — FIXME: N+1 query here, needs optimization
-   3. ...
-
-   Which ones should I create as issues? (enter numbers, "all", or "none")
-   ```
-
-4. Wait for user selection. For each selected item:
-   - Derive a clean title following `[Area] Imperative description` format
-   - Set type to `task` (for TODOs) or `bug` (for FIXMEs)
-   - Set priority to `medium` (default) or `high` (for FIXMEs)
-   - Include the file path and line number in the description
-   - Call `kanon_create_issue` for each
-
-5. Report all created issue keys when done.
-
-If the user declines, skip this step entirely.
+Store the `projectKey` for Phase 3.
 
 ---
 
-## Step 8: Save to Engram
+## Phase 3: Seed Content
 
-After successful project creation, save the onboarding context to engram for future sessions:
+Create issues and roadmap items based on discovery results. This phase runs as a batch with no user prompts in batch mode.
+
+### 3a: Idempotency Check
+
+Call these once and cache the results:
+
+```
+kanon_list_issues(projectKey: "{KEY}")
+kanon_list_roadmap(projectKey: "{KEY}")
+```
+
+Use these to skip items whose title matches an existing issue or roadmap item. Match logic: existing title starts with the same `[Area]` prefix AND contains the same key noun.
+
+### 3b: Interactive Confirmation (interactive mode only)
+
+In interactive mode, before creating anything, present a confirmation table:
+
+```
+## Proposed Items
+
+| # | Type | Title | Group |
+|---|------|-------|-------|
+| 1 | issue | [API] Fix N+1 query in user list | api |
+| 2 | issue | [Infra] Set up GitHub Actions | infra |
+| ... | | | |
+| 11 | roadmap | Add test infrastructure | — |
+
+Create all {N} items? (y/n)
+```
+
+Wait for user confirmation. If declined, skip creation entirely.
+
+In **batch mode**, skip this step — create everything silently.
+
+### 3c: Issue Creation
+
+Create issues in priority order, respecting a **total cap of 10 issues**:
+
+1. **FIXME bugs** (up to 3): Type `bug`, priority `high`
+2. **Architecture gaps** (up to 4): Type `task`, priority `medium`
+3. **TODO tasks** (up to 3): Type `task`, priority `medium`
+
+If fewer items exist in a category, overflow the budget to the next category.
+
+#### Issue Templates
+
+**TODO/FIXME issue:**
+```
+kanon_create_issue(
+  projectKey: "{KEY}",
+  title: "[{Area}] {Cleaned TODO/FIXME text}",
+  type: "task" | "bug",           // task for TODO, bug for FIXME
+  priority: "medium" | "high",    // medium for TODO, high for FIXME
+  description: "Found at `{file}:{line}`\n\n> {original line}\n\nExtracted from codebase scan.",
+  groupKey: "{area-groupKey}"
+)
+```
+
+**Architecture gap issue:**
+```
+kanon_create_issue(
+  projectKey: "{KEY}",
+  title: "[{Area}] Set up {missing thing}",
+  type: "task",
+  priority: "medium",
+  description: "The project is missing {thing}. This impacts {reason}.",
+  groupKey: "{area-groupKey}"       // typically "infra" for CI/Docker/linting gaps
+)
+```
+
+**Starter issue (based on tech stack):**
+```
+kanon_create_issue(
+  projectKey: "{KEY}",
+  title: "[{Area}] {Common setup task}",
+  type: "task",
+  priority: "low",
+  description: "Detected {framework/tool} in the stack. This is a common setup improvement.",
+  groupKey: "{area-groupKey}"
+)
+```
+
+#### Title Format
+
+Always use: `[Area] Verb phrase`
+
+Good: `[API] Add request validation middleware`, `[Infra] Set up GitHub Actions CI`
+Bad: `TODO fix auth`, `packages/api needs work`
+
+### 3d: Roadmap Item Creation
+
+Create roadmap items for larger concerns detected during discovery. **Cap at 5 items.** Only create for gaps actually detected. Status: `idea` for all.
+
+| Gap detected | Roadmap title | Horizon | Effort | Impact |
+|---|---|---|---|---|
+| No CI/CD pipeline | Add CI/CD pipeline | `now` | 3 | 5 |
+| No test configuration | Set up test infrastructure | `now` | 2 | 4 |
+| No docs/ directory | Add project documentation | `next` | 2 | 3 |
+| No Dockerfile | Add containerization | `next` | 2 | 3 |
+| No linting config | Set up linting and formatting | `later` | 1 | 2 |
+
+```
+kanon_create_roadmap_item(
+  projectKey: "{KEY}",
+  title: "{roadmap title}",
+  horizon: "now" | "next" | "later",
+  effort: {1-5},
+  impact: {1-5},
+  description: "{why this matters}",
+  status: "idea"
+)
+```
+
+Skip any roadmap item whose title matches an existing roadmap item (idempotency).
+
+### 3e: MCP Call Sequence
+
+Execute in this order:
+
+1. `kanon_list_issues(projectKey)` — cache for dedup
+2. `kanon_list_roadmap(projectKey)` — cache for dedup
+3. For each issue (in priority order): `kanon_create_issue(...)` — skip duplicates
+4. For each roadmap item: `kanon_create_roadmap_item(...)` — skip duplicates
+
+If any individual MCP call fails, log a warning and continue with the remaining items. Do not abort the entire flow.
+
+---
+
+## Phase 4: Report
+
+Present results and persist context.
+
+### 4a: Summary Table
+
+```
+## Kanon Init Summary
+
+| Category | Count | Details |
+|----------|-------|---------|
+| Project | 1 | {KEY} ({created | reused}) |
+| Groups | {N} | {group1}, {group2}, ... |
+| Issues created | {N} | {X} bugs, {Y} tasks |
+| Issues skipped (duplicates) | {N} | — |
+| Roadmap items created | {N} | — |
+| Roadmap items skipped | {N} | — |
+```
+
+### 4b: Save to Engram
 
 ```
 mem_save(
@@ -223,40 +321,43 @@ mem_save(
   project: "{engram-project-name or KEY lowercase}",
   topic_key: "kanon-project/{KEY}",
   content: "
-    **What**: Created Kanon project {KEY} ({name}) in workspace {workspace-name}
+    **What**: Created/reused Kanon project {KEY} ({name}) in workspace {workspace-name}
     **Tech stack**: {detected stack summary}
     **Monorepo**: {yes/no}
-    **Key directories**: {dir summary}
+    **Groups**: {group list}
     **Workspace ID**: {workspaceId}
     **Project key**: {KEY}
-    **Issues seeded**: {N issues created from TODOs, or 'none'}
+    **Issues created**: {N} ({breakdown by type})
+    **Roadmap items created**: {N}
   "
 )
 ```
-
-This allows future agent sessions to recover project context without re-scanning.
 
 ---
 
 ## Edge Cases
 
-**No recognizable project files found**: Present minimal findings. Ask the user to provide the project name and key manually. Still allow project creation — not every project has standard manifest files.
+**No recognizable project files found**: Derive minimal metadata from the directory name. Still allow project creation and seeding of architecture-gap issues.
 
-**Key exceeds 6 characters**: Truncate intelligently. Prefer acronyms (e.g., "my-cool-app" -> "MCA") over simple truncation. Always validate the key matches `^[A-Z][A-Z0-9]*$`.
+**Key exceeds 6 characters**: Truncate intelligently. Prefer acronyms (e.g., "my-cool-app" -> "MCA") over simple truncation. Validate key matches `^[A-Z][A-Z0-9]*$`.
 
-**Project key already exists**: Detect via `kanon_list_projects` and suggest alternatives by appending a digit (e.g., "KAN" -> "KAN2") or using a different abbreviation.
+**Project key already exists**: Detected via `kanon_list_projects`. Reuse the existing project — do not create duplicates.
 
-**Very large codebase with many TODOs**: The 20-item cap prevents overwhelming the user. Prioritize TODOs with descriptive text over bare `// TODO` markers.
+**Very large codebase with many TODOs**: The 20-match grep cap and 10-issue creation cap prevent overwhelming the board. Prioritize FIXME entries and items with descriptive text.
 
-**User wants to re-run on an already-onboarded project**: Check `kanon_list_projects` first. If the project key already exists, inform the user and ask if they want to update the existing project instead of creating a new one.
+**Re-run on already-onboarded project**: Idempotency check (Phase 3a) prevents duplicate issues. New TODOs added since last run will be created.
+
+**No TODOs found**: Skip TODO-derived issues. Architecture-gap and starter issues are still created.
+
+**MCP call failure during seeding**: Log a warning and continue with remaining items. Never block the entire flow for a single failed call.
 
 ---
 
 ## Best Practices
 
-1. **Always confirm before creating** — Never create the project without explicit user approval on the key, name, and workspace.
-2. **Clean titles for seeded issues** — TODO comments are often terse. Expand them into proper `[Area] Description` titles a teammate can understand.
-3. **Respect the cap** — Never create more than 20 issues from a TODO scan. Quality over quantity.
-4. **Save to engram** — The onboarding context is valuable for future sessions. Do not skip Step 8.
-5. **Fail gracefully** — If any MCP call fails during issue seeding, log a warning and continue with the remaining items. Do not abort the entire flow.
-6. **One project per run** — This skill creates one project per invocation. For monorepos with multiple logical projects, suggest running `/kanon-init` once per sub-project.
+1. **Clean titles for seeded issues** — TODO comments are often terse. Expand them into proper `[Area] Description` titles a teammate can understand.
+2. **Respect all caps** — 10 issues, 5 roadmap items, 5 groups. Quality over quantity.
+3. **Save to engram** — The onboarding context is valuable for future sessions. Do not skip Phase 4b.
+4. **Fail gracefully** — If any MCP call fails during seeding, log a warning and continue. Do not abort.
+5. **Idempotency first** — Always check for existing items before creating. A second run should produce zero duplicates.
+6. **One project per run** — For monorepos with multiple logical projects, suggest running once per sub-project.
