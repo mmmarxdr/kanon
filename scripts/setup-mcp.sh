@@ -409,7 +409,7 @@ merge_config() {
 
     if (!config[rootKey]) config[rootKey] = {};
     config[rootKey]['kanon-mcp'] = useWsl
-      ? { command: 'wsl', args: [nodeBin, mcpPkg], env: { KANON_API_URL: apiUrl, KANON_API_KEY: apiKey } }
+      ? { command: 'wsl', args: ['env', 'KANON_API_URL=' + apiUrl, 'KANON_API_KEY=' + apiKey, nodeBin, mcpPkg] }
       : { command: nodeBin, args: [mcpPkg], env: { KANON_API_URL: apiUrl, KANON_API_KEY: apiKey } };
 
     const dir = path.dirname(file);
