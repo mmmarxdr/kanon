@@ -86,6 +86,7 @@ export function FilterBar({ assignees, projectKey }: FilterBarProps) {
         value={filters.search ?? ""}
         onChange={(v) => handleSelect("search", v)}
         placeholder="Search issues..."
+        data-testid="filter-search"
       />
 
       {/* Type filter */}
@@ -94,6 +95,7 @@ export function FilterBar({ assignees, projectKey }: FilterBarProps) {
         onChange={(v) => handleSelect("type", v)}
         options={ISSUE_TYPES}
         allLabel="All types"
+        data-testid="filter-type"
       />
 
       {/* Priority filter */}
@@ -102,6 +104,7 @@ export function FilterBar({ assignees, projectKey }: FilterBarProps) {
         onChange={(v) => handleSelect("priority", v)}
         options={ISSUE_PRIORITIES}
         allLabel="All priorities"
+        data-testid="filter-priority"
       />
 
       {/* Assignee filter */}
@@ -116,6 +119,7 @@ export function FilterBar({ assignees, projectKey }: FilterBarProps) {
       <ClearFiltersButton
         visible={!!hasActiveFilters}
         onClick={clearFilters}
+        data-testid="filter-clear"
       />
 
       {/* Spacer to push right-side controls */}

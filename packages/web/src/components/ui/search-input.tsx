@@ -5,6 +5,7 @@ interface SearchInputProps {
   onChange: (value: string) => void;
   placeholder?: string;
   className?: string;
+  "data-testid"?: string;
 }
 
 export function SearchInput({
@@ -12,6 +13,7 @@ export function SearchInput({
   onChange,
   placeholder = "Search...",
   className,
+  "data-testid": testId,
 }: SearchInputProps) {
   const [localValue, setLocalValue] = useState(value);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -67,6 +69,7 @@ export function SearchInput({
         placeholder={placeholder}
         value={localValue}
         onChange={handleChange}
+        data-testid={testId}
         className="h-8 w-64 rounded-md border-b-2 border-transparent bg-surface-container-high pl-8 pr-8 text-sm
           text-foreground placeholder:text-muted-foreground
           focus:outline-none focus:ring-0 focus:border-b-primary

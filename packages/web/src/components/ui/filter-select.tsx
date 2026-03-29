@@ -6,6 +6,7 @@ interface FilterSelectProps {
   options: { label: string; value: string }[];
   allLabel?: string;
   className?: string;
+  "data-testid"?: string;
 }
 
 export function FilterSelect({
@@ -14,6 +15,7 @@ export function FilterSelect({
   options,
   allLabel = "All",
   className,
+  "data-testid": testId,
 }: FilterSelectProps) {
   function handleChange(e: ChangeEvent<HTMLSelectElement>) {
     onChange(e.target.value);
@@ -23,6 +25,7 @@ export function FilterSelect({
     <select
       value={value}
       onChange={handleChange}
+      data-testid={testId}
       className={`h-8 rounded-md border-b-2 border-transparent bg-surface-container-high px-2 text-sm
         text-foreground
         focus:outline-none focus:ring-0 focus:border-b-primary

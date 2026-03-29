@@ -52,8 +52,8 @@ test.describe("Board rendering", () => {
     const countBadge = firstColumn.locator("span.tabular-nums").first();
     await expect(countBadge).toBeVisible();
 
-    // The count text should be a number in parentheses like "(3)"
+    // The count text should be a plain number like "3"
     const countText = await countBadge.textContent();
-    expect(countText).toMatch(/^\(\d+\)$/);
+    expect(countText).toMatch(/^\d+$/);
   });
 });
