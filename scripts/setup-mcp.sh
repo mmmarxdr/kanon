@@ -84,6 +84,15 @@ TOOL_COUNT=${#TOOL_NAMES[@]}
 API_URL="${KANON_API_URL:-http://localhost:${KANON_API_PORT:-3000}}"
 MCP_PKG="$ROOT_DIR/packages/mcp/dist/index.js"
 
+# ── WSL Detection ────────────────────────────────────────────────────────────
+IS_WSL=false
+if grep -qi microsoft /proc/version 2>/dev/null; then
+  IS_WSL=true
+fi
+
+# Windows-native tools that need special MCP command when running from WSL
+WINDOWS_NATIVE_TOOLS="cursor windsurf vscode antigravity"
+
 # ── Flag parsing ──────────────────────────────────────────────────────────────
 FLAG_ALL=false
 FLAG_REMOVE=false
@@ -566,6 +575,41 @@ else
   fi
   if [[ $FAIL_COUNT -gt 0 ]]; then
     echo -e "${RED}✗ ${FAIL_COUNT} tool(s) failed to configure. Check errors above.${NC}"
+  fi
+
+  # WSL advisory for Windows-native tools
+  if [[ "$IS_WSL" == true ]]; then
+    # Check if any selected tools are Windows-native
+    HAS_WIN_TOOL=false
+    for idx in "${SELECTED_INDICES[@]}"; do
+      name="${TOOL_NAMES[$idx]}"
+      if [[ " $WINDOWS_NATIVE_TOOLS " == *" $name "* ]]; then
+        HAS_WIN_TOOL=true
+        break
+      fi
+    done
+    if [[ "$HAS_WIN_TOOL" == true ]]; then
+      echo ""
+      echo -e "${YELLOW}  WSL detected.${NC} For Windows-native tools (Antigravity, Cursor, Windsurf, VS Code):"
+      echo ""
+      echo "  The configs above were written to Linux paths (~/.cursor, ~/.gemini, etc.)."
+      echo "  Windows-native tools read from Windows paths instead."
+      echo ""
+      echo "  To configure manually for Windows-native tools:"
+      echo "  1. Find your Windows config path, e.g.:"
+      echo "     Antigravity: C:\\Users\\<username>\\.gemini\\antigravity\\mcp_config.json"
+      echo "     Cursor:      C:\\Users\\<username>\\.cursor\\mcp.json"
+      echo ""
+      echo "  2. Use this MCP entry (note 'wsl' as command):"
+      echo "     {"
+      echo "       \"command\": \"wsl\","
+      echo "       \"args\": [\"node\", \"$MCP_PKG\"],"
+      echo "       \"env\": { \"KANON_API_URL\": \"$API_URL\", \"KANON_API_KEY\": \"<your-key>\" }"
+      echo "     }"
+      echo ""
+      echo "  3. Copy skills from .agent/skills/ to your Windows tool's skill directory."
+      echo ""
+    fi
   fi
 fi
 echo ""
