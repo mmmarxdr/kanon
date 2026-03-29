@@ -167,7 +167,20 @@ Use `--quiet` to suppress success messages.
 
 ## MCP Integration
 
-Kanon includes an MCP (Model Context Protocol) server that lets AI agents manage issues, projects, and roadmaps programmatically.
+Kanon includes an MCP (Model Context Protocol) server that lets AI agents manage issues, projects, and roadmaps programmatically. The setup script auto-detects installed AI coding tools and configures them.
+
+**Supported tools:**
+
+| Tool | Config Location |
+|------|----------------|
+| Claude Code | `~/.claude.json` |
+| Cursor | `~/.cursor/mcp.json` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` |
+| VS Code (Copilot) | `.vscode/mcp.json` (project-local) |
+| Continue | `~/.continue/config.json` |
+| Zed | `~/.config/zed/settings.json` |
+| OpenCode | `opencode.json` (project-local) |
+| Antigravity | `~/.gemini/antigravity/mcp_config.json` |
 
 **Setup:**
 
@@ -175,10 +188,26 @@ Kanon includes an MCP (Model Context Protocol) server that lets AI agents manage
 2. Run the setup script:
 
 ```sh
+# Interactive — detect tools and select from a list
 pnpm setup:mcp
+
+# Configure all detected tools at once
+pnpm setup:mcp --all
+
+# Configure a specific tool
+pnpm setup:mcp --tool cursor
+
+# Remove kanon from all tool configs
+pnpm setup:mcp --remove --all
+
+# Remove kanon from a specific tool
+pnpm setup:mcp --remove --tool zed
+
+# Show full help
+pnpm setup:mcp --help
 ```
 
-This will authenticate against the API, generate an API key, and write the MCP configuration to `~/.claude.json` (global) or `.mcp.json` (project-level). Restart Claude Code afterward to pick up the new configuration.
+The script authenticates against the API, generates an API key, and merges the MCP configuration into each tool's config file (preserving any existing entries). Restart your AI coding tool afterward to pick up the new configuration.
 
 ## Releasing
 
