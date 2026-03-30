@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-29
+
+### Added
+
+- Multi-tool MCP setup (`pnpm setup:mcp`) — supports Claude Code, Cursor, Antigravity
+- WSL auto-detection with Windows-side path resolution for desktop tools
+- Global skill installation for all three supported tools
+- Router template installation (CLAUDE.md snippet, .cursor/rules/kanon.mdc, GEMINI.md snippet)
+- Portable skills in `packages/mcp/skills/` (kanon-init, kanon-create-issue, kanon-mcp, kanon-roadmap, kanon-orchestrator-hooks)
+- Portable workflows in `packages/mcp/workflows/` for Antigravity
+- Comprehensive README with setup and development guide
+- Reworked kanon-init skill — 4-phase batch flow (Discover, Resolve, Seed, Report)
+
+### Changed
+
+- Centralized port configuration via env vars (KANON_API_PORT, KANON_WEB_PORT)
+- Removed tool-specific files from repo — all installed globally by setup script
+- Stripped setup script to 3 tested tools only (Claude Code, Cursor, Antigravity)
+
+### Fixed
+
+- CI: added packageManager field for pnpm/action-setup@v4
+- CI: build bridge package before API typecheck
+- CI: vite port flag not passed correctly to Playwright
+- E2E: updated auth helpers for workspace-decoupled login (18/18 passing)
+- E2E: aligned board count regex, added filter data-testid props
+- E2E: fixed login error, board cards, comments, DnD test failures
+- Web: login tests updated to spy on native fetch
+- Null guard for engram search results in issue context
+- setup-mcp.sh crash on second tool (bash arithmetic with set -e)
+- Absolute node path in MCP configs for WSL compatibility
+- Inline env vars for WSL MCP configs (env object doesn't cross WSL boundary)
+
 ## [0.1.0] - 2026-03-29
 
 ### Added
