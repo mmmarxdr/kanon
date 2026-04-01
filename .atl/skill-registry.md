@@ -1,46 +1,54 @@
 # Skill Registry — kanon
 
-Generated: 2026-03-28
+Generated: 2026-03-30 (sdd-init)
 
-## User-Level Skills
+## User-Level Skills (`~/.cursor/skills/`)
+
+Skills instaladas en el perfil de Cursor (excl. fases SDD y duplicados Kanon del bundle).
 
 | Name | Path | Trigger |
 |------|------|---------|
-| react-doctor | `~/.claude/skills/react-doctor/SKILL.md` | Run after making React changes to catch issues early. Use when reviewing code, finishing a feature, or fixing bugs in a React project. |
-| go-testing | `~/.claude/skills/go-testing/SKILL.md` | When writing Go tests, using teatest, or adding test coverage. |
-| skill-creator | `~/.claude/skills/skill-creator/SKILL.md` | When user asks to create a new skill, add agent instructions, or document patterns for AI. |
-| context7-mcp | `~/.claude/skills/context7-mcp/SKILL.md` | When user asks about libraries, frameworks, API references, or needs code examples involving specific packages. |
+| issue-creation | `~/.cursor/skills/issue-creation/SKILL.md` | Crear issue de GitHub, bug o feature (Agent Teams Lite). |
+| branch-pr | `~/.cursor/skills/branch-pr/SKILL.md` | Abrir PR, preparar rama, revisión (issue-first). |
+| skill-creator | `~/.cursor/skills/skill-creator/SKILL.md` | Crear o documentar nuevas agent skills. |
+| go-testing | `~/.cursor/skills/go-testing/SKILL.md` | Tests en Go / Bubbletea / teatest. |
+| judgment-day | `~/.cursor/skills/judgment-day/SKILL.md` | Revisión adversarial dual (doble juez). |
 
-## SDD Phase Skills
+Las skills `kanon-*` también suelen existir bajo `~/.cursor/skills/` si las instalaste globalmente; para **este repo** manda la copia empaquetada en `packages/mcp/skills/` (ver abajo).
+
+## SDD Phase Skills (`~/.cursor/skills/`)
 
 | Name | Path |
 |------|------|
-| sdd-init | `~/.claude/skills/sdd-init/SKILL.md` |
-| sdd-explore | `~/.claude/skills/sdd-explore/SKILL.md` |
-| sdd-propose | `~/.claude/skills/sdd-propose/SKILL.md` |
-| sdd-spec | `~/.claude/skills/sdd-spec/SKILL.md` |
-| sdd-design | `~/.claude/skills/sdd-design/SKILL.md` |
-| sdd-tasks | `~/.claude/skills/sdd-tasks/SKILL.md` |
-| sdd-apply | `~/.claude/skills/sdd-apply/SKILL.md` |
-| sdd-verify | `~/.claude/skills/sdd-verify/SKILL.md` |
-| sdd-archive | `~/.claude/skills/sdd-archive/SKILL.md` |
+| sdd-init | `~/.cursor/skills/sdd-init/SKILL.md` |
+| sdd-explore | `~/.cursor/skills/sdd-explore/SKILL.md` |
+| sdd-propose | `~/.cursor/skills/sdd-propose/SKILL.md` |
+| sdd-spec | `~/.cursor/skills/sdd-spec/SKILL.md` |
+| sdd-design | `~/.cursor/skills/sdd-design/SKILL.md` |
+| sdd-tasks | `~/.cursor/skills/sdd-tasks/SKILL.md` |
+| sdd-apply | `~/.cursor/skills/sdd-apply/SKILL.md` |
+| sdd-verify | `~/.cursor/skills/sdd-verify/SKILL.md` |
+| sdd-archive | `~/.cursor/skills/sdd-archive/SKILL.md` |
 
-## Project-Level Skills
+## Project-Level Skills (bundle `packages/mcp/skills/`)
 
 | Name | Path | Trigger |
 |------|------|---------|
-| kanon-init | `.claude/skills/kanon-init/SKILL.md` | Automated project onboarding — scan a codebase, create a Kanon project, and seed initial issues from TODOs. Trigger: `/kanon-init` |
-| kanon-mcp | `.claude/skills/kanon-mcp/SKILL.md` | Human-facing project board integration — clean cards, meaningful titles, progressive enrichment from SDD and general work. Active during all SDD phases and issue management. |
-| kanon-nl-create | `.claude/skills/kanon-nl-create/SKILL.md` | Natural language issue creation — parse user descriptions of bugs, features, and tasks into well-structured Kanon issues. Trigger: user says "create an issue", "track this", "log a bug", or describes work to capture. |
-| kanon-roadmap | `.claude/skills/kanon-roadmap/SKILL.md` | Proactive roadmap capture — recognize future work during conversations and SDD workflows, create and enrich roadmap items. Trigger: user mentions deferred work, "someday", "eventually", or SDD phases surface out-of-scope items. |
-| kanon-orchestrator-hooks | `.claude/skills/kanon-orchestrator-hooks/SKILL.md` | Kanon-specific hooks for the SDD orchestrator — ROADMAP injection into sub-agent prompts and post-phase deferred_items processing. Active when launching SDD phases in the kanon project. |
+| kanon-init | `packages/mcp/skills/kanon-init/SKILL.md` | `/kanon-init` — onboarding proyecto Kanon. |
+| kanon-mcp | `packages/mcp/skills/kanon-mcp/SKILL.md` | Tablero, issues, enriquecimiento SDD. |
+| kanon-create-issue | `packages/mcp/skills/kanon-create-issue/SKILL.md` | Crear issues Kanon desde lenguaje natural. |
+| kanon-roadmap | `packages/mcp/skills/kanon-roadmap/SKILL.md` | Roadmap y trabajo diferido. |
+| kanon-orchestrator-hooks | `packages/mcp/skills/kanon-orchestrator-hooks/SKILL.md` | Hooks orchestrator SDD + Kanon. |
+| kanon-workflow | `packages/mcp/skills/kanon-workflow/SKILL.md` | Agente único — Kanon primero, SDD por riesgo, Engram, roadmap diferido. |
 
 ## Shared Configs
 
 | Name | Path | Purpose |
 |------|------|---------|
-| kanon-phase-common | `.claude/skills/_shared/kanon-phase-common.md` | Shared Kanon issue tracking protocol for all SDD phase sub-agents — state transitions, description enrichment, and engram references. |
+| kanon-phase-common | `.claude/skills/_shared/kanon-phase-common.md` | Protocolo compartido fases SDD + Kanon (no parte del install global MCP genérico). |
 
 ## Project Conventions
 
-_No project-level CLAUDE.md, AGENTS.md, .cursorrules, or GEMINI.md found._
+| File | Purpose |
+|------|---------|
+| `CLAUDE.md` | Descripción monorepo, paquetes, setup, MCP. |

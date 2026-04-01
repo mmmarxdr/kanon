@@ -15,6 +15,10 @@ packages/api/prisma/*.db
 # IDE
 .vscode/
 .idea/
+
+# Local-only agent setup (Cursor / optional skills copy — not required for app build)
+.cursor/
+packages/mcp/skills/kanon-workflow/
 *.swp
 *.swo
 

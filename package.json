@@ -12,6 +12,7 @@
     "db:studio": "pnpm --filter @kanon/api db:studio",
     "smoke-test": "pnpm --filter @kanon/api smoke-test",
     "dev:web": "pnpm --filter @kanon/web dev",
+    "dev:app": "node scripts/run-dev-app.mjs",
     "build:web": "pnpm --filter @kanon/web build",
     "e2e": "pnpm --filter @kanon/e2e test",
     "e2e:ui": "pnpm --filter @kanon/e2e test:ui",
@@ -24,5 +25,8 @@
   "packageManager": "pnpm@10.32.1",
   "engines": {
     "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
   }
 }

@@ -60,6 +60,24 @@ TOOL_DETECTS=(
 
 TOOL_COUNT=${#TOOL_NAMES[@]}
 
+# API base URL: KANON_API_URL overrides everything. Otherwise use KANON_API_PORT or PORT from
+# packages/api/.env (same file the API reads with pnpm dev) — avoids probing the wrong port.
+API_ENV_FILE="$ROOT_DIR/packages/api/.env"
+if [[ -z "${KANON_API_URL:-}" ]] && [[ -z "${KANON_API_PORT:-}" ]] && [[ -f "$API_ENV_FILE" ]]; then
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?PORT[[:space:]]*=[[:space:]]*(.*)$ ]]; then
+      val="${BASH_REMATCH[2]%%#*}"
+      val="$(printf '%s' "$val" | tr -d '\r')"
+      val="$(echo "$val" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/")"
+      if [[ -n "$val" ]]; then
+        KANON_API_PORT="$val"
+      fi
+      break
+    fi
+  done <"$API_ENV_FILE"
+fi
 API_URL="${KANON_API_URL:-http://localhost:${KANON_API_PORT:-3000}}"
 MCP_PKG="$ROOT_DIR/packages/mcp/dist/index.js"
 
@@ -126,6 +144,13 @@ show_help() {
   echo "  The MCP entry uses 'wsl node' as the command so Windows apps"
   echo "  can invoke the server running inside WSL."
   echo "  Skills and workflows are also installed to Windows-side paths."
+  echo ""
+  echo -e "${BOLD}API ENDPOINT${NC}"
+  echo "  Health is checked before configuring MCP. URL order:"
+  echo "    1) KANON_API_URL (full base, e.g. http://127.0.0.1:4000)"
+  echo "    2) KANON_API_PORT (default host http://localhost:\$PORT)"
+  echo "    3) PORT from packages/api/.env if 1–2 unset"
+  echo "    4) fallback :3000"
   echo ""
   exit 0
 }
@@ -656,7 +681,8 @@ install_router() {
         target="$HOME/.cursor/rules/kanon.mdc"
       fi
       mkdir -p "$(dirname "$target")"
-      cp "$TEMPLATES_DIR/cursor-rules.mdc" "$target"
+      cp "$TEMPLATES_DIR/cursor-rules.mdc" "$target" \
+        || { echo -e "${YELLOW}  ⚠${NC} Failed installing cursor router instructions at $target"; return 1; }
       ok "Installed router instructions for ${BOLD}${name}${NC} (${target})"
       ;;
     antigravity)
@@ -722,7 +748,9 @@ for idx in "${SELECTED_INDICES[@]}"; do
     remove_router "$name"
   else
     install_skills_and_workflows "$name"
-    install_router "$name"
+    if ! install_router "$name"; then
+      warn "Router instructions step failed for ${name}; MCP + skills remain installed"
+    fi
   fi
 done
 

@@ -1,5 +1,7 @@
 # Kanon Issue Tracking (Optional)
 
+If there is **no** external orchestrator and you work from Cursor with a single agent, follow **`kanon-workflow`** (`packages/mcp/skills/kanon-workflow/SKILL.md`) for Kanon-first steps, SDD gates, and Engram — then apply the table below when you have `kanon_issue_key` / `kanon_project_key`.
+
 If the orchestrator provides `kanon_issue_key` and `kanon_project_key` in your launch prompt, integrate with Kanon issue tracking. Kanon is the **human-facing project board** — every update you make should be readable by a person who has never touched the codebase.
 
 ## At Phase START (first action)
