@@ -8,6 +8,7 @@ import { GroupedBoard } from "@/features/board/grouped-board";
 import { FilterBar } from "@/features/board/filter-bar";
 import { IssueDetailPanel } from "@/features/issue-detail/issue-detail-panel";
 import { useCurrentProject } from "@/hooks/use-current-project";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface BoardSearchParams {
   issue?: string;
@@ -23,6 +24,7 @@ export const boardRoute = createRoute({
 });
 
 function BoardPage() {
+  const { t } = useI18n();
   const { projectKey } = boardRoute.useParams();
   const { issue: selectedIssueKey } = boardRoute.useSearch();
   const navigate = useNavigate();
@@ -73,7 +75,7 @@ function BoardPage() {
   if (isLoading || (viewMode === "grouped" && groupsLoading)) {
     return (
       <div className="flex items-center justify-center h-full p-8">
-        <p className="text-muted-foreground">Loading board...</p>
+        <p className="text-muted-foreground">{t("board.loading")}</p>
       </div>
     );
   }
@@ -82,7 +84,7 @@ function BoardPage() {
     return (
       <div className="flex items-center justify-center h-full p-8">
         <p className="text-destructive-foreground">
-          Failed to load issues: {error.message}
+          {t("board.loadErrorPrefix")} {error.message}
         </p>
       </div>
     );
@@ -95,7 +97,7 @@ function BoardPage() {
         {/* Breadcrumb & Title */}
         <div className="mb-4">
           <p className="text-[0.6875rem] text-on-surface/40 uppercase tracking-wider mb-1">
-            Workspace &rsaquo; {currentProject?.name ?? projectKey}
+            {t("backlog.breadcrumbWorkspace")} &rsaquo; {currentProject?.name ?? projectKey}
           </p>
           <h1 className="text-xl font-semibold text-on-surface">
             {projectKey}
@@ -108,20 +110,20 @@ function BoardPage() {
             type="button"
             className="px-3 py-2 text-sm font-medium text-on-surface border-b-2 border-primary transition-colors"
           >
-            Issues
+            {t("board.tabs.issues")}
           </button>
           <button
             type="button"
             className="px-3 py-2 text-sm text-on-surface/50 hover:text-on-surface border-b-2 border-transparent transition-colors"
           >
-            Views
+            {t("board.tabs.views")}
           </button>
           <Link
             to="/roadmap/$projectKey"
             params={{ projectKey }}
             className="px-3 py-2 text-sm text-on-surface/50 hover:text-on-surface border-b-2 border-transparent transition-colors"
           >
-            Roadmap
+            {t("nav.roadmap")}
           </Link>
         </div>
 

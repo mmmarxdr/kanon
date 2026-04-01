@@ -13,6 +13,7 @@ import { useContainerWidth } from "../use-container-size";
 import { useTimelineData } from "./use-timeline-data";
 import { TimelineBar } from "./timeline-bar";
 import { TimelineTooltip } from "./timeline-tooltip";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface GanttTimelineProps {
   items: RoadmapItem[];
@@ -29,6 +30,7 @@ const Y_AXIS_WIDTH = 180;
  * floating-point precision issues in recharts rendering.
  */
 export function GanttTimeline({ items }: GanttTimelineProps) {
+  const { t } = useI18n();
   const [containerRef, containerWidth] = useContainerWidth();
   const { domain, domainStart, groups } = useTimelineData(items);
   const setSelectedItemId = useRoadmapStore((s) => s.setSelectedItemId);
@@ -47,7 +49,7 @@ export function GanttTimeline({ items }: GanttTimelineProps) {
   if (items.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
-        <p className="text-sm text-on-surface/40">No roadmap items yet</p>
+        <p className="text-sm text-on-surface/40">{t("roadmap.timeline.empty")}</p>
       </div>
     );
   }
@@ -55,7 +57,7 @@ export function GanttTimeline({ items }: GanttTimelineProps) {
   // Sparse state encouragement
   const sparseMessage =
     items.length < 3
-      ? "Add more items to see a richer timeline view."
+      ? t("roadmap.timeline.sparseHint")
       : undefined;
 
   return (
@@ -73,8 +75,20 @@ export function GanttTimeline({ items }: GanttTimelineProps) {
         return (
           <ChartCard
             key={group.horizon}
-            title={group.label}
-            subtitle={`${group.items.length} item${group.items.length !== 1 ? "s" : ""}`}
+            title={
+              group.horizon === "now"
+                ? t("roadmap.horizon.now")
+                : group.horizon === "next"
+                  ? t("roadmap.horizon.next")
+                  : group.horizon === "later"
+                    ? t("roadmap.horizon.later")
+                    : t("roadmap.horizon.someday")
+            }
+            subtitle={`${group.items.length} ${
+              group.items.length === 1
+                ? t("roadmap.timeline.itemOne")
+                : t("roadmap.timeline.itemOther")
+            }`}
           >
             {containerWidth > 0 && (
               <BarChart
@@ -108,7 +122,7 @@ export function GanttTimeline({ items }: GanttTimelineProps) {
                   strokeDasharray="3 3"
                   strokeWidth={1.5}
                   label={{
-                    value: "Today",
+                    value: t("roadmap.timeline.today"),
                     position: "top",
                     fontSize: 10,
                     fill: "#EF4444",

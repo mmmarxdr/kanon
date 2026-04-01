@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
   --color-background: #FAFAFA;
@@ -32,6 +33,7 @@
   --color-on-surface: #1A1C1C;
   --color-on-primary-container: #0D9488;
   --color-primary-container: #CCFBF1;
+  --color-filter-active-foreground: #ECEEF0;
   --color-outline: #767586;
   --color-outline-variant: #bcc9c6;
   --radius: 0.375rem;
@@ -44,6 +46,43 @@
   --animate-fade-in: fade-in 0.2s ease-out;
   --animate-slide-up: slide-up 0.25s ease-out;
   --animate-command-palette-in: command-palette-in 0.15s ease-out;
+}
+
+:root.dark {
+  --color-background: #181b1d;
+  --color-foreground: #eceef0;
+  --color-muted: #222629;
+  --color-muted-foreground: #a9adb3;
+  --color-card: #202427;
+  --color-card-foreground: #eceef0;
+  --color-popover: #202427;
+  --color-popover-foreground: #eceef0;
+  --color-primary: #33c2b3;
+  --color-primary-foreground: #0a2622;
+  --color-secondary: #2a2f33;
+  --color-secondary-foreground: #dde1e6;
+  --color-accent: #1e3a37;
+  --color-accent-foreground: #72ddd2;
+  --color-destructive: #f05252;
+  --color-destructive-foreground: #fef2f2;
+  --color-success: #24c08f;
+  --color-warning: #f2a93b;
+  --color-border: #343a3f;
+  --color-input: #343a3f;
+  --color-ring: #33c2b3;
+  --color-primary-hover: #2aa89b;
+  --color-primary-light: #1e3a37;
+  --color-primary-fixed: #1e3a37;
+  --color-surface: #1b1f22;
+  --color-surface-container-low: #202427;
+  --color-surface-container-lowest: #181b1d;
+  --color-surface-container-high: #2a2f33;
+  --color-on-surface: #eceef0;
+  --color-on-primary-container: #72ddd2;
+  --color-primary-container: #1e3a37;
+  --color-filter-active-foreground: #ECEEF0;
+  --color-outline: #9398a0;
+  --color-outline-variant: #454d55;
 }
 
 body {

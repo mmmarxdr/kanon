@@ -4,6 +4,7 @@ import { authenticatedRoute } from "../_authenticated";
 import { fetchApi } from "@/lib/api-client";
 import { projectKeys } from "@/lib/query-keys";
 import type { Project } from "@/types/project";
+import { useI18n } from "@/hooks/use-i18n";
 
 export const projectSelectRoute = createRoute({
   path: "/workspaces/$workspaceId/projects",
@@ -12,6 +13,7 @@ export const projectSelectRoute = createRoute({
 });
 
 function ProjectSelectPage() {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const { workspaceId } = projectSelectRoute.useParams();
 
@@ -26,31 +28,31 @@ function ProjectSelectPage() {
       <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-sm">
         <div className="mb-6 flex items-center justify-between">
           <h1 className="text-2xl font-bold text-foreground">
-            Select Project
+            {t("projectSelect.title")}
           </h1>
           <button
             onClick={() => void navigate({ to: "/workspaces" })}
             className="text-sm text-muted-foreground hover:text-foreground"
           >
-            Back
+            {t("projectSelect.back")}
           </button>
         </div>
 
         {projectsQuery.isLoading && (
           <div className="py-8 text-center text-muted-foreground">
-            Loading projects...
+            {t("projectSelect.loading")}
           </div>
         )}
 
         {projectsQuery.error && (
           <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            Failed to load projects. Please try again.
+            {t("projectSelect.loadError")}
           </div>
         )}
 
         {projectsQuery.data && projectsQuery.data.length === 0 && (
           <div className="py-8 text-center text-muted-foreground">
-            No projects in this workspace yet.
+            {t("projectSelect.empty")}
           </div>
         )}
 

@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { CommentList } from "./comment-list";
 import { ActivityList } from "./activity-list";
 import type { Comment, ActivityLog } from "@/types/issue";
+import { useI18n } from "@/hooks/use-i18n";
 
 type Tab = "comments" | "activity";
 
@@ -26,6 +27,7 @@ export function TabsSection({
   onAddComment,
   isSubmittingComment,
 }: TabsSectionProps) {
+  const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<Tab>("comments");
 
   const handleTabChange = useCallback((tab: Tab) => {
@@ -37,13 +39,13 @@ export function TabsSection({
       {/* Tab bar */}
       <div className="flex border-b border-border" role="tablist">
         <TabButton
-          label="Comments"
+          label={t("issueDetail.tabs.comments")}
           count={comments.length}
           isActive={activeTab === "comments"}
           onClick={() => handleTabChange("comments")}
         />
         <TabButton
-          label="Activity"
+          label={t("issueDetail.tabs.activity")}
           count={activities.length}
           isActive={activeTab === "activity"}
           onClick={() => handleTabChange("activity")}

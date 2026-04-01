@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { Issue, IssuePriority, IssueType } from "@/types/issue";
+import { useI18n } from "@/hooks/use-i18n";
 
 /** Color mapping for priority indicator dots with glow aura. */
 const PRIORITY_COLORS: Record<IssuePriority, string> = {
@@ -32,6 +33,7 @@ interface IssueCardProps {
 }
 
 export function IssueCard({ issue, onSelect }: IssueCardProps) {
+  const { t } = useI18n();
   const cardRef = useRef<HTMLDivElement>(null);
   const {
     attributes,
@@ -57,6 +59,15 @@ export function IssueCard({ issue, onSelect }: IssueCardProps) {
       onSelect(issue.key, cardRef.current);
     }
   };
+
+  const priorityTitle =
+    issue.priority === "critical"
+      ? t("backlog.priority.critical")
+      : issue.priority === "high"
+        ? t("backlog.priority.high")
+        : issue.priority === "medium"
+          ? t("backlog.priority.medium")
+          : t("backlog.priority.low");
 
   return (
     <div
@@ -85,14 +96,14 @@ export function IssueCard({ issue, onSelect }: IssueCardProps) {
         {issue.children && issue.children.length > 0 && (
           <span
             className="ml-1 inline-flex items-center justify-center px-1.5 py-0.5 rounded-md bg-primary-container text-on-primary-container text-[10px] font-semibold"
-            title={`${issue.children.length} child issue${issue.children.length === 1 ? "" : "s"}`}
+            title={`${issue.children.length} ${issue.children.length === 1 ? t("board.issue.childOne") : t("board.issue.childOther")}`}
           >
             {issue.children.length}
           </span>
         )}
         <span
           className={`ml-auto inline-block w-1.5 h-1.5 rounded-full ${PRIORITY_COLORS[issue.priority]}`}
-          title={issue.priority}
+          title={priorityTitle}
         />
       </div>
 

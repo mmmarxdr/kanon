@@ -7,6 +7,7 @@ import { IssueDetailPanel } from "@/features/issue-detail/issue-detail-panel";
 import { NewIssueModal } from "@/features/board/new-issue-modal";
 import { useBoardStore } from "@/stores/board-store";
 import { useCurrentProject } from "@/hooks/use-current-project";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface BacklogSearchParams {
   issue?: string;
@@ -22,6 +23,7 @@ export const backlogRoute = createRoute({
 });
 
 function BacklogPage() {
+  const { t } = useI18n();
   const { projectKey } = backlogRoute.useParams();
   const { issue: selectedIssueKey } = backlogRoute.useSearch();
   const navigate = useNavigate();
@@ -63,7 +65,7 @@ function BacklogPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full p-8">
-        <p className="text-muted-foreground">Loading backlog...</p>
+        <p className="text-muted-foreground">{t("backlog.loading")}</p>
       </div>
     );
   }
@@ -72,7 +74,7 @@ function BacklogPage() {
     return (
       <div className="flex items-center justify-center h-full p-8">
         <p className="text-destructive-foreground">
-          Failed to load issues: {error.message}
+          {t("backlog.loadErrorPrefix")} {error.message}
         </p>
       </div>
     );
@@ -85,9 +87,9 @@ function BacklogPage() {
         {/* Breadcrumb & Title */}
         <div className="mb-3">
           <p className="text-xs text-muted-foreground mb-0.5">
-            Workspace &rsaquo; {currentProject?.name ?? projectKey}
+            {t("backlog.breadcrumbWorkspace")} &rsaquo; {currentProject?.name ?? projectKey}
           </p>
-          <h1 className="text-xl font-semibold text-foreground">Backlog</h1>
+          <h1 className="text-xl font-semibold text-foreground">{t("backlog.title")}</h1>
         </div>
 
         {/* Search + Filters + New Issue */}
@@ -112,7 +114,7 @@ function BacklogPage() {
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search issues..."
+              placeholder={t("backlog.searchPlaceholder")}
               className="w-full pl-9 pr-3 py-2 rounded-md border border-border bg-card text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary transition-all"
               data-testid="backlog-search"
             />
@@ -120,11 +122,12 @@ function BacklogPage() {
 
           {/* Issue count */}
           <span className="text-xs text-muted-foreground">
-            {issues?.length ?? 0} issues
+            {issues?.length ?? 0}{" "}
+            {(issues?.length ?? 0) === 1 ? t("backlog.issuesOne") : t("backlog.issuesOther")}
           </span>
 
           {/* View mode toggle */}
-          <div className="flex items-center rounded-md bg-[#E8E8E8] p-0.5">
+          <div className="flex items-center rounded-md bg-surface-container-high p-0.5">
             <button
               type="button"
               data-testid="backlog-view-grouped"
@@ -135,7 +138,7 @@ function BacklogPage() {
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              Grouped
+              {t("backlog.viewGrouped")}
             </button>
             <button
               type="button"
@@ -147,7 +150,7 @@ function BacklogPage() {
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              Flat
+              {t("backlog.viewFlat")}
             </button>
           </div>
 
@@ -162,7 +165,7 @@ function BacklogPage() {
                 data-testid="backlog-show-ungrouped"
               />
               <span className="text-xs text-muted-foreground">
-                Show ungrouped
+                {t("backlog.showUngrouped")}
               </span>
             </label>
           )}
@@ -185,7 +188,7 @@ function BacklogPage() {
             >
               <path d="M7 2v10M2 7h10" />
             </svg>
-            New Issue
+            {t("backlog.newIssue")}
           </button>
         </div>
       </div>

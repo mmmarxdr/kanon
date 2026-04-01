@@ -10,6 +10,7 @@ import { boardRoute } from "./routes/_authenticated/board";
 import { backlogRoute } from "./routes/_authenticated/backlog";
 import { profileRoute } from "./routes/_authenticated/profile";
 import { roadmapRoute } from "./routes/_authenticated/roadmap";
+import { settingsRoute } from "./routes/_authenticated/settings";
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -22,6 +23,7 @@ const routeTree = rootRoute.addChildren([
     backlogRoute,
     profileRoute,
     roadmapRoute,
+    settingsRoute,
   ]),
 ]);
 

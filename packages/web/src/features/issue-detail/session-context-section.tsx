@@ -1,4 +1,5 @@
 import { useIssueContextQuery } from "./use-issue-detail-queries";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface SessionContextSectionProps {
   issueKey: string;
@@ -14,6 +15,7 @@ interface SessionContextSectionProps {
 export function SessionContextSection({
   issueKey,
 }: SessionContextSectionProps) {
+  const { t } = useI18n();
   const { data } = useIssueContextQuery(issueKey);
 
   // Hidden when no data, loading, or empty sessions
@@ -27,7 +29,7 @@ export function SessionContextSection({
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-        AI Context
+        {t("issueDetail.aiContext")}
       </span>
       <div className="flex flex-col gap-2">
         {sessions.map((session) => (
@@ -64,6 +66,7 @@ function formatDate(iso: string): string {
 }
 
 function SessionCard({ session }: SessionCardProps) {
+  const { t } = useI18n();
   const nextStepsPreview = session.nextSteps.slice(0, 3);
   const remaining = session.nextSteps.length - 3;
 
@@ -89,7 +92,7 @@ function SessionCard({ session }: SessionCardProps) {
           ))}
           {remaining > 0 && (
             <li className="text-[10px] text-muted-foreground/70 pl-3">
-              +{remaining} more
+              +{remaining} {t("issueDetail.more")}
             </li>
           )}
         </ul>

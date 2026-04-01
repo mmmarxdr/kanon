@@ -3,6 +3,8 @@ import type { Issue, IssuePriority, IssueType, GroupSummary } from "@/types/issu
 import type { IssueState } from "@/stores/board-store";
 import { STATE_LABELS, useBoardStore } from "@/stores/board-store";
 import { humanizeGroupKey } from "@/lib/humanize-group-key";
+import { useI18n } from "@/hooks/use-i18n";
+import type { MessageKey } from "@/i18n/messages";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -15,25 +17,11 @@ const PRIORITY_COLORS: Record<IssuePriority, string> = {
   low: "bg-gray-400",
 };
 
-const PRIORITY_LABELS: Record<IssuePriority, string> = {
-  critical: "Critical",
-  high: "High",
-  medium: "Medium",
-  low: "Low",
-};
-
 const TYPE_COLORS: Record<IssueType, string> = {
   feature: "bg-primary/10 text-primary",
   bug: "bg-red-50 text-red-600",
   task: "bg-secondary text-muted-foreground",
   spike: "bg-violet-50 text-violet-600",
-};
-
-const TYPE_LABELS: Record<IssueType, string> = {
-  feature: "Feature",
-  bug: "Bug",
-  task: "Task",
-  spike: "Spike",
 };
 
 const STATE_COLORS: Record<IssueState, string> = {
@@ -121,21 +109,21 @@ function compareIssues(
 // Relative date helper
 // ---------------------------------------------------------------------------
 
-function relativeDate(dateStr: string): string {
+function relativeDate(dateStr: string, t: (key: MessageKey) => string): string {
   const now = Date.now();
   const then = new Date(dateStr).getTime();
   const diffSec = Math.floor((now - then) / 1000);
 
-  if (diffSec < 60) return "just now";
+  if (diffSec < 60) return t("backlog.relative.justNow");
   const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffMin < 60) return `${diffMin}${t("backlog.relative.minutesAgoSuffix")}`;
   const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffHr < 24) return `${diffHr}${t("backlog.relative.hoursAgoSuffix")}`;
   const diffDay = Math.floor(diffHr / 24);
-  if (diffDay < 30) return `${diffDay}d ago`;
+  if (diffDay < 30) return `${diffDay}${t("backlog.relative.daysAgoSuffix")}`;
   const diffMonth = Math.floor(diffDay / 30);
-  if (diffMonth < 12) return `${diffMonth}mo ago`;
-  return `${Math.floor(diffMonth / 12)}y ago`;
+  if (diffMonth < 12) return `${diffMonth}${t("backlog.relative.monthsAgoSuffix")}`;
+  return `${Math.floor(diffMonth / 12)}${t("backlog.relative.yearsAgoSuffix")}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +208,23 @@ function IssueRow({
   indented?: boolean;
   onSelectIssue: (key: string, element: HTMLElement) => void;
 }) {
+  const { t } = useI18n();
+  const typeLabel =
+    issue.type === "feature"
+      ? t("backlog.type.feature")
+      : issue.type === "bug"
+        ? t("backlog.type.bug")
+        : issue.type === "task"
+          ? t("backlog.type.task")
+          : t("backlog.type.spike");
+  const priorityLabel =
+    issue.priority === "critical"
+      ? t("backlog.priority.critical")
+      : issue.priority === "high"
+        ? t("backlog.priority.high")
+        : issue.priority === "medium"
+          ? t("backlog.priority.medium")
+          : t("backlog.priority.low");
   return (
     <tr
       key={issue.id}
@@ -250,7 +255,7 @@ function IssueRow({
         <span
           className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold ${TYPE_COLORS[issue.type]}`}
         >
-          {TYPE_LABELS[issue.type]}
+          {typeLabel}
         </span>
       </td>
 
@@ -261,7 +266,7 @@ function IssueRow({
             className={`inline-block w-2 h-2 rounded-full ${PRIORITY_COLORS[issue.priority]}`}
           />
           <span className="text-xs text-muted-foreground">
-            {PRIORITY_LABELS[issue.priority]}
+            {priorityLabel}
           </span>
         </div>
       </td>
@@ -287,7 +292,7 @@ function IssueRow({
             </span>
           </div>
         ) : (
-          <span className="text-xs text-muted-foreground/50">--</span>
+          <span className="text-xs text-muted-foreground/50">{t("common.none")}</span>
         )}
       </td>
 
@@ -297,7 +302,7 @@ function IssueRow({
           className="text-xs text-muted-foreground"
           title={new Date(issue.createdAt).toLocaleString()}
         >
-          {relativeDate(issue.createdAt)}
+          {relativeDate(issue.createdAt, t)}
         </span>
       </td>
 
@@ -340,6 +345,7 @@ function GroupHeaderRow({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useI18n();
   // Count completed issues (archived state)
   const completedLabel =
     group.latestState === "archived"
@@ -389,7 +395,7 @@ function GroupHeaderRow({
           className="text-xs text-muted-foreground"
           title={new Date(group.updatedAt).toLocaleString()}
         >
-          {relativeDate(group.updatedAt)}
+          {relativeDate(group.updatedAt, t)}
         </span>
       </td>
 
@@ -413,18 +419,17 @@ interface BacklogTableProps {
 
 interface ColumnDef {
   field: SortField;
-  label: string;
   className: string;
 }
 
 const COLUMNS: ColumnDef[] = [
-  { field: "key", label: "Key", className: "w-[100px]" },
-  { field: "title", label: "Title", className: "min-w-[200px]" },
-  { field: "type", label: "Type", className: "w-[90px]" },
-  { field: "priority", label: "Priority", className: "w-[110px]" },
-  { field: "state", label: "State", className: "w-[100px]" },
-  { field: "assignee", label: "Assignee", className: "w-[120px]" },
-  { field: "createdAt", label: "Created", className: "w-[100px]" },
+  { field: "key", className: "w-[100px]" },
+  { field: "title", className: "min-w-[200px]" },
+  { field: "type", className: "w-[90px]" },
+  { field: "priority", className: "w-[110px]" },
+  { field: "state", className: "w-[100px]" },
+  { field: "assignee", className: "w-[120px]" },
+  { field: "createdAt", className: "w-[100px]" },
 ];
 
 export function BacklogTable({
@@ -433,6 +438,7 @@ export function BacklogTable({
   onSelectIssue,
   groups,
 }: BacklogTableProps) {
+  const { t } = useI18n();
   const viewMode = useBoardStore((s) => s.viewMode);
   const showUngrouped = useBoardStore((s) => s.showUngrouped);
 
@@ -536,10 +542,20 @@ export function BacklogTable({
   if (!hasContent) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
-        <p className="text-muted-foreground text-sm">No issues found</p>
+        <p className="text-muted-foreground text-sm">{t("backlog.noIssuesFound")}</p>
       </div>
     );
   }
+
+  const headerLabel = (field: SortField): string => {
+    if (field === "key") return t("backlog.table.key");
+    if (field === "title") return t("backlog.table.title");
+    if (field === "type") return t("backlog.table.type");
+    if (field === "priority") return t("backlog.table.priority");
+    if (field === "state") return t("backlog.table.state");
+    if (field === "assignee") return t("backlog.table.assignee");
+    return t("backlog.table.created");
+  };
 
   return (
     <table className="w-full border-collapse">
@@ -553,7 +569,7 @@ export function BacklogTable({
               onClick={() => handleSort(col.field)}
             >
               <div className="flex items-center gap-1">
-                <span>{col.label}</span>
+                <span>{headerLabel(col.field)}</span>
                 <SortIcon
                   active={sortField === col.field}
                   direction={sortDir}
@@ -563,7 +579,7 @@ export function BacklogTable({
           ))}
           {/* Labels column — not sortable */}
           <th className="min-w-[120px] text-left text-xs uppercase tracking-wider text-muted-foreground font-medium py-2.5 px-4">
-            Labels
+            {t("backlog.labels")}
           </th>
         </tr>
       </thead>
@@ -597,7 +613,7 @@ export function BacklogTable({
                     className="py-2 px-4"
                   >
                     <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                      Ungrouped ({ungroupedIssues.length})
+                      {t("backlog.ungrouped")} ({ungroupedIssues.length})
                     </span>
                   </td>
                 </tr>

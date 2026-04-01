@@ -14,6 +14,7 @@ import "@xyflow/react/dist/style.css";
 import * as dagre from "@dagrejs/dagre";
 import type { RoadmapItem } from "@/types/roadmap";
 import { RoadmapNode } from "./roadmap-node";
+import { useI18n } from "@/hooks/use-i18n";
 
 const NODE_WIDTH = 220;
 const NODE_HEIGHT = 80;
@@ -88,6 +89,7 @@ function layoutGraph(
 }
 
 export default function GraphView({ items, onSelectItem }: GraphViewProps) {
+  const { t } = useI18n();
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
     () => layoutGraph(items, onSelectItem),
     [items, onSelectItem],
@@ -105,7 +107,7 @@ export default function GraphView({ items, onSelectItem }: GraphViewProps) {
     return (
       <div className="flex items-center justify-center h-full">
         <p className="text-muted-foreground text-sm">
-          No roadmap items to display.
+          {t("roadmap.graph.empty")}
         </p>
       </div>
     );
@@ -116,8 +118,7 @@ export default function GraphView({ items, onSelectItem }: GraphViewProps) {
       {!hasDependencies && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-card/90 backdrop-blur-sm border border-border rounded-lg px-4 py-2 shadow-sm">
           <p className="text-sm text-muted-foreground">
-            No dependencies yet. Open an item and add dependencies to see
-            connections here.
+            {t("roadmap.graph.noDependenciesHint")}
           </p>
         </div>
       )}

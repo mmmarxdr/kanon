@@ -1,16 +1,24 @@
 import {
   useBoardStore,
   BOARD_COLUMNS,
-  COLUMN_LABELS,
 } from "@/stores/board-store";
+import { useI18n } from "@/hooks/use-i18n";
 
 export function ColumnToggle() {
+  const { t } = useI18n();
   const { hiddenColumns, toggleColumn } = useBoardStore();
+  const columnLabel = (column: (typeof BOARD_COLUMNS)[number]): string => {
+    if (column === "backlog") return t("board.column.backlog");
+    if (column === "analysis") return t("board.column.analysis");
+    if (column === "in_progress") return t("board.column.inProgress");
+    if (column === "testing") return t("board.column.testing");
+    return t("board.column.finished");
+  };
 
   return (
     <div className="inline-flex items-center gap-0 rounded-md bg-surface-container-high overflow-hidden">
       <span className="text-[0.6875rem] font-medium text-on-surface/50 uppercase tracking-wider px-3">
-        Columns
+        {t("board.columns")}
       </span>
       {BOARD_COLUMNS.map((column) => {
         const isVisible = !hiddenColumns.has(column);
@@ -25,9 +33,13 @@ export function ColumnToggle() {
                   ? "bg-primary text-primary-foreground"
                   : "text-on-surface/50 hover:text-on-surface hover:bg-on-surface/5"
               }`}
-            title={isVisible ? `Hide ${COLUMN_LABELS[column]}` : `Show ${COLUMN_LABELS[column]}`}
+            title={
+              isVisible
+                ? `${t("board.column.hide")} ${columnLabel(column)}`
+                : `${t("board.column.show")} ${columnLabel(column)}`
+            }
           >
-            {COLUMN_LABELS[column]}
+            {columnLabel(column)}
           </button>
         );
       })}

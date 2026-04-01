@@ -3,6 +3,8 @@ import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { issueKeys } from "@/lib/query-keys";
 import type { Issue } from "@/types/issue";
+import { useI18n } from "@/hooks/use-i18n";
+import { useLastProjectStore } from "@/stores/last-project-store";
 
 interface CommandPaletteProps {
   onClose: () => void;
@@ -26,6 +28,7 @@ interface CommandItem {
  * - Create new issue action
  */
 export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) {
+  const { t } = useI18n();
   const [search, setSearch] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -81,10 +84,19 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
     }
 
     // Static actions
+    const resolveProjectKey = (): string => {
+      const stored = useLastProjectStore.getState().lastProjectKey;
+      if (stored) {
+        return stored;
+      }
+      const firstIssue = cachedIssues[0];
+      return firstIssue?.key.split("-")[0] ?? "";
+    };
+
     const actions: { id: string; label: string; icon: string; onSelect: () => void }[] = [
       {
         id: "create-issue",
-        label: "Create new issue",
+        label: t("palette.createIssue"),
         icon: "+",
         onSelect: () => {
           onClose();
@@ -93,13 +105,11 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
       },
       {
         id: "go-board",
-        label: "Go to Board",
+        label: t("palette.goBoard"),
         icon: "\u25A6",
         onSelect: () => {
-          // Navigate to the most recent project board or workspace select
-          const firstIssue = cachedIssues[0];
-          if (firstIssue) {
-            const projectKey = firstIssue.key.split("-")[0] ?? "";
+          const projectKey = resolveProjectKey();
+          if (projectKey) {
             void navigate({
               to: "/board/$projectKey",
               params: { projectKey },
@@ -110,17 +120,25 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
       },
       {
         id: "go-backlog",
-        label: "Go to Backlog",
+        label: t("palette.goBacklog"),
         icon: "\u2630",
         onSelect: () => {
+          const projectKey = resolveProjectKey();
+          if (projectKey) {
+            void navigate({
+              to: "/backlog/$projectKey",
+              params: { projectKey },
+            });
+          }
           onClose();
         },
       },
       {
         id: "go-settings",
-        label: "Go to Settings",
+        label: t("palette.goSettings"),
         icon: "\u2699",
         onSelect: () => {
+          void navigate({ to: "/settings" });
           onClose();
         },
       },
@@ -141,7 +159,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
     }
 
     return result;
-  }, [search, cachedIssues, navigate, onClose, onCreateIssue]);
+  }, [search, cachedIssues, navigate, onClose, onCreateIssue, t]);
 
   // Reset selection when items change
   useEffect(() => {
@@ -215,7 +233,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Command palette"
+        aria-label={t("palette.dialogTitle")}
         data-testid="command-palette"
         className="relative bg-card rounded-xl shadow-2xl max-w-xl w-full mx-4 mt-[20vh] h-fit animate-command-palette-in"
         onKeyDown={handleKeyDown}
@@ -240,7 +258,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Type a command or search..."
+            placeholder={t("palette.placeholder")}
             autoFocus
             className="flex-1 bg-transparent text-lg text-foreground placeholder:text-muted-foreground py-3 px-3 focus:outline-none"
             data-testid="command-palette-input"
@@ -254,7 +272,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
         <div ref={listRef} className="max-h-80 overflow-y-auto py-2">
           {items.length === 0 ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-              No results found
+              {t("palette.noResults")}
             </div>
           ) : (
             <>
@@ -262,7 +280,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
               {issueItems.length > 0 && (
                 <div>
                   <div className="text-[11px] uppercase tracking-wider text-muted-foreground px-4 py-2 font-medium">
-                    Issues
+                    {t("palette.sectionIssues")}
                   </div>
                   {issueItems.map((item, i) => (
                     <button
@@ -290,7 +308,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
               {actionItems.length > 0 && (
                 <div>
                   <div className="text-[11px] uppercase tracking-wider text-muted-foreground px-4 py-2 font-medium">
-                    Actions
+                    {t("palette.sectionActions")}
                   </div>
                   {actionItems.map((item, i) => {
                     const globalIndex = actionIndexOffset + i;
@@ -324,15 +342,15 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
         <div className="border-t border-border px-4 py-2 flex items-center gap-4 text-[11px] text-muted-foreground">
           <span>
             <kbd className="font-mono bg-muted px-1 py-0.5 rounded mr-1">&uarr;&darr;</kbd>
-            Navigate
+            {t("palette.navigate")}
           </span>
           <span>
             <kbd className="font-mono bg-muted px-1 py-0.5 rounded mr-1">&crarr;</kbd>
-            Select
+            {t("palette.select")}
           </span>
           <span>
             <kbd className="font-mono bg-muted px-1 py-0.5 rounded mr-1">Esc</kbd>
-            Close
+            {t("palette.close")}
           </span>
         </div>
       </div>

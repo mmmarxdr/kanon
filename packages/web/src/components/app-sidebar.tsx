@@ -1,11 +1,14 @@
 import { useLocation, Link } from "@tanstack/react-router";
 import { useSidebarStore } from "@/stores/sidebar-store";
 import { useAuthStore } from "@/stores/auth-store";
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useSyncEvents } from "@/hooks/use-sync-events";
 import { SyncIndicator } from "@/components/sync-indicator";
 import { useProjectsQuery } from "@/hooks/use-projects-query";
 import { useActiveWorkspaceId } from "@/hooks/use-workspace-query";
+import { useLastProjectStore } from "@/stores/last-project-store";
+import { useI18n } from "@/hooks/use-i18n";
+import type { MessageKey } from "@/i18n/messages";
 
 // ---------------------------------------------------------------------------
 // Inline SVG Icons (20x20)
@@ -174,7 +177,7 @@ function LogoutIcon({ className }: { className?: string }) {
 // ---------------------------------------------------------------------------
 
 interface NavItem {
-  label: string;
+  labelKey: MessageKey;
   icon: React.ComponentType<{ className?: string }>;
   /** If href starts with "/board", it's considered active when pathname includes /board */
   href: string;
@@ -183,11 +186,11 @@ interface NavItem {
 
 function buildNavItems(projectKey: string): NavItem[] {
   return [
-    { label: "Board", icon: BoardIcon, href: `/board/${projectKey}`, matchPrefix: "/board" },
-    { label: "Backlog", icon: BacklogIcon, href: `/backlog/${projectKey}`, matchPrefix: "/backlog" },
-    { label: "Roadmap", icon: RoadmapIcon, href: `/roadmap/${projectKey}`, matchPrefix: "/roadmap" },
-    { label: "Cycles", icon: CyclesIcon, href: "/cycles", matchPrefix: "/cycles" },
-    { label: "Settings", icon: SettingsIcon, href: "/settings", matchPrefix: "/settings" },
+    { labelKey: "nav.board", icon: BoardIcon, href: `/board/${projectKey}`, matchPrefix: "/board" },
+    { labelKey: "nav.backlog", icon: BacklogIcon, href: `/backlog/${projectKey}`, matchPrefix: "/backlog" },
+    { labelKey: "nav.roadmap", icon: RoadmapIcon, href: `/roadmap/${projectKey}`, matchPrefix: "/roadmap" },
+    { labelKey: "nav.cycles", icon: CyclesIcon, href: "/cycles", matchPrefix: "/cycles" },
+    { labelKey: "nav.settings", icon: SettingsIcon, href: "/settings", matchPrefix: "/settings" },
   ];
 }
 
@@ -230,6 +233,7 @@ function Tooltip({
 // ---------------------------------------------------------------------------
 
 export function AppSidebar() {
+  const { t } = useI18n();
   const collapsed = useSidebarStore((s) => s.collapsed);
   const toggleSidebar = useSidebarStore((s) => s.toggleSidebar);
   const user = useAuthStore((s) => s.user);
@@ -247,11 +251,34 @@ export function AppSidebar() {
     triggerSync,
   } = useSyncEvents();
 
-  // Extract projectKey from URL (e.g., /board/KAN or /backlog/KAN or /roadmap/KAN → KAN)
-  const projectKey = location.pathname.match(/^\/(board|backlog|roadmap)\/([^/]+)/)?.[2] ?? "";
-  const navItems = buildNavItems(projectKey);
+  const lastStored = useLastProjectStore((s) => s.lastProjectKey);
+  const setLastProjectKey = useLastProjectStore((s) => s.setLastProjectKey);
 
-  const displayName = user?.displayName ?? user?.email ?? "User";
+  const fromUrl =
+    location.pathname.match(/^\/(board|backlog|roadmap)\/([^/]+)/)?.[2] ?? "";
+
+  useEffect(() => {
+    if (fromUrl) {
+      setLastProjectKey(fromUrl);
+    }
+  }, [fromUrl, setLastProjectKey]);
+
+  const effectiveProjectKey = useMemo(() => {
+    if (fromUrl) {
+      return fromUrl;
+    }
+    if (projectsLoading && lastStored) {
+      return lastStored;
+    }
+    if (lastStored && projects?.some((p) => p.key === lastStored)) {
+      return lastStored;
+    }
+    return projects?.[0]?.key ?? "";
+  }, [fromUrl, lastStored, projects, projectsLoading]);
+
+  const navItems = buildNavItems(effectiveProjectKey);
+
+  const displayName = user?.displayName ?? user?.email ?? t("nav.userFallback");
   const initials = displayName
     .split(" ")
     .map((w) => w[0])
@@ -277,7 +304,9 @@ export function AppSidebar() {
         <button
           onClick={toggleSidebar}
           className={`p-1 rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors ${collapsed ? "mx-auto" : ""}`}
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-label={
+            collapsed ? t("nav.expandSidebar") : t("nav.collapseSidebar")
+          }
         >
           <ChevronLeftIcon
             className={`transition-transform duration-300 ${collapsed ? "rotate-180" : ""}`}
@@ -288,10 +317,13 @@ export function AppSidebar() {
       {/* ── Navigation ── */}
       <nav className="flex flex-col gap-0.5 px-2 mt-3">
         {navItems.map((item) => {
+          const label = t(item.labelKey);
           const isActive = location.pathname.startsWith(item.matchPrefix);
           const Icon = item.icon;
-          const hasRoute =
-            item.matchPrefix === "/board" || item.matchPrefix === "/backlog" || item.matchPrefix === "/roadmap";
+          const isProjectNav =
+            item.matchPrefix === "/board" ||
+            item.matchPrefix === "/backlog" ||
+            item.matchPrefix === "/roadmap";
 
           const linkContent = (
             <div
@@ -304,20 +336,51 @@ export function AppSidebar() {
               }`}
             >
               <Icon className="shrink-0" />
-              {!collapsed && <span>{item.label}</span>}
+              {!collapsed && <span>{label}</span>}
             </div>
           );
 
-          if (hasRoute) {
+          if (item.matchPrefix === "/settings") {
             return (
-              <Tooltip key={item.label} label={item.label} show={collapsed}>
-                <Link to={item.href}>{linkContent}</Link>
+              <Tooltip key={item.labelKey} label={label} show={collapsed}>
+                <Link to="/settings">{linkContent}</Link>
+              </Tooltip>
+            );
+          }
+
+          if (isProjectNav) {
+            if (!effectiveProjectKey) {
+              return (
+                <Tooltip key={item.labelKey} label={label} show={collapsed}>
+                  <div
+                    className="opacity-50 cursor-not-allowed"
+                    aria-disabled="true"
+                    title={t("nav.noProject")}
+                  >
+                    {linkContent}
+                  </div>
+                </Tooltip>
+              );
+            }
+
+            const to =
+              item.matchPrefix === "/board"
+                ? "/board/$projectKey"
+                : item.matchPrefix === "/backlog"
+                  ? "/backlog/$projectKey"
+                  : "/roadmap/$projectKey";
+
+            return (
+              <Tooltip key={item.labelKey} label={label} show={collapsed}>
+                <Link to={to} params={{ projectKey: effectiveProjectKey }}>
+                  {linkContent}
+                </Link>
               </Tooltip>
             );
           }
 
           return (
-            <Tooltip key={item.label} label={item.label} show={collapsed}>
+            <Tooltip key={item.labelKey} label={label} show={collapsed}>
               {linkContent}
             </Tooltip>
           );
@@ -328,7 +391,7 @@ export function AppSidebar() {
       <div className="mt-6 px-2">
         {!collapsed && (
           <p className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium px-3 mb-1">
-            Projects
+            {t("nav.projects")}
           </p>
         )}
         <div className="flex flex-col gap-0.5">
@@ -345,10 +408,10 @@ export function AppSidebar() {
             </>
           )}
           {!projectsLoading && projects && projects.length === 0 && !collapsed && (
-            <p className="px-3 py-1.5 text-sm text-muted-foreground">No projects</p>
+            <p className="px-3 py-1.5 text-sm text-muted-foreground">{t("nav.noProjects")}</p>
           )}
           {!projectsLoading && projects && projects.map((project) => {
-            const isActiveProject = projectKey === project.key;
+            const isActiveProject = effectiveProjectKey === project.key;
             return (
               <Tooltip
                 key={project.id}
@@ -411,17 +474,17 @@ export function AppSidebar() {
           )}
           {!collapsed && (
             <>
-              <Tooltip label="Profile" show={false}>
+              <Tooltip label={t("nav.profile")} show={false}>
                 <Link to="/profile">
                   <button
                     className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-                    aria-label="Profile"
+                    aria-label={t("nav.profile")}
                   >
                     <UserIcon />
                   </button>
                 </Link>
               </Tooltip>
-              <Tooltip label="Logout" show={false}>
+              <Tooltip label={t("nav.logout")} show={false}>
                 <button
                   onClick={() => {
                     void logoutFn().then(() => {
@@ -429,7 +492,7 @@ export function AppSidebar() {
                     });
                   }}
                   className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-                  aria-label="Logout"
+                  aria-label={t("nav.logout")}
                 >
                   <LogoutIcon />
                 </button>

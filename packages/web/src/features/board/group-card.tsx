@@ -2,8 +2,9 @@ import { useRef } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { GroupSummary } from "@/types/issue";
-import { STATE_LABELS, type IssueState } from "@/stores/board-store";
+import { type IssueState } from "@/stores/board-store";
 import { humanizeGroupKey } from "@/lib/humanize-group-key";
+import { useI18n } from "@/hooks/use-i18n";
 
 /** Color mapping for state indicator dots. */
 const STATE_COLORS: Record<IssueState, string> = {
@@ -24,6 +25,7 @@ interface GroupCardProps {
 }
 
 export function GroupCard({ group, onClick }: GroupCardProps) {
+  const { t } = useI18n();
   const cardRef = useRef<HTMLDivElement>(null);
   const {
     attributes,
@@ -51,6 +53,24 @@ export function GroupCard({ group, onClick }: GroupCardProps) {
   };
 
   const displayTitle = group.title || humanizeGroupKey(group.groupKey);
+  const latestStateLabel =
+    group.latestState === "backlog"
+      ? t("board.state.backlog")
+      : group.latestState === "explore"
+        ? t("board.state.explore")
+        : group.latestState === "propose"
+          ? t("board.state.propose")
+          : group.latestState === "design"
+            ? t("board.state.design")
+            : group.latestState === "spec"
+              ? t("board.state.spec")
+              : group.latestState === "tasks"
+                ? t("board.state.tasks")
+                : group.latestState === "apply"
+                  ? t("board.state.apply")
+                  : group.latestState === "verify"
+                    ? t("board.state.verify")
+                    : t("board.state.archived");
 
   return (
     <div
@@ -76,7 +96,7 @@ export function GroupCard({ group, onClick }: GroupCardProps) {
         </span>
         <span
           className="ml-auto inline-flex items-center justify-center px-1.5 py-0.5 rounded-md bg-primary-container text-on-primary-container text-[10px] font-semibold"
-          title={`${group.count} issue${group.count === 1 ? "" : "s"} in group`}
+          title={`${group.count} ${group.count === 1 ? t("backlog.issuesOne") : t("backlog.issuesOther")} ${t("board.group.inGroup")}`}
         >
           {group.count}
         </span>
@@ -93,7 +113,7 @@ export function GroupCard({ group, onClick }: GroupCardProps) {
           className={`inline-block w-1.5 h-1.5 rounded-full ${STATE_COLORS[group.latestState] ?? "bg-gray-400"}`}
         />
         <span className="text-[0.6875rem] text-on-surface/50 tracking-wide">
-          {STATE_LABELS[group.latestState]}
+          {latestStateLabel}
         </span>
       </div>
     </div>

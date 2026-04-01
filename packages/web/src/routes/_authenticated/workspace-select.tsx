@@ -5,6 +5,7 @@ import { authenticatedRoute } from "../_authenticated";
 import { fetchApi } from "@/lib/api-client";
 import { useAuthStore } from "@/stores/auth-store";
 import { workspaceKeys } from "@/lib/query-keys";
+import { useI18n } from "@/hooks/use-i18n";
 
 export const workspaceSelectRoute = createRoute({
   path: "/workspaces",
@@ -27,6 +28,7 @@ interface Project {
 }
 
 function WorkspaceSelectPage() {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const didAutoRedirect = useRef(false);
@@ -75,7 +77,7 @@ function WorkspaceSelectPage() {
       <div className="flex min-h-screen items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          <p className="text-sm text-muted-foreground">Loading workspace...</p>
+          <p className="text-sm text-muted-foreground">{t("workspaceSelect.loading")}</p>
         </div>
       </div>
     );
@@ -94,7 +96,7 @@ function WorkspaceSelectPage() {
       <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-sm">
         <div className="mb-6 flex items-center justify-between">
           <h1 className="text-2xl font-bold text-foreground">
-            Select Workspace
+            {t("workspaceSelect.title")}
           </h1>
           <button
             onClick={() => {
@@ -103,25 +105,25 @@ function WorkspaceSelectPage() {
             }}
             className="text-sm text-muted-foreground hover:text-foreground"
           >
-            Sign out
+            {t("workspaceSelect.signOut")}
           </button>
         </div>
 
         {user && (
           <p className="mb-4 text-sm text-muted-foreground">
-            Signed in as {user.email}
+            {t("workspaceSelect.signedInAs")} {user.email}
           </p>
         )}
 
         {workspacesQuery.error && (
           <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            Failed to load workspaces. Please try again.
+            {t("workspaceSelect.loadError")}
           </div>
         )}
 
         {workspacesQuery.data && workspacesQuery.data.length === 0 && (
           <div className="py-8 text-center text-muted-foreground">
-            No workspaces found. You may need to be invited to a workspace.
+            {t("workspaceSelect.empty")}
           </div>
         )}
 

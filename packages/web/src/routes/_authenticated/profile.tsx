@@ -4,6 +4,7 @@ import { authenticatedRoute } from "../_authenticated";
 import { useAuthStore } from "@/stores/auth-store";
 import { fetchApi, ApiError } from "@/lib/api-client";
 import type { AuthUser } from "@/stores/auth-store";
+import { useI18n } from "@/hooks/use-i18n";
 
 export const profileRoute = createRoute({
   path: "/profile",
@@ -19,6 +20,7 @@ interface ProfileData {
 }
 
 function ProfilePage() {
+  const { t } = useI18n();
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
 
@@ -61,12 +63,12 @@ function ProfilePage() {
         });
       }
 
-      setProfileSuccess("Profile updated successfully.");
+      setProfileSuccess(t("profile.updateSuccess"));
     } catch (err) {
       if (err instanceof ApiError) {
         setProfileError(err.message);
       } else {
-        setProfileError("Failed to update profile.");
+        setProfileError(t("profile.updateError"));
       }
     } finally {
       setProfileSaving(false);
@@ -79,12 +81,12 @@ function ProfilePage() {
     setPasswordSuccess(null);
 
     if (newPassword !== confirmPassword) {
-      setPasswordError("New passwords do not match.");
+      setPasswordError(t("profile.passwordMismatch"));
       return;
     }
 
     if (newPassword.length < 8) {
-      setPasswordError("New password must be at least 8 characters.");
+      setPasswordError(t("profile.passwordTooShort"));
       return;
     }
 
@@ -96,7 +98,7 @@ function ProfilePage() {
         body: JSON.stringify({ currentPassword, newPassword }),
       });
 
-      setPasswordSuccess("Password changed successfully.");
+      setPasswordSuccess(t("profile.passwordSuccess"));
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
@@ -104,7 +106,7 @@ function ProfilePage() {
       if (err instanceof ApiError) {
         setPasswordError(err.message);
       } else {
-        setPasswordError("Failed to change password.");
+        setPasswordError(t("profile.passwordError"));
       }
     } finally {
       setPasswordSaving(false);
@@ -123,7 +125,7 @@ function ProfilePage() {
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="mx-auto max-w-lg space-y-8">
-        <h1 className="text-2xl font-bold text-foreground">Profile</h1>
+        <h1 className="text-2xl font-bold text-foreground">{t("profile.title")}</h1>
 
         {/* User Info Card */}
         <div className="rounded-lg border border-border bg-card p-6">
@@ -131,7 +133,7 @@ function ProfilePage() {
             {user.avatarUrl ? (
               <img
                 src={user.avatarUrl}
-                alt="Avatar"
+                alt={t("profile.avatarAlt")}
                 className="h-16 w-16 rounded-full object-cover"
               />
             ) : (
@@ -153,15 +155,15 @@ function ProfilePage() {
                 htmlFor="displayName"
                 className="text-sm font-medium text-card-foreground"
               >
-                Display Name
+                {t("profile.displayName")}
               </label>
               <input
                 id="displayName"
                 type="text"
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
-                placeholder="Your display name"
-                className="w-full rounded-md border border-input bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+                placeholder={t("profile.placeholderDisplayName")}
+                className="w-full rounded-md border border-input bg-surface-container-high px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
               />
             </div>
 
@@ -170,15 +172,15 @@ function ProfilePage() {
                 htmlFor="avatarUrl"
                 className="text-sm font-medium text-card-foreground"
               >
-                Avatar URL
+                {t("profile.avatarUrl")}
               </label>
               <input
                 id="avatarUrl"
                 type="url"
                 value={avatarUrl}
                 onChange={(e) => setAvatarUrl(e.target.value)}
-                placeholder="https://example.com/avatar.png"
-                className="w-full rounded-md border border-input bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+                placeholder={t("profile.placeholderAvatarUrl")}
+                className="w-full rounded-md border border-input bg-surface-container-high px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
               />
             </div>
 
@@ -199,7 +201,7 @@ function ProfilePage() {
               disabled={profileSaving}
               className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200 ease-out"
             >
-              {profileSaving ? "Saving..." : "Save Profile"}
+              {profileSaving ? t("profile.saving") : t("profile.save")}
             </button>
           </form>
         </div>
@@ -207,7 +209,7 @@ function ProfilePage() {
         {/* Change Password Card */}
         <div className="rounded-lg border border-border bg-card p-6">
           <h2 className="text-lg font-semibold text-foreground mb-4">
-            Change Password
+            {t("profile.passwordTitle")}
           </h2>
 
           <form onSubmit={handlePasswordSubmit} className="space-y-4">
@@ -216,16 +218,16 @@ function ProfilePage() {
                 htmlFor="currentPassword"
                 className="text-sm font-medium text-card-foreground"
               >
-                Current Password
+                {t("profile.currentPassword")}
               </label>
               <input
                 id="currentPassword"
                 type="password"
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
-                placeholder="Enter current password"
+                placeholder={t("profile.placeholderCurrentPassword")}
                 required
-                className="w-full rounded-md border border-input bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+                className="w-full rounded-md border border-input bg-surface-container-high px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
               />
             </div>
 
@@ -234,17 +236,17 @@ function ProfilePage() {
                 htmlFor="newPassword"
                 className="text-sm font-medium text-card-foreground"
               >
-                New Password
+                {t("profile.newPassword")}
               </label>
               <input
                 id="newPassword"
                 type="password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="Enter new password (min 8 chars)"
+                placeholder={t("profile.placeholderNewPassword")}
                 required
                 minLength={8}
-                className="w-full rounded-md border border-input bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+                className="w-full rounded-md border border-input bg-surface-container-high px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
               />
             </div>
 
@@ -253,16 +255,16 @@ function ProfilePage() {
                 htmlFor="confirmPassword"
                 className="text-sm font-medium text-card-foreground"
               >
-                Confirm New Password
+                {t("profile.confirmPassword")}
               </label>
               <input
                 id="confirmPassword"
                 type="password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Confirm new password"
+                placeholder={t("profile.placeholderConfirmPassword")}
                 required
-                className="w-full rounded-md border border-input bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+                className="w-full rounded-md border border-input bg-surface-container-high px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
               />
             </div>
 
@@ -283,7 +285,9 @@ function ProfilePage() {
               disabled={passwordSaving}
               className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200 ease-out"
             >
-              {passwordSaving ? "Changing..." : "Change Password"}
+              {passwordSaving
+                ? t("profile.changingPassword")
+                : t("profile.changePassword")}
             </button>
           </form>
         </div>

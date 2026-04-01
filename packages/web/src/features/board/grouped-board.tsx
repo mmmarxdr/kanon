@@ -18,11 +18,11 @@ import {
   useBoardStore,
   BOARD_COLUMNS,
   COLUMN_DEFAULT_STATE,
-  COLUMN_LABELS,
   COLUMN_STATE_MAP,
   type BoardColumn as BoardColumnType,
 } from "@/stores/board-store";
 import type { GroupSummary, Issue } from "@/types/issue";
+import { useI18n } from "@/hooks/use-i18n";
 import { groupSummariesByColumn, groupByColumn } from "./use-issues-query";
 import { useGroupTransitionMutation } from "./use-group-transition-mutation";
 import { useTransitionMutation } from "./use-transition-mutation";
@@ -60,7 +60,18 @@ function GroupedColumn({
   onSelectGroup,
   onSelectIssue,
 }: GroupedColumnProps) {
+  const { t } = useI18n();
   const { setNodeRef, isOver } = useDroppable({ id: column });
+  const columnLabel =
+    column === "backlog"
+      ? t("board.column.backlog")
+      : column === "analysis"
+        ? t("board.column.analysis")
+        : column === "in_progress"
+          ? t("board.column.inProgress")
+          : column === "testing"
+            ? t("board.column.testing")
+            : t("board.column.finished");
 
   const totalCount =
     groups.reduce((sum, g) => sum + g.count, 0) +
@@ -86,7 +97,7 @@ function GroupedColumn({
             aria-hidden="true"
           />
           <h3 className="text-[0.6875rem] font-semibold uppercase tracking-wider text-on-surface/60">
-            {COLUMN_LABELS[column]}
+            {columnLabel}
           </h3>
         </div>
         <span className="inline-flex items-center justify-center px-1.5 py-0.5 rounded-md bg-primary-container text-on-primary-container text-[10px] font-semibold tabular-nums">

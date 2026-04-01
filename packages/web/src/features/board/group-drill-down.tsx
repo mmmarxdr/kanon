@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback } from "react";
 import { useGroupIssuesQuery } from "./use-issues-query";
 import { IssueCard } from "./issue-card";
 import { humanizeGroupKey } from "@/lib/humanize-group-key";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface GroupDrillDownProps {
   projectKey: string;
@@ -21,6 +22,7 @@ export function GroupDrillDown({
   onClose,
   onSelectIssue,
 }: GroupDrillDownProps) {
+  const { t } = useI18n();
   const panelRef = useRef<HTMLDivElement>(null);
   const { data: issues, isLoading, error } = useGroupIssuesQuery(projectKey, groupKey);
 
@@ -55,7 +57,7 @@ export function GroupDrillDown({
         ref={panelRef}
         role="dialog"
         aria-modal="true"
-        aria-label={`Group: ${displayTitle}`}
+        aria-label={`${t("board.group.labelPrefix")}: ${displayTitle}`}
         className="fixed right-0 top-0 bottom-0 w-[28rem] max-w-[90vw] bg-background border-l border-border shadow-xl z-50
           animate-slide-in-right overflow-hidden flex flex-col"
       >
@@ -73,7 +75,7 @@ export function GroupDrillDown({
             type="button"
             onClick={onClose}
             className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md hover:bg-secondary"
-            aria-label="Close panel"
+            aria-label={t("roadmap.detail.ariaClosePanel")}
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -90,26 +92,27 @@ export function GroupDrillDown({
         <div className="flex-1 overflow-y-auto p-4">
           {isLoading && (
             <p className="text-sm text-muted-foreground py-4 text-center">
-              Loading issues...
+              {t("board.group.loadingIssues")}
             </p>
           )}
 
           {error && (
             <p className="text-sm text-destructive-foreground py-4 text-center">
-              Failed to load issues: {error.message}
+              {t("backlog.loadErrorPrefix")} {error.message}
             </p>
           )}
 
           {issues && issues.length === 0 && (
             <p className="text-sm text-muted-foreground py-4 text-center">
-              No issues in this group.
+              {t("board.group.noIssues")}
             </p>
           )}
 
           {issues && issues.length > 0 && (
             <div className="flex flex-col gap-2">
               <span className="text-xs text-muted-foreground mb-1">
-                {issues.length} issue{issues.length === 1 ? "" : "s"}
+                {issues.length}{" "}
+                {issues.length === 1 ? t("backlog.issuesOne") : t("backlog.issuesOther")}
               </span>
               {issues.map((issue) => (
                 <IssueCard

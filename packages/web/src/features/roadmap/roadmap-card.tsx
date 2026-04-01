@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { RoadmapItem, RoadmapStatus } from "@/types/roadmap";
+import { useI18n } from "@/hooks/use-i18n";
 
 /** Color classes for each roadmap status. */
 const STATUS_COLORS: Record<RoadmapStatus, string> = {
@@ -9,14 +10,6 @@ const STATUS_COLORS: Record<RoadmapStatus, string> = {
   planned: "bg-blue-50 text-blue-600",
   in_progress: "bg-amber-50 text-amber-600",
   done: "bg-emerald-50 text-emerald-600",
-};
-
-/** Human-readable labels for each status. */
-const STATUS_LABELS: Record<RoadmapStatus, string> = {
-  idea: "Idea",
-  planned: "Planned",
-  in_progress: "In Progress",
-  done: "Done",
 };
 
 /** Effort/impact color intensity based on value (1-5). */
@@ -38,6 +31,7 @@ interface RoadmapCardProps {
 }
 
 export function RoadmapCard({ item, onSelect }: RoadmapCardProps) {
+  const { t } = useI18n();
   const cardRef = useRef<HTMLDivElement>(null);
   const {
     attributes,
@@ -64,6 +58,15 @@ export function RoadmapCard({ item, onSelect }: RoadmapCardProps) {
     }
   };
 
+  const statusLabel =
+    item.status === "idea"
+      ? t("roadmap.status.idea")
+      : item.status === "planned"
+        ? t("roadmap.status.planned")
+        : item.status === "in_progress"
+          ? t("roadmap.status.inProgress")
+          : t("roadmap.status.done");
+
   return (
     <div
       ref={setRefs}
@@ -84,7 +87,7 @@ export function RoadmapCard({ item, onSelect }: RoadmapCardProps) {
         {item.effort != null && (
           <span
             className={`inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[10px] font-bold ${scoreBadgeClass(item.effort)}`}
-            title={`Effort: ${item.effort}/5`}
+            title={`${t("roadmap.card.effortTitle")}: ${item.effort}/5`}
           >
             E{item.effort}
           </span>
@@ -92,16 +95,16 @@ export function RoadmapCard({ item, onSelect }: RoadmapCardProps) {
         {item.impact != null && (
           <span
             className={`inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[10px] font-bold ${scoreBadgeClass(item.impact)}`}
-            title={`Impact: ${item.impact}/5`}
+            title={`${t("roadmap.card.impactTitle")}: ${item.impact}/5`}
           >
             I{item.impact}
           </span>
         )}
         <span
           className={`ml-auto inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${STATUS_COLORS[item.status]}`}
-          title={`Status: ${STATUS_LABELS[item.status]}`}
+          title={`${t("roadmap.card.statusTitle")}: ${statusLabel}`}
         >
-          {STATUS_LABELS[item.status]}
+          {statusLabel}
         </span>
       </div>
 

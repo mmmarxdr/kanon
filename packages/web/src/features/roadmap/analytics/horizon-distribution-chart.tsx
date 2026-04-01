@@ -13,6 +13,7 @@ import { ChartCard } from "./chart-card";
 import { ChartTooltip } from "./chart-tooltip";
 import { useHorizonData } from "./use-analytics-data";
 import { useContainerWidth } from "../use-container-size";
+import { useI18n } from "@/hooks/use-i18n";
 
 const CHART_HEIGHT = 250;
 
@@ -21,23 +22,35 @@ interface HorizonDistributionChartProps {
 }
 
 export function HorizonDistributionChart({ items }: HorizonDistributionChartProps) {
+  const { t } = useI18n();
   const data = useHorizonData(items);
+  const localizedData = data.map((d) => ({
+    ...d,
+    label:
+      d.horizon === "now"
+        ? t("roadmap.horizon.now")
+        : d.horizon === "next"
+          ? t("roadmap.horizon.next")
+          : d.horizon === "later"
+            ? t("roadmap.horizon.later")
+            : t("roadmap.horizon.someday"),
+  }));
   const hasData = data.some((d) => d.count > 0);
   const [containerRef, containerWidth] = useContainerWidth();
 
   return (
     <ChartCard
-      title="Horizon Distribution"
-      subtitle="Items per horizon"
+      title={t("roadmap.analytics.horizonDistribution.title")}
+      subtitle={t("roadmap.analytics.horizonDistribution.subtitle")}
       isEmpty={!hasData}
-      emptyMessage="No roadmap items yet. Add items to see horizon distribution."
+      emptyMessage={t("roadmap.analytics.horizonDistribution.empty")}
     >
       <div ref={containerRef}>
         {containerWidth > 0 && (
           <BarChart
             width={containerWidth}
             height={CHART_HEIGHT}
-            data={data}
+            data={localizedData}
             layout="horizontal"
             margin={{ top: 10, right: 10, bottom: 5, left: 0 }}
           >

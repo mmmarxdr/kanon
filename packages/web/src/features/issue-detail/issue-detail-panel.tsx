@@ -19,6 +19,7 @@ import {
 } from "./use-issue-mutations";
 import { useTransitionMutation } from "@/features/board/use-transition-mutation";
 import type { IssueState } from "@/stores/board-store";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface IssueDetailPanelProps {
   issueKey: string;
@@ -45,6 +46,7 @@ export function IssueDetailPanel({
   onClose,
   triggerElement,
 }: IssueDetailPanelProps) {
+  const { t } = useI18n();
   const panelRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
@@ -194,7 +196,7 @@ export function IssueDetailPanel({
         >
           {issueLoading || !issue ? (
             <div className="flex items-center justify-center h-full p-8">
-              <p className="text-muted-foreground">Loading issue...</p>
+              <p className="text-muted-foreground">{t("issueDetail.loadingIssue")}</p>
             </div>
           ) : (
             <div className="flex flex-col gap-5 p-5">
@@ -209,7 +211,7 @@ export function IssueDetailPanel({
               {/* Description: markdown render / textarea toggle */}
               <div className="flex flex-col gap-1">
                 <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                  Description
+                  {t("issueDetail.description")}
                 </span>
                 {isEditingDescription ? (
                   <textarea
@@ -228,8 +230,8 @@ export function IssueDetailPanel({
                     className="w-full rounded border border-border bg-secondary px-3 py-2
                       text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/30
                       resize-y min-h-[6rem]"
-                    placeholder="Add a description (supports Markdown)..."
-                    aria-label="Issue description"
+                    placeholder={t("issueDetail.addDescriptionMarkdown")}
+                    aria-label={t("issueDetail.ariaDescription")}
                   />
                 ) : (
                   <button
@@ -246,7 +248,7 @@ export function IssueDetailPanel({
                       </div>
                     ) : (
                       <span className="text-sm text-muted-foreground italic">
-                        Click to add a description...
+                        {t("issueDetail.clickToAddDescription")}
                       </span>
                     )}
                   </button>

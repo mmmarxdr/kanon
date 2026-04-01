@@ -6,11 +6,10 @@ import {
 } from "@dnd-kit/sortable";
 import type { BoardColumn as BoardColumnType } from "@/stores/board-store";
 import {
-  COLUMN_LABELS,
   COLUMN_STATE_MAP,
-  STATE_LABELS,
 } from "@/stores/board-store";
 import type { Issue } from "@/types/issue";
+import { useI18n } from "@/hooks/use-i18n";
 import { IssueCard } from "./issue-card";
 
 /** Colored pill indicator per column (3px × 16px). */
@@ -29,8 +28,30 @@ interface BoardColumnProps {
 }
 
 export function BoardColumn({ column, issues, onSelectIssue }: BoardColumnProps) {
+  const { t } = useI18n();
   const { setNodeRef, isOver } = useDroppable({ id: column });
   const [expanded, setExpanded] = useState(false);
+  const columnLabel =
+    column === "backlog"
+      ? t("board.column.backlog")
+      : column === "analysis"
+        ? t("board.column.analysis")
+        : column === "in_progress"
+          ? t("board.column.inProgress")
+          : column === "testing"
+            ? t("board.column.testing")
+            : t("board.column.finished");
+  const stateLabel = (state: (typeof states)[number]): string => {
+    if (state === "backlog") return t("board.state.backlog");
+    if (state === "explore") return t("board.state.explore");
+    if (state === "propose") return t("board.state.propose");
+    if (state === "design") return t("board.state.design");
+    if (state === "spec") return t("board.state.spec");
+    if (state === "tasks") return t("board.state.tasks");
+    if (state === "apply") return t("board.state.apply");
+    if (state === "verify") return t("board.state.verify");
+    return t("board.state.archived");
+  };
 
   const states = COLUMN_STATE_MAP[column];
   const hasSubGroups = states.length > 1;
@@ -54,7 +75,9 @@ export function BoardColumn({ column, issues, onSelectIssue }: BoardColumnProps)
               type="button"
               onClick={() => setExpanded((prev) => !prev)}
               className="text-muted-foreground hover:text-on-surface transition-colors"
-              aria-label={expanded ? "Collapse sub-groups" : "Expand sub-groups"}
+              aria-label={
+                expanded ? t("board.column.collapseSubgroups") : t("board.column.expandSubgroups")
+              }
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -71,7 +94,7 @@ export function BoardColumn({ column, issues, onSelectIssue }: BoardColumnProps)
             </button>
           )}
           <h3 className="text-[0.6875rem] font-semibold uppercase tracking-wider text-on-surface/60">
-            {COLUMN_LABELS[column]}
+            {columnLabel}
           </h3>
         </div>
         <span className="inline-flex items-center justify-center px-1.5 py-0.5 rounded-md bg-primary-container text-on-primary-container text-[10px] font-semibold tabular-nums">
@@ -92,7 +115,7 @@ export function BoardColumn({ column, issues, onSelectIssue }: BoardColumnProps)
               <div key={state} className="flex flex-col gap-1 animate-fade-in">
                 <div className="flex items-center justify-between px-1 pt-1">
                   <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                    {STATE_LABELS[state]}
+                    {stateLabel(state)}
                   </span>
                   <span className="text-xs text-muted-foreground tabular-nums">
                     {stateIssues.length}

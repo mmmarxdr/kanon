@@ -11,6 +11,7 @@ import { GanttTimeline } from "@/features/roadmap/timeline/gantt-timeline";
 import { useRoadmapStore, type ViewMode } from "@/stores/roadmap-store";
 import type { Horizon, RoadmapItem } from "@/types/roadmap";
 import { useCurrentProject } from "@/hooks/use-current-project";
+import { useI18n } from "@/hooks/use-i18n";
 
 const GraphView = lazy(
   () => import("@/features/roadmap/graph/graph-view"),
@@ -30,6 +31,7 @@ export const roadmapRoute = createRoute({
 });
 
 function RoadmapPage() {
+  const { t } = useI18n();
   const { projectKey } = roadmapRoute.useParams();
   const { project: currentProject } = useCurrentProject();
   const { data: items, isLoading, error } = useRoadmapQuery(projectKey);
@@ -44,10 +46,10 @@ function RoadmapPage() {
   const setViewMode = useRoadmapStore((s) => s.setViewMode);
 
   const VIEW_MODE_OPTIONS = [
-    { label: "Board", value: "board" },
-    { label: "Analytics", value: "analytics" },
-    { label: "Timeline", value: "timeline" },
-    { label: "Graph", value: "graph" },
+    { label: t("roadmap.view.board"), value: "board" },
+    { label: t("roadmap.view.analytics"), value: "analytics" },
+    { label: t("roadmap.view.timeline"), value: "timeline" },
+    { label: t("roadmap.view.graph"), value: "graph" },
   ];
 
   const filteredItems = useMemo(() => {
@@ -91,7 +93,7 @@ function RoadmapPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full p-8">
-        <p className="text-muted-foreground">Loading roadmap...</p>
+        <p className="text-muted-foreground">{t("roadmap.loading")}</p>
       </div>
     );
   }
@@ -100,7 +102,7 @@ function RoadmapPage() {
     return (
       <div className="flex items-center justify-center h-full p-8">
         <p className="text-destructive-foreground">
-          Failed to load roadmap: {error.message}
+          {t("roadmap.loadErrorPrefix")} {error.message}
         </p>
       </div>
     );
@@ -113,10 +115,10 @@ function RoadmapPage() {
         {/* Breadcrumb & Title */}
         <div className="mb-3">
           <p className="text-[0.6875rem] text-on-surface/40 uppercase tracking-wider mb-1">
-            Workspace &rsaquo; {currentProject?.name ?? projectKey}
+            {t("roadmap.breadcrumbWorkspace")} &rsaquo; {currentProject?.name ?? projectKey}
           </p>
           <h1 className="text-xl font-semibold text-on-surface">
-            {projectKey} &mdash; Roadmap
+            {projectKey} &mdash; {t("roadmap.titleSuffix")}
           </h1>
         </div>
 
@@ -130,7 +132,7 @@ function RoadmapPage() {
             }}
             className="bg-gradient-to-b from-primary to-primary-hover text-primary-foreground hover:from-primary-hover hover:to-primary-hover rounded px-3 py-1.5 text-sm font-medium transition-all duration-200"
           >
-            + New Item
+            {t("roadmap.newItem")}
           </button>
 
           {/* View mode segmented control */}
@@ -173,7 +175,7 @@ function RoadmapPage() {
           <Suspense
             fallback={
               <div className="flex items-center justify-center h-full">
-                <p className="text-muted-foreground">Loading graph...</p>
+                <p className="text-muted-foreground">{t("roadmap.loadingGraph")}</p>
               </div>
             }
           >

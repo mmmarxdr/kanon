@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface IssueDetailHeaderProps {
   issueKey: string;
@@ -20,6 +21,7 @@ export function IssueDetailHeader({
   onTitleChange,
   onClose,
 }: IssueDetailHeaderProps) {
+  const { t } = useI18n();
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(title);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -84,8 +86,8 @@ export function IssueDetailHeader({
               border-b-2 border-primary outline-none px-0 py-0.5
               focus:ring-2 focus:ring-primary/30
               placeholder:text-muted-foreground"
-            placeholder="Issue title"
-            aria-label="Issue title"
+            placeholder={t("issueDetail.titlePlaceholder")}
+            aria-label={t("issueDetail.ariaTitle")}
           />
         ) : (
           <button
@@ -107,7 +109,7 @@ export function IssueDetailHeader({
         onClick={onClose}
         className="shrink-0 mt-0.5 rounded-md p-1.5 text-muted-foreground
           hover:bg-secondary hover:text-foreground transition-colors"
-        aria-label="Close panel"
+        aria-label={t("roadmap.detail.ariaClosePanel")}
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"

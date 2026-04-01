@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Comment } from "@/types/issue";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface CommentListProps {
   comments: Comment[];
@@ -22,6 +23,7 @@ export function CommentList({
   onAddComment,
   isSubmitting,
 }: CommentListProps) {
+  const { t } = useI18n();
   const [draft, setDraft] = useState("");
 
   const handleSubmit = useCallback(
@@ -38,7 +40,7 @@ export function CommentList({
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-        Loading comments...
+        {t("issueDetail.comments.loading")}
       </div>
     );
   }
@@ -48,7 +50,7 @@ export function CommentList({
       {/* Comment list */}
       {comments.length === 0 ? (
         <p className="text-sm text-muted-foreground py-4 text-center">
-          No comments yet.
+          {t("issueDetail.comments.empty")}
         </p>
       ) : (
         <ul className="flex flex-col gap-3">
@@ -63,12 +65,12 @@ export function CommentList({
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="Add a comment... (markdown supported)"
+          placeholder={t("issueDetail.comments.placeholder")}
           rows={3}
           className="w-full rounded bg-secondary text-sm text-foreground
             border border-border px-3 py-2 outline-none resize-y
             focus:border-primary focus:ring-1 focus:ring-primary/30 placeholder:text-muted-foreground"
-          aria-label="New comment"
+          aria-label={t("issueDetail.comments.ariaNew")}
         />
         <div className="flex justify-end">
           <button
@@ -78,7 +80,7 @@ export function CommentList({
               text-sm font-medium transition-colors
               hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isSubmitting ? "Submitting..." : "Comment"}
+            {isSubmitting ? t("issueDetail.comments.submitting") : t("issueDetail.comments.submit")}
           </button>
         </div>
       </form>
@@ -91,6 +93,7 @@ export function CommentList({
 /* ------------------------------------------------------------------ */
 
 function CommentItem({ comment }: { comment: Comment }) {
+  const { t } = useI18n();
   return (
     <li className="rounded-lg border border-border bg-card p-3">
       {/* Header: author + timestamp + source badge */}
@@ -100,7 +103,7 @@ function CommentItem({ comment }: { comment: Comment }) {
         </span>
         {comment.source === "agent" && (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">
-            AI
+            {t("issueDetail.comments.aiBadge")}
           </span>
         )}
         <span className="ml-auto text-xs text-muted-foreground">

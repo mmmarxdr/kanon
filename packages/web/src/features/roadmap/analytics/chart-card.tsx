@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface ChartCardProps {
   title: string;
@@ -16,9 +17,10 @@ export function ChartCard({
   title,
   subtitle,
   isEmpty = false,
-  emptyMessage = "Not enough data to display this chart.",
+  emptyMessage,
   children,
 }: ChartCardProps) {
+  const { t } = useI18n();
   return (
     <div className="bg-surface-container-lowest rounded-md p-4">
       <div className="mb-3">
@@ -30,7 +32,9 @@ export function ChartCard({
 
       {isEmpty ? (
         <div className="flex items-center justify-center h-40">
-          <p className="text-sm text-on-surface/40">{emptyMessage}</p>
+          <p className="text-sm text-on-surface/40">
+            {emptyMessage || t("roadmap.chart.notEnoughData")}
+          </p>
         </div>
       ) : (
         children

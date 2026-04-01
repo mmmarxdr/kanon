@@ -1,6 +1,5 @@
 import type { RoadmapStatus, Horizon } from "@/types/roadmap";
-import { STATUS_LABELS } from "@/stores/roadmap-store";
-import { HORIZON_LABELS } from "@/stores/roadmap-store";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface TooltipPayloadItem {
   payload?: {
@@ -31,6 +30,7 @@ function formatDate(iso: string): string {
  * Option A styling: bg-surface-container-lowest, rounded-md, shadow-float, no border.
  */
 export function TimelineTooltip({ active, payload }: TimelineTooltipProps) {
+  const { t } = useI18n();
   if (!active || !payload?.length) return null;
 
   const entry = payload[0];
@@ -44,26 +44,42 @@ export function TimelineTooltip({ active, payload }: TimelineTooltipProps) {
 
       <div className="space-y-1">
         <div className="flex justify-between gap-4">
-          <span className="text-on-surface/60">Created</span>
+          <span className="text-on-surface/60">{t("roadmap.timeline.tooltip.created")}</span>
           <span>{d.createdAt ? formatDate(d.createdAt) : "\u2014"}</span>
         </div>
 
         <div className="flex justify-between gap-4">
-          <span className="text-on-surface/60">Target</span>
-          <span>{d.targetDate ? formatDate(d.targetDate) : "No target date"}</span>
+          <span className="text-on-surface/60">{t("roadmap.timeline.tooltip.target")}</span>
+          <span>{d.targetDate ? formatDate(d.targetDate) : t("roadmap.timeline.tooltip.noTargetDate")}</span>
         </div>
 
         <div className="flex justify-between gap-4">
-          <span className="text-on-surface/60">Status</span>
+          <span className="text-on-surface/60">{t("roadmap.timeline.tooltip.status")}</span>
           <span className="font-medium">
-            {d.status ? STATUS_LABELS[d.status] : "\u2014"}
+            {d.status
+              ? d.status === "idea"
+                ? t("roadmap.status.idea")
+                : d.status === "planned"
+                  ? t("roadmap.status.planned")
+                  : d.status === "in_progress"
+                    ? t("roadmap.status.inProgress")
+                    : t("roadmap.status.done")
+              : "\u2014"}
           </span>
         </div>
 
         <div className="flex justify-between gap-4">
-          <span className="text-on-surface/60">Horizon</span>
+          <span className="text-on-surface/60">{t("roadmap.timeline.tooltip.horizon")}</span>
           <span className="font-medium">
-            {d.horizon ? HORIZON_LABELS[d.horizon] : "\u2014"}
+            {d.horizon
+              ? d.horizon === "now"
+                ? t("roadmap.horizon.now")
+                : d.horizon === "next"
+                  ? t("roadmap.horizon.next")
+                  : d.horizon === "later"
+                    ? t("roadmap.horizon.later")
+                    : t("roadmap.horizon.someday")
+              : "\u2014"}
           </span>
         </div>
       </div>

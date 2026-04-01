@@ -9,10 +9,10 @@ import {
 } from "recharts";
 import type { RoadmapItem } from "@/types/roadmap";
 import { HORIZON_CHART_COLORS } from "./chart-colors";
-import { HORIZON_LABELS } from "@/stores/roadmap-store";
 import { ChartCard } from "./chart-card";
 import { useEffortImpactData, type EffortImpactPoint } from "./use-analytics-data";
 import { useContainerWidth } from "../use-container-size";
+import { useI18n } from "@/hooks/use-i18n";
 
 const CHART_HEIGHT = 320;
 
@@ -21,6 +21,15 @@ interface EffortImpactChartProps {
 }
 
 function CustomTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: EffortImpactPoint }> }) {
+  const { t } = useI18n();
+  const horizonLabel = (horizon: EffortImpactPoint["horizon"]) =>
+    horizon === "now"
+      ? t("roadmap.horizon.now")
+      : horizon === "next"
+        ? t("roadmap.horizon.next")
+        : horizon === "later"
+          ? t("roadmap.horizon.later")
+          : t("roadmap.horizon.someday");
   if (!active || !payload?.length) return null;
   const entry = payload[0];
   if (!entry) return null;
@@ -29,25 +38,34 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: Array<
     <div className="bg-surface-container-lowest rounded-md shadow-float p-2 text-xs text-on-surface">
       <p className="font-medium">{point.title}</p>
       <p className="text-on-surface/60 mt-1">
-        Effort: {point.effort} &middot; Impact: {point.impact}
+        {t("roadmap.analytics.effortImpact.tooltipEffort")}: {point.effort} &middot; {t("roadmap.analytics.effortImpact.tooltipImpact")}: {point.impact}
       </p>
       <p className="text-on-surface/60">
-        Horizon: {HORIZON_LABELS[point.horizon]}
+        {t("roadmap.analytics.effortImpact.tooltipHorizon")}: {horizonLabel(point.horizon)}
       </p>
     </div>
   );
 }
 
 export function EffortImpactChart({ items }: EffortImpactChartProps) {
+  const { t } = useI18n();
+  const horizonLabel = (horizon: string) =>
+    horizon === "now"
+      ? t("roadmap.horizon.now")
+      : horizon === "next"
+        ? t("roadmap.horizon.next")
+        : horizon === "later"
+          ? t("roadmap.horizon.later")
+          : t("roadmap.horizon.someday");
   const data = useEffortImpactData(items);
   const [containerRef, containerWidth] = useContainerWidth();
 
   return (
     <ChartCard
-      title="Effort vs Impact"
-      subtitle="Items with both scores plotted"
+      title={t("roadmap.analytics.effortImpact.title")}
+      subtitle={t("roadmap.analytics.effortImpact.subtitle")}
       isEmpty={data.length === 0}
-      emptyMessage="No items have both effort and impact scores. Add scores to see them here."
+      emptyMessage={t("roadmap.analytics.effortImpact.empty")}
     >
       <div ref={containerRef}>
         {containerWidth > 0 && (
@@ -60,20 +78,20 @@ export function EffortImpactChart({ items }: EffortImpactChartProps) {
             <XAxis
               type="number"
               dataKey="effort"
-              name="Effort"
+              name={t("roadmap.analytics.effortImpact.axisEffort")}
               domain={[0.5, 5.5]}
               ticks={[1, 2, 3, 4, 5]}
               tick={{ fontSize: 11 }}
-              label={{ value: "Effort", position: "insideBottom", offset: -5, fontSize: 11 }}
+              label={{ value: t("roadmap.analytics.effortImpact.axisEffort"), position: "insideBottom", offset: -5, fontSize: 11 }}
             />
             <YAxis
               type="number"
               dataKey="impact"
-              name="Impact"
+              name={t("roadmap.analytics.effortImpact.axisImpact")}
               domain={[0.5, 5.5]}
               ticks={[1, 2, 3, 4, 5]}
               tick={{ fontSize: 11 }}
-              label={{ value: "Impact", angle: -90, position: "insideLeft", offset: 10, fontSize: 11 }}
+              label={{ value: t("roadmap.analytics.effortImpact.axisImpact"), angle: -90, position: "insideLeft", offset: 10, fontSize: 11 }}
             />
             <ReferenceLine x={2.5} stroke="#94a3b8" strokeDasharray="3 3" opacity={0.4} />
             <ReferenceLine y={2.5} stroke="#94a3b8" strokeDasharray="3 3" opacity={0.4} />
@@ -86,7 +104,7 @@ export function EffortImpactChart({ items }: EffortImpactChartProps) {
                 return (
                   <Scatter
                     key={horizon}
-                    name={HORIZON_LABELS[horizon as keyof typeof HORIZON_LABELS]}
+                    name={horizonLabel(horizon)}
                     data={horizonData}
                     fill={color}
                     fillOpacity={0.8}
@@ -111,7 +129,7 @@ export function EffortImpactChart({ items }: EffortImpactChartProps) {
                       className="inline-block w-2.5 h-2.5 rounded-full"
                       style={{ backgroundColor: color }}
                     />
-                    {HORIZON_LABELS[horizon as keyof typeof HORIZON_LABELS]}
+                    {horizonLabel(horizon)}
                   </div>
                 );
               },

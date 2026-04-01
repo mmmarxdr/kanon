@@ -1,6 +1,7 @@
 import { useCallback } from "react";
-import { STATE_LABELS, type IssueState } from "@/stores/board-store";
+import { type IssueState } from "@/stores/board-store";
 import type { Issue } from "@/types/issue";
+import { useI18n } from "@/hooks/use-i18n";
 
 /** Color map for state badges in child rows. */
 const STATE_COLORS: Record<IssueState, string> = {
@@ -30,6 +31,7 @@ export function ChildrenSection({
   children,
   onSelect,
 }: ChildrenSectionProps) {
+  const { t } = useI18n();
   if (children.length === 0) {
     return null;
   }
@@ -37,7 +39,7 @@ export function ChildrenSection({
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-        Sub-tasks
+        {t("issueDetail.children.subtasks")}
       </span>
       <ul className="flex flex-col gap-1" role="list">
         {children.map((child) => (
@@ -59,6 +61,7 @@ function ChildRow({
   issue: Issue;
   onSelect: (issueKey: string) => void;
 }) {
+  const { t } = useI18n();
   const handleClick = useCallback(() => {
     onSelect(issue.key);
   }, [onSelect, issue.key]);
@@ -110,7 +113,23 @@ function ChildRow({
       <span
         className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${stateColor}`}
       >
-        {STATE_LABELS[issue.state]}
+        {issue.state === "backlog"
+          ? t("board.state.backlog")
+          : issue.state === "explore"
+            ? t("board.state.explore")
+            : issue.state === "propose"
+              ? t("board.state.propose")
+              : issue.state === "design"
+                ? t("board.state.design")
+                : issue.state === "spec"
+                  ? t("board.state.spec")
+                  : issue.state === "tasks"
+                    ? t("board.state.tasks")
+                    : issue.state === "apply"
+                      ? t("board.state.apply")
+                      : issue.state === "verify"
+                        ? t("board.state.verify")
+                        : t("board.state.archived")}
       </span>
     </li>
   );

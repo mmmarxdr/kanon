@@ -1,4 +1,5 @@
 import type { ActivityLog } from "@/types/issue";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface ActivityListProps {
   activities: ActivityLog[];
@@ -12,10 +13,11 @@ interface ActivityListProps {
  * Each entry shows: actor, action type, field change details (old -> new), and timestamp.
  */
 export function ActivityList({ activities, isLoading }: ActivityListProps) {
+  const { t } = useI18n();
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-        Loading activity...
+        {t("issueDetail.activity.loading")}
       </div>
     );
   }
@@ -23,7 +25,7 @@ export function ActivityList({ activities, isLoading }: ActivityListProps) {
   if (activities.length === 0) {
     return (
       <p className="text-sm text-muted-foreground py-4 text-center">
-        No activity yet.
+        {t("issueDetail.activity.empty")}
       </p>
     );
   }
@@ -50,12 +52,12 @@ export function ActivityList({ activities, isLoading }: ActivityListProps) {
 /*  Single activity entry                                              */
 /* ------------------------------------------------------------------ */
 
-const ACTION_CONFIG: Record<string, { icon: string; label: string }> = {
-  created: { icon: "+", label: "created this issue" },
-  state_changed: { icon: "~", label: "changed state" },
-  assigned: { icon: "@", label: "changed assignee" },
-  commented: { icon: "#", label: "commented" },
-  edited: { icon: "/", label: "edited" },
+const ACTION_CONFIG: Record<string, { icon: string; labelKey: string }> = {
+  created: { icon: "+", labelKey: "issueDetail.activity.action.created" },
+  state_changed: { icon: "~", labelKey: "issueDetail.activity.action.stateChanged" },
+  assigned: { icon: "@", labelKey: "issueDetail.activity.action.assigned" },
+  commented: { icon: "#", labelKey: "issueDetail.activity.action.commented" },
+  edited: { icon: "/", labelKey: "issueDetail.activity.action.edited" },
 };
 
 function ActivityItem({
@@ -65,9 +67,10 @@ function ActivityItem({
   entry: ActivityLog;
   isLast: boolean;
 }) {
+  const { t } = useI18n();
   const config = ACTION_CONFIG[entry.action] ?? {
     icon: "?",
-    label: entry.action,
+    labelKey: "issueDetail.activity.action.fallback",
   };
 
   return (
@@ -89,7 +92,9 @@ function ActivityItem({
             {entry.actor.username}
           </span>
           <span className="text-sm text-muted-foreground">
-            {config.label}
+            {config.labelKey === "issueDetail.activity.action.fallback"
+              ? entry.action
+              : t(config.labelKey as "issueDetail.activity.action.created")}
           </span>
           {entry.field && (
             <span className="text-xs text-muted-foreground">

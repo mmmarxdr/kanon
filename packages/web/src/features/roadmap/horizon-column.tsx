@@ -5,8 +5,9 @@ import {
 } from "@dnd-kit/sortable";
 import type { Horizon } from "@/types/roadmap";
 import type { RoadmapItem } from "@/types/roadmap";
-import { HORIZON_LABELS, HORIZON_PILL_COLORS } from "@/stores/roadmap-store";
+import { HORIZON_PILL_COLORS } from "@/stores/roadmap-store";
 import { RoadmapCard } from "./roadmap-card";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface HorizonColumnProps {
   horizon: Horizon;
@@ -21,7 +22,16 @@ export function HorizonColumn({
   onSelectItem,
   onAddItem,
 }: HorizonColumnProps) {
+  const { t } = useI18n();
   const { setNodeRef, isOver } = useDroppable({ id: horizon });
+  const horizonLabel =
+    horizon === "now"
+      ? t("roadmap.horizon.now")
+      : horizon === "next"
+        ? t("roadmap.horizon.next")
+        : horizon === "later"
+          ? t("roadmap.horizon.later")
+          : t("roadmap.horizon.someday");
 
   return (
     <div
@@ -38,7 +48,7 @@ export function HorizonColumn({
             aria-hidden="true"
           />
           <h3 className="text-[0.6875rem] font-semibold uppercase tracking-wider text-on-surface/60">
-            {HORIZON_LABELS[horizon]}
+            {horizonLabel}
           </h3>
         </div>
         <div className="flex items-center gap-2">
@@ -50,7 +60,7 @@ export function HorizonColumn({
               type="button"
               onClick={() => onAddItem(horizon)}
               className="text-on-surface/40 hover:text-on-surface transition-colors"
-              aria-label={`Add item to ${HORIZON_LABELS[horizon]}`}
+              aria-label={`${t("roadmap.column.addItemTo")} ${horizonLabel}`}
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"

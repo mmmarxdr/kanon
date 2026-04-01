@@ -10,6 +10,7 @@ import { ChartCard } from "./chart-card";
 import { ChartTooltip } from "./chart-tooltip";
 import { useStatusData } from "./use-analytics-data";
 import { useContainerWidth } from "../use-container-size";
+import { useI18n } from "@/hooks/use-i18n";
 
 const CHART_HEIGHT = 250;
 
@@ -18,6 +19,7 @@ interface StatusBreakdownChartProps {
 }
 
 function CenterLabel({ viewBox, total }: { viewBox?: { cx: number; cy: number }; total: number }) {
+  const { t } = useI18n();
   if (!viewBox) return null;
   const { cx, cy } = viewBox;
   return (
@@ -26,30 +28,42 @@ function CenterLabel({ viewBox, total }: { viewBox?: { cx: number; cy: number };
         {total}
       </tspan>
       <tspan x={cx} dy="1.4em" className="fill-on-surface/60 text-xs">
-        Total
+        {t("roadmap.analytics.total")}
       </tspan>
     </text>
   );
 }
 
 export function StatusBreakdownChart({ items }: StatusBreakdownChartProps) {
+  const { t } = useI18n();
   const data = useStatusData(items);
+  const localizedData = data.map((d) => ({
+    ...d,
+    label:
+      d.status === "idea"
+        ? t("roadmap.status.idea")
+        : d.status === "planned"
+          ? t("roadmap.status.planned")
+          : d.status === "in_progress"
+            ? t("roadmap.status.inProgress")
+            : t("roadmap.status.done"),
+  }));
   const total = data.reduce((sum, d) => sum + d.count, 0);
   const hasData = data.some((d) => d.count > 0);
   const [containerRef, containerWidth] = useContainerWidth();
 
   return (
     <ChartCard
-      title="Status Breakdown"
-      subtitle="Items per status"
+      title={t("roadmap.analytics.statusBreakdown.title")}
+      subtitle={t("roadmap.analytics.statusBreakdown.subtitle")}
       isEmpty={!hasData}
-      emptyMessage="No roadmap items yet. Add items to see status breakdown."
+      emptyMessage={t("roadmap.analytics.statusBreakdown.empty")}
     >
       <div ref={containerRef}>
         {containerWidth > 0 && (
           <PieChart width={containerWidth} height={CHART_HEIGHT}>
             <Pie
-              data={data.filter((d) => d.count > 0)}
+              data={localizedData.filter((d) => d.count > 0)}
               cx="50%"
               cy="50%"
               innerRadius="60%"
@@ -58,7 +72,7 @@ export function StatusBreakdownChart({ items }: StatusBreakdownChartProps) {
               nameKey="label"
               paddingAngle={2}
             >
-              {data
+              {localizedData
                 .filter((d) => d.count > 0)
                 .map((entry) => (
                   <Cell key={entry.status} fill={entry.fill} />
@@ -74,7 +88,7 @@ export function StatusBreakdownChart({ items }: StatusBreakdownChartProps) {
 
         {/* Legend — outside the chart, constrained to card width */}
         <div className="flex flex-wrap gap-3 mt-2 justify-center">
-          {data
+          {localizedData
             .filter((d) => d.count > 0)
             .map((d) => (
               <div key={d.status} className="flex items-center gap-1.5 text-xs text-on-surface/70">

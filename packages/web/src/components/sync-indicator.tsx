@@ -1,29 +1,31 @@
 import { useEffect, useRef, useState } from "react";
 import type { SyncStatus, SyncEvent } from "@/lib/sse-client";
+import { useI18n } from "@/hooks/use-i18n";
+import type { MessageKey } from "@/i18n/messages";
 
 const STATUS_CONFIG: Record<
   SyncStatus,
-  { color: string; pulse: boolean; label: string }
+  { color: string; pulse: boolean; labelKey: MessageKey }
 > = {
   connected: {
     color: "bg-emerald-500",
     pulse: false,
-    label: "Sync connected",
+    labelKey: "sync.status.connected",
   },
   connecting: {
     color: "bg-teal-400",
     pulse: true,
-    label: "Syncing...",
+    labelKey: "sync.status.connecting",
   },
   disconnected: {
     color: "bg-gray-400",
     pulse: false,
-    label: "Sync disconnected",
+    labelKey: "sync.status.disconnected",
   },
   error: {
     color: "bg-red-500",
     pulse: false,
-    label: "Sync error",
+    labelKey: "sync.status.error",
   },
 };
 
@@ -38,22 +40,25 @@ export interface SyncIndicatorProps {
 /**
  * Format a timestamp as a relative time string (e.g. "2 min ago").
  */
-function formatRelativeTime(timestamp: string): string {
+function formatRelativeTime(
+  timestamp: string,
+  t: (key: MessageKey) => string,
+): string {
   const now = Date.now();
   const then = new Date(timestamp).getTime();
   const diffMs = now - then;
   const diffSec = Math.floor(diffMs / 1000);
 
-  if (diffSec < 5) return "just now";
-  if (diffSec < 60) return `${diffSec}s ago`;
+  if (diffSec < 5) return t("sync.relative.justNow");
+  if (diffSec < 60) return `${diffSec}${t("sync.relative.secondsAgoSuffix")}`;
 
   const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin} min ago`;
+  if (diffMin < 60) return `${diffMin}${t("sync.relative.minutesAgoSuffix")}`;
 
   const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffHr < 24) return `${diffHr}${t("sync.relative.hoursAgoSuffix")}`;
 
-  return `${Math.floor(diffHr / 24)}d ago`;
+  return `${Math.floor(diffHr / 24)}${t("sync.relative.daysAgoSuffix")}`;
 }
 
 /**
@@ -68,6 +73,7 @@ export function SyncIndicator({
   isManualSyncing,
   onTriggerSync,
 }: SyncIndicatorProps) {
+  const { t } = useI18n();
   const [isOpen, setIsOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
 
@@ -98,7 +104,7 @@ export function SyncIndicator({
         type="button"
         onClick={() => setIsOpen((o) => !o)}
         className="flex items-center focus:outline-none"
-        aria-label={config.label}
+        aria-label={t(config.labelKey)}
         aria-expanded={isOpen}
         data-testid="sync-indicator-button"
       >
@@ -123,12 +129,12 @@ export function SyncIndicator({
                 }`}
               />
               <span className="text-foreground font-medium text-xs">
-                {config.label}
+                {t(config.labelKey)}
               </span>
             </div>
             {lastSyncAt && (
               <p className="text-xs text-muted-foreground mt-1">
-                Last sync: {formatRelativeTime(lastSyncAt)}
+                {t("sync.lastSyncPrefix")} {formatRelativeTime(lastSyncAt, t)}
               </p>
             )}
           </div>
@@ -137,7 +143,7 @@ export function SyncIndicator({
           <div className="max-h-40 overflow-y-auto px-3 py-2">
             {syncHistory.length === 0 ? (
               <p className="text-xs text-muted-foreground italic">
-                No sync events yet
+                {t("sync.noEvents")}
               </p>
             ) : (
               <ul className="space-y-1" data-testid="sync-history-list">
@@ -154,13 +160,13 @@ export function SyncIndicator({
                       }
                     >
                       {event.type === "sync_complete"
-                        ? `Synced ${(event as Record<string, unknown>).changedCount ?? 0} items`
+                        ? `${t("sync.event.syncedPrefix")} ${(event as Record<string, unknown>).changedCount ?? 0} ${t("sync.event.items")}`
                         : event.type === "sync_error"
-                          ? `Error: ${(event as Record<string, unknown>).message ?? "Unknown"}`
+                          ? `${t("sync.event.errorPrefix")} ${(event as Record<string, unknown>).message ?? t("sync.event.unknown")}`
                           : event.type}
                     </span>
                     <span className="text-muted-foreground ml-2 shrink-0">
-                      {formatRelativeTime(event.timestamp)}
+                      {formatRelativeTime(event.timestamp, t)}
                     </span>
                   </li>
                 ))}
@@ -180,10 +186,10 @@ export function SyncIndicator({
               {isManualSyncing ? (
                 <>
                   <span className="w-3 h-3 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                  Syncing...
+                  {t("sync.status.connecting")}
                 </>
               ) : (
-                "Sync Now"
+                t("sync.syncNow")
               )}
             </button>
           </div>

@@ -1,8 +1,8 @@
 import type { RoadmapItem } from "@/types/roadmap";
 import { HORIZON_CHART_COLORS } from "./chart-colors";
-import { HORIZON_LABELS } from "@/stores/roadmap-store";
 import { ChartCard } from "./chart-card";
 import { useAgingData } from "./use-analytics-data";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface AgingItemsListProps {
   items: RoadmapItem[];
@@ -10,14 +10,15 @@ interface AgingItemsListProps {
 }
 
 export function AgingItemsList({ items, thresholdDays = 30 }: AgingItemsListProps) {
+  const { t } = useI18n();
   const agingItems = useAgingData(items, thresholdDays);
 
   return (
     <ChartCard
-      title="Aging Ideas"
-      subtitle={`Items in "idea" status for ${thresholdDays}+ days`}
+      title={t("roadmap.analytics.aging.title")}
+      subtitle={`${t("roadmap.analytics.aging.subtitlePrefix")} ${thresholdDays}+ ${t("roadmap.analytics.aging.subtitleSuffix")}`}
       isEmpty={agingItems.length === 0}
-      emptyMessage="No aging items — roadmap is fresh!"
+      emptyMessage={t("roadmap.analytics.aging.empty")}
     >
       <ul className="space-y-2 max-h-60 overflow-y-auto">
         {agingItems.map((item) => (
@@ -30,14 +31,23 @@ export function AgingItemsList({ items, thresholdDays = 30 }: AgingItemsListProp
                 {item.title}
               </p>
               <p className="text-xs text-on-surface/50">
-                {item.ageDays} day{item.ageDays !== 1 ? "s" : ""} old
+                {item.ageDays}{" "}
+                {item.ageDays === 1
+                  ? t("roadmap.analytics.aging.dayOne")
+                  : t("roadmap.analytics.aging.dayOther")}
               </p>
             </div>
             <span
               className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold text-white shrink-0"
               style={{ backgroundColor: HORIZON_CHART_COLORS[item.horizon] }}
             >
-              {HORIZON_LABELS[item.horizon]}
+              {item.horizon === "now"
+                ? t("roadmap.horizon.now")
+                : item.horizon === "next"
+                  ? t("roadmap.horizon.next")
+                  : item.horizon === "later"
+                    ? t("roadmap.horizon.later")
+                    : t("roadmap.horizon.someday")}
             </span>
           </li>
         ))}

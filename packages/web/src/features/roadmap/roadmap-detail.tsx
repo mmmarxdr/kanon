@@ -9,7 +9,7 @@ import {
   useAddDependencyMutation,
   useRemoveDependencyMutation,
 } from "./use-roadmap-query";
-import { HORIZON_LABELS } from "@/stores/roadmap-store";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface RoadmapDetailProps {
   item: RoadmapItem;
@@ -25,6 +25,7 @@ export function RoadmapDetail({
   projectKey,
   onClose,
 }: RoadmapDetailProps) {
+  const { t } = useI18n();
   const panelRef = useRef<HTMLDivElement>(null);
   const updateMutation = useUpdateRoadmapMutation(projectKey, item.id);
   const deleteMutation = useDeleteRoadmapMutation(projectKey);
@@ -153,12 +154,12 @@ export function RoadmapDetail({
   );
 
   const handleDelete = useCallback(() => {
-    if (confirm("Delete this roadmap item?")) {
+    if (confirm(t("roadmap.detail.confirmDelete"))) {
       deleteMutation.mutate(item.id, {
         onSuccess: () => onClose(),
       });
     }
-  }, [deleteMutation, item.id, onClose]);
+  }, [deleteMutation, item.id, onClose, t]);
 
   const handlePromote = useCallback(() => {
     promoteMutation.mutate({ itemId: item.id });
@@ -169,6 +170,16 @@ export function RoadmapDetail({
       if (e.target === e.currentTarget) onClose();
     },
     [onClose],
+  );
+
+  const getStatusLabel = useCallback(
+    (status: RoadmapStatus): string => {
+      if (status === "idea") return t("roadmap.status.idea");
+      if (status === "planned") return t("roadmap.status.planned");
+      if (status === "in_progress") return t("roadmap.status.inProgress");
+      return t("roadmap.status.done");
+    },
+    [t],
   );
 
   return (
@@ -221,7 +232,7 @@ export function RoadmapDetail({
                       }
                     }}
                     className="w-full text-lg font-semibold text-foreground bg-transparent border-b border-primary outline-none"
-                    aria-label="Roadmap item title"
+                    aria-label={t("roadmap.detail.ariaItemTitle")}
                   />
                 ) : (
                   <h2
@@ -237,7 +248,7 @@ export function RoadmapDetail({
                 type="button"
                 onClick={onClose}
                 className="p-1.5 rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors shrink-0"
-                aria-label="Close panel"
+                aria-label={t("roadmap.detail.ariaClosePanel")}
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -253,7 +264,7 @@ export function RoadmapDetail({
             {/* Description */}
             <div className="flex flex-col gap-1">
               <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                Description
+                {t("roadmap.detail.description")}
               </span>
               {isEditingDescription ? (
                 <textarea
@@ -272,8 +283,8 @@ export function RoadmapDetail({
                   className="w-full rounded border border-border bg-secondary px-3 py-2
                     text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/30
                     resize-y min-h-[6rem]"
-                  placeholder="Add a description..."
-                  aria-label="Roadmap item description"
+                  placeholder={t("roadmap.detail.addDescription")}
+                  aria-label={t("roadmap.detail.ariaItemDescription")}
                 />
               ) : (
                 <button
@@ -288,7 +299,7 @@ export function RoadmapDetail({
                     </p>
                   ) : (
                     <span className="text-sm text-muted-foreground italic">
-                      Click to add a description...
+                      {t("roadmap.detail.clickAddDescription")}
                     </span>
                   )}
                 </button>
@@ -300,7 +311,7 @@ export function RoadmapDetail({
               {/* Horizon */}
               <div className="flex flex-col gap-1">
                 <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                  Horizon
+                  {t("roadmap.detail.horizon")}
                 </span>
                 <select
                   value={item.horizon}
@@ -311,7 +322,13 @@ export function RoadmapDetail({
                 >
                   {HORIZON_OPTIONS.map((h) => (
                     <option key={h} value={h}>
-                      {HORIZON_LABELS[h]}
+                      {h === "now"
+                        ? t("roadmap.horizon.now")
+                        : h === "next"
+                          ? t("roadmap.horizon.next")
+                          : h === "later"
+                            ? t("roadmap.horizon.later")
+                            : t("roadmap.horizon.someday")}
                     </option>
                   ))}
                 </select>
@@ -320,7 +337,7 @@ export function RoadmapDetail({
               {/* Effort */}
               <div className="flex flex-col gap-1">
                 <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                  Effort (1-5)
+                  {t("roadmap.detail.effort")}
                 </span>
                 <select
                   value={item.effort ?? ""}
@@ -329,7 +346,7 @@ export function RoadmapDetail({
                   }
                   className="rounded border border-border bg-secondary px-2 py-1.5 text-sm text-foreground outline-none focus:border-primary"
                 >
-                  <option value="">Unset</option>
+                  <option value="">{t("roadmap.detail.unset")}</option>
                   {SCORE_OPTIONS.map((v) => (
                     <option key={v} value={v}>
                       {v}
@@ -341,7 +358,7 @@ export function RoadmapDetail({
               {/* Impact */}
               <div className="flex flex-col gap-1">
                 <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                  Impact (1-5)
+                  {t("roadmap.detail.impact")}
                 </span>
                 <select
                   value={item.impact ?? ""}
@@ -350,7 +367,7 @@ export function RoadmapDetail({
                   }
                   className="rounded border border-border bg-secondary px-2 py-1.5 text-sm text-foreground outline-none focus:border-primary"
                 >
-                  <option value="">Unset</option>
+                  <option value="">{t("roadmap.detail.unset")}</option>
                   {SCORE_OPTIONS.map((v) => (
                     <option key={v} value={v}>
                       {v}
@@ -362,7 +379,7 @@ export function RoadmapDetail({
               {/* Labels */}
               <div className="flex flex-col gap-1">
                 <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                  Labels
+                  {t("roadmap.detail.labels")}
                 </span>
                 <div className="flex items-center gap-1 flex-wrap min-h-[2rem]">
                   {item.labels.map((label) => (
@@ -375,7 +392,7 @@ export function RoadmapDetail({
                   ))}
                   {item.labels.length === 0 && (
                     <span className="text-xs text-muted-foreground italic">
-                      No labels
+                      {t("roadmap.detail.noLabels")}
                     </span>
                   )}
                 </div>
@@ -384,7 +401,7 @@ export function RoadmapDetail({
               {/* Target Date */}
               <div className="flex flex-col gap-1">
                 <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                  Target Date
+                  {t("roadmap.detail.targetDate")}
                 </span>
                 <input
                   type="date"
@@ -402,20 +419,22 @@ export function RoadmapDetail({
             {/* Dependencies */}
             <div className="flex flex-col gap-3">
               <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                Dependencies
+                {t("roadmap.detail.dependencies")}
               </span>
 
               {/* Blocks list */}
               {(item.blocks ?? []).length > 0 && (
                 <div className="flex flex-col gap-1.5">
                   <span className="text-xs font-medium text-muted-foreground">
-                    Blocks
+                    {t("roadmap.detail.blocks")}
                   </span>
                   {(item.blocks ?? []).map((dep) => (
                     <DependencyEntry
                       key={dep.id}
-                      title={dep.target?.title ?? "Unknown"}
+                      title={dep.target?.title ?? t("roadmap.detail.unknown")}
                       status={dep.target?.status ?? "idea"}
+                      statusLabel={getStatusLabel(dep.target?.status ?? "idea")}
+                      removeAriaPrefix={t("roadmap.detail.removeDependency")}
                       onRemove={() => handleRemoveDependency(dep.id)}
                     />
                   ))}
@@ -426,13 +445,15 @@ export function RoadmapDetail({
               {(item.dependsOn ?? []).length > 0 && (
                 <div className="flex flex-col gap-1.5">
                   <span className="text-xs font-medium text-muted-foreground">
-                    Blocked by
+                    {t("roadmap.detail.blockedBy")}
                   </span>
                   {(item.dependsOn ?? []).map((dep) => (
                     <DependencyEntry
                       key={dep.id}
-                      title={dep.source?.title ?? "Unknown"}
+                      title={dep.source?.title ?? t("roadmap.detail.unknown")}
                       status={dep.source?.status ?? "idea"}
+                      statusLabel={getStatusLabel(dep.source?.status ?? "idea")}
+                      removeAriaPrefix={t("roadmap.detail.removeDependency")}
                       onRemove={() => handleRemoveDependency(dep.id)}
                     />
                   ))}
@@ -442,7 +463,7 @@ export function RoadmapDetail({
               {(item.blocks ?? []).length === 0 &&
                 (item.dependsOn ?? []).length === 0 && (
                   <span className="text-xs text-muted-foreground italic">
-                    No dependencies
+                    {t("roadmap.detail.noDependencies")}
                   </span>
                 )}
 
@@ -461,7 +482,7 @@ export function RoadmapDetail({
                     // Delay to allow click on dropdown items
                     setTimeout(() => setShowDepDropdown(false), 200);
                   }}
-                  placeholder="Add dependency... (this item blocks)"
+                  placeholder={t("roadmap.detail.addDependencyPlaceholder")}
                   className="w-full rounded border border-border bg-secondary px-2 py-1.5 text-sm text-foreground outline-none focus:border-primary"
                 />
                 {showDepDropdown && availableItems.length > 0 && (
@@ -477,7 +498,10 @@ export function RoadmapDetail({
                         <span className="truncate flex-1">
                           {candidate.title}
                         </span>
-                        <StatusBadge status={candidate.status} />
+                        <StatusBadge
+                          status={candidate.status}
+                          statusLabel={getStatusLabel(candidate.status)}
+                        />
                       </button>
                     ))}
                   </div>
@@ -488,11 +512,11 @@ export function RoadmapDetail({
             {/* Timestamps */}
             <div className="flex items-center gap-4 text-xs text-muted-foreground">
               <span>
-                Created:{" "}
+                {t("roadmap.detail.created")}:{" "}
                 {new Date(item.createdAt).toLocaleDateString()}
               </span>
               <span>
-                Updated:{" "}
+                {t("roadmap.detail.updated")}:{" "}
                 {new Date(item.updatedAt).toLocaleDateString()}
               </span>
             </div>
@@ -508,13 +532,13 @@ export function RoadmapDetail({
                     hover:bg-primary/90 transition-colors disabled:opacity-50"
                 >
                   {promoteMutation.isPending
-                    ? "Promoting..."
-                    : "Promote to Issue"}
+                    ? t("roadmap.detail.promoting")
+                    : t("roadmap.detail.promoteToIssue")}
                 </button>
               )}
               {item.promoted && (
                 <span className="text-sm text-emerald-600 font-medium">
-                  Already promoted
+                  {t("roadmap.detail.alreadyPromoted")}
                 </span>
               )}
               <button
@@ -524,7 +548,7 @@ export function RoadmapDetail({
                 className="px-3 py-1.5 text-sm font-medium rounded border border-border text-destructive-foreground
                   hover:bg-destructive/10 transition-colors disabled:opacity-50 ml-auto"
               >
-                Delete
+                {t("roadmap.detail.delete")}
               </button>
             </div>
           </div>
@@ -542,19 +566,18 @@ const DEP_STATUS_COLORS: Record<RoadmapStatus, string> = {
   done: "bg-emerald-50 text-emerald-600",
 };
 
-const DEP_STATUS_LABELS: Record<RoadmapStatus, string> = {
-  idea: "Idea",
-  planned: "Planned",
-  in_progress: "In Progress",
-  done: "Done",
-};
-
-function StatusBadge({ status }: { status: RoadmapStatus }) {
+function StatusBadge({
+  status,
+  statusLabel,
+}: {
+  status: RoadmapStatus;
+  statusLabel: string;
+}) {
   return (
     <span
       className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 ${DEP_STATUS_COLORS[status]}`}
     >
-      {DEP_STATUS_LABELS[status]}
+      {statusLabel}
     </span>
   );
 }
@@ -562,21 +585,25 @@ function StatusBadge({ status }: { status: RoadmapStatus }) {
 function DependencyEntry({
   title,
   status,
+  statusLabel,
+  removeAriaPrefix,
   onRemove,
 }: {
   title: string;
   status: RoadmapStatus;
+  statusLabel: string;
+  removeAriaPrefix: string;
   onRemove: () => void;
 }) {
   return (
     <div className="flex items-center gap-2 rounded bg-secondary/50 px-2 py-1.5">
       <span className="text-sm text-foreground truncate flex-1">{title}</span>
-      <StatusBadge status={status} />
+      <StatusBadge status={status} statusLabel={statusLabel} />
       <button
         type="button"
         onClick={onRemove}
         className="p-0.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors shrink-0"
-        aria-label={`Remove dependency: ${title}`}
+        aria-label={`${removeAriaPrefix}: ${title}`}
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"

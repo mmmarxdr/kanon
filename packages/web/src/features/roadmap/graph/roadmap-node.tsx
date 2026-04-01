@@ -1,7 +1,8 @@
 import { memo } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { RoadmapItem, RoadmapStatus } from "@/types/roadmap";
-import { HORIZON_LABELS, HORIZON_PILL_COLORS } from "@/stores/roadmap-store";
+import { HORIZON_PILL_COLORS } from "@/stores/roadmap-store";
+import { useI18n } from "@/hooks/use-i18n";
 
 /** Color classes for each roadmap status. */
 const STATUS_COLORS: Record<RoadmapStatus, string> = {
@@ -10,13 +11,6 @@ const STATUS_COLORS: Record<RoadmapStatus, string> = {
   in_progress:
     "bg-amber-50 text-amber-600 dark:bg-amber-900/40 dark:text-amber-300",
   done: "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-300",
-};
-
-const STATUS_LABELS: Record<RoadmapStatus, string> = {
-  idea: "Idea",
-  planned: "Planned",
-  in_progress: "In Progress",
-  done: "Done",
 };
 
 const SCORE_COLORS: Record<number, string> = {
@@ -30,7 +24,24 @@ const SCORE_COLORS: Record<number, string> = {
 type RoadmapNodeData = RoadmapItem & { onSelect?: (id: string) => void };
 
 function RoadmapNodeComponent({ data }: NodeProps) {
+  const { t } = useI18n();
   const item = data as unknown as RoadmapNodeData;
+  const statusLabel =
+    item.status === "idea"
+      ? t("roadmap.status.idea")
+      : item.status === "planned"
+        ? t("roadmap.status.planned")
+        : item.status === "in_progress"
+          ? t("roadmap.status.inProgress")
+          : t("roadmap.status.done");
+  const horizonLabel =
+    item.horizon === "now"
+      ? t("roadmap.horizon.now")
+      : item.horizon === "next"
+        ? t("roadmap.horizon.next")
+        : item.horizon === "later"
+          ? t("roadmap.horizon.later")
+          : t("roadmap.horizon.someday");
 
   const handleClick = () => {
     item.onSelect?.(item.id);
@@ -53,12 +64,12 @@ function RoadmapNodeComponent({ data }: NodeProps) {
         <span
           className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${STATUS_COLORS[item.status]}`}
         >
-          {STATUS_LABELS[item.status]}
+          {statusLabel}
         </span>
         <span
           className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold text-white ${HORIZON_PILL_COLORS[item.horizon]}`}
         >
-          {HORIZON_LABELS[item.horizon]}
+          {horizonLabel}
         </span>
       </div>
 

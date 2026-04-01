@@ -6,6 +6,7 @@ import { SearchInput } from "@/components/ui/search-input";
 import { FilterSelect } from "@/components/ui/filter-select";
 import { FilterBar as FilterBarLayout } from "@/components/ui/filter-bar";
 import { ClearFiltersButton } from "@/components/ui/clear-filters-button";
+import { useI18n } from "@/hooks/use-i18n";
 import { ColumnToggle } from "./column-toggle";
 import { NewIssueModal } from "./new-issue-modal";
 
@@ -31,6 +32,7 @@ interface FilterBarProps {
 }
 
 export function FilterBar({ assignees, projectKey }: FilterBarProps) {
+  const { t } = useI18n();
   const { filters, setFilter, clearFilters, viewMode, setViewMode, showUngrouped, setShowUngrouped } = useBoardStore();
   const [showNewIssue, setShowNewIssue] = useState(false);
 
@@ -78,6 +80,28 @@ export function FilterBar({ assignees, projectKey }: FilterBarProps) {
     value: a.id,
     label: a.username,
   }));
+  const issueTypes = ISSUE_TYPES.map((item) => ({
+    ...item,
+    label:
+      item.value === "feature"
+        ? t("backlog.type.feature")
+        : item.value === "bug"
+          ? t("backlog.type.bug")
+          : item.value === "task"
+            ? t("backlog.type.task")
+            : t("backlog.type.spike"),
+  }));
+  const issuePriorities = ISSUE_PRIORITIES.map((item) => ({
+    ...item,
+    label:
+      item.value === "critical"
+        ? t("backlog.priority.critical")
+        : item.value === "high"
+          ? t("backlog.priority.high")
+          : item.value === "medium"
+            ? t("backlog.priority.medium")
+            : t("backlog.priority.low"),
+  }));
 
   return (
     <FilterBarLayout>
@@ -85,7 +109,7 @@ export function FilterBar({ assignees, projectKey }: FilterBarProps) {
       <SearchInput
         value={filters.search ?? ""}
         onChange={(v) => handleSelect("search", v)}
-        placeholder="Search issues..."
+        placeholder={t("backlog.searchPlaceholder")}
         data-testid="filter-search"
       />
 
@@ -93,8 +117,8 @@ export function FilterBar({ assignees, projectKey }: FilterBarProps) {
       <FilterSelect
         value={filters.type ?? ""}
         onChange={(v) => handleSelect("type", v)}
-        options={ISSUE_TYPES}
-        allLabel="All types"
+        options={issueTypes}
+        allLabel={t("board.filter.allTypes")}
         data-testid="filter-type"
       />
 
@@ -102,8 +126,8 @@ export function FilterBar({ assignees, projectKey }: FilterBarProps) {
       <FilterSelect
         value={filters.priority ?? ""}
         onChange={(v) => handleSelect("priority", v)}
-        options={ISSUE_PRIORITIES}
-        allLabel="All priorities"
+        options={issuePriorities}
+        allLabel={t("board.filter.allPriorities")}
         data-testid="filter-priority"
       />
 
@@ -112,7 +136,7 @@ export function FilterBar({ assignees, projectKey }: FilterBarProps) {
         value={filters.assigneeId ?? ""}
         onChange={(v) => handleSelect("assigneeId", v)}
         options={assigneeOptions}
-        allLabel="All assignees"
+        allLabel={t("board.filter.allAssignees")}
       />
 
       {/* Clear all button */}
@@ -137,7 +161,7 @@ export function FilterBar({ assignees, projectKey }: FilterBarProps) {
             onChange={(e) => setShowUngrouped(e.target.checked)}
             className="rounded border-outline-variant/30 text-primary focus:ring-primary/30 h-3.5 w-3.5"
           />
-          Ungrouped
+          {t("backlog.ungrouped")}
         </label>
       )}
 
@@ -149,12 +173,12 @@ export function FilterBar({ assignees, projectKey }: FilterBarProps) {
           onClick={() => setViewMode("grouped")}
           className={`h-7 px-2.5 text-xs font-medium transition-all duration-200
             ${viewMode === "grouped"
-              ? "bg-primary text-primary-foreground"
+              ? "bg-primary text-[var(--color-filter-active-foreground)]"
               : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
             }`}
-          title="Grouped view"
+          title={t("board.view.groupedTitle")}
         >
-          Grouped
+          {t("backlog.viewGrouped")}
         </button>
         <button
           type="button"
@@ -162,12 +186,12 @@ export function FilterBar({ assignees, projectKey }: FilterBarProps) {
           onClick={() => setViewMode("flat")}
           className={`h-7 px-2.5 text-xs font-medium transition-all duration-200
             ${viewMode === "flat"
-              ? "bg-primary text-primary-foreground"
+              ? "bg-primary text-[var(--color-filter-active-foreground)]"
               : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
             }`}
-          title="Flat view"
+          title={t("board.view.flatTitle")}
         >
-          Flat
+          {t("backlog.viewFlat")}
         </button>
       </div>
 
@@ -181,7 +205,7 @@ export function FilterBar({ assignees, projectKey }: FilterBarProps) {
         className="bg-gradient-to-b from-primary to-primary-hover text-primary-foreground hover:from-primary-hover hover:to-primary-hover rounded px-3 py-1.5 text-sm font-medium transition-all duration-200"
         data-testid="new-issue-button"
       >
-        New Issue
+        {t("backlog.newIssue")}
       </button>
 
       {/* New Issue modal */}

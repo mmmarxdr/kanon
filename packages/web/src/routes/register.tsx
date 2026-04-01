@@ -2,6 +2,7 @@ import { createRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { rootRoute } from "./__root";
 import { fetchApi, ApiError } from "@/lib/api-client";
+import { useI18n } from "@/hooks/use-i18n";
 
 export const registerRoute = createRoute({
   path: "/register",
@@ -11,6 +12,7 @@ export const registerRoute = createRoute({
 
 function RegisterPage() {
   const navigate = useNavigate();
+  const { t } = useI18n();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -39,7 +41,7 @@ function RegisterPage() {
       if (err instanceof ApiError) {
         setError(err.message);
       } else {
-        setError("An unexpected error occurred");
+        setError(t("register.errorUnexpected"));
       }
     } finally {
       setLoading(false);
@@ -51,7 +53,11 @@ function RegisterPage() {
       <div className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-sm animate-fade-in">
         <div className="mb-6 text-center">
           <h1 className="text-2xl font-bold text-foreground">
-            Create your <span className="text-primary">Kanon</span> account
+            {t("register.titleStart")}{" "}
+            <span className="text-primary">Kanon</span>
+            {t("register.titleEnd")
+              ? ` ${t("register.titleEnd")}`
+              : ""}
           </h1>
         </div>
 
@@ -61,16 +67,16 @@ function RegisterPage() {
               htmlFor="email"
               className="text-sm font-medium text-card-foreground"
             >
-              Email
+              {t("register.email")}
             </label>
             <input
               id="email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
+              placeholder={t("register.placeholderEmail")}
               required
-              className="w-full rounded-md border border-input bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+              className="w-full rounded-md border border-input bg-surface-container-high px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
             />
           </div>
 
@@ -79,18 +85,18 @@ function RegisterPage() {
               htmlFor="password"
               className="text-sm font-medium text-card-foreground"
             >
-              Password
+              {t("register.password")}
             </label>
             <input
               id="password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="At least 8 characters"
+              placeholder={t("register.placeholderPassword")}
               required
               minLength={8}
               maxLength={128}
-              className="w-full rounded-md border border-input bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+              className="w-full rounded-md border border-input bg-surface-container-high px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
             />
           </div>
 
@@ -99,16 +105,16 @@ function RegisterPage() {
               htmlFor="displayName"
               className="text-sm font-medium text-card-foreground"
             >
-              Display Name
+              {t("register.displayName")}
             </label>
             <input
               id="displayName"
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="Your name (optional)"
+              placeholder={t("register.placeholderDisplayName")}
               maxLength={100}
-              className="w-full rounded-md border border-input bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+              className="w-full rounded-md border border-input bg-surface-container-high px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
             />
           </div>
 
@@ -123,12 +129,12 @@ function RegisterPage() {
             disabled={loading}
             className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200 ease-out"
           >
-            {loading ? "Creating account..." : "Create account"}
+            {loading ? t("register.submitting") : t("register.submit")}
           </button>
         </form>
 
         <p className="mt-4 text-center text-sm text-muted-foreground">
-          Already have an account?{" "}
+          {t("register.hasAccount")}{" "}
           <a
             href="/login"
             onClick={(e) => {
@@ -137,7 +143,7 @@ function RegisterPage() {
             }}
             className="text-primary underline-offset-4 hover:underline"
           >
-            Sign in
+            {t("register.signIn")}
           </a>
         </p>
       </div>

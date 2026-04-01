@@ -3,6 +3,7 @@ import { FocusTrap } from "focus-trap-react";
 import { useCreateIssueMutation } from "./use-create-issue-mutation";
 import { useIssuesQuery } from "./use-issues-query";
 import type { IssueType, IssuePriority } from "@/types/issue";
+import { useI18n } from "@/hooks/use-i18n";
 
 const ISSUE_TYPES: { value: IssueType; label: string }[] = [
   { value: "task", label: "Task" },
@@ -81,6 +82,7 @@ interface NewIssueModalProps {
  * - Semi-transparent backdrop (click to close)
  */
 export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
+  const { t } = useI18n();
   const titleRef = useRef<HTMLInputElement>(null);
   const createMutation = useCreateIssueMutation(projectKey);
   const { data: issues } = useIssuesQuery(projectKey);
@@ -169,10 +171,28 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
   }, []);
 
   const inputClass =
-    "w-full rounded-md border-none bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary transition-all duration-150 ease-out";
+    "w-full rounded-md border-none bg-surface-container-high px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary transition-all duration-150 ease-out";
 
   const selectClass =
-    "w-full rounded-md border-none bg-[#E8E8E8] px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary transition-all duration-150 ease-out";
+    "w-full rounded-md border-none bg-surface-container-high px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary transition-all duration-150 ease-out";
+  const issueTypeLabel = (value: IssueType): string => {
+    if (value === "feature") return t("backlog.type.feature");
+    if (value === "bug") return t("backlog.type.bug");
+    if (value === "task") return t("backlog.type.task");
+    return t("backlog.type.spike");
+  };
+  const issuePriorityLabel = (value: IssuePriority): string => {
+    if (value === "critical") return t("backlog.priority.critical");
+    if (value === "high") return t("backlog.priority.high");
+    if (value === "medium") return t("backlog.priority.medium");
+    return t("backlog.priority.low");
+  };
+  const templateLabel = (key: string): string => {
+    if (key === "bug-report") return t("board.template.bugReport");
+    if (key === "feature-request") return t("board.template.featureRequest");
+    if (key === "task") return t("backlog.type.task");
+    return t("backlog.type.spike");
+  };
 
   return (
     <FocusTrap
@@ -206,7 +226,7 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
             type="button"
             onClick={onClose}
             className="absolute top-4 right-4 text-muted-foreground hover:text-foreground transition-colors"
-            aria-label="Close"
+            aria-label={t("palette.close")}
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -228,7 +248,7 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
             id="new-issue-title"
             className="text-lg font-semibold text-foreground mb-4"
           >
-            New Issue
+            {t("backlog.newIssue")}
           </h2>
 
           {/* Form */}
@@ -245,7 +265,7 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
                 htmlFor="issue-template"
                 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1 block"
               >
-                Template
+                {t("board.modal.template")}
               </label>
               <select
                 id="issue-template"
@@ -254,10 +274,10 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
                 className={selectClass}
                 data-testid="new-issue-template"
               >
-                <option value="">None</option>
+                <option value="">{t("board.modal.none")}</option>
                 {TEMPLATES.map((t) => (
                   <option key={t.key} value={t.key}>
-                    {t.name}
+                    {templateLabel(t.key)}
                   </option>
                 ))}
               </select>
@@ -269,7 +289,7 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
                 htmlFor="issue-title"
                 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1 block"
               >
-                Title <span className="text-destructive">*</span>
+                {t("board.modal.title")} <span className="text-destructive">*</span>
               </label>
               <input
                 ref={titleRef}
@@ -279,7 +299,7 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 onKeyDown={handleTitleKeyDown}
-                placeholder="Issue title"
+                placeholder={t("board.modal.placeholderIssueTitle")}
                 className={`${inputClass} text-lg`}
                 data-testid="new-issue-title-input"
               />
@@ -292,7 +312,7 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
                   htmlFor="issue-type"
                   className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1 block"
                 >
-                  Type
+                  {t("backlog.table.type")}
                 </label>
                 <select
                   id="issue-type"
@@ -303,7 +323,7 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
                 >
                   {ISSUE_TYPES.map((t) => (
                     <option key={t.value} value={t.value}>
-                      {t.label}
+                      {issueTypeLabel(t.value)}
                     </option>
                   ))}
                 </select>
@@ -313,7 +333,7 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
                   htmlFor="issue-priority"
                   className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1 block"
                 >
-                  Priority
+                  {t("backlog.table.priority")}
                 </label>
                 <select
                   id="issue-priority"
@@ -324,7 +344,7 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
                 >
                   {ISSUE_PRIORITIES.map((p) => (
                     <option key={p.value} value={p.value}>
-                      {p.label}
+                      {issuePriorityLabel(p.value)}
                     </option>
                   ))}
                 </select>
@@ -337,14 +357,14 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
                 htmlFor="issue-description"
                 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1 block"
               >
-                Description
+                {t("roadmap.detail.description")}
               </label>
               <textarea
                 id="issue-description"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 rows={4}
-                placeholder="Add description..."
+                placeholder={t("roadmap.detail.addDescription")}
                 className={`${inputClass} resize-y`}
                 data-testid="new-issue-description"
               />
@@ -357,14 +377,14 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
                   htmlFor="issue-labels"
                   className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1 block"
                 >
-                  Labels
+                  {t("backlog.labels")}
                 </label>
                 <input
                   id="issue-labels"
                   type="text"
                   value={labels}
                   onChange={(e) => setLabels(e.target.value)}
-                  placeholder="bug-fix, ui (comma-separated)"
+                  placeholder={t("board.modal.labelsPlaceholder")}
                   className={inputClass}
                   data-testid="new-issue-labels"
                 />
@@ -374,7 +394,7 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
                   htmlFor="issue-parent"
                   className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1 block"
                 >
-                  Parent Issue
+                  {t("board.modal.parentIssue")}
                 </label>
                 <select
                   id="issue-parent"
@@ -383,7 +403,7 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
                   className={selectClass}
                   data-testid="new-issue-parent"
                 >
-                  <option value="">None</option>
+                  <option value="">{t("board.modal.none")}</option>
                   {issues?.map((issue) => (
                     <option key={issue.id} value={issue.id}>
                       {issue.key}: {issue.title}
@@ -400,7 +420,7 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
                 onClick={onClose}
                 className="px-4 py-2 rounded-md text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
               >
-                Cancel
+                {t("roadmap.modal.cancel")}
               </button>
               <button
                 type="submit"
@@ -430,7 +450,7 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
                     />
                   </svg>
                 )}
-                Create Issue
+                {t("board.modal.createIssue")}
               </button>
             </div>
           </form>

@@ -2,32 +2,34 @@ import { PieChart, Pie, Cell } from "recharts";
 import type { RoadmapItem } from "@/types/roadmap";
 import { ChartCard } from "./chart-card";
 import { usePromotionData } from "./use-analytics-data";
+import { useI18n } from "@/hooks/use-i18n";
 
 interface PromotionRateCardProps {
   items: RoadmapItem[];
 }
 
 export function PromotionRateCard({ items }: PromotionRateCardProps) {
+  const { t } = useI18n();
   const { promoted, total, rate } = usePromotionData(items);
 
   const ringData = [
-    { name: "Promoted", value: promoted },
-    { name: "Remaining", value: Math.max(total - promoted, 0) },
+    { name: t("roadmap.analytics.promotionRate.legendPromoted"), value: promoted },
+    { name: t("roadmap.analytics.promotionRate.legendRemaining"), value: Math.max(total - promoted, 0) },
   ];
 
   return (
     <ChartCard
-      title="Promotion Rate"
-      subtitle="Roadmap items promoted to issues"
+      title={t("roadmap.analytics.promotionRate.title")}
+      subtitle={t("roadmap.analytics.promotionRate.subtitle")}
       isEmpty={total === 0}
-      emptyMessage="No roadmap items yet."
+      emptyMessage={t("roadmap.analytics.promotionRate.empty")}
     >
       <div className="flex items-center gap-6">
         {/* Large percentage */}
         <div className="flex-1">
           <p className="text-4xl font-bold text-on-surface">{rate}%</p>
           <p className="text-sm text-on-surface/60 mt-1">
-            {promoted} / {total} promoted
+            {promoted} / {total} {t("roadmap.analytics.promotionRate.promoted")}
           </p>
         </div>
 
