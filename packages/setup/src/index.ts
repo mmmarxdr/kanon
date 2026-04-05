@@ -3,7 +3,7 @@
 
 import { Command } from "commander";
 import chalk from "chalk";
-import { isWsl, resolveWinHome } from "./detect.js";
+import { buildPlatformContext } from "./detect.js";
 import { resolveAuth } from "./auth.js";
 import { detectTools, getToolByName } from "./registry.js";
 import {
@@ -16,7 +16,7 @@ import {
 import { installSkills, removeSkills } from "./skills.js";
 import { installTemplate, removeTemplate } from "./templates.js";
 import { installWorkflows, removeWorkflows } from "./workflows.js";
-import type { ToolDefinition } from "./types.js";
+import type { ToolDefinition, PlatformContext } from "./types.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -74,16 +74,14 @@ async function run(options: {
   const removeMode = options.remove === true;
   const assetsDir = getAssetsDir();
 
-  // ── WSL Detection ──────────────────────────────────────────────────
-  const wslMode = isWsl();
-  let winHome: string | undefined;
+  // ── Platform Detection ─────────────────────────────────────────────
+  const ctx = await buildPlatformContext();
 
-  if (wslMode) {
-    winHome = resolveWinHome();
-    if (winHome) {
+  if (ctx.platform === "wsl") {
+    if (ctx.winHome) {
       console.log(
         chalk.cyan("[info]") +
-          `  WSL detected — Windows home: ${chalk.bold(winHome)}`,
+          `  WSL detected — Windows home: ${chalk.bold(ctx.winHome)}`,
       );
     } else {
       console.log(
@@ -103,9 +101,15 @@ async function run(options: {
         `Unknown tool: '${options.tool}'. Supported: claude-code, cursor, antigravity`,
       );
     }
+    // Check if the tool supports the current platform
+    if (!tool.platforms[ctx.platform]) {
+      throw new Error(
+        `${tool.displayName} is not supported on ${ctx.platform}`,
+      );
+    }
     selectedTools = [tool];
   } else if (options.all) {
-    selectedTools = await detectTools(wslMode, winHome);
+    selectedTools = await detectTools(ctx);
     if (selectedTools.length === 0) {
       throw new Error(
         "No supported tools detected. Install at least one supported AI coding tool.",
@@ -113,7 +117,7 @@ async function run(options: {
     }
   } else {
     // Detect and show what's available
-    selectedTools = await detectTools(wslMode, winHome);
+    selectedTools = await detectTools(ctx);
     if (selectedTools.length === 0) {
       throw new Error(
         "No supported tools detected. Install at least one supported AI coding tool.",
@@ -158,12 +162,22 @@ async function run(options: {
   let successCount = 0;
 
   for (const tool of selectedTools) {
-    const useWslPaths = wslMode && tool.isWindowsNative;
-    const pathArg = useWslPaths ? winHome : undefined;
+    const platformPaths = tool.platforms[ctx.platform];
+    if (!platformPaths) {
+      console.log(
+        chalk.yellow("  ⚠") +
+          ` ${tool.displayName} is not supported on ${ctx.platform} — skipping`,
+      );
+      console.log("");
+      continue;
+    }
+
+    const configPath = platformPaths.config(ctx);
+    const skillDir = platformPaths.skills(ctx);
+    const templatePath = platformPaths.template(ctx);
 
     if (removeMode) {
       // ── Remove Mode ──────────────────────────────────────────────
-      const configPath = tool.configPath(pathArg);
       const removed = removeConfig(configPath, tool.rootKey);
       if (removed) {
         console.log(
@@ -178,7 +192,6 @@ async function run(options: {
       }
 
       // Remove skills
-      const skillDir = tool.skillDest(pathArg);
       const removedSkills = removeSkills(skillDir);
       if (removedSkills.length > 0) {
         console.log(
@@ -188,7 +201,6 @@ async function run(options: {
       }
 
       // Remove template
-      const templatePath = tool.templateTarget(pathArg);
       const removedTemplate = removeTemplate(templatePath, tool.templateMode);
       if (removedTemplate) {
         console.log(
@@ -198,8 +210,8 @@ async function run(options: {
       }
 
       // Remove workflows
-      if (tool.workflowDest) {
-        const wfDir = tool.workflowDest(pathArg);
+      if (platformPaths.workflows) {
+        const wfDir = platformPaths.workflows(ctx);
         const removedWfs = removeWorkflows(wfDir);
         if (removedWfs.length > 0) {
           console.log(
@@ -212,13 +224,12 @@ async function run(options: {
       successCount++;
     } else {
       // ── Install Mode ─────────────────────────────────────────────
-      const configPath = tool.configPath(pathArg);
       const entry = buildMcpEntry(
         mcpResolution,
         apiUrl,
         apiKey,
-        wslMode,
-        tool.isWindowsNative,
+        ctx,
+        platformPaths.mcpMode,
         nodeBin,
       );
 
@@ -230,7 +241,6 @@ async function run(options: {
       );
 
       // 2. Skills
-      const skillDir = tool.skillDest(pathArg);
       const installedSkills = installSkills(skillDir, assetsDir);
       if (installedSkills.length > 0) {
         console.log(
@@ -240,7 +250,6 @@ async function run(options: {
       }
 
       // 3. Template
-      const templatePath = tool.templateTarget(pathArg);
       installTemplate(
         templatePath,
         tool.templateSource,
@@ -253,8 +262,8 @@ async function run(options: {
       );
 
       // 4. Workflows
-      if (tool.workflowDest) {
-        const wfDir = tool.workflowDest(pathArg);
+      if (platformPaths.workflows) {
+        const wfDir = platformPaths.workflows(ctx);
         const installedWfs = installWorkflows(wfDir, assetsDir);
         if (installedWfs.length > 0) {
           console.log(

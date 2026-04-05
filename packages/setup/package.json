@@ -1,6 +1,6 @@
 {
   "name": "@kanon-pm/setup",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Setup and configure Kanon AI tool integrations (Claude Code, Cursor, Antigravity)",
   "bin": {

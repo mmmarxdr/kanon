@@ -1,27 +1,38 @@
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+// ─── Platform Types (cross-platform refactor) ────────────────────────────────
+
+export type Platform = "win32" | "wsl" | "linux";
+
+export interface PlatformContext {
+  platform: Platform;
+  homedir: string; // os.homedir() — on WSL this is /home/user
+  winHome?: string; // /mnt/c/Users/X (WSL only)
+  appDataDir?: string; // %APPDATA% resolved (win32 only)
+}
+
+export type McpMode = "direct" | "wsl-bridge";
+
+export interface PlatformPaths {
+  detect: (ctx: PlatformContext) => Promise<boolean>;
+  config: (ctx: PlatformContext) => string;
+  skills: (ctx: PlatformContext) => string;
+  workflows?: (ctx: PlatformContext) => string;
+  template: (ctx: PlatformContext) => string;
+  mcpMode: McpMode;
+}
+
+// ─── Tool Definition ─────────────────────────────────────────────────────────
+
 export interface ToolDefinition {
   name: string;
   displayName: string;
-  configPath: (winHome?: string) => string;
   rootKey: string;
-  detect: () => Promise<boolean>;
-  wslDetect?: (winHome: string) => Promise<boolean>;
-  skillDest: (winHome?: string) => string;
-  workflowDest?: (winHome?: string) => string;
   templateSource: string;
-  templateTarget: (winHome?: string) => string;
   templateMode: "marker-inject" | "file-copy";
-  isWindowsNative: boolean;
-}
 
-export interface SetupOptions {
-  apiUrl: string;
-  apiKey: string;
-  tools: ToolDefinition[];
-  remove: boolean;
-  wslMode: boolean;
-  winHome?: string;
+  // Per-platform paths map — each tool declares which platforms it supports
+  platforms: Partial<Record<Platform, PlatformPaths>>;
 }
 
 export interface McpServerEntry {

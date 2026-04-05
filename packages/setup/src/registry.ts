@@ -1,111 +1,151 @@
 // ─── Tool Registry ───────────────────────────────────────────────────────────
 
 import fs from "node:fs";
-import os from "node:os";
-import type { ToolDefinition } from "./types.js";
+import type { ToolDefinition, PlatformContext } from "./types.js";
 import { commandExists } from "./detect.js";
-
-const home = os.homedir();
 
 export const toolRegistry: ToolDefinition[] = [
   // ── Claude Code ──────────────────────────────────────────────────────
   {
     name: "claude-code",
     displayName: "Claude Code",
-    configPath: () => `${home}/.claude.json`,
     rootKey: "mcpServers",
-    detect: async () => {
-      return fs.existsSync(`${home}/.claude`) || commandExists("claude");
-    },
-    skillDest: () => `${home}/.claude/skills`,
-    workflowDest: () => `${home}/.claude/workflows`,
     templateSource: "claude-code-snippet.md",
-    templateTarget: () => `${home}/.claude/CLAUDE.md`,
     templateMode: "marker-inject",
-    isWindowsNative: false,
+
+    platforms: {
+      // Claude Code is NOT supported on win32 — no entry
+      wsl: {
+        detect: async (ctx) =>
+          fs.existsSync(`${ctx.homedir}/.claude`) ||
+          commandExists("claude", ctx.platform),
+        config: (ctx) => `${ctx.homedir}/.claude.json`,
+        skills: (ctx) => `${ctx.homedir}/.claude/skills`,
+        workflows: (ctx) => `${ctx.homedir}/.claude/workflows`,
+        template: (ctx) => `${ctx.homedir}/.claude/CLAUDE.md`,
+        mcpMode: "direct",
+      },
+      linux: {
+        detect: async (ctx) =>
+          fs.existsSync(`${ctx.homedir}/.claude`) ||
+          commandExists("claude", ctx.platform),
+        config: (ctx) => `${ctx.homedir}/.claude.json`,
+        skills: (ctx) => `${ctx.homedir}/.claude/skills`,
+        workflows: (ctx) => `${ctx.homedir}/.claude/workflows`,
+        template: (ctx) => `${ctx.homedir}/.claude/CLAUDE.md`,
+        mcpMode: "direct",
+      },
+    },
   },
 
   // ── Cursor ───────────────────────────────────────────────────────────
   {
     name: "cursor",
     displayName: "Cursor",
-    configPath: (winHome?: string) => {
-      const base = winHome || home;
-      return `${base}/.cursor/mcp.json`;
-    },
     rootKey: "mcpServers",
-    detect: async () => {
-      return fs.existsSync(`${home}/.cursor`);
-    },
-    wslDetect: async (winHome: string) => {
-      return fs.existsSync(`${winHome}/.cursor`);
-    },
-    skillDest: (winHome?: string) => {
-      const base = winHome || home;
-      return `${base}/.cursor/skills`;
-    },
-    // Cursor has no global workflows
     templateSource: "cursor-rules.mdc",
-    templateTarget: (winHome?: string) => {
-      const base = winHome || home;
-      return `${base}/.cursor/rules/kanon.mdc`;
-    },
     templateMode: "file-copy",
-    isWindowsNative: true,
+
+    platforms: {
+      win32: {
+        detect: async (ctx) => {
+          const appData = ctx.appDataDir;
+          return !!appData && fs.existsSync(`${appData}\\Cursor\\User`);
+        },
+        config: (ctx) => {
+          const appData = ctx.appDataDir!;
+          return `${appData}\\Cursor\\User\\mcp.json`;
+        },
+        skills: (ctx) => `${ctx.homedir}\\.cursor\\skills`,
+        template: (ctx) => `${ctx.homedir}\\.cursor\\rules\\kanon.mdc`,
+        mcpMode: "direct",
+      },
+      wsl: {
+        detect: async (ctx) => {
+          return !!ctx.winHome && fs.existsSync(`${ctx.winHome}/.cursor`);
+        },
+        config: (ctx) => `${ctx.winHome!}/.cursor/mcp.json`,
+        skills: (ctx) => `${ctx.winHome!}/.cursor/skills`,
+        template: (ctx) => `${ctx.winHome!}/.cursor/rules/kanon.mdc`,
+        mcpMode: "wsl-bridge",
+      },
+      linux: {
+        detect: async (ctx) => fs.existsSync(`${ctx.homedir}/.cursor`),
+        config: (ctx) => `${ctx.homedir}/.cursor/mcp.json`,
+        skills: (ctx) => `${ctx.homedir}/.cursor/skills`,
+        template: (ctx) => `${ctx.homedir}/.cursor/rules/kanon.mdc`,
+        mcpMode: "direct",
+      },
+    },
   },
 
   // ── Antigravity (Gemini) ─────────────────────────────────────────────
   {
     name: "antigravity",
     displayName: "Antigravity",
-    configPath: (winHome?: string) => {
-      const base = winHome || home;
-      return `${base}/.gemini/antigravity/mcp_config.json`;
-    },
     rootKey: "mcpServers",
-    detect: async () => {
-      return fs.existsSync(`${home}/.gemini`);
-    },
-    wslDetect: async (winHome: string) => {
-      return fs.existsSync(`${winHome}/.gemini`);
-    },
-    skillDest: (winHome?: string) => {
-      const base = winHome || home;
-      return `${base}/.gemini/antigravity/skills`;
-    },
-    workflowDest: (winHome?: string) => {
-      const base = winHome || home;
-      return `${base}/.gemini/antigravity/global_workflows`;
-    },
     templateSource: "gemini-instructions.md",
-    templateTarget: (winHome?: string) => {
-      const base = winHome || home;
-      return `${base}/.gemini/GEMINI.md`;
-    },
     templateMode: "marker-inject",
-    isWindowsNative: true,
+
+    platforms: {
+      win32: {
+        detect: async (ctx) =>
+          fs.existsSync(`${ctx.homedir}\\.gemini`),
+        config: (ctx) =>
+          `${ctx.homedir}\\.gemini\\antigravity\\mcp_config.json`,
+        skills: (ctx) =>
+          `${ctx.homedir}\\.gemini\\antigravity\\skills`,
+        workflows: (ctx) =>
+          `${ctx.homedir}\\.gemini\\antigravity\\global_workflows`,
+        template: (ctx) => `${ctx.homedir}\\.gemini\\GEMINI.md`,
+        mcpMode: "direct",
+      },
+      wsl: {
+        detect: async (ctx) => {
+          return !!ctx.winHome && fs.existsSync(`${ctx.winHome}/.gemini`);
+        },
+        config: (ctx) =>
+          `${ctx.winHome!}/.gemini/antigravity/mcp_config.json`,
+        skills: (ctx) =>
+          `${ctx.winHome!}/.gemini/antigravity/skills`,
+        workflows: (ctx) =>
+          `${ctx.winHome!}/.gemini/antigravity/global_workflows`,
+        template: (ctx) => `${ctx.winHome!}/.gemini/GEMINI.md`,
+        mcpMode: "wsl-bridge",
+      },
+      linux: {
+        detect: async (ctx) =>
+          fs.existsSync(`${ctx.homedir}/.gemini`),
+        config: (ctx) =>
+          `${ctx.homedir}/.gemini/antigravity/mcp_config.json`,
+        skills: (ctx) =>
+          `${ctx.homedir}/.gemini/antigravity/skills`,
+        workflows: (ctx) =>
+          `${ctx.homedir}/.gemini/antigravity/global_workflows`,
+        template: (ctx) => `${ctx.homedir}/.gemini/GEMINI.md`,
+        mcpMode: "direct",
+      },
+    },
   },
 ];
 
 /**
  * Detect which tools are available on the system.
- * In WSL mode, Windows-native tools are detected via their wslDetect method.
+ * Uses the per-platform paths map to check support and run detection.
  */
 export async function detectTools(
-  wslMode: boolean,
-  winHome?: string,
+  ctx: PlatformContext,
 ): Promise<ToolDefinition[]> {
   const detected: ToolDefinition[] = [];
 
   for (const tool of toolRegistry) {
-    let found = false;
-
-    if (wslMode && tool.isWindowsNative && tool.wslDetect && winHome) {
-      found = await tool.wslDetect(winHome);
-    } else if (!tool.isWindowsNative || !wslMode) {
-      found = await tool.detect();
+    const platformPaths = tool.platforms[ctx.platform];
+    if (!platformPaths) {
+      // Tool doesn't support this platform — skip silently
+      continue;
     }
 
+    const found = await platformPaths.detect(ctx);
     if (found) {
       detected.push(tool);
     }

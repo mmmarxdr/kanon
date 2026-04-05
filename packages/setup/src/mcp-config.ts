@@ -2,7 +2,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { McpServerEntry } from "./types.js";
+import { fileURLToPath } from "node:url";
+import type { McpServerEntry, McpMode, PlatformContext } from "./types.js";
 
 /**
  * Merge a Kanon MCP server entry into a tool's JSON config file.
@@ -70,21 +71,23 @@ export type McpResolution =
 
 /**
  * Build the MCP server entry for Kanon.
- * In WSL mode for Windows-native tools, uses "wsl" as command.
- * When resolution mode is "npx", uses npx to invoke @kanon/mcp dynamically.
+ *
+ * Uses PlatformContext + McpMode to determine the entry format:
+ * - 'direct': linux, wsl-native tools, or win32 — uses node/npx directly
+ * - 'wsl-bridge': Windows-side tools invoked from WSL — uses `wsl` wrapper
  */
 export function buildMcpEntry(
   resolution: McpResolution,
   apiUrl: string,
   apiKey: string,
-  wslMode: boolean,
-  isWindowsNative: boolean,
+  ctx: PlatformContext,
+  mcpMode: McpMode,
   nodeBin: string,
 ): McpServerEntry {
   const isNpx = resolution.mode === "npx";
 
-  if (wslMode && isWindowsNative) {
-    // Windows-native tools invoke via WSL
+  if (mcpMode === "wsl-bridge") {
+    // Windows-side tools invoked via WSL wrapper
     const envArgs = [`KANON_API_URL=${apiUrl}`];
     if (apiKey) {
       envArgs.push(`KANON_API_KEY=${apiKey}`);
@@ -101,6 +104,7 @@ export function buildMcpEntry(
     };
   }
 
+  // Direct mode (linux, wsl-native tools, or win32)
   const env: Record<string, string> = { KANON_API_URL: apiUrl };
   if (apiKey) {
     env["KANON_API_KEY"] = apiKey;
@@ -128,7 +132,8 @@ export function buildMcpEntry(
  */
 export function resolveMcpServerPath(): McpResolution {
   // Try to find the local monorepo MCP dist
-  const scriptDir = new URL(".", import.meta.url).pathname;
+  // Use fileURLToPath() instead of .pathname to handle Windows drive letters correctly
+  const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   const localMcp = path.resolve(scriptDir, "../../mcp/dist/index.js");
   if (fs.existsSync(localMcp)) {
     return { mode: "local", path: localMcp };

@@ -1,7 +1,11 @@
 // ─── Detection Utilities ─────────────────────────────────────────────────────
 
 import fs from "node:fs";
+import os from "node:os";
 import { execSync } from "node:child_process";
+import type { Platform, PlatformContext } from "./types.js";
+
+// ─── Internal Helpers ────────────────────────────────────────────────────────
 
 /**
  * Check if running inside WSL by reading /proc/version.
@@ -38,12 +42,59 @@ export function resolveWinHome(): string | undefined {
   }
 }
 
+// ─── Platform Detection ──────────────────────────────────────────────────────
+
+/**
+ * Detect the current platform as a tri-state: win32, wsl, or linux.
+ * Accepts an optional override for testing.
+ */
+export function detectPlatform(override?: Platform): Platform {
+  if (override) return override;
+
+  if (process.platform === "win32") return "win32";
+  if (isWsl()) return "wsl";
+  return "linux";
+}
+
+/**
+ * Build a PlatformContext once at startup. All downstream functions receive
+ * this context instead of threading winHome/wslMode booleans.
+ *
+ * Overrides allow test injection without mocking globals.
+ */
+export async function buildPlatformContext(
+  overrides?: Partial<PlatformContext>,
+): Promise<PlatformContext> {
+  const platform = overrides?.platform ?? detectPlatform();
+  const homedir = overrides?.homedir ?? os.homedir();
+
+  const ctx: PlatformContext = { platform, homedir };
+
+  switch (platform) {
+    case "win32":
+      ctx.appDataDir = overrides?.appDataDir ?? process.env["APPDATA"];
+      break;
+    case "wsl":
+      ctx.winHome = overrides?.winHome ?? resolveWinHome();
+      break;
+    case "linux":
+      // No extra fields needed
+      break;
+  }
+
+  return ctx;
+}
+
+// ─── Command Existence ───────────────────────────────────────────────────────
+
 /**
  * Check if a command exists on the system.
+ * Uses `where` on win32 and `which` on linux/wsl.
  */
-export function commandExists(cmd: string): boolean {
+export function commandExists(cmd: string, platform?: Platform): boolean {
+  const whichCmd = platform === "win32" ? "where" : "which";
   try {
-    execSync(`which ${cmd}`, { stdio: ["pipe", "pipe", "pipe"] });
+    execSync(`${whichCmd} ${cmd}`, { stdio: ["pipe", "pipe", "pipe"] });
     return true;
   } catch {
     return false;

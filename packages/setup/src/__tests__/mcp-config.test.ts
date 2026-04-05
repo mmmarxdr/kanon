@@ -108,16 +108,26 @@ describe("mcp-config", () => {
   });
 
   describe("buildMcpEntry", () => {
-    it("should build a standard entry for local mode", () => {
-      const entry = buildMcpEntry({ mode: "local", path: "/path/to/server.js" }, "http://api.test", "key123", false, false, "/usr/bin/node");
+    it("should build a direct entry for linux", () => {
+      const ctx = { platform: "linux" as const, homedir: "/home/user" };
+      const entry = buildMcpEntry(
+        { mode: "local", path: "/path/to/server.js" },
+        "http://api.test", "key123",
+        ctx, "direct", "/usr/bin/node",
+      );
 
       expect(entry.command).toBe("/usr/bin/node");
       expect(entry.args).toEqual(["/path/to/server.js"]);
       expect(entry.env).toEqual({ KANON_API_URL: "http://api.test", KANON_API_KEY: "key123" });
     });
 
-    it("should build a WSL entry for Windows-native tools with local path", () => {
-      const entry = buildMcpEntry({ mode: "local", path: "/path/to/server.js" }, "http://api.test", "key123", true, true, "/usr/bin/node");
+    it("should build a wsl-bridge entry for cursor on WSL", () => {
+      const ctx = { platform: "wsl" as const, homedir: "/home/user", winHome: "/mnt/c/Users/User" };
+      const entry = buildMcpEntry(
+        { mode: "local", path: "/path/to/server.js" },
+        "http://api.test", "key123",
+        ctx, "wsl-bridge", "/usr/bin/node",
+      );
 
       expect(entry.command).toBe("wsl");
       expect(entry.args).toContain("env");
@@ -127,26 +137,54 @@ describe("mcp-config", () => {
       expect(entry.args).toContain("/path/to/server.js");
     });
 
-    it("should omit KANON_API_KEY when apiKey is empty", () => {
-      const entry = buildMcpEntry({ mode: "local", path: "/path/to/server.js" }, "http://api.test", "", false, false, "/usr/bin/node");
+    it("should build a direct entry for claude-code on WSL (no wsl-bridge)", () => {
+      const ctx = { platform: "wsl" as const, homedir: "/home/user", winHome: "/mnt/c/Users/User" };
+      const entry = buildMcpEntry(
+        { mode: "local", path: "/path/to/server.js" },
+        "http://api.test", "key123",
+        ctx, "direct", "/usr/bin/node",
+      );
 
-      expect(entry.env).toEqual({ KANON_API_URL: "http://api.test" });
-      expect(entry.env!["KANON_API_KEY"]).toBeUndefined();
-    });
-
-    it("should build an npx entry when mode is npx", () => {
-      const entry = buildMcpEntry({ mode: "npx" }, "http://api.test", "key123", false, false, "/usr/bin/node");
-
-      expect(entry.command).toBe("npx");
-      expect(entry.args).toEqual(["@kanon/mcp"]);
+      expect(entry.command).toBe("/usr/bin/node");
+      expect(entry.args).toEqual(["/path/to/server.js"]);
       expect(entry.env).toEqual({ KANON_API_URL: "http://api.test", KANON_API_KEY: "key123" });
     });
 
-    it("should build a WSL npx entry for Windows-native tools in npx mode", () => {
-      const entry = buildMcpEntry({ mode: "npx" }, "http://api.test", "key123", true, true, "/usr/bin/node");
+    it("should build a direct entry for win32", () => {
+      const ctx = { platform: "win32" as const, homedir: "C:\\Users\\User", appDataDir: "C:\\Users\\User\\AppData\\Roaming" };
+      const entry = buildMcpEntry(
+        { mode: "local", path: "C:\\path\\to\\server.js" },
+        "http://api.test", "key123",
+        ctx, "direct", "C:\\Program Files\\nodejs\\node.exe",
+      );
+
+      expect(entry.command).toBe("C:\\Program Files\\nodejs\\node.exe");
+      expect(entry.args).toEqual(["C:\\path\\to\\server.js"]);
+      expect(entry.env).toEqual({ KANON_API_URL: "http://api.test", KANON_API_KEY: "key123" });
+    });
+
+    it("should build a wsl-bridge npx entry", () => {
+      const ctx = { platform: "wsl" as const, homedir: "/home/user", winHome: "/mnt/c/Users/User" };
+      const entry = buildMcpEntry(
+        { mode: "npx" },
+        "http://api.test", "key123",
+        ctx, "wsl-bridge", "/usr/bin/node",
+      );
 
       expect(entry.command).toBe("wsl");
       expect(entry.args).toEqual(["env", "KANON_API_URL=http://api.test", "KANON_API_KEY=key123", "npx", "@kanon/mcp"]);
+    });
+
+    it("should omit KANON_API_KEY when empty in new signature", () => {
+      const ctx = { platform: "linux" as const, homedir: "/home/user" };
+      const entry = buildMcpEntry(
+        { mode: "local", path: "/path/to/server.js" },
+        "http://api.test", "",
+        ctx, "direct", "/usr/bin/node",
+      );
+
+      expect(entry.env).toEqual({ KANON_API_URL: "http://api.test" });
+      expect(entry.env!["KANON_API_KEY"]).toBeUndefined();
     });
   });
 });
