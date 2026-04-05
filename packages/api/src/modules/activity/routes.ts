@@ -5,7 +5,7 @@ import { z } from "zod";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 import { ACTIVITY_ACTIONS } from "../../shared/constants.js";
-import { resolveMemberIdFromIssue } from "../../shared/resolve-member.js";
+import { requireIssueMember, requireIssueRole } from "../../middleware/require-role.js";
 import * as activityService from "./service.js";
 
 /**
@@ -24,6 +24,7 @@ export default async function activityRoutes(
   app.get(
     "/issues/:key/activity",
     {
+      preHandler: [requireIssueMember("key")],
       schema: {
         params: z.object({
           key: z.string(),
@@ -76,6 +77,7 @@ export default async function activityRoutes(
   app.post(
     "/issues/:key/activity",
     {
+      preHandler: [requireIssueRole("key", "member")],
       schema: {
         params: z.object({
           key: z.string(),
@@ -97,14 +99,9 @@ export default async function activityRoutes(
         throw new AppError(404, "ISSUE_NOT_FOUND", `Issue ${key} not found`);
       }
 
-      const memberId = await resolveMemberIdFromIssue(
-        request.user.userId,
-        key,
-      );
-
       const entry = await activityService.createActivityLog({
         issueId: issue.id,
-        memberId,
+        memberId: request.member!.id,
         action: request.body.action,
         details: request.body.details as Prisma.InputJsonValue | undefined,
       });

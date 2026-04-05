@@ -3,9 +3,23 @@ import { AppError } from "../../shared/types.js";
 import type { CreateWorkspaceBody, UpdateWorkspaceBody } from "./schema.js";
 
 /**
- * Create a new workspace.
+ * Derive a username from a user's email or displayName.
+ * Takes the local part of the email, lowercases it, and strips non-alphanumeric chars.
  */
-export async function createWorkspace(body: CreateWorkspaceBody) {
+function deriveUsername(email: string, displayName?: string | null): string {
+  if (displayName) {
+    const slug = displayName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    if (slug.length > 0) return slug;
+  }
+  // Fall back to email local part
+  const local = email.split("@")[0] ?? "user";
+  return local.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "user";
+}
+
+/**
+ * Create a new workspace and add the creator as owner atomically.
+ */
+export async function createWorkspace(body: CreateWorkspaceBody, userId: string) {
   // Check for duplicate slug
   const existing = await prisma.workspace.findUnique({
     where: { slug: body.slug },
@@ -18,11 +32,36 @@ export async function createWorkspace(body: CreateWorkspaceBody) {
     );
   }
 
-  return prisma.workspace.create({
-    data: {
-      name: body.name,
-      slug: body.slug,
-    },
+  // Look up user for username derivation
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { email: true, displayName: true },
+  });
+  if (!user) {
+    throw new AppError(404, "USER_NOT_FOUND", "User not found");
+  }
+
+  const username = deriveUsername(user.email, user.displayName);
+
+  // Atomic transaction: create workspace + owner member
+  return prisma.$transaction(async (tx) => {
+    const workspace = await tx.workspace.create({
+      data: {
+        name: body.name,
+        slug: body.slug,
+      },
+    });
+
+    await tx.member.create({
+      data: {
+        username,
+        role: "owner",
+        userId,
+        workspaceId: workspace.id,
+      },
+    });
+
+    return workspace;
   });
 }
 

@@ -7,7 +7,7 @@ import {
   ProjectKeyParam,
 } from "./schema.js";
 import * as projectService from "./service.js";
-import { requireProjectRole } from "../../middleware/require-role.js";
+import { requireMember, requireProjectMember, requireProjectRole, requireRole } from "../../middleware/require-role.js";
 
 /**
  * Project routes plugin.
@@ -25,6 +25,7 @@ export default async function projectRoutes(
   app.post(
     "/workspaces/:wid/projects",
     {
+      preHandler: [requireRole("wid", "member")],
       schema: {
         params: WorkspaceIdParam,
         body: CreateProjectBody,
@@ -45,6 +46,7 @@ export default async function projectRoutes(
   app.get(
     "/workspaces/:wid/projects",
     {
+      preHandler: [requireMember("wid")],
       schema: {
         params: WorkspaceIdParam,
       },
@@ -60,6 +62,7 @@ export default async function projectRoutes(
   app.get(
     "/projects/:key",
     {
+      preHandler: [requireProjectMember("key")],
       schema: {
         params: ProjectKeyParam,
       },
@@ -75,6 +78,7 @@ export default async function projectRoutes(
   app.patch(
     "/projects/:key",
     {
+      preHandler: [requireProjectRole("key", "admin")],
       schema: {
         params: ProjectKeyParam,
         body: UpdateProjectBody,

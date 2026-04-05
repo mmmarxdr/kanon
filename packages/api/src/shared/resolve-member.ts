@@ -5,6 +5,8 @@ import { AppError } from "./types.js";
  * Resolve a Member ID from a userId and workspaceId.
  * Used by workspace-scoped operations (activity logs, comments, etc.)
  * that need a Member FK but only have the authenticated userId.
+ *
+ * @deprecated Use `requireMember`/`requireRole` middleware instead, which sets `request.member`.
  */
 export async function resolveMemberId(
   userId: string,
@@ -34,6 +36,8 @@ export async function resolveMemberId(
 /**
  * Resolve a Member ID from a userId and an issue key.
  * Looks up the issue's project workspace, then finds the member.
+ *
+ * @deprecated Use `requireIssueMember`/`requireIssueRole` middleware instead, which sets `request.member`.
  */
 export async function resolveMemberIdFromIssue(
   userId: string,
@@ -58,6 +62,8 @@ export async function resolveMemberIdFromIssue(
 /**
  * Resolve a Member ID from a userId and a project key.
  * Looks up the project's workspace, then finds the member.
+ *
+ * @deprecated Use `requireProjectMember`/`requireProjectRole` middleware instead, which sets `request.member`.
  */
 export async function resolveMemberIdFromProject(
   userId: string,

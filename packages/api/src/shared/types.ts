@@ -1,3 +1,4 @@
+import type { MemberRole } from "@prisma/client";
 import type { BridgeSyncService } from "../services/bridge-sync-service.js";
 
 /**
@@ -26,6 +27,17 @@ export interface AuthUser {
 }
 
 /**
+ * Workspace member context, set by requireRole/requireMember preHandlers.
+ * Provides the member's identity and role within the resolved workspace.
+ */
+export interface MemberContext {
+  id: string;          // Member.id (UUID)
+  role: MemberRole;    // from @prisma/client
+  workspaceId: string;
+  userId: string;
+}
+
+/**
  * JWT token payload structure.
  * Contains only user identity — no workspace or role claims.
  */
@@ -40,6 +52,7 @@ export interface TokenPayload {
 declare module "fastify" {
   interface FastifyRequest {
     user: AuthUser;
+    member?: MemberContext;
   }
   interface FastifyInstance {
     bridgeSyncService?: BridgeSyncService;

@@ -10,7 +10,10 @@ import {
   AddDependencyBody,
   DependencyIdParam,
 } from "./schema.js";
-import { resolveMemberIdFromProject } from "../../shared/resolve-member.js";
+import {
+  requireProjectMember,
+  requireProjectRole,
+} from "../../middleware/require-role.js";
 import * as roadmapService from "./service.js";
 
 /**
@@ -28,6 +31,7 @@ export default async function roadmapRoutes(
   app.get(
     "/projects/:key/roadmap",
     {
+      preHandler: [requireProjectMember("key")],
       schema: {
         params: ProjectKeyParam,
         querystring: RoadmapFilterQuery,
@@ -47,6 +51,7 @@ export default async function roadmapRoutes(
   app.post(
     "/projects/:key/roadmap",
     {
+      preHandler: [requireProjectRole("key", "member")],
       schema: {
         params: ProjectKeyParam,
         body: CreateRoadmapItemBody,
@@ -67,6 +72,7 @@ export default async function roadmapRoutes(
   app.get(
     "/projects/:key/roadmap/:id",
     {
+      preHandler: [requireProjectMember("key")],
       schema: {
         params: RoadmapItemIdParam,
       },
@@ -85,6 +91,7 @@ export default async function roadmapRoutes(
   app.patch(
     "/projects/:key/roadmap/:id",
     {
+      preHandler: [requireProjectRole("key", "member")],
       schema: {
         params: RoadmapItemIdParam,
         body: UpdateRoadmapItemBody,
@@ -95,7 +102,7 @@ export default async function roadmapRoutes(
         request.params.key,
         request.params.id,
         request.body,
-        await resolveMemberIdFromProject(request.user.userId, request.params.key),
+        request.member!.id,
       );
     },
   );
@@ -106,6 +113,7 @@ export default async function roadmapRoutes(
   app.delete(
     "/projects/:key/roadmap/:id",
     {
+      preHandler: [requireProjectRole("key", "admin")],
       schema: {
         params: RoadmapItemIdParam,
       },
@@ -125,6 +133,7 @@ export default async function roadmapRoutes(
   app.post(
     "/projects/:key/roadmap/:id/promote",
     {
+      preHandler: [requireProjectRole("key", "member")],
       schema: {
         params: RoadmapItemIdParam,
         body: PromoteBody,
@@ -135,7 +144,7 @@ export default async function roadmapRoutes(
         request.params.key,
         request.params.id,
         request.body,
-        await resolveMemberIdFromProject(request.user.userId, request.params.key),
+        request.member!.id,
       );
       return reply.status(201).send(issue);
     },
@@ -149,6 +158,7 @@ export default async function roadmapRoutes(
   app.get(
     "/projects/:key/roadmap/:id/dependencies",
     {
+      preHandler: [requireProjectMember("key")],
       schema: {
         params: RoadmapItemIdParam,
       },
@@ -167,6 +177,7 @@ export default async function roadmapRoutes(
   app.post(
     "/projects/:key/roadmap/:id/dependencies",
     {
+      preHandler: [requireProjectRole("key", "member")],
       schema: {
         params: RoadmapItemIdParam,
         body: AddDependencyBody,
@@ -188,6 +199,7 @@ export default async function roadmapRoutes(
   app.delete(
     "/projects/:key/roadmap/:id/dependencies/:depId",
     {
+      preHandler: [requireProjectRole("key", "admin")],
       schema: {
         params: DependencyIdParam,
       },

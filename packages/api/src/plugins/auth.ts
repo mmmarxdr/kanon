@@ -124,6 +124,9 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
   // Decorate request with a default user value (required by Fastify)
   fastify.decorateRequest("user", null as unknown as AuthUser);
 
+  // Decorate request with a default member value (set by requireRole/requireMember preHandlers)
+  fastify.decorateRequest("member", undefined);
+
   // Add auth hook to all routes
   fastify.addHook("onRequest", authHook);
 }

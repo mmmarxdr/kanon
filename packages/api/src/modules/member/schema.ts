@@ -22,3 +22,41 @@ export const UpdateProfileBody = z.object({
   avatarUrl: z.string().url("avatarUrl must be a valid URL").nullable().optional(),
 });
 export type UpdateProfileBody = z.infer<typeof UpdateProfileBody>;
+
+// ── Workspace Member Management Schemas ──────────────────────────────────────
+
+const MemberRoleEnum = z.enum(["owner", "admin", "member", "viewer"]);
+
+/**
+ * Add member request body — used by POST /api/workspaces/:wid/members.
+ */
+export const AddMemberBody = z.object({
+  email: z.string().email("Must be a valid email"),
+  role: MemberRoleEnum,
+});
+export type AddMemberBody = z.infer<typeof AddMemberBody>;
+
+/**
+ * Change member role request body — used by PATCH /api/workspaces/:wid/members/:mid.
+ */
+export const ChangeMemberRoleBody = z.object({
+  role: MemberRoleEnum,
+});
+export type ChangeMemberRoleBody = z.infer<typeof ChangeMemberRoleBody>;
+
+/**
+ * Workspace member params — used by member CRUD routes.
+ */
+export const WorkspaceMemberParams = z.object({
+  wid: z.string().uuid("Invalid workspace ID"),
+  mid: z.string().uuid("Invalid member ID"),
+});
+export type WorkspaceMemberParams = z.infer<typeof WorkspaceMemberParams>;
+
+/**
+ * Workspace ID param — used by workspace-scoped member routes.
+ */
+export const WorkspaceIdParam = z.object({
+  wid: z.string().uuid("Invalid workspace ID"),
+});
+export type WorkspaceIdParam = z.infer<typeof WorkspaceIdParam>;

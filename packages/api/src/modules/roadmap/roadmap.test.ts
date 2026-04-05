@@ -4,6 +4,7 @@ import {
   createTestApp,
   seedTestWorkspace,
   seedTestMember,
+  seedTestMemberWithRole,
   seedTestProject,
   cleanDatabase,
   disconnectTestDb,
@@ -216,11 +217,17 @@ describe("Roadmap API", () => {
   // ── Delete ──────────────────────────────────────────────────────────────
 
   it("DELETE /api/projects/:key/roadmap/:id deletes the item and nullifies issue FK", async () => {
+    // Delete requires admin+ role — seed an admin member for this test
+    const adminWs = await seedTestWorkspace();
+    const admin = await seedTestMemberWithRole(adminWs.id, "admin");
+    const adminProject = await seedTestProject(adminWs.id);
+    const adminProjectKey = adminProject.key;
+
     // Create roadmap item
     const createRes = await app.inject({
       method: "POST",
-      url: `/api/projects/${projectKey}/roadmap`,
-      headers: { authorization: `Bearer ${token}` },
+      url: `/api/projects/${adminProjectKey}/roadmap`,
+      headers: { authorization: `Bearer ${admin.token}` },
       payload: { title: "To delete" },
     });
     const roadmapItem = createRes.json();
@@ -228,8 +235,8 @@ describe("Roadmap API", () => {
     // Promote to issue to create an FK link
     const promoteRes = await app.inject({
       method: "POST",
-      url: `/api/projects/${projectKey}/roadmap/${roadmapItem.id}/promote`,
-      headers: { authorization: `Bearer ${token}` },
+      url: `/api/projects/${adminProjectKey}/roadmap/${roadmapItem.id}/promote`,
+      headers: { authorization: `Bearer ${admin.token}` },
       payload: {},
     });
     expect(promoteRes.statusCode).toBe(201);
@@ -238,16 +245,16 @@ describe("Roadmap API", () => {
     // Delete the roadmap item
     const deleteRes = await app.inject({
       method: "DELETE",
-      url: `/api/projects/${projectKey}/roadmap/${roadmapItem.id}`,
-      headers: { authorization: `Bearer ${token}` },
+      url: `/api/projects/${adminProjectKey}/roadmap/${roadmapItem.id}`,
+      headers: { authorization: `Bearer ${admin.token}` },
     });
     expect(deleteRes.statusCode).toBe(204);
 
     // Verify GET returns 404
     const getRes = await app.inject({
       method: "GET",
-      url: `/api/projects/${projectKey}/roadmap/${roadmapItem.id}`,
-      headers: { authorization: `Bearer ${token}` },
+      url: `/api/projects/${adminProjectKey}/roadmap/${roadmapItem.id}`,
+      headers: { authorization: `Bearer ${admin.token}` },
     });
     expect(getRes.statusCode).toBe(404);
 
@@ -255,7 +262,7 @@ describe("Roadmap API", () => {
     const issueRes = await app.inject({
       method: "GET",
       url: `/api/issues/${issue.key}`,
-      headers: { authorization: `Bearer ${token}` },
+      headers: { authorization: `Bearer ${admin.token}` },
     });
     expect(issueRes.statusCode).toBe(200);
     expect(issueRes.json().roadmapItemId).toBeNull();

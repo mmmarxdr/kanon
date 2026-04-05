@@ -17,6 +17,7 @@ import issueRoutes from "./modules/issue/routes.js";
 import commentRoutes from "./modules/comment/routes.js";
 import eventsRoutes from "./modules/events/routes.js";
 import memberRoutes from "./modules/member/routes.js";
+import workspaceMemberRoutes from "./modules/member/workspace-member-routes.js";
 import roadmapRoutes from "./modules/roadmap/routes.js";
 import { EngramClient } from "@kanon/bridge";
 import { BridgeSyncService } from "./services/bridge-sync-service.js";
@@ -66,6 +67,7 @@ export async function buildApp() {
   await app.register(activityRoutes, { prefix: "/api" });
   await app.register(eventsRoutes, { prefix: "/api/events" });
   await app.register(memberRoutes, { prefix: "/api/members" });
+  await app.register(workspaceMemberRoutes, { prefix: "/api/workspaces/:wid/members" });
   await app.register(roadmapRoutes, { prefix: "/api" });
 
   // ─── Bridge Sync Service (Phase C) ───────────────────────────────────

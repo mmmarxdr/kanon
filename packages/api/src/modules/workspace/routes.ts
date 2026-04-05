@@ -6,7 +6,7 @@ import {
   WorkspaceIdParam,
 } from "./schema.js";
 import * as workspaceService from "./service.js";
-import { requireRole } from "../../middleware/require-role.js";
+import { requireMember, requireRole } from "../../middleware/require-role.js";
 
 /**
  * Workspace routes plugin.
@@ -28,7 +28,10 @@ export default async function workspaceRoutes(
       },
     },
     async (request, reply) => {
-      const workspace = await workspaceService.createWorkspace(request.body);
+      const workspace = await workspaceService.createWorkspace(
+        request.body,
+        request.user.userId,
+      );
       return reply.status(201).send(workspace);
     },
   );

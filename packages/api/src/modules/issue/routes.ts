@@ -10,7 +10,12 @@ import {
   GroupKeyParam,
   IssueFilterQuery,
 } from "./schema.js";
-import { resolveMemberIdFromIssue, resolveMemberIdFromProject } from "../../shared/resolve-member.js";
+import {
+  requireProjectMember,
+  requireProjectRole,
+  requireIssueMember,
+  requireIssueRole,
+} from "../../middleware/require-role.js";
 import * as issueService from "./service.js";
 
 /**
@@ -28,20 +33,17 @@ export default async function issueRoutes(
   app.post(
     "/projects/:key/issues",
     {
+      preHandler: [requireProjectRole("key", "member")],
       schema: {
         params: ProjectKeyParam,
         body: CreateIssueBody,
       },
     },
     async (request, reply) => {
-      const memberId = await resolveMemberIdFromProject(
-        request.user.userId,
-        request.params.key,
-      );
       const issue = await issueService.createIssue(
         request.params.key,
         request.body,
-        memberId,
+        request.member!.id,
       );
       return reply.status(201).send(issue);
     },
@@ -53,6 +55,7 @@ export default async function issueRoutes(
   app.get(
     "/projects/:key/issues",
     {
+      preHandler: [requireProjectMember("key")],
       schema: {
         params: ProjectKeyParam,
         querystring: IssueFilterQuery,
@@ -69,6 +72,7 @@ export default async function issueRoutes(
   app.get(
     "/issues/:key",
     {
+      preHandler: [requireIssueMember("key")],
       schema: {
         params: IssueKeyParam,
       },
@@ -84,20 +88,17 @@ export default async function issueRoutes(
   app.patch(
     "/issues/:key",
     {
+      preHandler: [requireIssueRole("key", "member")],
       schema: {
         params: IssueKeyParam,
         body: UpdateIssueBody,
       },
     },
     async (request, _reply) => {
-      const memberId = await resolveMemberIdFromIssue(
-        request.user.userId,
-        request.params.key,
-      );
       return issueService.updateIssue(
         request.params.key,
         request.body,
-        memberId,
+        request.member!.id,
       );
     },
   );
@@ -108,20 +109,17 @@ export default async function issueRoutes(
   app.post(
     "/issues/:key/transition",
     {
+      preHandler: [requireIssueRole("key", "member")],
       schema: {
         params: IssueKeyParam,
         body: TransitionBody,
       },
     },
     async (request, _reply) => {
-      const memberId = await resolveMemberIdFromIssue(
-        request.user.userId,
-        request.params.key,
-      );
       return issueService.transitionIssue(
         request.params.key,
         request.body.to_state,
-        memberId,
+        request.member!.id,
       );
     },
   );
@@ -133,6 +131,7 @@ export default async function issueRoutes(
   app.get(
     "/projects/:key/issues/groups",
     {
+      preHandler: [requireProjectMember("key")],
       schema: {
         params: ProjectKeyParam,
       },
@@ -149,6 +148,7 @@ export default async function issueRoutes(
   app.get(
     "/issues/:key/context",
     {
+      preHandler: [requireIssueMember("key")],
       schema: {
         params: IssueKeyParam,
       },
@@ -165,21 +165,18 @@ export default async function issueRoutes(
   app.patch(
     "/projects/:key/issues/groups/:groupKey/transition",
     {
+      preHandler: [requireProjectRole("key", "member")],
       schema: {
         params: GroupKeyParam,
         body: BatchTransitionBody,
       },
     },
     async (request, _reply) => {
-      const memberId = await resolveMemberIdFromProject(
-        request.user.userId,
-        request.params.key,
-      );
       return issueService.transitionGroup(
         request.params.key,
         request.params.groupKey,
         request.body.to_state,
-        memberId,
+        request.member!.id,
       );
     },
   );
