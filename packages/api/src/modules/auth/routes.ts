@@ -99,10 +99,17 @@ export default async function authRoutes(
 
   /**
    * POST /api/auth/register
+   * Rate limited: 5 attempts per minute per IP.
    */
   app.post(
     "/register",
     {
+      config: {
+        rateLimit: {
+          max: 5,
+          timeWindow: "1 minute",
+        },
+      },
       schema: {
         body: RegisterBody,
         response: { 201: RegisterResponse },
@@ -117,10 +124,17 @@ export default async function authRoutes(
   /**
    * POST /api/auth/login
    * Sets auth cookies AND returns tokens in body (backward compat).
+   * Rate limited: 10 attempts per minute per IP.
    */
   app.post(
     "/login",
     {
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: "1 minute",
+        },
+      },
       schema: {
         body: LoginBody,
         response: { 200: LoginResponse },
@@ -247,10 +261,17 @@ export default async function authRoutes(
    * POST /api/auth/api-key
    * This route is under /api/auth/* which the auth plugin skips.
    * We manually verify the JWT in the handler since this endpoint requires auth.
+   * Rate limited: 5 attempts per minute per IP.
    */
   app.post(
     "/api-key",
     {
+      config: {
+        rateLimit: {
+          max: 5,
+          timeWindow: "1 minute",
+        },
+      },
       schema: {
         response: { 201: ApiKeyResponse },
       },

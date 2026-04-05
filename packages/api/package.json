@@ -21,14 +21,15 @@
   "dependencies": {
     "@fastify/cookie": "^11.0.0",
     "@fastify/cors": "^11.0.0",
+    "@fastify/rate-limit": "^10.3.0",
+    "@kanon/bridge": "workspace:*",
     "@prisma/client": "^6.0.0",
     "bcryptjs": "^3.0.3",
     "fastify": "^5.0.0",
     "fastify-plugin": "^5.0.0",
     "fastify-type-provider-zod": "^4.0.0",
     "jsonwebtoken": "^9.0.2",
-    "zod": "^3.23.0",
-    "@kanon/bridge": "workspace:*"
+    "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/jsonwebtoken": "^9.0.7",

@@ -318,7 +318,9 @@ describe("Auth Integration", () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({ status: "ok" });
+      const body = res.json();
+      expect(body.status).toBe("ok");
+      expect(body.db).toBe("connected");
     });
   });
 });

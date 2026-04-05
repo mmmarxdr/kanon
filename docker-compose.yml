@@ -28,8 +28,8 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: "postgresql://kanon:kanon@postgres:5432/kanon?schema=public"
-      JWT_SECRET: "dev-jwt-secret-change-in-production"
-      JWT_REFRESH_SECRET: "dev-jwt-refresh-secret-change-in-production"
+      JWT_SECRET: "${JWT_SECRET:-dev-jwt-secret-change-in-production}"
+      JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET:-dev-jwt-refresh-secret-change-in-production}"
       PORT: "${KANON_API_PORT:-3000}"
       HOST: "0.0.0.0"
       NODE_ENV: "production"

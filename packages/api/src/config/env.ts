@@ -71,6 +71,49 @@ const envSchema = z.object({
     ),
 });
 
+/**
+ * Production-only refinement: JWT secrets must be at least 32 characters
+ * and must not be the default dev values.
+ */
+const envSchemaWithProductionChecks = envSchema.superRefine((data, ctx) => {
+  if (data.NODE_ENV !== "production") return;
+
+  const devDefaults = [
+    "dev-jwt-secret-change-in-production",
+    "dev-jwt-refresh-secret-change-in-production",
+  ];
+
+  if (data.JWT_SECRET.length < 32) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["JWT_SECRET"],
+      message: "JWT_SECRET must be at least 32 characters in production",
+    });
+  }
+  if (devDefaults.includes(data.JWT_SECRET)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["JWT_SECRET"],
+      message: "JWT_SECRET must not use the default dev value in production",
+    });
+  }
+
+  if (data.JWT_REFRESH_SECRET.length < 32) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["JWT_REFRESH_SECRET"],
+      message: "JWT_REFRESH_SECRET must be at least 32 characters in production",
+    });
+  }
+  if (devDefaults.includes(data.JWT_REFRESH_SECRET)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["JWT_REFRESH_SECRET"],
+      message: "JWT_REFRESH_SECRET must not use the default dev value in production",
+    });
+  }
+});
+
 export type Env = z.infer<typeof envSchema>;
 
 /**
@@ -78,7 +121,7 @@ export type Env = z.infer<typeof envSchema>;
  * Throws a descriptive error if validation fails.
  */
 function loadEnv(): Env {
-  const result = envSchema.safeParse(process.env);
+  const result = envSchemaWithProductionChecks.safeParse(process.env);
 
   if (!result.success) {
     const formatted = result.error.issues

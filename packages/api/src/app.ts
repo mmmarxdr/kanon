@@ -1,11 +1,13 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
+import rateLimit from "@fastify/rate-limit";
 import {
   serializerCompiler,
   validatorCompiler,
 } from "fastify-type-provider-zod";
 import { env } from "./config/env.js";
+import { prisma } from "./config/prisma.js";
 import errorHandler from "./plugins/error-handler.js";
 import authPlugin from "./plugins/auth.js";
 import csrfPlugin from "./plugins/csrf.js";
@@ -47,6 +49,16 @@ export async function buildApp() {
     credentials: true,
   });
 
+  // Rate limiting — registered globally with a generous default,
+  // auth routes apply stricter per-route limits via routeConfig.
+  // Disabled in test mode to avoid false failures in integration tests.
+  if (env.NODE_ENV !== "test") {
+    await app.register(rateLimit, {
+      max: 1000,
+      timeWindow: "1 minute",
+    });
+  }
+
   // Core plugins
   await app.register(cookie, {
     secret: env.COOKIE_SECRET || undefined,
@@ -55,8 +67,15 @@ export async function buildApp() {
   await app.register(authPlugin);
   await app.register(csrfPlugin);
 
-  // Health check (always public, before auth)
-  app.get("/health", async () => ({ status: "ok" }));
+  // Health check with DB connectivity (always public, before auth)
+  app.get("/health", async (_request, reply) => {
+    try {
+      await prisma.$queryRawUnsafe("SELECT 1");
+      return { status: "ok", db: "connected" };
+    } catch {
+      return reply.status(503).send({ status: "degraded", db: "disconnected" });
+    }
+  });
 
   // Feature module routes
   await app.register(authRoutes, { prefix: "/api/auth" });
