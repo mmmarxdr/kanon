@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `@kanon-pm/setup` — standalone npm package for AI tool configuration, replaces `setup-mcp.sh`
+- kanon-orchestrator-hooks promoted to product skill (5 product skills total)
+
+### Fixed
+
+- Dockerized Engram — upgraded to golang:1.23, improved error visibility, retry window 10s → 60s, ENGRAM_URL derived from ENGRAM_PORT
+- Idempotent installs — legacy "kanon" MCP key cleanup, stale skill/workflow file removal
+
+### Changed
+
+- `release.sh` includes `packages/setup` in version bumps
+- `pnpm setup:mcp` now delegates to `@kanon-pm/setup`; `setup-mcp.sh` deprecated with warning
+
 ## [0.2.0] - 2026-03-29
 
 ### Added

@@ -2,7 +2,7 @@
 
 **An opinionated, AI-native project management platform.**
 
-![Version](https://img.shields.io/badge/version-0.1.0-blue)
+![Version](https://img.shields.io/badge/version-0.2.0-blue)
 
 ## What is Kanon?
 
@@ -165,49 +165,42 @@ This idempotent script handles:
 
 Use `--quiet` to suppress success messages.
 
-## MCP Integration
+## AI Tool Setup
 
-Kanon includes an MCP (Model Context Protocol) server that lets AI agents manage issues, projects, and roadmaps programmatically. The setup script auto-detects installed AI coding tools and configures them.
+Kanon integrates with AI coding tools via MCP (Model Context Protocol), global skills, and workflow triggers. The `@kanon-pm/setup` package auto-detects installed tools and configures them.
 
-**Supported tools:**
+**Supported tools:** Claude Code, Cursor, Antigravity
 
-| Tool | Config Location |
-|------|----------------|
-| Claude Code | `~/.claude.json` |
-| Cursor | `~/.cursor/mcp.json` |
-| Windsurf | `~/.codeium/windsurf/mcp_config.json` |
-| VS Code (Copilot) | `.vscode/mcp.json` (project-local) |
-| Continue | `~/.continue/config.json` |
-| Zed | `~/.config/zed/settings.json` |
-| OpenCode | `opencode.json` (project-local) |
-| Antigravity | `~/.gemini/antigravity/mcp_config.json` |
-
-**Setup:**
-
-1. Make sure the dev environment is running (`pnpm dev:start`)
-2. Run the setup script:
+### Install (any project)
 
 ```sh
 # Interactive — detect tools and select from a list
-pnpm setup:mcp
+npx @kanon-pm/setup
 
 # Configure all detected tools at once
-pnpm setup:mcp --all
+npx @kanon-pm/setup --all
 
 # Configure a specific tool
-pnpm setup:mcp --tool cursor
-
-# Remove kanon from all tool configs
-pnpm setup:mcp --remove --all
+npx @kanon-pm/setup --tool claude-code
+npx @kanon-pm/setup --tool cursor
+npx @kanon-pm/setup --tool antigravity
 
 # Remove kanon from a specific tool
-pnpm setup:mcp --remove --tool zed
+npx @kanon-pm/setup --remove --tool cursor
 
-# Show full help
-pnpm setup:mcp --help
+# Remove kanon from all tool configs
+npx @kanon-pm/setup --remove --all
 ```
 
-The script authenticates against the API, generates an API key, and merges the MCP configuration into each tool's config file (preserving any existing entries). Restart your AI coding tool afterward to pick up the new configuration.
+### Install (monorepo developers)
+
+If you are working inside the Kanon monorepo, you can also use:
+
+```sh
+pnpm setup:mcp            # same options as above
+```
+
+The installer authenticates against the API, generates an API key, and merges the MCP configuration into each tool's config file (preserving existing entries). It also installs global skills and workflow triggers. Restart your AI coding tool afterward to pick up the new configuration.
 
 ## Releasing
 
@@ -237,11 +230,11 @@ Kanon supports multiple AI coding tools via standardized instruction files:
 - **CLAUDE.md** -- Claude Code project instructions and development skills
 - **.claude/skills/** -- Claude Code skills for kanon development
 
-Run `pnpm setup:mcp` to configure both the MCP server and global skills/workflows for your AI coding tool.
+Run `npx @kanon-pm/setup` (or `pnpm setup:mcp` inside the monorepo) to configure MCP, global skills, and workflows.
 
 ### Skills and Workflows
 
-`pnpm setup:mcp` installs Kanon skills and workflow triggers globally for each configured tool. This means the kanon MCP tools are available from any project, not just this repo.
+The installer places Kanon skills and workflow triggers globally for each configured tool. This means the kanon MCP tools are available from any project, not just this repo.
 
 | Skill | What it does |
 |-------|-------------|
@@ -259,7 +252,7 @@ Global install locations per tool:
 | Windsurf | (not supported) | `~/.codeium/windsurf/global_workflows/kanon-*.md` |
 | OpenCode | `~/.config/opencode/skills/kanon-*/` | (skills are discoverable) |
 
-To remove skills and workflows along with MCP config: `pnpm setup:mcp --remove --all`
+To remove skills and workflows along with MCP config: `npx @kanon-pm/setup --remove --all`
 
 ## Contributing
 
