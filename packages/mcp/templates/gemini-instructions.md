@@ -10,7 +10,7 @@ Available workflows:
 Available skills (auto-loaded when relevant):
 - kanon-mcp — Issue management, board updates, state transitions
 - kanon-roadmap — Capture deferred work as roadmap items
-- kanon-orchestrator-hooks — SDD phase launches
+- kanon-orchestrator-hooks — SDD phase launches, deferred_items processing, roadmap injection
 
 When creating issues:
 - Title format: `[Area] Verb phrase`

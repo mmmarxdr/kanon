@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ── Deprecation Warning ──────────────────────────────────────────────────────
+echo ""
+echo -e "\033[1;33m⚠️  setup-mcp.sh is deprecated. Use: npx @kanon-pm/setup\033[0m"
+echo -e "   Run 'npx @kanon-pm/setup --help' for options."
+echo ""
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Kanon MCP Setup — Multi-Tool Integration
 #

@@ -18,7 +18,8 @@
     "test:all": "pnpm --filter @kanon/api test && pnpm --filter @kanon/web test && pnpm e2e",
     "dev:start": "bash scripts/dev-start.sh",
     "dev:stop": "bash scripts/dev-stop.sh",
-    "setup:mcp": "bash scripts/setup-mcp.sh",
+    "setup:mcp": "node packages/setup/dist/index.js",
+    "setup:ai": "node packages/setup/dist/index.js",
     "kanon": "pnpm --filter @kanon/cli build && node packages/cli/dist/index.js"
   },
   "packageManager": "pnpm@10.32.1",

@@ -1,18 +1,29 @@
 ---
-description: Kanon project management — use kanon_* MCP tools for issue tracking, roadmap, and project onboarding
-alwaysApply: true
+description: Kanon project management integration — use kanon MCP tools for issue tracking, roadmap capture, and project onboarding
+alwaysApply: false
 ---
 
 # Kanon MCP Integration
 
-Kanon MCP tools are available for project management. Use the installed skills:
+Kanon MCP tools (`kanon_*`) are available for project management. Use them in the situations described below.
 
-- `/kanon-init` — Scan codebase, create project, seed issues and roadmap items
-- `/kanon-create-issue` — Create an issue from natural language description
-- kanon-mcp skill — Issue management, board updates, state transitions
-- kanon-roadmap skill — Capture deferred work as roadmap items
+## When to Use Kanon Tools
 
-When creating issues, follow these conventions:
+### Issue Creation
+When the user describes a bug, feature request, or task that should be tracked, use `kanon_create_issue` to create a well-structured issue. Follow these conventions:
 - Title format: `[Area] Verb phrase` (e.g., `[API] Add authentication middleware`)
-- Always check available groups before creating: call `kanon_list_groups(projectKey)`
-- Assign groupKey when a matching group exists
+- Check available groups first with `kanon_list_groups(projectKey)` and assign `groupKey` when a matching group exists
+- Set appropriate priority and type based on the user's description
+
+### Issue Tracking
+When the user's work maps to an existing issue, use Kanon tools to keep the board in sync:
+- `kanon_list_issues` — find relevant issues for the current work
+- `kanon_get_issue` — retrieve full issue details and context
+- `kanon_transition_issue` — move issues through workflow states (e.g., to-do, in-progress, done)
+- `kanon_update_issue` — update issue details as work progresses
+
+### Roadmap Capture
+When future work is identified during development (deferred ideas, follow-up tasks, technical debt), use `kanon_create_roadmap_item` to capture it for later prioritization. This prevents good ideas from being lost.
+
+### Project Onboarding
+When onboarding a new codebase to Kanon, use `kanon_create_project` to set up the project, then use `kanon_list_groups` and `kanon_create_issue` to seed initial structure.

@@ -135,6 +135,7 @@ PACKAGE_FILES=(
   "${ROOT_DIR}/packages/cli/package.json"
   "${ROOT_DIR}/packages/bridge/package.json"
   "${ROOT_DIR}/packages/e2e/package.json"
+  "${ROOT_DIR}/packages/setup/package.json"
 )
 
 # ─── Dry run mode ───────────────────────────────────────────────────

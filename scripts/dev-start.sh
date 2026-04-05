@@ -7,7 +7,8 @@ cd "$ROOT_DIR"
 # ── Port configuration (override via env or .env) ────────────────────────────
 API_PORT="${KANON_API_PORT:-3000}"
 WEB_PORT="${KANON_WEB_PORT:-5173}"
-ENGRAM_URL="${ENGRAM_URL:-http://localhost:7437}"
+ENGRAM_PORT="${ENGRAM_PORT:-7437}"
+ENGRAM_URL="${ENGRAM_URL:-http://localhost:${ENGRAM_PORT}}"
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -141,9 +142,9 @@ if [[ "$WITH_ENGRAM" == "true" ]]; then
     ENGRAM_SOURCE="existing"
   else
     info "Starting Engram via docker compose (profile: engram)..."
-    if docker compose -f "$ROOT_DIR/docker-compose.yml" --profile engram up -d engram 2>/dev/null; then
+    if docker compose -f "$ROOT_DIR/docker-compose.yml" --profile engram up -d engram; then
       info "Waiting for Engram to be healthy..."
-      ENGRAM_RETRIES=10
+      ENGRAM_RETRIES=60
       until curl -sf --max-time 2 "${ENGRAM_URL}/health" >/dev/null 2>&1; do
         ENGRAM_RETRIES=$((ENGRAM_RETRIES - 1))
         if [[ "$ENGRAM_RETRIES" -le 0 ]]; then

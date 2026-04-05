@@ -132,6 +132,25 @@ importers:
         specifier: ^4.1.1
         version: 4.1.1(@types/node@20.19.37)(jsdom@29.0.1)(vite@6.4.1(@types/node@20.19.37)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0))
 
+  packages/setup:
+    dependencies:
+      chalk:
+        specifier: ^5.3.0
+        version: 5.6.2
+      commander:
+        specifier: ^12.0.0
+        version: 12.1.0
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.37
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/debug@4.1.13)(@types/node@20.19.37)(jiti@2.6.1)(jsdom@29.0.1)(lightningcss@1.32.0)(tsx@4.21.0)
+
   packages/web:
     dependencies:
       '@dagrejs/dagre':
