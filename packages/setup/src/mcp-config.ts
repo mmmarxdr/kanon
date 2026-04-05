@@ -3,7 +3,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { McpServerEntry, McpMode, PlatformContext } from "./types.js";
+import type {
+  McpServerEntry,
+  McpMode,
+  PlatformContext,
+} from "./types.js";
+import { toolRegistry } from "./registry.js";
 
 /**
  * Merge a Kanon MCP server entry into a tool's JSON config file.
@@ -161,4 +166,78 @@ export function resolveMcpServerPath(): McpResolution {
  */
 export function resolveNodeBin(): string {
   return process.execPath;
+}
+
+/**
+ * Extract auth credentials from existing kanon-mcp entries across all tool configs.
+ *
+ * Scans each tool in the registry that supports the current platform, reads its
+ * MCP config file, and looks for a "kanon-mcp" entry. Extracts KANON_API_URL and
+ * KANON_API_KEY from:
+ * - Direct mode: `entry.env.KANON_API_URL` / `entry.env.KANON_API_KEY`
+ * - WSL bridge mode: parses `entry.args` array for `KANON_API_URL=xxx` patterns
+ *
+ * Returns the first values found. Missing files/entries are handled gracefully.
+ */
+export function extractExistingAuth(
+  ctx: PlatformContext,
+): { apiUrl?: string; apiKey?: string } {
+  let apiUrl: string | undefined;
+  let apiKey: string | undefined;
+
+  for (const tool of toolRegistry) {
+    const platformPaths = tool.platforms[ctx.platform];
+    if (!platformPaths) continue;
+
+    const configPath = platformPaths.config(ctx);
+
+    let config: Record<string, unknown>;
+    try {
+      const content = fs.readFileSync(configPath, "utf8");
+      config = JSON.parse(content) as Record<string, unknown>;
+    } catch {
+      // File doesn't exist or is invalid JSON — skip
+      continue;
+    }
+
+    const servers = config[tool.rootKey] as
+      | Record<string, unknown>
+      | undefined;
+    if (!servers) continue;
+
+    const entry = servers["kanon-mcp"] as
+      | { command?: string; args?: string[]; env?: Record<string, string> }
+      | undefined;
+    if (!entry) continue;
+
+    // Try direct mode: env object
+    if (entry.env) {
+      if (!apiUrl && entry.env["KANON_API_URL"]) {
+        apiUrl = entry.env["KANON_API_URL"];
+      }
+      if (!apiKey && entry.env["KANON_API_KEY"]) {
+        apiKey = entry.env["KANON_API_KEY"];
+      }
+    }
+
+    // Try WSL bridge mode: parse args array for KEY=VALUE patterns
+    if (entry.args) {
+      for (const arg of entry.args) {
+        if (!apiUrl && arg.startsWith("KANON_API_URL=")) {
+          apiUrl = arg.slice("KANON_API_URL=".length);
+        }
+        if (!apiKey && arg.startsWith("KANON_API_KEY=")) {
+          apiKey = arg.slice("KANON_API_KEY=".length);
+        }
+      }
+    }
+
+    // Stop early if we have both values
+    if (apiUrl && apiKey) break;
+  }
+
+  const result: { apiUrl?: string; apiKey?: string } = {};
+  if (apiUrl) result.apiUrl = apiUrl;
+  if (apiKey) result.apiKey = apiKey;
+  return result;
 }

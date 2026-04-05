@@ -2,7 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { mergeConfig, removeConfig, buildMcpEntry } from "../mcp-config.js";
+import {
+  mergeConfig,
+  removeConfig,
+  buildMcpEntry,
+  extractExistingAuth,
+} from "../mcp-config.js";
+import type { PlatformContext } from "../types.js";
 
 describe("mcp-config", () => {
   let tmpDir: string;
@@ -104,6 +110,108 @@ describe("mcp-config", () => {
 
       const removed = removeConfig(configPath, "mcpServers");
       expect(removed).toBe(false);
+    });
+  });
+
+  describe("extractExistingAuth", () => {
+    it("should extract auth from direct-mode config (env object)", () => {
+      // Write a config file that looks like a direct-mode kanon-mcp entry
+      const configPath = path.join(tmpDir, ".claude.json");
+      const config = {
+        mcpServers: {
+          "kanon-mcp": {
+            command: "node",
+            args: ["/path/to/server.js"],
+            env: {
+              KANON_API_URL: "http://localhost:4001",
+              KANON_API_KEY: "test-key-123",
+            },
+          },
+        },
+      };
+      fs.writeFileSync(configPath, JSON.stringify(config));
+
+      // Create a ctx that points claude-code's config to our tmp file
+      const ctx: PlatformContext = {
+        platform: "linux",
+        homedir: tmpDir,
+      };
+
+      // Mock the registry to point to our tmp config
+      // extractExistingAuth uses toolRegistry internally, so we need
+      // the config path to match. Claude Code on linux uses `${homedir}/.claude.json`
+      const result = extractExistingAuth(ctx);
+
+      // Should find the URL and key from the env object
+      expect(result.apiUrl).toBe("http://localhost:4001");
+      expect(result.apiKey).toBe("test-key-123");
+    });
+
+    it("should extract auth from WSL bridge-mode config (args array)", () => {
+      // WSL bridge mode puts env vars in the args array as KEY=VALUE
+      // Cursor on WSL uses `${winHome}/.cursor/mcp.json`
+      const cursorDir = path.join(tmpDir, ".cursor");
+      fs.mkdirSync(cursorDir, { recursive: true });
+      const configPath = path.join(cursorDir, "mcp.json");
+      const config = {
+        mcpServers: {
+          "kanon-mcp": {
+            command: "wsl",
+            args: [
+              "env",
+              "KANON_API_URL=http://localhost:4001",
+              "KANON_API_KEY=bridge-key-456",
+              "node",
+              "/path/to/server.js",
+            ],
+          },
+        },
+      };
+      fs.writeFileSync(configPath, JSON.stringify(config));
+
+      const ctx: PlatformContext = {
+        platform: "wsl",
+        homedir: "/home/user",
+        winHome: tmpDir,
+      };
+
+      const result = extractExistingAuth(ctx);
+
+      expect(result.apiUrl).toBe("http://localhost:4001");
+      expect(result.apiKey).toBe("bridge-key-456");
+    });
+
+    it("should return empty object when no kanon-mcp entry exists", () => {
+      // Write a config with other servers but no kanon-mcp
+      const configPath = path.join(tmpDir, ".claude.json");
+      const config = {
+        mcpServers: {
+          "other-server": { command: "other", args: [] },
+        },
+      };
+      fs.writeFileSync(configPath, JSON.stringify(config));
+
+      const ctx: PlatformContext = {
+        platform: "linux",
+        homedir: tmpDir,
+      };
+
+      const result = extractExistingAuth(ctx);
+
+      expect(result.apiUrl).toBeUndefined();
+      expect(result.apiKey).toBeUndefined();
+    });
+
+    it("should handle missing config file gracefully", () => {
+      const ctx: PlatformContext = {
+        platform: "linux",
+        homedir: path.join(tmpDir, "nonexistent"),
+      };
+
+      const result = extractExistingAuth(ctx);
+
+      expect(result.apiUrl).toBeUndefined();
+      expect(result.apiKey).toBeUndefined();
     });
   });
 

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-04-05
+
+### Added
+- Interactive tool selection with `@inquirer/prompts` checkbox — zero-flag UX
+- Smart auth cascade: flag > env > existing config > auto-generate (localhost) > interactive prompt
+- `--yes`/`-y` flag for non-interactive CI/scripting mode
+- Auto-generate API keys from running localhost Kanon API
+- Extract existing auth from previously installed tool configs
+- Auth source tracking — summary shows where URL and key came from
+- Non-TTY detection — falls back to non-interactive mode automatically
+- Platform label printed at startup (WSL2, Linux, Windows)
+
 ## [0.3.0] - 2026-04-05
 
 ### Added

@@ -3,6 +3,7 @@
 
 import { Command } from "commander";
 import chalk from "chalk";
+import { checkbox } from "@inquirer/prompts";
 import { buildPlatformContext } from "./detect.js";
 import { resolveAuth } from "./auth.js";
 import { detectTools, getToolByName } from "./registry.js";
@@ -16,7 +17,7 @@ import {
 import { installSkills, removeSkills } from "./skills.js";
 import { installTemplate, removeTemplate } from "./templates.js";
 import { installWorkflows, removeWorkflows } from "./workflows.js";
-import type { ToolDefinition, PlatformContext } from "./types.js";
+import type { ToolDefinition, PlatformContext, AuthResult } from "./types.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -46,7 +47,8 @@ program
     "Target a specific tool (claude-code, cursor, antigravity)",
   )
   .option("--all", "Configure all detected tools")
-  .option("--remove", "Remove Kanon configuration from tools");
+  .option("--remove", "Remove Kanon configuration from tools")
+  .option("-y, --yes", "Accept all defaults without interactive prompts");
 
 program.action(async (options: {
   apiUrl?: string;
@@ -54,6 +56,7 @@ program.action(async (options: {
   tool?: string;
   all?: boolean;
   remove?: boolean;
+  yes?: boolean;
 }) => {
   try {
     await run(options);
@@ -70,18 +73,25 @@ async function run(options: {
   tool?: string;
   all?: boolean;
   remove?: boolean;
+  yes?: boolean;
 }): Promise<void> {
   const removeMode = options.remove === true;
   const assetsDir = getAssetsDir();
+  const isInteractive =
+    !options.yes && !options.tool && !options.all && !!process.stdin.isTTY;
 
-  // ── Platform Detection ─────────────────────────────────────────────
+  // ── 1. Platform Detection ──────────────────────────────────────────
   const ctx = await buildPlatformContext();
+
+  const platformLabel =
+    ctx.platform === "wsl" ? "WSL2" : ctx.platform.charAt(0).toUpperCase() + ctx.platform.slice(1);
+  console.log(chalk.cyan("[info]") + `  Detected platform: ${chalk.bold(platformLabel)}`);
 
   if (ctx.platform === "wsl") {
     if (ctx.winHome) {
       console.log(
         chalk.cyan("[info]") +
-          `  WSL detected — Windows home: ${chalk.bold(ctx.winHome)}`,
+          `  Windows home: ${chalk.bold(ctx.winHome)}`,
       );
     } else {
       console.log(
@@ -91,55 +101,31 @@ async function run(options: {
     }
   }
 
-  // ── Tool Detection & Selection ─────────────────────────────────────
-  let selectedTools: ToolDefinition[];
+  // ── 2. Detect all tools ────────────────────────────────────────────
+  const detectedTools = await detectTools(ctx);
 
-  if (options.tool) {
-    const tool = getToolByName(options.tool);
-    if (!tool) {
-      throw new Error(
-        `Unknown tool: '${options.tool}'. Supported: claude-code, cursor, antigravity`,
-      );
-    }
-    // Check if the tool supports the current platform
-    if (!tool.platforms[ctx.platform]) {
-      throw new Error(
-        `${tool.displayName} is not supported on ${ctx.platform}`,
-      );
-    }
-    selectedTools = [tool];
-  } else if (options.all) {
-    selectedTools = await detectTools(ctx);
-    if (selectedTools.length === 0) {
-      throw new Error(
-        "No supported tools detected. Install at least one supported AI coding tool.",
-      );
-    }
-  } else {
-    // Detect and show what's available
-    selectedTools = await detectTools(ctx);
-    if (selectedTools.length === 0) {
-      throw new Error(
-        "No supported tools detected. Install at least one supported AI coding tool.",
-      );
-    }
-    console.log("");
-    console.log(chalk.bold("Detected AI coding tools:"));
-    for (const tool of selectedTools) {
-      console.log(`  ${chalk.cyan("-")} ${tool.displayName}`);
-    }
-    console.log("");
-  }
+  // ── 3. Select tools (interactive or flag-based) ────────────────────
+  const selectedTools = await selectTools(
+    detectedTools,
+    { tool: options.tool, all: options.all, yes: options.yes },
+    isInteractive,
+    ctx,
+  );
 
-  // ── Auth Resolution (skip for --remove) ────────────────────────────
+  // ── 4. Auth Resolution (skip for --remove) ─────────────────────────
   let apiUrl = "";
   let apiKey = "";
+  let auth: AuthResult | undefined;
 
   if (!removeMode) {
-    const auth = await resolveAuth({
-      apiUrl: options.apiUrl,
-      apiKey: options.apiKey,
-    });
+    auth = await resolveAuth(
+      {
+        apiUrl: options.apiUrl,
+        apiKey: options.apiKey,
+        yes: options.yes,
+      },
+      ctx,
+    );
     apiUrl = auth.apiUrl;
     apiKey = auth.apiKey;
   }
@@ -279,7 +265,7 @@ async function run(options: {
     console.log("");
   }
 
-  // ── Summary ────────────────────────────────────────────────────────
+  // ── 6. Summary ─────────────────────────────────────────────────────
   if (removeMode) {
     console.log(
       chalk.green(
@@ -289,12 +275,20 @@ async function run(options: {
   } else {
     console.log(
       chalk.green(
-        `✓ Kanon configured for ${successCount} tool(s)!`,
+        `✓ Configured ${successCount} tool(s)!`,
       ),
     );
     console.log("");
-    console.log(`  API URL: ${chalk.cyan(apiUrl)}`);
-    console.log(`  MCP:     ${chalk.cyan(mcpResolution.mode === "local" ? mcpResolution.path : "npx @kanon/mcp")}`);
+    if (auth) {
+      const maskKey = (key: string) =>
+        key.length > 4 ? "****" + key.slice(-4) : "****";
+      console.log(
+        `  API URL: ${chalk.cyan(apiUrl)} ${chalk.dim(`(from ${auth.urlSource})`)}`,
+      );
+      console.log(
+        `  API Key: ${chalk.cyan(maskKey(apiKey))} ${chalk.dim(`(${auth.keySource})`)}`,
+      );
+    }
     console.log("");
     console.log(
       chalk.yellow(
@@ -303,6 +297,85 @@ async function run(options: {
     );
   }
   console.log("");
+}
+
+// ─── Tool Selection ──────────────────────────────────────────────────────────
+
+/**
+ * Select which tools to configure based on flags or interactive checkbox.
+ *
+ * - --tool <name> → single tool (validated against registry)
+ * - --all or --yes → all detected tools
+ * - interactive (TTY, no flags) → checkbox with all pre-selected
+ * - non-interactive (no TTY, no flags) → all detected tools
+ */
+export async function selectTools(
+  detected: ToolDefinition[],
+  flags: { tool?: string; all?: boolean; yes?: boolean },
+  isInteractive: boolean,
+  ctx: PlatformContext,
+  deps?: { promptTools?: (choices: Array<{ name: string; value: string; checked: boolean }>) => Promise<string[]> },
+): Promise<ToolDefinition[]> {
+  // --tool flag: single tool by name
+  if (flags.tool) {
+    const tool = getToolByName(flags.tool);
+    if (!tool) {
+      throw new Error(
+        `Unknown tool: '${flags.tool}'. Supported: claude-code, cursor, antigravity`,
+      );
+    }
+    if (!tool.platforms[ctx.platform]) {
+      throw new Error(
+        `${tool.displayName} is not supported on ${ctx.platform}`,
+      );
+    }
+    return [tool];
+  }
+
+  // No tools detected → error
+  if (detected.length === 0) {
+    throw new Error(
+      "No supported tools detected. Install at least one supported AI coding tool.",
+    );
+  }
+
+  // --all or --yes → all detected
+  if (flags.all || flags.yes) {
+    return detected;
+  }
+
+  // Non-interactive (no TTY) → all detected
+  if (!isInteractive) {
+    return detected;
+  }
+
+  // Interactive → checkbox with all pre-selected
+  const _promptTools = deps?.promptTools ?? defaultPromptTools;
+
+  console.log("");
+  const selectedNames = await _promptTools(
+    detected.map((t) => ({
+      name: t.displayName,
+      value: t.name,
+      checked: true,
+    })),
+  );
+
+  if (selectedNames.length === 0) {
+    console.log(chalk.yellow("No tools selected — nothing to do."));
+    process.exit(0);
+  }
+
+  return detected.filter((t) => selectedNames.includes(t.name));
+}
+
+async function defaultPromptTools(
+  choices: Array<{ name: string; value: string; checked: boolean }>,
+): Promise<string[]> {
+  return checkbox({
+    message: "Select tools to configure:",
+    choices,
+  });
 }
 
 program.parse();

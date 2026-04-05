@@ -40,3 +40,38 @@ export interface McpServerEntry {
   args: string[];
   env?: Record<string, string>;
 }
+
+// ─── Auth Types ─────────────────────────────────────────────────────────────
+
+/** Source that resolved an auth field, for logging */
+export type AuthSource =
+  | "flag"
+  | "env"
+  | "existing-config"
+  | "auto-generated"
+  | "prompt";
+
+export interface AuthResult {
+  apiUrl: string;
+  apiKey: string;
+  urlSource: AuthSource;
+  keySource: AuthSource;
+}
+
+/** Injectable dependencies for resolveAuth — enables testing without mocks */
+export interface AuthDeps {
+  extractExisting?: (
+    ctx: PlatformContext,
+  ) => { apiUrl?: string; apiKey?: string };
+  autoGenerateKey?: (apiUrl: string) => Promise<string | null>;
+  promptUrl?: () => Promise<string>;
+  promptKey?: () => Promise<string>;
+  fetchFn?: typeof globalThis.fetch;
+}
+
+// ─── Interactive Options ────────────────────────────────────────────────────
+
+export interface InteractiveOptions {
+  yes: boolean;
+  interactive: boolean;
+}
