@@ -17,6 +17,7 @@ import {
 import { installSkills, removeSkills } from "./skills.js";
 import { installTemplate, removeTemplate } from "./templates.js";
 import { installWorkflows, removeWorkflows } from "./workflows.js";
+import { installAgents, removeAgents } from "./agents.js";
 import type { ToolDefinition, PlatformContext, AuthResult } from "./types.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -207,6 +208,18 @@ async function run(options: {
         }
       }
 
+      // Remove agents
+      if (platformPaths.agents) {
+        const agentDir = platformPaths.agents(ctx);
+        const removedAgents = removeAgents(agentDir);
+        if (removedAgents.length > 0) {
+          console.log(
+            chalk.green("  ✓") +
+              ` Removed ${removedAgents.length} agents from ${chalk.bold(tool.displayName)}`,
+          );
+        }
+      }
+
       successCount++;
     } else {
       // ── Install Mode ─────────────────────────────────────────────
@@ -255,6 +268,18 @@ async function run(options: {
           console.log(
             chalk.green("  ✓") +
               ` Installed ${installedWfs.length} workflows to ${chalk.cyan(wfDir)}`,
+          );
+        }
+      }
+
+      // 5. Agents
+      if (platformPaths.agents) {
+        const agentDir = platformPaths.agents(ctx);
+        const installedAgents = installAgents(agentDir, assetsDir);
+        if (installedAgents.length > 0) {
+          console.log(
+            chalk.green("  ✓") +
+              ` Installed ${installedAgents.length} agents to ${chalk.cyan(agentDir)}`,
           );
         }
       }

@@ -31,4 +31,8 @@ if [ -d "$MCP_DIR/workflows" ]; then
   cp -r "$MCP_DIR/workflows" "$ASSETS_DIR/"
 fi
 
+# Copy agents
+mkdir -p "$ASSETS_DIR/agents"
+cp "$MCP_DIR/agents/kanon"*.md "$ASSETS_DIR/agents/" 2>/dev/null || true
+
 echo "Assets copied to $ASSETS_DIR"

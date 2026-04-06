@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-04-05
+
+### Added
+- Kanon sub-agent definition for AI tool delegation (Claude Code, Cursor, Gemini CLI)
+- Agent installation support in `npx @kanon-pm/setup` (installs alongside skills)
+- Issue lifecycle section in kanon-mcp skill (start_work → progress → done → stop_work)
+- SessionStart and PreCompact hooks in kanon-orchestrator-hooks skill
+
+### Changed
+- Skills optimized: 57% token reduction (15,600 → 6,700 tokens) via Agent Skills frontmatter and removal of MCP-duplicated content
+- Enriched MCP tool descriptions with usage hints (create_issue, transition_issue, update_issue, list_groups)
+
 ## [0.4.0] - 2026-04-05
 
 ### Added

@@ -9,7 +9,7 @@ import { formatList } from "../transforms.js";
 export function registerGroupTools(server: McpServer, client: KanonClient): void {
   server.tool(
     "kanon_list_groups",
-    "List issue groups for a Kanon project",
+    "List issue groups for a Kanon project. Call this before kanon_create_issue to discover valid groups for groupKey assignment.",
     ListGroupsInput.shape,
     async ({ projectKey, format, limit, offset }) => {
       try {

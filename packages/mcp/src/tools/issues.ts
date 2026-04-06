@@ -63,7 +63,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient): void
 
   server.tool(
     "kanon_create_issue",
-    "Create a new issue in a Kanon project",
+    "Create a Kanon issue. Title: imperative, no key prefix (e.g. 'Fix login redirect'). Call kanon_list_groups first for valid groupKey.",
     CreateIssueInput.shape,
     async ({ projectKey, title, description, type, priority, labels, groupKey, assigneeId, sprintId, parentId, dueDate, template, format }) => {
       try {
@@ -89,7 +89,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient): void
 
   server.tool(
     "kanon_update_issue",
-    "Update fields of an existing Kanon issue",
+    "Update fields of an existing Kanon issue. Always call kanon_get_issue first to read current state before updating — append, don't overwrite.",
     UpdateIssueInput.shape,
     async ({ issueKey, title, description, priority, labels, assigneeId, sprintId, dueDate, roadmapItemId, format }) => {
       try {
@@ -113,7 +113,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient): void
 
   server.tool(
     "kanon_transition_issue",
-    "Transition a Kanon issue to a new state",
+    "Transition a Kanon issue to a new state. Call kanon_get_issue first to check current state. Valid states: backlog, explore, propose, design, spec, tasks, apply, verify, archived.",
     TransitionIssueInput.shape,
     async ({ issueKey, state, format }) => {
       try {

@@ -18,6 +18,7 @@ export interface PlatformPaths {
   config: (ctx: PlatformContext) => string;
   skills: (ctx: PlatformContext) => string;
   workflows?: (ctx: PlatformContext) => string;
+  agents?: (ctx: PlatformContext) => string;
   template: (ctx: PlatformContext) => string;
   mcpMode: McpMode;
 }

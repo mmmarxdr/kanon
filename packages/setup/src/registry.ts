@@ -22,6 +22,7 @@ export const toolRegistry: ToolDefinition[] = [
         config: (ctx) => `${ctx.homedir}/.claude.json`,
         skills: (ctx) => `${ctx.homedir}/.claude/skills`,
         workflows: (ctx) => `${ctx.homedir}/.claude/workflows`,
+        agents: (ctx) => `${ctx.homedir}/.claude/agents`,
         template: (ctx) => `${ctx.homedir}/.claude/CLAUDE.md`,
         mcpMode: "direct",
       },
@@ -32,6 +33,7 @@ export const toolRegistry: ToolDefinition[] = [
         config: (ctx) => `${ctx.homedir}/.claude.json`,
         skills: (ctx) => `${ctx.homedir}/.claude/skills`,
         workflows: (ctx) => `${ctx.homedir}/.claude/workflows`,
+        agents: (ctx) => `${ctx.homedir}/.claude/agents`,
         template: (ctx) => `${ctx.homedir}/.claude/CLAUDE.md`,
         mcpMode: "direct",
       },
@@ -57,6 +59,7 @@ export const toolRegistry: ToolDefinition[] = [
           return `${appData}\\Cursor\\User\\mcp.json`;
         },
         skills: (ctx) => `${ctx.homedir}\\.cursor\\skills`,
+        agents: (ctx) => `${ctx.homedir}\\.cursor\\agents`,
         template: (ctx) => `${ctx.homedir}\\.cursor\\rules\\kanon.mdc`,
         mcpMode: "direct",
       },
@@ -66,6 +69,7 @@ export const toolRegistry: ToolDefinition[] = [
         },
         config: (ctx) => `${ctx.winHome!}/.cursor/mcp.json`,
         skills: (ctx) => `${ctx.winHome!}/.cursor/skills`,
+        agents: (ctx) => `${ctx.winHome!}/.cursor/agents`,
         template: (ctx) => `${ctx.winHome!}/.cursor/rules/kanon.mdc`,
         mcpMode: "wsl-bridge",
       },
@@ -73,6 +77,7 @@ export const toolRegistry: ToolDefinition[] = [
         detect: async (ctx) => fs.existsSync(`${ctx.homedir}/.cursor`),
         config: (ctx) => `${ctx.homedir}/.cursor/mcp.json`,
         skills: (ctx) => `${ctx.homedir}/.cursor/skills`,
+        agents: (ctx) => `${ctx.homedir}/.cursor/agents`,
         template: (ctx) => `${ctx.homedir}/.cursor/rules/kanon.mdc`,
         mcpMode: "direct",
       },
@@ -97,6 +102,7 @@ export const toolRegistry: ToolDefinition[] = [
           `${ctx.homedir}\\.gemini\\antigravity\\skills`,
         workflows: (ctx) =>
           `${ctx.homedir}\\.gemini\\antigravity\\global_workflows`,
+        agents: (ctx) => `${ctx.homedir}\\.gemini\\agents`,
         template: (ctx) => `${ctx.homedir}\\.gemini\\GEMINI.md`,
         mcpMode: "direct",
       },
@@ -110,6 +116,7 @@ export const toolRegistry: ToolDefinition[] = [
           `${ctx.winHome!}/.gemini/antigravity/skills`,
         workflows: (ctx) =>
           `${ctx.winHome!}/.gemini/antigravity/global_workflows`,
+        agents: (ctx) => `${ctx.winHome!}/.gemini/agents`,
         template: (ctx) => `${ctx.winHome!}/.gemini/GEMINI.md`,
         mcpMode: "wsl-bridge",
       },
@@ -122,6 +129,7 @@ export const toolRegistry: ToolDefinition[] = [
           `${ctx.homedir}/.gemini/antigravity/skills`,
         workflows: (ctx) =>
           `${ctx.homedir}/.gemini/antigravity/global_workflows`,
+        agents: (ctx) => `${ctx.homedir}/.gemini/agents`,
         template: (ctx) => `${ctx.homedir}/.gemini/GEMINI.md`,
         mcpMode: "direct",
       },
