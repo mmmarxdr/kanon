@@ -1,6 +1,7 @@
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 import type { CreateWorkspaceBody, UpdateWorkspaceBody } from "./schema.js";
+import { eventBus } from "../../services/event-bus/index.js";
 
 /**
  * Derive a username from a user's email or displayName.
@@ -60,6 +61,18 @@ export async function createWorkspace(body: CreateWorkspaceBody, userId: string)
         workspaceId: workspace.id,
       },
     });
+
+    // Emit member.added for the auto-created owner (fire-and-forget, inside tx return)
+    try {
+      eventBus.emit({
+        type: "member.added",
+        workspaceId: workspace.id,
+        actorId: "system",
+        payload: { username, role: "owner", userId },
+      });
+    } catch {
+      // Never let event emission break the mutation
+    }
 
     return workspace;
   });

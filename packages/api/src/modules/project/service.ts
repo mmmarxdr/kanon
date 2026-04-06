@@ -1,6 +1,7 @@
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 import type { CreateProjectBody, UpdateProjectBody } from "./schema.js";
+import { eventBus } from "../../services/event-bus/index.js";
 
 /**
  * Create a project within a workspace.
@@ -8,6 +9,7 @@ import type { CreateProjectBody, UpdateProjectBody } from "./schema.js";
 export async function createProject(
   workspaceId: string,
   body: CreateProjectBody,
+  actorId?: string,
 ) {
   // Check unique key within workspace
   const existing = await prisma.project.findUnique({
@@ -26,7 +28,7 @@ export async function createProject(
     );
   }
 
-  return prisma.project.create({
+  const project = await prisma.project.create({
     data: {
       key: body.key,
       name: body.name,
@@ -34,6 +36,20 @@ export async function createProject(
       workspaceId,
     },
   });
+
+  // Emit domain event (fire-and-forget)
+  try {
+    eventBus.emit({
+      type: "project.created",
+      workspaceId,
+      actorId: actorId ?? "system",
+      payload: { projectId: project.id, projectKey: project.key, name: project.name },
+    });
+  } catch {
+    // Never let event emission break the mutation
+  }
+
+  return project;
 }
 
 /**
@@ -66,7 +82,7 @@ export async function getProject(key: string) {
 /**
  * Update a project by key.
  */
-export async function updateProject(key: string, body: UpdateProjectBody) {
+export async function updateProject(key: string, body: UpdateProjectBody, actorId?: string) {
   const project = await prisma.project.findFirst({
     where: { key },
   });
@@ -78,16 +94,30 @@ export async function updateProject(key: string, body: UpdateProjectBody) {
     );
   }
 
-  return prisma.project.update({
+  const updated = await prisma.project.update({
     where: { id: project.id },
     data: body,
   });
+
+  // Emit domain event (fire-and-forget)
+  try {
+    eventBus.emit({
+      type: "project.updated",
+      workspaceId: project.workspaceId,
+      actorId: actorId ?? "system",
+      payload: { projectId: project.id, projectKey: project.key, fields: Object.keys(body) },
+    });
+  } catch {
+    // Never let event emission break the mutation
+  }
+
+  return updated;
 }
 
 /**
  * Soft delete (archive) a project by key.
  */
-export async function archiveProject(key: string) {
+export async function archiveProject(key: string, actorId?: string) {
   const project = await prisma.project.findFirst({
     where: { key },
   });
@@ -99,8 +129,22 @@ export async function archiveProject(key: string) {
     );
   }
 
-  return prisma.project.update({
+  const archived = await prisma.project.update({
     where: { id: project.id },
     data: { archived: true },
   });
+
+  // Emit domain event (fire-and-forget)
+  try {
+    eventBus.emit({
+      type: "project.archived",
+      workspaceId: project.workspaceId,
+      actorId: actorId ?? "system",
+      payload: { projectId: project.id, projectKey: project.key },
+    });
+  } catch {
+    // Never let event emission break the mutation
+  }
+
+  return archived;
 }

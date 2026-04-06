@@ -6,6 +6,8 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { CommandPalette } from "@/components/command-palette";
 import { useCommandPalette } from "@/hooks/use-command-palette";
 import { useCommandPaletteStore } from "@/stores/command-palette-store";
+import { useDomainEvents } from "@/hooks/use-domain-events";
+import { useActiveWorkspaceId } from "@/hooks/use-workspace-query";
 
 export const authenticatedRoute = createRoute({
   id: "_authenticated",
@@ -41,6 +43,10 @@ function AuthenticatedLayout() {
     (s) => s.requestCreateIssue,
   );
   const isLoading = useAuthStore((s) => s.isLoading);
+  const activeWorkspaceId = useActiveWorkspaceId();
+
+  // Connect to workspace-scoped SSE for real-time cache invalidation
+  useDomainEvents(activeWorkspaceId);
 
   if (isLoading) {
     return (

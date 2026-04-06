@@ -253,6 +253,42 @@ export function IssueDetailPanel({
                 )}
               </div>
 
+              {/* Active workers */}
+              {issue.activeWorkers && issue.activeWorkers.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                    Currently Working
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {issue.activeWorkers.map((worker) => {
+                      const elapsed = Math.floor(
+                        (Date.now() - new Date(worker.startedAt).getTime()) / 60_000,
+                      );
+                      const duration =
+                        elapsed < 1
+                          ? "just started"
+                          : elapsed < 60
+                            ? `${elapsed}m`
+                            : `${Math.floor(elapsed / 60)}h ${elapsed % 60}m`;
+                      return (
+                        <span
+                          key={worker.memberId}
+                          className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700"
+                          title={`Working via ${worker.clientType} for ${duration}`}
+                        >
+                          <span className="relative flex h-5 w-5 items-center justify-center rounded-full bg-emerald-200 text-[10px] font-bold uppercase">
+                            {worker.username.charAt(0)}
+                            <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full bg-emerald-500 ring-1 ring-white" />
+                          </span>
+                          {worker.username}
+                          <span className="text-emerald-500">{duration}</span>
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Metadata fields */}
               <MetadataSection
                 issue={issue}

@@ -14,6 +14,11 @@ import type {
 } from "./schema.js";
 import { ORDERED_STATES } from "../../shared/constants.js";
 import { resolveTemplate } from "../../shared/issue-templates.js";
+import { eventBus } from "../../services/event-bus/index.js";
+import {
+  getActiveWorkers,
+  getActiveWorkersForIssues,
+} from "../work-session/service.js";
 
 /**
  * Generate the next issue key for a project using MAX+1 in a transaction.
@@ -105,6 +110,18 @@ export async function createIssue(
     details: { title: issue.title, type: issue.type, priority: issue.priority },
   });
 
+  // Emit domain event (fire-and-forget)
+  try {
+    eventBus.emit({
+      type: "issue.created",
+      workspaceId: project.workspaceId,
+      actorId: memberId,
+      payload: { issueKey: issue.key, issueId: issue.id, projectKey: project.key, title: issue.title },
+    });
+  } catch {
+    // Never let event emission break the mutation
+  }
+
   return issue;
 }
 
@@ -140,7 +157,7 @@ export async function listIssues(
   if (filters.parent_only) where.parentId = null;
   if (filters.group_key) where.groupKey = filters.group_key;
 
-  return prisma.issue.findMany({
+  const issues = await prisma.issue.findMany({
     where,
     orderBy: { createdAt: "desc" },
     include: {
@@ -153,6 +170,15 @@ export async function listIssues(
       },
     },
   });
+
+  // Batch-fetch active workers to avoid N+1 queries
+  const issueIds = issues.map((i) => i.id);
+  const workersMap = await getActiveWorkersForIssues(issueIds);
+
+  return issues.map((issue) => ({
+    ...issue,
+    activeWorkers: workersMap.get(issue.id) ?? [],
+  }));
 }
 
 /**
@@ -243,7 +269,10 @@ export async function getIssue(key: string) {
   if (!issue) {
     throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${key}" not found`);
   }
-  return issue;
+
+  const activeWorkers = await getActiveWorkers(issue.id);
+
+  return { ...issue, activeWorkers };
 }
 
 /**
@@ -254,7 +283,10 @@ export async function updateIssue(
   body: UpdateIssueBody,
   memberId: string,
 ) {
-  const issue = await prisma.issue.findUnique({ where: { key } });
+  const issue = await prisma.issue.findUnique({
+    where: { key },
+    include: { project: { select: { workspaceId: true, key: true } } },
+  });
   if (!issue) {
     throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${key}" not found`);
   }
@@ -286,6 +318,7 @@ export async function updateIssue(
       details: {
         from: issue.assigneeId,
         to: body.assigneeId,
+        source: "api",
       },
     });
   }
@@ -324,6 +357,28 @@ export async function updateIssue(
     details: { fields: Object.keys(body) },
   });
 
+  // Emit domain events (fire-and-forget)
+  try {
+    eventBus.emit({
+      type: "issue.updated",
+      workspaceId: issue.project.workspaceId,
+      actorId: memberId,
+      payload: { issueKey: key, issueId: issue.id, fields: Object.keys(body) },
+    });
+
+    // Emit a specific assignment event if assignee changed
+    if (body.assigneeId !== undefined) {
+      eventBus.emit({
+        type: "issue.assigned",
+        workspaceId: issue.project.workspaceId,
+        actorId: memberId,
+        payload: { issueKey: key, issueId: issue.id, from: issue.assigneeId, to: body.assigneeId },
+      });
+    }
+  } catch {
+    // Never let event emission break the mutation
+  }
+
   return updated;
 }
 
@@ -335,7 +390,10 @@ export async function transitionIssue(
   toState: string,
   memberId: string,
 ) {
-  const issue = await prisma.issue.findUnique({ where: { key } });
+  const issue = await prisma.issue.findUnique({
+    where: { key },
+    include: { project: { select: { workspaceId: true } } },
+  });
   if (!issue) {
     throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${key}" not found`);
   }
@@ -367,6 +425,18 @@ export async function transitionIssue(
 
   // Sync roadmap item status based on aggregate issue states
   await syncRoadmapItemStatus(prisma, updated.id);
+
+  // Emit domain event (fire-and-forget)
+  try {
+    eventBus.emit({
+      type: "issue.transitioned",
+      workspaceId: issue.project.workspaceId,
+      actorId: memberId,
+      payload: { issueKey: key, issueId: issue.id, from: issue.state, to: toState },
+    });
+  } catch {
+    // Never let event emission break the mutation
+  }
 
   return updated;
 }

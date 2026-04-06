@@ -26,6 +26,16 @@ const TYPE_COLORS: Record<IssueType, string> = {
   spike: "bg-violet-50 text-violet-600",
 };
 
+/** Format elapsed time from ISO timestamp to human-readable string. */
+function formatElapsed(isoTimestamp: string): string {
+  const ms = Date.now() - new Date(isoTimestamp).getTime();
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m ago`;
+}
+
 interface IssueCardProps {
   issue: Issue;
   onSelect?: (key: string, element: HTMLElement) => void;
@@ -100,6 +110,25 @@ export function IssueCard({ issue, onSelect }: IssueCardProps) {
       <p className="text-[0.875rem] font-medium text-on-surface leading-snug line-clamp-2 mt-4">
         {issue.title}
       </p>
+
+      {/* Active workers indicator */}
+      {issue.activeWorkers && issue.activeWorkers.length > 0 && (
+        <div className="flex items-center gap-1.5 mt-3">
+          {issue.activeWorkers.map((worker) => (
+            <span
+              key={worker.memberId}
+              className="inline-flex items-center gap-1 text-[0.6875rem] text-emerald-600 font-medium"
+              title={`${worker.username} working via ${worker.clientType} since ${formatElapsed(worker.startedAt)}`}
+            >
+              <span className="relative flex h-4 w-4 items-center justify-center rounded-full bg-emerald-100 text-[9px] font-bold text-emerald-700 uppercase">
+                {worker.username.charAt(0)}
+                <span className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-emerald-500 ring-1 ring-surface-container-lowest" />
+              </span>
+              {worker.username}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Bottom row: labels + assignee */}
       <div className="flex items-center gap-1.5 flex-wrap mt-4">

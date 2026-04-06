@@ -35,6 +35,7 @@ export default async function projectRoutes(
       const project = await projectService.createProject(
         request.params.wid,
         request.body,
+        request.member?.id,
       );
       return reply.status(201).send(project);
     },
@@ -85,7 +86,7 @@ export default async function projectRoutes(
       },
     },
     async (request, _reply) => {
-      return projectService.updateProject(request.params.key, request.body);
+      return projectService.updateProject(request.params.key, request.body, request.member?.id);
     },
   );
 
@@ -101,7 +102,7 @@ export default async function projectRoutes(
       },
     },
     async (request, _reply) => {
-      return projectService.archiveProject(request.params.key);
+      return projectService.archiveProject(request.params.key, request.member?.id);
     },
   );
 }

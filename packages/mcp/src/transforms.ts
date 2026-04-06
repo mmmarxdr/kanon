@@ -24,7 +24,7 @@ export type EntityType =
 // ─── Field Allowlists ───────────────────────────────────────────────────────
 
 export const ISSUE_LIST_FIELDS = [
-  "key", "title", "state", "type", "priority", "labels", "groupKey", "dueDate",
+  "key", "title", "state", "type", "priority", "labels", "groupKey", "dueDate", "activeWorkers",
 ] as const;
 
 export const ISSUE_DETAIL_FIELDS = [
@@ -106,6 +106,17 @@ export function slimIssue(issue: KanonIssue): Record<string, unknown> {
   } else if (assignee !== undefined) {
     base["assignee"] = assignee;
   }
+  // Format activeWorkers into human-readable strings
+  const activeWorkers = raw["activeWorkers"];
+  if (Array.isArray(activeWorkers) && activeWorkers.length > 0) {
+    base["activeWorkers"] = (activeWorkers as Array<Record<string, unknown>>).map((w) => {
+      const elapsed = formatWorkerElapsed(w["startedAt"] as string);
+      return `${w["username"]} (since ${elapsed}, via ${w["source"]})`;
+    });
+  } else {
+    // Omit if no active workers to save tokens
+    delete base["activeWorkers"];
+  }
   return base as Record<string, unknown>;
 }
 
@@ -114,7 +125,7 @@ export function slimIssue(issue: KanonIssue): Record<string, unknown> {
  * Includes description, project key, and slimmed children.
  */
 export function slimIssueDetail(issue: KanonIssue): Record<string, unknown> {
-  const base = slimIssue(issue);
+  const base = slimIssue(issue); // activeWorkers already handled by slimIssue
   // Add detail-only fields
   base["description"] = issue.description ?? null;
   // Extract project key if project is an object
@@ -172,6 +183,20 @@ export function slimWorkspace(workspace: KanonWorkspace): Record<string, unknown
  */
 export function slimGroup(group: GroupSummary): Record<string, unknown> {
   return slimPick(group as unknown as Record<string, unknown>, GROUP_FIELDS) as Record<string, unknown>;
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Format elapsed time for active workers.
+ */
+function formatWorkerElapsed(startedAt: string): string {
+  const diff = Date.now() - new Date(startedAt).getTime();
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m ago`;
 }
 
 // ─── Dispatcher ─────────────────────────────────────────────────────────────

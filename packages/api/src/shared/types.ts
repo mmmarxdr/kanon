@@ -1,5 +1,6 @@
 import type { MemberRole } from "@prisma/client";
 import type { BridgeSyncService } from "../services/bridge-sync-service.js";
+import type { IEventBus } from "../services/event-bus/index.js";
 
 /**
  * Structured application error with HTTP status code and machine-readable code.
@@ -56,5 +57,6 @@ declare module "fastify" {
   }
   interface FastifyInstance {
     bridgeSyncService?: BridgeSyncService;
+    eventBus: IEventBus;
   }
 }

@@ -44,6 +44,20 @@ export const commentKeys = {
   list: (issueKey: string) => [...commentKeys.lists(), issueKey] as const,
 };
 
+export const memberKeys = {
+  all: ["members"] as const,
+  lists: () => [...memberKeys.all, "list"] as const,
+  list: (workspaceId: string) =>
+    [...memberKeys.lists(), workspaceId] as const,
+};
+
+export const workSessionKeys = {
+  all: ["work-sessions"] as const,
+  lists: () => [...workSessionKeys.all, "list"] as const,
+  list: (issueKey: string) =>
+    [...workSessionKeys.lists(), issueKey] as const,
+};
+
 export const activityKeys = {
   all: ["activity"] as const,
   lists: () => [...activityKeys.all, "list"] as const,

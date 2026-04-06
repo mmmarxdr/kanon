@@ -24,6 +24,17 @@ export interface Issue {
   createdAt: string;
   updatedAt: string;
   children?: Issue[];
+  activeWorkers?: ActiveWorker[];
+}
+
+/**
+ * Active worker on an issue, returned by the API in issue responses.
+ */
+export interface ActiveWorker {
+  memberId: string;
+  username: string;
+  startedAt: string;
+  clientType: string;
 }
 
 /**

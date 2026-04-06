@@ -138,6 +138,7 @@ export async function seedTestProject(
  * Deletes in reverse dependency order.
  */
 export async function cleanDatabase(): Promise<void> {
+  await prisma.workSession.deleteMany();
   await prisma.activityLog.deleteMany();
   await prisma.comment.deleteMany();
   await prisma.issue.deleteMany();

@@ -117,6 +117,17 @@ export interface BatchTransitionResult {
   transitioned: number;
 }
 
+/**
+ * Active worker info returned by the work session endpoints.
+ */
+export interface ActiveWorkerInfo {
+  userId: string;
+  memberId: string;
+  username: string;
+  startedAt: string;
+  source: string;
+}
+
 export interface KanonClientOptions {
   baseUrl: string;
   apiKey?: string;
@@ -438,6 +449,56 @@ export class KanonClient {
       body["details"] = details;
     }
     await this.request<unknown>("POST", `/api/issues/${issueKey}/activity`, body);
+  }
+
+  // ─── Work Sessions ──────────────────────────────────────────────────────
+
+  /**
+   * Start a work session on an issue.
+   * Route: POST /api/issues/:key/work-sessions
+   */
+  async startWork(
+    issueKey: string,
+    source: string = "mcp",
+  ): Promise<{ session: unknown; warnings: string[]; autoAssigned: boolean }> {
+    return this.request<{ session: unknown; warnings: string[]; autoAssigned: boolean }>(
+      "POST",
+      `/api/issues/${issueKey}/work-sessions`,
+      { source },
+    );
+  }
+
+  /**
+   * Stop a work session on an issue.
+   * Route: DELETE /api/issues/:key/work-sessions
+   */
+  async stopWork(issueKey: string): Promise<{ ok: boolean; deleted: boolean }> {
+    return this.request<{ ok: boolean; deleted: boolean }>(
+      "DELETE",
+      `/api/issues/${issueKey}/work-sessions`,
+    );
+  }
+
+  /**
+   * Send a heartbeat for an active work session.
+   * Route: POST /api/issues/:key/work-sessions/heartbeat
+   */
+  async heartbeat(issueKey: string): Promise<{ ok: boolean }> {
+    return this.request<{ ok: boolean }>(
+      "POST",
+      `/api/issues/${issueKey}/work-sessions/heartbeat`,
+    );
+  }
+
+  /**
+   * List active work sessions for an issue.
+   * Route: GET /api/issues/:key/work-sessions
+   */
+  async listActiveSessions(issueKey: string): Promise<ActiveWorkerInfo[]> {
+    return this.request<ActiveWorkerInfo[]>(
+      "GET",
+      `/api/issues/${issueKey}/work-sessions`,
+    );
   }
 
   // ─── Health ─────────────────────────────────────────────────────────────

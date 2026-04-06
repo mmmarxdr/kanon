@@ -95,7 +95,8 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  members Member[]
+  members      Member[]
+  workSessions WorkSession[]
 
   @@map("users")
 }
@@ -175,6 +176,7 @@ model Issue {
 
   activityLogs ActivityLog[]
   comments     Comment[]
+  workSessions WorkSession[]
 
   @@unique([projectId, key])
   @@index([projectId, state])
@@ -219,6 +221,7 @@ model Member {
   assignedIssues Issue[]       @relation("AssignedIssues")
   activityLogs   ActivityLog[]
   comments       Comment[]
+  workSessions   WorkSession[]
 
   @@unique([userId, workspaceId])
   @@unique([workspaceId, username])
@@ -299,4 +302,25 @@ model RoadmapDependency {
   @@unique([sourceId, targetId])
   @@index([targetId])
   @@map("roadmap_dependencies")
+}
+
+model WorkSession {
+  id            String    @id @default(uuid()) @db.Uuid
+  startedAt     DateTime  @default(now()) @map("started_at")
+  lastHeartbeat DateTime  @default(now()) @map("last_heartbeat")
+  source        String    @default("mcp") // "mcp" | "web" | "claude-code" | "cursor"
+
+  userId   String @map("user_id") @db.Uuid
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  issueId  String @map("issue_id") @db.Uuid
+  issue    Issue  @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  memberId String @map("member_id") @db.Uuid
+  member   Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, issueId])
+  @@index([issueId, lastHeartbeat])
+  @@index([memberId, lastHeartbeat])
+  @@map("work_sessions")
 }

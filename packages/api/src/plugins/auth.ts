@@ -11,7 +11,7 @@ import { COOKIE_NAMES } from "../shared/constants.js";
 /**
  * Public routes that do not require authentication.
  */
-const PUBLIC_PREFIXES = ["/api/auth/", "/api/events/", "/health"];
+const PUBLIC_PREFIXES = ["/api/auth/", "/api/events/sync", "/health"];
 
 /**
  * Check if a route path is public (no auth required).

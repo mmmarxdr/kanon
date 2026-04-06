@@ -9,6 +9,9 @@ import { registerIssueTools } from "./tools/issues.js";
 import { registerRoadmapTools } from "./tools/roadmap.js";
 import { registerCommentTools } from "./tools/comments.js";
 import { registerContextTools } from "./tools/context.js";
+import { registerWorkSessionTools } from "./tools/work-sessions.js";
+import { shutdownAllHeartbeats } from "./heartbeat.js";
+import { startSseClient, stopSseClient } from "./sse-client.js";
 
 // ─── Env Validation (fail-fast) ────────────────────────────────────────────
 
@@ -45,6 +48,7 @@ registerIssueTools(server, client);
 registerCommentTools(server, client);
 registerRoadmapTools(server, client);
 registerContextTools(server);
+registerWorkSessionTools(server, client);
 
 // ─── Connect ────────────────────────────────────────────────────────────────
 
@@ -52,9 +56,29 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Kanon MCP Server running on stdio");
+
+  // Start background SSE client if workspace ID is configured
+  const workspaceId = process.env["KANON_WORKSPACE_ID"];
+  if (workspaceId && KANON_API_URL && KANON_API_KEY) {
+    startSseClient(KANON_API_URL, workspaceId, KANON_API_KEY);
+    console.error(`SSE client started for workspace ${workspaceId}`);
+  }
 }
 
 main().catch((error) => {
   console.error("Fatal error in main():", error);
   process.exit(1);
 });
+
+// ─── Graceful Shutdown ─────────────────────────────────────────────────────
+
+async function shutdown(): Promise<void> {
+  console.error("Kanon MCP Server shutting down...");
+  stopSseClient();
+  await shutdownAllHeartbeats();
+  process.exit(0);
+}
+
+process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());
+process.on("beforeExit", () => void shutdownAllHeartbeats());

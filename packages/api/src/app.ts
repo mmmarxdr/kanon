@@ -18,11 +18,15 @@ import projectRoutes from "./modules/project/routes.js";
 import issueRoutes from "./modules/issue/routes.js";
 import commentRoutes from "./modules/comment/routes.js";
 import eventsRoutes from "./modules/events/routes.js";
+import workspaceEventsRoutes from "./modules/events/workspace-events.js";
 import memberRoutes from "./modules/member/routes.js";
 import workspaceMemberRoutes from "./modules/member/workspace-member-routes.js";
 import roadmapRoutes from "./modules/roadmap/routes.js";
+import workSessionRoutes from "./modules/work-session/routes.js";
 import { EngramClient } from "@kanon/bridge";
 import { BridgeSyncService } from "./services/bridge-sync-service.js";
+import { eventBus } from "./services/event-bus/index.js";
+import { cleanupExpired } from "./modules/work-session/service.js";
 
 /**
  * Build and configure the Fastify application.
@@ -67,6 +71,9 @@ export async function buildApp() {
   await app.register(authPlugin);
   await app.register(csrfPlugin);
 
+  // ─── Domain EventBus ──────────────────────────────────────────────────
+  app.decorate("eventBus", eventBus);
+
   // Health check with DB connectivity (always public, before auth)
   app.get("/health", async (_request, reply) => {
     try {
@@ -85,9 +92,30 @@ export async function buildApp() {
   await app.register(commentRoutes, { prefix: "/api" });
   await app.register(activityRoutes, { prefix: "/api" });
   await app.register(eventsRoutes, { prefix: "/api/events" });
+  await app.register(workspaceEventsRoutes, { prefix: "/api/events/workspace" });
   await app.register(memberRoutes, { prefix: "/api/members" });
   await app.register(workspaceMemberRoutes, { prefix: "/api/workspaces/:wid/members" });
   await app.register(roadmapRoutes, { prefix: "/api" });
+  await app.register(workSessionRoutes, { prefix: "/api" });
+
+  // ─── Work Session Cleanup (background interval) ──────────────────────
+  let cleanupInterval: ReturnType<typeof setInterval> | undefined;
+
+  app.addHook("onReady", async () => {
+    cleanupInterval = setInterval(() => {
+      cleanupExpired(app.log).catch((err) => {
+        app.log.error({ err }, "Work session cleanup failed");
+      });
+    }, 60_000); // every 60 seconds
+    app.log.info("Work session cleanup interval started (every 60s)");
+  });
+
+  app.addHook("onClose", async () => {
+    if (cleanupInterval) {
+      clearInterval(cleanupInterval);
+      app.log.info("Work session cleanup interval stopped");
+    }
+  });
 
   // ─── Bridge Sync Service (Phase C) ───────────────────────────────────
   if (env.ENGRAM_SYNC_ENABLED) {

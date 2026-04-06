@@ -2,6 +2,7 @@ import type { MemberRole } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 import type { UpdateProfileBody } from "./schema.js";
+import { eventBus } from "../../services/event-bus/index.js";
 
 // Role hierarchy for permission checks (higher index = more privileged)
 const ROLE_HIERARCHY: MemberRole[] = ["viewer", "member", "admin", "owner"];
@@ -133,6 +134,7 @@ export async function addMember(
   email: string,
   role: MemberRole,
   actingRole: MemberRole,
+  actorId?: string,
 ) {
   // Admin cannot assign owner role
   if (role === "owner" && actingRole !== "owner") {
@@ -178,7 +180,7 @@ export async function addMember(
     username = `${username}-${Date.now().toString(36)}`;
   }
 
-  return prisma.member.create({
+  const member = await prisma.member.create({
     data: {
       username,
       role,
@@ -191,6 +193,20 @@ export async function addMember(
       },
     },
   });
+
+  // Emit domain event (fire-and-forget)
+  try {
+    eventBus.emit({
+      type: "member.added",
+      workspaceId,
+      actorId: actorId ?? "system",
+      payload: { memberId: member.id, username: member.username, role: member.role, email },
+    });
+  } catch {
+    // Never let event emission break the mutation
+  }
+
+  return member;
 }
 
 /**
@@ -203,6 +219,7 @@ export async function changeMemberRole(
   memberId: string,
   newRole: MemberRole,
   actingRole: MemberRole,
+  actorId?: string,
 ) {
   const member = await prisma.member.findFirst({
     where: { id: memberId, workspaceId },
@@ -231,7 +248,7 @@ export async function changeMemberRole(
     throw new AppError(403, "FORBIDDEN", "Insufficient permissions to change this member's role");
   }
 
-  return prisma.member.update({
+  const updated = await prisma.member.update({
     where: { id: memberId },
     data: { role: newRole },
     include: {
@@ -240,6 +257,20 @@ export async function changeMemberRole(
       },
     },
   });
+
+  // Emit domain event (fire-and-forget)
+  try {
+    eventBus.emit({
+      type: "member.role_changed",
+      workspaceId,
+      actorId: actorId ?? "system",
+      payload: { memberId, from: member.role, to: newRole },
+    });
+  } catch {
+    // Never let event emission break the mutation
+  }
+
+  return updated;
 }
 
 /**
@@ -283,4 +314,16 @@ export async function removeMember(
   await prisma.member.delete({
     where: { id: memberId },
   });
+
+  // Emit domain event (fire-and-forget)
+  try {
+    eventBus.emit({
+      type: "member.removed",
+      workspaceId,
+      actorId: member.userId === actingUserId ? memberId : "system",
+      payload: { memberId, username: member.username, role: member.role },
+    });
+  } catch {
+    // Never let event emission break the mutation
+  }
 }

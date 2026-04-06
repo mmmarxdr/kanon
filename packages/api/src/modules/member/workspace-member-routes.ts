@@ -54,6 +54,7 @@ export default async function workspaceMemberRoutes(
         request.body.email,
         request.body.role,
         request.member!.role,
+        request.member!.id,
       );
       return reply.status(201).send(member);
     },
@@ -78,6 +79,7 @@ export default async function workspaceMemberRoutes(
         request.params.mid,
         request.body.role,
         request.member!.role,
+        request.member!.id,
       );
     },
   );
