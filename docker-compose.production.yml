@@ -1,0 +1,101 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kanon}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.production}
+      POSTGRES_DB: ${POSTGRES_DB:-kanon}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - kanon-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kanon}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kanon-api:
+    build:
+      context: .
+      dockerfile: packages/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env.production}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env.production}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in .env.production}
+      PORT: "3000"
+      HOST: "0.0.0.0"
+      NODE_ENV: production
+      CORS_ORIGIN: ${CORS_ORIGIN:?Set CORS_ORIGIN in .env.production}
+      COOKIE_SECRET: ${COOKIE_SECRET:-}
+      ENGRAM_URL: ${ENGRAM_URL:-http://engram:7437}
+      ENGRAM_SYNC_ENABLED: ${ENGRAM_SYNC_ENABLED:-false}
+    networks:
+      - kanon-internal
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  kanon-web:
+    build:
+      context: .
+      dockerfile: packages/web/Dockerfile.production
+    restart: unless-stopped
+    depends_on:
+      kanon-api:
+        condition: service_healthy
+    ports:
+      - "${KANON_WEB_PORT:-80}:80"
+    networks:
+      - kanon-internal
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  engram:
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM golang:1.23-alpine AS builder
+        RUN apk add --no-cache git gcc musl-dev
+        RUN git clone --depth 1 https://github.com/Gentleman-Programming/engram.git /src
+        WORKDIR /src
+        RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /engram ./cmd/engram
+        FROM alpine:3.21
+        COPY --from=builder /engram /usr/local/bin/engram
+        RUN mkdir -p /data
+        ENV ENGRAM_DB_PATH=/data/engram.db
+        EXPOSE 7437
+        ENTRYPOINT ["engram"]
+        CMD ["serve"]
+    restart: unless-stopped
+    profiles:
+      - engram
+    volumes:
+      - engram_data:/data
+    networks:
+      - kanon-internal
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:7437/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  kanon-internal:
+    driver: bridge
+
+volumes:
+  pgdata:
+  engram_data:
