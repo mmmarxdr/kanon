@@ -37,6 +37,9 @@ export const UpdateWorkspaceBody = z.object({
       "Slug must be lowercase alphanumeric with hyphens",
     )
     .optional(),
+  allowedDomains: z
+    .array(z.string().min(1).max(253))
+    .optional(),
 });
 export type UpdateWorkspaceBody = z.infer<typeof UpdateWorkspaceBody>;
 

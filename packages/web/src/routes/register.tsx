@@ -3,14 +3,22 @@ import { useState } from "react";
 import { rootRoute } from "./__root";
 import { fetchApi, ApiError } from "@/lib/api-client";
 
+interface RegisterSearch {
+  invite?: string;
+}
+
 export const registerRoute = createRoute({
   path: "/register",
   getParentRoute: () => rootRoute,
   component: RegisterPage,
+  validateSearch: (search: Record<string, unknown>): RegisterSearch => ({
+    invite: typeof search.invite === "string" ? search.invite : undefined,
+  }),
 });
 
 function RegisterPage() {
   const navigate = useNavigate();
+  const { invite } = registerRoute.useSearch();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -33,8 +41,11 @@ function RegisterPage() {
         }),
       });
 
-      // Registration successful — redirect to login
-      void navigate({ to: "/login" });
+      // Registration successful — redirect to login (preserving invite token)
+      void navigate({
+        to: "/login",
+        search: invite ? { invite } : {},
+      });
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message);
@@ -133,7 +144,10 @@ function RegisterPage() {
             href="/login"
             onClick={(e) => {
               e.preventDefault();
-              void navigate({ to: "/login" });
+              void navigate({
+                to: "/login",
+                search: invite ? { invite } : {},
+              });
             }}
             className="text-primary underline-offset-4 hover:underline"
           >

@@ -44,6 +44,22 @@ export default async function workspaceRoutes(
   });
 
   /**
+   * GET /api/workspaces/:id
+   */
+  app.get(
+    "/:id",
+    {
+      preHandler: [requireMember("id")],
+      schema: {
+        params: WorkspaceIdParam,
+      },
+    },
+    async (request, _reply) => {
+      return workspaceService.getWorkspace(request.params.id);
+    },
+  );
+
+  /**
    * PATCH /api/workspaces/:id
    */
   app.patch(

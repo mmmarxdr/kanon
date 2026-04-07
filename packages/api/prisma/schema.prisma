@@ -97,6 +97,8 @@ model User {
 
   members      Member[]
   workSessions WorkSession[]
+  createdInvites WorkspaceInvite[]
+  passwordResetTokens PasswordResetToken[]
 
   @@map("users")
 }
@@ -108,8 +110,11 @@ model Workspace {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  allowedDomains String[] @default([]) @map("allowed_domains")
+
   projects Project[]
   members  Member[]
+  invites  WorkspaceInvite[]
 
   @@map("workspaces")
 }
@@ -323,4 +328,42 @@ model WorkSession {
   @@index([issueId, lastHeartbeat])
   @@index([memberId, lastHeartbeat])
   @@map("work_sessions")
+}
+
+model WorkspaceInvite {
+  id        String    @id @default(uuid()) @db.Uuid
+  token     String    @unique
+  role      String    @default("member")
+  maxUses   Int       @default(0) @map("max_uses")   // 0 = unlimited
+  useCount  Int       @default(0) @map("use_count")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  label     String?                                   // optional description
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  workspaceId String    @map("workspace_id") @db.Uuid
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  createdById String @map("created_by_id") @db.Uuid
+  createdBy   User   @relation(fields: [createdById], references: [id])
+
+  @@index([workspaceId])
+  @@index([token])
+  @@map("workspace_invites")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+
+  userId    String    @map("user_id") @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }

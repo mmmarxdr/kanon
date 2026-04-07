@@ -291,7 +291,7 @@ export function AppSidebar() {
           const isActive = location.pathname.startsWith(item.matchPrefix);
           const Icon = item.icon;
           const hasRoute =
-            item.matchPrefix === "/board" || item.matchPrefix === "/backlog" || item.matchPrefix === "/roadmap";
+            item.matchPrefix === "/board" || item.matchPrefix === "/backlog" || item.matchPrefix === "/roadmap" || item.matchPrefix === "/settings";
 
           const linkContent = (
             <div

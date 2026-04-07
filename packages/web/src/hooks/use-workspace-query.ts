@@ -2,10 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchApi } from "@/lib/api-client";
 import { workspaceKeys } from "@/lib/query-keys";
 
-interface Workspace {
+export interface Workspace {
   id: string;
   name: string;
   slug: string;
+  allowedDomains: string[];
   createdAt: string;
 }
 

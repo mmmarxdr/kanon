@@ -16,8 +16,18 @@ const PUBLIC_PREFIXES = ["/api/auth/", "/api/events/sync", "/health"];
 /**
  * Check if a route path is public (no auth required).
  */
-function isPublicRoute(url: string): boolean {
-  return PUBLIC_PREFIXES.some((prefix) => url.startsWith(prefix));
+function isPublicRoute(url: string, method: string): boolean {
+  if (PUBLIC_PREFIXES.some((prefix) => url.startsWith(prefix))) {
+    return true;
+  }
+
+  // GET /api/invites/:token is public (invite metadata preview).
+  // POST /api/invites/:token/accept requires auth, so only GET is public.
+  if (method === "GET" && url.startsWith("/api/invites/")) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -59,7 +69,7 @@ async function authHook(
   _reply: FastifyReply,
 ): Promise<void> {
   // Skip auth for public routes
-  if (isPublicRoute(request.url)) {
+  if (isPublicRoute(request.url, request.method)) {
     return;
   }
 

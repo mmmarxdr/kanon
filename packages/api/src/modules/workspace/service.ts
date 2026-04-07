@@ -79,6 +79,17 @@ export async function createWorkspace(body: CreateWorkspaceBody, userId: string)
 }
 
 /**
+ * Get a single workspace by ID.
+ */
+export async function getWorkspace(id: string) {
+  const workspace = await prisma.workspace.findUnique({ where: { id } });
+  if (!workspace) {
+    throw new AppError(404, "WORKSPACE_NOT_FOUND", "Workspace not found");
+  }
+  return workspace;
+}
+
+/**
  * List all workspaces for the authenticated user.
  */
 export async function listWorkspaces(userId: string) {

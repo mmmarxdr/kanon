@@ -51,6 +51,13 @@ export const memberKeys = {
     [...memberKeys.lists(), workspaceId] as const,
 };
 
+export const inviteKeys = {
+  all: ["invites"] as const,
+  lists: () => [...inviteKeys.all, "list"] as const,
+  list: (workspaceId: string) =>
+    [...inviteKeys.lists(), workspaceId] as const,
+};
+
 export const workSessionKeys = {
   all: ["work-sessions"] as const,
   lists: () => [...workSessionKeys.all, "list"] as const,

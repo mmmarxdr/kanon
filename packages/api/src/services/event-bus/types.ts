@@ -16,7 +16,10 @@ export type DomainEventType =
   | "member.removed"
   | "member.role_changed"
   | "work_session.started"
-  | "work_session.ended";
+  | "work_session.ended"
+  | "invite.created"
+  | "invite.revoked"
+  | "invite.accepted";
 
 /**
  * A typed domain event emitted after a successful mutation.
