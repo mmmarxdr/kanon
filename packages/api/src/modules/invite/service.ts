@@ -205,18 +205,44 @@ export async function getInviteMetadata(token: string) {
  */
 export async function acceptInvite(token: string, userId: string, userEmail: string) {
   return prisma.$transaction(async (tx) => {
-    const invite = await tx.workspaceInvite.findUnique({
-      where: { token },
-      include: {
-        workspace: {
-          select: { id: true, name: true, allowedDomains: true },
-        },
-      },
-    });
+    // Use FOR UPDATE to prevent race conditions on concurrent accepts
+    const rows = await tx.$queryRaw<Array<{
+      id: string;
+      token: string;
+      role: string;
+      max_uses: number;
+      use_count: number;
+      expires_at: Date;
+      revoked_at: Date | null;
+      workspace_id: string;
+    }>>`
+      SELECT id, token, role, max_uses, use_count, expires_at, revoked_at, workspace_id
+      FROM workspace_invites
+      WHERE token = ${token}
+      FOR UPDATE
+    `;
 
-    if (!invite) {
+    const row = rows[0];
+    if (!row) {
       throw new AppError(404, "INVITE_NOT_FOUND", "Invite not found");
     }
+
+    const workspace = await tx.workspace.findUniqueOrThrow({
+      where: { id: row.workspace_id },
+      select: { id: true, name: true, allowedDomains: true },
+    });
+
+    const invite = {
+      id: row.id,
+      token: row.token,
+      role: row.role,
+      maxUses: row.max_uses,
+      useCount: row.use_count,
+      expiresAt: row.expires_at,
+      revokedAt: row.revoked_at,
+      workspaceId: row.workspace_id,
+      workspace,
+    };
 
     // Validate invite is still usable
     const now = new Date();
