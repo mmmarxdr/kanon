@@ -89,3 +89,37 @@ export const ChangePasswordBody = z.object({
     .max(128, "New password must be at most 128 characters"),
 });
 export type ChangePasswordBody = z.infer<typeof ChangePasswordBody>;
+
+/**
+ * Forgot password request body.
+ */
+export const ForgotPasswordBody = z.object({
+  email: z.string().email("Invalid email address"),
+});
+export type ForgotPasswordBody = z.infer<typeof ForgotPasswordBody>;
+
+/**
+ * Forgot password response.
+ */
+export const ForgotPasswordResponse = z.object({
+  message: z.string(),
+});
+
+/**
+ * Reset password request body.
+ */
+export const ResetPasswordBody = z.object({
+  token: z.string().min(1, "Reset token is required"),
+  newPassword: z
+    .string()
+    .min(8, "Password must be at least 8 characters")
+    .max(128, "Password must be at most 128 characters"),
+});
+export type ResetPasswordBody = z.infer<typeof ResetPasswordBody>;
+
+/**
+ * Reset password response.
+ */
+export const ResetPasswordResponse = z.object({
+  message: z.string(),
+});

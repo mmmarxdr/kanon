@@ -39,6 +39,17 @@ const envSchema = z.object({
   COOKIE_SECRET: z
     .string()
     .optional(),
+  RESEND_API_KEY: z
+    .string()
+    .optional(),
+  EMAIL_FROM: z
+    .string()
+    .optional()
+    .default("Kanon <noreply@kanon.dev>"),
+  APP_URL: z
+    .string()
+    .optional()
+    .default("http://localhost:5173"),
   CORS_ORIGIN: z
     .string()
     .optional()

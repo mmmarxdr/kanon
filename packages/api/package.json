@@ -29,6 +29,7 @@
     "fastify-plugin": "^5.0.0",
     "fastify-type-provider-zod": "^4.0.0",
     "jsonwebtoken": "^9.0.2",
+    "resend": "^6.10.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {

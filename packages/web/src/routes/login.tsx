@@ -5,15 +5,23 @@ import { useAuthStore } from "@/stores/auth-store";
 import { fetchApi, ApiError } from "@/lib/api-client";
 import type { AuthUser } from "@/stores/auth-store";
 
+interface LoginSearch {
+  invite?: string;
+}
+
 export const loginRoute = createRoute({
   path: "/login",
   getParentRoute: () => rootRoute,
   component: LoginPage,
+  validateSearch: (search: Record<string, unknown>): LoginSearch => ({
+    invite: typeof search.invite === "string" ? search.invite : undefined,
+  }),
 });
 
 function LoginPage() {
   const navigate = useNavigate();
   const { setUser } = useAuthStore();
+  const { invite } = loginRoute.useSearch();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -52,6 +60,19 @@ function LoginPage() {
       // Fetch user info from /me (using the cookies just set)
       const user = await fetchApi<AuthUser>("/api/auth/me");
       setUser(user);
+
+      // If there's a pending invite token, accept it after login
+      if (invite) {
+        try {
+          await fetchApi(`/api/invites/${invite}/accept`, {
+            method: "POST",
+            body: JSON.stringify({}),
+          });
+        } catch {
+          // Don't block the auth flow — the user is logged in regardless.
+          // They can retry accepting the invite from the invite link.
+        }
+      }
 
       void navigate({ to: "/workspaces" });
     } catch (err) {
@@ -111,6 +132,19 @@ function LoginPage() {
             />
           </div>
 
+          <div className="flex justify-end">
+            <a
+              href="/forgot-password"
+              onClick={(e) => {
+                e.preventDefault();
+                void navigate({ to: "/forgot-password" });
+              }}
+              className="text-xs text-primary underline-offset-4 hover:underline"
+            >
+              Forgot password?
+            </a>
+          </div>
+
           {error && (
             <div data-testid="login-error" className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               {error}
@@ -132,7 +166,10 @@ function LoginPage() {
             href="/register"
             onClick={(e) => {
               e.preventDefault();
-              void navigate({ to: "/register" });
+              void navigate({
+                to: "/register",
+                search: invite ? { invite } : {},
+              });
             }}
             className="text-primary underline-offset-4 hover:underline"
           >

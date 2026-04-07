@@ -16,8 +16,13 @@ import {
   ApiKeyResponse,
   MeResponse,
   ChangePasswordBody,
+  ForgotPasswordBody,
+  ForgotPasswordResponse,
+  ResetPasswordBody,
+  ResetPasswordResponse,
 } from "./schema.js";
 import * as authService from "./service.js";
+import { createEmailProvider } from "../../services/email/index.js";
 
 /**
  * Helper: set auth cookies on a reply.
@@ -96,6 +101,7 @@ export default async function authRoutes(
   fastify: FastifyInstance,
 ): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+  const emailProvider = createEmailProvider();
 
   /**
    * POST /api/auth/register
@@ -254,6 +260,57 @@ export default async function authRoutes(
         (request.body as any).newPassword,
       );
       return reply.status(200).send({ success: true });
+    },
+  );
+
+  /**
+   * POST /api/auth/forgot-password
+   * Sends a password reset email if the account exists.
+   * Always returns 200 to prevent email enumeration.
+   * Rate limited: 3 attempts per minute per IP.
+   */
+  app.post(
+    "/forgot-password",
+    {
+      config: {
+        rateLimit: {
+          max: 3,
+          timeWindow: "1 minute",
+        },
+      },
+      schema: {
+        body: ForgotPasswordBody,
+        response: { 200: ForgotPasswordResponse },
+      },
+    },
+    async (request, _reply) => {
+      await authService.requestPasswordReset(
+        (request.body as ForgotPasswordBody).email,
+        emailProvider,
+      );
+      return {
+        message:
+          "If that email is registered, you will receive a reset link",
+      };
+    },
+  );
+
+  /**
+   * POST /api/auth/reset-password
+   * Resets the user's password using a valid reset token.
+   */
+  app.post(
+    "/reset-password",
+    {
+      schema: {
+        body: ResetPasswordBody,
+        response: { 200: ResetPasswordResponse },
+      },
+    },
+    async (request, _reply) => {
+      const body = request.body as ResetPasswordBody;
+      await authService.resetPassword(body.token, body.newPassword);
+      return { message: "Password has been reset successfully" };
     },
   );
 
