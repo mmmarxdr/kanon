@@ -47,6 +47,7 @@ export function InvitesSection({
   const [maxUses, setMaxUses] = useState<string>("0");
   const [expiresInHours, setExpiresInHours] = useState<string>("168");
   const [label, setLabel] = useState("");
+  const [email, setEmail] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const isAdmin = currentUserRole === "admin" || currentUserRole === "owner";
@@ -59,6 +60,7 @@ export function InvitesSection({
         maxUses: parseInt(maxUses, 10) || 0,
         expiresInHours: parseInt(expiresInHours, 10) || 168,
         label: label || undefined,
+        email: email || undefined,
       },
       {
         onSuccess: () => {
@@ -67,6 +69,7 @@ export function InvitesSection({
           setMaxUses("0");
           setExpiresInHours("168");
           setLabel("");
+          setEmail("");
         },
       },
     );
@@ -168,6 +171,24 @@ export function InvitesSection({
             </div>
           </div>
 
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-card-foreground">
+              Send to email <span className="text-muted-foreground">(optional)</span>
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="colleague@example.com"
+              className="w-full rounded-md border border-input bg-[#E8E8E8] px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+            />
+            {email && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Invite will be sent to <span className="font-medium text-foreground">{email}</span>
+              </p>
+            )}
+          </div>
+
           {createInvite.isError && (
             <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               {createInvite.error.message}
@@ -261,6 +282,11 @@ function InviteRow({
           <span className="text-xs text-muted-foreground">
             {roleLabel(invite.role)}
           </span>
+          {invite.email && (
+            <span className="text-xs text-muted-foreground">
+              &rarr; {invite.email}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3 mt-0.5">
           <p className="text-xs text-muted-foreground">

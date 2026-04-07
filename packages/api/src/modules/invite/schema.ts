@@ -10,6 +10,7 @@ export const CreateInviteBody = z.object({
   maxUses: z.number().int().min(0).optional().default(0),
   expiresInHours: z.number().int().min(1).max(720).optional().default(168),
   label: z.string().max(200).optional(),
+  email: z.string().email().optional(),
 });
 export type CreateInviteBody = z.infer<typeof CreateInviteBody>;
 
@@ -25,6 +26,7 @@ export const InviteResponse = z.object({
   expiresAt: z.string(),
   revokedAt: z.string().nullable(),
   label: z.string().nullable(),
+  email: z.string().nullable(),
   inviteUrl: z.string(),
   createdBy: z.object({
     email: z.string(),
@@ -57,6 +59,7 @@ export const InviteMetadataResponse = z.object({
   isExhausted: z.boolean(),
   isRevoked: z.boolean(),
   isValid: z.boolean(),
+  email: z.string().nullable(),
 });
 
 /**

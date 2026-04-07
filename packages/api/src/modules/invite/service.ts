@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
 import type { MemberRole } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
+import { env } from "../../config/env.js";
 import { AppError } from "../../shared/types.js";
 import { eventBus } from "../../services/event-bus/index.js";
+import type { EmailProvider } from "../../services/email/types.js";
 import type { CreateInviteBody } from "./schema.js";
 
 /**
@@ -42,6 +44,7 @@ function toInviteResponse(invite: {
   expiresAt: Date;
   revokedAt: Date | null;
   label: string | null;
+  email: string | null;
   createdAt: Date;
   createdBy: { email: string; displayName: string | null };
 }) {
@@ -54,6 +57,7 @@ function toInviteResponse(invite: {
     expiresAt: invite.expiresAt.toISOString(),
     revokedAt: invite.revokedAt?.toISOString() ?? null,
     label: invite.label,
+    email: invite.email,
     inviteUrl: `/invite/${invite.token}`,
     createdBy: {
       email: invite.createdBy.email,
@@ -64,12 +68,69 @@ function toInviteResponse(invite: {
 }
 
 /**
+ * Build the HTML email for a workspace invite.
+ */
+function buildInviteEmail(opts: {
+  workspaceName: string;
+  role: string;
+  inviterName: string;
+  inviteUrl: string;
+  expiresAt: Date;
+}): { subject: string; html: string; text: string } {
+  const expiresDate = opts.expiresAt.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+  const roleLabel = opts.role.charAt(0).toUpperCase() + opts.role.slice(1);
+
+  const subject = `You've been invited to join ${opts.workspaceName} on Kanon`;
+
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
+      <h2 style="color: #111; margin-bottom: 16px;">You're invited!</h2>
+      <p style="color: #333; font-size: 15px; line-height: 1.5;">
+        <strong>${opts.inviterName}</strong> has invited you to join
+        <strong>${opts.workspaceName}</strong> as a <strong>${roleLabel}</strong>.
+      </p>
+      <div style="margin: 32px 0; text-align: center;">
+        <a href="${opts.inviteUrl}"
+           style="display: inline-block; background-color: #111; color: #fff; padding: 12px 32px; border-radius: 6px; text-decoration: none; font-size: 14px; font-weight: 500;">
+          Accept Invite
+        </a>
+      </div>
+      <p style="color: #666; font-size: 13px;">
+        This invite expires on ${expiresDate}.
+      </p>
+      <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;" />
+      <p style="color: #999; font-size: 12px;">
+        If you didn't expect this invitation, you can safely ignore this email.
+      </p>
+    </div>
+  `.trim();
+
+  const text = [
+    `You've been invited to join ${opts.workspaceName} on Kanon!`,
+    "",
+    `${opts.inviterName} has invited you to join as a ${roleLabel}.`,
+    "",
+    `Accept the invite: ${opts.inviteUrl}`,
+    "",
+    `This invite expires on ${expiresDate}.`,
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+/**
  * Create a new workspace invite link.
+ * If an email is provided and an emailProvider is available, sends an invite email.
  */
 export async function createInvite(
   workspaceId: string,
   createdById: string,
   body: CreateInviteBody,
+  emailProvider?: EmailProvider,
 ) {
   const token = generateToken();
   const expiresAt = new Date(Date.now() + body.expiresInHours * 60 * 60 * 1000);
@@ -81,6 +142,7 @@ export async function createInvite(
       maxUses: body.maxUses,
       expiresAt,
       label: body.label ?? null,
+      email: body.email ?? null,
       workspaceId,
       createdById,
     },
@@ -88,8 +150,32 @@ export async function createInvite(
       createdBy: {
         select: { email: true, displayName: true },
       },
+      workspace: {
+        select: { name: true },
+      },
     },
   });
+
+  // Send invite email if an email address was provided
+  if (body.email && emailProvider) {
+    const inviteUrl = `${env.APP_URL}/invite/${token}`;
+    const inviterName = invite.createdBy.displayName ?? invite.createdBy.email;
+    const emailContent = buildInviteEmail({
+      workspaceName: invite.workspace.name,
+      role: invite.role,
+      inviterName,
+      inviteUrl,
+      expiresAt,
+    });
+
+    // Fire-and-forget — don't let email failure break invite creation
+    emailProvider.send({
+      to: body.email,
+      ...emailContent,
+    }).catch((err) => {
+      console.error(`Failed to send invite email to ${body.email}:`, err);
+    });
+  }
 
   // Emit domain event (fire-and-forget)
   try {
@@ -196,6 +282,7 @@ export async function getInviteMetadata(token: string) {
     isExhausted,
     isRevoked,
     isValid,
+    email: invite.email ?? null,
   };
 }
 

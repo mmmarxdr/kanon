@@ -11,6 +11,7 @@ import {
 } from "./schema.js";
 import * as inviteService from "./service.js";
 import { requireRole } from "../../middleware/require-role.js";
+import { createEmailProvider } from "../../services/email/index.js";
 
 /**
  * Workspace-scoped invite management routes plugin.
@@ -20,10 +21,12 @@ export async function workspaceInviteRoutes(
   fastify: FastifyInstance,
 ): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+  const emailProvider = createEmailProvider();
 
   /**
    * POST /api/workspaces/:wid/invites
    * Create a new invite link. Requires admin+ role.
+   * If body.email is provided, sends an invite email to the recipient.
    */
   app.post(
     "/",
@@ -40,6 +43,7 @@ export async function workspaceInviteRoutes(
         request.params.wid,
         request.user.userId,
         request.body,
+        emailProvider,
       );
       return reply.status(201).send(invite);
     },

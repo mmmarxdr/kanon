@@ -339,6 +339,7 @@ model WorkspaceInvite {
   expiresAt DateTime  @map("expires_at")
   revokedAt DateTime? @map("revoked_at")
   label     String?                                   // optional description
+  email     String?   @map("email")                   // optional recipient email
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
 

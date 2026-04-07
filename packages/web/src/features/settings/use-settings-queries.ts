@@ -25,6 +25,7 @@ export interface WorkspaceInvite {
   expiresAt: string;
   revokedAt: string | null;
   label: string | null;
+  email: string | null;
   inviteUrl: string;
   createdBy: {
     email: string;
@@ -46,6 +47,7 @@ interface CreateInviteInput {
   maxUses?: number;
   expiresInHours?: number;
   label?: string;
+  email?: string;
 }
 
 // ── Queries ─────────────────────────────────────────────────────────────────
