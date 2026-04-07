@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import { createRoute, useNavigate } from "@tanstack/react-router";
+import { createRoute, useNavigate, redirect, Link } from "@tanstack/react-router";
 import { authenticatedRoute } from "../_authenticated";
 import { useBacklogQuery, useGroupsQuery } from "@/features/backlog/use-backlog-query";
 import { BacklogTable } from "@/features/backlog/backlog-table";
@@ -19,6 +19,11 @@ export const backlogRoute = createRoute({
   validateSearch: (search: Record<string, unknown>): BacklogSearchParams => ({
     issue: typeof search.issue === "string" ? search.issue : undefined,
   }),
+  beforeLoad: ({ params }) => {
+    if (!params.projectKey || params.projectKey.trim() === "") {
+      throw redirect({ to: "/" });
+    }
+  },
 });
 
 function BacklogPage() {
@@ -64,6 +69,17 @@ function BacklogPage() {
     return (
       <div className="flex items-center justify-center h-full p-8">
         <p className="text-muted-foreground">Loading backlog...</p>
+      </div>
+    );
+  }
+
+  if (!projectKey) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-8 gap-3">
+        <p className="text-muted-foreground">No project selected.</p>
+        <Link to="/" className="text-sm text-primary hover:underline">
+          Go to project selection
+        </Link>
       </div>
     );
   }

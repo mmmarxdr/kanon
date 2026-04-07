@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, lazy, Suspense } from "react";
-import { createRoute } from "@tanstack/react-router";
+import { createRoute, redirect, Link } from "@tanstack/react-router";
 import { authenticatedRoute } from "../_authenticated";
 import { useRoadmapQuery } from "@/features/roadmap/use-roadmap-query";
 import { RoadmapBoard } from "@/features/roadmap/roadmap-board";
@@ -27,6 +27,11 @@ export const roadmapRoute = createRoute({
   validateSearch: (search: Record<string, unknown>): RoadmapSearchParams => ({
     item: typeof search.item === "string" ? search.item : undefined,
   }),
+  beforeLoad: ({ params }) => {
+    if (!params.projectKey || params.projectKey.trim() === "") {
+      throw redirect({ to: "/" });
+    }
+  },
 });
 
 function RoadmapPage() {
@@ -92,6 +97,17 @@ function RoadmapPage() {
     return (
       <div className="flex items-center justify-center h-full p-8">
         <p className="text-muted-foreground">Loading roadmap...</p>
+      </div>
+    );
+  }
+
+  if (!projectKey) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-8 gap-3">
+        <p className="text-muted-foreground">No project selected.</p>
+        <Link to="/" className="text-sm text-primary hover:underline">
+          Go to project selection
+        </Link>
       </div>
     );
   }

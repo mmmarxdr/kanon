@@ -179,13 +179,15 @@ interface NavItem {
   /** If href starts with "/board", it's considered active when pathname includes /board */
   href: string;
   matchPrefix: string;
+  /** Whether the item requires a project to be selected */
+  requiresProject?: boolean;
 }
 
 function buildNavItems(projectKey: string): NavItem[] {
   return [
-    { label: "Board", icon: BoardIcon, href: `/board/${projectKey}`, matchPrefix: "/board" },
-    { label: "Backlog", icon: BacklogIcon, href: `/backlog/${projectKey}`, matchPrefix: "/backlog" },
-    { label: "Roadmap", icon: RoadmapIcon, href: `/roadmap/${projectKey}`, matchPrefix: "/roadmap" },
+    { label: "Board", icon: BoardIcon, href: `/board/${projectKey}`, matchPrefix: "/board", requiresProject: true },
+    { label: "Backlog", icon: BacklogIcon, href: `/backlog/${projectKey}`, matchPrefix: "/backlog", requiresProject: true },
+    { label: "Roadmap", icon: RoadmapIcon, href: `/roadmap/${projectKey}`, matchPrefix: "/roadmap", requiresProject: true },
     { label: "Cycles", icon: CyclesIcon, href: "/cycles", matchPrefix: "/cycles" },
     { label: "Settings", icon: SettingsIcon, href: "/settings", matchPrefix: "/settings" },
   ];
@@ -292,15 +294,18 @@ export function AppSidebar() {
           const Icon = item.icon;
           const hasRoute =
             item.matchPrefix === "/board" || item.matchPrefix === "/backlog" || item.matchPrefix === "/roadmap" || item.matchPrefix === "/settings";
+          const isDisabled = item.requiresProject && !projectKey;
 
           const linkContent = (
             <div
-              className={`flex items-center gap-2.5 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
+              className={`flex items-center gap-2.5 py-2 rounded-md text-sm font-medium transition-colors ${
                 collapsed ? "justify-center px-0" : "px-3"
               } ${
-                isActive
-                  ? "bg-primary/10 text-primary"
-                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                isDisabled
+                  ? "text-muted-foreground/40 cursor-not-allowed"
+                  : isActive
+                    ? "bg-primary/10 text-primary cursor-pointer"
+                    : "text-muted-foreground hover:bg-secondary hover:text-foreground cursor-pointer"
               }`}
             >
               <Icon className="shrink-0" />
@@ -308,7 +313,7 @@ export function AppSidebar() {
             </div>
           );
 
-          if (hasRoute) {
+          if (hasRoute && !isDisabled) {
             return (
               <Tooltip key={item.label} label={item.label} show={collapsed}>
                 <Link to={item.href}>{linkContent}</Link>
@@ -317,7 +322,7 @@ export function AppSidebar() {
           }
 
           return (
-            <Tooltip key={item.label} label={item.label} show={collapsed}>
+            <Tooltip key={item.label} label={isDisabled ? `${item.label} (select a project first)` : item.label} show={collapsed}>
               {linkContent}
             </Tooltip>
           );
@@ -346,6 +351,9 @@ export function AppSidebar() {
           )}
           {!projectsLoading && projects && projects.length === 0 && !collapsed && (
             <p className="px-3 py-1.5 text-sm text-muted-foreground">No projects</p>
+          )}
+          {!projectsLoading && projects && projects.length > 0 && !projectKey && !collapsed && (
+            <p className="px-3 py-1 text-xs text-muted-foreground italic">Select a project below</p>
           )}
           {!projectsLoading && projects && projects.map((project) => {
             const isActiveProject = projectKey === project.key;

@@ -1,5 +1,5 @@
 import { useMemo, useCallback, useRef } from "react";
-import { createRoute, useNavigate, Link } from "@tanstack/react-router";
+import { createRoute, useNavigate, Link, redirect } from "@tanstack/react-router";
 import { authenticatedRoute } from "../_authenticated";
 import { useIssuesQuery, useGroupsQuery } from "@/features/board/use-issues-query";
 import { useBoardStore } from "@/stores/board-store";
@@ -20,6 +20,11 @@ export const boardRoute = createRoute({
   validateSearch: (search: Record<string, unknown>): BoardSearchParams => ({
     issue: typeof search.issue === "string" ? search.issue : undefined,
   }),
+  beforeLoad: ({ params }) => {
+    if (!params.projectKey || params.projectKey.trim() === "") {
+      throw redirect({ to: "/" });
+    }
+  },
 });
 
 function BoardPage() {
@@ -74,6 +79,17 @@ function BoardPage() {
     return (
       <div className="flex items-center justify-center h-full p-8">
         <p className="text-muted-foreground">Loading board...</p>
+      </div>
+    );
+  }
+
+  if (!projectKey) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-8 gap-3">
+        <p className="text-muted-foreground">No project selected.</p>
+        <Link to="/" className="text-sm text-primary hover:underline">
+          Go to project selection
+        </Link>
       </div>
     );
   }
