@@ -13,7 +13,7 @@ vi.mock("@tanstack/react-router", () => ({
     if (opts.component) {
       captured.RegisterComponent = opts.component;
     }
-    return {};
+    return { useSearch: () => ({ invite: undefined }) };
   },
   createRootRoute: () => ({}),
   useNavigate: () => mockNavigate,
@@ -92,7 +92,7 @@ describe("RegisterPage", () => {
     expect(body.username).toBeUndefined();
 
     await waitFor(() => {
-      expect(mockNavigate).toHaveBeenCalledWith({ to: "/login" });
+      expect(mockNavigate).toHaveBeenCalledWith({ to: "/login", search: {} });
     });
   });
 

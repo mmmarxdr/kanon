@@ -16,7 +16,7 @@ vi.mock("@tanstack/react-router", () => ({
     if (opts.component) {
       captured.LoginComponent = opts.component;
     }
-    return {};
+    return { useSearch: () => ({ invite: undefined }) };
   },
   createRootRoute: () => ({}),
   useNavigate: () => mockNavigate,
