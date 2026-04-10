@@ -124,4 +124,11 @@ After pulling new changes:
 
 ## License
 
-This project does not yet have a published license. All rights reserved.
+Kanon is licensed under the [Apache License 2.0](./LICENSE).
+
+Copyright © 2026 Marc Dechand. See [NOTICE](./NOTICE) for attribution requirements.
+
+You are free to use, modify, and distribute Kanon — including for commercial
+purposes — provided you preserve the copyright, license, and NOTICE files in
+any redistribution. Apache 2.0 includes an explicit patent grant that protects
+both users and contributors.
