@@ -1,127 +1,123 @@
 # Kanon
 
-**An opinionated, AI-native project management platform.**
+**Project management, rebuilt for the age of AI coding agents.**
 
-![Version](https://img.shields.io/badge/version-0.2.0-blue)
+<!-- SCREENSHOT: main kanban board with AI agent activity visible.
+     Recommended size: 1600x900, .png, commit it to docs/assets/kanban.png -->
 
-Kanon is a self-hosted project management tool designed to work seamlessly with AI coding agents. It provides a REST API, a web UI with kanban boards, and an MCP server that lets AI assistants create and manage issues directly. Built as a TypeScript monorepo, it runs locally with PostgreSQL.
+![Kanon Kanban](docs/assets/kanban.png)
 
-## Quick Start
+---
+
+## Why Kanon?
+
+Jira, Linear and Trello were designed for humans clicking in browsers.
+But more and more of the code that ships today is written by AI agents —
+and those agents cannot drive a board that was never built for them.
+
+Kanon treats AI agents as first-class users, not as a bolted-on integration.
+Issues, sprints, transitions, dependencies — all operable natively through
+the Model Context Protocol (MCP). The web UI is there for humans. The MCP
+server is there for agents. Both talk to the same source of truth.
+
+## The name
+
+**Kanon** (Greek: *κανών, kanṓn*) — "the rule, the measuring rod".
+In ancient Greek it referred to the straight standard against which every
+other measurement is judged. Fitting, for a system whose job is to set the
+cadence of engineering work.
+
+## What you get
+
+- **MCP-native** — your AI assistant (Claude Code, Cursor, Antigravity)
+  creates, transitions and comments on issues directly, with no custom glue code.
+- **Web Kanban** — a fast React 19 UI for the moments you want to drive the
+  board yourself.
+- **Self-hosted** — your data stays in your Postgres, your infra, your network.
+- **SDD-aware lifecycle** — issues move through states that mirror real work:
+  `backlog → explore → propose → spec → design → tasks → apply → verify → archive`.
+- **Zero-friction AI setup** — one command (`npx @kanon-pm/setup`) configures
+  your AI tools with MCP, skills and workflows.
+- **Real-time** — WebSocket-backed updates across clients.
+
+## Inspiration
+
+I built Kanon because my own workflow broke.
+
+I was writing specs, having agents implement them, verifying output, archiving
+changes — and the tools I was using to track that work (Notion boards, Linear,
+custom Markdown trees) could not talk to the agents doing the work. Every
+hand-off needed me to translate between the board and the agent.
+
+Kanon started as a single-user tool to close that gap — a board where the
+agent can create its own issue when it spots a TODO, update state when it
+finishes a phase, and link dependencies without being asked. It is still
+opinionated toward that workflow, and it is the laboratory where I keep
+refining how humans and agents share a project.
+
+---
+
+## Quick start
+
+> Requires Node.js 20+, pnpm and Docker.
 
 ```bash
-# 1. Clone and start
 git clone https://github.com/mmmarxdr/kanon.git
 cd kanon
-pnpm install
-pnpm dev:start    # starts PostgreSQL, API, web, and optionally Engram
+pnpm setup      # install deps, run migrations, build
+pnpm dev:start  # boot Postgres, API, web and Engram
+```
 
-# 2. Configure your AI tools
+Open [http://localhost:5173](http://localhost:5173) and sign in with
+`dev@kanon.io` / `Password1!` (workspace: `kanon-dev`).
+
+To wire up your AI tools:
+
+```bash
 npx @kanon-pm/setup
 ```
 
-Open [http://localhost:5173](http://localhost:5173) and log in with `dev@kanon.io` / `Password1!` (workspace: `kanon-dev`). The setup wizard auto-detects your tools and resolves credentials.
+For advanced install options (manual Postgres, no-Docker setup, CI scripting),
+see **[docs/INSTALL.md](docs/INSTALL.md)**.
+For AI tool setup details and supported clients, see
+**[docs/AI_TOOLS.md](docs/AI_TOOLS.md)**.
 
-## AI Tool Setup
+---
 
-### What `npx @kanon-pm/setup` does
+## Tech stack
 
-- Detects installed AI tools (Claude Code, Cursor, Antigravity)
-- Presents an interactive checkbox to select which to configure
-- Auto-resolves API credentials (from existing config, running API, or prompts you)
-- Installs MCP server config, skills, templates, and workflows
-- Works on Windows (PowerShell), WSL2, and Linux
+Fastify 5, Prisma, PostgreSQL, React 19, Vite 6, TanStack Router + Query,
+Tailwind CSS 4, Zustand, `@modelcontextprotocol/sdk`, Vitest, Playwright.
+Monorepo with pnpm workspaces.
 
-### Usage examples
+## Project layout
 
-```bash
-# Interactive (recommended)
-npx @kanon-pm/setup
+| Package            | Path              | Role                          |
+| ------------------ | ----------------- | ----------------------------- |
+| `@kanon/api`       | `packages/api`    | REST API (Fastify + Prisma)   |
+| `@kanon/web`       | `packages/web`    | Web frontend (React + Vite)   |
+| `@kanon/mcp`       | `packages/mcp`    | MCP server for AI agents      |
+| `@kanon/cli`       | `packages/cli`    | CLI tool                      |
+| `@kanon/bridge`    | `packages/bridge` | Shared types and contracts    |
+| `@kanon/e2e`       | `packages/e2e`    | Playwright end-to-end tests   |
+| `@kanon-pm/setup`  | `packages/setup`  | AI tool setup wizard          |
 
-# Non-interactive (CI/scripting)
-npx @kanon-pm/setup --yes
+For dev commands, build/test/release instructions and project internals,
+see **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)**.
 
-# Specific tool only
-npx @kanon-pm/setup --tool claude-code
+---
 
-# With explicit credentials
-npx @kanon-pm/setup --api-url http://localhost:3000 --api-key YOUR_KEY
+## Status
 
-# Remove Kanon from all tools
-npx @kanon-pm/setup --remove --yes
-```
-
-### Supported Tools
-
-| Tool | Platform | Status |
-|------|----------|--------|
-| Claude Code | WSL2, Linux | Supported |
-| Cursor | Windows, WSL2, Linux | Supported |
-| Antigravity | Windows, WSL2, Linux | Supported |
-
-## Prerequisites
-
-- [Node.js](https://nodejs.org/) >= 20
-- [pnpm](https://pnpm.io/) (the repo pins `pnpm@10.32.1`)
-- [Docker](https://www.docker.com/) (for PostgreSQL)
-
-## Tech Stack
-
-- **Runtime:** Node.js 20+, TypeScript
-- **API:** Fastify 5, Prisma (PostgreSQL), Zod
-- **Web:** React 19, Vite 6, TanStack Router + Query, Tailwind CSS 4, Zustand
-- **MCP:** Model Context Protocol SDK
-- **Testing:** Vitest, Playwright (E2E), Testing Library
-- **Monorepo:** pnpm workspaces
-
-## Project Structure
-
-| Package | Path | Description |
-|---------|------|-------------|
-| `@kanon/api` | `packages/api` | REST API server (Fastify, Prisma) |
-| `@kanon/web` | `packages/web` | Web frontend (React, Vite) |
-| `@kanon/mcp` | `packages/mcp` | MCP server for AI agent integration |
-| `@kanon/cli` | `packages/cli` | CLI tool |
-| `@kanon/bridge` | `packages/bridge` | Shared types and contracts |
-| `@kanon/e2e` | `packages/e2e` | End-to-end tests (Playwright) |
-| `@kanon-pm/setup` | `packages/setup` | AI tool setup wizard |
-
-## Development
-
-### Common commands
-
-```bash
-pnpm dev:start                # Start everything (API + Web + Engram + MCP)
-pnpm dev:start -- --no-engram # Skip Engram memory service
-pnpm dev:start -- --no-mcp    # Skip MCP package build
-pnpm test:all                 # Run all tests (API + Web + E2E)
-pnpm e2e                      # Run E2E tests only
-pnpm build                    # Build all packages
-pnpm db:studio                # Open Prisma Studio (database browser)
-```
-
-### Upgrading
-
-After pulling new changes:
-
-```bash
-./scripts/upgrade.sh
-```
-
-### Releasing
-
-```bash
-./scripts/release.sh --dry-run patch   # Preview
-./scripts/release.sh patch             # Create a patch release
-./scripts/release.sh --push minor      # Create and push a minor release
-```
+Early development — v0.2.0. Expect breaking changes until v1.0.
+Heading toward v1 with hardened multi-user support, a public API key
+flow and a stabilized MCP surface.
 
 ## Contributing
 
-1. Create a feature branch from `main`
-2. Make your changes
-3. Ensure tests pass: `pnpm test:all`
-4. Submit a pull request
+Contributions are welcome. Read **[CONTRIBUTING.md](CONTRIBUTING.md)**
+before opening a PR.
 
 ## License
 
-This project does not yet have a published license. All rights reserved.
+Apache License 2.0. See [LICENSE](LICENSE).
