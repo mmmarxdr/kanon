@@ -5,7 +5,8 @@
 <!-- SCREENSHOT: main kanban board with AI agent activity visible.
      Recommended size: 1600x900, .png, commit it to docs/assets/kanban.png -->
 
-![Kanon Kanban](docs/assets/kanban.png)
+<img width="1912" height="856" alt="image" src="https://github.com/user-attachments/assets/13e1698b-cd48-4e34-9a24-becdf49f7752" />
+
 
 ---
 
