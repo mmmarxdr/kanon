@@ -30,6 +30,9 @@ pnpm-debug.log*
 # Test coverage
 coverage/
 
+# Dev runtime state
+.dev-info/
+
 # Secrets & credentials
 .mcp.json
 *.pem

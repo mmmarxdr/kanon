@@ -11,7 +11,9 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "verify-assets": "bash scripts/verify-assets.sh",
+    "prepublishOnly": "pnpm build && bash scripts/verify-assets.sh"
   },
   "files": [
     "dist/",

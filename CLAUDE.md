@@ -19,7 +19,7 @@ TypeScript, Node 20+, pnpm workspaces. See individual package.json files for fra
 
 ## Development Setup
 
-pnpm install && pnpm dev
+pnpm setup && pnpm dev:start
 
 ## Kanon MCP Tools
 

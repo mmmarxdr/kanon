@@ -59,9 +59,10 @@ if [[ "$SHOW_HELP" == "true" ]]; then
   exit 0
 fi
 
-# ── PID file for cleanup ─────────────────────────────────────────────────────
+# ── PID file and dev-info cleanup ────────────────────────────────────────────
 PID_FILE="$ROOT_DIR/.dev-pids"
 rm -f "$PID_FILE"
+rm -rf "$ROOT_DIR/.dev-info"
 
 cleanup() {
   echo ""
@@ -78,6 +79,26 @@ cleanup() {
   ok "All processes stopped."
 }
 trap cleanup SIGINT SIGTERM
+
+# ── 0. Setup-done preflight ──────────────────────────────────────────────────
+# Confirm workspace has been set up before attempting to start services.
+# These outputs are produced by 'pnpm setup' and are required to run.
+SETUP_MISSING=false
+if [[ ! -d "$ROOT_DIR/node_modules/.pnpm" ]]; then
+  warn "node_modules/.pnpm not found"
+  SETUP_MISSING=true
+fi
+if [[ ! -f "$ROOT_DIR/packages/api/node_modules/.prisma/client/index.js" ]]; then
+  warn "Prisma client not generated (packages/api/node_modules/.prisma/client/index.js missing)"
+  SETUP_MISSING=true
+fi
+if [[ ! -f "$ROOT_DIR/packages/setup/dist/index.js" ]]; then
+  warn "Setup package not built (packages/setup/dist/index.js missing)"
+  SETUP_MISSING=true
+fi
+if [[ "$SETUP_MISSING" == "true" ]]; then
+  fail "Run 'pnpm setup' first."
+fi
 
 # ── 1. Check prerequisites ───────────────────────────────────────────────────
 info "Checking prerequisites..."
@@ -242,8 +263,32 @@ echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}  Kanon Dev Environment Ready${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
-echo -e "  API:           ${CYAN}http://localhost:${API_PORT}${NC}"
-echo -e "  Web:           ${CYAN}http://localhost:${WEB_PORT}${NC}"
+# Poll .dev-info/{api,web}.json for the actual bound URLs (up to 10s each)
+read_service_url() {
+  local svc="$1"
+  local default_url="$2"
+  local info_file="$ROOT_DIR/.dev-info/${svc}.json"
+  local tries=0
+  while [[ $tries -lt 10 ]]; do
+    if [[ -f "$info_file" ]]; then
+      local url
+      url=$(python3 -c "import json,sys; d=json.load(open('$info_file')); print(d['url'])" 2>/dev/null || true)
+      if [[ -n "$url" ]]; then
+        echo "$url"
+        return
+      fi
+    fi
+    sleep 1
+    tries=$((tries + 1))
+  done
+  echo "${default_url} (unverified — service did not write port file)"
+}
+
+API_URL_ACTUAL=$(read_service_url "api" "http://localhost:${API_PORT}")
+WEB_URL_ACTUAL=$(read_service_url "web" "http://localhost:${WEB_PORT}")
+
+echo -e "  API:           ${CYAN}${API_URL_ACTUAL}${NC}"
+echo -e "  Web:           ${CYAN}${WEB_URL_ACTUAL}${NC}"
 if [[ "$WITH_ENGRAM" == "true" ]]; then
   if [[ "$ENGRAM_SOURCE" == "existing" ]]; then
     echo -e "  Engram:        ${CYAN}${ENGRAM_URL}${NC} ${GREEN}(existing instance)${NC}"

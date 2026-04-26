@@ -94,6 +94,9 @@ jobs:
           API_PORT: "3001"
           WEB_PORT: "5174"
 
+      - name: Verify setup package assets
+        run: pnpm --filter @kanon-pm/setup build && bash packages/setup/scripts/verify-assets.sh
+
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v4

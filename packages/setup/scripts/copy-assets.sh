@@ -32,7 +32,9 @@ if [ -d "$MCP_DIR/workflows" ]; then
 fi
 
 # Copy agents
+# Fails fast with a clear message if no agent files exist — intentional hard failure.
+# Post-copy integrity is validated by scripts/verify-assets.sh (called by prepublishOnly and CI).
 mkdir -p "$ASSETS_DIR/agents"
-cp "$MCP_DIR/agents/kanon"*.md "$ASSETS_DIR/agents/" 2>/dev/null || true
+cp "$MCP_DIR/agents/kanon"*.md "$ASSETS_DIR/agents/" || { echo "ERROR: no agents found in $MCP_DIR/agents/"; exit 1; }
 
 echo "Assets copied to $ASSETS_DIR"
