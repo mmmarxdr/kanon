@@ -1,8 +1,4 @@
-import { SearchInput } from "@/components/ui/search-input";
-import { FilterChipGroup } from "@/components/ui/filter-chip-group";
-import { FilterSelect } from "@/components/ui/filter-select";
-import { FilterBar } from "@/components/ui/filter-bar";
-import { ClearFiltersButton } from "@/components/ui/clear-filters-button";
+import { FilterChipSelect } from "@/components/ui/primitives";
 import {
   useRoadmapStore,
   ROADMAP_STATUSES,
@@ -24,9 +20,9 @@ const HORIZON_OPTIONS: { label: string; value: string }[] = [
 ];
 
 const SORT_OPTIONS: { label: string; value: string }[] = [
-  { label: "Sort order", value: "sortOrder" },
-  { label: "Impact \u2193", value: "impact" },
-  { label: "Effort \u2191", value: "effort" },
+  { label: "Manual", value: "sortOrder" },
+  { label: "Impact ↓", value: "impact" },
+  { label: "Effort ↑", value: "effort" },
   { label: "Newest", value: "createdAt" },
 ];
 
@@ -36,8 +32,6 @@ interface RoadmapFilterBarProps {
 }
 
 export function RoadmapFilterBar({ filteredCount, totalCount }: RoadmapFilterBarProps) {
-  const search = useRoadmapStore((s) => s.search);
-  const setSearch = useRoadmapStore((s) => s.setSearch);
   const activeStatusFilter = useRoadmapStore((s) => s.activeStatusFilter);
   const setStatusFilter = useRoadmapStore((s) => s.setStatusFilter);
   const activeHorizonFilter = useRoadmapStore((s) => s.activeHorizonFilter);
@@ -45,54 +39,54 @@ export function RoadmapFilterBar({ filteredCount, totalCount }: RoadmapFilterBar
   const sortPreference = useRoadmapStore((s) => s.sortPreference);
   const setSortPreference = useRoadmapStore((s) => s.setSortPreference);
 
-  const hasActiveFilters =
-    search !== "" ||
-    activeStatusFilter !== undefined ||
-    activeHorizonFilter !== undefined ||
-    sortPreference !== "sortOrder";
-
-  function handleClear() {
-    setSearch("");
-    setStatusFilter(undefined);
-    setHorizonFilter(undefined);
-    setSortPreference("sortOrder");
-  }
-
   return (
-    <FilterBar>
-      <SearchInput
-        value={search}
-        onChange={setSearch}
-        placeholder="Search items..."
-      />
-
-      <FilterChipGroup
-        value={activeStatusFilter as string | undefined}
-        onChange={(v) => setStatusFilter(v as RoadmapStatus | undefined)}
-        options={STATUS_OPTIONS}
-        allLabel="All"
-      />
-
-      <FilterSelect
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        flexWrap: "wrap",
+      }}
+    >
+      <FilterChipSelect
+        label="Horizon"
         value={activeHorizonFilter ?? ""}
-        onChange={(v) => setHorizonFilter((v || undefined) as Horizon | undefined)}
         options={HORIZON_OPTIONS}
-        allLabel="All horizons"
+        onChange={(v) => setHorizonFilter((v || undefined) as Horizon | undefined)}
+        allLabel="all"
       />
 
-      <FilterSelect
+      <FilterChipSelect
+        label="Status"
+        value={(activeStatusFilter as string | undefined) ?? ""}
+        options={STATUS_OPTIONS}
+        onChange={(v) => setStatusFilter((v || undefined) as RoadmapStatus | undefined)}
+        allLabel="any"
+      />
+
+      <FilterChipSelect
+        label="Sort"
         value={sortPreference}
-        onChange={(v) => setSortPreference((v || "sortOrder") as SortPreference)}
         options={SORT_OPTIONS}
-        allLabel="Sort order"
+        onChange={(v) => setSortPreference((v || "sortOrder") as SortPreference)}
+        allLabel="manual"
       />
 
-      <ClearFiltersButton visible={hasActiveFilters} onClick={handleClear} />
-
-      <span className="text-[0.6875rem] text-on-surface/50 tracking-wide">
+      <span
+        style={{
+          height: 16,
+          width: 1,
+          background: "var(--line)",
+          marginLeft: 4,
+        }}
+      />
+      <span
+        className="mono"
+        style={{ fontSize: 11, color: "var(--ink-3)" }}
+      >
         {filteredCount} item{filteredCount !== 1 ? "s" : ""}
         {filteredCount !== totalCount ? ` of ${totalCount}` : ""}
       </span>
-    </FilterBar>
+    </div>
   );
 }

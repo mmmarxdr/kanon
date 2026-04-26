@@ -1,6 +1,15 @@
 import { createRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { rootRoute } from "./__root";
+import {
+  AuthLayout,
+  ErrorBox,
+  FormInput,
+  H2,
+  PrimaryBtn,
+  Sub,
+  SuccessBox,
+} from "@/components/auth-layout";
 
 interface ResetPasswordSearch {
   token?: string;
@@ -25,67 +34,70 @@ function ResetPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
 
+  const backToSignIn = (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "flex-end",
+        fontSize: 12,
+        color: "var(--ink-3)",
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => void navigate({ to: "/login" })}
+        style={{ color: "var(--ink-3)" }}
+      >
+        ← Back to sign in
+      </button>
+    </div>
+  );
+
   if (!token) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-sm animate-fade-in">
-          <div className="mb-6 text-center">
-            <h1 className="text-2xl font-bold text-foreground">
-              Invalid reset link
-            </h1>
+      <AuthLayout
+        eyebrow="Reset"
+        title="Invalid reset link."
+        subtitle="This password reset link is invalid or has expired."
+        footer={backToSignIn}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+          <div>
+            <H2>Invalid reset link</H2>
+            <Sub>
+              Please request a new password reset link to continue.
+            </Sub>
           </div>
-
-          <p className="text-center text-sm text-muted-foreground">
-            This password reset link is invalid or has expired. Please request a
-            new one.
-          </p>
-
-          <p className="mt-4 text-center text-sm text-muted-foreground">
-            <a
-              href="/forgot-password"
-              onClick={(e) => {
-                e.preventDefault();
-                void navigate({ to: "/forgot-password" });
-              }}
-              className="text-primary underline-offset-4 hover:underline"
-            >
-              Request a new reset link
-            </a>
-          </p>
+          <PrimaryBtn
+            type="button"
+            onClick={() => void navigate({ to: "/forgot-password" })}
+          >
+            Request a new reset link →
+          </PrimaryBtn>
         </div>
-      </div>
+      </AuthLayout>
     );
   }
 
   if (success) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-sm animate-fade-in">
-          <div className="mb-6 text-center">
-            <h1 className="text-2xl font-bold text-foreground">
-              Password reset successful
-            </h1>
+      <AuthLayout
+        eyebrow="Done"
+        title="Password updated."
+        subtitle="You can now sign in with your new password."
+        footer={backToSignIn}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+          <div>
+            <H2>Password reset successful</H2>
+            <Sub>Your password has been updated.</Sub>
           </div>
-
-          <p className="text-center text-sm text-muted-foreground">
-            Your password has been updated. You can now sign in with your new
-            password.
-          </p>
-
-          <p className="mt-4 text-center text-sm text-muted-foreground">
-            <a
-              href="/login"
-              onClick={(e) => {
-                e.preventDefault();
-                void navigate({ to: "/login" });
-              }}
-              className="text-primary underline-offset-4 hover:underline"
-            >
-              Sign in
-            </a>
-          </p>
+          <SuccessBox>You can now sign in.</SuccessBox>
+          <PrimaryBtn type="button" onClick={() => void navigate({ to: "/login" })}>
+            Sign in →
+          </PrimaryBtn>
         </div>
-      </div>
+      </AuthLayout>
     );
   }
 
@@ -97,7 +109,6 @@ function ResetPasswordPage() {
       setError("Passwords do not match");
       return;
     }
-
     if (password.length < 8) {
       setError("Password must be at least 8 characters");
       return;
@@ -138,83 +149,49 @@ function ResetPasswordPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center">
-      <div className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-sm animate-fade-in">
-        <div className="mb-6 text-center">
-          <h1 className="text-2xl font-bold text-foreground">
-            Set new password
-          </h1>
+    <AuthLayout
+      eyebrow="Reset"
+      title="Set a new password."
+      subtitle="Choose a strong, unique password — at least 8 characters."
+      footer={backToSignIn}
+    >
+      <form
+        onSubmit={handleSubmit}
+        style={{ display: "flex", flexDirection: "column", gap: 22 }}
+      >
+        <div>
+          <H2>Set new password</H2>
+          <Sub>You'll use this to sign in next time.</Sub>
         </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <label
-              htmlFor="password"
-              className="text-sm font-medium text-card-foreground"
-            >
-              New Password
-            </label>
-            <input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="At least 8 characters"
-              required
-              minLength={8}
-              maxLength={128}
-              className="w-full rounded-md border border-input bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label
-              htmlFor="confirmPassword"
-              className="text-sm font-medium text-card-foreground"
-            >
-              Confirm Password
-            </label>
-            <input
-              id="confirmPassword"
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Repeat your password"
-              required
-              minLength={8}
-              maxLength={128}
-              className="w-full rounded-md border border-input bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
-            />
-          </div>
-
-          {error && (
-            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200 ease-out"
-          >
-            {loading ? "Resetting..." : "Reset password"}
-          </button>
-        </form>
-
-        <p className="mt-4 text-center text-sm text-muted-foreground">
-          <a
-            href="/login"
-            onClick={(e) => {
-              e.preventDefault();
-              void navigate({ to: "/login" });
-            }}
-            className="text-primary underline-offset-4 hover:underline"
-          >
-            Back to sign in
-          </a>
-        </p>
-      </div>
-    </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <FormInput
+            id="password"
+            fieldLabel="New password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="At least 8 characters"
+            required
+            minLength={8}
+            maxLength={128}
+          />
+          <FormInput
+            id="confirmPassword"
+            fieldLabel="Confirm password"
+            type="password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            placeholder="Repeat your password"
+            required
+            minLength={8}
+            maxLength={128}
+          />
+        </div>
+        {error && <ErrorBox>{error}</ErrorBox>}
+        <PrimaryBtn disabled={loading}>
+          {loading ? "Resetting…" : "Reset password →"}
+        </PrimaryBtn>
+      </form>
+    </AuthLayout>
   );
 }

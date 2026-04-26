@@ -98,9 +98,9 @@ function CommentItem({ comment }: { comment: Comment }) {
         <span className="text-sm font-medium text-foreground">
           {comment.author.username}
         </span>
-        {comment.source === "agent" && (
+        {comment.source !== "human" && (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">
-            AI
+            {comment.source === "engram_sync" ? "SYNC" : "AI"}
           </span>
         )}
         <span className="ml-auto text-xs text-muted-foreground">

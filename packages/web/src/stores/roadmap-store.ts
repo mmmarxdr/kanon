@@ -5,30 +5,41 @@ import type { Horizon, RoadmapStatus } from "@/types/roadmap";
  * Horizon values ordered for the swimlane view (left to right).
  */
 export const HORIZONS: readonly Horizon[] = [
-  "someday",
-  "later",
-  "next",
   "now",
+  "next",
+  "later",
+  "someday",
 ] as const;
 
 /**
  * Human-readable labels for each horizon.
  */
 export const HORIZON_LABELS: Record<Horizon, string> = {
-  someday: "Someday",
-  later: "Later",
-  next: "Next",
   now: "Now",
+  next: "Next",
+  later: "Later",
+  someday: "Someday",
 };
 
 /**
- * Color mapping for horizon column pill indicators.
+ * Sub-label describing the horizon's commitment level.
+ */
+export const HORIZON_SUB_LABELS: Record<Horizon, string> = {
+  now: "this cycle",
+  next: "1–2 cycles",
+  later: "this quarter",
+  someday: "no commitment",
+};
+
+/**
+ * Color mapping for horizon column pill indicators (legacy Tailwind classes,
+ * still used by older components — new components read tokens directly).
  */
 export const HORIZON_PILL_COLORS: Record<Horizon, string> = {
-  someday: "bg-gray-400",
-  later: "bg-blue-400",
-  next: "bg-amber-500",
   now: "bg-emerald-500",
+  next: "bg-amber-500",
+  later: "bg-blue-400",
+  someday: "bg-gray-400",
 };
 
 /**

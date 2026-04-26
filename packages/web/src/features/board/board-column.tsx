@@ -12,89 +12,157 @@ import {
 } from "@/stores/board-store";
 import type { Issue } from "@/types/issue";
 import { IssueCard } from "./issue-card";
+import { Icon } from "@/components/ui/icons";
 
-/** Colored pill indicator per column (3px × 16px). */
-const COLUMN_PILL_COLORS: Record<string, string> = {
-  backlog: "bg-gray-400",
-  analysis: "bg-primary",
-  in_progress: "bg-blue-500",
-  testing: "bg-amber-500",
-  finished: "bg-emerald-500",
+/** Status dot color per kanban column. */
+const COLUMN_DOT: Record<string, string> = {
+  backlog:     "var(--ink-4)",
+  todo:        "var(--ink-3)",
+  in_progress: "var(--accent)",
+  review:      "var(--ai)",
+  done:        "var(--ok)",
 };
 
 interface BoardColumnProps {
   column: BoardColumnType;
   issues: Issue[];
-  onSelectIssue?: (key: string, element: HTMLElement) => void;
+  onSelectIssue?: (key: string) => void;
+  onAddIssue?: (column: BoardColumnType) => void;
+  showRightDivider?: boolean;
 }
 
-export function BoardColumn({ column, issues, onSelectIssue }: BoardColumnProps) {
+export function BoardColumn({
+  column,
+  issues,
+  onSelectIssue,
+  onAddIssue,
+  showRightDivider = false,
+}: BoardColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: column });
   const [expanded, setExpanded] = useState(false);
 
   const states = COLUMN_STATE_MAP[column];
   const hasSubGroups = states.length > 1;
+  const dot = COLUMN_DOT[column] ?? "var(--ink-4)";
 
   return (
     <div
       data-testid={`board-column-${column}`}
-      className={`flex flex-col w-72 min-w-[18rem] shrink-0 rounded-md bg-surface-container-low
-        transition-all duration-200 ease-out
-        ${isOver ? "bg-primary-fixed/20" : ""}`}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+        borderRight: showRightDivider ? "1px solid var(--line)" : "none",
+        background: isOver ? "var(--bg-2)" : "transparent",
+        transition: "background 120ms ease-out",
+      }}
     >
-      {/* Column header */}
-      <div className="flex items-center justify-between px-3 py-3">
-        <div className="flex items-center gap-2">
+      {/* Header */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "10px 14px 8px",
+          position: "sticky",
+          top: 0,
+          background: "var(--bg)",
+          zIndex: 1,
+        }}
+      >
+        {hasSubGroups && (
+          <button
+            type="button"
+            onClick={() => setExpanded((p) => !p)}
+            style={{
+              color: "var(--ink-4)",
+              transform: expanded ? "rotate(90deg)" : "none",
+              transition: "transform 120ms",
+            }}
+            aria-label={expanded ? "Collapse sub-groups" : "Expand sub-groups"}
+          >
+            <Icon.ChevR style={{ width: 11, height: 11 }} />
+          </button>
+        )}
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            color: "var(--ink-2)",
+            fontSize: 12,
+          }}
+        >
           <span
-            className={`w-[3px] h-4 rounded-full ${COLUMN_PILL_COLORS[column] ?? "bg-gray-400"}`}
-            aria-hidden="true"
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: dot,
+              boxShadow: `0 0 0 2px color-mix(in oklch, ${dot} 16%, transparent)`,
+            }}
           />
-          {hasSubGroups && (
-            <button
-              type="button"
-              onClick={() => setExpanded((prev) => !prev)}
-              className="text-muted-foreground hover:text-on-surface transition-colors"
-              aria-label={expanded ? "Collapse sub-groups" : "Expand sub-groups"}
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 16 16"
-                fill="currentColor"
-                className={`w-3.5 h-3.5 transition-transform duration-200 ${expanded ? "rotate-90" : ""}`}
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M6.22 4.22a.75.75 0 0 1 1.06 0l3.25 3.25a.75.75 0 0 1 0 1.06l-3.25 3.25a.75.75 0 0 1-1.06-1.06L8.94 8 6.22 5.28a.75.75 0 0 1 0-1.06Z"
-                  clipRule="evenodd"
-                />
-              </svg>
-            </button>
-          )}
-          <h3 className="text-[0.6875rem] font-semibold uppercase tracking-wider text-on-surface/60">
-            {COLUMN_LABELS[column]}
-          </h3>
-        </div>
-        <span className="inline-flex items-center justify-center px-1.5 py-0.5 rounded-md bg-primary-container text-on-primary-container text-[10px] font-semibold tabular-nums">
+          {COLUMN_LABELS[column]}
+        </span>
+        <span style={{ flex: 1 }} />
+        <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)" }}>
           {issues.length}
         </span>
+        <button
+          type="button"
+          onClick={() => onAddIssue?.(column)}
+          style={{ color: "var(--ink-4)" }}
+          title="Add issue"
+          aria-label={`Add issue to ${COLUMN_LABELS[column]}`}
+        >
+          <Icon.Plus />
+        </button>
       </div>
 
-      {/* Droppable area with sorted cards */}
+      {/* Cards */}
       <div
         ref={setNodeRef}
-        className="flex flex-col gap-3 px-2 pb-3 overflow-y-auto flex-1 min-h-[4rem]"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 0,
+          padding: "0 8px 12px",
+          overflowY: "auto",
+          flex: 1,
+          minHeight: 64,
+        }}
       >
         {expanded && hasSubGroups ? (
-          /* Sub-grouped by DB state */
           states.map((state) => {
             const stateIssues = issues.filter((i) => i.state === state);
             return (
-              <div key={state} className="flex flex-col gap-1 animate-fade-in">
-                <div className="flex items-center justify-between px-1 pt-1">
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              <div
+                key={state}
+                style={{ display: "flex", flexDirection: "column", gap: 4 }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "4px 4px 0",
+                  }}
+                >
+                  <span
+                    className="mono"
+                    style={{
+                      fontSize: 9.5,
+                      color: "var(--ink-4)",
+                      letterSpacing: "0.06em",
+                      textTransform: "uppercase",
+                    }}
+                  >
                     {STATE_LABELS[state]}
                   </span>
-                  <span className="text-xs text-muted-foreground tabular-nums">
+                  <span
+                    className="mono"
+                    style={{ fontSize: 9.5, color: "var(--ink-4)" }}
+                  >
                     {stateIssues.length}
                   </span>
                 </div>
@@ -103,22 +171,45 @@ export function BoardColumn({ column, issues, onSelectIssue }: BoardColumnProps)
                   strategy={verticalListSortingStrategy}
                 >
                   {stateIssues.map((issue) => (
-                    <IssueCard key={issue.key} issue={issue} onSelect={onSelectIssue} />
+                    <IssueCard
+                      key={issue.key}
+                      issue={issue}
+                      onSelect={onSelectIssue}
+                    />
                   ))}
                 </SortableContext>
               </div>
             );
           })
         ) : (
-          /* Flat list (default / collapsed) */
           <SortableContext
             items={issues.map((i) => i.key)}
             strategy={verticalListSortingStrategy}
           >
             {issues.map((issue) => (
-              <IssueCard key={issue.key} issue={issue} onSelect={onSelectIssue} />
+              <IssueCard
+                key={issue.key}
+                issue={issue}
+                onSelect={onSelectIssue}
+              />
             ))}
           </SortableContext>
+        )}
+
+        {issues.length === 0 && (
+          <div
+            style={{
+              margin: "12px 8px",
+              padding: "16px 8px",
+              textAlign: "center",
+              color: "var(--ink-4)",
+              fontSize: 11,
+              border: "1px dashed var(--line)",
+              borderRadius: 5,
+            }}
+          >
+            Empty
+          </div>
         )}
       </div>
     </div>

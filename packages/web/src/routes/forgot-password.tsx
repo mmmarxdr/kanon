@@ -1,6 +1,15 @@
 import { createRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { rootRoute } from "./__root";
+import {
+  AuthLayout,
+  ErrorBox,
+  FormInput,
+  H2,
+  PrimaryBtn,
+  Sub,
+  SuccessBox,
+} from "@/components/auth-layout";
 
 export const forgotPasswordRoute = createRoute({
   path: "/forgot-password",
@@ -53,97 +62,76 @@ function ForgotPasswordPage() {
     }
   }
 
+  const backToSignIn = (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "flex-end",
+        fontSize: 12,
+        color: "var(--ink-3)",
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => void navigate({ to: "/login" })}
+        style={{ color: "var(--ink-3)" }}
+      >
+        ← Back to sign in
+      </button>
+    </div>
+  );
+
   if (submitted) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-sm animate-fade-in">
-          <div className="mb-6 text-center">
-            <h1 className="text-2xl font-bold text-foreground">
-              Check your email
-            </h1>
+      <AuthLayout
+        eyebrow="Inbox"
+        title="Check your email."
+        subtitle="If an account exists, we've sent reset instructions. The link expires in 30 minutes."
+        footer={backToSignIn}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+          <div>
+            <H2>Check your email</H2>
+            <Sub>
+              We sent a sign-in link to <span className="mono">{email}</span>.
+            </Sub>
           </div>
-
-          <p className="text-center text-sm text-muted-foreground">
-            If an account exists with that email address, we've sent password
-            reset instructions. Please check your inbox.
-          </p>
-
-          <p className="mt-4 text-center text-sm text-muted-foreground">
-            <a
-              href="/login"
-              onClick={(e) => {
-                e.preventDefault();
-                void navigate({ to: "/login" });
-              }}
-              className="text-primary underline-offset-4 hover:underline"
-            >
-              Back to sign in
-            </a>
-          </p>
+          <SuccessBox>Email sent · just now</SuccessBox>
         </div>
-      </div>
+      </AuthLayout>
     );
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center">
-      <div className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-sm animate-fade-in">
-        <div className="mb-6 text-center">
-          <h1 className="text-2xl font-bold text-foreground">
-            Reset your password
-          </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Enter your email and we'll send you a reset link.
-          </p>
+    <AuthLayout
+      eyebrow="Reset"
+      title="Forgotten passwords happen."
+      subtitle="We'll email a reset link. It expires in 30 minutes."
+      footer={backToSignIn}
+    >
+      <form
+        onSubmit={handleSubmit}
+        style={{ display: "flex", flexDirection: "column", gap: 22 }}
+      >
+        <div>
+          <H2>Reset your password</H2>
+          <Sub>Enter the email tied to your workspace.</Sub>
         </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <label
-              htmlFor="email"
-              className="text-sm font-medium text-card-foreground"
-            >
-              Email
-            </label>
-            <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              required
-              className="w-full rounded-md border border-input bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
-            />
-          </div>
-
-          {error && (
-            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200 ease-out"
-          >
-            {loading ? "Sending..." : "Send reset link"}
-          </button>
-        </form>
-
-        <p className="mt-4 text-center text-sm text-muted-foreground">
-          <a
-            href="/login"
-            onClick={(e) => {
-              e.preventDefault();
-              void navigate({ to: "/login" });
-            }}
-            className="text-primary underline-offset-4 hover:underline"
-          >
-            Back to sign in
-          </a>
-        </p>
-      </div>
-    </div>
+        <FormInput
+          id="email"
+          fieldLabel="Work email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@company.com"
+          required
+          autoFocus
+        />
+        {error && <ErrorBox>{error}</ErrorBox>}
+        <PrimaryBtn disabled={loading}>
+          {loading ? "Sending…" : "Send reset link →"}
+        </PrimaryBtn>
+      </form>
+    </AuthLayout>
   );
 }

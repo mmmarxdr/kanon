@@ -1,22 +1,28 @@
 import { useState, useRef, useCallback, useEffect } from "react";
+import { TypeGlyph, Prio, StatePip } from "@/components/ui/primitives";
+import { Icon } from "@/components/ui/icons";
+
+import type { IssueState } from "@/stores/board-store";
+import type { IssuePriority, IssueType } from "@/types/issue";
 
 interface IssueDetailHeaderProps {
   issueKey: string;
   title: string;
+  type?: IssueType;
+  priority?: IssuePriority;
+  state?: IssueState;
+  hasAgent?: boolean;
   onTitleChange: (newTitle: string) => void;
   onClose: () => void;
 }
 
-/**
- * Header for the issue detail panel.
- * Shows the issue key badge, a click-to-edit title, and a close button.
- *
- * Title editing: renders as text by default. Click to switch to an input.
- * Save on blur or Enter; cancel on Escape (reverts to original).
- */
 export function IssueDetailHeader({
   issueKey,
   title,
+  type = "task",
+  priority = "medium",
+  state = "backlog",
+  hasAgent = false,
   onTitleChange,
   onClose,
 }: IssueDetailHeaderProps) {
@@ -24,14 +30,12 @@ export function IssueDetailHeader({
   const [draft, setDraft] = useState(title);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Sync draft when server title changes (e.g., after optimistic rollback)
   useEffect(() => {
     if (!isEditing) {
       setDraft(title);
     }
   }, [title, isEditing]);
 
-  // Auto-focus input when entering edit mode
   useEffect(() => {
     if (isEditing) {
       inputRef.current?.focus();
@@ -45,7 +49,6 @@ export function IssueDetailHeader({
     if (trimmed && trimmed !== title) {
       onTitleChange(trimmed);
     } else {
-      // Revert to original if empty or unchanged
       setDraft(title);
     }
   }, [draft, title, onTitleChange]);
@@ -65,65 +68,143 @@ export function IssueDetailHeader({
   );
 
   return (
-    <div className="flex items-start gap-3 pr-2">
-      {/* Issue key badge */}
-      <span className="shrink-0 mt-1 rounded bg-secondary px-2 py-0.5 text-xs font-mono text-muted-foreground">
-        {issueKey}
-      </span>
-
-      {/* Title — click to edit */}
-      <div className="flex-1 min-w-0">
-        {isEditing ? (
-          <input
-            ref={inputRef}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={handleSave}
-            onKeyDown={handleKeyDown}
-            className="w-full bg-transparent text-lg font-semibold text-foreground
-              border-b-2 border-primary outline-none px-0 py-0.5
-              focus:ring-2 focus:ring-primary/30
-              placeholder:text-muted-foreground"
-            placeholder="Issue title"
-            aria-label="Issue title"
-          />
-        ) : (
-          <button
-            type="button"
-            onClick={() => setIsEditing(true)}
-            className="w-full text-left text-lg font-semibold text-foreground
-              hover:text-primary transition-colors cursor-text
-              truncate block"
-            id="issue-detail-title"
+    <div
+      style={{
+        padding: "20px 28px 14px",
+        borderBottom: "1px solid var(--line)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
+      {/* Meta row */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          flexWrap: "wrap",
+        }}
+      >
+        <TypeGlyph value={type} />
+        <span
+          className="mono"
+          style={{ fontSize: 12, color: "var(--ink-3)", whiteSpace: "nowrap" }}
+        >
+          {issueKey}
+        </span>
+        <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)" }}>
+          ·
+        </span>
+        <StatePip state={state} />
+        <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)" }}>
+          ·
+        </span>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            whiteSpace: "nowrap",
+          }}
+        >
+          <Prio value={priority} />
+          <span
+            className="mono"
+            style={{ fontSize: 11, color: "var(--ink-3)" }}
           >
-            {title}
-          </button>
+            {priority}
+          </span>
+        </span>
+
+        <span style={{ flex: 1, minWidth: 8 }} />
+
+        {hasAgent && (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              whiteSpace: "nowrap",
+            }}
+          >
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: "var(--ai)",
+                boxShadow: "0 0 0 3px var(--ai-2)",
+                flexShrink: 0,
+              }}
+            />
+            <span
+              style={{ fontSize: 11, color: "var(--ai)", fontWeight: 500 }}
+            >
+              Agent working
+            </span>
+          </span>
         )}
+
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close panel"
+          style={{
+            color: "var(--ink-4)",
+            padding: 4,
+            marginLeft: 4,
+          }}
+        >
+          <Icon.X />
+        </button>
       </div>
 
-      {/* Close button */}
-      <button
-        type="button"
-        onClick={onClose}
-        className="shrink-0 mt-0.5 rounded-md p-1.5 text-muted-foreground
-          hover:bg-secondary hover:text-foreground transition-colors"
-        aria-label="Close panel"
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
+      {/* Title — click to edit */}
+      {isEditing ? (
+        <input
+          ref={inputRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={handleSave}
+          onKeyDown={handleKeyDown}
+          aria-label="Issue title"
+          style={{
+            width: "100%",
+            background: "transparent",
+            color: "var(--ink)",
+            fontSize: 22,
+            fontWeight: 600,
+            letterSpacing: "-0.02em",
+            lineHeight: 1.2,
+            border: "none",
+            borderBottom: "2px solid var(--accent)",
+            outline: "none",
+            padding: "2px 0",
+            fontFamily: "Inter Tight",
+          }}
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => setIsEditing(true)}
+          id="issue-detail-title"
+          style={{
+            display: "block",
+            width: "100%",
+            textAlign: "left",
+            background: "transparent",
+            color: "var(--ink)",
+            fontSize: 22,
+            fontWeight: 600,
+            letterSpacing: "-0.02em",
+            lineHeight: 1.2,
+            cursor: "text",
+          }}
         >
-          <line x1="18" y1="6" x2="6" y2="18" />
-          <line x1="6" y1="6" x2="18" y2="18" />
-        </svg>
-      </button>
+          {title}
+        </button>
+      )}
     </div>
   );
 }

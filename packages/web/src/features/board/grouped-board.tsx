@@ -29,14 +29,15 @@ import { useTransitionMutation } from "./use-transition-mutation";
 import { GroupCard } from "./group-card";
 import { IssueCard } from "./issue-card";
 import { GroupDrillDown } from "./group-drill-down";
+import { Icon } from "@/components/ui/icons";
 
-/** Colored pill indicator per column (3px x 16px). */
-const COLUMN_PILL_COLORS: Record<string, string> = {
-  backlog: "bg-gray-400",
-  analysis: "bg-primary",
-  in_progress: "bg-blue-500",
-  testing: "bg-amber-500",
-  finished: "bg-emerald-500",
+/** Status dot color per kanban column. */
+const COLUMN_DOT: Record<string, string> = {
+  backlog:     "var(--ink-4)",
+  todo:        "var(--ink-3)",
+  in_progress: "var(--accent)",
+  review:      "var(--ai)",
+  done:        "var(--ok)",
 };
 
 // --------------------------------------------------------------------------
@@ -48,8 +49,10 @@ interface GroupedColumnProps {
   groups: GroupSummary[];
   ungroupedIssues: Issue[];
   showUngrouped: boolean;
-  onSelectGroup: (groupKey: string, element: HTMLElement) => void;
-  onSelectIssue?: (key: string, element: HTMLElement) => void;
+  onSelectGroup: (groupKey: string) => void;
+  onSelectIssue?: (key: string) => void;
+  onAddIssue?: (column: BoardColumnType) => void;
+  showRightDivider?: boolean;
 }
 
 function GroupedColumn({
@@ -59,6 +62,8 @@ function GroupedColumn({
   showUngrouped,
   onSelectGroup,
   onSelectIssue,
+  onAddIssue,
+  showRightDivider = false,
 }: GroupedColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: column });
 
@@ -71,36 +76,83 @@ function GroupedColumn({
     ...(showUngrouped ? ungroupedIssues.map((i) => i.key) : []),
   ];
 
+  const dot = COLUMN_DOT[column] ?? "var(--ink-4)";
+  const isEmpty = groups.length === 0 && (!showUngrouped || ungroupedIssues.length === 0);
+
   return (
     <div
       data-testid={`board-column-${column}`}
-      className={`flex flex-col w-72 min-w-[18rem] shrink-0 rounded-md bg-surface-container-low
-        transition-all duration-200 ease-out
-        ${isOver ? "bg-primary-fixed/20" : ""}`}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+        borderRight: showRightDivider ? "1px solid var(--line)" : "none",
+        background: isOver ? "var(--bg-2)" : "transparent",
+        transition: "background 120ms ease-out",
+      }}
     >
-      {/* Column header */}
-      <div className="flex items-center justify-between px-3 py-3">
-        <div className="flex items-center gap-2">
+      {/* Header */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "10px 14px 8px",
+          position: "sticky",
+          top: 0,
+          background: "var(--bg)",
+          zIndex: 1,
+        }}
+      >
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            color: "var(--ink-2)",
+            fontSize: 12,
+          }}
+        >
           <span
-            className={`w-[3px] h-4 rounded-full ${COLUMN_PILL_COLORS[column] ?? "bg-gray-400"}`}
-            aria-hidden="true"
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: dot,
+              boxShadow: `0 0 0 2px color-mix(in oklch, ${dot} 16%, transparent)`,
+            }}
           />
-          <h3 className="text-[0.6875rem] font-semibold uppercase tracking-wider text-on-surface/60">
-            {COLUMN_LABELS[column]}
-          </h3>
-        </div>
-        <span className="inline-flex items-center justify-center px-1.5 py-0.5 rounded-md bg-primary-container text-on-primary-container text-[10px] font-semibold tabular-nums">
+          {COLUMN_LABELS[column]}
+        </span>
+        <span style={{ flex: 1 }} />
+        <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)" }}>
           {totalCount}
         </span>
+        <button
+          type="button"
+          onClick={() => onAddIssue?.(column)}
+          style={{ color: "var(--ink-4)" }}
+          title="Add issue"
+          aria-label={`Add issue to ${COLUMN_LABELS[column]}`}
+        >
+          <Icon.Plus />
+        </button>
       </div>
 
-      {/* Droppable area */}
+      {/* Cards */}
       <div
         ref={setNodeRef}
-        className="flex flex-col gap-3 px-2 pb-3 overflow-y-auto flex-1 min-h-[4rem]"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 0,
+          padding: "0 8px 12px",
+          overflowY: "auto",
+          flex: 1,
+          minHeight: 64,
+        }}
       >
         <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
-          {/* Group cards */}
           {groups.map((group) => (
             <GroupCard
               key={group.groupKey}
@@ -109,7 +161,6 @@ function GroupedColumn({
             />
           ))}
 
-          {/* Ungrouped issues (shown only when toggled on) */}
           {showUngrouped &&
             ungroupedIssues.map((issue) => (
               <IssueCard
@@ -119,6 +170,22 @@ function GroupedColumn({
               />
             ))}
         </SortableContext>
+
+        {isEmpty && (
+          <div
+            style={{
+              margin: "12px 8px",
+              padding: "16px 8px",
+              textAlign: "center",
+              color: "var(--ink-4)",
+              fontSize: 11,
+              border: "1px dashed var(--line)",
+              borderRadius: 5,
+            }}
+          >
+            Empty
+          </div>
+        )}
       </div>
     </div>
   );
@@ -132,7 +199,8 @@ interface GroupedBoardProps {
   groups: GroupSummary[];
   issues: Issue[];
   projectKey: string;
-  onSelectIssue?: (key: string, element: HTMLElement) => void;
+  onSelectIssue?: (key: string) => void;
+  onAddIssue?: (column: BoardColumnType) => void;
 }
 
 export function GroupedBoard({
@@ -140,6 +208,7 @@ export function GroupedBoard({
   issues,
   projectKey,
   onSelectIssue,
+  onAddIssue,
 }: GroupedBoardProps) {
   const { hiddenColumns, showUngrouped } = useBoardStore();
   const groupTransition = useGroupTransitionMutation(projectKey);
@@ -260,12 +329,9 @@ export function GroupedBoard({
     [groups, issues, groupTransition, transitionMutation],
   );
 
-  const handleSelectGroup = useCallback(
-    (groupKey: string, _element: HTMLElement) => {
-      setDrillDownGroupKey(groupKey);
-    },
-    [],
-  );
+  const handleSelectGroup = useCallback((groupKey: string) => {
+    setDrillDownGroupKey(groupKey);
+  }, []);
 
   const handleCloseDrillDown = useCallback(() => {
     setDrillDownGroupKey(null);
@@ -281,9 +347,17 @@ export function GroupedBoard({
       >
         <div
           data-testid="grouped-board"
-          className="flex gap-4 overflow-x-auto pb-4 h-full bg-surface [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-outline-variant/30 [&::-webkit-scrollbar-thumb]:rounded-full"
+          className="kanban-scroll"
+          style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${visibleColumns.length}, minmax(240px, 1fr))`,
+            gap: 0,
+            overflow: "auto",
+            height: "100%",
+            background: "var(--bg)",
+          }}
         >
-          {visibleColumns.map((col) => (
+          {visibleColumns.map((col, i) => (
             <GroupedColumn
               key={col}
               column={col}
@@ -292,19 +366,20 @@ export function GroupedBoard({
               showUngrouped={showUngrouped}
               onSelectGroup={handleSelectGroup}
               onSelectIssue={onSelectIssue}
+              onAddIssue={onAddIssue}
+              showRightDivider={i < visibleColumns.length - 1}
             />
           ))}
         </div>
 
-        {/* Drag overlay renders the card being dragged above everything */}
         <DragOverlay dropAnimation={null}>
           {activeGroup ? (
-            <div className="shadow-[var(--shadow-drag)] rounded-md">
+            <div style={{ boxShadow: "var(--shadow-drag)" }}>
               <GroupCard group={activeGroup} />
             </div>
           ) : null}
           {activeIssue ? (
-            <div className="shadow-[var(--shadow-drag)] rounded-md">
+            <div style={{ boxShadow: "var(--shadow-drag)" }}>
               <IssueCard issue={activeIssue} />
             </div>
           ) : null}

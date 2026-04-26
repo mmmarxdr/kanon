@@ -9,8 +9,11 @@ import { inviteRoute } from "./routes/invite";
 import { authenticatedRoute } from "./routes/_authenticated";
 import { workspaceSelectRoute } from "./routes/_authenticated/workspace-select";
 import { projectSelectRoute } from "./routes/_authenticated/project-select";
+import { inboxRoute } from "./routes/_authenticated/inbox";
+import { issueRoute } from "./routes/_authenticated/issue";
+import { dependenciesRoute } from "./routes/_authenticated/dependencies";
+import { cyclesRoute, cyclesIndexRoute } from "./routes/_authenticated/cycles";
 import { boardRoute } from "./routes/_authenticated/board";
-import { backlogRoute } from "./routes/_authenticated/backlog";
 import { profileRoute } from "./routes/_authenticated/profile";
 import { roadmapRoute } from "./routes/_authenticated/roadmap";
 import { settingsRoute } from "./routes/_authenticated/settings";
@@ -25,10 +28,14 @@ const routeTree = rootRoute.addChildren([
   authenticatedRoute.addChildren([
     workspaceSelectRoute,
     projectSelectRoute,
+    inboxRoute,
     boardRoute,
-    backlogRoute,
+    issueRoute,
     profileRoute,
     roadmapRoute,
+    dependenciesRoute,
+    cyclesRoute,
+    cyclesIndexRoute,
     settingsRoute,
   ]),
 ]);

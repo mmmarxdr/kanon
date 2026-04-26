@@ -1,8 +1,8 @@
 import { createRoute, Outlet, redirect } from "@tanstack/react-router";
-import { useEffect } from "react";
 import { rootRoute } from "./__root";
 import { useAuthStore } from "@/stores/auth-store";
 import { AppSidebar } from "@/components/app-sidebar";
+import { AppTopbar } from "@/components/app-topbar";
 import { CommandPalette } from "@/components/command-palette";
 import { useCommandPalette } from "@/hooks/use-command-palette";
 import { useCommandPaletteStore } from "@/stores/command-palette-store";
@@ -15,20 +15,14 @@ export const authenticatedRoute = createRoute({
   beforeLoad: async () => {
     const state = useAuthStore.getState();
 
-    // If already authenticated, proceed
-    if (state.isAuthenticated && state.user) {
-      return;
-    }
+    if (state.isAuthenticated && state.user) return;
 
-    // If not loading yet (first visit or after clear), try bootstrap
     if (!state.isLoading) {
       await state.bootstrap();
     } else {
-      // Bootstrap is already running (isLoading=true on init), wait for it
       await state.bootstrap();
     }
 
-    // After bootstrap, check if we have a user
     const afterBootstrap = useAuthStore.getState();
     if (!afterBootstrap.isAuthenticated) {
       throw redirect({ to: "/login" });
@@ -39,31 +33,71 @@ export const authenticatedRoute = createRoute({
 
 function AuthenticatedLayout() {
   const { isOpen, close } = useCommandPalette();
-  const requestCreateIssue = useCommandPaletteStore(
-    (s) => s.requestCreateIssue,
-  );
+  const requestCreateIssue = useCommandPaletteStore((s) => s.requestCreateIssue);
   const isLoading = useAuthStore((s) => s.isLoading);
   const activeWorkspaceId = useActiveWorkspaceId();
 
-  // Connect to workspace-scoped SSE for real-time cache invalidation
   useDomainEvents(activeWorkspaceId);
 
   if (isLoading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          <p className="text-sm text-muted-foreground">Loading...</p>
+      <div
+        style={{
+          display: "flex",
+          height: "100vh",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "var(--bg)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 12,
+          }}
+        >
+          <div
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: "50%",
+              border: "2px solid var(--accent)",
+              borderTopColor: "transparent",
+              animation: "spin 0.8s linear infinite",
+            }}
+          />
+          <p style={{ fontSize: 12, color: "var(--ink-3)" }}>Loading…</p>
         </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen bg-background">
+    <div
+      style={{
+        display: "flex",
+        height: "100vh",
+        background: "var(--bg)",
+        overflow: "hidden",
+      }}
+    >
       <AppSidebar />
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <Outlet />
+      <main
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          minWidth: 0,
+        }}
+      >
+        <AppTopbar />
+        <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+          <Outlet />
+        </div>
       </main>
       {isOpen && (
         <CommandPalette onClose={close} onCreateIssue={requestCreateIssue} />

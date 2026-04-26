@@ -1,13 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { useBoardStore, type BoardFilters } from "@/stores/board-store";
 import { useCommandPaletteStore } from "@/stores/command-palette-store";
-import type { IssueType, IssuePriority } from "@/types/issue";
-import { SearchInput } from "@/components/ui/search-input";
-import { FilterSelect } from "@/components/ui/filter-select";
-import { FilterBar as FilterBarLayout } from "@/components/ui/filter-bar";
-import { ClearFiltersButton } from "@/components/ui/clear-filters-button";
-import { ColumnToggle } from "./column-toggle";
 import { NewIssueModal } from "./new-issue-modal";
+import {
+  FilterChipSelect,
+  Segmented,
+} from "@/components/ui/primitives";
 
 const ISSUE_TYPES: { value: string; label: string }[] = [
   { value: "feature", label: "Feature" },
@@ -23,15 +21,18 @@ const ISSUE_PRIORITIES: { value: string; label: string }[] = [
   { value: "low", label: "Low" },
 ];
 
+const GROUP_OPTIONS: { value: string; label: string }[] = [
+  { value: "grouped", label: "Group" },
+  { value: "flat", label: "None" },
+];
+
 interface FilterBarProps {
-  /** Unique assignees extracted from the current issue set. */
   assignees: { id: string; username: string }[];
-  /** Project key needed for creating issues. */
   projectKey: string;
 }
 
 export function FilterBar({ assignees, projectKey }: FilterBarProps) {
-  const { filters, setFilter, clearFilters, viewMode, setViewMode, showUngrouped, setShowUngrouped } = useBoardStore();
+  const { filters, setFilter, viewMode, setViewMode } = useBoardStore();
   const [showNewIssue, setShowNewIssue] = useState(false);
 
   const createIssueRequested = useCommandPaletteStore(
@@ -41,10 +42,8 @@ export function FilterBar({ assignees, projectKey }: FilterBarProps) {
     (s) => s.clearCreateIssueRequest,
   );
 
-  const openNewIssue = useCallback(() => setShowNewIssue(true), []);
   const closeNewIssue = useCallback(() => setShowNewIssue(false), []);
 
-  // Open New Issue modal when requested from the command palette
   useEffect(() => {
     if (createIssueRequested) {
       setShowNewIssue(true);
@@ -52,7 +51,7 @@ export function FilterBar({ assignees, projectKey }: FilterBarProps) {
     }
   }, [createIssueRequested, clearCreateIssueRequest]);
 
-  // 'c' keyboard shortcut to open New Issue modal (only when no input focused)
+  // 'c' shortcut to open New Issue
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "c" && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -67,9 +66,6 @@ export function FilterBar({ assignees, projectKey }: FilterBarProps) {
     return () => document.removeEventListener("keydown", handler);
   }, []);
 
-  const hasActiveFilters =
-    filters.type || filters.priority || filters.assigneeId || filters.search;
-
   function handleSelect(key: keyof BoardFilters, value: string) {
     setFilter(key, value || undefined);
   }
@@ -80,114 +76,56 @@ export function FilterBar({ assignees, projectKey }: FilterBarProps) {
   }));
 
   return (
-    <FilterBarLayout>
-      {/* Text search with icon */}
-      <SearchInput
-        value={filters.search ?? ""}
-        onChange={(v) => handleSelect("search", v)}
-        placeholder="Search issues..."
-        data-testid="filter-search"
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        flexWrap: "wrap",
+      }}
+    >
+      <Segmented
+        value="board"
+        options={[{ id: "board", label: "Board" }]}
       />
 
-      {/* Type filter */}
-      <FilterSelect
+      <FilterChipSelect
+        label="Group by"
+        value={viewMode === "grouped" ? "grouped" : "flat"}
+        options={GROUP_OPTIONS}
+        onChange={(v) =>
+          setViewMode(v === "grouped" ? "grouped" : "flat")
+        }
+        allLabel="state"
+      />
+
+      <FilterChipSelect
+        label="Type"
         value={filters.type ?? ""}
-        onChange={(v) => handleSelect("type", v)}
         options={ISSUE_TYPES}
-        allLabel="All types"
-        data-testid="filter-type"
+        onChange={(v) => handleSelect("type", v)}
+        allLabel="any"
       />
 
-      {/* Priority filter */}
-      <FilterSelect
+      <FilterChipSelect
+        label="Priority"
         value={filters.priority ?? ""}
-        onChange={(v) => handleSelect("priority", v)}
         options={ISSUE_PRIORITIES}
-        allLabel="All priorities"
-        data-testid="filter-priority"
+        onChange={(v) => handleSelect("priority", v)}
+        allLabel="any"
       />
 
-      {/* Assignee filter */}
-      <FilterSelect
+      <FilterChipSelect
+        label="Assignee"
         value={filters.assigneeId ?? ""}
-        onChange={(v) => handleSelect("assigneeId", v)}
         options={assigneeOptions}
-        allLabel="All assignees"
+        onChange={(v) => handleSelect("assigneeId", v)}
+        allLabel="any"
       />
 
-      {/* Clear all button */}
-      <ClearFiltersButton
-        visible={!!hasActiveFilters}
-        onClick={clearFilters}
-        data-testid="filter-clear"
-      />
-
-      {/* Spacer to push right-side controls */}
-      <div className="flex-1" />
-
-      {/* Show ungrouped toggle (only visible in grouped mode) */}
-      {viewMode === "grouped" && (
-        <label
-          className="inline-flex items-center gap-1.5 text-[0.6875rem] text-on-surface/50 uppercase tracking-wider cursor-pointer select-none"
-          data-testid="toggle-show-ungrouped"
-        >
-          <input
-            type="checkbox"
-            checked={showUngrouped}
-            onChange={(e) => setShowUngrouped(e.target.checked)}
-            className="rounded border-outline-variant/30 text-primary focus:ring-primary/30 h-3.5 w-3.5"
-          />
-          Ungrouped
-        </label>
-      )}
-
-      {/* View mode toggle (grouped/flat) */}
-      <div className="inline-flex items-center gap-0 rounded-md bg-surface-container-high overflow-hidden">
-        <button
-          type="button"
-          data-testid="view-mode-grouped"
-          onClick={() => setViewMode("grouped")}
-          className={`h-7 px-2.5 text-xs font-medium transition-all duration-200
-            ${viewMode === "grouped"
-              ? "bg-primary text-primary-foreground"
-              : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
-            }`}
-          title="Grouped view"
-        >
-          Grouped
-        </button>
-        <button
-          type="button"
-          data-testid="view-mode-flat"
-          onClick={() => setViewMode("flat")}
-          className={`h-7 px-2.5 text-xs font-medium transition-all duration-200
-            ${viewMode === "flat"
-              ? "bg-primary text-primary-foreground"
-              : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
-            }`}
-          title="Flat view"
-        >
-          Flat
-        </button>
-      </div>
-
-      {/* Column toggle */}
-      <ColumnToggle />
-
-      {/* New Issue button */}
-      <button
-        type="button"
-        onClick={openNewIssue}
-        className="bg-gradient-to-b from-primary to-primary-hover text-primary-foreground hover:from-primary-hover hover:to-primary-hover rounded px-3 py-1.5 text-sm font-medium transition-all duration-200"
-        data-testid="new-issue-button"
-      >
-        New Issue
-      </button>
-
-      {/* New Issue modal */}
       {showNewIssue && (
         <NewIssueModal projectKey={projectKey} onClose={closeNewIssue} />
       )}
-    </FilterBarLayout>
+    </div>
   );
 }

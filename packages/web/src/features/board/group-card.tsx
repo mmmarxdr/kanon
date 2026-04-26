@@ -1,30 +1,23 @@
-import { useRef } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { GroupSummary } from "@/types/issue";
 import { STATE_LABELS, type IssueState } from "@/stores/board-store";
 import { humanizeGroupKey } from "@/lib/humanize-group-key";
 
-/** Color mapping for state indicator dots. */
-const STATE_COLORS: Record<IssueState, string> = {
-  backlog: "bg-gray-400",
-  explore: "bg-gray-500",
-  propose: "bg-primary",
-  design: "bg-primary",
-  spec: "bg-primary",
-  tasks: "bg-blue-500",
-  apply: "bg-blue-500",
-  verify: "bg-amber-500",
-  archived: "bg-emerald-500",
+const STATE_DOT: Record<IssueState, string> = {
+  backlog:     "var(--ink-4)",
+  todo:        "var(--ink-3)",
+  in_progress: "var(--accent)",
+  review:      "var(--ai)",
+  done:        "var(--ok)",
 };
 
 interface GroupCardProps {
   group: GroupSummary;
-  onClick?: (groupKey: string, element: HTMLElement) => void;
+  onClick?: (groupKey: string) => void;
 }
 
 export function GroupCard({ group, onClick }: GroupCardProps) {
-  const cardRef = useRef<HTMLDivElement>(null);
   const {
     attributes,
     listeners,
@@ -34,65 +27,129 @@ export function GroupCard({ group, onClick }: GroupCardProps) {
     isDragging,
   } = useSortable({ id: `group:${group.groupKey}` });
 
-  const style = {
+  const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-  };
-
-  const setRefs = (node: HTMLDivElement | null) => {
-    setNodeRef(node);
-    (cardRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+    background: "var(--panel)",
+    border: "1px solid var(--line)",
+    borderTop: "none",
+    borderRadius: 0,
+    padding: "10px 10px 10px 12px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    cursor: isDragging ? "grabbing" : "grab",
+    position: "relative",
+    opacity: isDragging ? 0.5 : 1,
+    boxShadow: isDragging ? "var(--shadow-drag)" : undefined,
   };
 
   const handleClick = () => {
-    if (!isDragging && onClick && cardRef.current) {
-      onClick(group.groupKey, cardRef.current);
+    if (!isDragging && onClick) {
+      onClick(group.groupKey);
     }
   };
 
   const displayTitle = group.title || humanizeGroupKey(group.groupKey);
+  const dot = STATE_DOT[group.latestState] ?? "var(--ink-4)";
 
   return (
     <div
-      ref={setRefs}
+      ref={setNodeRef}
       style={style}
       {...attributes}
       {...listeners}
       data-testid={`group-card-${group.groupKey}`}
       onClick={handleClick}
-      className={`rounded-md bg-surface-container-lowest p-4
-        cursor-grab active:cursor-grabbing
-        hover:bg-primary-fixed/20 transition-all duration-200 ease-out
-        animate-fade-in
-        ${isDragging ? "opacity-50 scale-[1.02] shadow-[var(--shadow-drag)]" : ""}`}
+      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-2)")}
+      onMouseLeave={(e) => (e.currentTarget.style.background = "var(--panel)")}
     >
-      {/* Top row: group icon + count badge */}
-      <div className="flex items-center gap-2">
-        <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-violet-50 text-violet-600 text-[10px] font-bold">
+      {/* Top row: group glyph + key + count badge */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span
+          className="mono"
+          aria-hidden
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 14,
+            height: 14,
+            borderRadius: 3,
+            background: "color-mix(in oklch, var(--accent) 22%, transparent)",
+            color: "var(--accent)",
+            fontSize: 9,
+            fontWeight: 700,
+          }}
+        >
           G
         </span>
-        <span className="text-xs text-on-surface/50 font-mono tracking-wide truncate max-w-[120px]">
+        <span
+          className="mono"
+          style={{
+            fontSize: 10.5,
+            color: "var(--ink-3)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            maxWidth: 140,
+          }}
+        >
           {group.groupKey}
         </span>
+        <span style={{ flex: 1 }} />
         <span
-          className="ml-auto inline-flex items-center justify-center px-1.5 py-0.5 rounded-md bg-primary-container text-on-primary-container text-[10px] font-semibold"
+          className="mono"
           title={`${group.count} issue${group.count === 1 ? "" : "s"} in group`}
+          style={{
+            padding: "0 5px",
+            borderRadius: 3,
+            background: "var(--bg-3)",
+            color: "var(--ink-3)",
+            fontSize: 9.5,
+            fontWeight: 600,
+          }}
         >
           {group.count}
         </span>
       </div>
 
       {/* Title */}
-      <p className="text-[0.875rem] font-medium text-on-surface leading-snug line-clamp-2 mt-4">
+      <div
+        style={{
+          fontSize: 12.5,
+          color: "var(--ink)",
+          fontWeight: 450,
+          lineHeight: 1.35,
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+        }}
+      >
         {displayTitle}
-      </p>
+      </div>
 
       {/* Bottom row: state indicator */}
-      <div className="flex items-center gap-1.5 mt-4">
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <span
-          className={`inline-block w-1.5 h-1.5 rounded-full ${STATE_COLORS[group.latestState] ?? "bg-gray-400"}`}
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            background: dot,
+            boxShadow: `0 0 0 2px color-mix(in oklch, ${dot} 16%, transparent)`,
+          }}
         />
-        <span className="text-[0.6875rem] text-on-surface/50 tracking-wide">
+        <span
+          className="mono"
+          style={{
+            fontSize: 9.5,
+            color: "var(--ink-4)",
+            letterSpacing: "0.06em",
+            textTransform: "uppercase",
+          }}
+        >
           {STATE_LABELS[group.latestState]}
         </span>
       </div>

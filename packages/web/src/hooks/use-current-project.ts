@@ -12,9 +12,11 @@ export function useCurrentProject(): {
   const workspaceId = useActiveWorkspaceId();
   const { data: projects, isLoading } = useProjectsQuery(workspaceId);
 
-  // Extract projectKey from URL (e.g., /board/KAN or /backlog/KAN or /roadmap/KAN → KAN)
+  // Extract projectKey from any project-scoped route.
   const projectKey =
-    location.pathname.match(/^\/(board|backlog|roadmap)\/([^/]+)/)?.[2] ?? "";
+    location.pathname.match(
+      /^\/(board|roadmap|dependencies|cycles)\/([^/]+)/,
+    )?.[2] ?? "";
 
   const project = projects?.find((p) => p.key === projectKey);
 

@@ -7,7 +7,7 @@ interface GroupDrillDownProps {
   projectKey: string;
   groupKey: string;
   onClose: () => void;
-  onSelectIssue?: (key: string, element: HTMLElement) => void;
+  onSelectIssue?: (key: string) => void;
 }
 
 /**

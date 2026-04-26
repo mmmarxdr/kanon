@@ -2,35 +2,21 @@ import { useRef } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { RoadmapItem, RoadmapStatus } from "@/types/roadmap";
+import { ScoreBar, Tag } from "@/components/ui/primitives";
 
-/** Color classes for each roadmap status. */
-const STATUS_COLORS: Record<RoadmapStatus, string> = {
-  idea: "bg-gray-100 text-gray-600",
-  planned: "bg-blue-50 text-blue-600",
-  in_progress: "bg-amber-50 text-amber-600",
-  done: "bg-emerald-50 text-emerald-600",
+const STATUS_DOT: Record<RoadmapStatus, string> = {
+  idea: "var(--ink-4)",
+  planned: "var(--ink-3)",
+  in_progress: "var(--accent)",
+  done: "var(--ok)",
 };
 
-/** Human-readable labels for each status. */
-const STATUS_LABELS: Record<RoadmapStatus, string> = {
+const STATUS_LABEL: Record<RoadmapStatus, string> = {
   idea: "Idea",
   planned: "Planned",
-  in_progress: "In Progress",
+  in_progress: "In progress",
   done: "Done",
 };
-
-/** Effort/impact color intensity based on value (1-5). */
-const SCORE_COLORS: Record<number, string> = {
-  1: "bg-gray-100 text-gray-500",
-  2: "bg-blue-50 text-blue-500",
-  3: "bg-blue-100 text-blue-600",
-  4: "bg-orange-100 text-orange-600",
-  5: "bg-red-100 text-red-600",
-};
-
-function scoreBadgeClass(value: number): string {
-  return SCORE_COLORS[value] ?? SCORE_COLORS[3] ?? "bg-blue-100 text-blue-600";
-}
 
 interface RoadmapCardProps {
   item: RoadmapItem;
@@ -48,11 +34,6 @@ export function RoadmapCard({ item, onSelect }: RoadmapCardProps) {
     isDragging,
   } = useSortable({ id: item.id });
 
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
-
   const setRefs = (node: HTMLDivElement | null) => {
     setNodeRef(node);
     (cardRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
@@ -64,65 +45,122 @@ export function RoadmapCard({ item, onSelect }: RoadmapCardProps) {
     }
   };
 
+  const totalScore =
+    item.impact != null && item.effort != null
+      ? item.impact - item.effort
+      : null;
+
+  const dot = STATUS_DOT[item.status];
+
   return (
     <div
       ref={setRefs}
-      style={style}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        background: "var(--panel)",
+        border: "1px solid var(--line)",
+        borderRadius: 6,
+        padding: "9px 11px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        cursor: isDragging ? "grabbing" : "grab",
+        opacity: isDragging ? 0.5 : item.status === "done" ? 0.7 : 1,
+        boxShadow: isDragging ? "var(--shadow-drag)" : undefined,
+      }}
       {...attributes}
       {...listeners}
       data-testid={`roadmap-card-${item.id}`}
       onClick={handleClick}
-      className={`rounded-md bg-surface-container-lowest p-4
-        cursor-grab active:cursor-grabbing
-        hover:bg-primary-fixed/20 transition-all duration-200 ease-out
-        animate-fade-in
-        ${isDragging ? "opacity-50 scale-[1.02] shadow-[var(--shadow-drag)]" : ""}
-        ${item.status === "done" && !isDragging ? "opacity-60" : ""}`}
     >
-      {/* Top row: effort + impact badges */}
-      <div className="flex items-center gap-1.5">
-        {item.effort != null && (
-          <span
-            className={`inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[10px] font-bold ${scoreBadgeClass(item.effort)}`}
-            title={`Effort: ${item.effort}/5`}
-          >
-            E{item.effort}
-          </span>
-        )}
-        {item.impact != null && (
-          <span
-            className={`inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[10px] font-bold ${scoreBadgeClass(item.impact)}`}
-            title={`Impact: ${item.impact}/5`}
-          >
-            I{item.impact}
-          </span>
-        )}
+      {/* Status pip + status label */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <span
-          className={`ml-auto inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${STATUS_COLORS[item.status]}`}
-          title={`Status: ${STATUS_LABELS[item.status]}`}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: 12,
+            color: "var(--ink-2)",
+          }}
         >
-          {STATUS_LABELS[item.status]}
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: dot,
+              boxShadow: `0 0 0 2px color-mix(in oklch, ${dot} 16%, transparent)`,
+            }}
+          />
+          {STATUS_LABEL[item.status]}
         </span>
+        <span style={{ flex: 1 }} />
       </div>
 
       {/* Title */}
-      <p className="text-[0.875rem] font-medium text-on-surface leading-snug line-clamp-2 mt-4">
+      <div
+        style={{
+          fontSize: 12.5,
+          color: "var(--ink)",
+          fontWeight: 500,
+          lineHeight: 1.35,
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+        }}
+      >
         {item.title}
-      </p>
+      </div>
 
-      {/* Bottom row: labels */}
+      {/* Score bars + delta */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          marginTop: 2,
+        }}
+      >
+        <ScoreBar label="E" value={item.effort} max={5} tone="warn" />
+        <ScoreBar label="I" value={item.impact} max={5} tone="ok" />
+        <span style={{ flex: 1 }} />
+        {totalScore != null && (
+          <span
+            className="mono"
+            style={{
+              fontSize: 10,
+              color: totalScore >= 0 ? "var(--ok)" : "var(--ink-4)",
+            }}
+          >
+            {totalScore >= 0 ? "+" : ""}
+            {totalScore}
+          </span>
+        )}
+      </div>
+
+      {/* Labels */}
       {item.labels.length > 0 && (
-        <div className="flex items-center gap-1.5 flex-wrap mt-4">
-          {item.labels.slice(0, 4).map((label) => (
-            <span
-              key={label}
-              className="text-[0.6875rem] uppercase tracking-wider px-1.5 py-0.5 rounded-md outline outline-1 outline-outline-variant/20 text-on-surface/60 font-medium"
-            >
-              {label}
-            </span>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            flexWrap: "wrap",
+          }}
+        >
+          {item.labels.slice(0, 4).map((l) => (
+            <Tag key={l} kind={l.startsWith("sdd:") ? "sdd" : "default"}>
+              {l}
+            </Tag>
           ))}
           {item.labels.length > 4 && (
-            <span className="text-[0.6875rem] text-on-surface/50">
+            <span
+              className="mono"
+              style={{ fontSize: 10, color: "var(--ink-4)" }}
+            >
               +{item.labels.length - 4}
             </span>
           )}

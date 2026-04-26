@@ -2,6 +2,14 @@ import { createRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { rootRoute } from "./__root";
 import { fetchApi, ApiError } from "@/lib/api-client";
+import {
+  AuthLayout,
+  ErrorBox,
+  FormInput,
+  H2,
+  PrimaryBtn,
+  Sub,
+} from "@/components/auth-layout";
 
 interface RegisterSearch {
   invite?: string;
@@ -41,7 +49,6 @@ function RegisterPage() {
         }),
       });
 
-      // Registration successful — redirect to login (preserving invite token)
       void navigate({
         to: "/login",
         search: invite ? { invite } : {},
@@ -58,103 +65,83 @@ function RegisterPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center">
-      <div className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-sm animate-fade-in">
-        <div className="mb-6 text-center">
-          <h1 className="text-2xl font-bold text-foreground">
-            Create your <span className="text-primary">Kanon</span> account
-          </h1>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <label
-              htmlFor="email"
-              className="text-sm font-medium text-card-foreground"
-            >
-              Email
-            </label>
-            <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              required
-              className="w-full rounded-md border border-input bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label
-              htmlFor="password"
-              className="text-sm font-medium text-card-foreground"
-            >
-              Password
-            </label>
-            <input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="At least 8 characters"
-              required
-              minLength={8}
-              maxLength={128}
-              className="w-full rounded-md border border-input bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label
-              htmlFor="displayName"
-              className="text-sm font-medium text-card-foreground"
-            >
-              Display Name
-            </label>
-            <input
-              id="displayName"
-              type="text"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="Your name (optional)"
-              maxLength={100}
-              className="w-full rounded-md border border-input bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
-            />
-          </div>
-
-          {error && (
-            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {error}
-            </div>
-          )}
-
+    <AuthLayout
+      eyebrow="New here"
+      title="Set up your workspace."
+      subtitle="Two minutes to a working tracker. Invite your team after."
+      footer={
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            fontSize: 12,
+            color: "var(--ink-3)",
+            gap: 8,
+          }}
+        >
+          Already on Kanon?{" "}
           <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200 ease-out"
-          >
-            {loading ? "Creating account..." : "Create account"}
-          </button>
-        </form>
-
-        <p className="mt-4 text-center text-sm text-muted-foreground">
-          Already have an account?{" "}
-          <a
-            href="/login"
-            onClick={(e) => {
-              e.preventDefault();
+            type="button"
+            onClick={() =>
               void navigate({
                 to: "/login",
                 search: invite ? { invite } : {},
-              });
-            }}
-            className="text-primary underline-offset-4 hover:underline"
+              })
+            }
+            style={{ color: "var(--accent-ink)", fontWeight: 500 }}
           >
-            Sign in
-          </a>
-        </p>
-      </div>
-    </div>
+            Sign in →
+          </button>
+        </div>
+      }
+    >
+      <form
+        onSubmit={handleSubmit}
+        style={{ display: "flex", flexDirection: "column", gap: 22 }}
+      >
+        <div>
+          <H2>Create your account</H2>
+          <Sub>Free for teams under 10. No credit card.</Sub>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <FormInput
+            id="displayName"
+            fieldLabel="Full name"
+            type="text"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder="Your name"
+            maxLength={100}
+          />
+          <FormInput
+            id="email"
+            fieldLabel="Work email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@company.com"
+            required
+          />
+          <FormInput
+            id="password"
+            fieldLabel="Password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="At least 8 characters"
+            required
+            minLength={8}
+            maxLength={128}
+          />
+        </div>
+
+        {error && <ErrorBox>{error}</ErrorBox>}
+
+        <PrimaryBtn disabled={loading}>
+          {loading ? "Creating account…" : "Create account →"}
+        </PrimaryBtn>
+      </form>
+    </AuthLayout>
   );
 }

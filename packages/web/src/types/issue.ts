@@ -33,8 +33,10 @@ export interface Issue {
 export interface ActiveWorker {
   memberId: string;
   username: string;
+  isAgent: boolean;
   startedAt: string;
-  clientType: string;
+  /** Source of the work session: web | mcp | claude-code | cursor | etc. */
+  source: string;
 }
 
 /**
@@ -48,6 +50,14 @@ export interface GroupSummary {
   updatedAt: string;
 }
 
+export interface IssueDependencyEdge {
+  id: string;
+  type: "blocks";
+  createdAt: string;
+  source?: { id: string; key: string; title: string; state: IssueState };
+  target?: { id: string; key: string; title: string; state: IssueState };
+}
+
 /**
  * Extended issue shape returned by GET /api/issues/:key
  * Includes nested assignee with email and project details.
@@ -56,7 +66,11 @@ export interface IssueDetail extends Issue {
   assignee?: { id: string; username: string; email: string };
   project: { id: string; key: string; name: string };
   children?: Issue[];
+  blocks?: IssueDependencyEdge[];
+  blockedBy?: IssueDependencyEdge[];
 }
+
+export type CommentSource = "human" | "mcp" | "engram_sync" | "system";
 
 /**
  * Comment on an issue, returned by GET /api/issues/:key/comments.
@@ -64,7 +78,7 @@ export interface IssueDetail extends Issue {
 export interface Comment {
   id: string;
   body: string;
-  source: "human" | "agent";
+  source: CommentSource;
   author: { id: string; username: string };
   createdAt: string;
   updatedAt: string;

@@ -158,7 +158,18 @@ export function RoadmapBoard({
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
-      <div className="flex gap-4 h-full overflow-x-auto pb-4 bg-surface [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-outline-variant/30 [&::-webkit-scrollbar-thumb]:rounded-full">
+      <div
+        className="kanban-scroll"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, minmax(280px, 1fr))",
+          gap: 12,
+          padding: "12px 16px",
+          overflow: "auto",
+          height: "100%",
+          background: "var(--bg)",
+        }}
+      >
         {HORIZONS.map((horizon) => (
           <HorizonColumn
             key={horizon}
@@ -170,10 +181,9 @@ export function RoadmapBoard({
         ))}
       </div>
 
-      {/* Drag overlay renders the card being dragged above everything */}
       <DragOverlay dropAnimation={null}>
         {activeItem ? (
-          <div className="shadow-[var(--shadow-drag)] rounded-md">
+          <div style={{ boxShadow: "var(--shadow-drag)", borderRadius: 6 }}>
             <RoadmapCard item={activeItem} />
           </div>
         ) : null}

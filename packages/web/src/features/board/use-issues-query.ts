@@ -65,14 +65,10 @@ export function groupByState(
   // Initialize all states with empty arrays
   const allStates: IssueState[] = [
     "backlog",
-    "explore",
-    "propose",
-    "design",
-    "spec",
-    "tasks",
-    "apply",
-    "verify",
-    "archived",
+    "todo",
+    "in_progress",
+    "review",
+    "done",
   ];
   for (const state of allStates) {
     grouped.set(state, []);

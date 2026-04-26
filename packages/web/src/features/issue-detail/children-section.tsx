@@ -4,15 +4,11 @@ import type { Issue } from "@/types/issue";
 
 /** Color map for state badges in child rows. */
 const STATE_COLORS: Record<IssueState, string> = {
-  backlog: "bg-zinc-100 text-zinc-600",
-  explore: "bg-sky-100 text-sky-700",
-  propose: "bg-blue-100 text-blue-700",
-  design: "bg-indigo-100 text-indigo-700",
-  spec: "bg-purple-100 text-purple-700",
-  tasks: "bg-amber-100 text-amber-700",
-  apply: "bg-emerald-100 text-emerald-700",
-  verify: "bg-teal-100 text-teal-700",
-  archived: "bg-zinc-100 text-zinc-500",
+  backlog:     "bg-zinc-100 text-zinc-600",
+  todo:        "bg-sky-100 text-sky-700",
+  in_progress: "bg-blue-100 text-blue-700",
+  review:      "bg-amber-100 text-amber-700",
+  done:        "bg-emerald-100 text-emerald-700",
 };
 
 interface ChildrenSectionProps {

@@ -1,82 +1,58 @@
 import { create } from "zustand";
 
 /**
- * Issue states matching the API's IssueState enum.
- * Ordered to reflect the Kanon workflow pipeline.
+ * Issue states matching the API's IssueState enum (kanban pipeline).
  */
 export const ISSUE_STATES = [
   "backlog",
-  "explore",
-  "propose",
-  "design",
-  "spec",
-  "tasks",
-  "apply",
-  "verify",
-  "archived",
+  "todo",
+  "in_progress",
+  "review",
+  "done",
 ] as const;
 
 export type IssueState = (typeof ISSUE_STATES)[number];
 
 // ---------------------------------------------------------------------------
-// Board columns – each column groups one or more IssueStates
+// Board columns – one column per state.
+// The board column model is preserved so legacy imports keep working, but it
+// is now a 1:1 mapping with IssueState.
 // ---------------------------------------------------------------------------
 
-/** Logical columns shown on the board. */
-export type BoardColumn =
-  | "backlog"
-  | "analysis"
-  | "in_progress"
-  | "testing"
-  | "finished";
+export type BoardColumn = IssueState;
 
-/** Ordered list of all board columns (left → right). */
-export const BOARD_COLUMNS: readonly BoardColumn[] = [
-  "backlog",
-  "analysis",
-  "in_progress",
-  "testing",
-  "finished",
-] as const;
+export const BOARD_COLUMNS: readonly BoardColumn[] = ISSUE_STATES;
 
-/** Maps each board column to the IssueStates it contains. */
 export const COLUMN_STATE_MAP: Record<BoardColumn, readonly IssueState[]> = {
-  backlog: ["backlog", "explore"],
-  analysis: ["propose", "design", "spec"],
-  in_progress: ["tasks", "apply"],
-  testing: ["verify"],
-  finished: ["archived"],
+  backlog:     ["backlog"],
+  todo:        ["todo"],
+  in_progress: ["in_progress"],
+  review:      ["review"],
+  done:        ["done"],
 };
 
-/** Default IssueState assigned when an issue is dragged into a column. */
 export const COLUMN_DEFAULT_STATE: Record<BoardColumn, IssueState> = {
-  backlog: "backlog",
-  analysis: "propose",
-  in_progress: "tasks",
-  testing: "verify",
-  finished: "archived",
+  backlog:     "backlog",
+  todo:        "todo",
+  in_progress: "in_progress",
+  review:      "review",
+  done:        "done",
 };
 
-/** Human-readable labels for each board column. */
 export const COLUMN_LABELS: Record<BoardColumn, string> = {
-  backlog: "Backlog",
-  analysis: "Analysis",
-  in_progress: "In Progress",
-  testing: "Testing",
-  finished: "Finished",
+  backlog:     "Backlog",
+  todo:        "Todo",
+  in_progress: "In progress",
+  review:      "In review",
+  done:        "Done",
 };
 
-/** Human-readable labels for each state column. */
 export const STATE_LABELS: Record<IssueState, string> = {
-  backlog: "Backlog",
-  explore: "Explore",
-  propose: "Propose",
-  design: "Design",
-  spec: "Spec",
-  tasks: "Tasks",
-  apply: "Apply",
-  verify: "Verify",
-  archived: "Archived",
+  backlog:     "Backlog",
+  todo:        "Todo",
+  in_progress: "In progress",
+  review:      "In review",
+  done:        "Done",
 };
 
 /** Columns hidden by default on the board (only in flat mode). */

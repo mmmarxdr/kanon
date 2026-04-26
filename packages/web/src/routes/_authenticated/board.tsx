@@ -1,25 +1,22 @@
-import { useMemo, useCallback, useRef } from "react";
+import { useMemo, useCallback, useState } from "react";
 import { createRoute, useNavigate, Link, redirect } from "@tanstack/react-router";
 import { authenticatedRoute } from "../_authenticated";
 import { useIssuesQuery, useGroupsQuery } from "@/features/board/use-issues-query";
-import { useBoardStore } from "@/stores/board-store";
+import {
+  useBoardStore,
+  COLUMN_DEFAULT_STATE,
+  type BoardColumn,
+  type IssueState,
+} from "@/stores/board-store";
 import { KanbanBoard } from "@/features/board/kanban-board";
 import { GroupedBoard } from "@/features/board/grouped-board";
 import { FilterBar } from "@/features/board/filter-bar";
-import { IssueDetailPanel } from "@/features/issue-detail/issue-detail-panel";
-import { useCurrentProject } from "@/hooks/use-current-project";
-
-interface BoardSearchParams {
-  issue?: string;
-}
+import { NewIssueModal } from "@/features/board/new-issue-modal";
 
 export const boardRoute = createRoute({
   path: "/board/$projectKey",
   getParentRoute: () => authenticatedRoute,
   component: BoardPage,
-  validateSearch: (search: Record<string, unknown>): BoardSearchParams => ({
-    issue: typeof search.issue === "string" ? search.issue : undefined,
-  }),
   beforeLoad: ({ params }) => {
     if (!params.projectKey || params.projectKey.trim() === "") {
       throw redirect({ to: "/" });
@@ -29,36 +26,32 @@ export const boardRoute = createRoute({
 
 function BoardPage() {
   const { projectKey } = boardRoute.useParams();
-  const { issue: selectedIssueKey } = boardRoute.useSearch();
   const navigate = useNavigate();
-  const { project: currentProject } = useCurrentProject();
   const { data: issues, isLoading, error } = useIssuesQuery(projectKey);
   const { data: groups, isLoading: groupsLoading } = useGroupsQuery(projectKey);
   const viewMode = useBoardStore((s) => s.viewMode);
-  const triggerElementRef = useRef<HTMLElement | null>(null);
+
+  const [newIssueState, setNewIssueState] = useState<IssueState | null>(null);
 
   const handleSelectIssue = useCallback(
-    (key: string, element: HTMLElement) => {
-      triggerElementRef.current = element;
+    (key: string) => {
       void navigate({
-        from: boardRoute.fullPath,
-        search: (prev) => ({ ...prev, issue: key }),
+        to: "/issue/$key",
+        params: { key },
+        search: { from: "board" },
       });
     },
     [navigate],
   );
 
-  const handleClosePanel = useCallback(() => {
-    void navigate({
-      from: boardRoute.fullPath,
-      search: (prev) => {
-        const { issue: _, ...rest } = prev;
-        return rest;
-      },
-    });
-  }, [navigate]);
+  const handleAddIssue = useCallback((column: BoardColumn) => {
+    setNewIssueState(COLUMN_DEFAULT_STATE[column]);
+  }, []);
 
-  // Extract unique assignees from issue set for the filter bar
+  const handleCloseNewIssue = useCallback(() => {
+    setNewIssueState(null);
+  }, []);
+
   const assignees = useMemo(() => {
     if (!issues) return [];
     const map = new Map<string, { id: string; username: string }>();
@@ -77,17 +70,37 @@ function BoardPage() {
 
   if (isLoading || (viewMode === "grouped" && groupsLoading)) {
     return (
-      <div className="flex items-center justify-center h-full p-8">
-        <p className="text-muted-foreground">Loading board...</p>
+      <div
+        style={{
+          height: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "var(--ink-3)",
+          fontSize: 12,
+        }}
+      >
+        Loading board…
       </div>
     );
   }
 
   if (!projectKey) {
     return (
-      <div className="flex flex-col items-center justify-center h-full p-8 gap-3">
-        <p className="text-muted-foreground">No project selected.</p>
-        <Link to="/" className="text-sm text-primary hover:underline">
+      <div
+        style={{
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 12,
+          color: "var(--ink-3)",
+          fontSize: 12,
+        }}
+      >
+        <p>No project selected.</p>
+        <Link to="/" style={{ color: "var(--accent-ink)" }}>
           Go to project selection
         </Link>
       </div>
@@ -96,80 +109,78 @@ function BoardPage() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-full p-8">
-        <p className="text-destructive-foreground">
-          Failed to load issues: {error.message}
-        </p>
+      <div
+        style={{
+          height: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "var(--bad)",
+          fontSize: 12,
+        }}
+      >
+        Failed to load issues: {error.message}
       </div>
     );
   }
 
+  const total = issues?.length ?? 0;
+  const inProgress =
+    issues?.filter((i) => i.state === "in_progress").length ?? 0;
+
   return (
-    <div className="flex flex-col flex-1 overflow-hidden bg-surface">
-      {/* Top bar: breadcrumb + title + tabs + filters */}
-      <div className="shrink-0 px-6 pt-5 pb-3">
-        {/* Breadcrumb & Title */}
-        <div className="mb-4">
-          <p className="text-[0.6875rem] text-on-surface/40 uppercase tracking-wider mb-1">
-            Workspace &rsaquo; {currentProject?.name ?? projectKey}
-          </p>
-          <h1 className="text-xl font-semibold text-on-surface">
-            {projectKey}
-          </h1>
-        </div>
-
-        {/* Tabs row */}
-        <div className="flex items-center gap-0 mb-4">
-          <button
-            type="button"
-            className="px-3 py-2 text-sm font-medium text-on-surface border-b-2 border-primary transition-colors"
-          >
-            Issues
-          </button>
-          <button
-            type="button"
-            className="px-3 py-2 text-sm text-on-surface/50 hover:text-on-surface border-b-2 border-transparent transition-colors"
-          >
-            Views
-          </button>
-          <Link
-            to="/roadmap/$projectKey"
-            params={{ projectKey }}
-            className="px-3 py-2 text-sm text-on-surface/50 hover:text-on-surface border-b-2 border-transparent transition-colors"
-          >
-            Roadmap
-          </Link>
-        </div>
-
-        {/* Filter bar with column toggle and New Issue */}
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        overflow: "hidden",
+        background: "var(--bg)",
+      }}
+    >
+      {/* Toolbar */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "10px 16px",
+          borderBottom: "1px solid var(--line)",
+          flexShrink: 0,
+        }}
+      >
         <FilterBar assignees={assignees} projectKey={projectKey} />
+        <div style={{ flex: 1 }} />
+        <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+          {total} issues · {inProgress} active
+        </span>
       </div>
 
       {/* Board */}
-      <div className="flex-1 overflow-hidden px-6">
+      <div style={{ flex: 1, overflow: "hidden" }}>
         {viewMode === "grouped" ? (
           <GroupedBoard
             groups={groups ?? []}
             issues={issues ?? []}
             projectKey={projectKey}
             onSelectIssue={handleSelectIssue}
+            onAddIssue={handleAddIssue}
           />
         ) : (
           <KanbanBoard
             issues={issues ?? []}
             projectKey={projectKey}
             onSelectIssue={handleSelectIssue}
+            onAddIssue={handleAddIssue}
           />
         )}
       </div>
 
-      {/* Issue detail slide-over panel */}
-      {selectedIssueKey && (
-        <IssueDetailPanel
-          issueKey={selectedIssueKey}
+      {newIssueState && (
+        <NewIssueModal
           projectKey={projectKey}
-          onClose={handleClosePanel}
-          triggerElement={triggerElementRef.current}
+          defaultState={newIssueState}
+          onClose={handleCloseNewIssue}
         />
       )}
     </div>

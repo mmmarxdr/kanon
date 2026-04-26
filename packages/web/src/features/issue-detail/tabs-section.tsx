@@ -1,9 +1,10 @@
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { CommentList } from "./comment-list";
 import { ActivityList } from "./activity-list";
+import { AgentThread } from "./agent-thread";
 import type { Comment, ActivityLog } from "@/types/issue";
 
-type Tab = "comments" | "activity";
+type Tab = "comments" | "agent" | "activity";
 
 interface TabsSectionProps {
   comments: Comment[];
@@ -14,10 +15,8 @@ interface TabsSectionProps {
   isSubmittingComment: boolean;
 }
 
-/**
- * Tab switcher between Comments and Activity tabs
- * in the issue detail panel.
- */
+const AGENT_SOURCES = new Set(["mcp", "engram_sync", "system"]);
+
 export function TabsSection({
   comments,
   commentsLoading,
@@ -28,82 +27,94 @@ export function TabsSection({
 }: TabsSectionProps) {
   const [activeTab, setActiveTab] = useState<Tab>("comments");
 
-  const handleTabChange = useCallback((tab: Tab) => {
-    setActiveTab(tab);
-  }, []);
+  const humanComments = comments.filter((c) => !AGENT_SOURCES.has(c.source));
+  const agentComments = comments.filter((c) => AGENT_SOURCES.has(c.source));
+
+  const tabs: { id: Tab; label: string; count: number }[] = [
+    { id: "comments", label: "Comments", count: humanComments.length },
+    { id: "agent", label: "Agent", count: agentComments.length },
+    { id: "activity", label: "Activity", count: activities.length },
+  ];
 
   return (
-    <div className="flex flex-col gap-3">
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       {/* Tab bar */}
-      <div className="flex border-b border-border" role="tablist">
-        <TabButton
-          label="Comments"
-          count={comments.length}
-          isActive={activeTab === "comments"}
-          onClick={() => handleTabChange("comments")}
-        />
-        <TabButton
-          label="Activity"
-          count={activities.length}
-          isActive={activeTab === "activity"}
-          onClick={() => handleTabChange("activity")}
-        />
+      <div
+        role="tablist"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 16,
+          borderBottom: "1px solid var(--line)",
+        }}
+      >
+        {tabs.map((t) => {
+          const active = activeTab === t.id;
+          const isAgent = t.id === "agent";
+          const accent = isAgent ? "var(--ai)" : "var(--accent)";
+          return (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setActiveTab(t.id)}
+              style={{
+                position: "relative",
+                padding: "8px 0",
+                fontSize: 12.5,
+                fontWeight: active ? 500 : 400,
+                color: active
+                  ? isAgent
+                    ? "var(--ai)"
+                    : "var(--ink)"
+                  : "var(--ink-3)",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              {t.label}
+              <span
+                className="mono"
+                style={{ fontSize: 10, color: "var(--ink-4)" }}
+              >
+                {t.count}
+              </span>
+              {active && (
+                <span
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    right: 0,
+                    bottom: -1,
+                    height: 2,
+                    background: accent,
+                  }}
+                />
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {/* Tab content */}
       <div role="tabpanel">
-        {activeTab === "comments" ? (
+        {activeTab === "comments" && (
           <CommentList
-            comments={comments}
+            comments={humanComments}
             isLoading={commentsLoading}
             onAddComment={onAddComment}
             isSubmitting={isSubmittingComment}
           />
-        ) : (
-          <ActivityList
-            activities={activities}
-            isLoading={activitiesLoading}
-          />
+        )}
+        {activeTab === "agent" && (
+          <AgentThread comments={comments} isLoading={commentsLoading} />
+        )}
+        {activeTab === "activity" && (
+          <ActivityList activities={activities} isLoading={activitiesLoading} />
         )}
       </div>
     </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Tab button                                                         */
-/* ------------------------------------------------------------------ */
-
-function TabButton({
-  label,
-  count,
-  isActive,
-  onClick,
-}: {
-  label: string;
-  count: number;
-  isActive: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={isActive}
-      onClick={onClick}
-      className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px
-        ${
-          isActive
-            ? "border-primary text-primary"
-            : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
-        }`}
-    >
-      {label}
-      {count > 0 && (
-        <span className="ml-1.5 text-xs text-muted-foreground">
-          ({count})
-        </span>
-      )}
-    </button>
   );
 }

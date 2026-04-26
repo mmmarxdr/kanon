@@ -3,6 +3,7 @@ import { fetchApi } from "@/lib/api-client";
 import { issueKeys } from "@/lib/query-keys";
 import { useToastStore } from "@/stores/toast-store";
 import type { Issue, IssueType, IssuePriority } from "@/types/issue";
+import type { IssueState } from "@/stores/board-store";
 
 /**
  * Input shape for creating a new issue via POST /api/projects/:key/issues.
@@ -12,6 +13,7 @@ export interface CreateIssueInput {
   description?: string;
   type?: IssueType;
   priority?: IssuePriority;
+  state?: IssueState;
   labels?: string[];
   assigneeId?: string;
   parentId?: string;

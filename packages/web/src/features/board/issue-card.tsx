@@ -1,48 +1,14 @@
-import { useRef } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { Issue, IssuePriority, IssueType } from "@/types/issue";
-
-/** Color mapping for priority indicator dots with glow aura. */
-const PRIORITY_COLORS: Record<IssuePriority, string> = {
-  critical: "bg-red-500 shadow-[0_0_4px_rgba(239,68,68,0.3)]",
-  high: "bg-orange-400 shadow-[0_0_4px_rgba(251,146,60,0.3)]",
-  medium: "bg-yellow-400 shadow-[0_0_4px_rgba(250,204,21,0.3)]",
-  low: "bg-gray-400 shadow-[0_0_4px_rgba(156,163,175,0.3)]",
-};
-
-/** Icon labels for issue types. */
-const TYPE_ICONS: Record<IssueType, string> = {
-  feature: "F",
-  bug: "B",
-  task: "T",
-  spike: "S",
-};
-
-const TYPE_COLORS: Record<IssueType, string> = {
-  feature: "bg-primary/10 text-primary",
-  bug: "bg-red-50 text-red-600",
-  task: "bg-secondary text-muted-foreground",
-  spike: "bg-violet-50 text-violet-600",
-};
-
-/** Format elapsed time from ISO timestamp to human-readable string. */
-function formatElapsed(isoTimestamp: string): string {
-  const ms = Date.now() - new Date(isoTimestamp).getTime();
-  const minutes = Math.floor(ms / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ${minutes % 60}m ago`;
-}
+import type { Issue } from "@/types/issue";
+import { Avatar, Prio, Tag, TypeGlyph, avatarInitials } from "@/components/ui/primitives";
 
 interface IssueCardProps {
   issue: Issue;
-  onSelect?: (key: string, element: HTMLElement) => void;
+  onSelect?: (key: string) => void;
 }
 
 export function IssueCard({ issue, onSelect }: IssueCardProps) {
-  const cardRef = useRef<HTMLDivElement>(null);
   const {
     attributes,
     listeners,
@@ -52,106 +18,137 @@ export function IssueCard({ issue, onSelect }: IssueCardProps) {
     isDragging,
   } = useSortable({ id: issue.key });
 
-  const style = {
+  const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-  };
-
-  const setRefs = (node: HTMLDivElement | null) => {
-    setNodeRef(node);
-    (cardRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+    background: "var(--panel)",
+    border: "1px solid var(--line)",
+    borderTop: "none",
+    borderRadius: 0,
+    padding: "10px 10px 10px 12px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    cursor: isDragging ? "grabbing" : "grab",
+    position: "relative",
+    opacity: isDragging ? 0.5 : 1,
+    boxShadow: isDragging ? "var(--shadow-drag)" : undefined,
   };
 
   const handleClick = () => {
-    if (!isDragging && onSelect && cardRef.current) {
-      onSelect(issue.key, cardRef.current);
+    if (!isDragging && onSelect) {
+      onSelect(issue.key);
     }
   };
 
+  const hasAgent = (issue.activeWorkers ?? []).some((w) => w.isAgent);
+  const workers = (issue.activeWorkers ?? []).slice(0, 3);
+
   return (
     <div
-      ref={setRefs}
+      ref={setNodeRef}
       style={style}
       {...attributes}
       {...listeners}
       data-testid={`issue-card-${issue.key}`}
       onClick={handleClick}
-      className={`rounded-md bg-surface-container-lowest p-4
-        cursor-grab active:cursor-grabbing
-        hover:bg-primary-fixed/20 transition-all duration-200 ease-out
-        animate-fade-in
-        ${isDragging ? "opacity-50 scale-[1.02] shadow-[var(--shadow-drag)]" : ""}`}
+      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-2)")}
+      onMouseLeave={(e) => (e.currentTarget.style.background = "var(--panel)")}
     >
-      {/* Top row: key + type badge */}
-      <div className="flex items-center gap-2">
+      {hasAgent && (
         <span
-          className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${TYPE_COLORS[issue.type]}`}
-        >
-          {TYPE_ICONS[issue.type]}
-        </span>
-        <span className="text-xs text-primary font-mono tracking-wide">
+          aria-hidden
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: 2,
+            background: "var(--ai)",
+          }}
+        />
+      )}
+
+      {/* Top row: type + key + priority */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <TypeGlyph value={issue.type} />
+        <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-3)" }}>
           {issue.key}
         </span>
         {issue.children && issue.children.length > 0 && (
           <span
-            className="ml-1 inline-flex items-center justify-center px-1.5 py-0.5 rounded-md bg-primary-container text-on-primary-container text-[10px] font-semibold"
+            className="mono"
             title={`${issue.children.length} child issue${issue.children.length === 1 ? "" : "s"}`}
+            style={{
+              padding: "0 4px",
+              borderRadius: 3,
+              background: "var(--bg-3)",
+              color: "var(--ink-3)",
+              fontSize: 9.5,
+              fontWeight: 600,
+            }}
           >
             {issue.children.length}
           </span>
         )}
-        <span
-          className={`ml-auto inline-block w-1.5 h-1.5 rounded-full ${PRIORITY_COLORS[issue.priority]}`}
-          title={issue.priority}
-        />
+        <span style={{ flex: 1 }} />
+        <Prio value={issue.priority} />
       </div>
 
       {/* Title */}
-      <p className="text-[0.875rem] font-medium text-on-surface leading-snug line-clamp-2 mt-4">
+      <div
+        style={{
+          fontSize: 12.5,
+          color: "var(--ink)",
+          fontWeight: 450,
+          lineHeight: 1.35,
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+        }}
+      >
         {issue.title}
-      </p>
+      </div>
 
-      {/* Active workers indicator */}
-      {issue.activeWorkers && issue.activeWorkers.length > 0 && (
-        <div className="flex items-center gap-1.5 mt-3">
-          {issue.activeWorkers.map((worker) => (
-            <span
-              key={worker.memberId}
-              className="inline-flex items-center gap-1 text-[0.6875rem] text-emerald-600 font-medium"
-              title={`${worker.username} working via ${worker.clientType} since ${formatElapsed(worker.startedAt)}`}
-            >
-              <span className="relative flex h-4 w-4 items-center justify-center rounded-full bg-emerald-100 text-[9px] font-bold text-emerald-700 uppercase">
-                {worker.username.charAt(0)}
-                <span className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-emerald-500 ring-1 ring-surface-container-lowest" />
+      {/* Bottom: labels + workers + assignee */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          flexWrap: "wrap",
+        }}
+      >
+        {issue.labels.slice(0, 3).map((l) => (
+          <Tag
+            key={l}
+            kind={l.startsWith("sdd:") ? "sdd" : l === "ai" ? "ai" : "default"}
+          >
+            {l}
+          </Tag>
+        ))}
+        <span style={{ flex: 1 }} />
+        {workers.length > 0 && (
+          <span style={{ display: "inline-flex", marginRight: 4 }}>
+            {workers.map((w, i) => (
+              <span key={w.memberId} style={{ marginLeft: i === 0 ? 0 : -4 }}>
+                <Avatar
+                  initials={avatarInitials(w.username, "?")}
+                  name={w.username}
+                  size={16}
+                  isAgent={w.isAgent}
+                />
               </span>
-              {worker.username}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* Bottom row: labels + assignee */}
-      <div className="flex items-center gap-1.5 flex-wrap mt-4">
-        {issue.labels.filter((l) => l.startsWith("sdd:")).map((label) => (
-          <span
-            key={label}
-            className="text-[0.6875rem] uppercase tracking-wider px-1.5 py-0.5 rounded-md outline outline-1 outline-outline-variant/20 text-primary font-medium"
-          >
-            {label}
+            ))}
           </span>
-        ))}
-        {issue.labels.filter((l) => !l.startsWith("sdd:")).slice(0, 3).map((label) => (
-          <span
-            key={label}
-            className="text-[0.6875rem] uppercase tracking-wider px-1.5 py-0.5 rounded-md outline outline-1 outline-outline-variant/20 text-on-surface/60 font-medium"
-          >
-            {label}
-          </span>
-        ))}
+        )}
         {issue.assignee && (
-          <span className="ml-auto text-[0.6875rem] text-on-surface/50 tracking-wide">
-            {issue.assignee.username}
-          </span>
+          <Avatar
+            initials={avatarInitials(issue.assignee.username, "?")}
+            name={issue.assignee.username}
+            size={18}
+          />
         )}
       </div>
     </div>

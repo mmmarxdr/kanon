@@ -1,20 +1,18 @@
-import { useState, useCallback, useMemo, lazy, Suspense } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { createRoute, redirect, Link } from "@tanstack/react-router";
 import { authenticatedRoute } from "../_authenticated";
 import { useRoadmapQuery } from "@/features/roadmap/use-roadmap-query";
 import { RoadmapBoard } from "@/features/roadmap/roadmap-board";
+import { RoadmapProposalBanner } from "@/features/roadmap/proposal-banner";
 import { RoadmapDetail } from "@/features/roadmap/roadmap-detail";
 import { RoadmapFilterBar } from "@/features/roadmap/roadmap-filter-bar";
 import { NewRoadmapItemModal } from "@/features/roadmap/new-roadmap-item-modal";
 import { AnalyticsDashboard } from "@/features/roadmap/analytics/analytics-dashboard";
 import { GanttTimeline } from "@/features/roadmap/timeline/gantt-timeline";
 import { useRoadmapStore, type ViewMode } from "@/stores/roadmap-store";
-import type { Horizon, RoadmapItem } from "@/types/roadmap";
-import { useCurrentProject } from "@/hooks/use-current-project";
-
-const GraphView = lazy(
-  () => import("@/features/roadmap/graph/graph-view"),
-);
+import type { Horizon } from "@/types/roadmap";
+import { Segmented } from "@/components/ui/primitives";
+import { Icon } from "@/components/ui/icons";
 
 interface RoadmapSearchParams {
   item?: string;
@@ -36,7 +34,6 @@ export const roadmapRoute = createRoute({
 
 function RoadmapPage() {
   const { projectKey } = roadmapRoute.useParams();
-  const { project: currentProject } = useCurrentProject();
   const { data: items, isLoading, error } = useRoadmapQuery(projectKey);
   const [selectedItemId, setSelectedItemId] = useState<string | undefined>();
   const [showNewItem, setShowNewItem] = useState(false);
@@ -48,12 +45,14 @@ function RoadmapPage() {
   const viewMode = useRoadmapStore((s) => s.viewMode);
   const setViewMode = useRoadmapStore((s) => s.setViewMode);
 
-  const VIEW_MODE_OPTIONS = [
-    { label: "Board", value: "board" },
-    { label: "Analytics", value: "analytics" },
-    { label: "Timeline", value: "timeline" },
-    { label: "Graph", value: "graph" },
+  const VIEW_MODE_OPTIONS: { id: Exclude<ViewMode, "graph">; label: string }[] = [
+    { id: "board", label: "Horizons" },
+    { id: "timeline", label: "Timeline" },
+    { id: "analytics", label: "Analytics" },
   ];
+
+  const effectiveViewMode: Exclude<ViewMode, "graph"> =
+    viewMode === "graph" ? "board" : viewMode;
 
   const filteredItems = useMemo(() => {
     if (!items) return [];
@@ -95,17 +94,37 @@ function RoadmapPage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-full p-8">
-        <p className="text-muted-foreground">Loading roadmap...</p>
+      <div
+        style={{
+          height: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "var(--ink-3)",
+          fontSize: 12,
+        }}
+      >
+        Loading roadmap…
       </div>
     );
   }
 
   if (!projectKey) {
     return (
-      <div className="flex flex-col items-center justify-center h-full p-8 gap-3">
-        <p className="text-muted-foreground">No project selected.</p>
-        <Link to="/" className="text-sm text-primary hover:underline">
+      <div
+        style={{
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 12,
+          color: "var(--ink-3)",
+          fontSize: 12,
+        }}
+      >
+        <p>No project selected.</p>
+        <Link to="/" style={{ color: "var(--accent-ink)" }}>
           Go to project selection
         </Link>
       </div>
@@ -114,90 +133,110 @@ function RoadmapPage() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-full p-8">
-        <p className="text-destructive-foreground">
-          Failed to load roadmap: {error.message}
-        </p>
+      <div
+        style={{
+          height: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "var(--bad)",
+          fontSize: 12,
+        }}
+      >
+        Failed to load roadmap: {error.message}
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col flex-1 overflow-hidden bg-surface">
-      {/* Top bar */}
-      <div className="shrink-0 px-6 pt-5 pb-3">
-        {/* Breadcrumb & Title */}
-        <div className="mb-3">
-          <p className="text-[0.6875rem] text-on-surface/40 uppercase tracking-wider mb-1">
-            Workspace &rsaquo; {currentProject?.name ?? projectKey}
-          </p>
-          <h1 className="text-xl font-semibold text-on-surface">
-            {projectKey} &mdash; Roadmap
-          </h1>
-        </div>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        overflow: "hidden",
+        background: "var(--bg)",
+      }}
+    >
+      {/* Toolbar */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "10px 16px",
+          borderBottom: "1px solid var(--line)",
+          flexShrink: 0,
+        }}
+      >
+        <Segmented<Exclude<ViewMode, "graph">>
+          value={effectiveViewMode}
+          options={VIEW_MODE_OPTIONS}
+          onChange={(v) => setViewMode(v)}
+        />
+        <Link
+          to="/dependencies/$projectKey"
+          params={{ projectKey }}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            height: 26,
+            padding: "0 8px",
+            border: "1px solid var(--line)",
+            borderRadius: 4,
+            background: "var(--panel)",
+            color: "var(--ink-2)",
+            fontSize: 12,
+          }}
+        >
+          <Icon.Graph /> Open dependency graph
+        </Link>
+        <button
+          type="button"
+          onClick={() => {
+            setNewItemHorizon("later");
+            setShowNewItem(true);
+          }}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            height: 26,
+            padding: "0 10px",
+            background: "var(--accent)",
+            color: "var(--btn-ink)",
+            border: "none",
+            borderRadius: 4,
+            fontSize: 12,
+            fontWeight: 500,
+          }}
+        >
+          <Icon.Plus /> New item
+        </button>
 
-        {/* Action bar */}
-        <div className="flex items-center gap-3 mb-4">
-          <button
-            type="button"
-            onClick={() => {
-              setNewItemHorizon("later");
-              setShowNewItem(true);
-            }}
-            className="bg-gradient-to-b from-primary to-primary-hover text-primary-foreground hover:from-primary-hover hover:to-primary-hover rounded px-3 py-1.5 text-sm font-medium transition-all duration-200"
-          >
-            + New Item
-          </button>
+        <div style={{ flex: 1 }} />
 
-          {/* View mode segmented control */}
-          <div className="flex items-center gap-1">
-            {VIEW_MODE_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => setViewMode(opt.value as ViewMode)}
-                className={`px-2 py-1 text-xs uppercase tracking-wider rounded-md transition-all duration-200 ${
-                  viewMode === opt.value
-                    ? "bg-primary-fixed/20 text-primary font-semibold"
-                    : "text-muted-foreground hover:bg-foreground/5"
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-
-          <RoadmapFilterBar
-            filteredCount={filteredItems.length}
-            totalCount={items?.length ?? 0}
-          />
-        </div>
+        <RoadmapFilterBar
+          filteredCount={filteredItems.length}
+          totalCount={items?.length ?? 0}
+        />
       </div>
 
-      {/* Main content: Board or Analytics */}
-      <div className="flex-1 overflow-hidden px-6">
-        {viewMode === "board" ? (
+      {effectiveViewMode === "board" && (
+        <RoadmapProposalBanner projectKey={projectKey} />
+      )}
+
+      <div style={{ flex: 1, overflow: "hidden" }}>
+        {effectiveViewMode === "board" ? (
           <RoadmapBoard
             items={filteredItems}
             projectKey={projectKey}
             onSelectItem={handleSelectItem}
             onAddItem={handleAddItem}
           />
-        ) : viewMode === "timeline" ? (
+        ) : effectiveViewMode === "timeline" ? (
           <GanttTimeline items={filteredItems} />
-        ) : viewMode === "graph" ? (
-          <Suspense
-            fallback={
-              <div className="flex items-center justify-center h-full">
-                <p className="text-muted-foreground">Loading graph...</p>
-              </div>
-            }
-          >
-            <GraphView
-              items={filteredItems}
-              onSelectItem={handleSelectItem}
-            />
-          </Suspense>
         ) : (
           <AnalyticsDashboard items={filteredItems} />
         )}

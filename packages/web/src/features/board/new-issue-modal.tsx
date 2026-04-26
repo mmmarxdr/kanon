@@ -1,8 +1,15 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { FocusTrap } from "focus-trap-react";
 import { useCreateIssueMutation } from "./use-create-issue-mutation";
 import { useIssuesQuery } from "./use-issues-query";
 import type { IssueType, IssuePriority } from "@/types/issue";
+import {
+  STATE_LABELS,
+  ISSUE_STATES,
+  type IssueState,
+} from "@/stores/board-store";
+import { Icon } from "@/components/ui/icons";
+import { FilterChipSelect } from "@/components/ui/primitives";
 
 const ISSUE_TYPES: { value: IssueType; label: string }[] = [
   { value: "task", label: "Task" },
@@ -17,6 +24,11 @@ const ISSUE_PRIORITIES: { value: IssuePriority; label: string }[] = [
   { value: "medium", label: "Medium" },
   { value: "low", label: "Low" },
 ];
+
+const STATE_OPTIONS = ISSUE_STATES.map((s) => ({
+  value: s,
+  label: STATE_LABELS[s],
+}));
 
 type IssueTemplateEntry = {
   key: string;
@@ -65,41 +77,56 @@ const TEMPLATES: IssueTemplateEntry[] = [
   },
 ];
 
+const TEMPLATE_OPTIONS = TEMPLATES.map((t) => ({ value: t.key, label: t.name }));
+
 interface NewIssueModalProps {
   projectKey: string;
   onClose: () => void;
+  defaultState?: IssueState;
 }
 
-/**
- * Modal for creating a new issue.
- *
- * Features:
- * - FocusTrap for accessibility
- * - Escape key to close
- * - Enter in title submits (if title not empty)
- * - Loading state on Create button during mutation
- * - Semi-transparent backdrop (click to close)
- */
-export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
-  const titleRef = useRef<HTMLInputElement>(null);
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  height: 32,
+  padding: "0 10px",
+  background: "var(--bg)",
+  border: "1px solid var(--line)",
+  borderRadius: 5,
+  color: "var(--ink)",
+  fontSize: 12.5,
+  outline: "none",
+};
+
+const labelStyle: React.CSSProperties = {
+  display: "block",
+  fontSize: 10,
+  letterSpacing: "0.06em",
+  textTransform: "uppercase",
+  color: "var(--ink-4)",
+  marginBottom: 4,
+  fontFamily: "JetBrains Mono, monospace",
+};
+
+export function NewIssueModal({
+  projectKey,
+  onClose,
+  defaultState,
+}: NewIssueModalProps) {
   const createMutation = useCreateIssueMutation(projectKey);
   const { data: issues } = useIssuesQuery(projectKey);
 
-  // Form state
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [type, setType] = useState<IssueType>("task");
   const [priority, setPriority] = useState<IssuePriority>("medium");
+  const [state, setState] = useState<IssueState>(defaultState ?? "backlog");
   const [labels, setLabels] = useState("");
   const [parentId, setParentId] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState("");
 
-  // Escape key handler
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-      }
+      if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
@@ -120,20 +147,17 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
         description: description.trim() || undefined,
         type,
         priority,
+        state,
         labels: parsedLabels.length > 0 ? parsedLabels : undefined,
         parentId: parentId || undefined,
       },
-      {
-        onSuccess: () => {
-          onClose();
-        },
-      },
+      { onSuccess: () => onClose() },
     );
-  }, [title, description, type, priority, labels, parentId, createMutation, onClose]);
+  }, [title, description, type, priority, state, labels, parentId, createMutation, onClose]);
 
   const handleTitleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === "Enter" && title.trim()) {
+      if (e.key === "Enter" && title.trim() && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         handleSubmit();
       }
@@ -143,9 +167,7 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
 
   const handleBackdropClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
-      if (e.target === e.currentTarget) {
-        onClose();
-      }
+      if (e.target === e.currentTarget) onClose();
     },
     [onClose],
   );
@@ -168,12 +190,6 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
     }
   }, []);
 
-  const inputClass =
-    "w-full rounded-md border-none bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary transition-all duration-150 ease-out";
-
-  const selectClass =
-    "w-full rounded-md border-none bg-[#E8E8E8] px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary transition-all duration-150 ease-out";
-
   return (
     <FocusTrap
       focusTrapOptions={{
@@ -184,179 +200,179 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
       }}
     >
       <div
-        className="fixed inset-0 z-50 flex items-center justify-center"
         onClick={handleBackdropClick}
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 50,
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "center",
+          padding: "8vh 16px 16px",
+          background: "color-mix(in oklch, var(--bg) 70%, transparent)",
+          backdropFilter: "blur(4px)",
+        }}
       >
-        {/* Backdrop */}
-        <div
-          className="absolute inset-0 bg-black/20 backdrop-blur-sm animate-fade-in"
-          aria-hidden="true"
-        />
-
-        {/* Modal card */}
         <div
           role="dialog"
           aria-modal="true"
-          aria-labelledby="new-issue-title"
+          aria-labelledby="new-issue-title-label"
           data-testid="new-issue-modal"
-          className="relative bg-card rounded-lg shadow-xl max-w-lg w-full p-6 mx-4 animate-fade-in"
+          style={{
+            position: "relative",
+            width: "100%",
+            maxWidth: 560,
+            background: "var(--panel)",
+            border: "1px solid var(--line)",
+            borderRadius: 8,
+            boxShadow: "var(--shadow-drag)",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+          }}
         >
-          {/* Close button */}
-          <button
-            type="button"
-            onClick={onClose}
-            className="absolute top-4 right-4 text-muted-foreground hover:text-foreground transition-colors"
-            aria-label="Close"
+          {/* Header */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "12px 14px",
+              borderBottom: "1px solid var(--line)",
+              background: "var(--bg-2)",
+            }}
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-5 w-5"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+            <span
+              className="mono"
+              style={{
+                fontSize: 10.5,
+                letterSpacing: "0.06em",
+                textTransform: "uppercase",
+                color: "var(--ink-4)",
+              }}
             >
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
+              New issue
+            </span>
+            <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+              · {projectKey}
+            </span>
+            <span style={{ flex: 1 }} />
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              style={{ color: "var(--ink-4)", padding: 2 }}
+            >
+              <Icon.X />
+            </button>
+          </div>
 
-          {/* Title */}
-          <h2
-            id="new-issue-title"
-            className="text-lg font-semibold text-foreground mb-4"
-          >
-            New Issue
-          </h2>
-
-          {/* Form */}
           <form
             onSubmit={(e) => {
               e.preventDefault();
               handleSubmit();
             }}
-            className="flex flex-col gap-4"
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 14,
+              padding: "16px 16px 14px",
+            }}
           >
-            {/* Template selector */}
-            <div>
-              <label
-                htmlFor="issue-template"
-                className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1 block"
-              >
-                Template
-              </label>
-              <select
-                id="issue-template"
-                value={selectedTemplate}
-                onChange={(e) => handleTemplateChange(e.target.value)}
-                className={selectClass}
-                data-testid="new-issue-template"
-              >
-                <option value="">None</option>
-                {TEMPLATES.map((t) => (
-                  <option key={t.key} value={t.key}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Issue title */}
-            <div>
-              <label
-                htmlFor="issue-title"
-                className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1 block"
-              >
-                Title <span className="text-destructive">*</span>
-              </label>
-              <input
-                ref={titleRef}
-                id="issue-title"
-                type="text"
-                autoFocus
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                onKeyDown={handleTitleKeyDown}
-                placeholder="Issue title"
-                className={`${inputClass} text-lg`}
-                data-testid="new-issue-title-input"
-              />
-            </div>
-
-            {/* Type and Priority in two columns */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label
-                  htmlFor="issue-type"
-                  className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1 block"
-                >
-                  Type
-                </label>
-                <select
-                  id="issue-type"
-                  value={type}
-                  onChange={(e) => setType(e.target.value as IssueType)}
-                  className={selectClass}
-                  data-testid="new-issue-type"
-                >
-                  {ISSUE_TYPES.map((t) => (
-                    <option key={t.value} value={t.value}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label
-                  htmlFor="issue-priority"
-                  className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1 block"
-                >
-                  Priority
-                </label>
-                <select
-                  id="issue-priority"
-                  value={priority}
-                  onChange={(e) => setPriority(e.target.value as IssuePriority)}
-                  className={selectClass}
-                  data-testid="new-issue-priority"
-                >
-                  {ISSUE_PRIORITIES.map((p) => (
-                    <option key={p.value} value={p.value}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
+            {/* Title — flush, no label */}
+            <input
+              id="new-issue-title-label"
+              type="text"
+              autoFocus
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onKeyDown={handleTitleKeyDown}
+              placeholder="Issue title"
+              data-testid="new-issue-title-input"
+              style={{
+                width: "100%",
+                background: "transparent",
+                border: "none",
+                outline: "none",
+                color: "var(--ink)",
+                fontSize: 16,
+                fontWeight: 500,
+                padding: "2px 0",
+              }}
+            />
 
             {/* Description */}
-            <div>
-              <label
-                htmlFor="issue-description"
-                className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1 block"
-              >
-                Description
-              </label>
-              <textarea
-                id="issue-description"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={4}
-                placeholder="Add description..."
-                className={`${inputClass} resize-y`}
-                data-testid="new-issue-description"
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={5}
+              placeholder="Add description…"
+              data-testid="new-issue-description"
+              style={{
+                width: "100%",
+                background: "var(--bg)",
+                border: "1px solid var(--line)",
+                borderRadius: 5,
+                padding: "10px 12px",
+                color: "var(--ink)",
+                fontSize: 12.5,
+                lineHeight: 1.5,
+                outline: "none",
+                resize: "vertical",
+                minHeight: 96,
+                fontFamily: "inherit",
+              }}
+            />
+
+            {/* Filter chips row — type / priority / state */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                flexWrap: "wrap",
+              }}
+            >
+              <FilterChipSelect
+                label="Type"
+                value={type}
+                options={ISSUE_TYPES}
+                onChange={(v) => setType((v || "task") as IssueType)}
+                allLabel="task"
+              />
+              <FilterChipSelect
+                label="Priority"
+                value={priority}
+                options={ISSUE_PRIORITIES}
+                onChange={(v) => setPriority((v || "medium") as IssuePriority)}
+                allLabel="medium"
+              />
+              <FilterChipSelect
+                label="State"
+                value={state}
+                options={STATE_OPTIONS}
+                onChange={(v) => setState((v || "backlog") as IssueState)}
+                allLabel="backlog"
+              />
+              <FilterChipSelect
+                label="Template"
+                value={selectedTemplate}
+                options={TEMPLATE_OPTIONS}
+                onChange={handleTemplateChange}
+                allLabel="none"
               />
             </div>
 
-            {/* Labels and Parent in a row */}
-            <div className="grid grid-cols-2 gap-3">
+            {/* Labels + Parent */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 12,
+              }}
+            >
               <div>
-                <label
-                  htmlFor="issue-labels"
-                  className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1 block"
-                >
+                <label htmlFor="issue-labels" style={labelStyle}>
                   Labels
                 </label>
                 <input
@@ -364,24 +380,21 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
                   type="text"
                   value={labels}
                   onChange={(e) => setLabels(e.target.value)}
-                  placeholder="bug-fix, ui (comma-separated)"
-                  className={inputClass}
+                  placeholder="bug, ui (comma-separated)"
                   data-testid="new-issue-labels"
+                  style={inputStyle}
                 />
               </div>
               <div>
-                <label
-                  htmlFor="issue-parent"
-                  className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground mb-1 block"
-                >
-                  Parent Issue
+                <label htmlFor="issue-parent" style={labelStyle}>
+                  Parent issue
                 </label>
                 <select
                   id="issue-parent"
                   value={parentId}
                   onChange={(e) => setParentId(e.target.value)}
-                  className={selectClass}
                   data-testid="new-issue-parent"
+                  style={{ ...inputStyle, paddingLeft: 8 }}
                 >
                   <option value="">None</option>
                   {issues?.map((issue) => (
@@ -392,48 +405,65 @@ export function NewIssueModal({ projectKey, onClose }: NewIssueModalProps) {
                 </select>
               </div>
             </div>
-
-            {/* Action buttons */}
-            <div className="flex justify-end gap-3 mt-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2 rounded-md text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={!title.trim() || createMutation.isPending}
-                className="px-4 py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                data-testid="new-issue-submit"
-              >
-                {createMutation.isPending && (
-                  <svg
-                    className="animate-spin h-4 w-4"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    />
-                  </svg>
-                )}
-                Create Issue
-              </button>
-            </div>
           </form>
+
+          {/* Footer */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "10px 14px",
+              borderTop: "1px solid var(--line)",
+              background: "var(--bg-2)",
+            }}
+          >
+            <span
+              className="mono"
+              style={{ fontSize: 10.5, color: "var(--ink-4)" }}
+            >
+              ⌘↵ to create · Esc to close
+            </span>
+            <span style={{ flex: 1 }} />
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                height: 28,
+                padding: "0 12px",
+                border: "1px solid var(--line)",
+                borderRadius: 4,
+                background: "var(--panel)",
+                color: "var(--ink-2)",
+                fontSize: 12,
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={!title.trim() || createMutation.isPending}
+              data-testid="new-issue-submit"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                height: 28,
+                padding: "0 12px",
+                border: "none",
+                borderRadius: 4,
+                background: "var(--accent)",
+                color: "var(--btn-ink)",
+                fontSize: 12,
+                fontWeight: 500,
+                opacity: !title.trim() || createMutation.isPending ? 0.55 : 1,
+                cursor: !title.trim() || createMutation.isPending ? "not-allowed" : "pointer",
+              }}
+            >
+              {createMutation.isPending ? "Creating…" : "Create issue"}
+            </button>
+          </div>
         </div>
       </div>
     </FocusTrap>

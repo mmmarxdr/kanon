@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -9,7 +9,6 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { useState } from "react";
 import {
   useBoardStore,
   BOARD_COLUMNS,
@@ -26,10 +25,11 @@ import { IssueCard } from "./issue-card";
 interface KanbanBoardProps {
   issues: Issue[];
   projectKey: string;
-  onSelectIssue?: (key: string, element: HTMLElement) => void;
+  onSelectIssue?: (key: string) => void;
+  onAddIssue?: (column: BoardColumnType) => void;
 }
 
-export function KanbanBoard({ issues, projectKey, onSelectIssue }: KanbanBoardProps) {
+export function KanbanBoard({ issues, projectKey, onSelectIssue, onAddIssue }: KanbanBoardProps) {
   const { hiddenColumns, filters } = useBoardStore();
   const transitionMutation = useTransitionMutation(projectKey);
   const [activeIssue, setActiveIssue] = useState<Issue | null>(null);
@@ -40,7 +40,6 @@ export function KanbanBoard({ issues, projectKey, onSelectIssue }: KanbanBoardPr
     }),
   );
 
-  // Apply client-side filters
   const filteredIssues = useMemo(() => {
     return issues.filter((issue) => {
       if (filters.type && issue.type !== filters.type) return false;
@@ -60,10 +59,8 @@ export function KanbanBoard({ issues, projectKey, onSelectIssue }: KanbanBoardPr
     });
   }, [issues, filters]);
 
-  // Group filtered issues by board column
   const grouped = useMemo(() => groupByColumn(filteredIssues), [filteredIssues]);
 
-  // Visible columns (respecting toggle state)
   const visibleColumns = useMemo(
     () => BOARD_COLUMNS.filter((col) => !hiddenColumns.has(col)),
     [hiddenColumns],
@@ -89,16 +86,12 @@ export function KanbanBoard({ issues, projectKey, onSelectIssue }: KanbanBoardPr
       const issue = issues.find((i) => i.key === issueKey);
       if (!issue) return;
 
-      // Determine the target board column.
-      // `over.id` can be either a column droppable ID (a BoardColumn)
-      // or another card's key. If it's a card, find that card's column.
       let targetColumn: BoardColumnType;
       if (BOARD_COLUMNS.includes(over.id as BoardColumnType)) {
         targetColumn = over.id as BoardColumnType;
       } else {
         const overIssue = issues.find((i) => i.key === over.id);
         if (!overIssue) return;
-        // Find which column the over-issue belongs to
         const found = BOARD_COLUMNS.find((col) =>
           COLUMN_STATE_MAP[col].includes(overIssue.state),
         );
@@ -106,8 +99,6 @@ export function KanbanBoard({ issues, projectKey, onSelectIssue }: KanbanBoardPr
         targetColumn = found;
       }
 
-      // Same-column drop is a no-op: don't transition if the issue
-      // is already in a state belonging to the target column.
       if (COLUMN_STATE_MAP[targetColumn].includes(issue.state)) return;
 
       transitionMutation.mutate({
@@ -125,21 +116,33 @@ export function KanbanBoard({ issues, projectKey, onSelectIssue }: KanbanBoardPr
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
-      <div data-testid="kanban-board" className="flex gap-4 overflow-x-auto pb-4 h-full bg-surface [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-outline-variant/30 [&::-webkit-scrollbar-thumb]:rounded-full">
-        {visibleColumns.map((col) => (
+      <div
+        data-testid="kanban-board"
+        className="kanban-scroll"
+        style={{
+          display: "grid",
+          gridTemplateColumns: `repeat(${visibleColumns.length}, minmax(240px, 1fr))`,
+          gap: 0,
+          overflow: "auto",
+          height: "100%",
+          background: "var(--bg)",
+        }}
+      >
+        {visibleColumns.map((col, i) => (
           <BoardColumn
             key={col}
             column={col}
             issues={grouped.get(col) ?? []}
             onSelectIssue={onSelectIssue}
+            onAddIssue={onAddIssue}
+            showRightDivider={i < visibleColumns.length - 1}
           />
         ))}
       </div>
 
-      {/* Drag overlay renders the card being dragged above everything */}
       <DragOverlay dropAnimation={null}>
         {activeIssue ? (
-          <div className="shadow-[var(--shadow-drag)] rounded-md">
+          <div style={{ boxShadow: "var(--shadow-drag)", borderRadius: 5 }}>
             <IssueCard issue={activeIssue} />
           </div>
         ) : null}
