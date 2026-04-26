@@ -14,14 +14,21 @@ import csrfPlugin from "./plugins/csrf.js";
 import authRoutes from "./modules/auth/routes.js";
 import activityRoutes from "./modules/activity/routes.js";
 import workspaceRoutes from "./modules/workspace/routes.js";
+import dashboardRoutes from "./modules/dashboard/routes.js";
+import {
+  workspaceProposalRoutes,
+  proposalActionRoutes,
+} from "./modules/mcp-proposal/routes.js";
 import projectRoutes from "./modules/project/routes.js";
 import issueRoutes from "./modules/issue/routes.js";
+import issueDependencyRoutes from "./modules/issue-dependency/routes.js";
 import commentRoutes from "./modules/comment/routes.js";
 import eventsRoutes from "./modules/events/routes.js";
 import workspaceEventsRoutes from "./modules/events/workspace-events.js";
 import memberRoutes from "./modules/member/routes.js";
 import workspaceMemberRoutes from "./modules/member/workspace-member-routes.js";
 import roadmapRoutes from "./modules/roadmap/routes.js";
+import cycleRoutes from "./modules/cycle/routes.js";
 import workSessionRoutes from "./modules/work-session/routes.js";
 import { workspaceInviteRoutes, publicInviteRoutes } from "./modules/invite/routes.js";
 import { EngramClient } from "@kanon/bridge";
@@ -88,8 +95,12 @@ export async function buildApp() {
   // Feature module routes
   await app.register(authRoutes, { prefix: "/api/auth" });
   await app.register(workspaceRoutes, { prefix: "/api/workspaces" });
+  await app.register(dashboardRoutes, { prefix: "/api/workspaces" });
+  await app.register(workspaceProposalRoutes, { prefix: "/api/workspaces" });
+  await app.register(proposalActionRoutes, { prefix: "/api" });
   await app.register(projectRoutes, { prefix: "/api" });
   await app.register(issueRoutes, { prefix: "/api" });
+  await app.register(issueDependencyRoutes, { prefix: "/api" });
   await app.register(commentRoutes, { prefix: "/api" });
   await app.register(activityRoutes, { prefix: "/api" });
   await app.register(eventsRoutes, { prefix: "/api/events" });
@@ -97,6 +108,7 @@ export async function buildApp() {
   await app.register(memberRoutes, { prefix: "/api/members" });
   await app.register(workspaceMemberRoutes, { prefix: "/api/workspaces/:wid/members" });
   await app.register(roadmapRoutes, { prefix: "/api" });
+  await app.register(cycleRoutes, { prefix: "/api" });
   await app.register(workSessionRoutes, { prefix: "/api" });
   await app.register(workspaceInviteRoutes, { prefix: "/api/workspaces/:wid/invites" });
   await app.register(publicInviteRoutes, { prefix: "/api/invites" });
