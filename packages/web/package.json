@@ -12,13 +12,11 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@dagrejs/dagre": "^3.0.0",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@tanstack/react-query": "^5.62.0",
     "@tanstack/react-router": "^1.92.0",
-    "@xyflow/react": "^12.10.1",
     "focus-trap-react": "^12.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
