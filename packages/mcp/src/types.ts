@@ -9,14 +9,10 @@ export const ISSUE_TYPES = ["feature", "bug", "task", "spike"] as const;
 export const ISSUE_PRIORITIES = ["critical", "high", "medium", "low"] as const;
 export const ISSUE_STATES = [
   "backlog",
-  "explore",
-  "propose",
-  "design",
-  "spec",
-  "tasks",
-  "apply",
-  "verify",
-  "archived",
+  "todo",
+  "in_progress",
+  "review",
+  "done",
 ] as const;
 
 export const HORIZONS = ["now", "next", "later", "someday"] as const;

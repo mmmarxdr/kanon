@@ -113,7 +113,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient): void
 
   server.tool(
     "kanon_transition_issue",
-    "Transition a Kanon issue to a new state. Call kanon_get_issue first to check current state. Valid states: backlog, explore, propose, design, spec, tasks, apply, verify, archived.",
+    "Transition a Kanon issue to a new state. Call kanon_get_issue first to check current state. Valid states: backlog, todo, in_progress, review, done.",
     TransitionIssueInput.shape,
     async ({ issueKey, state, format }) => {
       try {
