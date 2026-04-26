@@ -25,14 +25,10 @@ enum IssuePriority {
 
 enum IssueState {
   backlog
-  explore
-  propose
-  design
-  spec
-  tasks
-  apply
-  verify
-  archived
+  todo
+  in_progress
+  review
+  done
 }
 
 enum MemberRole {
@@ -42,10 +38,15 @@ enum MemberRole {
   viewer
 }
 
-enum SprintStatus {
-  planning
+enum CycleState {
+  upcoming
   active
-  completed
+  done
+}
+
+enum CycleScopeEventKind {
+  add
+  remove
 }
 
 enum ActivityAction {
@@ -53,7 +54,7 @@ enum ActivityAction {
   state_changed
   assigned
   commented
-  sprint_changed
+  cycle_changed
   edited
   engram_synced
 }
@@ -115,8 +116,36 @@ model Workspace {
   projects Project[]
   members  Member[]
   invites  WorkspaceInvite[]
+  proposals McpProposal[]
 
   @@map("workspaces")
+}
+
+model McpProposal {
+  id          String            @id @default(uuid()) @db.Uuid
+  kind        McpProposalKind
+  status      McpProposalStatus @default(pending)
+  title       String
+  reason      String?
+  /** Optional reference key — issue key, roadmap item id, etc. */
+  targetRef   String?           @map("target_ref")
+  /** Free-form payload (action description, suggested values). */
+  payload     Json?
+  /** Identifier of the agent that produced the proposal (e.g. "claude-mcp"). */
+  generatedBy String?           @map("generated_by")
+  proposedAt  DateTime          @default(now()) @map("proposed_at")
+  appliedAt   DateTime?         @map("applied_at")
+  dismissedAt DateTime?         @map("dismissed_at")
+
+  workspaceId String    @map("workspace_id") @db.Uuid
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  projectId String?  @map("project_id") @db.Uuid
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, status])
+  @@index([projectId, status])
+  @@map("mcp_proposals")
 }
 
 model Project {
@@ -133,8 +162,9 @@ model Project {
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   issues       Issue[]
-  sprints      Sprint[]
+  cycles       Cycle[]
   roadmapItems RoadmapItem[]
+  proposals    McpProposal[]
 
   @@unique([workspaceId, key])
   @@index([workspaceId])
@@ -169,8 +199,11 @@ model Issue {
   assigneeId String? @map("assignee_id") @db.Uuid
   assignee   Member? @relation("AssignedIssues", fields: [assigneeId], references: [id], onDelete: SetNull)
 
-  sprintId String? @map("sprint_id") @db.Uuid
-  sprint   Sprint? @relation(fields: [sprintId], references: [id], onDelete: SetNull)
+  /** Story-point estimate. Null = unestimated. Used by Cycles burnup. */
+  estimate Int? @map("estimate")
+
+  cycleId String? @map("cycle_id") @db.Uuid
+  cycle   Cycle?  @relation(fields: [cycleId], references: [id], onDelete: SetNull)
 
   parentId String? @map("parent_id") @db.Uuid
   parent   Issue?  @relation("SubIssues", fields: [parentId], references: [id], onDelete: SetNull)
@@ -183,38 +216,103 @@ model Issue {
   comments     Comment[]
   workSessions WorkSession[]
 
+  // Issue→Issue dependencies (semantically distinct from RoadmapDependency)
+  blocks    IssueDependency[] @relation("IssueBlocks")
+  blockedBy IssueDependency[] @relation("IssueBlockedBy")
+
   @@unique([projectId, key])
   @@index([projectId, state])
   @@index([projectId, groupKey])
-  @@index([sprintId])
+  @@index([cycleId])
   @@index([assigneeId])
   @@index([parentId])
   @@map("issues")
 }
 
-model Sprint {
-  id        String       @id @default(uuid()) @db.Uuid
+enum IssueDependencyType {
+  blocks
+}
+
+enum McpProposalKind {
+  promote_roadmap_item    // Promote a roadmap item to a sooner horizon
+  add_dependency          // Suggest a new dependency edge (issue or roadmap)
+  split_issue             // Split a single issue into atomic sub-issues
+  reassign                // Suggest a different assignee
+  generic                 // Anything else; payload describes
+}
+
+enum McpProposalStatus {
+  pending
+  applied
+  dismissed
+}
+
+model IssueDependency {
+  id        String              @id @default(uuid()) @db.Uuid
+  type      IssueDependencyType @default(blocks)
+  createdAt DateTime            @default(now()) @map("created_at")
+
+  sourceId String @map("source_id") @db.Uuid
+  source   Issue  @relation("IssueBlocks", fields: [sourceId], references: [id], onDelete: Cascade)
+
+  targetId String @map("target_id") @db.Uuid
+  target   Issue  @relation("IssueBlockedBy", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceId, targetId, type])
+  @@index([sourceId])
+  @@index([targetId])
+  @@map("issue_dependencies")
+}
+
+model Cycle {
+  id        String     @id @default(uuid()) @db.Uuid
   name      String
   goal      String?
-  status    SprintStatus @default(planning)
-  startDate DateTime?    @map("start_date")
-  endDate   DateTime?    @map("end_date")
-  createdAt DateTime     @default(now()) @map("created_at")
-  updatedAt DateTime     @updatedAt @map("updated_at")
+  state     CycleState @default(upcoming)
+  startDate DateTime   @map("start_date")
+  endDate   DateTime   @map("end_date")
+  /** Velocity in story points. Set when the cycle is closed. */
+  velocity  Int?
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
 
   projectId String  @map("project_id") @db.Uuid
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  issues Issue[]
+  issues      Issue[]
+  scopeEvents CycleScopeEvent[]
 
-  @@index([projectId, status])
-  @@map("sprints")
+  @@index([projectId, state])
+  @@index([projectId, startDate])
+  @@map("cycles")
+}
+
+model CycleScopeEvent {
+  id        String              @id @default(uuid()) @db.Uuid
+  /** Day index within the cycle (1-based) at the moment of the change. */
+  day       Int
+  kind      CycleScopeEventKind
+  /** Issue key (KAN-123) at the time of the event. Stored as string so the
+   *  event survives even if the issue is later deleted. */
+  issueKey  String              @map("issue_key")
+  reason    String?
+  createdAt DateTime            @default(now()) @map("created_at")
+
+  cycleId String @map("cycle_id") @db.Uuid
+  cycle   Cycle  @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+
+  authorId String? @map("author_id") @db.Uuid
+  author   Member? @relation("CycleScopeAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([cycleId, day])
+  @@map("cycle_scope_events")
 }
 
 model Member {
   id        String     @id @default(uuid()) @db.Uuid
   username  String
   role      MemberRole @default(member)
+  isAgent   Boolean    @default(false) @map("is_agent")
   createdAt DateTime   @default(now()) @map("created_at")
   updatedAt DateTime   @updatedAt @map("updated_at")
 
@@ -223,10 +321,11 @@ model Member {
   workspaceId String    @map("workspace_id") @db.Uuid
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  assignedIssues Issue[]       @relation("AssignedIssues")
-  activityLogs   ActivityLog[]
-  comments       Comment[]
-  workSessions   WorkSession[]
+  assignedIssues   Issue[]           @relation("AssignedIssues")
+  activityLogs     ActivityLog[]
+  comments         Comment[]
+  workSessions     WorkSession[]
+  cycleScopeEvents CycleScopeEvent[] @relation("CycleScopeAuthor")
 
   @@unique([userId, workspaceId])
   @@unique([workspaceId, username])

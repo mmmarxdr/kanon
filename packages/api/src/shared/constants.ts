@@ -6,14 +6,10 @@ import type { IssueState } from "@prisma/client";
  */
 export const ORDERED_STATES: readonly IssueState[] = [
   "backlog",
-  "explore",
-  "propose",
-  "design",
-  "spec",
-  "tasks",
-  "apply",
-  "verify",
-  "archived",
+  "todo",
+  "in_progress",
+  "review",
+  "done",
 ] as const;
 
 /**
@@ -36,14 +32,10 @@ export const ISSUE_TYPES = ["feature", "bug", "task", "spike"] as const;
 export const ISSUE_PRIORITIES = ["critical", "high", "medium", "low"] as const;
 export const ISSUE_STATES = [
   "backlog",
-  "explore",
-  "propose",
-  "design",
-  "spec",
-  "tasks",
-  "apply",
-  "verify",
-  "archived",
+  "todo",
+  "in_progress",
+  "review",
+  "done",
 ] as const;
 export const MEMBER_ROLES = ["owner", "admin", "member", "viewer"] as const;
 export const ACTIVITY_ACTIONS = [
@@ -51,7 +43,7 @@ export const ACTIVITY_ACTIONS = [
   "state_changed",
   "assigned",
   "commented",
-  "sprint_changed",
+  "cycle_changed",
   "edited",
   "engram_synced",
 ] as const;
