@@ -56,7 +56,7 @@ export async function startWork(
       lastHeartbeat: { gt: cutoff },
     },
     include: {
-      member: { select: { username: true } },
+      member: { select: { username: true, isAgent: true } },
     },
   });
 
@@ -210,7 +210,7 @@ export async function getActiveWorkers(issueId: string) {
       lastHeartbeat: { gt: cutoff },
     },
     include: {
-      member: { select: { username: true } },
+      member: { select: { username: true, isAgent: true } },
     },
     orderBy: { startedAt: "asc" },
   });
@@ -219,6 +219,7 @@ export async function getActiveWorkers(issueId: string) {
     userId: s.userId,
     memberId: s.memberId,
     username: s.member.username,
+    isAgent: s.member.isAgent,
     startedAt: s.startedAt.toISOString(),
     source: s.source,
   }));
@@ -238,7 +239,7 @@ export async function getActiveWorkersForIssues(issueIds: string[]) {
       lastHeartbeat: { gt: cutoff },
     },
     include: {
-      member: { select: { username: true } },
+      member: { select: { username: true, isAgent: true } },
     },
     orderBy: { startedAt: "asc" },
   });
@@ -256,7 +257,7 @@ export async function getActiveWorkersForIssues(issueIds: string[]) {
 function mapSession(s: {
   userId: string;
   memberId: string;
-  member: { username: string };
+  member: { username: string; isAgent: boolean };
   startedAt: Date;
   source: string;
 }) {
@@ -264,6 +265,7 @@ function mapSession(s: {
     userId: s.userId,
     memberId: s.memberId,
     username: s.member.username,
+    isAgent: s.member.isAgent,
     startedAt: s.startedAt.toISOString(),
     source: s.source,
   };

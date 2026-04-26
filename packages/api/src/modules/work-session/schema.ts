@@ -22,6 +22,7 @@ export const ActiveWorkerResponse = z.object({
   userId: z.string().uuid(),
   memberId: z.string().uuid(),
   username: z.string(),
+  isAgent: z.boolean(),
   startedAt: z.string().datetime(),
   source: z.string(),
 });

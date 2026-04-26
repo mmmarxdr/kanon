@@ -15,7 +15,7 @@ export type TransitionResult =
  * - Forward transitions (higher index): always allowed, isRegression = false
  * - Backward transitions (lower index): always allowed, isRegression = true
  * - Same state: not allowed
- * - From archived to any state: allowed (reopen), isRegression = true
+ * - From done to any state: allowed (reopen), isRegression = true
  * - To same state: not allowed
  */
 export function validateTransition(

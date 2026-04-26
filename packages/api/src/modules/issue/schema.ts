@@ -16,8 +16,9 @@ export const CreateIssueBody = z.object({
   description: z.string().max(50000).optional(),
   type: z.enum(ISSUE_TYPES).optional(),
   priority: z.enum(ISSUE_PRIORITIES).optional(),
+  state: z.enum(ISSUE_STATES).optional(),
   assigneeId: z.string().uuid().optional(),
-  sprintId: z.string().uuid().optional(),
+  cycleId: z.string().uuid().optional(),
   parentId: z.string().uuid().optional(),
   labels: z.array(z.string()).default([]),
   dueDate: z.string().datetime().optional(),
@@ -35,7 +36,7 @@ export const UpdateIssueBody = z.object({
   type: z.enum(ISSUE_TYPES).optional(),
   priority: z.enum(ISSUE_PRIORITIES).optional(),
   assigneeId: z.string().uuid().nullable().optional(),
-  sprintId: z.string().uuid().nullable().optional(),
+  cycleId: z.string().uuid().nullable().optional(),
   parentId: z.string().uuid().nullable().optional(),
   labels: z.array(z.string()).optional(),
   dueDate: z.string().datetime().nullable().optional(),
@@ -69,9 +70,9 @@ export const IssueKeyParam = z.object({
 /**
  * Issue list query filters.
  *
- * NOTE: Query params use snake_case (assignee_id, sprint_id) to follow
+ * NOTE: Query params use snake_case (assignee_id, cycle_id) to follow
  * URL convention, while Prisma model fields use camelCase (assigneeId,
- * sprintId). The mapping happens in issue/service.ts listIssues(), e.g.:
+ * cycleId). The mapping happens in issue/service.ts listIssues(), e.g.:
  *   if (filters.assignee_id) where.assigneeId = filters.assignee_id;
  */
 export const IssueFilterQuery = z.object({
@@ -79,7 +80,7 @@ export const IssueFilterQuery = z.object({
   type: z.enum(ISSUE_TYPES).optional(),
   priority: z.enum(ISSUE_PRIORITIES).optional(),
   assignee_id: z.string().uuid().optional(),
-  sprint_id: z.string().uuid().optional(),
+  cycle_id: z.string().uuid().optional(),
   label: z.string().optional(),
   parent_only: z.coerce.boolean().optional(),
   group_key: z.string().optional(),

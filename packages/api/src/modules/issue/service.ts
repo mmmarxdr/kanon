@@ -92,12 +92,13 @@ export async function createIssue(
       description: resolvedDescription,
       type: resolvedType,
       priority: resolvedPriority,
+      state: body.state,
       labels: resolvedLabels,
       dueDate: body.dueDate ? new Date(body.dueDate) : undefined,
       groupKey: body.groupKey,
       projectId: project.id,
       assigneeId: body.assigneeId,
-      sprintId: body.sprintId,
+      cycleId: body.cycleId,
       parentId: body.parentId,
     },
   });
@@ -152,7 +153,7 @@ export async function listIssues(
   if (filters.priority) where.priority = filters.priority;
   // snake_case query params → camelCase Prisma fields (see issue/schema.ts)
   if (filters.assignee_id) where.assigneeId = filters.assignee_id;
-  if (filters.sprint_id) where.sprintId = filters.sprint_id;
+  if (filters.cycle_id) where.cycleId = filters.cycle_id;
   if (filters.label) where.labels = { has: filters.label };
   if (filters.parent_only) where.parentId = null;
   if (filters.group_key) where.groupKey = filters.group_key;
@@ -264,6 +265,16 @@ export async function getIssue(key: string) {
       children: {
         select: { id: true, key: true, title: true, state: true, labels: true },
       },
+      blocks: {
+        include: {
+          target: { select: { id: true, key: true, title: true, state: true } },
+        },
+      },
+      blockedBy: {
+        include: {
+          source: { select: { id: true, key: true, title: true, state: true } },
+        },
+      },
     },
   });
   if (!issue) {
@@ -322,11 +333,11 @@ export async function updateIssue(
       },
     });
   }
-  if (body.sprintId !== undefined) {
-    if (body.sprintId === null) {
-      data.sprint = { disconnect: true };
+  if (body.cycleId !== undefined) {
+    if (body.cycleId === null) {
+      data.cycle = { disconnect: true };
     } else {
-      data.sprint = { connect: { id: body.sprintId } };
+      data.cycle = { connect: { id: body.cycleId } };
     }
   }
   if (body.parentId !== undefined) {

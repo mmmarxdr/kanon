@@ -5,16 +5,16 @@ import type { PrismaClient, RoadmapStatus, IssueState } from "@prisma/client";
  *
  * Rules:
  * - No issues → null (status unchanged — caller should skip update)
- * - All issues archived → "done"
- * - Any issue not archived → "in_progress"
+ * - All issues done → "done"
+ * - Any issue not done → "in_progress"
  */
 export function computeStatus(
   issues: Pick<{ state: IssueState }, "state">[],
 ): RoadmapStatus | null {
   if (issues.length === 0) return null;
 
-  const allArchived = issues.every((i) => i.state === "archived");
-  return allArchived ? "done" : "in_progress";
+  const allDone = issues.every((i) => i.state === "done");
+  return allDone ? "done" : "in_progress";
 }
 
 /**

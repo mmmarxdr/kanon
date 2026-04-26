@@ -8,31 +8,27 @@ import { createActivityLog } from "../activity/service.js";
 /**
  * Maps every IssueState to the board-column index it belongs to.
  *
- * Column order:
- *   0 = backlog, 1 = analysis, 2 = in_progress, 3 = testing, 4 = finished
+ * Column order matches the kanban pipeline:
+ *   0 = backlog, 1 = todo, 2 = in_progress, 3 = review, 4 = done
  */
 export const STATE_TO_COLUMN_INDEX: Record<string, number> = {
   backlog: 0,
-  explore: 0,
-  propose: 1,
-  design: 1,
-  spec: 1,
-  tasks: 2,
-  apply: 2,
-  verify: 3,
-  archived: 4,
+  todo: 1,
+  in_progress: 2,
+  review: 3,
+  done: 4,
 };
 
 /**
  * Default IssueState for each column index (used when auto-advancing a parent).
- * Index matches the column order above.
+ * One state per column now that the pipeline is flat.
  */
 export const COLUMN_DEFAULT_STATES: readonly string[] = [
-  "backlog", // 0 – backlog
-  "propose", // 1 – analysis
-  "tasks", // 2 – in_progress
-  "verify", // 3 – testing
-  "archived", // 4 – finished
+  "backlog",
+  "todo",
+  "in_progress",
+  "review",
+  "done",
 ];
 
 // ---------------------------------------------------------------------------
