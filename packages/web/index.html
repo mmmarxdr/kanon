@@ -1,10 +1,23 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="" data-appearance="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Kanon</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script>
+      // Apply persisted theme/appearance before paint to avoid flash
+      (function() {
+        try {
+          var t = localStorage.getItem('kanon:theme') || 'mono';
+          var a = localStorage.getItem('kanon:appearance') || 'dark';
+          document.documentElement.dataset.theme = t === 'cobalt' ? '' : t;
+          document.documentElement.dataset.appearance = a;
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
