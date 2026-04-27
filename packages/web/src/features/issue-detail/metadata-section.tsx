@@ -12,6 +12,8 @@ import type {
   IssuePriority,
   Issue,
 } from "@/types/issue";
+import { useCyclesQuery } from "@/features/cycles/use-cycles-query";
+import type { Cycle } from "@/types/cycle";
 
 const ISSUE_TYPES: IssueType[] = ["feature", "bug", "task", "spike"];
 const ISSUE_PRIORITIES: IssuePriority[] = ["critical", "high", "medium", "low"];
@@ -26,6 +28,12 @@ interface MetadataSectionProps {
   projectKey: string;
   onFieldChange: (payload: Record<string, unknown>) => void;
   onTransition: (toState: IssueState) => void;
+  /**
+   * Called when the user changes the cycle assignment on this issue.
+   * nextCycleId is null when the user selects "Unassigned".
+   * currentCycleId is null when the issue had no cycle before.
+   */
+  onCycleChange: (nextCycleId: string | null, currentCycleId: string | null) => void;
 }
 
 /**
@@ -43,11 +51,16 @@ export function MetadataSection({
   projectKey,
   onFieldChange,
   onTransition,
+  onCycleChange,
 }: MetadataSectionProps) {
   const queryClient = useQueryClient();
 
   // Derive unique assignees from the board issues cache
   const assignees = useAssigneesFromCache(projectKey, queryClient);
+
+  // Fetch all cycles for this project to populate the cycle picker
+  const { data: allCycles } = useCyclesQuery(projectKey);
+  const sortedCycles = sortCyclesForDropdown(allCycles ?? []);
 
   const handleTypeChange = useCallback(
     (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -76,6 +89,15 @@ export function MetadataSection({
       onFieldChange({ assigneeId: value || undefined });
     },
     [onFieldChange],
+  );
+
+  const handleCycleSelectChange = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => {
+      const nextCycleId = e.target.value || null;
+      const currentCycleId = issue.cycle?.id ?? null;
+      onCycleChange(nextCycleId, currentCycleId);
+    },
+    [issue.cycle?.id, onCycleChange],
   );
 
   return (
@@ -120,6 +142,23 @@ export function MetadataSection({
           {ISSUE_STATES.map((s) => (
             <option key={s} value={s}>
               {STATE_LABELS[s]}
+            </option>
+          ))}
+        </select>
+      </MetadataField>
+
+      {/* Cycle (attach/detach via cycle-scoped endpoints — NOT via PATCH issue) */}
+      <MetadataField label="Cycle">
+        <select
+          value={issue.cycle?.id ?? ""}
+          onChange={handleCycleSelectChange}
+          data-testid="metadata-cycle-select"
+          className="w-full rounded bg-secondary text-sm text-foreground border border-border px-2 py-1 outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
+        >
+          <option value="">Unassigned</option>
+          {sortedCycles.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
             </option>
           ))}
         </select>
@@ -222,6 +261,29 @@ function useAssigneesFromCache(
   return Array.from(map.values()).sort((a, b) =>
     a.username.localeCompare(b.username),
   );
+}
+
+/**
+ * Sort cycles for the dropdown per design D3:
+ * 1. active first
+ * 2. upcoming — ascending by startDate
+ * 3. done — descending by startDate
+ */
+function sortCyclesForDropdown(cycles: Cycle[]): Cycle[] {
+  const active = cycles.filter((c) => c.state === "active");
+  const upcoming = cycles
+    .filter((c) => c.state === "upcoming")
+    .sort(
+      (a, b) =>
+        new Date(a.startDate).getTime() - new Date(b.startDate).getTime(),
+    );
+  const done = cycles
+    .filter((c) => c.state === "done")
+    .sort(
+      (a, b) =>
+        new Date(b.startDate).getTime() - new Date(a.startDate).getTime(),
+    );
+  return [...active, ...upcoming, ...done];
 }
 
 function formatDate(iso: string): string {

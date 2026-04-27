@@ -13,6 +13,10 @@ import {
   useAddCommentMutation,
 } from "@/features/issue-detail/use-issue-mutations";
 import { useTransitionMutation } from "@/features/board/use-transition-mutation";
+import {
+  useAttachIssueMutation,
+  useDetachIssueMutation,
+} from "@/features/cycles/use-cycle-mutations";
 import { IssueDetailHeader } from "@/features/issue-detail/issue-detail-header";
 import { MetadataSection } from "@/features/issue-detail/metadata-section";
 import { ChildrenSection } from "@/features/issue-detail/children-section";
@@ -63,6 +67,10 @@ function IssuePage() {
   const updateMutation = useUpdateIssueMutation(issueKey, projectKey);
   const addCommentMutation = useAddCommentMutation(issueKey);
   const transitionMutation = useTransitionMutation(projectKey);
+  // Cycle attach/detach mutations — constructed at top level because React
+  // forbids conditional hook calls. cycleId is passed at mutate()-call time.
+  const attachIssueMutation = useAttachIssueMutation(projectKey);
+  const detachIssueMutation = useDetachIssueMutation(projectKey);
 
   useEffect(() => {
     if (!isEditingDescription && issue?.description !== undefined) {
@@ -124,6 +132,36 @@ function IssuePage() {
       updateMutation.mutate({ description: trimmed });
     }
   }, [descriptionDraft, issue?.description, updateMutation]);
+
+  /**
+   * Handles cycle assignment changes from MetadataSection.
+   *
+   * Sequencing:
+   * - If currentCycleId is set, detach first (await).
+   * - Only after detach resolves (or if no detach needed), attach to nextCycleId.
+   * This ensures CycleScopeEvent history is preserved correctly.
+   */
+  const handleCycleChange = useCallback(
+    async (nextCycleId: string | null, currentCycleId: string | null) => {
+      if (!nextCycleId && !currentCycleId) return;
+
+      if (currentCycleId) {
+        await detachIssueMutation.mutateAsync({
+          cycleId: currentCycleId,
+          issueKey,
+          context: "issue-detail",
+        });
+      }
+      if (nextCycleId) {
+        attachIssueMutation.mutate({
+          cycleId: nextCycleId,
+          issueKey,
+          context: "issue-detail",
+        });
+      }
+    },
+    [issueKey, attachIssueMutation, detachIssueMutation],
+  );
 
   if (isLoading || !issue) {
     return (
@@ -540,6 +578,9 @@ function IssuePage() {
             projectKey={projectKey}
             onFieldChange={handleFieldChange}
             onTransition={handleTransition}
+            onCycleChange={(nextId, currentId) => {
+              void handleCycleChange(nextId, currentId);
+            }}
           />
         </div>
 

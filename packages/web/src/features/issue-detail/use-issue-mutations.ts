@@ -9,6 +9,11 @@ import type { Issue } from "@/types/issue";
  * Partial update payload for PATCH /api/issues/:key.
  * Each field is optional — mutations send only the changed field.
  * State transitions are NOT handled here (use useTransitionMutation instead).
+ *
+ * NOTE: `cycleId` MUST NOT be added here. Cycle assignment changes MUST go
+ * through `useAttachIssueMutation` / `useDetachIssueMutation` via the
+ * cycle-scoped endpoints (`POST /api/cycles/:id/issues`) so that
+ * `CycleScopeEvent` history is preserved for velocity tracking.
  */
 type IssueUpdatePayload = Partial<
   Pick<

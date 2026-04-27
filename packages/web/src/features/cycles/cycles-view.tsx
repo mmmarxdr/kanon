@@ -1,6 +1,9 @@
-import { useMemo, useState } from "react";
+import { useMemo, useCallback, useState } from "react";
+import React from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useCyclesQuery, useCycleQuery } from "./use-cycles-query";
+import { CreateCycleModal } from "./create-cycle-modal";
+import { CloseCycleDialog } from "./close-cycle-dialog";
 import type {
   Cycle,
   CycleDetail,
@@ -22,6 +25,8 @@ export function CyclesView() {
   }, [cycles]);
 
   const [selectedCycleId, setSelectedCycleId] = useState<string | undefined>();
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isCloseOpen, setIsCloseOpen] = useState(false);
   const cycleId = selectedCycleId ?? activeCycle?.id;
   const { data: cycle, isLoading } = useCycleQuery(cycleId);
 
@@ -31,16 +36,50 @@ export function CyclesView() {
   if (cyclesLoading) return <Empty>Loading cycles…</Empty>;
   if (!cycles || cycles.length === 0) {
     return (
-      <Empty>
-        No cycles yet. Create one to start planning the next iteration.
-      </Empty>
+      <>
+        <Empty>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+            <span>No cycles yet. Create one to start planning the next iteration.</span>
+            <button
+              type="button"
+              onClick={() => setIsCreateOpen(true)}
+              data-testid="cycles-empty-state-cta"
+              style={{
+                height: 30,
+                padding: "0 14px",
+                borderRadius: 5,
+                border: "none",
+                background: "var(--accent)",
+                color: "var(--btn-ink)",
+                fontSize: 12,
+                fontWeight: 500,
+                cursor: "pointer",
+              }}
+            >
+              + New cycle
+            </button>
+          </div>
+        </Empty>
+        {isCreateOpen && (
+          <CreateCycleModal
+            projectKey={projectKey}
+            onClose={() => setIsCreateOpen(false)}
+          />
+        )}
+      </>
     );
   }
   if (isLoading || !cycle) return <Empty>Loading cycle…</Empty>;
 
   const doneCycles = cycles.filter((c) => c.state === "done").reverse();
 
+  // Stable callbacks so CycleHeader (React.memo) skips re-renders on parent updates
+  const handlePick = useCallback((id: string) => setSelectedCycleId(id), []);
+  const handleNewCycle = useCallback(() => setIsCreateOpen(true), []);
+  const handleCloseCycle = useCallback(() => setIsCloseOpen(true), []);
+
   return (
+    <>
     <div
       style={{
         height: "100%",
@@ -51,7 +90,9 @@ export function CyclesView() {
       <CycleHeader
         cycle={cycle}
         all={cycles}
-        onPick={(id) => setSelectedCycleId(id)}
+        onPick={handlePick}
+        onNewCycle={handleNewCycle}
+        onCloseCycle={handleCloseCycle}
       />
       <div
         style={{
@@ -76,6 +117,20 @@ export function CyclesView() {
         {doneCycles.length > 0 && <VelocityHistory cycles={doneCycles} />}
       </div>
     </div>
+    {isCreateOpen && (
+      <CreateCycleModal
+        projectKey={projectKey}
+        onClose={() => setIsCreateOpen(false)}
+      />
+    )}
+    {isCloseOpen && cycle && (
+      <CloseCycleDialog
+        cycle={cycle}
+        cycles={cycles}
+        onClose={() => setIsCloseOpen(false)}
+      />
+    )}
+    </>
   );
 }
 
@@ -83,14 +138,18 @@ export function CyclesView() {
    Header
    ============================================================ */
 
-function CycleHeader({
+const CycleHeader = React.memo(function CycleHeader({
   cycle,
   all,
   onPick,
+  onNewCycle,
+  onCloseCycle,
 }: {
   cycle: CycleDetail;
   all: Cycle[];
   onPick: (id: string) => void;
+  onNewCycle: () => void;
+  onCloseCycle: () => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -206,6 +265,37 @@ function CycleHeader({
                   )}
                 </button>
               ))}
+              {/* Footer: new cycle CTA */}
+              <div
+                style={{
+                  marginTop: 2,
+                  borderTop: "1px solid var(--line)",
+                  paddingTop: 2,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    onNewCycle();
+                  }}
+                  data-testid="cycles-picker-new-cycle"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    width: "100%",
+                    padding: "7px 10px",
+                    borderRadius: 4,
+                    textAlign: "left",
+                    color: "var(--ink-3)",
+                    fontSize: 12,
+                  }}
+                >
+                  <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
+                  New cycle
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -219,7 +309,7 @@ function CycleHeader({
           <button type="button" style={pillBtn(false)}>
             <Icon.Spark style={{ color: "var(--ai)" }} /> Plan next with Claude
           </button>
-          <button type="button" style={pillBtn(true)}>
+          <button type="button" onClick={onCloseCycle} style={pillBtn(true)}>
             Close cycle →
           </button>
         </div>
@@ -253,7 +343,7 @@ function CycleHeader({
       </div>
     </div>
   );
-}
+});
 
 function pillBtn(primary: boolean): React.CSSProperties {
   return {
@@ -299,15 +389,19 @@ function CycleStateDot({ state }: { state: Cycle["state"] }) {
    ============================================================ */
 
 function CycleStatStrip({ cycle }: { cycle: CycleDetail }) {
-  const pct = cycle.scope > 0 ? Math.round((cycle.completed / cycle.scope) * 100) : 0;
-  const elapsedPct = Math.round((cycle.dayIndex / cycle.days) * 100);
-  const onTrack = pct >= elapsedPct - 8;
-  const projected = Math.round(
-    cycle.completed * (cycle.days / Math.max(cycle.dayIndex, 1)),
-  );
-  const drift = cycle.scopeAdded - cycle.scopeRemoved;
+  const { pct, elapsedPct, onTrack, projected, drift } = useMemo(() => {
+    const pct = cycle.scope > 0 ? Math.round((cycle.completed / cycle.scope) * 100) : 0;
+    const elapsedPct = Math.round((cycle.dayIndex / cycle.days) * 100);
+    const onTrack = pct >= elapsedPct - 8;
+    const projected = Math.round(
+      cycle.completed * (cycle.days / Math.max(cycle.dayIndex, 1)),
+    );
+    const drift = cycle.scopeAdded - cycle.scopeRemoved;
+    return { pct, elapsedPct, onTrack, projected, drift };
+  }, [cycle.scope, cycle.completed, cycle.dayIndex, cycle.days, cycle.scopeAdded, cycle.scopeRemoved]);
 
-  const stats = [
+  type StatEntry = { label: string; value: string; sub: string; tone: "ok" | "warn" | "neutral" };
+  const stats = useMemo((): StatEntry[] => [
     {
       label: "Completed",
       value: `${cycle.completed} / ${cycle.scope}`,
@@ -346,7 +440,11 @@ function CycleStatStrip({ cycle }: { cycle: CycleDetail }) {
       sub: cycle.state === "done" ? "final" : "in progress",
       tone: "neutral",
     },
-  ] as const;
+  ], [
+    cycle.completed, cycle.scope, cycle.dayIndex, cycle.days,
+    cycle.scopeAdded, cycle.scopeRemoved, cycle.risks, cycle.velocity, cycle.state,
+    pct, elapsedPct, onTrack, projected, drift,
+  ]);
 
   return (
     <div
@@ -410,35 +508,47 @@ function CycleStatStrip({ cycle }: { cycle: CycleDetail }) {
    Burnup chart
    ============================================================ */
 
-function BurnupChart({ cycle }: { cycle: CycleDetail }) {
+export const BurnupChart = React.memo(function BurnupChart({ cycle }: { cycle: CycleDetail }) {
   const W = 920;
   const H = 220;
   const P = { l: 36, r: 16, t: 16, b: 28 };
-  const data = cycle.burnup;
-  const scope = cycle.scopeLine;
-  const max = Math.max(cycle.scope + 4, ...scope);
-  const days = cycle.days;
-  const xStep = (W - P.l - P.r) / Math.max(days, 1);
-  const y = (v: number) =>
-    P.t + (1 - v / Math.max(max, 1)) * (H - P.t - P.b);
 
-  const burnPath = data
-    .map((v, i) => `${i === 0 ? "M" : "L"} ${P.l + i * xStep} ${y(v)}`)
-    .join(" ");
-  const burnArea =
-    burnPath +
-    ` L ${P.l + (data.length - 1) * xStep} ${H - P.b} L ${P.l} ${H - P.b} Z`;
-  const scopePath = scope
-    .map((v, i) => `${i === 0 ? "M" : "L"} ${P.l + i * xStep} ${y(v)}`)
-    .join(" ");
-  const idealPath = `M ${P.l} ${y(0)} L ${P.l + days * xStep} ${y(cycle.scope)}`;
-  const cur = Math.min(cycle.dayIndex, data.length - 1);
-  const slope =
-    cur >= 1
-      ? (data[cur]! - data[Math.max(0, cur - 3)]!) / Math.min(3, cur)
-      : 0;
-  const projEnd = (data[cur] ?? 0) + slope * (days - cur);
-  const projPath = `M ${P.l + cur * xStep} ${y(data[cur] ?? 0)} L ${P.l + days * xStep} ${y(projEnd)}`;
+  const {
+    max, xStep, y, burnPath, burnArea, scopePath, idealPath, cur, projPath, xTicks,
+  } = useMemo(() => {
+    const data = cycle.burnup;
+    const scope = cycle.scopeLine;
+    const days = cycle.days;
+    const max = Math.max(cycle.scope + 4, ...scope);
+    const xStep = (W - P.l - P.r) / Math.max(days, 1);
+    const y = (v: number) =>
+      P.t + (1 - v / Math.max(max, 1)) * (H - P.t - P.b);
+
+    const burnPath = data
+      .map((v, i) => `${i === 0 ? "M" : "L"} ${P.l + i * xStep} ${y(v)}`)
+      .join(" ");
+    const burnArea =
+      burnPath +
+      ` L ${P.l + (data.length - 1) * xStep} ${H - P.b} L ${P.l} ${H - P.b} Z`;
+    const scopePath = scope
+      .map((v, i) => `${i === 0 ? "M" : "L"} ${P.l + i * xStep} ${y(v)}`)
+      .join(" ");
+    const idealPath = `M ${P.l} ${y(0)} L ${P.l + days * xStep} ${y(cycle.scope)}`;
+    const cur = Math.min(cycle.dayIndex, data.length - 1);
+    const slope =
+      cur >= 1
+        ? (data[cur]! - data[Math.max(0, cur - 3)]!) / Math.min(3, cur)
+        : 0;
+    const projEnd = (data[cur] ?? 0) + slope * (days - cur);
+    const projPath = `M ${P.l + cur * xStep} ${y(data[cur] ?? 0)} L ${P.l + days * xStep} ${y(projEnd)}`;
+
+    // Deduplicate x-axis ticks so short cycles (days ≤ 3) don't show repeated labels.
+    // e.g. days=1 → raw [0,0,1,1,1] → deduped [0,1]
+    const rawTicks = [0, Math.round(days * 0.25), Math.round(days * 0.5), Math.round(days * 0.75), days];
+    const xTicks = Array.from(new Set(rawTicks));
+
+    return { max, xStep, y, burnPath, burnArea, scopePath, idealPath, cur, projPath, xTicks };
+  }, [cycle.burnup, cycle.scopeLine, cycle.days, cycle.scope, cycle.dayIndex]);
 
   return (
     <Card
@@ -489,21 +599,19 @@ function BurnupChart({ cycle }: { cycle: CycleDetail }) {
             </text>
           </g>
         ))}
-        {[0, Math.round(days * 0.25), Math.round(days * 0.5), Math.round(days * 0.75), days].map(
-          (d) => (
-            <text
-              key={d}
-              x={P.l + d * xStep}
-              y={H - 10}
-              textAnchor="middle"
-              fontSize="10"
-              fill="var(--ink-4)"
-              fontFamily="JetBrains Mono"
-            >
-              D{d}
-            </text>
-          ),
-        )}
+        {xTicks.map((d) => (
+          <text
+            key={d}
+            x={P.l + d * xStep}
+            y={H - 10}
+            textAnchor="middle"
+            fontSize="10"
+            fill="var(--ink-4)"
+            fontFamily="JetBrains Mono"
+          >
+            D{d}
+          </text>
+        ))}
         <line
           x1={P.l + cur * xStep}
           x2={P.l + cur * xStep}
@@ -544,7 +652,7 @@ function BurnupChart({ cycle }: { cycle: CycleDetail }) {
         />
         <circle
           cx={P.l + cur * xStep}
-          cy={y(data[cur] ?? 0)}
+          cy={y(cycle.burnup[cur] ?? 0)}
           r="4"
           fill="var(--bg)"
           stroke="var(--accent)"
@@ -553,13 +661,13 @@ function BurnupChart({ cycle }: { cycle: CycleDetail }) {
       </svg>
     </Card>
   );
-}
+});
 
 /* ============================================================
    Right column
    ============================================================ */
 
-function RightColumn({ cycle }: { cycle: CycleDetail }) {
+const RightColumn = React.memo(function RightColumn({ cycle }: { cycle: CycleDetail }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <Card title="Scope timeline" sub="day-by-day changes">
@@ -586,7 +694,7 @@ function RightColumn({ cycle }: { cycle: CycleDetail }) {
       </Card>
     </div>
   );
-}
+});
 
 function ScopeTimeline({ events }: { events: CycleScopeEvent[] }) {
   return (
@@ -767,7 +875,7 @@ function Risks({ risks }: { risks: CycleRisk[] }) {
    Issues panel
    ============================================================ */
 
-function CycleIssuesPanel({ issues }: { issues: CycleIssue[] }) {
+const CycleIssuesPanel = React.memo(function CycleIssuesPanel({ issues }: { issues: CycleIssue[] }) {
   const navigate = useNavigate();
   const grouped = useMemo(() => groupByState(issues), [issues]);
 
@@ -903,7 +1011,7 @@ function CycleIssuesPanel({ issues }: { issues: CycleIssue[] }) {
       )}
     </Card>
   );
-}
+});
 
 function groupByState(issues: CycleIssue[]) {
   const order: IssueState[] = [
@@ -951,21 +1059,27 @@ function prioColor(p: string) {
    Velocity history
    ============================================================ */
 
-function VelocityHistory({ cycles }: { cycles: Cycle[] }) {
-  const data = cycles.filter((c) => c.velocity != null) as Array<
-    Cycle & { velocity: number }
-  >;
-  if (data.length === 0) return null;
-  const max = Math.max(...data.map((c) => c.velocity));
+const VelocityHistory = React.memo(function VelocityHistory({ cycles }: { cycles: Cycle[] }) {
   const W = 920;
   const H = 200;
   const P = { l: 36, r: 16, t: 12, b: 28 };
-  const slot = (W - P.l - P.r) / data.length;
-  const barW = slot * 0.5;
-  const y = (v: number) => P.t + (1 - v / Math.max(max, 1)) * (H - P.t - P.b);
-  const avg = Math.round(
-    data.reduce((s, c) => s + c.velocity, 0) / data.length,
-  );
+
+  const { data, max, avg, slot, barW, y } = useMemo(() => {
+    const data = cycles.filter((c) => c.velocity != null) as Array<
+      Cycle & { velocity: number }
+    >;
+    // Use reduce instead of spread+map to avoid intermediate array alloc + O(n) spread
+    const max = data.reduce((m, c) => c.velocity > m ? c.velocity : m, 0);
+    const slot = (W - P.l - P.r) / Math.max(data.length, 1);
+    const barW = slot * 0.5;
+    const y = (v: number) => P.t + (1 - v / Math.max(max, 1)) * (H - P.t - P.b);
+    const avg = Math.round(
+      data.reduce((s, c) => s + c.velocity, 0) / Math.max(data.length, 1),
+    );
+    return { data, max, avg, slot, barW, y };
+  }, [cycles]);
+
+  if (data.length === 0) return null;
 
   return (
     <Card
@@ -1047,7 +1161,7 @@ function VelocityHistory({ cycles }: { cycles: Cycle[] }) {
       </svg>
     </Card>
   );
-}
+});
 
 /* ============================================================
    Generic helpers

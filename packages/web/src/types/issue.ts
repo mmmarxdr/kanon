@@ -60,7 +60,11 @@ export interface IssueDependencyEdge {
 
 /**
  * Extended issue shape returned by GET /api/issues/:key
- * Includes nested assignee with email and project details.
+ * Includes nested assignee with email, project details, and the cycle relation.
+ *
+ * NOTE: cycleId is available on the base Issue type via Prisma's scalar
+ * inclusion. The `cycle` relation object is fetched via include and only
+ * present on IssueDetail — do NOT add it to the base Issue interface.
  */
 export interface IssueDetail extends Issue {
   assignee?: { id: string; username: string; email: string };
@@ -68,6 +72,8 @@ export interface IssueDetail extends Issue {
   children?: Issue[];
   blocks?: IssueDependencyEdge[];
   blockedBy?: IssueDependencyEdge[];
+  /** Cycle this issue is attached to. Null when unassigned. */
+  cycle?: { id: string; name: string } | null;
 }
 
 export type CommentSource = "human" | "mcp" | "engram_sync" | "system";

@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchApi } from "@/lib/api-client";
+import { cycleKeys } from "@/lib/query-keys";
 import type { Cycle, CycleDetail } from "@/types/cycle";
 
 export function useCyclesQuery(projectKey: string | undefined) {
   return useQuery({
-    queryKey: ["cycles", projectKey],
+    queryKey: cycleKeys.list(projectKey ?? ""),
     queryFn: () =>
       fetchApi<Cycle[]>(`/api/projects/${encodeURIComponent(projectKey!)}/cycles`),
     enabled: !!projectKey,
@@ -14,7 +15,7 @@ export function useCyclesQuery(projectKey: string | undefined) {
 
 export function useCycleQuery(cycleId: string | undefined) {
   return useQuery({
-    queryKey: ["cycle", cycleId],
+    queryKey: cycleKeys.detail(cycleId ?? ""),
     queryFn: () =>
       fetchApi<CycleDetail>(`/api/cycles/${encodeURIComponent(cycleId!)}`),
     enabled: !!cycleId,
