@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchApi } from "@/lib/api-client";
-import { issueKeys } from "@/lib/query-keys";
+import { issueKeys, cycleKeys } from "@/lib/query-keys";
 import { useToastStore } from "@/stores/toast-store";
 import type { GroupSummary } from "@/types/issue";
 import type { IssueState } from "@/stores/board-store";
@@ -78,6 +78,11 @@ export function useGroupTransitionMutation(projectKey: string) {
       void queryClient.invalidateQueries({
         queryKey: issueKeys.groups(projectKey),
       });
+      // F3: defensive duplicate of the SSE path (F1) for same-tab freshness
+      // when SSE is degraded. onSettled fires once per group mutation (not once
+      // per issue), so a single invalidation covers all issues transitioned.
+      // TanStack coalesces with F1 — no double network roundtrip.
+      void queryClient.invalidateQueries({ queryKey: cycleKeys.all });
     },
   });
 }

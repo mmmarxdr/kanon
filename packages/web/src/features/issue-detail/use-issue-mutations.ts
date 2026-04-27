@@ -14,6 +14,13 @@ import type { Issue } from "@/types/issue";
  * through `useAttachIssueMutation` / `useDetachIssueMutation` via the
  * cycle-scoped endpoints (`POST /api/cycles/:id/issues`) so that
  * `CycleScopeEvent` history is preserved for velocity tracking.
+ *
+ * TODO(estimate-edit): `estimate` is NOT yet on this payload — only
+ * title | description | type | priority | labels | assigneeId are present.
+ * F4 cycle invalidation (invalidate cycleKeys when estimate changes) is
+ * gated on estimate landing here. See the TODO comment in onSettled below.
+ * Do NOT add `estimate` until the estimate-edit feature ships both the UI
+ * and the backend PATCH /api/issues/:key support for the field.
  */
 type IssueUpdatePayload = Partial<
   Pick<
@@ -107,7 +114,7 @@ export function useUpdateIssueMutation(
         );
     },
 
-    onSettled: () => {
+    onSettled: (_data, _err, _payload, _context) => {
       // Always refetch to sync with server truth
       void queryClient.invalidateQueries({
         queryKey: issueKeys.detail(issueKey),
@@ -115,6 +122,36 @@ export function useUpdateIssueMutation(
       void queryClient.invalidateQueries({
         queryKey: issueKeys.list(projectKey),
       });
+
+      // TODO(estimate-edit): activate this block when `estimate` is added to
+      // IssueUpdatePayload and the estimate-edit UI ships. Until then, leaving
+      // this as a comment block so the logic is ready to uncomment atomically.
+      //
+      // F4: estimate is the ONLY field on this mutation that affects cycle math.
+      // State transitions are owned by useTransitionMutation (F2/F3 + F1 SSE).
+      // Cycle attach/detach go through useAttachIssueMutation / useDetachIssueMutation.
+      //
+      // if (_payload.estimate !== undefined) {
+      //   // Read cycleId from the onMutate snapshot — avoids race with
+      //   // optimistic update or server refetch that may have mutated the cache.
+      //   // IssueDetail.cycle?.id is the correct path (IssueDetail.cycleId
+      //   // does NOT exist as a top-level field on the TS type).
+      //   const cycleId = _context?.previousDetail?.cycle?.id;
+      //   if (cycleId) {
+      //     // Narrow invalidation: only the specific cycle whose scope changed.
+      //     void queryClient.invalidateQueries({
+      //       queryKey: cycleKeys.detail(cycleId),
+      //     });
+      //   } else {
+      //     // Snapshot empty (mutation fired pre-fetch) or issue not in any cycle.
+      //     // Fall back to broad invalidation to honor the freshness contract.
+      //     void queryClient.invalidateQueries({ queryKey: cycleKeys.all });
+      //   }
+      // }
+      //
+      // Also: import { cycleKeys } from "@/lib/query-keys" and update the
+      // onSettled signature to: (_data, _err, payload, context) — removing
+      // the leading underscores when activating.
     },
   });
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { issueKeys, projectKeys, workspaceKeys } from "@/lib/query-keys";
+import { issueKeys, projectKeys, workspaceKeys, cycleKeys } from "@/lib/query-keys";
 
 /**
  * Connects to the workspace-scoped SSE endpoint for domain events
@@ -30,6 +30,12 @@ export function useDomainEvents(workspaceId: string | undefined): void {
     // ── Issue events ──────────────────────────────────────────────────
     const handleIssueEvent = () => {
       void queryClient.invalidateQueries({ queryKey: issueKeys.all });
+      // F1: SSE is the canonical real-time refresh path for cycles. Any
+      // issue.* event may affect cycle math (state transitions, estimate
+      // updates, cycle attach/detach). cycleKeys.all is broad because SSE
+      // payloads do not carry cycleId today; TanStack only refetches
+      // observer-mounted queries so fan-out is bounded by mounted Cycles views.
+      void queryClient.invalidateQueries({ queryKey: cycleKeys.all });
     };
 
     es.addEventListener("issue.created", handleIssueEvent);

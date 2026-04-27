@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchApi } from "@/lib/api-client";
-import { issueKeys } from "@/lib/query-keys";
+import { issueKeys, cycleKeys } from "@/lib/query-keys";
 import { useToastStore } from "@/stores/toast-store";
 import type { Issue } from "@/types/issue";
 import type { IssueState } from "@/stores/board-store";
@@ -78,6 +78,10 @@ export function useTransitionMutation(projectKey: string) {
       void queryClient.invalidateQueries({
         queryKey: issueKeys.list(projectKey),
       });
+      // F2: defensive duplicate of the SSE path (F1) for same-tab freshness
+      // when SSE is degraded. TanStack coalesces invalidations within a tick
+      // so this does not cause a double network roundtrip when F1 also fires.
+      void queryClient.invalidateQueries({ queryKey: cycleKeys.all });
     },
   });
 }
