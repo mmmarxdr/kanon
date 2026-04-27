@@ -1,6 +1,7 @@
 import type { CycleScopeEvent, IssueState } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
+import { eventBus } from "../../services/event-bus/index.js";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -290,7 +291,13 @@ interface AttachIssuesInput {
 export async function attachIssues(cycleId: string, input: AttachIssuesInput) {
   const cycle = await prisma.cycle.findUnique({
     where: { id: cycleId },
-    select: { id: true, projectId: true, startDate: true, endDate: true },
+    select: {
+      id: true,
+      projectId: true,
+      startDate: true,
+      endDate: true,
+      project: { select: { workspaceId: true } },
+    },
   });
   if (!cycle) throw new AppError(404, "CYCLE_NOT_FOUND", "Cycle not found");
 
@@ -359,6 +366,23 @@ export async function attachIssues(cycleId: string, input: AttachIssuesInput) {
       });
     }
   });
+
+  // Emit issue.updated for each affected issue (fire-and-forget) so SSE
+  // listeners (useDomainEvents) invalidate cycleKeys.all on the frontend.
+  // Without this, cycle membership changes don't auto-refresh the Cycles view.
+  try {
+    const affected = [...(input.add ?? []), ...(input.remove ?? [])];
+    for (const key of affected) {
+      eventBus.emit({
+        type: "issue.updated",
+        workspaceId: cycle.project.workspaceId,
+        actorId: input.authorId,
+        payload: { issueKey: key, fields: ["cycleId"] },
+      });
+    }
+  } catch {
+    // Never let event emission break the mutation
+  }
 
   return getCycle(cycleId);
 }

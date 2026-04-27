@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import {
   createTestApp,
@@ -10,6 +10,7 @@ import {
   disconnectTestDb,
 } from "../../test/helpers.js";
 import { prisma } from "../../config/prisma.js";
+import { eventBus } from "../../services/event-bus/index.js";
 
 /**
  * Integration tests for cycle routes.
@@ -178,6 +179,47 @@ describe("Cycle Routes", () => {
       });
       expect(event).not.toBeNull();
       expect(event!.kind).toBe("add");
+    });
+
+    it("emits issue.updated event for each issue affected by attach/detach (so SSE handlers refresh cycle queries)", async () => {
+      const ws = await seedTestWorkspace();
+      const member = await seedTestMember(ws.id);
+      const project = await seedTestProject(ws.id);
+      const cycleA = await seedCycle(project.id);
+      const cycleB = await seedCycle(project.id, { state: "upcoming" });
+      const issue1 = await seedIssue(project.id, cycleA.id);
+      const issue2 = await seedIssue(project.id);
+
+      const emitSpy = vi.spyOn(eventBus, "emit");
+
+      // Detach issue1 from cycleA, attach issue2 to cycleA — affects 2 issues.
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/cycles/${cycleA.id}/issues`,
+        headers: { authorization: `Bearer ${member.token}` },
+        payload: { add: [issue2.key], remove: [issue1.key] },
+      });
+
+      expect(res.statusCode).toBe(200);
+
+      // One issue.updated emission per affected issue, scoped to the workspace.
+      const calls = emitSpy.mock.calls
+        .map((c) => c[0])
+        .filter((e) => e.type === "issue.updated");
+      expect(calls.length).toBe(2);
+      const keys = calls.map((c) => c.payload.issueKey).sort();
+      expect(keys).toEqual([issue1.key, issue2.key].sort());
+      for (const c of calls) {
+        expect(c.workspaceId).toBe(ws.id);
+      }
+
+      // Bonus: also verify cycle B is unaffected (only cycleA route was hit).
+      const cycleBIssues = await prisma.issue.count({
+        where: { cycleId: cycleB.id },
+      });
+      expect(cycleBIssues).toBe(0);
+
+      emitSpy.mockRestore();
     });
 
     it("creates CycleScopeEvent with kind=remove when detaching an issue", async () => {
