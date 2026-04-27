@@ -17,8 +17,8 @@ import type { ActiveAgentSession } from "./use-dashboard-query";
 export function InboxView() {
   const workspaceId = useActiveWorkspaceId();
   const { data, isLoading } = useDashboardQuery(workspaceId ?? null);
-  const apply = useApplyProposalMutation(workspaceId ?? null);
-  const dismiss = useDismissProposalMutation(workspaceId ?? null);
+  const apply = useApplyProposalMutation(workspaceId ?? null, "inbox");
+  const dismiss = useDismissProposalMutation(workspaceId ?? null, "inbox");
   const user = useAuthStore((s) => s.user);
   const openPalette = useCommandPaletteStore((s) => s.open);
   const navigate = useNavigate();

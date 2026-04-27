@@ -5,6 +5,7 @@ import {
   useApplyProposalMutation,
   useDismissProposalMutation,
 } from "@/features/inbox/use-dashboard-query";
+import { proposalKeys } from "@/lib/query-keys";
 import type { McpProposal } from "@/types/proposal";
 import { Icon } from "@/components/ui/icons";
 
@@ -17,7 +18,7 @@ export function FloatingMcpCard() {
   const workspaceId = useActiveWorkspaceId();
 
   const { data } = useQuery({
-    queryKey: ["proposals", workspaceId, "pending"],
+    queryKey: proposalKeys.pending(workspaceId ?? null),
     queryFn: () =>
       fetchApi<McpProposal[]>(
         `/api/workspaces/${workspaceId}/proposals?status=pending`,
@@ -26,8 +27,8 @@ export function FloatingMcpCard() {
     staleTime: 30_000,
   });
 
-  const apply = useApplyProposalMutation(workspaceId ?? null);
-  const dismiss = useDismissProposalMutation(workspaceId ?? null);
+  const apply = useApplyProposalMutation(workspaceId ?? null, "roadmap");
+  const dismiss = useDismissProposalMutation(workspaceId ?? null, "roadmap");
 
   // Prefer dependency-related kinds, fall back to anything pending.
   const proposal =

@@ -80,3 +80,27 @@ export const roadmapKeys = {
   dependencies: (itemId: string) =>
     [...roadmapKeys.all, "dependencies", itemId] as const,
 };
+
+export const cycleKeys = {
+  all: ["cycles"] as const,
+  lists: () => [...cycleKeys.all, "list"] as const,
+  list: (projectKey: string) => [...cycleKeys.lists(), projectKey] as const,
+  details: () => [...cycleKeys.all, "detail"] as const,
+  detail: (cycleId: string) => [...cycleKeys.details(), cycleId] as const,
+};
+
+export const proposalKeys = {
+  all: ["proposals"] as const,
+  lists: () => [...proposalKeys.all, "list"] as const,
+  list: (workspaceId: string | null) =>
+    [...proposalKeys.lists(), workspaceId] as const,
+  pending: (workspaceId: string | null) =>
+    [...proposalKeys.all, "pending", workspaceId] as const,
+};
+
+export const dashboardKeys = {
+  all: ["dashboard"] as const,
+  details: () => [...dashboardKeys.all, "detail"] as const,
+  detail: (workspaceId: string | null) =>
+    [...dashboardKeys.details(), workspaceId] as const,
+};

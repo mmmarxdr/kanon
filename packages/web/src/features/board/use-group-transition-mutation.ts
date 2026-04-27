@@ -72,12 +72,11 @@ export function useGroupTransitionMutation(projectKey: string) {
     },
 
     onSettled: () => {
-      // Invalidate both groups and issues lists to get true server state
+      // Only invalidate the groups query — the list view is not mounted when
+      // the board is visible, and the server-truth for group latestState is
+      // served by the groups key alone.
       void queryClient.invalidateQueries({
         queryKey: issueKeys.groups(projectKey),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: issueKeys.list(projectKey),
       });
     },
   });
