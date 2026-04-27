@@ -212,3 +212,55 @@ export function requireIssueRole(issueKeyParam: string, ...roles: MemberRole[]):
 export function requireIssueMember(issueKeyParam: string): preHandlerHookHandler {
   return requireIssueRole(issueKeyParam);
 }
+
+// ---------------------------------------------------------------------------
+// Cycle-scoped factories (routes like /api/cycles/:id/...)
+// ---------------------------------------------------------------------------
+
+/**
+ * Like requireRole, but resolves the workspace from a cycle ID URL param
+ * by looking up the cycle's project workspace.
+ *
+ * Sets `request.member` with the resolved MemberContext.
+ *
+ * @param cycleIdParam - The name of the URL param holding the cycle ID (e.g. 'id')
+ * @param roles - Allowed MemberRole values. If empty, any membership is sufficient.
+ */
+export function requireCycleRole(cycleIdParam: string, ...roles: MemberRole[]): preHandlerHookHandler {
+  return async (request, _reply) => {
+    const user = request.user;
+
+    if (!user) {
+      throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+    }
+
+    const cycleId = (request.params as Record<string, string>)[cycleIdParam];
+    if (!cycleId) {
+      throw new AppError(400, "CYCLE_ID_REQUIRED", "Cycle ID is required");
+    }
+
+    const cycle = await prisma.cycle.findUnique({
+      where: { id: cycleId },
+      select: { project: { select: { workspaceId: true } } },
+    });
+
+    if (!cycle) {
+      throw new AppError(404, "CYCLE_NOT_FOUND", `Cycle "${cycleId}" not found`);
+    }
+
+    const minimumRole = roles.length > 0
+      ? roles.reduce((least, r) =>
+          ROLE_HIERARCHY.indexOf(r) < ROLE_HIERARCHY.indexOf(least) ? r : least,
+        )
+      : undefined;
+
+    request.member = await resolveAndCheckMember(user.userId, cycle.project.workspaceId, minimumRole);
+  };
+}
+
+/**
+ * Shorthand: require cycle workspace membership with no minimum role.
+ */
+export function requireCycleMember(cycleIdParam: string): preHandlerHookHandler {
+  return requireCycleRole(cycleIdParam);
+}

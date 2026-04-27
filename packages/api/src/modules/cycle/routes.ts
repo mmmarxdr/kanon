@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import * as cycleService from "./service.js";
-import { requireProjectMember, requireProjectRole } from "../../middleware/require-role.js";
+import { requireProjectMember, requireProjectRole, requireCycleMember, requireCycleRole } from "../../middleware/require-role.js";
 
 const ProjectKeyParam = z.object({ key: z.string() });
 const CycleIdParam = z.object({ id: z.string().uuid() });
@@ -53,25 +53,34 @@ export default async function cycleRoutes(fastify: FastifyInstance): Promise<voi
 
   app.get(
     "/cycles/:id",
-    { schema: { params: CycleIdParam } },
+    {
+      preHandler: [requireCycleMember("id")],
+      schema: { params: CycleIdParam },
+    },
     async (request, _reply) => cycleService.getCycle(request.params.id),
   );
 
   app.post(
     "/cycles/:id/close",
-    { schema: { params: CycleIdParam } },
+    {
+      preHandler: [requireCycleRole("id", "member")],
+      schema: { params: CycleIdParam },
+    },
     async (request, _reply) => cycleService.closeCycle(request.params.id),
   );
 
   app.post(
     "/cycles/:id/issues",
-    { schema: { params: CycleIdParam, body: AttachIssuesBody } },
+    {
+      preHandler: [requireCycleRole("id", "member")],
+      schema: { params: CycleIdParam, body: AttachIssuesBody },
+    },
     async (request, _reply) =>
       cycleService.attachIssues(request.params.id, {
         add: request.body.add,
         remove: request.body.remove,
         reason: request.body.reason,
-        authorId: request.member?.id,
+        authorId: request.member!.id,
       }),
   );
 }

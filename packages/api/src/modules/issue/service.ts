@@ -275,6 +275,9 @@ export async function getIssue(key: string) {
           source: { select: { id: true, key: true, title: true, state: true } },
         },
       },
+      cycle: {
+        select: { id: true, name: true },
+      },
     },
   });
   if (!issue) {

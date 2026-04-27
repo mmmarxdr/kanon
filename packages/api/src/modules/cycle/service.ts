@@ -294,6 +294,35 @@ export async function attachIssues(cycleId: string, input: AttachIssuesInput) {
   });
   if (!cycle) throw new AppError(404, "CYCLE_NOT_FOUND", "Cycle not found");
 
+  const allKeys = [...(input.add ?? []), ...(input.remove ?? [])];
+
+  if (allKeys.length > 0) {
+    const foundIssues = await prisma.issue.findMany({
+      where: { key: { in: allKeys } },
+      select: { key: true, projectId: true },
+    });
+
+    const foundKeySet = new Set(foundIssues.map((i) => i.key));
+
+    // Keys that do not exist in the database at all
+    const missingKeys = allKeys.filter((k) => !foundKeySet.has(k));
+
+    // Keys that exist but belong to a different project
+    const crossProjectKeys = foundIssues
+      .filter((i) => i.projectId !== cycle.projectId)
+      .map((i) => i.key);
+
+    const offendingKeys = [...new Set([...missingKeys, ...crossProjectKeys])];
+
+    if (offendingKeys.length > 0) {
+      throw new AppError(
+        400,
+        "CROSS_PROJECT_ISSUE",
+        `The following issue keys do not belong to this cycle's project: ${offendingKeys.join(", ")}`,
+      );
+    }
+  }
+
   const day = dayIndex(cycle.startDate, cycle.endDate);
 
   await prisma.$transaction(async (tx) => {

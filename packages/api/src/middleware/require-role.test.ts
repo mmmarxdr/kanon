@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { requireRole } from "./require-role.js";
+import { requireRole, requireCycleRole, requireCycleMember } from "./require-role.js";
 import type { FastifyRequest, FastifyReply } from "fastify";
 
 /**
@@ -18,11 +18,15 @@ vi.mock("../config/prisma.js", () => ({
     member: {
       findUnique: vi.fn(),
     },
+    cycle: {
+      findUnique: vi.fn(),
+    },
   },
 }));
 
 import { prisma } from "../config/prisma.js";
 const mockFindUnique = vi.mocked(prisma.member.findUnique);
+const mockCycleFindUnique = vi.mocked(prisma.cycle.findUnique);
 
 function makeRequest(user: any, params?: Record<string, string>): FastifyRequest {
   return {
@@ -36,6 +40,7 @@ const dummyReply = {} as FastifyReply;
 describe("requireRole", () => {
   beforeEach(() => {
     mockFindUnique.mockReset();
+    mockCycleFindUnique.mockReset();
   });
 
   it("passes when member has an allowed role", async () => {
@@ -300,5 +305,142 @@ describe("requireRole", () => {
         expect(err.message).toContain("admin");
       }
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// requireCycleRole / requireCycleMember
+// ---------------------------------------------------------------------------
+
+describe("requireCycleRole", () => {
+  const CYCLE_ID = "cycle-uuid-1234";
+  const WORKSPACE_ID = "ws-uuid-5678";
+
+  beforeEach(() => {
+    mockFindUnique.mockReset();
+    mockCycleFindUnique.mockReset();
+  });
+
+  it("passes and sets request.member when cycle exists and user is a member with sufficient role", async () => {
+    mockCycleFindUnique.mockResolvedValue({
+      project: { workspaceId: WORKSPACE_ID },
+    } as any);
+    mockFindUnique.mockResolvedValue({ id: "m1", role: "member" } as any);
+
+    const handler = requireCycleRole("id", "member");
+    const request = makeRequest(
+      { userId: "u1", email: "u@test.com" },
+      { id: CYCLE_ID },
+    );
+    await expect(handler(request, dummyReply, vi.fn())).resolves.toBeUndefined();
+    expect(mockCycleFindUnique).toHaveBeenCalledWith({
+      where: { id: CYCLE_ID },
+      select: { project: { select: { workspaceId: true } } },
+    });
+    expect(request.member).toEqual({
+      id: "m1",
+      role: "member",
+      workspaceId: WORKSPACE_ID,
+      userId: "u1",
+    });
+  });
+
+  it("throws 401 when user is not authenticated", async () => {
+    const handler = requireCycleRole("id", "member");
+    const request = makeRequest(null, { id: CYCLE_ID });
+    try {
+      await handler(request, dummyReply, vi.fn());
+      expect.fail("Should have thrown");
+    } catch (err: any) {
+      expect(err.statusCode).toBe(401);
+      expect(err.code).toBe("UNAUTHORIZED");
+    }
+    // prisma should NOT be called when unauthenticated
+    expect(mockCycleFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("throws 404 when cycle does not exist", async () => {
+    mockCycleFindUnique.mockResolvedValue(null);
+
+    const handler = requireCycleRole("id", "member");
+    const request = makeRequest(
+      { userId: "u1", email: "u@test.com" },
+      { id: CYCLE_ID },
+    );
+    try {
+      await handler(request, dummyReply, vi.fn());
+      expect.fail("Should have thrown");
+    } catch (err: any) {
+      expect(err.statusCode).toBe(404);
+      expect(err.code).toBe("CYCLE_NOT_FOUND");
+    }
+    // member lookup should NOT be called when cycle is missing
+    expect(mockFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("throws 403 when user is not a member of the cycle's workspace", async () => {
+    mockCycleFindUnique.mockResolvedValue({
+      project: { workspaceId: WORKSPACE_ID },
+    } as any);
+    mockFindUnique.mockResolvedValue(null); // not a member
+
+    const handler = requireCycleRole("id", "member");
+    const request = makeRequest(
+      { userId: "u1", email: "u@test.com" },
+      { id: CYCLE_ID },
+    );
+    try {
+      await handler(request, dummyReply, vi.fn());
+      expect.fail("Should have thrown");
+    } catch (err: any) {
+      expect(err.statusCode).toBe(403);
+      expect(err.code).toBe("FORBIDDEN");
+    }
+  });
+
+  it("throws 403 when user role is below the minimum required", async () => {
+    mockCycleFindUnique.mockResolvedValue({
+      project: { workspaceId: WORKSPACE_ID },
+    } as any);
+    mockFindUnique.mockResolvedValue({ id: "m1", role: "viewer" } as any);
+
+    const handler = requireCycleRole("id", "member");
+    const request = makeRequest(
+      { userId: "u1", email: "u@test.com" },
+      { id: CYCLE_ID },
+    );
+    try {
+      await handler(request, dummyReply, vi.fn());
+      expect.fail("Should have thrown");
+    } catch (err: any) {
+      expect(err.statusCode).toBe(403);
+      expect(err.code).toBe("FORBIDDEN");
+      expect(err.message).toContain("member");
+    }
+  });
+});
+
+describe("requireCycleMember", () => {
+  const CYCLE_ID = "cycle-uuid-9999";
+  const WORKSPACE_ID = "ws-uuid-aaaa";
+
+  beforeEach(() => {
+    mockFindUnique.mockReset();
+    mockCycleFindUnique.mockReset();
+  });
+
+  it("delegates to requireCycleRole with no minimum role (any membership passes)", async () => {
+    mockCycleFindUnique.mockResolvedValue({
+      project: { workspaceId: WORKSPACE_ID },
+    } as any);
+    mockFindUnique.mockResolvedValue({ id: "m2", role: "viewer" } as any);
+
+    const handler = requireCycleMember("id");
+    const request = makeRequest(
+      { userId: "u2", email: "u2@test.com" },
+      { id: CYCLE_ID },
+    );
+    await expect(handler(request, dummyReply, vi.fn())).resolves.toBeUndefined();
+    expect(request.member).toMatchObject({ id: "m2", role: "viewer" });
   });
 });
