@@ -8,6 +8,8 @@ import type {
   KanonProject,
   KanonWorkspace,
   GroupSummary,
+  KanonCycle,
+  KanonCycleDetail,
 } from "./kanon-client.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -19,12 +21,13 @@ export type EntityType =
   | "project" | "project-write"
   | "workspace"
   | "group"
-  | "comment-write";
+  | "comment-write"
+  | "cycle" | "cycle-detail";
 
 // ─── Field Allowlists ───────────────────────────────────────────────────────
 
 export const ISSUE_LIST_FIELDS = [
-  "key", "title", "state", "type", "priority", "labels", "groupKey", "dueDate", "activeWorkers",
+  "key", "title", "state", "type", "priority", "labels", "groupKey", "dueDate", "activeWorkers", "cycle",
 ] as const;
 
 export const ISSUE_DETAIL_FIELDS = [
@@ -50,7 +53,7 @@ export const GROUP_FIELDS = [
 // ─── Write-Slim Field Allowlists ───────────────────────────────────────────
 
 export const ISSUE_WRITE_FIELDS = [
-  "key", "title", "state", "type", "priority",
+  "key", "title", "state", "type", "priority", "cycle",
 ] as const;
 
 export const ROADMAP_WRITE_FIELDS = [
@@ -185,6 +188,68 @@ export function slimGroup(group: GroupSummary): Record<string, unknown> {
   return slimPick(group as unknown as Record<string, unknown>, GROUP_FIELDS) as Record<string, unknown>;
 }
 
+// ─── Cycle Transforms ──────────────────────────────────────────────────────
+
+export const CYCLE_LIST_FIELDS = [
+  "id", "name", "state", "startDate", "endDate", "velocity",
+] as const;
+
+/**
+ * Slim transform for cycles in list context.
+ * Adds derived `isActive` boolean to make state clear without parsing dates.
+ */
+export function slimCycle(cycle: KanonCycle): Record<string, unknown> {
+  const base = slimPick(cycle as unknown as Record<string, unknown>, CYCLE_LIST_FIELDS) as Record<string, unknown>;
+  base["isActive"] = cycle.state === "active";
+  return base;
+}
+
+/**
+ * Slim transform for cycle detail. Includes burnup arrays, scope, risks.
+ * Issues are slimmed to {key, title, state}. Scope events kept compact.
+ */
+export function slimCycleDetail(cycle: KanonCycleDetail): Record<string, unknown> {
+  const base = slimCycle(cycle) as Record<string, unknown>;
+  base["goal"] = cycle.goal ?? null;
+  base["dayIndex"] = cycle.dayIndex;
+  base["days"] = cycle.days;
+  base["scope"] = cycle.scope;
+  base["completed"] = cycle.completed;
+  base["scopeAdded"] = cycle.scopeAdded;
+  base["scopeRemoved"] = cycle.scopeRemoved;
+  base["burnup"] = cycle.burnup;
+  base["scopeLine"] = cycle.scopeLine;
+  base["risks"] = cycle.risks ?? [];
+  base["issues"] = (cycle.issues ?? []).map((i) => ({
+    key: i.key,
+    title: i.title,
+    state: i.state,
+  }));
+  base["scopeEvents"] = (cycle.scopeEvents ?? []).map((e) => ({
+    type: e.type,
+    issueId: e.issueId,
+    reason: e.reason,
+    createdAt: e.createdAt,
+  }));
+  return base;
+}
+
+/**
+ * Format a cycle (list context). Wraps slim/full/compact formatting.
+ */
+export function formatCycle(cycle: KanonCycle, format: Format = "slim"): unknown {
+  if (format === "full") return cycle;
+  return slimCycle(cycle);
+}
+
+/**
+ * Format a cycle detail (single-entity full inspection).
+ */
+export function formatCycleDetail(cycle: KanonCycleDetail, format: Format = "slim"): unknown {
+  if (format === "full") return cycle;
+  return slimCycleDetail(cycle);
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────
 
 /**
@@ -212,6 +277,8 @@ const SLIM_TRANSFORMS: Record<EntityType, (data: unknown) => unknown> = {
   "workspace": (data) => slimWorkspace(data as KanonWorkspace),
   "group": (data) => slimGroup(data as GroupSummary),
   "comment-write": (data) => slimPick(data as Record<string, unknown>, COMMENT_WRITE_FIELDS) as Record<string, unknown>,
+  "cycle": (data) => slimCycle(data as KanonCycle),
+  "cycle-detail": (data) => slimCycleDetail(data as KanonCycleDetail),
 };
 
 /**
@@ -225,6 +292,113 @@ export function formatEntity(
   if (format === "full") return data;
   const transform = SLIM_TRANSFORMS[entityType];
   return transform(data);
+}
+
+// ─── Ack Tier (minimal write-tool acknowledgement) ─────────────────────────
+
+/**
+ * Identity-only acknowledgement tier for write tools. Each kind picks the
+ * minimal identity surface so callers can reference the entity in a follow-up
+ * call without paying for the full payload. Pass `format: "full"` on the tool
+ * to opt out and receive the legacy entity shape.
+ */
+export type AckKind =
+  | "issue"
+  | "cycle"
+  | "cycle-attach"
+  | "cycle-close"
+  | "roadmap-item"
+  | "work-session"
+  | "work-session-stop"
+  | "project"
+  | "issue-dependency"
+  | "batch-transition"
+  | "comment";
+
+/**
+ * Format an ack payload for a write tool. The returned object always has
+ * `ok: true` as the first key. For composite payloads (`cycle-attach`,
+ * `cycle-close`) the supplied fields pass through verbatim — the caller is
+ * responsible for assembling them. For single-entity kinds we read identity
+ * fields off the entity by name.
+ */
+export function formatAck(
+  payload: unknown,
+  kind: AckKind,
+): Record<string, unknown> {
+  const src = (payload ?? {}) as Record<string, unknown>;
+  switch (kind) {
+    case "issue":
+      return { ok: true, id: src["id"], key: src["key"] };
+    case "cycle":
+      return {
+        ok: true,
+        id: src["id"],
+        name: src["name"],
+        state: src["state"],
+      };
+    case "roadmap-item":
+      return {
+        ok: true,
+        id: src["id"],
+        title: src["title"],
+        horizon: src["horizon"],
+      };
+    case "work-session":
+      return {
+        ok: true,
+        id: src["id"],
+        issueId: src["issueId"],
+        startedAt: src["startedAt"],
+      };
+    case "project":
+      return {
+        ok: true,
+        id: src["id"],
+        key: src["key"],
+        name: src["name"],
+      };
+    case "cycle-attach":
+      return {
+        ok: true,
+        cycleId: src["cycleId"],
+        added: src["added"],
+        removed: src["removed"],
+        scope: src["scope"],
+        completed: src["completed"],
+      };
+    case "cycle-close":
+      return {
+        ok: true,
+        cycleId: src["cycleId"],
+        disposition: src["disposition"],
+        movedIssueKeys: src["movedIssueKeys"],
+      };
+    case "issue-dependency":
+      return {
+        ok: true,
+        id: src["id"],
+        projectId: src["projectId"],
+      };
+    case "batch-transition":
+      return {
+        ok: true,
+        count: src["count"],
+        keys: src["keys"],
+      };
+    case "comment":
+      return {
+        ok: true,
+        id: src["id"],
+        issueKey: src["issueKey"],
+      };
+    case "work-session-stop":
+      return {
+        ok: true,
+        deleted: src["deleted"],
+        issueKey: src["issueKey"],
+      };
+  }
 }
 
 // ─── Compact Table Rendering ───────────────────────────────────────────────

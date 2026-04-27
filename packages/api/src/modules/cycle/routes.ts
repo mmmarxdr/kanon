@@ -13,6 +13,27 @@ const CreateCycleBody = z.object({
   startDate: z.string().datetime(),
   endDate: z.string().datetime(),
   state: z.enum(["upcoming", "active", "done"]).optional(),
+  /**
+   * Optional issue keys to attach atomically with cycle creation. Empty
+   * array (or omitted) = no attach work, no transaction overhead.
+   */
+  attachIssueKeys: z.array(z.string()).max(100).optional(),
+});
+
+const GetCycleQuery = z.object({
+  /** When `"true"`, returns the full scopeEvents array (default: last 20). */
+  includeAllScopeEvents: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((v) => v === "true"),
+});
+
+const CloseCycleQuery = z.object({
+  /** When `"true"`, returns the full updated cycle (legacy shape). */
+  verbose: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((v) => v === "true"),
 });
 
 const AttachIssuesBody = z.object({
@@ -40,13 +61,18 @@ export default async function cycleRoutes(fastify: FastifyInstance): Promise<voi
       schema: { params: ProjectKeyParam, body: CreateCycleBody },
     },
     async (request, reply) => {
-      const created = await cycleService.createCycle(request.params.key, {
-        name: request.body.name,
-        goal: request.body.goal,
-        startDate: new Date(request.body.startDate),
-        endDate: new Date(request.body.endDate),
-        state: request.body.state,
-      });
+      const created = await cycleService.createCycle(
+        request.params.key,
+        {
+          name: request.body.name,
+          goal: request.body.goal,
+          startDate: new Date(request.body.startDate),
+          endDate: new Date(request.body.endDate),
+          state: request.body.state,
+          attachIssueKeys: request.body.attachIssueKeys,
+        },
+        request.member!.id,
+      );
       return reply.status(201).send(created);
     },
   );
@@ -55,18 +81,24 @@ export default async function cycleRoutes(fastify: FastifyInstance): Promise<voi
     "/cycles/:id",
     {
       preHandler: [requireCycleMember("id")],
-      schema: { params: CycleIdParam },
+      schema: { params: CycleIdParam, querystring: GetCycleQuery },
     },
-    async (request, _reply) => cycleService.getCycle(request.params.id),
+    async (request, _reply) =>
+      cycleService.getCycle(request.params.id, {
+        includeAllScopeEvents: request.query.includeAllScopeEvents,
+      }),
   );
 
   app.post(
     "/cycles/:id/close",
     {
       preHandler: [requireCycleRole("id", "member")],
-      schema: { params: CycleIdParam },
+      schema: { params: CycleIdParam, querystring: CloseCycleQuery },
     },
-    async (request, _reply) => cycleService.closeCycle(request.params.id),
+    async (request, _reply) =>
+      cycleService.closeCycle(request.params.id, {
+        verbose: request.query.verbose,
+      }),
   );
 
   app.post(

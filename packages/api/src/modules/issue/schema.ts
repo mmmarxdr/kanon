@@ -84,6 +84,12 @@ export const IssueFilterQuery = z.object({
   label: z.string().optional(),
   parent_only: z.coerce.boolean().optional(),
   group_key: z.string().optional(),
+  /**
+   * CSV of issue keys to filter by (e.g. "ENG-1,ENG-2").
+   * Server splits, trims, drops empties, caps at 100 → 400 KEY_LIMIT_EXCEEDED.
+   * Cross-project keys silently omitted (only matched keys returned).
+   */
+  keys: z.string().optional(),
 });
 export type IssueFilterQuery = z.infer<typeof IssueFilterQuery>;
 
@@ -102,6 +108,17 @@ export const BatchTransitionBody = z.object({
   to_state: z.enum(ISSUE_STATES),
 });
 export type BatchTransitionBody = z.infer<typeof BatchTransitionBody>;
+
+/**
+ * Batch transition by issue keys (project-scoped).
+ * All-or-nothing: pre-validation rejects on first cross-project / invalid
+ * state-machine target before any DB write.
+ */
+export const BatchTransitionByKeysBody = z.object({
+  to_state: z.enum(ISSUE_STATES),
+  keys: z.array(z.string()).min(1, "At least one key is required").max(100, "Maximum 100 keys per request"),
+});
+export type BatchTransitionByKeysBody = z.infer<typeof BatchTransitionByKeysBody>;
 
 /**
  * Group summary response shape (for documentation; actual response is inferred from service).

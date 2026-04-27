@@ -11,6 +11,7 @@ import type {
   CreateIssueBody,
   UpdateIssueBody,
   IssueFilterQuery,
+  BatchTransitionByKeysBody,
 } from "./schema.js";
 import { ORDERED_STATES } from "../../shared/constants.js";
 import { resolveTemplate } from "../../shared/issue-templates.js";
@@ -19,6 +20,11 @@ import {
   getActiveWorkers,
   getActiveWorkersForIssues,
 } from "../work-session/service.js";
+import {
+  recordCycleScopeEvent,
+  validateCycleBelongsToProject,
+  dayIndex,
+} from "../cycle/service.js";
 
 /**
  * Generate the next issue key for a project using MAX+1 in a transaction.
@@ -82,6 +88,24 @@ export async function createIssue(
     resolvedDescription = body.description ?? tmpl.descriptionTemplate;
   }
 
+  // Cross-project guard for cycleId — runs BEFORE nextIssueKey so a rejection
+  // does not burn a sequence number. Also returns the loaded cycle so we can
+  // compute `day` once for the scope event below without a second findUnique.
+  let validatedCycle:
+    | {
+        id: string;
+        projectId: string;
+        startDate: Date;
+        endDate: Date;
+      }
+    | null = null;
+  if (body.cycleId !== undefined && body.cycleId !== null) {
+    validatedCycle = await validateCycleBelongsToProject(
+      body.cycleId,
+      project.id,
+    );
+  }
+
   const { key, sequenceNum } = await nextIssueKey(project.id, project.key);
 
   const issue = await prisma.issue.create({
@@ -110,6 +134,22 @@ export async function createIssue(
     action: "created",
     details: { title: issue.title, type: issue.type, priority: issue.priority },
   });
+
+  // Record CycleScopeEvent if the new issue was placed in a cycle. Best-effort —
+  // a failure here must not orphan the already-created issue.
+  if (validatedCycle) {
+    try {
+      await recordCycleScopeEvent({
+        cycleId: validatedCycle.id,
+        kind: "add",
+        issueKey: issue.key,
+        authorId: memberId,
+        day: dayIndex(validatedCycle.startDate, validatedCycle.endDate),
+      });
+    } catch {
+      // Scope event is best-effort; never block issue creation
+    }
+  }
 
   // Emit domain event (fire-and-forget)
   try {
@@ -157,6 +197,27 @@ export async function listIssues(
   if (filters.label) where.labels = { has: filters.label };
   if (filters.parent_only) where.parentId = null;
   if (filters.group_key) where.groupKey = filters.group_key;
+
+  // CSV keys filter — split, trim, drop empties; cap at 100. Empty after
+  // trim (or absent) → no-op. The projectId guard above already prevents
+  // cross-project leakage, so non-existent or foreign keys are silently
+  // omitted from results (Prisma returns the intersection only).
+  if (filters.keys !== undefined) {
+    const parsed = filters.keys
+      .split(",")
+      .map((k) => k.trim())
+      .filter((k) => k.length > 0);
+    if (parsed.length > 100) {
+      throw new AppError(
+        400,
+        "KEY_LIMIT_EXCEEDED",
+        `Maximum 100 keys per request (received ${parsed.length})`,
+      );
+    }
+    if (parsed.length > 0) {
+      where.key = { in: parsed };
+    }
+  }
 
   const issues = await prisma.issue.findMany({
     where,
@@ -336,11 +397,33 @@ export async function updateIssue(
       },
     });
   }
+  // Track cycleId change so we can emit scope events AFTER update.
+  const prevCycleId: string | null = issue.cycleId;
+  let cycleChanged = false;
+  let validatedNewCycle:
+    | {
+        id: string;
+        projectId: string;
+        startDate: Date;
+        endDate: Date;
+      }
+    | null = null;
   if (body.cycleId !== undefined) {
     if (body.cycleId === null) {
       data.cycle = { disconnect: true };
+      cycleChanged = prevCycleId !== null;
     } else {
+      // Cross-project guard runs BEFORE prisma.issue.update, so a reject
+      // leaves the issue untouched. Only validate when value actually
+      // differs (no-op writes don't need a DB roundtrip).
+      if (body.cycleId !== prevCycleId) {
+        validatedNewCycle = await validateCycleBelongsToProject(
+          body.cycleId,
+          issue.projectId,
+        );
+      }
       data.cycle = { connect: { id: body.cycleId } };
+      cycleChanged = body.cycleId !== prevCycleId;
     }
   }
   if (body.parentId !== undefined) {
@@ -362,6 +445,35 @@ export async function updateIssue(
     where: { key },
     data,
   });
+
+  // Record CycleScopeEvent rows for cycle membership changes. Best-effort —
+  // failures must not break the update contract.
+  if (cycleChanged) {
+    try {
+      if (prevCycleId !== null) {
+        await recordCycleScopeEvent({
+          cycleId: prevCycleId,
+          kind: "remove",
+          issueKey: key,
+          authorId: memberId,
+        });
+      }
+      if (validatedNewCycle !== null) {
+        await recordCycleScopeEvent({
+          cycleId: validatedNewCycle.id,
+          kind: "add",
+          issueKey: key,
+          authorId: memberId,
+          day: dayIndex(
+            validatedNewCycle.startDate,
+            validatedNewCycle.endDate,
+          ),
+        });
+      }
+    } catch {
+      // Scope event is best-effort
+    }
+  }
 
   // Log field edit activity
   await createActivityLog({
@@ -584,6 +696,160 @@ export async function transitionGroup(
   }
 
   return { count: result.count, groupKey, state: targetState };
+}
+
+/**
+ * Batch transition issues identified by keys (project-scoped, all-or-nothing).
+ *
+ * Pre-validation (BEFORE opening tx, no partial DB writes possible):
+ *   1. Project exists.
+ *   2. Every input key resolves to an issue.
+ *   3. Every resolved issue belongs to the project (cross-project ⇒ reject).
+ *   4. Every per-issue state transition is allowed by the state-machine.
+ *
+ * On any pre-validation failure, no Prisma write occurs. Mirrors the
+ * `transitionGroup` pre-validate-then-tx pattern for consistency.
+ */
+export async function batchTransitionByKeys(
+  projectKey: string,
+  body: BatchTransitionByKeysBody,
+  memberId: string,
+) {
+  const project = await prisma.project.findFirst({
+    where: { key: projectKey },
+  });
+  if (!project) {
+    throw new AppError(
+      404,
+      "PROJECT_NOT_FOUND",
+      `Project "${projectKey}" not found`,
+    );
+  }
+
+  const targetState = body.to_state as IssueState;
+  if (!ORDERED_STATES.includes(targetState)) {
+    throw new AppError(400, "INVALID_STATE", `Invalid state: "${body.to_state}"`);
+  }
+
+  // Single SELECT covering existence + cross-project + state-machine input.
+  const issues = await prisma.issue.findMany({
+    where: { key: { in: body.keys } },
+    select: {
+      id: true,
+      key: true,
+      state: true,
+      projectId: true,
+      parentId: true,
+      roadmapItemId: true,
+    },
+  });
+
+  // Existence + cross-project guard (mirror cycle/service.attachIssues semantics).
+  const foundKeySet = new Set(issues.map((i) => i.key));
+  const missingKeys = body.keys.filter((k) => !foundKeySet.has(k));
+  const crossProjectKeys = issues
+    .filter((i) => i.projectId !== project.id)
+    .map((i) => i.key);
+  const offendingKeys = [...new Set([...missingKeys, ...crossProjectKeys])];
+  if (offendingKeys.length > 0) {
+    throw new AppError(
+      400,
+      "CROSS_PROJECT_ISSUE",
+      `The following issue keys do not belong to project "${projectKey}": ${offendingKeys.join(", ")}`,
+    );
+  }
+
+  // Filter out same-state no-ops, validate the rest.
+  const issuesToTransition = issues.filter((i) => i.state !== targetState);
+  for (const issue of issuesToTransition) {
+    const result = validateTransition(issue.state, targetState);
+    if (!result.allowed) {
+      throw new AppError(
+        400,
+        "INVALID_TRANSITION",
+        `Cannot transition issue "${issue.key}" from "${issue.state}" to "${targetState}": ${result.reason}`,
+      );
+    }
+  }
+
+  if (issuesToTransition.length === 0) {
+    return {
+      count: 0,
+      keys: body.keys,
+      state: targetState,
+    };
+  }
+
+  // All-or-nothing transaction: bulk update + activity logs.
+  const result = await prisma.$transaction(async (tx) => {
+    const updateResult = await tx.issue.updateMany({
+      where: { id: { in: issuesToTransition.map((i) => i.id) } },
+      data: { state: targetState },
+    });
+
+    await tx.activityLog.createMany({
+      data: issuesToTransition.map((issue) => ({
+        issueId: issue.id,
+        memberId,
+        action: "state_changed" as const,
+        details: {
+          from: issue.state,
+          to: targetState,
+          batchTransition: true,
+          mode: "keys",
+        },
+      })),
+    });
+
+    return updateResult;
+  });
+
+  // Auto-advance parents + sync roadmap items (mirrors transitionGroup).
+  const issuesWithParents = issuesToTransition.filter((i) => i.parentId);
+  const uniqueParentIds = [
+    ...new Set(issuesWithParents.map((i) => i.parentId!)),
+  ];
+  for (const _parentId of uniqueParentIds) {
+    const rep = issuesWithParents.find((i) => i.parentId === _parentId)!;
+    await checkAndAdvanceParent(prisma, { parentId: rep.parentId }, memberId);
+  }
+
+  const uniqueRoadmapItemIds = [
+    ...new Set(
+      issuesToTransition
+        .map((i) => i.roadmapItemId)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+  for (const roadmapItemId of uniqueRoadmapItemIds) {
+    const rep = issuesToTransition.find((i) => i.roadmapItemId === roadmapItemId)!;
+    await syncRoadmapItemStatus(prisma, rep.id);
+  }
+
+  // Emit issue.transitioned per-issue (fire-and-forget).
+  try {
+    for (const issue of issuesToTransition) {
+      eventBus.emit({
+        type: "issue.transitioned",
+        workspaceId: project.workspaceId,
+        actorId: memberId,
+        payload: {
+          issueKey: issue.key,
+          issueId: issue.id,
+          from: issue.state,
+          to: targetState,
+        },
+      });
+    }
+  } catch {
+    // Never let event emission break the mutation
+  }
+
+  return {
+    count: result.count,
+    keys: issuesToTransition.map((i) => i.key),
+    state: targetState,
+  };
 }
 
 // ─── Issue Context (Engram Session Summaries) ──────────────────────────────
