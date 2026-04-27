@@ -30,6 +30,12 @@ export function CyclesView() {
   const cycleId = selectedCycleId ?? activeCycle?.id;
   const { data: cycle, isLoading } = useCycleQuery(cycleId);
 
+  // All hooks MUST run before any early return — Rules of Hooks.
+  // Stable callbacks so CycleHeader (React.memo) skips re-renders on parent updates.
+  const handlePick = useCallback((id: string) => setSelectedCycleId(id), []);
+  const handleNewCycle = useCallback(() => setIsCreateOpen(true), []);
+  const handleCloseCycle = useCallback(() => setIsCloseOpen(true), []);
+
   if (!projectKey) {
     return <Empty>Pick a project to see cycles.</Empty>;
   }
@@ -72,11 +78,6 @@ export function CyclesView() {
   if (isLoading || !cycle) return <Empty>Loading cycle…</Empty>;
 
   const doneCycles = cycles.filter((c) => c.state === "done").reverse();
-
-  // Stable callbacks so CycleHeader (React.memo) skips re-renders on parent updates
-  const handlePick = useCallback((id: string) => setSelectedCycleId(id), []);
-  const handleNewCycle = useCallback(() => setIsCreateOpen(true), []);
-  const handleCloseCycle = useCallback(() => setIsCloseOpen(true), []);
 
   return (
     <>
