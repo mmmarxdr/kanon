@@ -309,9 +309,17 @@ elif [[ "$MCP_STATUS" == "skipped" ]]; then
 else
   echo -e "  MCP:           ${RED}${MCP_STATUS}${NC}"
 fi
-if [[ ! -f "$ROOT_DIR/.mcp.json" ]]; then
-  echo ""
-  echo -e "  ${YELLOW}MCP not configured.${NC} Run ${CYAN}pnpm setup:mcp${NC} to auto-generate .mcp.json"
+# Claude-Code-specific advisory: a project-level .mcp.json with a kanon entry will be loaded
+# in addition to the user's global Claude Code config, causing split-brain (two MCP children
+# with potentially drifted keys). This is a Claude-Code-only mechanism — other tools (Cursor,
+# Opencode, Antigravity, etc.) are configured via their own per-tool paths by `pnpm setup:mcp`.
+if [[ -f "$ROOT_DIR/.mcp.json" ]]; then
+  if python3 -c "import json,sys; d=json.load(open('$ROOT_DIR/.mcp.json')); sys.exit(0 if any(k.startswith('kanon') for k in d.get('mcpServers',{})) else 1)" 2>/dev/null; then
+    echo ""
+    echo -e "  ${RED}Warning (Claude Code):${NC} project-level ${CYAN}.mcp.json${NC} with a kanon entry detected."
+    echo -e "  Claude Code will load it alongside the global config, risking key drift."
+    echo -e "  Recommended: remove it (${CYAN}rm $ROOT_DIR/.mcp.json${NC}) and rely on ${CYAN}pnpm setup:mcp${NC} for your tool of choice."
+  fi
 fi
 echo ""
 echo -e "${GREEN}  ── Login credentials ──────────────${NC}"
