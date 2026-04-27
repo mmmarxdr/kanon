@@ -20,6 +20,22 @@ export const ROADMAP_STATUSES = ["idea", "planned", "in_progress", "done"] as co
 
 // ─── Shared Optional Params ─────────────────────────────────────────────────
 
+/**
+ * Write-tool response tier. Defaults to `ack` at the handler level (minimal
+ * `{ ok, id, key }` shape). Pass `slim` for the legacy slim entity view, or
+ * `full` for the raw API entity (byte-identical pre-change shape).
+ *
+ * Consumers compose this on tool input shapes via `WriteFormatField`.
+ */
+export const FormatEnum = z.enum(["ack", "slim", "full"]);
+
+/**
+ * Spread into a write-tool input shape to add `format?: "ack" | "slim" | "full"`.
+ * Default is applied in the handler (`input.format ?? "ack"`) — keeping the
+ * field optional in zod preserves backward-compatible parsing.
+ */
+export const WriteFormatField = { format: FormatEnum.optional() };
+
 export const FormatParam = z.enum(["slim", "full", "compact"]).default("slim")
   .describe("Response format: slim (default, fewer tokens), full (raw API response), or compact (markdown table)");
 
@@ -55,7 +71,7 @@ export const ListIssuesInput = z.object({
   type: z.enum(ISSUE_TYPES).optional().describe("Filter by issue type"),
   priority: z.enum(ISSUE_PRIORITIES).optional().describe("Filter by priority"),
   assigneeId: z.string().optional().describe("Filter by assignee ID"),
-  sprintId: z.string().optional().describe("Filter by sprint ID"),
+  cycleId: z.string().uuid().optional().describe("Filter by cycle ID"),
   label: z.string().optional().describe("Filter by label"),
   groupKey: z.string().optional().describe("Filter by group key"),
   format: ListFormatParam.optional(),
@@ -87,7 +103,7 @@ export const CreateIssueInput = z.object({
   labels: z.array(z.string()).optional().describe("Labels to attach"),
   groupKey: z.string().optional().describe("Group key to assign"),
   assigneeId: z.string().optional().describe("Assignee member ID"),
-  sprintId: z.string().optional().describe("Sprint ID"),
+  cycleId: z.string().uuid().optional().describe("Cycle ID to attach the issue to (emits scope event natively)"),
   parentId: z.string().optional().describe("Parent issue ID"),
   dueDate: z.string().optional().describe("Due date (ISO 8601)"),
   template: z
@@ -105,17 +121,17 @@ export const UpdateIssueInput = z.object({
   priority: z.enum(ISSUE_PRIORITIES).optional().describe("New priority"),
   labels: z.array(z.string()).optional().describe("New labels"),
   assigneeId: z.string().nullable().optional().describe("New assignee ID"),
-  sprintId: z.string().nullable().optional().describe("New sprint ID"),
+  cycleId: z.string().uuid().nullable().optional().describe("Cycle ID to attach (or null to detach)"),
   dueDate: z.string().nullable().optional().describe("New due date"),
   roadmapItemId: z.string().nullable().optional().describe("Roadmap item ID to link (UUID, null to unlink)"),
-  format: FormatParam.optional(),
+  ...WriteFormatField,
 });
 
 /** kanon_transition_issue */
 export const TransitionIssueInput = z.object({
   issueKey: z.string().describe("Issue key (e.g. 'KAN-42')"),
   state: z.enum(ISSUE_STATES).describe("Target state"),
-  format: FormatParam.optional(),
+  ...WriteFormatField,
 });
 
 /** kanon_batch_transition */
@@ -123,7 +139,7 @@ export const BatchTransitionInput = z.object({
   projectKey: z.string().describe("Project key"),
   groupKey: z.string().describe("Group key to transition"),
   state: z.enum(ISSUE_STATES).describe("Target state for all issues in group"),
-  format: FormatParam.optional(),
+  ...WriteFormatField,
 });
 
 // ─── Workspace Tool Input Schemas ───────────────────────────────────────────
@@ -142,7 +158,7 @@ export const CreateProjectInput = z.object({
     .describe("Project key (uppercase, 1-6 chars, e.g. 'KAN')"),
   name: z.string().min(1).max(100).describe("Project name"),
   description: z.string().max(500).optional().describe("Project description"),
-  format: FormatParam.optional(),
+  ...WriteFormatField,
 });
 
 /** kanon_update_project */
@@ -151,7 +167,7 @@ export const UpdateProjectInput = z.object({
   name: z.string().min(1).max(100).optional().describe("New name"),
   description: z.string().max(500).nullable().optional().describe("New description"),
   engramNamespace: z.string().max(100).nullable().optional().describe("Engram namespace"),
-  format: FormatParam.optional(),
+  ...WriteFormatField,
 });
 
 // ─── Roadmap Tool Input Schemas ─────────────────────────────────────────────
@@ -179,7 +195,7 @@ export const CreateRoadmapItemInput = z.object({
   labels: z.array(z.string()).optional().describe("Labels to attach"),
   sortOrder: z.number().optional().describe("Sort order (float, default 0)"),
   targetDate: z.string().optional().describe("Target date (ISO 8601)"),
-  format: FormatParam.optional(),
+  ...WriteFormatField,
 });
 
 /** kanon_update_roadmap_item */
@@ -195,7 +211,7 @@ export const UpdateRoadmapItemInput = z.object({
   labels: z.array(z.string()).optional().describe("New labels"),
   sortOrder: z.number().optional().describe("New sort order"),
   targetDate: z.string().nullable().optional().describe("New target date (ISO 8601)"),
-  format: FormatParam.optional(),
+  ...WriteFormatField,
 });
 
 /** kanon_delete_roadmap_item */
@@ -213,6 +229,7 @@ export const PromoteRoadmapItemInput = z.object({
   priority: z.enum(ISSUE_PRIORITIES).optional().describe("Issue priority"),
   labels: z.array(z.string()).optional().describe("Issue labels"),
   groupKey: z.string().optional().describe("Group key to assign"),
+  ...WriteFormatField,
 });
 
 // ─── Dependency Tool Input Schemas ──────────────────────────────────────────
@@ -225,6 +242,7 @@ export const AddDependencyInput = z.object({
   sourceItemId: z.string().describe("Source roadmap item ID (the item that blocks)"),
   targetItemId: z.string().describe("Target roadmap item ID (the item being blocked)"),
   type: z.enum(DEPENDENCY_TYPES).optional().describe("Dependency type (default: blocks)"),
+  ...WriteFormatField,
 });
 
 /** kanon_remove_dependency */
@@ -258,5 +276,65 @@ export const SyncObservationInput = z.object({
     .describe("Engram observation ID — included in comment footer for traceability"),
   topicKey: z.string().optional()
     .describe("Engram topic key (e.g. 'sdd/my-change/design')"),
+  ...WriteFormatField,
+});
+
+// ─── Cycle Tool Input Schemas ───────────────────────────────────────────────
+
+export const CYCLE_STATES = ["upcoming", "active", "done"] as const;
+export const CYCLE_DISPOSITIONS = ["move_to_next", "move_to_backlog", "leave"] as const;
+
+/** kanon_list_cycles */
+export const ListCyclesInput = z.object({
+  projectKey: z.string().describe("Project key (e.g. 'KAN')"),
+  format: ListFormatParam.optional(),
+});
+
+/** kanon_get_cycle */
+export const GetCycleInput = z.object({
+  cycleId: z.string().uuid().describe("Cycle ID (UUID)"),
   format: FormatParam.optional(),
 });
+
+/** kanon_create_cycle */
+export const CreateCycleInput = z.object({
+  projectKey: z.string().describe("Project key (e.g. 'KAN')"),
+  name: z.string().min(1).max(200).describe("Cycle name (e.g. 'Sprint 12')"),
+  goal: z.string().optional().describe("Cycle goal / one-line objective"),
+  startDate: z.string().describe("Start date — accepts YYYY-MM-DD or full ISO datetime"),
+  endDate: z.string().describe("End date — accepts YYYY-MM-DD or full ISO datetime"),
+  state: z.enum(CYCLE_STATES).optional()
+    .describe("Initial state (default 'upcoming'). Setting 'active' demotes any other active cycle."),
+  ...WriteFormatField,
+});
+
+/** kanon_attach_issues_to_cycle */
+export const AttachIssuesToCycleShape = {
+  cycleId: z.string().uuid().describe("Cycle ID (UUID)"),
+  add: z.array(z.string()).optional().describe("Issue keys to attach (e.g. ['KAN-12','KAN-13'])"),
+  remove: z.array(z.string()).optional().describe("Issue keys to detach"),
+  reason: z.string().optional()
+    .describe("Reason for the scope change — surfaces in the audit trail"),
+  ...WriteFormatField,
+};
+export const AttachIssuesToCycleInput = z.object(AttachIssuesToCycleShape).refine(
+  (d) => (d.add?.length ?? 0) + (d.remove?.length ?? 0) > 0,
+  { message: "add or remove must contain at least one issue key" },
+);
+
+/** kanon_close_cycle (raw shape — refine is applied at the schema level below) */
+export const CloseCycleShape = {
+  cycleId: z.string().uuid().describe("Cycle ID (UUID)"),
+  disposition: z.enum(CYCLE_DISPOSITIONS).describe(
+    "What to do with incomplete (non-done) issues: 'move_to_next' (next upcoming cycle), 'move_to_backlog' (detach), 'leave' (keep attached)",
+  ),
+  projectKey: z.string().optional().describe(
+    "Project key (e.g. 'KAN'). Required when disposition='move_to_next' so the next upcoming cycle can be located.",
+  ),
+  reason: z.string().optional().describe("Reason for the disposition — surfaces in audit trail"),
+  ...WriteFormatField,
+};
+export const CloseCycleInput = z.object(CloseCycleShape).refine(
+  (d) => d.disposition !== "move_to_next" || !!d.projectKey,
+  { message: "projectKey is required when disposition='move_to_next'", path: ["projectKey"] },
+);

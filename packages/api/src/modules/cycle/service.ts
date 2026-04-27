@@ -1,4 +1,4 @@
-import type { CycleScopeEvent, IssueState } from "@prisma/client";
+import type { CycleScopeEvent, IssueState, Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 import { eventBus } from "../../services/event-bus/index.js";
@@ -7,8 +7,14 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * 1-based day index inside a cycle (clamped to [1, totalDays]).
+ * Exported so other modules (e.g. issue service) can stamp scope events
+ * with a consistent day value.
  */
-function dayIndex(start: Date, end: Date, now: Date = new Date()): number {
+export function dayIndex(
+  start: Date,
+  end: Date,
+  now: Date = new Date(),
+): number {
   const total = Math.max(
     1,
     Math.round((end.getTime() - start.getTime()) / ONE_DAY_MS),
@@ -22,6 +28,86 @@ function totalDays(start: Date, end: Date): number {
     1,
     Math.round((end.getTime() - start.getTime()) / ONE_DAY_MS),
   );
+}
+
+/**
+ * Validate that a cycle exists AND belongs to a given project. Throws
+ * AppError 400 CROSS_PROJECT_CYCLE if the cycle's project differs.
+ *
+ * Returns the loaded cycle (with startDate/endDate) so callers can reuse it
+ * for day-index computation without a second findUnique.
+ */
+export async function validateCycleBelongsToProject(
+  cycleId: string,
+  projectId: string,
+): Promise<{
+  id: string;
+  projectId: string;
+  startDate: Date;
+  endDate: Date;
+}> {
+  const cycle = await prisma.cycle.findUnique({
+    where: { id: cycleId },
+    select: { id: true, projectId: true, startDate: true, endDate: true },
+  });
+  if (!cycle) {
+    throw new AppError(
+      400,
+      "CROSS_PROJECT_CYCLE",
+      `Cycle "${cycleId}" not found`,
+    );
+  }
+  if (cycle.projectId !== projectId) {
+    throw new AppError(
+      400,
+      "CROSS_PROJECT_CYCLE",
+      `Cycle "${cycleId}" belongs to a different project`,
+    );
+  }
+  return cycle;
+}
+
+/**
+ * Insert a CycleScopeEvent row. Used by both the cycle attach/detach API
+ * and by the issue service when createIssue/updateIssue mutate cycleId.
+ *
+ * If `day` is not provided, the cycle is loaded to compute it.
+ * Pass `tx` to participate in an outer transaction.
+ */
+export async function recordCycleScopeEvent(params: {
+  cycleId: string;
+  kind: "add" | "remove";
+  issueKey: string;
+  reason?: string | null;
+  authorId?: string | null;
+  day?: number;
+  tx?: Prisma.TransactionClient;
+}): Promise<void> {
+  const client = params.tx ?? prisma;
+
+  let day = params.day;
+  if (day === undefined) {
+    const cycle = await client.cycle.findUnique({
+      where: { id: params.cycleId },
+      select: { startDate: true, endDate: true },
+    });
+    if (!cycle) {
+      // Cycle disappeared — nothing to record. Caller decides whether to log.
+      return;
+    }
+    day = dayIndex(cycle.startDate, cycle.endDate);
+  }
+
+  await client.cycleScopeEvent.create({
+    data: {
+      cycleId: params.cycleId,
+      day,
+      kind: params.kind,
+      issueKey: params.issueKey,
+      reason: params.reason ?? undefined,
+      authorId: params.authorId ?? undefined,
+    },
+  });
 }
 
 /**
@@ -171,7 +257,17 @@ export async function listCycles(projectKey: string) {
   });
 }
 
-export async function getCycle(id: string) {
+/**
+ * Default cap for `scopeEvents` returned in cycle responses. Burnup math and
+ * risk computation always run on the FULL event set; only the response slice
+ * is capped.
+ */
+const DEFAULT_SCOPE_EVENTS_LIMIT = 20;
+
+export async function getCycle(
+  id: string,
+  opts?: { includeAllScopeEvents?: boolean },
+) {
   const cycle = await prisma.cycle.findUnique({
     where: { id },
     include: {
@@ -188,15 +284,20 @@ export async function getCycle(id: string) {
           assignee: { select: { id: true, username: true } },
         },
       },
-      scopeEvents: {
-        orderBy: { day: "asc" },
-        include: {
-          author: { select: { id: true, username: true, isAgent: true } },
-        },
-      },
     },
   });
   if (!cycle) throw new AppError(404, "CYCLE_NOT_FOUND", "Cycle not found");
+
+  // Fetch scope events separately so we can keep the FULL array for burnup +
+  // risk math while only paginating the response. One extra read; no count()
+  // round-trip needed because we measure length() on the in-memory array.
+  const allScopeEvents = await prisma.cycleScopeEvent.findMany({
+    where: { cycleId: cycle.id },
+    orderBy: { day: "asc" },
+    include: {
+      author: { select: { id: true, username: true, isAgent: true } },
+    },
+  });
 
   const dIdx = dayIndex(cycle.startDate, cycle.endDate);
   const tDays = totalDays(cycle.startDate, cycle.endDate);
@@ -209,18 +310,24 @@ export async function getCycle(id: string) {
     cycle.endDate,
   );
 
+  // Risk computation MUST see all events; aggregate counts MUST match totals.
   const risks = computeRisks(
     { dayIndex: dIdx, days: tDays, scope, completed },
     cycle.issues,
-    cycle.scopeEvents,
+    allScopeEvents,
   );
+  const scopeAdded = allScopeEvents.filter((e) => e.kind === "add").length;
+  const scopeRemoved = allScopeEvents.filter((e) => e.kind === "remove").length;
 
-  // Aggregate scope add/remove counts for the header
-  const scopeAdded = cycle.scopeEvents.filter((e) => e.kind === "add").length;
-  const scopeRemoved = cycle.scopeEvents.filter((e) => e.kind === "remove").length;
+  // Response slice: last N events by insertion order (already day-asc).
+  const responseScopeEvents = opts?.includeAllScopeEvents
+    ? allScopeEvents
+    : allScopeEvents.slice(-DEFAULT_SCOPE_EVENTS_LIMIT);
 
   return {
     ...cycle,
+    scopeEvents: responseScopeEvents,
+    totalScopeEvents: allScopeEvents.length,
     dayIndex: dIdx,
     days: tDays,
     scope,
@@ -239,34 +346,148 @@ interface CreateCycleInput {
   startDate: Date;
   endDate: Date;
   state?: "upcoming" | "active" | "done";
+  /**
+   * Optional keys of issues to attach to the new cycle atomically.
+   * When provided (length > 0), the cycle creation, demotion of any other
+   * active cycle, the issue.updateMany, and the scope-event createMany ALL
+   * run inside a single Prisma transaction — so a failure rolls everything
+   * back. Pre-validation (cross-project / missing key) runs BEFORE the tx
+   * to avoid wasted work.
+   */
+  attachIssueKeys?: string[];
 }
 
-export async function createCycle(projectKey: string, input: CreateCycleInput) {
+export async function createCycle(
+  projectKey: string,
+  input: CreateCycleInput,
+  authorId?: string,
+) {
   const project = await prisma.project.findFirst({ where: { key: projectKey } });
   if (!project)
     throw new AppError(404, "PROJECT_NOT_FOUND", `Project "${projectKey}" not found`);
 
-  // If the new cycle is active, demote any other active cycle to done.
-  if (input.state === "active") {
-    await prisma.cycle.updateMany({
-      where: { projectId: project.id, state: "active" },
-      data: { state: "done" },
+  const attachKeys = input.attachIssueKeys ?? [];
+  const shouldAttach = attachKeys.length > 0;
+
+  // ── Path A: no attach work — keep the legacy non-tx path so call sites
+  // that don't need atomicity don't pay the tx overhead.
+  if (!shouldAttach) {
+    if (input.state === "active") {
+      await prisma.cycle.updateMany({
+        where: { projectId: project.id, state: "active" },
+        data: { state: "done" },
+      });
+    }
+    return prisma.cycle.create({
+      data: {
+        name: input.name,
+        goal: input.goal,
+        state: input.state ?? "upcoming",
+        startDate: input.startDate,
+        endDate: input.endDate,
+        projectId: project.id,
+      },
     });
   }
 
-  return prisma.cycle.create({
-    data: {
-      name: input.name,
-      goal: input.goal,
-      state: input.state ?? "upcoming",
-      startDate: input.startDate,
-      endDate: input.endDate,
-      projectId: project.id,
-    },
+  // ── Path B: attach issues atomically.
+  // Pre-validate cross-project / missing keys BEFORE opening the tx — same
+  // approach as `attachIssues` for consistent error semantics.
+  const foundIssues = await prisma.issue.findMany({
+    where: { key: { in: attachKeys } },
+    select: { key: true, projectId: true },
   });
+  const foundKeySet = new Set(foundIssues.map((i) => i.key));
+  const missingKeys = attachKeys.filter((k) => !foundKeySet.has(k));
+  const crossProjectKeys = foundIssues
+    .filter((i) => i.projectId !== project.id)
+    .map((i) => i.key);
+  const offendingKeys = [...new Set([...missingKeys, ...crossProjectKeys])];
+  if (offendingKeys.length > 0) {
+    throw new AppError(
+      400,
+      "CROSS_PROJECT_ISSUE",
+      `The following issue keys do not belong to project "${projectKey}": ${offendingKeys.join(", ")}`,
+    );
+  }
+
+  const cycle = await prisma.$transaction(async (tx) => {
+    // Demote inside the tx so a later failure also rolls back the demotion.
+    if (input.state === "active") {
+      await tx.cycle.updateMany({
+        where: { projectId: project.id, state: "active" },
+        data: { state: "done" },
+      });
+    }
+
+    const created = await tx.cycle.create({
+      data: {
+        name: input.name,
+        goal: input.goal,
+        state: input.state ?? "upcoming",
+        startDate: input.startDate,
+        endDate: input.endDate,
+        projectId: project.id,
+      },
+    });
+
+    // Attach all issues in the SAME tx so an FK violation rolls back the
+    // cycle.create above.
+    await tx.issue.updateMany({
+      where: { key: { in: attachKeys }, projectId: project.id },
+      data: { cycleId: created.id },
+    });
+
+    const day = dayIndex(created.startDate, created.endDate);
+    await tx.cycleScopeEvent.createMany({
+      data: attachKeys.map((issueKey) => ({
+        cycleId: created.id,
+        day,
+        kind: "add" as const,
+        issueKey,
+        authorId: authorId ?? null,
+      })),
+    });
+
+    return created;
+  });
+
+  // Post-commit SSE: only fires once the whole tx committed. Mirrors the
+  // emission pattern in `attachIssues`.
+  if (authorId) {
+    try {
+      for (const issueKey of attachKeys) {
+        eventBus.emit({
+          type: "issue.updated",
+          workspaceId: project.workspaceId,
+          actorId: authorId,
+          payload: { issueKey, fields: ["cycleId"] },
+        });
+      }
+    } catch {
+      // Never let event emission break the mutation
+    }
+  }
+
+  return cycle;
 }
 
-export async function closeCycle(id: string) {
+/**
+ * Close a cycle. Default response is a minimal ack
+ *   `{ id, state, velocity, closedAt }`
+ * sized to fit MCP token budgets. Pass `{ verbose: true }` to receive the
+ * full updated cycle row (legacy shape) — used when the caller still needs
+ * raw cycle data and wants to skip a follow-up `getCycle` round-trip.
+ *
+ * Note: the Prisma `Cycle` model does not currently have a dedicated
+ * `closedAt` column. We surface the row's `updatedAt` (which Prisma stamps
+ * on `update`) under the ack-friendly name. If a dedicated column is added
+ * later, swap the source here.
+ */
+export async function closeCycle(
+  id: string,
+  opts?: { verbose?: boolean },
+) {
   const cycle = await prisma.cycle.findUnique({
     where: { id },
     include: {
@@ -275,10 +496,19 @@ export async function closeCycle(id: string) {
   });
   if (!cycle) throw new AppError(404, "CYCLE_NOT_FOUND", "Cycle not found");
   const velocity = sumPoints(cycle.issues, (i) => i.state === "done");
-  return prisma.cycle.update({
+  const updated = await prisma.cycle.update({
     where: { id },
     data: { state: "done", velocity },
   });
+  if (opts?.verbose) {
+    return updated;
+  }
+  return {
+    id: updated.id,
+    state: updated.state,
+    velocity: updated.velocity,
+    closedAt: updated.updatedAt,
+  };
 }
 
 interface AttachIssuesInput {
@@ -338,32 +568,34 @@ export async function attachIssues(cycleId: string, input: AttachIssuesInput) {
         where: { key: { in: input.add }, projectId: cycle.projectId },
         data: { cycleId: cycle.id },
       });
-      await tx.cycleScopeEvent.createMany({
-        data: input.add.map((key) => ({
+      for (const key of input.add) {
+        await recordCycleScopeEvent({
           cycleId: cycle.id,
-          day,
-          kind: "add" as const,
+          kind: "add",
           issueKey: key,
           reason: input.reason,
           authorId: input.authorId,
-        })),
-      });
+          day,
+          tx,
+        });
+      }
     }
     if (input.remove?.length) {
       await tx.issue.updateMany({
         where: { key: { in: input.remove }, cycleId: cycle.id },
         data: { cycleId: null },
       });
-      await tx.cycleScopeEvent.createMany({
-        data: input.remove.map((key) => ({
+      for (const key of input.remove) {
+        await recordCycleScopeEvent({
           cycleId: cycle.id,
-          day,
-          kind: "remove" as const,
+          kind: "remove",
           issueKey: key,
           reason: input.reason,
           authorId: input.authorId,
-        })),
-      });
+          day,
+          tx,
+        });
+      }
     }
   });
 

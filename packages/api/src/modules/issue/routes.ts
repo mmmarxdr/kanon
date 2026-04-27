@@ -5,6 +5,7 @@ import {
   UpdateIssueBody,
   TransitionBody,
   BatchTransitionBody,
+  BatchTransitionByKeysBody,
   ProjectKeyParam,
   IssueKeyParam,
   GroupKeyParam,
@@ -176,6 +177,30 @@ export default async function issueRoutes(
         request.params.key,
         request.params.groupKey,
         request.body.to_state,
+        request.member!.id,
+      );
+    },
+  );
+
+  /**
+   * POST /api/projects/:key/issues/batch-transition
+   * Batch-transitions issues identified by keys to a new state.
+   * All-or-nothing: pre-validation rejects on cross-project / invalid
+   * state-machine target before any DB write.
+   */
+  app.post(
+    "/projects/:key/issues/batch-transition",
+    {
+      preHandler: [requireProjectRole("key", "member")],
+      schema: {
+        params: ProjectKeyParam,
+        body: BatchTransitionByKeysBody,
+      },
+    },
+    async (request, _reply) => {
+      return issueService.batchTransitionByKeys(
+        request.params.key,
+        request.body,
         request.member!.id,
       );
     },

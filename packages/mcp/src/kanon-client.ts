@@ -45,6 +45,59 @@ export interface KanonIssue {
   specArtifacts?: unknown;
   engramContext?: unknown;
   labels?: string[];
+  cycle?: { id: string; name: string; state: "upcoming" | "active" | "done" } | null;
+}
+
+/**
+ * Cycle shape returned by the Kanon API list endpoint.
+ */
+export interface KanonCycle {
+  id: string;
+  name: string;
+  goal: string | null;
+  state: "upcoming" | "active" | "done";
+  startDate: string;
+  endDate: string;
+  velocity: number | null;
+  projectId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Detailed cycle shape returned by GET /api/cycles/:id and the attach-issues endpoint.
+ */
+export interface KanonCycleDetail extends KanonCycle {
+  dayIndex: number;
+  days: number;
+  scope: number;
+  completed: number;
+  scopeAdded: number;
+  scopeRemoved: number;
+  burnup: number[];
+  scopeLine: number[];
+  risks: Array<{
+    id: string;
+    severity: "low" | "medium" | "high";
+    title: string;
+    detail: string;
+    action?: string;
+  }>;
+  issues: Array<{
+    id: string;
+    key: string;
+    title: string;
+    state: string;
+    estimate?: number | null;
+  }>;
+  scopeEvents: Array<{
+    id: string;
+    issueId: string;
+    type: "added" | "removed";
+    reason: string | null;
+    createdAt: string;
+    authorId: string | null;
+  }>;
 }
 
 /**
@@ -430,6 +483,75 @@ export class KanonClient {
       "POST",
       `/api/issues/${issueKey}/comments`,
       { body, source },
+    );
+  }
+
+  // ─── Cycles ─────────────────────────────────────────────────────────────
+
+  /**
+   * List cycles for a project.
+   * Route: GET /api/projects/:key/cycles
+   */
+  async listCycles(projectKey: string): Promise<KanonCycle[]> {
+    return this.request<KanonCycle[]>(
+      "GET",
+      `/api/projects/${projectKey}/cycles`,
+    );
+  }
+
+  /**
+   * Get a cycle's full detail (burnup, scope events, risks, issues).
+   * Route: GET /api/cycles/:id
+   */
+  async getCycle(cycleId: string): Promise<KanonCycleDetail> {
+    return this.request<KanonCycleDetail>("GET", `/api/cycles/${cycleId}`);
+  }
+
+  /**
+   * Create a cycle in a project.
+   * Route: POST /api/projects/:key/cycles
+   */
+  async createCycle(
+    projectKey: string,
+    body: {
+      name: string;
+      goal?: string;
+      startDate: string;
+      endDate: string;
+      state?: "upcoming" | "active" | "done";
+    },
+  ): Promise<KanonCycle> {
+    return this.request<KanonCycle>(
+      "POST",
+      `/api/projects/${projectKey}/cycles`,
+      body,
+    );
+  }
+
+  /**
+   * Attach issues to or detach issues from a cycle. Emits scope events server-side.
+   * Route: POST /api/cycles/:id/issues
+   */
+  async attachIssuesToCycle(
+    cycleId: string,
+    body: { add?: string[]; remove?: string[]; reason?: string },
+  ): Promise<KanonCycleDetail> {
+    return this.request<KanonCycleDetail>(
+      "POST",
+      `/api/cycles/${cycleId}/issues`,
+      body,
+    );
+  }
+
+  /**
+   * Close a cycle. Sets state to 'done' and computes velocity from done issues.
+   * Route: POST /api/cycles/:id/close
+   */
+  async closeCycle(cycleId: string): Promise<KanonCycle> {
+    return this.request<KanonCycle>(
+      "POST",
+      `/api/cycles/${cycleId}/close`,
+      {},
     );
   }
 

@@ -9,6 +9,9 @@ import {
   formatEntity,
   formatList,
   toCompactTable,
+  formatCycle,
+  formatCycleDetail,
+  formatAck,
   DEFAULT_LIMIT,
   ISSUE_WRITE_FIELDS,
   ROADMAP_WRITE_FIELDS,
@@ -506,6 +509,273 @@ describe("toCompactTable", () => {
     const lines = table.split("\n");
     expect(lines).toHaveLength(3); // header + separator + 1 row
     expect(lines[2]).toBe("| 1 |");
+  });
+});
+
+// ─── Cycle Transforms ────────────────────────────────────────────────────────
+
+function makeCycle(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "cyc_001",
+    name: "Sprint 1",
+    goal: "Ship cycles",
+    state: "active",
+    startDate: "2026-04-01T00:00:00.000Z",
+    endDate: "2026-04-14T00:00:00.000Z",
+    velocity: null,
+    projectId: "proj_001",
+    createdAt: "2026-03-30T00:00:00Z",
+    updatedAt: "2026-04-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function makeCycleDetail(overrides: Record<string, unknown> = {}) {
+  return {
+    ...makeCycle(),
+    dayIndex: 3,
+    days: 14,
+    scope: 10,
+    completed: 4,
+    scopeAdded: 2,
+    scopeRemoved: 1,
+    burnup: [0, 1, 2, 4],
+    scopeLine: [10, 11, 11, 10],
+    risks: [{ id: "r1", severity: "medium" as const, title: "Slow", detail: "details" }],
+    issues: [
+      { id: "i1", key: "KAN-1", title: "A", state: "done", estimate: 2 },
+      { id: "i2", key: "KAN-2", title: "B", state: "in_progress", estimate: 3 },
+    ],
+    scopeEvents: [
+      { id: "e1", issueId: "i1", type: "added" as const, reason: "plan", createdAt: "2026-04-01T00:00:00Z", authorId: "u1" },
+    ],
+    ...overrides,
+  };
+}
+
+describe("formatCycle", () => {
+  it("keeps id, name, state, dates, velocity and adds isActive", () => {
+    const result = formatCycle(makeCycle() as any) as Record<string, unknown>;
+    expect(result["id"]).toBe("cyc_001");
+    expect(result["name"]).toBe("Sprint 1");
+    expect(result["state"]).toBe("active");
+    expect(result["startDate"]).toBeDefined();
+    expect(result["endDate"]).toBeDefined();
+    expect(result["isActive"]).toBe(true);
+  });
+
+  it("isActive is false for upcoming/done cycles", () => {
+    const upcoming = formatCycle(makeCycle({ state: "upcoming" }) as any) as Record<string, unknown>;
+    const done = formatCycle(makeCycle({ state: "done" }) as any) as Record<string, unknown>;
+    expect(upcoming["isActive"]).toBe(false);
+    expect(done["isActive"]).toBe(false);
+  });
+
+  it("returns raw object when format='full'", () => {
+    const raw = makeCycle();
+    const result = formatCycle(raw as any, "full");
+    expect(result).toBe(raw);
+  });
+});
+
+describe("formatCycleDetail", () => {
+  it("includes burnup, scopeLine, risks, slimmed issues, slimmed scopeEvents", () => {
+    const result = formatCycleDetail(makeCycleDetail() as any) as Record<string, unknown>;
+    expect(result["burnup"]).toEqual([0, 1, 2, 4]);
+    expect(result["scopeLine"]).toEqual([10, 11, 11, 10]);
+    expect(result["scope"]).toBe(10);
+    expect(result["completed"]).toBe(4);
+    expect((result["risks"] as unknown[]).length).toBe(1);
+    expect(result["issues"]).toEqual([
+      { key: "KAN-1", title: "A", state: "done" },
+      { key: "KAN-2", title: "B", state: "in_progress" },
+    ]);
+    expect((result["scopeEvents"] as Array<Record<string, unknown>>)[0]).not.toHaveProperty("authorId");
+    expect((result["scopeEvents"] as Array<Record<string, unknown>>)[0]).toHaveProperty("type", "added");
+  });
+
+  it("preserves isActive flag from slimCycle base", () => {
+    const result = formatCycleDetail(makeCycleDetail() as any) as Record<string, unknown>;
+    expect(result["isActive"]).toBe(true);
+  });
+});
+
+describe("formatEntity for cycles", () => {
+  it("dispatches 'cycle' type to slimCycle", () => {
+    const result = formatEntity(makeCycle(), "cycle", "slim") as Record<string, unknown>;
+    expect(result).toHaveProperty("isActive");
+    expect(result).not.toHaveProperty("projectId");
+  });
+
+  it("dispatches 'cycle-detail' type to slimCycleDetail", () => {
+    const result = formatEntity(makeCycleDetail(), "cycle-detail", "slim") as Record<string, unknown>;
+    expect(result).toHaveProperty("burnup");
+    expect(result).toHaveProperty("isActive");
+  });
+});
+
+// ─── formatAck ───────────────────────────────────────────────────────────────
+
+describe("formatAck", () => {
+  it("issue → { ok: true, id, key }", () => {
+    const issue = makeIssue();
+    const result = formatAck(issue, "issue");
+    expect(result).toEqual({ ok: true, id: "iss_001", key: "KAN-1" });
+    expect(Object.keys(result)).toEqual(["ok", "id", "key"]);
+  });
+
+  it("cycle → { ok: true, id, name, state }", () => {
+    const cycle = makeCycle();
+    const result = formatAck(cycle, "cycle");
+    expect(result).toEqual({
+      ok: true,
+      id: "cyc_001",
+      name: "Sprint 1",
+      state: "active",
+    });
+    expect(Object.keys(result)).toEqual(["ok", "id", "name", "state"]);
+  });
+
+  it("roadmap-item → { ok: true, id, title, horizon }", () => {
+    const item = makeRoadmapItem();
+    const result = formatAck(item, "roadmap-item");
+    expect(result).toEqual({
+      ok: true,
+      id: "rm_001",
+      title: "Roadmap feature",
+      horizon: "near",
+    });
+    expect(Object.keys(result)).toEqual(["ok", "id", "title", "horizon"]);
+  });
+
+  it("work-session → { ok: true, id, issueId, startedAt }", () => {
+    const session = {
+      id: "ws_001",
+      issueId: "iss_001",
+      startedAt: "2026-04-27T10:00:00Z",
+      memberId: "m_001",
+      source: "mcp",
+    };
+    const result = formatAck(session, "work-session");
+    expect(result).toEqual({
+      ok: true,
+      id: "ws_001",
+      issueId: "iss_001",
+      startedAt: "2026-04-27T10:00:00Z",
+    });
+    expect(Object.keys(result)).toEqual(["ok", "id", "issueId", "startedAt"]);
+  });
+
+  it("project → { ok: true, id, key, name }", () => {
+    const project = makeProject();
+    const result = formatAck(project, "project");
+    expect(result).toEqual({
+      ok: true,
+      id: "proj_001",
+      key: "KAN",
+      name: "Kanon",
+    });
+    expect(Object.keys(result)).toEqual(["ok", "id", "key", "name"]);
+  });
+
+  it("cycle-attach → passes through cycleId, added, removed, scope, completed", () => {
+    const payload = {
+      cycleId: "cyc_001",
+      added: ["KAN-1", "KAN-2"],
+      removed: [],
+      scope: 5,
+      completed: 2,
+    };
+    const result = formatAck(payload, "cycle-attach");
+    expect(result).toEqual({
+      ok: true,
+      cycleId: "cyc_001",
+      added: ["KAN-1", "KAN-2"],
+      removed: [],
+      scope: 5,
+      completed: 2,
+    });
+    expect(Object.keys(result)).toEqual([
+      "ok", "cycleId", "added", "removed", "scope", "completed",
+    ]);
+  });
+
+  it("cycle-close → passes through cycleId, disposition, movedIssueKeys", () => {
+    const payload = {
+      cycleId: "cyc_001",
+      disposition: "move_to_next",
+      movedIssueKeys: ["KAN-3", "KAN-4"],
+    };
+    const result = formatAck(payload, "cycle-close");
+    expect(result).toEqual({
+      ok: true,
+      cycleId: "cyc_001",
+      disposition: "move_to_next",
+      movedIssueKeys: ["KAN-3", "KAN-4"],
+    });
+    expect(Object.keys(result)).toEqual([
+      "ok", "cycleId", "disposition", "movedIssueKeys",
+    ]);
+  });
+
+  it("issue-dependency → { ok: true, id, projectId }", () => {
+    const dep = { id: "dep_001", projectId: "proj_001", type: "blocks", sourceId: "x", targetId: "y" };
+    const result = formatAck(dep, "issue-dependency");
+    expect(result).toEqual({
+      ok: true,
+      id: "dep_001",
+      projectId: "proj_001",
+    });
+    expect(Object.keys(result)).toEqual(["ok", "id", "projectId"]);
+  });
+
+  it("batch-transition → passes through count + keys", () => {
+    const payload = {
+      count: 3,
+      keys: ["KAN-1", "KAN-2", "KAN-3"],
+      state: "in_progress",
+    };
+    const result = formatAck(payload, "batch-transition");
+    expect(result).toEqual({
+      ok: true,
+      count: 3,
+      keys: ["KAN-1", "KAN-2", "KAN-3"],
+    });
+    expect(Object.keys(result)).toEqual(["ok", "count", "keys"]);
+  });
+
+  it("comment → { ok: true, id, issueKey }", () => {
+    const comment = {
+      id: "c_001",
+      issueKey: "KAN-1",
+      source: "engram_sync",
+      body: "long body content",
+      createdAt: "2026-04-27T00:00:00Z",
+    };
+    const result = formatAck(comment, "comment");
+    expect(result).toEqual({
+      ok: true,
+      id: "c_001",
+      issueKey: "KAN-1",
+    });
+    expect(Object.keys(result)).toEqual(["ok", "id", "issueKey"]);
+  });
+
+  it("work-session-stop → { ok: true, deleted, issueKey }", () => {
+    const payload = { ok: true, deleted: true, issueKey: "KAN-42" };
+    const result = formatAck(payload, "work-session-stop");
+    expect(result).toEqual({
+      ok: true,
+      deleted: true,
+      issueKey: "KAN-42",
+    });
+    expect(Object.keys(result)).toEqual(["ok", "deleted", "issueKey"]);
+  });
+
+  it("always places ok: true as the first key", () => {
+    const result = formatAck(makeIssue(), "issue");
+    expect(Object.keys(result)[0]).toBe("ok");
+    expect(result["ok"]).toBe(true);
   });
 });
 

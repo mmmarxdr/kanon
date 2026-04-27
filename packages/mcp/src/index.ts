@@ -10,6 +10,7 @@ import { registerRoadmapTools } from "./tools/roadmap.js";
 import { registerCommentTools } from "./tools/comments.js";
 import { registerContextTools } from "./tools/context.js";
 import { registerWorkSessionTools } from "./tools/work-sessions.js";
+import { registerCycleTools } from "./tools/cycles.js";
 import { shutdownAllHeartbeats } from "./heartbeat.js";
 import { startSseClient, stopSseClient } from "./sse-client.js";
 
@@ -49,6 +50,7 @@ registerCommentTools(server, client);
 registerRoadmapTools(server, client);
 registerContextTools(server);
 registerWorkSessionTools(server, client);
+registerCycleTools(server, client);
 
 // ─── Connect ────────────────────────────────────────────────────────────────
 

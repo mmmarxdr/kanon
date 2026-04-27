@@ -144,6 +144,120 @@ describe("KanonClient.updateProject", () => {
   });
 });
 
+// ─── Cycles ─────────────────────────────────────────────────────────────────
+
+describe("KanonClient.listCycles", () => {
+  it("calls GET /api/projects/:key/cycles", async () => {
+    const cycles = [
+      { id: "c1", name: "Sprint 1", state: "active", startDate: "2026-01-01", endDate: "2026-01-14" },
+    ];
+    const fetchMock = mockFetch(cycles);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await client.listCycles("KAN");
+
+    expect(result).toEqual(cycles);
+    const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/api/projects/KAN/cycles`);
+    expect(opts.method).toBe("GET");
+  });
+});
+
+describe("KanonClient.getCycle", () => {
+  it("calls GET /api/cycles/:id", async () => {
+    const cycleId = "550e8400-e29b-41d4-a716-446655440001";
+    const detail = { id: cycleId, name: "Sprint 1", burnup: [0, 1, 2], scopeLine: [5, 5, 5] };
+    const fetchMock = mockFetch(detail);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await client.getCycle(cycleId);
+
+    expect(result).toEqual(detail);
+    const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/api/cycles/${cycleId}`);
+    expect(opts.method).toBe("GET");
+  });
+});
+
+describe("KanonClient.createCycle", () => {
+  it("calls POST /api/projects/:key/cycles with body", async () => {
+    const created = {
+      id: "c1", name: "Sprint 1", state: "upcoming",
+      startDate: "2026-01-01T00:00:00.000Z", endDate: "2026-01-14T00:00:00.000Z",
+    };
+    const fetchMock = mockFetch(created, 201);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const body = {
+      name: "Sprint 1",
+      startDate: "2026-01-01T00:00:00.000Z",
+      endDate: "2026-01-14T00:00:00.000Z",
+    };
+    const result = await client.createCycle("KAN", body);
+
+    expect(result).toEqual(created);
+    const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/api/projects/KAN/cycles`);
+    expect(opts.method).toBe("POST");
+    expect(JSON.parse(opts.body as string)).toEqual(body);
+  });
+
+  it("includes goal and state when provided", async () => {
+    const fetchMock = mockFetch({}, 201);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await client.createCycle("KAN", {
+      name: "Sprint 1",
+      goal: "Ship cycles",
+      startDate: "2026-01-01T00:00:00.000Z",
+      endDate: "2026-01-14T00:00:00.000Z",
+      state: "active",
+    });
+
+    const [, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const sent = JSON.parse(opts.body as string);
+    expect(sent.goal).toBe("Ship cycles");
+    expect(sent.state).toBe("active");
+  });
+});
+
+describe("KanonClient.attachIssuesToCycle", () => {
+  const cycleId = "550e8400-e29b-41d4-a716-446655440001";
+
+  it("calls POST /api/cycles/:id/issues with add/remove/reason body", async () => {
+    const detail = { id: cycleId, name: "Sprint 1", issues: [] };
+    const fetchMock = mockFetch(detail);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const body = { add: ["KAN-1", "KAN-2"], remove: ["KAN-3"], reason: "rebalancing" };
+    const result = await client.attachIssuesToCycle(cycleId, body);
+
+    expect(result).toEqual(detail);
+    const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/api/cycles/${cycleId}/issues`);
+    expect(opts.method).toBe("POST");
+    expect(JSON.parse(opts.body as string)).toEqual(body);
+  });
+});
+
+describe("KanonClient.closeCycle", () => {
+  const cycleId = "550e8400-e29b-41d4-a716-446655440001";
+
+  it("calls POST /api/cycles/:id/close with empty body", async () => {
+    const closed = { id: cycleId, name: "Sprint 1", state: "done" };
+    const fetchMock = mockFetch(closed);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await client.closeCycle(cycleId);
+
+    expect(result).toEqual(closed);
+    const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/api/cycles/${cycleId}/close`);
+    expect(opts.method).toBe("POST");
+    expect(JSON.parse(opts.body as string)).toEqual({});
+  });
+});
+
 // ─── Auth header ────────────────────────────────────────────────────────────
 
 describe("KanonClient auth headers", () => {

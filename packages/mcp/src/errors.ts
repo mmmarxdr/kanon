@@ -55,11 +55,3 @@ export function dataResult(data: unknown): ToolResult {
     content: [{ type: "text", text: JSON.stringify(data) }],
   };
 }
-
-/**
- * @deprecated Use `dataResult` instead. This wrapper adds unnecessary tokens.
- * Kept temporarily for backward compatibility — internally delegates to `dataResult`.
- */
-export function successResult(data: unknown): ToolResult {
-  return dataResult(data);
-}
