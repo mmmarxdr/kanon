@@ -370,18 +370,23 @@ export async function attachIssues(cycleId: string, input: AttachIssuesInput) {
   // Emit issue.updated for each affected issue (fire-and-forget) so SSE
   // listeners (useDomainEvents) invalidate cycleKeys.all on the frontend.
   // Without this, cycle membership changes don't auto-refresh the Cycles view.
-  try {
-    const affected = [...(input.add ?? []), ...(input.remove ?? [])];
-    for (const key of affected) {
-      eventBus.emit({
-        type: "issue.updated",
-        workspaceId: cycle.project.workspaceId,
-        actorId: input.authorId,
-        payload: { issueKey: key, fields: ["cycleId"] },
-      });
+  // Route handlers always pass authorId from request.member!.id; if absent
+  // (only possible from internal callers), skip emission rather than crash.
+  if (input.authorId) {
+    try {
+      const actorId = input.authorId;
+      const affected = [...(input.add ?? []), ...(input.remove ?? [])];
+      for (const key of affected) {
+        eventBus.emit({
+          type: "issue.updated",
+          workspaceId: cycle.project.workspaceId,
+          actorId,
+          payload: { issueKey: key, fields: ["cycleId"] },
+        });
+      }
+    } catch {
+      // Never let event emission break the mutation
     }
-  } catch {
-    // Never let event emission break the mutation
   }
 
   return getCycle(cycleId);
