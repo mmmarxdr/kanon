@@ -77,7 +77,7 @@ describe("FileCredentialStore", () => {
     expect(stat.mode & 0o777).toBe(0o600);
   });
 
-  it("overwrites existing credentials for same server (single-record file)", async () => {
+  it("overwrites existing credentials for same server", async () => {
     const first: Creds = { ...VALID_CREDS, refreshToken: "old-token" };
     const second: Creds = { ...VALID_CREDS, refreshToken: "new-token" };
 
@@ -88,9 +88,32 @@ describe("FileCredentialStore", () => {
     expect(result?.refreshToken).toBe("new-token");
   });
 
+  it("preserves other servers when writing a new one (multi-server coexistence)", async () => {
+    const credsA: Creds = { ...VALID_CREDS, refreshToken: "token-a", server: "https://a.example.com" };
+    const credsB: Creds = { ...VALID_CREDS, refreshToken: "token-b", server: "https://b.example.com" };
+
+    await store.writeCredentials("https://a.example.com", credsA);
+    await store.writeCredentials("https://b.example.com", credsB);
+
+    expect(await store.readCredentials("https://a.example.com")).toEqual(credsA);
+    expect(await store.readCredentials("https://b.example.com")).toEqual(credsB);
+  });
+
   // ── clearCredentials ─────────────────────────────────────────────────────────
 
-  it("clear removes the credentials file", async () => {
+  it("clear removes only the specified server, keeping other entries", async () => {
+    const credsA: Creds = { ...VALID_CREDS, refreshToken: "token-a", server: "https://a.example.com" };
+    const credsB: Creds = { ...VALID_CREDS, refreshToken: "token-b", server: "https://b.example.com" };
+
+    await store.writeCredentials("https://a.example.com", credsA);
+    await store.writeCredentials("https://b.example.com", credsB);
+    await store.clearCredentials("https://a.example.com");
+
+    expect(await store.readCredentials("https://a.example.com")).toBeNull();
+    expect(await store.readCredentials("https://b.example.com")).toEqual(credsB);
+  });
+
+  it("clear deletes the file when removing the last entry", async () => {
     await store.writeCredentials("https://server.example.com", VALID_CREDS);
     await store.clearCredentials("https://server.example.com");
 
@@ -102,5 +125,13 @@ describe("FileCredentialStore", () => {
     await expect(
       store.clearCredentials("https://server.example.com")
     ).resolves.toBeUndefined();
+  });
+
+  it("clear is idempotent — clearing a missing key is a no-op (no throw)", async () => {
+    await store.writeCredentials("https://server.example.com", VALID_CREDS);
+    await expect(
+      store.clearCredentials("https://other.example.com")
+    ).resolves.toBeUndefined();
+    expect(await store.readCredentials("https://server.example.com")).toEqual(VALID_CREDS);
   });
 });

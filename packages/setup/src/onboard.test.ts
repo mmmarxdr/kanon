@@ -73,11 +73,12 @@ describe("onboardFromLink()", () => {
       token: "abc123.def456.ghi789jwt",
     });
 
-    // Credentials persisted
+    // Credentials persisted under the canonical apiUrl key (matches the
+    // wrapper's --server lookup format)
     expect(store.writeCredentials).toHaveBeenCalledWith(
-      "server.example.com",
+      "https://server.example.com",
       expect.objectContaining<Partial<Creds>>({
-        server: "server.example.com",
+        server: "https://server.example.com",
         refreshToken: ONBOARD_RESPONSE.refreshToken,
         email: ONBOARD_RESPONSE.email,
       }),

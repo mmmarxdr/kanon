@@ -91,7 +91,7 @@ export async function onboardFromLink(
     process.exit(1);
   }
 
-  const { host, apiUrl, token } = parsed!;
+  const { apiUrl, token } = parsed!;
 
   // ── 2. POST /api/auth/onboard ─────────────────────────────────────────────
   let responseBody: unknown;
@@ -143,9 +143,12 @@ export async function onboardFromLink(
   const data = parsed2.data;
 
   // ── 4. Write credentials ──────────────────────────────────────────────────
+  // Key the credential store by the full API URL (scheme + host + port).
+  // The MCP wrapper looks creds up by `--server <url>`, so writer and reader
+  // must use the same canonical key.
   try {
-    await store.writeCredentials(host, {
-      server: host,
+    await store.writeCredentials(data.apiUrl, {
+      server: data.apiUrl,
       refreshToken: data.refreshToken,
       email: data.email,
       savedAt: new Date().toISOString(),

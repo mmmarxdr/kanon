@@ -24,32 +24,32 @@ export class FileCredentialStore implements CredentialStore {
     return path.join(this.kanoDir, "credentials");
   }
 
-  async readCredentials(server: string): Promise<Creds | null> {
+  private async readAll(): Promise<Record<string, Creds>> {
     let raw: string;
     try {
       raw = await fs.readFile(this.credFile, "utf8");
     } catch {
-      return null;
+      return {};
     }
-
     try {
-      const data = JSON.parse(raw) as Record<string, unknown>;
-      const entry = data[server];
-      if (!entry || typeof entry !== "object") return null;
-      return entry as Creds;
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const out: Record<string, Creds> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        if (v && typeof v === "object") out[k] = v as Creds;
+      }
+      return out;
     } catch {
-      return null;
+      return {};
     }
   }
 
-  async writeCredentials(server: string, creds: Creds): Promise<void> {
+  private async writeAll(data: Record<string, Creds>): Promise<void> {
     try {
       await fs.mkdir(this.kanoDir, { recursive: true, mode: 0o700 });
     } catch {
       // already exists
     }
 
-    const data: Record<string, Creds> = { [server]: creds };
     const json = JSON.stringify(data, null, 2);
     const tmpFile = this.credFile + ".tmp";
     await fs.writeFile(tmpFile, json, { encoding: "utf8", mode: 0o600 });
@@ -65,11 +65,31 @@ export class FileCredentialStore implements CredentialStore {
     await fs.chmod(this.credFile, 0o600);
   }
 
-  async clearCredentials(_server: string): Promise<void> {
-    try {
-      await fs.unlink(this.credFile);
-    } catch {
-      // idempotent no-op
+  async readCredentials(server: string): Promise<Creds | null> {
+    const data = await this.readAll();
+    return data[server] ?? null;
+  }
+
+  async writeCredentials(server: string, creds: Creds): Promise<void> {
+    const data = await this.readAll();
+    data[server] = creds;
+    await this.writeAll(data);
+  }
+
+  async clearCredentials(server: string): Promise<void> {
+    const data = await this.readAll();
+    if (!(server in data)) return;
+    delete data[server];
+
+    if (Object.keys(data).length === 0) {
+      try {
+        await fs.unlink(this.credFile);
+      } catch {
+        // idempotent
+      }
+      return;
     }
+
+    await this.writeAll(data);
   }
 }

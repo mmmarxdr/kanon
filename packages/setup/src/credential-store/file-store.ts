@@ -1,5 +1,4 @@
 import * as fs from "fs/promises";
-import * as fsSync from "fs";
 import * as path from "path";
 import * as os from "os";
 import type { CredentialStore, Creds } from "./types.js";
@@ -30,60 +29,72 @@ export class FileCredentialStore implements CredentialStore {
     return path.join(this.kanoDir, "credentials");
   }
 
-  async readCredentials(server: string): Promise<Creds | null> {
+  private async readAll(): Promise<Record<string, Creds>> {
     let raw: string;
     try {
       raw = await fs.readFile(this.credFile, "utf8");
     } catch {
-      // File does not exist or is unreadable
-      return null;
+      return {};
     }
-
     try {
-      const data = JSON.parse(raw) as Record<string, unknown>;
-      const entry = data[server];
-      if (!entry || typeof entry !== "object") return null;
-      return entry as Creds;
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const out: Record<string, Creds> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        if (v && typeof v === "object") out[k] = v as Creds;
+      }
+      return out;
     } catch {
-      // Malformed JSON — return null, do NOT throw
-      return null;
+      return {};
     }
   }
 
-  async writeCredentials(server: string, creds: Creds): Promise<void> {
-    // Ensure ~/.kanon/ directory exists with mode 0700
+  private async writeAll(data: Record<string, Creds>): Promise<void> {
     try {
       await fs.mkdir(this.kanoDir, { recursive: true, mode: 0o700 });
     } catch {
-      // Directory may already exist; ignore
+      // already exists
     }
 
-    // Build the full credentials object (single-record file: overwrite)
-    const data: Record<string, Creds> = { [server]: creds };
     const json = JSON.stringify(data, null, 2);
-
-    // Atomic write: write to a temp file then rename
     const tmpFile = this.credFile + ".tmp";
     await fs.writeFile(tmpFile, json, { encoding: "utf8", mode: 0o600 });
 
     try {
       await fs.rename(tmpFile, this.credFile);
     } catch {
-      // If rename fails (cross-device), fall back to copy+delete
       await fs.copyFile(tmpFile, this.credFile);
       await fs.chmod(this.credFile, 0o600);
       await fs.unlink(tmpFile).catch(() => undefined);
     }
 
-    // Ensure correct perms on final file (handles case where file pre-existed)
     await fs.chmod(this.credFile, 0o600);
   }
 
-  async clearCredentials(_server: string): Promise<void> {
-    try {
-      await fs.unlink(this.credFile);
-    } catch {
-      // File does not exist — idempotent no-op
+  async readCredentials(server: string): Promise<Creds | null> {
+    const data = await this.readAll();
+    return data[server] ?? null;
+  }
+
+  async writeCredentials(server: string, creds: Creds): Promise<void> {
+    const data = await this.readAll();
+    data[server] = creds;
+    await this.writeAll(data);
+  }
+
+  async clearCredentials(server: string): Promise<void> {
+    const data = await this.readAll();
+    if (!(server in data)) return;
+    delete data[server];
+
+    if (Object.keys(data).length === 0) {
+      try {
+        await fs.unlink(this.credFile);
+      } catch {
+        // idempotent
+      }
+      return;
     }
+
+    await this.writeAll(data);
   }
 }
