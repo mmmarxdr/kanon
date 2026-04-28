@@ -48,6 +48,7 @@ export default defineConfig({
     },
   },
   server: {
+    host: true,
     port: Number(process.env.KANON_WEB_PORT) || 5173,
     proxy: {
       "/api": {

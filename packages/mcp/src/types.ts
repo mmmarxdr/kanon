@@ -135,14 +135,17 @@ export const TransitionIssueInput = z.object({
   ...WriteFormatField,
 });
 
-/** kanon_batch_transition */
-export const BatchTransitionInput = z.object({
+/** kanon_batch_transition (raw shape — used for MCP server.tool registration) */
+export const BatchTransitionInputShape = z.object({
   projectKey: z.string().describe("Project key"),
   groupKey: z.string().optional().describe("Group key to transition (mutually exclusive with keys)"),
   keys: z.array(z.string()).optional().describe("Specific issue keys to transition (mutually exclusive with groupKey)"),
   state: z.enum(ISSUE_STATES).describe("Target state for all issues"),
   ...WriteFormatField,
-}).refine(
+});
+
+/** kanon_batch_transition (refined — used for runtime safeParse validation) */
+export const BatchTransitionInput = BatchTransitionInputShape.refine(
   (d) => Boolean(d.groupKey) !== Boolean(d.keys?.length),
   { message: "Exactly one of groupKey or keys must be provided" },
 );

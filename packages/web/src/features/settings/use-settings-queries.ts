@@ -10,6 +10,7 @@ export interface WorkspaceMember {
   role: string;
   createdAt: string;
   user: {
+    id: string;
     email: string;
     displayName: string | null;
     avatarUrl: string | null;
@@ -150,6 +151,30 @@ export function useChangeMemberRoleMutation(workspaceId: string | undefined) {
         });
       }
     },
+  });
+}
+
+// ── Onboarding invite ────────────────────────────────────────────────────────
+
+export interface OnboardingInviteResponse {
+  inviteId: string;
+  url: string;       // kanon://<host>/onboard?token=<jwt>
+  token: string;     // raw JWT for admin modal
+  expiresAt: string; // ISO 8601
+}
+
+export function useGenerateOnboardingInviteMutation(workspaceId: string | undefined) {
+  return useMutation({
+    mutationFn: (input: { userId: string }) =>
+      fetchApi<OnboardingInviteResponse>(
+        `/api/workspaces/${workspaceId}/invites/onboarding`,
+        {
+          method: "POST",
+          body: JSON.stringify(input),
+        },
+      ),
+    // No query invalidation — onboarding invites are not shown in the invite list
+    // in this change (design decision §3.2.A — modal-only surface).
   });
 }
 

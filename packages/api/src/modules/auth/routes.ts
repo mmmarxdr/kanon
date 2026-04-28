@@ -20,6 +20,11 @@ import {
   ForgotPasswordResponse,
   ResetPasswordBody,
   ResetPasswordResponse,
+  OnboardBody,
+  OnboardResponse,
+  ExchangeBody,
+  ExchangeResponse,
+  RefreshIssueResponse,
 } from "./schema.js";
 import * as authService from "./service.js";
 import { createEmailProvider } from "../../services/email/index.js";
@@ -311,6 +316,61 @@ export default async function authRoutes(
       const body = request.body as ResetPasswordBody;
       await authService.resetPassword(body.token, body.newPassword);
       return { message: "Password has been reset successfully" };
+    },
+  );
+
+  /**
+   * POST /api/auth/onboard
+   * Consume a single-use onboarding JWT and issue a long-lived opaque refresh token.
+   * Public — all /api/auth/* routes are already in PUBLIC_PREFIXES.
+   */
+  app.post(
+    "/onboard",
+    {
+      schema: {
+        body: OnboardBody,
+        response: { 200: OnboardResponse },
+      },
+    },
+    async (request, _reply) => {
+      return authService.onboard((request.body as OnboardBody).token);
+    },
+  );
+
+  /**
+   * POST /api/auth/exchange
+   * Exchange an opaque refresh token for a short-lived access token.
+   * Public — all /api/auth/* routes are already in PUBLIC_PREFIXES.
+   */
+  app.post(
+    "/exchange",
+    {
+      schema: {
+        body: ExchangeBody,
+        response: { 200: ExchangeResponse },
+      },
+    },
+    async (request, _reply) => {
+      return authService.exchange((request.body as ExchangeBody).refreshToken);
+    },
+  );
+
+  /**
+   * POST /api/auth/refresh-issue
+   * Exchange a short-lived access token (from /login) for a DB-backed opaque
+   * refresh token compatible with the /exchange endpoint.
+   * Requires Bearer access token in Authorization header.
+   */
+  app.post(
+    "/refresh-issue",
+    {
+      schema: {
+        response: { 200: RefreshIssueResponse },
+      },
+    },
+    async (request, _reply) => {
+      const authUser = manualAuth(request);
+      return authService.issueRefreshFromLogin(authUser.userId);
     },
   );
 

@@ -123,3 +123,62 @@ export type ResetPasswordBody = z.infer<typeof ResetPasswordBody>;
 export const ResetPasswordResponse = z.object({
   message: z.string(),
 });
+
+// ── Onboarding (CLI token exchange) ──────────────────────────────────────────
+
+/**
+ * POST /api/auth/onboard request body.
+ * Accepts a single-use onboarding JWT issued by the server.
+ */
+export const OnboardBody = z.object({
+  token: z.string().min(20, "Token is required"),
+});
+export type OnboardBody = z.infer<typeof OnboardBody>;
+
+/**
+ * POST /api/auth/onboard response.
+ * Returns a long-lived opaque refresh token for the CLI credential store.
+ */
+export const OnboardResponse = z.object({
+  refreshToken: z.string(),
+  apiUrl: z.string(),
+  workspace: z.object({
+    id: z.string().uuid(),
+    slug: z.string(),
+    name: z.string(),
+  }),
+  email: z.string().email(),
+  expiresAt: z.string().datetime(),
+});
+
+// ── Refresh-issue (login → opaque token) ─────────────────────────────────────
+
+/**
+ * POST /api/auth/refresh-issue response.
+ * Issues a DB-backed opaque refresh token for a user who authenticated via
+ * the standard login() flow (which returns only stateless JWTs).
+ * Requires Bearer access token from POST /api/auth/login.
+ */
+export const RefreshIssueResponse = z.object({
+  refreshToken: z.string(),
+  expiresAt: z.string().datetime(),
+});
+
+// ── Token exchange ────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/auth/exchange request body.
+ * Accepts an opaque refresh token to issue a short-lived access token.
+ */
+export const ExchangeBody = z.object({
+  refreshToken: z.string().min(40, "Refresh token is required"),
+});
+export type ExchangeBody = z.infer<typeof ExchangeBody>;
+
+/**
+ * POST /api/auth/exchange response.
+ */
+export const ExchangeResponse = z.object({
+  accessToken: z.string(),
+  expiresIn: z.number().int(), // seconds — 900
+});

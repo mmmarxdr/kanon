@@ -4,8 +4,11 @@ import {
   useWorkspaceMembersQuery,
   useRemoveMemberMutation,
   useChangeMemberRoleMutation,
+  useGenerateOnboardingInviteMutation,
   type WorkspaceMember,
+  type OnboardingInviteResponse,
 } from "./use-settings-queries";
+import { OnboardingLinkModal } from "./onboarding-link-modal";
 
 const ROLES = ["viewer", "member", "admin", "owner"] as const;
 
@@ -33,8 +36,10 @@ export function MembersSection({
   const { data: members, isLoading, error } = useWorkspaceMembersQuery(workspaceId);
   const removeMember = useRemoveMemberMutation(workspaceId);
   const changeRole = useChangeMemberRoleMutation(workspaceId);
+  const generateOnboardingInvite = useGenerateOnboardingInviteMutation(workspaceId);
   const currentUser = useAuthStore((s) => s.user);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  const [onboardingModal, setOnboardingModal] = useState<OnboardingInviteResponse | null>(null);
 
   const isAdmin = currentUserRole === "admin" || currentUserRole === "owner";
 
@@ -128,6 +133,27 @@ export function MembersSection({
                   </span>
                 )}
 
+                {/* Generate onboarding link — admin only, visible for existing members */}
+                {isAdmin && (
+                  <button
+                    data-testid={`onboarding-gen-btn-${member.id}`}
+                    disabled={generateOnboardingInvite.isPending}
+                    onClick={() => {
+                      generateOnboardingInvite.mutate(
+                        { userId: member.user.id },
+                        {
+                          onSuccess: (data) => {
+                            setOnboardingModal(data);
+                          },
+                        },
+                      );
+                    }}
+                    className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors shrink-0 disabled:opacity-50"
+                  >
+                    {generateOnboardingInvite.isPending ? "..." : "Onboard"}
+                  </button>
+                )}
+
                 {/* Remove button */}
                 {isAdmin && !isOwner && !isCurrentUser && (
                   <>
@@ -165,6 +191,15 @@ export function MembersSection({
             );
           })}
         </div>
+      )}
+
+      {onboardingModal && (
+        <OnboardingLinkModal
+          open={true}
+          onClose={() => setOnboardingModal(null)}
+          url={onboardingModal.url}
+          expiresAt={onboardingModal.expiresAt}
+        />
       )}
     </div>
   );

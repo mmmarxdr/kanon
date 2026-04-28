@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "bin": {
-    "kanon-mcp": "./bin/kanon-mcp.js"
+    "kanon-mcp": "./bin/kanon-mcp.js",
+    "kanon-mcp-wrapper": "./dist/wrapper-cli.js"
   },
   "scripts": {
     "build": "tsc",

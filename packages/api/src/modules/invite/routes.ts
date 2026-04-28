@@ -8,6 +8,8 @@ import {
   InviteTokenParam,
   WorkspaceIdParam,
   WorkspaceInviteParams,
+  OnboardingInviteBody,
+  OnboardingInviteResponse,
 } from "./schema.js";
 import * as inviteService from "./service.js";
 import { requireRole } from "../../middleware/require-role.js";
@@ -64,6 +66,31 @@ export async function workspaceInviteRoutes(
     },
     async (request, _reply) => {
       return inviteService.listInvites(request.params.wid);
+    },
+  );
+
+  /**
+   * POST /api/workspaces/:wid/invites/onboarding
+   * Create a single-use CLI onboarding invite for an existing workspace member.
+   * Requires admin+ role. Returns kanon:// URL + JWT token.
+   */
+  app.post(
+    "/onboarding",
+    {
+      preHandler: [requireRole("wid", "admin")],
+      schema: {
+        params: WorkspaceIdParam,
+        body: OnboardingInviteBody,
+        response: { 201: OnboardingInviteResponse },
+      },
+    },
+    async (request, reply) => {
+      const result = await inviteService.createOnboardingInvite(
+        request.params.wid,
+        request.user.userId,
+        request.body,
+      );
+      return reply.status(201).send(result);
     },
   );
 

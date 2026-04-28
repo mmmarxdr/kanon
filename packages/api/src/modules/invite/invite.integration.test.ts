@@ -628,4 +628,55 @@ describe("Workspace Invites", () => {
       expect(res.statusCode).toBe(201);
     });
   });
+
+  // ── C2: POST /api/workspaces/:wid/invites/onboarding ─────────────────────
+
+  describe("POST /api/workspaces/:wid/invites/onboarding", () => {
+    it("admin creates onboarding invite for existing member — 201", async () => {
+      const ws = await seedTestWorkspace();
+      const admin = await seedTestMemberWithRole(ws.id, "admin");
+      const dev = await seedTestMemberWithRole(ws.id, "member");
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/workspaces/${ws.id}/invites/onboarding`,
+        headers: { authorization: `Bearer ${admin.token}` },
+        payload: { userId: dev.userId },
+      });
+
+      expect(res.statusCode).toBe(201);
+      const body = res.json();
+      expect(body).toHaveProperty("inviteId");
+      expect(body).toHaveProperty("token");
+      expect(body.url).toMatch(/^kanon:\/\//);
+      expect(body).toHaveProperty("expiresAt");
+    });
+
+    it("member (non-admin) attempt — 403", async () => {
+      const ws = await seedTestWorkspace();
+      const member = await seedTestMemberWithRole(ws.id, "member");
+      const target = await seedTestMemberWithRole(ws.id, "member");
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/workspaces/${ws.id}/invites/onboarding`,
+        headers: { authorization: `Bearer ${member.token}` },
+        payload: { userId: target.userId },
+      });
+
+      expect(res.statusCode).toBe(403);
+    });
+
+    it("unauthenticated request — 401", async () => {
+      const ws = await seedTestWorkspace();
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/workspaces/${ws.id}/invites/onboarding`,
+        payload: { userId: "00000000-0000-0000-0000-000000000001" },
+      });
+
+      expect(res.statusCode).toBe(401);
+    });
+  });
 });

@@ -18,6 +18,7 @@ export const ORDERED_STATES: readonly IssueState[] = [
 export const TOKEN_EXPIRY = {
   ACCESS: "15m",
   REFRESH: "7d",
+  KEYCHAIN_REFRESH: "30d",
 } as const;
 
 /**

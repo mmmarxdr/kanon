@@ -84,6 +84,16 @@ enum DependencyType {
   blocks
 }
 
+enum InviteKind {
+  MEMBER
+  ONBOARDING
+}
+
+enum RefreshSource {
+  ONBOARDING
+  LOGIN
+}
+
 // ─── Models ─────────────────────────────────────────────────────────────────
 
 model User {
@@ -100,6 +110,7 @@ model User {
   workSessions WorkSession[]
   createdInvites WorkspaceInvite[]
   passwordResetTokens PasswordResetToken[]
+  refreshTokens RefreshToken[]
 
   @@map("users")
 }
@@ -117,6 +128,7 @@ model Workspace {
   members  Member[]
   invites  WorkspaceInvite[]
   proposals McpProposal[]
+  refreshTokens RefreshToken[]
 
   @@map("workspaces")
 }
@@ -436,11 +448,13 @@ model WorkspaceInvite {
   maxUses   Int       @default(0) @map("max_uses")   // 0 = unlimited
   useCount  Int       @default(0) @map("use_count")
   expiresAt DateTime  @map("expires_at")
-  revokedAt DateTime? @map("revoked_at")
-  label     String?                                   // optional description
-  email     String?   @map("email")                   // optional recipient email
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
+  revokedAt  DateTime?  @map("revoked_at")
+  label      String?                                   // optional description
+  email      String?    @map("email")                  // optional recipient email
+  kind       InviteKind @default(MEMBER)
+  consumedAt DateTime?  @map("consumed_at")
+  createdAt  DateTime   @default(now()) @map("created_at")
+  updatedAt  DateTime   @updatedAt @map("updated_at")
 
   workspaceId String    @map("workspace_id") @db.Uuid
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -466,4 +480,25 @@ model PasswordResetToken {
 
   @@index([userId])
   @@map("password_reset_tokens")
+}
+
+model RefreshToken {
+  id          String        @id @default(uuid()) @db.Uuid
+  tokenHash   String        @unique @map("token_hash")
+  source      RefreshSource
+  createdAt   DateTime      @default(now()) @map("created_at")
+  expiresAt   DateTime      @map("expires_at")
+  lastUsedAt  DateTime?     @map("last_used_at")
+  revokedAt   DateTime?     @map("revoked_at")
+  metadata    Json?
+
+  userId      String        @map("user_id") @db.Uuid
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  workspaceId String        @map("workspace_id") @db.Uuid
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([userId, workspaceId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
 }

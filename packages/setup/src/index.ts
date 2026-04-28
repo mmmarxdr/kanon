@@ -60,13 +60,49 @@ program.action(async (options: {
   yes?: boolean;
 }) => {
   try {
-    await run(options);
+    await dispatch(process.argv, options, {
+      cascade: () => run(options),
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(chalk.red(`Error: ${message}`));
     process.exit(1);
   }
 });
+
+/**
+ * Dispatcher — routes argv to the correct handler.
+ *
+ * Extracted as a named export so it can be unit-tested without
+ * triggering Commander's parse() or process.exit().
+ *
+ * Routing order:
+ *   1. argv[2] === "login"         → login()
+ *   2. argv[2] starts with kanon:// → onboardFromLink()
+ *   3. everything else              → deps.cascade() (existing cascade resolver)
+ */
+export async function dispatch(
+  argv: string[],
+  _options: Record<string, unknown>,
+  deps: { cascade: () => Promise<void> },
+): Promise<void> {
+  const { onboardFromLink } = await import("./onboard.js");
+  const { login } = await import("./login.js");
+
+  const positional = argv[2];
+
+  if (positional === "login") {
+    await login();
+    return;
+  }
+
+  if (positional?.startsWith("kanon://")) {
+    await onboardFromLink(positional, {});
+    return;
+  }
+
+  await deps.cascade();
+}
 
 async function run(options: {
   apiUrl?: string;

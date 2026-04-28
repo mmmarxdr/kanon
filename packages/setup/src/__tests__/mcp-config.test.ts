@@ -294,5 +294,63 @@ describe("mcp-config", () => {
       expect(entry.env).toEqual({ KANON_API_URL: "http://api.test" });
       expect(entry.env!["KANON_API_KEY"]).toBeUndefined();
     });
+
+    // G4 — wrapper-mode tests
+    it("G4 wrapper mode — entry has no KANON_API_KEY, uses nodeBin + wrapperPath", () => {
+      const ctx = { platform: "linux" as const, homedir: "/home/user" };
+      const entry = buildMcpEntry(
+        { mode: "local", path: "/path/to/server.js" },
+        "https://server.example.com", "",
+        ctx, "direct", "/usr/bin/node",
+        "wrapper",
+      );
+
+      expect(entry.command).toBe("/usr/bin/node");
+      expect(entry.args).toContain("/path/to/server.js");
+      expect(entry.args).toContain("--server");
+      expect(entry.args).toContain("https://server.example.com");
+      // No KANON_API_KEY in env for wrapper mode
+      expect(entry.env?.["KANON_API_KEY"]).toBeUndefined();
+    });
+
+    it("G4 static-key mode (default) — backward compat, KANON_API_KEY present", () => {
+      const ctx = { platform: "linux" as const, homedir: "/home/user" };
+      const entry = buildMcpEntry(
+        { mode: "local", path: "/path/to/server.js" },
+        "https://server.example.com", "sk-abc123",
+        ctx, "direct", "/usr/bin/node",
+        // no 7th arg = default "static-key"
+      );
+
+      expect(entry.env?.["KANON_API_KEY"]).toBe("sk-abc123");
+      expect(entry.env?.["KANON_API_URL"]).toBe("https://server.example.com");
+    });
+  });
+
+  // G4 — extractExistingAuth wrapper-mode detection
+  describe("extractExistingAuth — wrapper mode", () => {
+    it("detects wrapper-mode entry and returns apiUrl from --server arg", () => {
+      const configPath = path.join(tmpDir, ".claude.json");
+      const config = {
+        mcpServers: {
+          "kanon-mcp": {
+            command: "/usr/bin/node",
+            args: ["/opt/kanon/mcp-wrapper.js", "--server", "https://server.example.com"],
+            // no env.KANON_API_KEY
+          },
+        },
+      };
+      fs.writeFileSync(configPath, JSON.stringify(config));
+
+      const ctx: PlatformContext = {
+        platform: "linux",
+        homedir: tmpDir,
+      };
+
+      const result = extractExistingAuth(ctx);
+
+      expect(result.apiUrl).toBe("https://server.example.com");
+      expect(result.apiKey).toBeUndefined();
+    });
   });
 });
