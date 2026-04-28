@@ -19,6 +19,15 @@ import type { CredentialStore } from "./credential-store/types.js";
 
 // ─── Injectable deps interface ─────────────────────────────────────────────
 
+export interface WrapperDeps {
+  argv: string[];
+  env: Record<string, string | undefined>;
+  fetch: typeof globalThis.fetch;
+  getCredentialStore: () => CredentialStore;
+  stderr: { write: (s: string) => void };
+  exit: (code: number) => void;
+  spawn: (cmd: string, args: string[], opts: SpawnOptions) => ChildProcess;
+}
 
 // ─── Arg parsing ───────────────────────────────────────────────────────────
 
