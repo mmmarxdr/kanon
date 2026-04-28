@@ -131,13 +131,7 @@ export function registerContextTools(server: McpServer): void {
 
   server.tool(
     "kanon_get_issue_context",
-    [
-      "Retrieve past AI coding session context for a Kanon issue.",
-      "Searches Engram for session summaries that mention the issue key.",
-      "Returns structured data: goal, discoveries, accomplished items, next steps, and relevant files.",
-      "Use this at the START of a coding session to understand prior work on an issue.",
-      "Returns empty results gracefully if Engram is not configured or unreachable.",
-    ].join(" "),
+    "Get prior Engram sessions for issueKey. Call at session start. Returns {sessions[{goal,discoveries,accomplished,nextSteps,relevantFiles}],sessionCount}.",
     GetIssueContextInput.shape,
     async ({ issueKey, limit }) => {
       const sessionLimit = limit ?? 5;

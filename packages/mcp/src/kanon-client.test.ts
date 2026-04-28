@@ -258,6 +258,97 @@ describe("KanonClient.closeCycle", () => {
   });
 });
 
+// ─── D9: batchTransitionByKeys client method ─────────────────────────────────
+
+describe("KanonClient.batchTransitionByKeys (D9)", () => {
+  it("calls POST /api/projects/:key/issues/batch-transition with keys and state", async () => {
+    const result = { count: 2, keys: ["KAN-1", "KAN-2"] };
+    const fetchMock = mockFetch(result);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const returned = await client.batchTransitionByKeys("KAN", ["KAN-1", "KAN-2"], "done");
+
+    expect(returned).toEqual(result);
+    const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/api/projects/KAN/issues/batch-transition`);
+    expect(opts.method).toBe("POST");
+    const body = JSON.parse(opts.body as string);
+    expect(body).toHaveProperty("keys", ["KAN-1", "KAN-2"]);
+    expect(body).toHaveProperty("to_state", "done");
+  });
+});
+
+// ─── D5: createCycle passes attachIssueKeys in body ─────────────────────────
+
+describe("KanonClient.createCycle — attachIssueKeys (D5)", () => {
+  it("includes attachIssueKeys in POST body when provided", async () => {
+    const fetchMock = mockFetch({ id: "c1", name: "Sprint 1", state: "upcoming" }, 201);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await client.createCycle("KAN", {
+      name: "Sprint 1",
+      startDate: "2026-05-01T00:00:00.000Z",
+      endDate: "2026-05-14T00:00:00.000Z",
+      attachIssueKeys: ["KAN-1", "KAN-2"],
+    });
+
+    const [, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(opts.body as string);
+    expect(body).toHaveProperty("attachIssueKeys", ["KAN-1", "KAN-2"]);
+  });
+});
+
+// ─── D7: getCycle passes includeAllScopeEvents query param ───────────────────
+
+describe("KanonClient.getCycle — includeAllScopeEvents (D7)", () => {
+  const cycleId = "550e8400-e29b-41d4-a716-446655440001";
+
+  it("appends ?includeAllScopeEvents=true when option is true", async () => {
+    const fetchMock = mockFetch({ id: cycleId, name: "Sprint 1" });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await client.getCycle(cycleId, { includeAllScopeEvents: true });
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("includeAllScopeEvents=true");
+  });
+
+  it("does not append param when option is false/absent", async () => {
+    const fetchMock = mockFetch({ id: cycleId, name: "Sprint 1" });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await client.getCycle(cycleId);
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).not.toContain("includeAllScopeEvents");
+  });
+});
+
+// ─── D3: listIssues keys[] forwarded as CSV ──────────────────────────────────
+
+describe("KanonClient.listIssues — keys[] filter (D3)", () => {
+  it("appends keys as CSV query param when provided", async () => {
+    const issues = [{ id: "i1", key: "KAN-1" }, { id: "i2", key: "KAN-2" }];
+    const fetchMock = mockFetch(issues);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await client.listIssues("KAN", { keys: ["KAN-1", "KAN-2"] });
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("keys=KAN-1%2CKAN-2");
+  });
+
+  it("does not add keys param when keys is absent", async () => {
+    const fetchMock = mockFetch([]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await client.listIssues("KAN", {});
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).not.toContain("keys=");
+  });
+});
+
 // ─── Auth header ────────────────────────────────────────────────────────────
 
 describe("KanonClient auth headers", () => {

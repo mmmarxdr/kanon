@@ -14,6 +14,7 @@ import {
   formatList,
   formatCycle,
   formatCycleDetail,
+  formatAck,
 } from "../transforms.js";
 import type { Format } from "../transforms.js";
 
@@ -43,12 +44,12 @@ export async function closeCycleWithDisposition(
     projectKey?: string;
     reason?: string;
   },
-): Promise<{ closed: KanonCycle; moved: number; disposition: string }> {
+): Promise<{ closed: KanonCycle; movedIssueKeys: string[]; disposition: string }> {
   const { cycleId, disposition, projectKey, reason } = input;
 
   if (disposition === "leave") {
     const closed = await client.closeCycle(cycleId);
-    return { closed, moved: 0, disposition };
+    return { closed, movedIssueKeys: [], disposition };
   }
 
   // Both move_to_backlog and move_to_next need the current cycle's incomplete issues.
@@ -64,7 +65,7 @@ export async function closeCycleWithDisposition(
       await client.attachIssuesToCycle(cycleId, body);
     }
     const closed = await client.closeCycle(cycleId);
-    return { closed, moved: incompleteKeys.length, disposition };
+    return { closed, movedIssueKeys: incompleteKeys, disposition };
   }
 
   // disposition === "move_to_next"
@@ -102,7 +103,7 @@ export async function closeCycleWithDisposition(
   }
 
   const closed = await client.closeCycle(cycleId);
-  return { closed, moved: incompleteKeys.length, disposition };
+  return { closed, movedIssueKeys: incompleteKeys, disposition };
 }
 
 // ─── Registration ───────────────────────────────────────────────────────────
@@ -110,7 +111,7 @@ export async function closeCycleWithDisposition(
 export function registerCycleTools(server: McpServer, client: KanonClient): void {
   server.tool(
     "kanon_list_cycles",
-    "List cycles in a Kanon project. Each entry includes an `isActive` boolean — use it instead of inferring from dates.",
+    "List cycles for projectKey. isActive boolean per entry — use it, don't infer from dates.",
     ListCyclesInput.shape,
     async ({ projectKey, format }) => {
       try {
@@ -129,11 +130,11 @@ export function registerCycleTools(server: McpServer, client: KanonClient): void
 
   server.tool(
     "kanon_get_cycle",
-    "Get a Kanon cycle's full detail. Use to inspect burnup progress, scope changes, computed risks, and attached issues before proposing changes.",
+    "Get cycle detail (burnup,scope events,risks,issues) by cycleId. includeAllScopeEvents for full audit. Returns slim; format:'full' for entity.",
     GetCycleInput.shape,
-    async ({ cycleId, format }) => {
+    async ({ cycleId, includeAllScopeEvents, format }) => {
       try {
-        const cycle = await client.getCycle(cycleId);
+        const cycle = await client.getCycle(cycleId, { includeAllScopeEvents: includeAllScopeEvents ?? false });
         return dataResult(formatCycleDetail(cycle, (format ?? "slim") as Format));
       } catch (err) {
         return errorResult(err);
@@ -143,9 +144,9 @@ export function registerCycleTools(server: McpServer, client: KanonClient): void
 
   server.tool(
     "kanon_create_cycle",
-    "Create a Kanon cycle. Dates accept YYYY-MM-DD or full ISO. Setting state='active' demotes any other active cycle in the project.",
+    "Create cycle (projectKey,name,goal,startDate,endDate,state,attachIssueKeys[]). Dates: YYYY-MM-DD or ISO. active state demotes current active. Returns ack {ok,id,name,state}; format:'full' for entity.",
     CreateCycleInput.shape,
-    async ({ projectKey, name, goal, startDate, endDate, state, format }) => {
+    async ({ projectKey, name, goal, startDate, endDate, state, attachIssueKeys, format }) => {
       try {
         const body: {
           name: string;
@@ -153,6 +154,7 @@ export function registerCycleTools(server: McpServer, client: KanonClient): void
           startDate: string;
           endDate: string;
           state?: "upcoming" | "active" | "done";
+          attachIssueKeys?: string[];
         } = {
           name,
           startDate: normalizeDate(startDate),
@@ -160,9 +162,12 @@ export function registerCycleTools(server: McpServer, client: KanonClient): void
         };
         if (goal !== undefined) body.goal = goal;
         if (state !== undefined) body.state = state;
+        if (attachIssueKeys !== undefined) body.attachIssueKeys = attachIssueKeys;
 
         const cycle = await client.createCycle(projectKey, body);
-        return dataResult(formatCycle(cycle, (format ?? "slim") as Format));
+        const fmt = format ?? "ack";
+        if (fmt === "ack") return dataResult(formatAck(cycle, "cycle"));
+        return dataResult(formatCycle(cycle, fmt as Format));
       } catch (err) {
         return errorResult(err);
       }
@@ -171,7 +176,7 @@ export function registerCycleTools(server: McpServer, client: KanonClient): void
 
   server.tool(
     "kanon_attach_issues_to_cycle",
-    "Move issues into or out of a cycle. Use for AI-driven scope changes. Provide a `reason` when the change isn't trivial — it appears in the cycle's scope event audit trail.",
+    "Add/remove issues (cycleId,add[],remove[],reason). reason logged in scope audit trail. Returns ack {ok,cycleId,added,removed,scope,completed}; format:'full' for cycle detail.",
     AttachIssuesToCycleShape,
     async ({ cycleId, add, remove, reason, format }) => {
       try {
@@ -181,7 +186,21 @@ export function registerCycleTools(server: McpServer, client: KanonClient): void
         if (reason !== undefined) body.reason = reason;
 
         const detail = await client.attachIssuesToCycle(cycleId, body);
-        return dataResult(formatCycleDetail(detail, (format ?? "slim") as Format));
+        const fmt = format ?? "ack";
+        if (fmt === "ack") {
+          // Build ack from the cycle detail
+          const raw = detail as unknown as Record<string, unknown>;
+          const addedKeys = add ?? [];
+          const removedKeys = remove ?? [];
+          return dataResult(formatAck({
+            cycleId,
+            added: addedKeys,
+            removed: removedKeys,
+            scope: raw["scope"] ?? 0,
+            completed: raw["completed"] ?? 0,
+          }, "cycle-attach"));
+        }
+        return dataResult(formatCycleDetail(detail, fmt as Format));
       } catch (err) {
         return errorResult(err);
       }
@@ -190,7 +209,7 @@ export function registerCycleTools(server: McpServer, client: KanonClient): void
 
   server.tool(
     "kanon_close_cycle",
-    "Close a cycle and dispose of incomplete issues. disposition: 'move_to_next' (requires projectKey, attaches incomplete issues to the next upcoming cycle), 'move_to_backlog' (detach incomplete issues), or 'leave' (keep them attached). Velocity is computed from done issues.",
+    "Close cycle (cycleId,disposition,projectKey,reason). disposition: move_to_next (needs projectKey), move_to_backlog, leave. Returns ack {ok,cycleId,disposition,movedIssueKeys}; format:'full' for {closed,movedIssueKeys,disposition}.",
     CloseCycleShape,
     async (args) => {
       try {
@@ -200,9 +219,17 @@ export function registerCycleTools(server: McpServer, client: KanonClient): void
           ...(args.projectKey !== undefined ? { projectKey: args.projectKey } : {}),
           ...(args.reason !== undefined ? { reason: args.reason } : {}),
         });
+        const fmt = args.format ?? "ack";
+        if (fmt === "ack") {
+          return dataResult(formatAck({
+            cycleId: args.cycleId,
+            disposition: summary.disposition,
+            movedIssueKeys: summary.movedIssueKeys,
+          }, "cycle-close"));
+        }
         return dataResult({
-          closed: formatCycle(summary.closed, (args.format ?? "slim") as Format),
-          moved: summary.moved,
+          closed: formatCycle(summary.closed, fmt as Format),
+          movedIssueKeys: summary.movedIssueKeys,
           disposition: summary.disposition,
         });
       } catch (err) {

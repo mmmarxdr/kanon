@@ -291,13 +291,16 @@ export class KanonClient {
    */
   async listIssues(
     projectKey: string,
-    filters?: Record<string, string>,
+    filters?: Record<string, string> & { keys?: string[] },
   ): Promise<KanonIssue[]> {
     let path = `/api/projects/${projectKey}/issues`;
-    if (filters && Object.keys(filters).length > 0) {
-      const params = new URLSearchParams(filters);
-      path += `?${params.toString()}`;
+    const { keys, ...rest } = filters ?? {};
+    const params = new URLSearchParams(rest as Record<string, string>);
+    if (keys && keys.length > 0) {
+      params.set("keys", keys.join(","));
     }
+    const qs = params.toString();
+    if (qs) path += `?${qs}`;
     return this.request<KanonIssue[]>("GET", path);
   }
 
@@ -353,6 +356,22 @@ export class KanonClient {
       "PATCH",
       `/api/projects/${projectKey}/issues/groups/${encodeURIComponent(groupKey)}/transition`,
       { to_state: toState },
+    );
+  }
+
+  /**
+   * Batch-transition specific issues by key to a new state.
+   * Route: POST /api/projects/:key/issues/batch-transition
+   */
+  async batchTransitionByKeys(
+    projectKey: string,
+    keys: string[],
+    toState: string,
+  ): Promise<{ count: number; keys: string[] }> {
+    return this.request<{ count: number; keys: string[] }>(
+      "POST",
+      `/api/projects/${projectKey}/issues/batch-transition`,
+      { keys, to_state: toState },
     );
   }
 
@@ -503,8 +522,15 @@ export class KanonClient {
    * Get a cycle's full detail (burnup, scope events, risks, issues).
    * Route: GET /api/cycles/:id
    */
-  async getCycle(cycleId: string): Promise<KanonCycleDetail> {
-    return this.request<KanonCycleDetail>("GET", `/api/cycles/${cycleId}`);
+  async getCycle(
+    cycleId: string,
+    options?: { includeAllScopeEvents?: boolean },
+  ): Promise<KanonCycleDetail> {
+    let path = `/api/cycles/${cycleId}`;
+    if (options?.includeAllScopeEvents) {
+      path += "?includeAllScopeEvents=true";
+    }
+    return this.request<KanonCycleDetail>("GET", path);
   }
 
   /**
@@ -519,6 +545,7 @@ export class KanonClient {
       startDate: string;
       endDate: string;
       state?: "upcoming" | "active" | "done";
+      attachIssueKeys?: string[];
     },
   ): Promise<KanonCycle> {
     return this.request<KanonCycle>(

@@ -22,6 +22,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `release.sh` includes `packages/setup` in version bumps
 - `pnpm setup:mcp` now delegates to `@kanon-pm/setup`; `setup-mcp.sh` deprecated with warning
 
+## [0.3.0] - 2026-04-28
+
+### BREAKING
+
+- MCP write tools now default to `ack` tier responses; pass `format:"full"` to restore prior raw entity behavior.
+
+### Added
+
+- `keys[]` filter on `kanon_list_issues` — fetch specific issues by key without a full list scan.
+- `attachIssueKeys` on `kanon_create_cycle` — atomically create a cycle and attach issues in one call.
+- `includeAllScopeEvents` on `kanon_get_cycle` — opt in to the full event log (default: last 20).
+- Batch-transition by issue keys via `kanon_batch_transition` (new `keys[]` mode, XOR with `groupKey`).
+- Ack-tier responses across all 17 write tools (`issue-write`, `transition`, `batch-transition`, `cycle-create`, `cycle-attach`, `cycle-close`, `roadmap-write`, `project-write`, `comment-write`, `dependency-write`, `work-session`).
+
+### Changed
+
+- Tool description sizes reduced ~30% across all 29 MCP tools.
+- Cycle attach is now atomic — `attachIssueKeys` rolls back if any key is invalid.
+- `kanon_close_cycle` returns minimal ack `{cycleId, disposition, movedIssueKeys}` by default; pass `format:"full"` for the full cycle entity.
+
 ## [0.2.0] - 2026-03-29
 
 ### Added

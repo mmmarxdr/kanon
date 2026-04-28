@@ -280,7 +280,7 @@ describe("mcp-config", () => {
       );
 
       expect(entry.command).toBe("wsl");
-      expect(entry.args).toEqual(["env", "KANON_API_URL=http://api.test", "KANON_API_KEY=key123", "npx", "@kanon/mcp"]);
+      expect(entry.args).toEqual(["env", "KANON_API_URL=http://api.test", "KANON_API_KEY=key123", "npx", "@kanon/mcp@>=0.3.0"]);
     });
 
     it("should omit KANON_API_KEY when empty in new signature", () => {

@@ -100,7 +100,7 @@ export function buildMcpEntry(
     if (isNpx) {
       return {
         command: "wsl",
-        args: ["env", ...envArgs, "npx", "@kanon/mcp"],
+        args: ["env", ...envArgs, "npx", "@kanon/mcp@>=0.3.0"],
       };
     }
     return {
@@ -118,7 +118,7 @@ export function buildMcpEntry(
   if (isNpx) {
     return {
       command: "npx",
-      args: ["@kanon/mcp"],
+      args: ["@kanon/mcp@>=0.3.0"],
       env,
     };
   }

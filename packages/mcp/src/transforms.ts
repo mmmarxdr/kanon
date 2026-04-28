@@ -27,7 +27,7 @@ export type EntityType =
 // ─── Field Allowlists ───────────────────────────────────────────────────────
 
 export const ISSUE_LIST_FIELDS = [
-  "key", "title", "state", "type", "priority", "labels", "groupKey", "dueDate", "activeWorkers", "cycle",
+  "key", "title", "state", "type", "priority", "labels", "groupKey", "dueDate", "activeWorkers", "cycleId",
 ] as const;
 
 export const ISSUE_DETAIL_FIELDS = [
@@ -53,7 +53,7 @@ export const GROUP_FIELDS = [
 // ─── Write-Slim Field Allowlists ───────────────────────────────────────────
 
 export const ISSUE_WRITE_FIELDS = [
-  "key", "title", "state", "type", "priority", "cycle",
+  "key", "title", "state", "type", "priority",
 ] as const;
 
 export const ROADMAP_WRITE_FIELDS = [
@@ -99,9 +99,16 @@ export function slimPick<T extends Record<string, unknown>>(
  * Flattens assignee object to just the username string.
  */
 export function slimIssue(issue: KanonIssue): Record<string, unknown> {
-  const base = slimPick(issue as unknown as Record<string, unknown>, ISSUE_LIST_FIELDS);
-  // Flatten assignee: extract username/name if it's an object, otherwise pass through
   const raw = issue as unknown as Record<string, unknown>;
+  const base = slimPick(raw, ISSUE_LIST_FIELDS);
+  // Flatten cycle object to cycleId scalar (ISSUE_LIST_FIELDS has "cycleId", not "cycle")
+  const cycle = raw["cycle"];
+  if (cycle && typeof cycle === "object" && cycle !== null) {
+    base["cycleId"] = (cycle as Record<string, unknown>)["id"] ?? null;
+  } else {
+    base["cycleId"] = null;
+  }
+  // Flatten assignee: extract username/name if it's an object, otherwise pass through
   const assignee = raw["assignee"];
   if (assignee && typeof assignee === "object" && assignee !== null) {
     const assigneeObj = assignee as Record<string, unknown>;
@@ -129,10 +136,19 @@ export function slimIssue(issue: KanonIssue): Record<string, unknown> {
  */
 export function slimIssueDetail(issue: KanonIssue): Record<string, unknown> {
   const base = slimIssue(issue); // activeWorkers already handled by slimIssue
+  // Restore cycle as nested {id, name, state} in detail context (overrides flat cycleId from slimIssue)
+  const raw = issue as unknown as Record<string, unknown>;
+  const cycle = raw["cycle"];
+  if (cycle && typeof cycle === "object" && cycle !== null) {
+    const c = cycle as Record<string, unknown>;
+    base["cycle"] = { id: c["id"], name: c["name"], state: c["state"] };
+  } else {
+    base["cycle"] = null;
+  }
+  delete base["cycleId"];
   // Add detail-only fields
   base["description"] = issue.description ?? null;
   // Extract project key if project is an object
-  const raw = issue as unknown as Record<string, unknown>;
   const project = raw["project"];
   if (project && typeof project === "object" && project !== null) {
     base["project"] = (project as Record<string, unknown>)["key"] ?? null;
@@ -341,8 +357,7 @@ export function formatAck(
       return {
         ok: true,
         id: src["id"],
-        title: src["title"],
-        horizon: src["horizon"],
+        status: src["status"],
       };
     case "work-session":
       return {

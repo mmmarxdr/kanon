@@ -1,10 +1,39 @@
-import { describe, it, expect, vi } from "vitest";
-import { closeCycleWithDisposition, normalizeDate } from "./cycles.js";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { closeCycleWithDisposition, normalizeDate, registerCycleTools } from "./cycles.js";
 import type {
   KanonClient,
   KanonCycle,
   KanonCycleDetail,
 } from "../kanon-client.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+
+// ─── Harness ────────────────────────────────────────────────────────────────
+
+type ToolHandler = (input: Record<string, unknown>) => Promise<{
+  content: Array<{ type: string; text: string }>;
+  isError?: boolean;
+}>;
+
+interface RegisteredTool {
+  name: string;
+  description: string;
+  shape: unknown;
+  handler: ToolHandler;
+}
+
+function captureTools(
+  register: (server: McpServer, client: KanonClient) => void,
+  client: KanonClient,
+): Map<string, RegisteredTool> {
+  const tools = new Map<string, RegisteredTool>();
+  const fakeServer = {
+    tool: (name: string, description: string, shape: unknown, handler: ToolHandler) => {
+      tools.set(name, { name, description, shape, handler });
+    },
+  } as unknown as McpServer;
+  register(fakeServer, client);
+  return tools;
+}
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -99,7 +128,7 @@ describe("closeCycleWithDisposition — leave", () => {
 
     expect(result).toEqual({
       closed: makeClosed(),
-      moved: 0,
+      movedIssueKeys: [],
       disposition: "leave",
     });
     expect(client.closeCycle).toHaveBeenCalledTimes(1);
@@ -126,7 +155,7 @@ describe("closeCycleWithDisposition — move_to_backlog", () => {
       reason: "End of sprint",
     });
 
-    expect(result.moved).toBe(2);
+    expect(result.movedIssueKeys.length).toBe(2);
     expect(result.disposition).toBe("move_to_backlog");
     expect(client.attachIssuesToCycle).toHaveBeenCalledWith(CYCLE_ID, {
       remove: ["KAN-2", "KAN-3"],
@@ -148,7 +177,7 @@ describe("closeCycleWithDisposition — move_to_backlog", () => {
       disposition: "move_to_backlog",
     });
 
-    expect(result.moved).toBe(0);
+    expect(result.movedIssueKeys.length).toBe(0);
     expect(client.attachIssuesToCycle).not.toHaveBeenCalled();
     expect(client.closeCycle).toHaveBeenCalledOnce();
   });
@@ -224,7 +253,7 @@ describe("closeCycleWithDisposition — move_to_next", () => {
       reason: "rollover",
     });
 
-    expect(result.moved).toBe(1);
+    expect(result.movedIssueKeys.length).toBe(1);
     expect(result.disposition).toBe("move_to_next");
     // First call: remove from current
     expect(client.attachIssuesToCycle).toHaveBeenNthCalledWith(1, CYCLE_ID, {
@@ -284,5 +313,376 @@ describe("closeCycleWithDisposition — move_to_next", () => {
     expect(client.attachIssuesToCycle).toHaveBeenNthCalledWith(2, NEXT_CYCLE_ID, {
       add: ["KAN-2"],
     });
+  });
+});
+
+// ─── D5: kanon_create_cycle — attachIssueKeys forwarded to client ────────────
+
+describe("kanon_create_cycle — attachIssueKeys (D5)", () => {
+  let mockClient: { createCycle: ReturnType<typeof vi.fn> };
+  let createCycleTool: RegisteredTool;
+
+  beforeEach(() => {
+    mockClient = {
+      createCycle: vi.fn().mockResolvedValue({
+        id: CYCLE_ID,
+        name: "Sprint 1",
+        goal: null,
+        state: "upcoming",
+        startDate: "2026-05-01T00:00:00.000Z",
+        endDate: "2026-05-14T00:00:00.000Z",
+        velocity: null,
+        projectId: "proj_001",
+        createdAt: "",
+        updatedAt: "",
+      }),
+    };
+    const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
+    const tool = tools.get("kanon_create_cycle");
+    if (!tool) throw new Error("kanon_create_cycle not registered");
+    createCycleTool = tool;
+  });
+
+  it("passes attachIssueKeys in the body sent to client.createCycle", async () => {
+    await createCycleTool.handler({
+      projectKey: "KAN",
+      name: "Sprint 1",
+      startDate: "2026-05-01",
+      endDate: "2026-05-14",
+      attachIssueKeys: ["KAN-1", "KAN-2"],
+    });
+
+    expect(mockClient.createCycle).toHaveBeenCalledWith(
+      "KAN",
+      expect.objectContaining({ attachIssueKeys: ["KAN-1", "KAN-2"] }),
+    );
+  });
+
+  it("does not include attachIssueKeys in body when not provided", async () => {
+    await createCycleTool.handler({
+      projectKey: "KAN",
+      name: "Sprint 1",
+      startDate: "2026-05-01",
+      endDate: "2026-05-14",
+    });
+
+    const [, body] = mockClient.createCycle.mock.calls[0] as [string, Record<string, unknown>];
+    expect(body).not.toHaveProperty("attachIssueKeys");
+  });
+});
+
+// ─── D7: kanon_get_cycle — includeAllScopeEvents forwarded ───────────────────
+
+describe("kanon_get_cycle — includeAllScopeEvents (D7)", () => {
+  let mockClient: { getCycle: ReturnType<typeof vi.fn> };
+  let getCycleTool: RegisteredTool;
+
+  const fakeDetail: KanonCycleDetail = {
+    id: CYCLE_ID,
+    name: "Sprint 1",
+    goal: null,
+    state: "active",
+    startDate: "2026-05-01T00:00:00.000Z",
+    endDate: "2026-05-14T00:00:00.000Z",
+    velocity: null,
+    projectId: "proj_001",
+    createdAt: "",
+    updatedAt: "",
+    dayIndex: 0,
+    days: 14,
+    scope: 0,
+    completed: 0,
+    scopeAdded: 0,
+    scopeRemoved: 0,
+    burnup: [],
+    scopeLine: [],
+    risks: [],
+    issues: [],
+    scopeEvents: [],
+  };
+
+  beforeEach(() => {
+    mockClient = { getCycle: vi.fn().mockResolvedValue(fakeDetail) };
+    const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
+    const tool = tools.get("kanon_get_cycle");
+    if (!tool) throw new Error("kanon_get_cycle not registered");
+    getCycleTool = tool;
+  });
+
+  it("passes includeAllScopeEvents:true to client.getCycle", async () => {
+    await getCycleTool.handler({
+      cycleId: CYCLE_ID,
+      includeAllScopeEvents: true,
+    });
+
+    expect(mockClient.getCycle).toHaveBeenCalledWith(
+      CYCLE_ID,
+      expect.objectContaining({ includeAllScopeEvents: true }),
+    );
+  });
+
+  it("calls getCycle without options when includeAllScopeEvents not provided", async () => {
+    await getCycleTool.handler({ cycleId: CYCLE_ID });
+
+    // Should not pass truthy includeAllScopeEvents
+    const [, opts] = mockClient.getCycle.mock.calls[0] as [string, Record<string, unknown> | undefined];
+    expect(opts?.includeAllScopeEvents).toBeFalsy();
+  });
+});
+
+// ─── D11: closeCycleWithDisposition returns movedIssueKeys array ─────────────
+
+describe("closeCycleWithDisposition — movedIssueKeys in return (D11)", () => {
+  it("leave path: getCycle never called, movedIssueKeys is empty array", async () => {
+    const client = makeClient();
+    client.closeCycle.mockResolvedValueOnce(makeClosed());
+
+    const result = await closeCycleWithDisposition(client as unknown as KanonClient, {
+      cycleId: CYCLE_ID,
+      disposition: "leave",
+    });
+
+    expect(client.getCycle).not.toHaveBeenCalled();
+    expect(result).toHaveProperty("movedIssueKeys");
+    expect(result.movedIssueKeys).toEqual([]);
+  });
+
+  it("move_to_backlog: movedIssueKeys contains incomplete issue keys", async () => {
+    const client = makeClient();
+    const detail = makeDetail([
+      { id: "i1", key: "KAN-1", title: "Done", state: "done" },
+      { id: "i2", key: "KAN-2", title: "Open", state: "todo" },
+      { id: "i3", key: "KAN-3", title: "WIP", state: "in_progress" },
+    ]);
+    client.getCycle.mockResolvedValueOnce(detail);
+    client.attachIssuesToCycle.mockResolvedValueOnce(detail);
+    client.closeCycle.mockResolvedValueOnce(makeClosed());
+
+    const result = await closeCycleWithDisposition(client as unknown as KanonClient, {
+      cycleId: CYCLE_ID,
+      disposition: "move_to_backlog",
+    });
+
+    expect(result).toHaveProperty("movedIssueKeys");
+    expect(result.movedIssueKeys).toEqual(["KAN-2", "KAN-3"]);
+  });
+});
+
+// ─── D11: kanon_close_cycle ack includes actual movedIssueKeys ───────────────
+
+describe("kanon_close_cycle — movedIssueKeys in ack (D11)", () => {
+  it("ack includes movedIssueKeys from disposition result (move_to_backlog)", async () => {
+    const mockClient = makeClient();
+    const detail = makeDetail([
+      { id: "i1", key: "KAN-1", title: "Done", state: "done" },
+      { id: "i2", key: "KAN-2", title: "Open", state: "todo" },
+    ]);
+    mockClient.getCycle.mockResolvedValueOnce(detail);
+    mockClient.attachIssuesToCycle.mockResolvedValueOnce(detail);
+    mockClient.closeCycle.mockResolvedValueOnce(makeClosed());
+
+    const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
+    const closeTool = tools.get("kanon_close_cycle")!;
+
+    const result = await closeTool.handler({
+      cycleId: CYCLE_ID,
+      disposition: "move_to_backlog",
+      projectKey: "KAN",
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed).toHaveProperty("ok", true);
+    expect(parsed).toHaveProperty("movedIssueKeys");
+    expect(parsed.movedIssueKeys).toEqual(["KAN-2"]);
+  });
+});
+
+// ─── C5: kanon_create_cycle — format tier ────────────────────────────────────
+
+describe("kanon_create_cycle — format tier", () => {
+  const fakeCycle: KanonCycle = {
+    id: CYCLE_ID,
+    name: "Sprint 1",
+    goal: null,
+    state: "upcoming",
+    startDate: "2026-05-01T00:00:00.000Z",
+    endDate: "2026-05-14T00:00:00.000Z",
+    velocity: null,
+    projectId: "proj_001",
+    createdAt: "2026-04-28T00:00:00Z",
+    updatedAt: "2026-04-28T00:00:00Z",
+  };
+
+  let mockClient: { createCycle: ReturnType<typeof vi.fn> };
+  let createCycleTool: RegisteredTool;
+
+  beforeEach(() => {
+    mockClient = { createCycle: vi.fn().mockResolvedValue(fakeCycle) };
+    const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
+    const tool = tools.get("kanon_create_cycle");
+    if (!tool) throw new Error("kanon_create_cycle not registered");
+    createCycleTool = tool;
+  });
+
+  it("defaults to ack: returns { ok, id, name, state } with no other fields", async () => {
+    const result = await createCycleTool.handler({
+      projectKey: "KAN",
+      name: "Sprint 1",
+      startDate: "2026-05-01",
+      endDate: "2026-05-14",
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed).toHaveProperty("ok", true);
+    expect(parsed).toHaveProperty("id", CYCLE_ID);
+    expect(parsed).toHaveProperty("name", "Sprint 1");
+    expect(parsed).toHaveProperty("state", "upcoming");
+    expect(parsed).not.toHaveProperty("startDate");
+    expect(parsed).not.toHaveProperty("endDate");
+    expect(parsed).not.toHaveProperty("projectId");
+  });
+
+  it("format: 'full' returns the raw cycle entity", async () => {
+    const result = await createCycleTool.handler({
+      projectKey: "KAN",
+      name: "Sprint 1",
+      startDate: "2026-05-01",
+      endDate: "2026-05-14",
+      format: "full",
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed).toHaveProperty("id", CYCLE_ID);
+    expect(parsed).toHaveProperty("startDate");
+    expect(parsed).toHaveProperty("endDate");
+    expect(parsed).toHaveProperty("projectId", "proj_001");
+    expect(parsed).not.toHaveProperty("ok");
+  });
+});
+
+// ─── C6: kanon_attach_issues_to_cycle — format tier ──────────────────────────
+
+describe("kanon_attach_issues_to_cycle — format tier", () => {
+  const fakeCycleDetail: KanonCycleDetail = {
+    id: CYCLE_ID,
+    name: "Sprint 1",
+    goal: null,
+    state: "active",
+    startDate: "2026-05-01T00:00:00.000Z",
+    endDate: "2026-05-14T00:00:00.000Z",
+    velocity: null,
+    projectId: "proj_001",
+    createdAt: "2026-04-28T00:00:00Z",
+    updatedAt: "2026-04-28T00:00:00Z",
+    dayIndex: 0,
+    days: 14,
+    scope: 2,
+    completed: 0,
+    scopeAdded: 2,
+    scopeRemoved: 0,
+    burnup: [],
+    scopeLine: [],
+    risks: [],
+    issues: [
+      { id: "i1", key: "KAN-1", title: "Issue 1", state: "todo", estimate: null } as any,
+      { id: "i2", key: "KAN-2", title: "Issue 2", state: "todo", estimate: null } as any,
+    ],
+    scopeEvents: [],
+  };
+
+  let mockClient: { attachIssuesToCycle: ReturnType<typeof vi.fn> };
+  let attachTool: RegisteredTool;
+
+  beforeEach(() => {
+    mockClient = { attachIssuesToCycle: vi.fn().mockResolvedValue(fakeCycleDetail) };
+    const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
+    const tool = tools.get("kanon_attach_issues_to_cycle");
+    if (!tool) throw new Error("kanon_attach_issues_to_cycle not registered");
+    attachTool = tool;
+  });
+
+  it("defaults to ack: returns { ok, cycleId, added, removed, scope, completed }", async () => {
+    const result = await attachTool.handler({
+      cycleId: CYCLE_ID,
+      add: ["KAN-1", "KAN-2"],
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed).toHaveProperty("ok", true);
+    expect(parsed).toHaveProperty("cycleId", CYCLE_ID);
+    expect(parsed).toHaveProperty("scope", 2);
+    expect(parsed).toHaveProperty("completed", 0);
+    expect(parsed).not.toHaveProperty("name");
+    expect(parsed).not.toHaveProperty("issues");
+  });
+
+  it("format: 'full' returns the full cycle detail entity", async () => {
+    const result = await attachTool.handler({
+      cycleId: CYCLE_ID,
+      add: ["KAN-1", "KAN-2"],
+      format: "full",
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed).toHaveProperty("id", CYCLE_ID);
+    expect(parsed).toHaveProperty("issues");
+    expect(parsed).toHaveProperty("burnup");
+    expect(parsed).not.toHaveProperty("ok");
+  });
+});
+
+// ─── C7: kanon_close_cycle — format tier ─────────────────────────────────────
+
+describe("kanon_close_cycle — format tier", () => {
+  let mockClient: MockClient;
+  let closeTool: RegisteredTool;
+
+  beforeEach(() => {
+    mockClient = makeClient();
+    // Default: leave disposition (no detail fetch)
+    mockClient.closeCycle.mockResolvedValue(makeClosed());
+    const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
+    const tool = tools.get("kanon_close_cycle");
+    if (!tool) throw new Error("kanon_close_cycle not registered");
+    closeTool = tool;
+  });
+
+  it("defaults to ack: returns { ok, cycleId, disposition, movedIssueKeys }", async () => {
+    const result = await closeTool.handler({
+      cycleId: CYCLE_ID,
+      disposition: "leave",
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed).toHaveProperty("ok", true);
+    expect(parsed).toHaveProperty("cycleId", CYCLE_ID);
+    expect(parsed).toHaveProperty("disposition", "leave");
+    expect(parsed).toHaveProperty("movedIssueKeys");
+    // No full entity fields
+    expect(parsed).not.toHaveProperty("name");
+    expect(parsed).not.toHaveProperty("startDate");
+    expect(parsed).not.toHaveProperty("velocity");
+  });
+
+  it("format: 'full' returns the full {closed, moved, disposition} summary", async () => {
+    const result = await closeTool.handler({
+      cycleId: CYCLE_ID,
+      disposition: "leave",
+      format: "full",
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]!.text);
+    // Full returns the {closed, movedIssueKeys, disposition} shape
+    expect(parsed).toHaveProperty("closed");
+    expect(parsed).toHaveProperty("movedIssueKeys");
+    expect(parsed).toHaveProperty("disposition", "leave");
+    expect(parsed).not.toHaveProperty("ok");
   });
 });

@@ -1,5 +1,7 @@
-import { describe, it, expect } from "vitest";
-import { formatCommentBody } from "./comments.js";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { formatCommentBody, registerCommentTools } from "./comments.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { KanonClient } from "../kanon-client.js";
 
 // ─── formatCommentBody ────────────────────────────────────────────────────────
 
@@ -136,5 +138,91 @@ describe("formatCommentBody", () => {
   it("output always ends with the footer italic line", () => {
     const result = formatCommentBody({ title: "T", content: "C" });
     expect(result.endsWith("*Synced from Engram*")).toBe(true);
+  });
+});
+
+// ─── Harness ────────────────────────────────────────────────────────────────
+
+type ToolHandler = (input: Record<string, unknown>) => Promise<{
+  content: Array<{ type: string; text: string }>;
+  isError?: boolean;
+}>;
+
+interface RegisteredTool {
+  name: string;
+  description: string;
+  shape: unknown;
+  handler: ToolHandler;
+}
+
+function captureTools(
+  register: (server: McpServer, client: KanonClient) => void,
+  client: KanonClient,
+): Map<string, RegisteredTool> {
+  const tools = new Map<string, RegisteredTool>();
+  const fakeServer = {
+    tool: (name: string, description: string, shape: unknown, handler: ToolHandler) => {
+      tools.set(name, { name, description, shape, handler });
+    },
+  } as unknown as McpServer;
+  register(fakeServer, client);
+  return tools;
+}
+
+// ─── C15: kanon_sync_observation — format tier ───────────────────────────────
+
+describe("kanon_sync_observation — format tier (C15)", () => {
+  const fakeComment = {
+    id: "cmt_001",
+    issueKey: "KAN-1",
+    source: "engram_sync",
+    body: "## 🧠 Title\n\nContent\n\n---\n*Synced from Engram*",
+    authorId: "user_001",
+    createdAt: "2026-04-28T00:00:00Z",
+  };
+
+  let mockClient: { createComment: ReturnType<typeof vi.fn> };
+  let syncTool: RegisteredTool;
+
+  beforeEach(() => {
+    mockClient = { createComment: vi.fn().mockResolvedValue(fakeComment) };
+    const tools = captureTools(registerCommentTools, mockClient as unknown as KanonClient);
+    const tool = tools.get("kanon_sync_observation");
+    if (!tool) throw new Error("kanon_sync_observation not registered");
+    syncTool = tool;
+  });
+
+  it("defaults to ack: returns { ok, id, issueKey } with no heavy fields", async () => {
+    const result = await syncTool.handler({
+      issueKey: "KAN-1",
+      title: "Architecture Decision",
+      content: "Chose hexagonal architecture.",
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed).toHaveProperty("ok", true);
+    expect(parsed).toHaveProperty("id", "cmt_001");
+    expect(parsed).toHaveProperty("issueKey", "KAN-1");
+    expect(parsed).not.toHaveProperty("body");
+    expect(parsed).not.toHaveProperty("authorId");
+    expect(parsed).not.toHaveProperty("source");
+  });
+
+  it("format: 'full' returns the raw comment entity", async () => {
+    const result = await syncTool.handler({
+      issueKey: "KAN-1",
+      title: "Architecture Decision",
+      content: "Chose hexagonal architecture.",
+      format: "full",
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed).toHaveProperty("id", "cmt_001");
+    expect(parsed).toHaveProperty("body");
+    expect(parsed).toHaveProperty("authorId", "user_001");
+    expect(parsed).toHaveProperty("source", "engram_sync");
+    expect(parsed).not.toHaveProperty("ok");
   });
 });

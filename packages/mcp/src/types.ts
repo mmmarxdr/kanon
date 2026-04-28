@@ -74,6 +74,7 @@ export const ListIssuesInput = z.object({
   cycleId: z.string().uuid().optional().describe("Filter by cycle ID"),
   label: z.string().optional().describe("Filter by label"),
   groupKey: z.string().optional().describe("Filter by group key"),
+  keys: z.array(z.string()).optional().describe("Fetch specific issues by key (e.g. ['KAN-1','KAN-2'])"),
   format: ListFormatParam.optional(),
   limit: LimitParam.optional(),
   offset: OffsetParam.optional(),
@@ -137,10 +138,14 @@ export const TransitionIssueInput = z.object({
 /** kanon_batch_transition */
 export const BatchTransitionInput = z.object({
   projectKey: z.string().describe("Project key"),
-  groupKey: z.string().describe("Group key to transition"),
-  state: z.enum(ISSUE_STATES).describe("Target state for all issues in group"),
+  groupKey: z.string().optional().describe("Group key to transition (mutually exclusive with keys)"),
+  keys: z.array(z.string()).optional().describe("Specific issue keys to transition (mutually exclusive with groupKey)"),
+  state: z.enum(ISSUE_STATES).describe("Target state for all issues"),
   ...WriteFormatField,
-});
+}).refine(
+  (d) => Boolean(d.groupKey) !== Boolean(d.keys?.length),
+  { message: "Exactly one of groupKey or keys must be provided" },
+);
 
 // ─── Workspace Tool Input Schemas ───────────────────────────────────────────
 
@@ -293,6 +298,8 @@ export const ListCyclesInput = z.object({
 /** kanon_get_cycle */
 export const GetCycleInput = z.object({
   cycleId: z.string().uuid().describe("Cycle ID (UUID)"),
+  includeAllScopeEvents: z.boolean().optional()
+    .describe("When true, returns all scope events instead of just the most recent ones"),
   format: FormatParam.optional(),
 });
 
@@ -305,6 +312,8 @@ export const CreateCycleInput = z.object({
   endDate: z.string().describe("End date — accepts YYYY-MM-DD or full ISO datetime"),
   state: z.enum(CYCLE_STATES).optional()
     .describe("Initial state (default 'upcoming'). Setting 'active' demotes any other active cycle."),
+  attachIssueKeys: z.array(z.string()).optional()
+    .describe("Issue keys to attach to the cycle immediately on creation (e.g. ['KAN-1','KAN-2'])"),
   ...WriteFormatField,
 });
 

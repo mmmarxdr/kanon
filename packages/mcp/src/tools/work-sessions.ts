@@ -25,7 +25,7 @@ const WhoIsWorkingInput = z.object({
 export function registerWorkSessionTools(server: McpServer, client: KanonClient): void {
   server.tool(
     "kanon_start_work",
-    "Signal that you're actively working on an issue. Auto-assigns if unassigned. Returns warnings if others are working on it. Starts automatic heartbeat to keep session alive.",
+    "Start work session on issue_key. Auto-assigns if unassigned; starts heartbeat. Returns ack {ok,sessionId,action:'started'}.",
     StartWorkInput.shape,
     async ({ issue_key }) => {
       try {
@@ -34,20 +34,12 @@ export function registerWorkSessionTools(server: McpServer, client: KanonClient)
         // Start auto-heartbeat for this issue
         startAutoHeartbeat(issue_key, client);
 
-        const lines: string[] = [];
-        lines.push(`Started work on ${issue_key}`);
-        if (result.autoAssigned) {
-          lines.push("Auto-assigned issue to you (was unassigned).");
-        }
-        if (result.warnings.length > 0) {
-          lines.push("");
-          lines.push("Warnings:");
-          for (const w of result.warnings) {
-            lines.push(`  - ${w}`);
-          }
-        }
-
-        return dataResult(lines.join("\n"));
+        const session = (result.session ?? {}) as Record<string, unknown>;
+        return dataResult({
+          ok: true,
+          sessionId: session["id"] ?? null,
+          action: "started" as const,
+        });
       } catch (err) {
         return errorResult(err);
       }
@@ -56,7 +48,7 @@ export function registerWorkSessionTools(server: McpServer, client: KanonClient)
 
   server.tool(
     "kanon_stop_work",
-    "Signal that you've stopped working on an issue. Clears your active session and stops the automatic heartbeat.",
+    "Stop work session on issue_key; clears session and heartbeat. Returns {ok,deleted,issueKey}.",
     StopWorkInput.shape,
     async ({ issue_key }) => {
       try {
@@ -64,10 +56,11 @@ export function registerWorkSessionTools(server: McpServer, client: KanonClient)
         stopAutoHeartbeat(issue_key);
 
         const result = await client.stopWork(issue_key);
-        const message = result.deleted
-          ? `Stopped work on ${issue_key}.`
-          : `No active session found for ${issue_key} (already stopped).`;
-        return dataResult(message);
+        return dataResult({
+          ok: true,
+          deleted: result.deleted,
+          issueKey: issue_key,
+        });
       } catch (err) {
         return errorResult(err);
       }
@@ -76,7 +69,7 @@ export function registerWorkSessionTools(server: McpServer, client: KanonClient)
 
   server.tool(
     "kanon_who_is_working",
-    "Check who is currently working on an issue. Shows active workers with their username, source (mcp/web/etc), and how long they've been working.",
+    "List active workers on issue_key: username, source (mcp/web/etc), elapsed time.",
     WhoIsWorkingInput.shape,
     async ({ issue_key }) => {
       try {

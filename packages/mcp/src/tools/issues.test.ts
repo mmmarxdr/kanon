@@ -1,6 +1,6 @@
-// ─── kanon_create_issue — format-tier behavior ──────────────────────────────
+// ─── Issue Tools — format-tier behavior ─────────────────────────────────────
 //
-// Proof-of-concept tests for the ack-tier wiring on a single write tool.
+// Tests for the ack-tier wiring on write tools (C1–C3, C11–C12).
 // Mirrors the harness pattern in `kanon-client.test.ts`: stub the MCP server's
 // tool registration, capture the handler, then drive it with a mock client.
 
@@ -126,5 +126,133 @@ describe("kanon_create_issue — format tier", () => {
   it("description mentions ack default and format:'full' opt-in", () => {
     expect(createTool.description.toLowerCase()).toContain("ack");
     expect(createTool.description).toMatch(/format/i);
+  });
+});
+
+// ─── C2: kanon_update_issue — format tier ────────────────────────────────────
+
+describe("kanon_update_issue — format tier", () => {
+  let mockClient: { updateIssue: ReturnType<typeof vi.fn> };
+  let updateTool: RegisteredTool;
+
+  beforeEach(() => {
+    mockClient = {
+      updateIssue: vi.fn().mockResolvedValue(makeFullIssue()),
+    };
+    const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
+    const tool = tools.get("kanon_update_issue");
+    if (!tool) throw new Error("kanon_update_issue not registered");
+    updateTool = tool;
+  });
+
+  it("defaults to ack: returns { ok, id, key } with no other fields", async () => {
+    const result = await updateTool.handler({
+      issueKey: "KAN-1",
+      title: "Updated title",
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed).toEqual({ ok: true, id: "iss_001", key: "KAN-1" });
+    expect(Object.keys(parsed)).toEqual(["ok", "id", "key"]);
+    expect(parsed).not.toHaveProperty("title");
+    expect(parsed).not.toHaveProperty("state");
+  });
+
+  it("format: 'full' returns the entity with all fields", async () => {
+    const result = await updateTool.handler({
+      issueKey: "KAN-1",
+      title: "Updated title",
+      format: "full",
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed).toHaveProperty("id", "iss_001");
+    expect(parsed).toHaveProperty("key", "KAN-1");
+    expect(parsed).toHaveProperty("title", "Fix login bug");
+    expect(parsed).toHaveProperty("type", "bug");
+    expect(parsed).toHaveProperty("priority", "high");
+  });
+});
+
+// ─── C3: kanon_transition_issue — format tier ────────────────────────────────
+
+describe("kanon_transition_issue — format tier", () => {
+  let mockClient: { transitionIssue: ReturnType<typeof vi.fn> };
+  let transitionTool: RegisteredTool;
+
+  beforeEach(() => {
+    mockClient = {
+      transitionIssue: vi.fn().mockResolvedValue(makeFullIssue({ state: "done" })),
+    };
+    const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
+    const tool = tools.get("kanon_transition_issue");
+    if (!tool) throw new Error("kanon_transition_issue not registered");
+    transitionTool = tool;
+  });
+
+  it("defaults to ack: returns { ok, id, key } with no other fields", async () => {
+    const result = await transitionTool.handler({
+      issueKey: "KAN-1",
+      state: "done",
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed).toEqual({ ok: true, id: "iss_001", key: "KAN-1" });
+    expect(Object.keys(parsed)).toEqual(["ok", "id", "key"]);
+    expect(parsed).not.toHaveProperty("state");
+  });
+
+  it("format: 'full' returns the entity with all fields", async () => {
+    const result = await transitionTool.handler({
+      issueKey: "KAN-1",
+      state: "done",
+      format: "full",
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed).toHaveProperty("id", "iss_001");
+    expect(parsed).toHaveProperty("key", "KAN-1");
+    expect(parsed).toHaveProperty("state", "done");
+    expect(parsed).toHaveProperty("type", "bug");
+  });
+});
+
+// ─── D3: kanon_list_issues — keys[] filter ───────────────────────────────────
+
+describe("kanon_list_issues — keys[] filter (D3)", () => {
+  let mockClient: { listIssues: ReturnType<typeof vi.fn> };
+  let listTool: RegisteredTool;
+
+  beforeEach(() => {
+    mockClient = {
+      listIssues: vi.fn().mockResolvedValue([makeFullIssue()]),
+    };
+    const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
+    const tool = tools.get("kanon_list_issues");
+    if (!tool) throw new Error("kanon_list_issues not registered");
+    listTool = tool;
+  });
+
+  it("zod shape accepts keys array", async () => {
+    const result = await listTool.handler({
+      projectKey: "KAN",
+      keys: ["KAN-1", "KAN-2"],
+    });
+    expect(result.isError).toBeUndefined();
+  });
+
+  it("passes keys to client.listIssues as a filter", async () => {
+    await listTool.handler({
+      projectKey: "KAN",
+      keys: ["KAN-1", "KAN-2"],
+    });
+    expect(mockClient.listIssues).toHaveBeenCalledWith(
+      "KAN",
+      expect.objectContaining({ keys: ["KAN-1", "KAN-2"] }),
+    );
   });
 });

@@ -10,7 +10,7 @@ import {
   UpdateProjectInput,
 } from "../types.js";
 import { errorResult, dataResult } from "../errors.js";
-import { formatList, formatEntity } from "../transforms.js";
+import { formatList, formatEntity, formatAck } from "../transforms.js";
 import type { Format } from "../transforms.js";
 
 export function registerProjectTools(server: McpServer, client: KanonClient): void {
@@ -18,7 +18,7 @@ export function registerProjectTools(server: McpServer, client: KanonClient): vo
 
   server.tool(
     "kanon_list_workspaces",
-    "List all workspaces visible to the authenticated user",
+    "List workspaces visible to the authenticated user. Returns compact list.",
     ListWorkspacesInput.shape,
     async ({ format }) => {
       try {
@@ -38,7 +38,7 @@ export function registerProjectTools(server: McpServer, client: KanonClient): vo
 
   server.tool(
     "kanon_list_projects",
-    "List all projects in a Kanon workspace",
+    "List projects by workspaceId. Returns compact list.",
     ListProjectsInput.shape,
     async ({ workspaceId, format, limit, offset }) => {
       try {
@@ -52,7 +52,7 @@ export function registerProjectTools(server: McpServer, client: KanonClient): vo
 
   server.tool(
     "kanon_get_project",
-    "Get details of a Kanon project by its key",
+    "Get project details by projectKey. Returns entity.",
     GetProjectInput.shape,
     async ({ projectKey, format }) => {
       try {
@@ -66,14 +66,16 @@ export function registerProjectTools(server: McpServer, client: KanonClient): vo
 
   server.tool(
     "kanon_create_project",
-    "Create a new project in a Kanon workspace",
+    "Create project (workspaceId,key,name,description). Returns ack {ok,id,key,name}; format:'full' for entity.",
     CreateProjectInput.shape,
     async ({ workspaceId, key, name, description, format }) => {
       try {
         const body: { key: string; name: string; description?: string } = { key, name };
         if (description !== undefined) body.description = description;
         const project = await client.createProject(workspaceId, body);
-        return dataResult(formatEntity(project, "project-write", (format ?? "slim") as Format));
+        const fmt = format ?? "ack";
+        if (fmt === "ack") return dataResult(formatAck(project, "project"));
+        return dataResult(formatEntity(project, "project-write", fmt as Format));
       } catch (err) {
         return errorResult(err);
       }
@@ -82,7 +84,7 @@ export function registerProjectTools(server: McpServer, client: KanonClient): vo
 
   server.tool(
     "kanon_update_project",
-    "Update a Kanon project (name, description, engram namespace)",
+    "Update project (projectKey,name,description,engramNamespace). Returns ack {ok,id,key,name}; format:'full' for entity.",
     UpdateProjectInput.shape,
     async (args) => {
       try {
@@ -92,7 +94,9 @@ export function registerProjectTools(server: McpServer, client: KanonClient): vo
         if (rest["description"] !== undefined) body["description"] = rest["description"];
         if (rest["engramNamespace"] !== undefined) body["engramNamespace"] = rest["engramNamespace"];
         const project = await client.updateProject(projectKey, body);
-        return dataResult(formatEntity(project, "project-write", (format ?? "slim") as Format));
+        const fmt = format ?? "ack";
+        if (fmt === "ack") return dataResult(formatAck(project, "project"));
+        return dataResult(formatEntity(project, "project-write", fmt as Format));
       } catch (err) {
         return errorResult(err);
       }
