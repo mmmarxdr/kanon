@@ -38,7 +38,7 @@ const client = new KanonClient({
 
 const server = new McpServer({
   name: "kanon-mcp",
-  version: "0.0.1",
+  version: "0.3.0",
 });
 
 // ─── Register Tools ─────────────────────────────────────────────────────────

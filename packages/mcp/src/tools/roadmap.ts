@@ -12,12 +12,12 @@ import {
   RemoveDependencyInput,
 } from "../types.js";
 import { errorResult, dataResult } from "../errors.js";
-import { formatList, formatEntity, type Format } from "../transforms.js";
+import { formatList, formatEntity, formatAck, type Format } from "../transforms.js";
 
 export function registerRoadmapTools(server: McpServer, client: KanonClient): void {
   server.tool(
     "kanon_list_roadmap",
-    "List roadmap items in a Kanon project with optional filters",
+    "List roadmap items for projectKey with filters (horizon,status,label). Returns compact list.",
     ListRoadmapInput.shape,
     async ({ projectKey, horizon, status, label, format, limit, offset }) => {
       try {
@@ -43,7 +43,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
 
   server.tool(
     "kanon_create_roadmap_item",
-    "Create a new roadmap item in a Kanon project",
+    "Create roadmap item (projectKey,title,description,horizon,status,effort,impact,labels,sortOrder,targetDate). Returns ack {ok,id,status}; format:'full' for entity.",
     CreateRoadmapItemInput.shape,
     async ({ projectKey, title, description, horizon, status, effort, impact, labels, sortOrder, targetDate, format }) => {
       try {
@@ -58,7 +58,9 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
         if (targetDate !== undefined) body["targetDate"] = targetDate;
 
         const item = await client.createRoadmapItem(projectKey, body);
-        return dataResult(formatEntity(item, "roadmap-write", (format ?? "slim") as Format));
+        const fmt = format ?? "ack";
+        if (fmt === "ack") return dataResult(formatAck(item, "roadmap-item"));
+        return dataResult(formatEntity(item, "roadmap-write", fmt as Format));
       } catch (err) {
         return errorResult(err);
       }
@@ -69,7 +71,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
 
   server.tool(
     "kanon_update_roadmap_item",
-    "Update fields of an existing roadmap item",
+    "Update roadmap item (projectKey,itemId,title,description,horizon,status,effort,impact,labels,sortOrder,targetDate). Returns ack {ok,id,status}; format:'full' for entity.",
     UpdateRoadmapItemInput.shape,
     async ({ projectKey, itemId, title, description, horizon, status, effort, impact, labels, sortOrder, targetDate, format }) => {
       try {
@@ -85,7 +87,9 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
         if (targetDate !== undefined) body["targetDate"] = targetDate;
 
         const item = await client.updateRoadmapItem(projectKey, itemId, body);
-        return dataResult(formatEntity(item, "roadmap-write", (format ?? "slim") as Format));
+        const fmt = format ?? "ack";
+        if (fmt === "ack") return dataResult(formatAck(item, "roadmap-item"));
+        return dataResult(formatEntity(item, "roadmap-write", fmt as Format));
       } catch (err) {
         return errorResult(err);
       }
@@ -94,7 +98,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
 
   server.tool(
     "kanon_delete_roadmap_item",
-    "Delete a roadmap item from a Kanon project",
+    "Delete roadmap item (projectKey,itemId). Returns {deleted:true,itemId}.",
     DeleteRoadmapItemInput.shape,
     async ({ projectKey, itemId }) => {
       try {
@@ -108,9 +112,9 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
 
   server.tool(
     "kanon_promote_roadmap_item",
-    "Promote a roadmap item to a full Kanon issue",
+    "Promote roadmap item to issue (projectKey,itemId,title,type,priority,labels,groupKey). Returns ack {ok,id,key}; format:'full' for entity.",
     PromoteRoadmapItemInput.shape,
-    async ({ projectKey, itemId, title, type, priority, labels, groupKey }) => {
+    async ({ projectKey, itemId, title, type, priority, labels, groupKey, format }) => {
       try {
         const body: Record<string, unknown> = {};
         if (title !== undefined) body["title"] = title;
@@ -120,7 +124,9 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
         if (groupKey !== undefined) body["groupKey"] = groupKey;
 
         const issue = await client.promoteRoadmapItem(projectKey, itemId, body);
-        return dataResult(formatEntity(issue, "issue-write"));
+        const fmt = format ?? "ack";
+        if (fmt === "ack") return dataResult(formatAck(issue, "issue"));
+        return dataResult(formatEntity(issue, "issue-write", fmt as Format));
       } catch (err) {
         return errorResult(err);
       }
@@ -131,15 +137,17 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
 
   server.tool(
     "kanon_add_dependency",
-    "Add a dependency between two roadmap items (source blocks target). Returns the created dependency or an error if a cycle would be created.",
+    "Add dependency (projectKey,sourceItemId,targetItemId,type): source blocks target. Errors if circular. Returns ack {ok,id,projectId}; format:'full' for entity.",
     AddDependencyInput.shape,
-    async ({ projectKey, sourceItemId, targetItemId, type }) => {
+    async ({ projectKey, sourceItemId, targetItemId, type, format }) => {
       try {
         const body: Record<string, unknown> = { targetId: targetItemId };
         if (type !== undefined) body["type"] = type;
 
         const dep = await client.addDependency(projectKey, sourceItemId, body);
-        return dataResult({ id: (dep as Record<string, unknown>)["id"], type: (dep as Record<string, unknown>)["type"] ?? "blocks" });
+        const fmt = format ?? "ack";
+        if (fmt === "ack") return dataResult(formatAck(dep, "issue-dependency"));
+        return dataResult(dep);
       } catch (err) {
         return errorResult(err);
       }
@@ -148,12 +156,12 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
 
   server.tool(
     "kanon_remove_dependency",
-    "Remove a dependency from a roadmap item",
+    "Remove dependency (projectKey,sourceItemId,dependencyId). Returns {ok,deleted,dependencyId}.",
     RemoveDependencyInput.shape,
     async ({ projectKey, sourceItemId, dependencyId }) => {
       try {
         await client.removeDependency(projectKey, sourceItemId, dependencyId);
-        return dataResult({ deleted: true, dependencyId });
+        return dataResult({ ok: true, deleted: true, dependencyId });
       } catch (err) {
         return errorResult(err);
       }

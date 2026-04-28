@@ -24,11 +24,11 @@ const CreateIssueInputShape = { ...CreateIssueInput.shape, ...WriteFormatField }
 export function registerIssueTools(server: McpServer, client: KanonClient): void {
   server.tool(
     "kanon_list_issues",
-    "List issues in a Kanon project with optional filters",
+    "List issues with filters (state,type,priority,assigneeId,cycleId,label,groupKey,keys[]). Returns slim list.",
     ListIssuesInput.shape,
-    async ({ projectKey, state, type, priority, assigneeId, cycleId, label, groupKey, format, limit, offset }) => {
+    async ({ projectKey, state, type, priority, assigneeId, cycleId, label, groupKey, keys, format, limit, offset }) => {
       try {
-        const filters: Record<string, string> = {};
+        const filters: Record<string, string> & { keys?: string[] } = {};
         if (state) filters["state"] = state;
         if (type) filters["type"] = type;
         if (priority) filters["priority"] = priority;
@@ -36,6 +36,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient): void
         if (cycleId) filters["cycleId"] = cycleId;
         if (label) filters["label"] = label;
         if (groupKey) filters["groupKey"] = groupKey;
+        if (keys && keys.length > 0) filters["keys"] = keys;
 
         const issues = await client.listIssues(projectKey, filters);
         const result = formatList(
@@ -54,7 +55,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient): void
 
   server.tool(
     "kanon_get_issue",
-    "Get full details of a Kanon issue by its key",
+    "Get issue detail by issueKey. Returns slim; format:'full' for full entity.",
     GetIssueInput.shape,
     async ({ issueKey, format }) => {
       try {
@@ -71,7 +72,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient): void
 
   server.tool(
     "kanon_create_issue",
-    "Create a Kanon issue. Title: imperative, no key prefix (e.g. 'Fix login redirect'). Call kanon_list_groups first for valid groupKey. Pass cycleId to attach the issue to a cycle on create — backend emits the scope event natively. Default returns minimal ack `{ok, id, key}`. Pass `format:'full'` to receive the entity.",
+    "Create issue (projectKey,title,description,type,priority,labels,groupKey,assigneeId,cycleId,parentId,dueDate,template). Title: imperative verb. kanon_list_groups for groupKey. cycleId attaches on create. Returns ack {ok,id,key}; format:'full' for entity.",
     CreateIssueInputShape,
     async (input) => {
       try {
@@ -105,7 +106,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient): void
 
   server.tool(
     "kanon_update_issue",
-    "Update fields of an existing Kanon issue. Always call kanon_get_issue first to read current state before updating — append, don't overwrite. Pass cycleId to attach (or null to detach).",
+    "Update issue (issueKey,title,description,priority,labels,assigneeId,cycleId,dueDate,roadmapItemId). Read first, append don't overwrite. cycleId=null detaches. Returns ack {ok,id,key}; format:'full' for entity.",
     UpdateIssueInput.shape,
     async ({ issueKey, title, description, priority, labels, assigneeId, cycleId, dueDate, roadmapItemId, format }) => {
       try {
@@ -120,7 +121,9 @@ export function registerIssueTools(server: McpServer, client: KanonClient): void
         if (roadmapItemId !== undefined) body["roadmapItemId"] = roadmapItemId;
 
         const issue = await client.updateIssue(issueKey, body);
-        return dataResult(formatEntity(issue, "issue-write", (format ?? "slim") as Format));
+        const fmt = format ?? "ack";
+        if (fmt === "ack") return dataResult(formatAck(issue, "issue"));
+        return dataResult(formatEntity(issue, "issue-write", fmt as Format));
       } catch (err) {
         return errorResult(err);
       }
@@ -129,15 +132,18 @@ export function registerIssueTools(server: McpServer, client: KanonClient): void
 
   server.tool(
     "kanon_transition_issue",
-    "Transition a Kanon issue to a new state. Call kanon_get_issue first to check current state. Valid states: backlog, todo, in_progress, review, done.",
+    "Transition issueKey to state (backlog,todo,in_progress,review,done). Returns ack {ok,id,key}; format:'full' for entity.",
     TransitionIssueInput.shape,
     async ({ issueKey, state, format }) => {
       try {
         const issue = await client.transitionIssue(issueKey, state);
-        return dataResult(formatEntity(issue, "issue-write", (format ?? "slim") as Format));
+        const fmt = format ?? "ack";
+        if (fmt === "ack") return dataResult(formatAck(issue, "issue"));
+        return dataResult(formatEntity(issue, "issue-write", fmt as Format));
       } catch (err) {
         return errorResult(err);
       }
     },
   );
+
 }

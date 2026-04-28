@@ -4,7 +4,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { KanonClient } from "../kanon-client.js";
 import { SyncObservationInput } from "../types.js";
 import { errorResult, dataResult } from "../errors.js";
-import { formatEntity, type Format } from "../transforms.js";
+import { formatEntity, formatAck, type Format } from "../transforms.js";
 
 const MAX_BODY_CHARS = 9900;
 const FOOTER_RESERVE = 200; // chars reserved for header + footer template
@@ -45,15 +45,7 @@ export function registerCommentTools(
 ): void {
   server.tool(
     "kanon_sync_observation",
-    [
-      "Post an Engram observation as a comment on a Kanon issue.",
-      "Call this AFTER saving a significant discovery, decision, or bug fix to Engram via mem_save,",
-      "when that observation is directly relevant to a specific Kanon issue.",
-      "Do NOT call this after every mem_save — only for observations that add meaningful context",
-      "to an issue's thread (e.g. architecture decisions, root-cause findings, non-obvious discoveries).",
-      "Requires issueKey and the observation's title + content.",
-      "observationId should be passed when available to aid traceability.",
-    ].join(" "),
+    "Post Engram observation as issue comment (issueKey,title,content,observationType,observationId,topicKey). Only when directly relevant — not every mem_save. Returns ack {ok,id,issueKey}; format:'full' for entity.",
     SyncObservationInput.shape,
     async ({
       issueKey,
@@ -73,7 +65,9 @@ export function registerCommentTools(
           topicKey,
         });
         const comment = await client.createComment(issueKey, body, "engram_sync");
-        return dataResult(formatEntity(comment, "comment-write", (format ?? "slim") as Format));
+        const fmt = format ?? "ack";
+        if (fmt === "ack") return dataResult(formatAck(comment, "comment"));
+        return dataResult(formatEntity(comment, "comment-write", fmt as Format));
       } catch (err) {
         return errorResult(err);
       }

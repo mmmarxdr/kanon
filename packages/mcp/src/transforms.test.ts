@@ -512,6 +512,45 @@ describe("toCompactTable", () => {
   });
 });
 
+// ─── D1: slimIssue cycle field flattening ────────────────────────────────────
+
+describe("slimIssue — cycle field flattening (D1)", () => {
+  it("flattens cycle object to cycleId string in list context", () => {
+    const issue = makeIssue({
+      cycle: { id: "cyc_001", name: "Sprint 1", state: "active" },
+    });
+    const result = slimIssue(issue as any);
+    expect(result).toHaveProperty("cycleId", "cyc_001");
+    expect(result).not.toHaveProperty("cycle");
+  });
+
+  it("sets cycleId to null when cycle is absent", () => {
+    const issue = makeIssue();
+    const result = slimIssue(issue as any);
+    expect(result).toHaveProperty("cycleId", null);
+    expect(result).not.toHaveProperty("cycle");
+  });
+});
+
+describe("slimIssueDetail — cycle field restored as nested object (D1)", () => {
+  it("restores cycle as nested {id, name, state} in detail context", () => {
+    const issue = makeIssue({
+      cycle: { id: "cyc_001", name: "Sprint 1", state: "active" },
+    });
+    const result = slimIssueDetail(issue as any);
+    expect(result).toHaveProperty("cycle");
+    expect(result["cycle"]).toEqual({ id: "cyc_001", name: "Sprint 1", state: "active" });
+    expect(result).not.toHaveProperty("cycleId");
+  });
+
+  it("sets cycle to null in detail when cycle is absent", () => {
+    const issue = makeIssue();
+    const result = slimIssueDetail(issue as any);
+    expect(result).toHaveProperty("cycle", null);
+    expect(result).not.toHaveProperty("cycleId");
+  });
+});
+
 // ─── Cycle Transforms ────────────────────────────────────────────────────────
 
 function makeCycle(overrides: Record<string, unknown> = {}) {
@@ -636,16 +675,15 @@ describe("formatAck", () => {
     expect(Object.keys(result)).toEqual(["ok", "id", "name", "state"]);
   });
 
-  it("roadmap-item → { ok: true, id, title, horizon }", () => {
+  it("roadmap-item → { ok: true, id, status }", () => {
     const item = makeRoadmapItem();
     const result = formatAck(item, "roadmap-item");
     expect(result).toEqual({
       ok: true,
       id: "rm_001",
-      title: "Roadmap feature",
-      horizon: "near",
+      status: "planned",
     });
-    expect(Object.keys(result)).toEqual(["ok", "id", "title", "horizon"]);
+    expect(Object.keys(result)).toEqual(["ok", "id", "status"]);
   });
 
   it("work-session → { ok: true, id, issueId, startedAt }", () => {

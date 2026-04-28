@@ -123,7 +123,7 @@ describe("kanon_create_project handler", () => {
     server = createMockServer();
   });
 
-  it("calls client.createProject with correct args and returns project-write slim", async () => {
+  it("calls client.createProject with correct args and returns ack by default", async () => {
     const created = { id: "p1", key: "KAN", name: "Kanon", workspaceId: "ws1", description: "Desc" };
     const createFn = vi.fn().mockResolvedValue(created);
     const client = createMockClient({ createProject: createFn });
@@ -136,10 +136,13 @@ describe("kanon_create_project handler", () => {
       name: "Kanon",
     })) as any;
 
-    // project-write slim: only key and name
-    expect(result).toEqual({ key: "KAN", name: "Kanon" });
+    // ack default: { ok, id, key, name }
+    expect(result).toHaveProperty("ok", true);
+    expect(result).toHaveProperty("id", "p1");
+    expect(result).toHaveProperty("key", "KAN");
+    expect(result).toHaveProperty("name", "Kanon");
     expect(result).not.toHaveProperty("success");
-    expect(result).not.toHaveProperty("id");
+    expect(result).not.toHaveProperty("description");
     expect(createFn).toHaveBeenCalledWith("ws1", { key: "KAN", name: "Kanon" });
   });
 
@@ -193,7 +196,7 @@ describe("kanon_update_project handler", () => {
     server = createMockServer();
   });
 
-  it("calls client.updateProject with correct key and body, returns project-write slim", async () => {
+  it("calls client.updateProject with correct key and body, returns ack by default", async () => {
     const updateFn = vi.fn().mockResolvedValue({ id: "p1", key: "KAN", name: "Kanon", engramNamespace: "kanon" });
     const client = createMockClient({ updateProject: updateFn });
     registerProjectTools(server as any, client);
@@ -204,10 +207,13 @@ describe("kanon_update_project handler", () => {
       engramNamespace: "kanon",
     })) as any;
 
-    // project-write slim: only key and name
-    expect(result).toEqual({ key: "KAN", name: "Kanon" });
+    // ack default: { ok, id, key, name }
+    expect(result).toHaveProperty("ok", true);
+    expect(result).toHaveProperty("id", "p1");
+    expect(result).toHaveProperty("key", "KAN");
+    expect(result).toHaveProperty("name", "Kanon");
     expect(result).not.toHaveProperty("success");
-    expect(result).not.toHaveProperty("id");
+    expect(result).not.toHaveProperty("engramNamespace");
     expect(updateFn).toHaveBeenCalledWith("KAN", { engramNamespace: "kanon" });
   });
 
@@ -250,5 +256,99 @@ describe("kanon_update_project handler", () => {
     await handler({ projectKey: "KAN", name: "New Name" });
 
     expect(updateFn).toHaveBeenCalledWith("KAN", { name: "New Name" });
+  });
+});
+
+// ─── C13: kanon_create_project — ack default ─────────────────────────────────
+
+describe("kanon_create_project — format tier (C13)", () => {
+  let server: ReturnType<typeof createMockServer>;
+
+  beforeEach(() => {
+    server = createMockServer();
+  });
+
+  it("defaults to ack: returns { ok, id, key, name } with no other fields", async () => {
+    const created = { id: "p1", key: "KAN", name: "Kanon", workspaceId: "ws1", description: "Desc" };
+    const client = createMockClient({ createProject: vi.fn().mockResolvedValue(created) });
+    registerProjectTools(server as any, client);
+
+    const handler = server.getHandler("kanon_create_project");
+    const result = parseResult(await handler({
+      workspaceId: "ws1",
+      key: "KAN",
+      name: "Kanon",
+    })) as any;
+
+    expect(result).toHaveProperty("ok", true);
+    expect(result).toHaveProperty("id", "p1");
+    expect(result).toHaveProperty("key", "KAN");
+    expect(result).toHaveProperty("name", "Kanon");
+    expect(result).not.toHaveProperty("description");
+    expect(result).not.toHaveProperty("workspaceId");
+  });
+
+  it("format: 'full' returns the raw project entity", async () => {
+    const created = { id: "p1", key: "KAN", name: "Kanon", workspaceId: "ws1", description: "Desc" };
+    const client = createMockClient({ createProject: vi.fn().mockResolvedValue(created) });
+    registerProjectTools(server as any, client);
+
+    const handler = server.getHandler("kanon_create_project");
+    const result = parseResult(await handler({
+      workspaceId: "ws1",
+      key: "KAN",
+      name: "Kanon",
+      format: "full",
+    })) as any;
+
+    expect(result).toHaveProperty("id", "p1");
+    expect(result).toHaveProperty("description", "Desc");
+    expect(result).toHaveProperty("workspaceId", "ws1");
+    expect(result).not.toHaveProperty("ok");
+  });
+});
+
+// ─── C14: kanon_update_project — ack default ─────────────────────────────────
+
+describe("kanon_update_project — format tier (C14)", () => {
+  let server: ReturnType<typeof createMockServer>;
+
+  beforeEach(() => {
+    server = createMockServer();
+  });
+
+  it("defaults to ack: returns { ok, id, key, name } with no other fields", async () => {
+    const updated = { id: "p1", key: "KAN", name: "Kanon Updated", engramNamespace: "kanon" };
+    const client = createMockClient({ updateProject: vi.fn().mockResolvedValue(updated) });
+    registerProjectTools(server as any, client);
+
+    const handler = server.getHandler("kanon_update_project");
+    const result = parseResult(await handler({
+      projectKey: "KAN",
+      name: "Kanon Updated",
+    })) as any;
+
+    expect(result).toHaveProperty("ok", true);
+    expect(result).toHaveProperty("id", "p1");
+    expect(result).toHaveProperty("key", "KAN");
+    expect(result).toHaveProperty("name", "Kanon Updated");
+    expect(result).not.toHaveProperty("engramNamespace");
+  });
+
+  it("format: 'full' returns the raw project entity", async () => {
+    const updated = { id: "p1", key: "KAN", name: "Kanon Updated", engramNamespace: "kanon" };
+    const client = createMockClient({ updateProject: vi.fn().mockResolvedValue(updated) });
+    registerProjectTools(server as any, client);
+
+    const handler = server.getHandler("kanon_update_project");
+    const result = parseResult(await handler({
+      projectKey: "KAN",
+      name: "Kanon Updated",
+      format: "full",
+    })) as any;
+
+    expect(result).toHaveProperty("id", "p1");
+    expect(result).toHaveProperty("engramNamespace", "kanon");
+    expect(result).not.toHaveProperty("ok");
   });
 });

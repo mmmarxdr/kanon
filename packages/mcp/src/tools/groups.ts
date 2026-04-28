@@ -9,7 +9,7 @@ import { formatList } from "../transforms.js";
 export function registerGroupTools(server: McpServer, client: KanonClient): void {
   server.tool(
     "kanon_list_groups",
-    "List issue groups for a Kanon project. Call this before kanon_create_issue to discover valid groups for groupKey assignment.",
+    "List issue groups for projectKey. Call before kanon_create_issue to get valid groupKey values.",
     ListGroupsInput.shape,
     async ({ projectKey, format, limit, offset }) => {
       try {
@@ -23,14 +23,31 @@ export function registerGroupTools(server: McpServer, client: KanonClient): void
 
   server.tool(
     "kanon_batch_transition",
-    "Batch-transition all issues in a group to a new state",
+    "Batch-transition (projectKey,state,groupKey|keys[]). groupKey or keys — mutually exclusive. Returns ack {ok,count,keys}; format:'full' for raw.",
     BatchTransitionInput.shape,
-    async ({ projectKey, groupKey, state, format }) => {
+    async (rawInput) => {
       try {
-        const result = await client.batchTransition(projectKey, groupKey, state);
+        // XOR validation: .shape bypasses .refine(), so parse manually
+        const parsed = BatchTransitionInput.safeParse(rawInput);
+        if (!parsed.success) {
+          return errorResult(new Error(parsed.error.errors[0]?.message ?? "Invalid input"));
+        }
+        const { projectKey, groupKey, keys, state, format } = parsed.data;
+
+        let result: unknown;
+        if (keys && keys.length > 0) {
+          result = await client.batchTransitionByKeys(projectKey, keys, state);
+        } else {
+          result = await client.batchTransition(projectKey, groupKey!, state);
+        }
+
         if (format === "full") return dataResult(result);
-        const count = Array.isArray(result) ? result.length : (result as unknown as Record<string, unknown>)["count"] ?? 0;
-        return dataResult({ transitioned: count, state });
+        const raw = result as Record<string, unknown>;
+        const count = Array.isArray(result) ? result.length : (raw["count"] ?? 0);
+        const resultKeys = Array.isArray(result)
+          ? (result as Array<Record<string, unknown>>).map((i) => i["key"]).filter(Boolean)
+          : (raw["keys"] ?? []);
+        return dataResult({ ok: true, count, keys: resultKeys });
       } catch (err) {
         return errorResult(err);
       }
