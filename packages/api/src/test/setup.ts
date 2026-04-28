@@ -13,3 +13,11 @@ process.env["JWT_SECRET"] =
 process.env["JWT_REFRESH_SECRET"] =
   process.env["JWT_REFRESH_SECRET"] ?? "test-jwt-refresh-secret-16-chars";
 process.env["PORT"] = process.env["PORT"] ?? "3001";
+
+// Vitest mirrors Vite's `import.meta.env.BASE_URL` into `process.env.BASE_URL`,
+// defaulting to "/" — which pisses off `new URL(env.BASE_URL)` in service code
+// (e.g. invite service builds the kanon:// link from BASE_URL host). Override
+// to a valid absolute URL so the schema's default no-ops correctly.
+if (!process.env["BASE_URL"] || process.env["BASE_URL"] === "/") {
+  process.env["BASE_URL"] = "http://localhost:3000";
+}
