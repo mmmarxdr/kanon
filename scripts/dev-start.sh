@@ -82,14 +82,14 @@ trap cleanup SIGINT SIGTERM
 
 # ── 0. Setup-done preflight ──────────────────────────────────────────────────
 # Confirm workspace has been set up before attempting to start services.
-# These outputs are produced by 'pnpm setup' and are required to run.
+# These outputs are produced by 'pnpm bootstrap' and are required to run.
 SETUP_MISSING=false
 if [[ ! -d "$ROOT_DIR/node_modules/.pnpm" ]]; then
   warn "node_modules/.pnpm not found"
   SETUP_MISSING=true
 fi
-if [[ ! -f "$ROOT_DIR/packages/api/node_modules/.prisma/client/index.js" ]]; then
-  warn "Prisma client not generated (packages/api/node_modules/.prisma/client/index.js missing)"
+if ! ls "$ROOT_DIR"/node_modules/.pnpm/@prisma+client*/node_modules/.prisma/client/index.js >/dev/null 2>&1; then
+  warn "Prisma client not generated (no .prisma/client found under .pnpm store)"
   SETUP_MISSING=true
 fi
 if [[ ! -f "$ROOT_DIR/packages/setup/dist/index.js" ]]; then
@@ -97,7 +97,7 @@ if [[ ! -f "$ROOT_DIR/packages/setup/dist/index.js" ]]; then
   SETUP_MISSING=true
 fi
 if [[ "$SETUP_MISSING" == "true" ]]; then
-  fail "Run 'pnpm setup' first."
+  fail "Run 'pnpm bootstrap' first. (Note: 'pnpm setup' is a pnpm builtin and will NOT run our setup script.)"
 fi
 
 # ── 1. Check prerequisites ───────────────────────────────────────────────────

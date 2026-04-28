@@ -1,6 +1,6 @@
 {
   "name": "@kanon-pm/setup",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "description": "Setup and configure Kanon AI tool integrations (Claude Code, Cursor, Antigravity)",
   "bin": {
@@ -15,6 +15,10 @@
     "verify-assets": "bash scripts/verify-assets.sh",
     "prepublishOnly": "pnpm build && bash scripts/verify-assets.sh"
   },
+  "exports": {
+    ".": "./dist/index.js",
+    "./api-types": "./dist/api-types.js"
+  },
   "files": [
     "dist/",
     "assets/"
@@ -22,7 +26,8 @@
   "dependencies": {
     "@inquirer/prompts": "^8.3.2",
     "chalk": "^5.3.0",
-    "commander": "^12.0.0"
+    "commander": "^12.0.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

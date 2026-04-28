@@ -2,7 +2,7 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { KanonClient } from "../kanon-client.js";
-import { ListGroupsInput, BatchTransitionInput } from "../types.js";
+import { ListGroupsInput, BatchTransitionInput, BatchTransitionInputShape } from "../types.js";
 import { errorResult, dataResult } from "../errors.js";
 import { formatList } from "../transforms.js";
 
@@ -24,8 +24,8 @@ export function registerGroupTools(server: McpServer, client: KanonClient): void
   server.tool(
     "kanon_batch_transition",
     "Batch-transition (projectKey,state,groupKey|keys[]). groupKey or keys — mutually exclusive. Returns ack {ok,count,keys}; format:'full' for raw.",
-    BatchTransitionInput.shape,
-    async (rawInput) => {
+    BatchTransitionInputShape.shape,
+    async (rawInput: unknown) => {
       try {
         // XOR validation: .shape bypasses .refine(), so parse manually
         const parsed = BatchTransitionInput.safeParse(rawInput);

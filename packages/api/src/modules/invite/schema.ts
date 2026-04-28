@@ -86,3 +86,24 @@ export const WorkspaceIdParam = z.object({
   wid: z.string().uuid("Invalid workspace ID"),
 });
 export type WorkspaceIdParam = z.infer<typeof WorkspaceIdParam>;
+
+/**
+ * Onboarding invite request body — used by POST /api/workspaces/:wid/invites/onboarding.
+ * Requires an existing user (by userId) who must already be a workspace member.
+ */
+export const OnboardingInviteBody = z.object({
+  userId: z.string().uuid("Invalid user ID"),
+  role: z.enum(["member", "admin", "viewer"]).optional().default("member"),
+  ttlHours: z.number().int().min(1).max(72).optional().default(72),
+});
+export type OnboardingInviteBody = z.infer<typeof OnboardingInviteBody>;
+
+/**
+ * Onboarding invite response — returned by POST /api/workspaces/:wid/invites/onboarding.
+ */
+export const OnboardingInviteResponse = z.object({
+  inviteId: z.string().uuid(),
+  url: z.string(),       // kanon://<host>/onboard?token=<jwt>
+  token: z.string(),     // raw JWT — for the admin modal
+  expiresAt: z.string().datetime(),
+});

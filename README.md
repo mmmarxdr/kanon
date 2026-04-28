@@ -68,8 +68,8 @@ refining how humans and agents share a project.
 ```bash
 git clone https://github.com/mmmarxdr/kanon.git
 cd kanon
-pnpm setup      # install deps, run migrations, build
-pnpm dev:start  # boot Postgres, API, web and Engram
+pnpm bootstrap   # install deps, generate prisma, migrate, build mcp + setup
+pnpm dev:start   # boot Postgres, API, web and Engram
 ```
 
 Open [http://localhost:5173](http://localhost:5173) and sign in with

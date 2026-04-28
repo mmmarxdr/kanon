@@ -1,11 +1,12 @@
 import { randomBytes } from "node:crypto";
+import jwt from "jsonwebtoken";
 import type { MemberRole } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { env } from "../../config/env.js";
 import { AppError } from "../../shared/types.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import type { EmailProvider } from "../../services/email/types.js";
-import type { CreateInviteBody } from "./schema.js";
+import type { CreateInviteBody, OnboardingInviteBody } from "./schema.js";
 
 /**
  * Generate a cryptographically secure invite token.
@@ -287,6 +288,77 @@ export async function getInviteMetadata(token: string) {
 }
 
 /**
+ * Create a single-use onboarding invite for an existing workspace member.
+ *
+ * CRITICAL (option 1): The target user MUST already exist AND be a member of
+ * the workspace. This function does NOT create users. Returns a signed JWT
+ * (scope=onboard) embedded in a kanon:// URL.
+ */
+export async function createOnboardingInvite(
+  workspaceId: string,
+  createdById: string,
+  body: OnboardingInviteBody,
+) {
+  // 1. Resolve user — must exist
+  const user = await prisma.user.findUnique({
+    where: { id: body.userId },
+    select: { id: true, email: true },
+  });
+  if (!user) {
+    throw new AppError(404, "USER_NOT_FOUND", "User not found");
+  }
+
+  // 2. Assert workspace membership
+  const member = await prisma.member.findUnique({
+    where: { userId_workspaceId: { userId: user.id, workspaceId } },
+    select: { id: true },
+  });
+  if (!member) {
+    throw new AppError(403, "NOT_A_MEMBER", "User is not a member of this workspace");
+  }
+
+  const ttlHours = body.ttlHours ?? env.ONBOARDING_TOKEN_TTL_HOURS;
+  const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000);
+
+  // 3. Persist the invite row — opaque token required by existing schema
+  const opaqueToken = generateToken();
+  const invite = await prisma.workspaceInvite.create({
+    data: {
+      token: opaqueToken,
+      role: body.role ?? "member",
+      maxUses: 1,
+      expiresAt,
+      label: "Onboarding link",
+      email: user.email,
+      kind: "ONBOARDING",
+      workspaceId,
+      createdById,
+    },
+    include: {
+      createdBy: { select: { email: true, displayName: true } },
+    },
+  });
+
+  // 4. Sign onboarding JWT: scope=onboard, sub=inviteId, exp=ttlHours
+  const jwtToken = jwt.sign(
+    { sub: invite.id, scope: "onboard" },
+    env.JWT_SECRET,
+    { expiresIn: `${ttlHours}h` },
+  );
+
+  // 5. Build kanon:// URL using BASE_URL host
+  const host = new URL(env.BASE_URL).host;
+  const url = `kanon://${host}/onboard?token=${jwtToken}`;
+
+  return {
+    inviteId: invite.id,
+    url,
+    token: jwtToken,
+    expiresAt: invite.expiresAt.toISOString(),
+  };
+}
+
+/**
  * Accept an invite — validates, increments useCount, creates member.
  * Uses an interactive transaction for atomicity.
  */
@@ -302,8 +374,9 @@ export async function acceptInvite(token: string, userId: string, userEmail: str
       expires_at: Date;
       revoked_at: Date | null;
       workspace_id: string;
+      kind: string | null;
     }>>`
-      SELECT id, token, role, max_uses, use_count, expires_at, revoked_at, workspace_id
+      SELECT id, token, role, max_uses, use_count, expires_at, revoked_at, workspace_id, kind
       FROM workspace_invites
       WHERE token = ${token}
       FOR UPDATE
@@ -312,6 +385,11 @@ export async function acceptInvite(token: string, userId: string, userEmail: str
     const row = rows[0];
     if (!row) {
       throw new AppError(404, "INVITE_NOT_FOUND", "Invite not found");
+    }
+
+    // Guard: onboarding invites are CLI-only — must not be accepted via the web flow
+    if (row.kind === "ONBOARDING") {
+      throw new AppError(400, "INVALID_INVITE_KIND", "This invite is for CLI onboarding only.");
     }
 
     const workspace = await tx.workspace.findUniqueOrThrow({

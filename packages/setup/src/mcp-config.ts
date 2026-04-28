@@ -81,6 +81,8 @@ export type McpResolution =
  * - 'direct': linux, wsl-native tools, or win32 — uses node/npx directly
  * - 'wsl-bridge': Windows-side tools invoked from WSL — uses `wsl` wrapper
  */
+export type McpEntryMode = "static-key" | "wrapper";
+
 export function buildMcpEntry(
   resolution: McpResolution,
   apiUrl: string,
@@ -88,9 +90,35 @@ export function buildMcpEntry(
   ctx: PlatformContext,
   mcpMode: McpMode,
   nodeBin: string,
+  entryMode: McpEntryMode = "static-key",
 ): McpServerEntry {
   const isNpx = resolution.mode === "npx";
 
+  // ── Wrapper mode: token-based auth, no KANON_API_KEY ─────────────────────────
+  if (entryMode === "wrapper") {
+    const wrapperPath = isNpx ? undefined : resolution.path;
+    if (mcpMode === "wsl-bridge") {
+      return {
+        command: "wsl",
+        args: [
+          nodeBin,
+          ...(wrapperPath ? [wrapperPath] : []),
+          "--server",
+          apiUrl,
+        ],
+      };
+    }
+    return {
+      command: nodeBin,
+      args: [
+        ...(wrapperPath ? [wrapperPath] : []),
+        "--server",
+        apiUrl,
+      ],
+    };
+  }
+
+  // ── Static-key mode (default) ─────────────────────────────────────────────────
   if (mcpMode === "wsl-bridge") {
     // Windows-side tools invoked via WSL wrapper
     const envArgs = [`KANON_API_URL=${apiUrl}`];
@@ -228,6 +256,14 @@ export function extractExistingAuth(
         }
         if (!apiKey && arg.startsWith("KANON_API_KEY=")) {
           apiKey = arg.slice("KANON_API_KEY=".length);
+        }
+      }
+
+      // Try wrapper mode: args contain "--server" <apiUrl> (no KANON_API_KEY)
+      if (!apiUrl) {
+        const serverIdx = entry.args.indexOf("--server");
+        if (serverIdx !== -1 && entry.args[serverIdx + 1]) {
+          apiUrl = entry.args[serverIdx + 1];
         }
       }
     }

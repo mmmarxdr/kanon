@@ -14,16 +14,20 @@
 ```bash
 git clone https://github.com/mmmarxdr/kanon.git
 cd kanon
-pnpm setup
+pnpm bootstrap
 pnpm dev:start
 ```
 
-`pnpm setup` does the following:
+> Note: do NOT run `pnpm setup` — it is a pnpm built-in that configures the
+> shell PATH and does NOT execute a project script. Use `pnpm bootstrap`.
 
-1. Installs workspace dependencies.
-2. Generates the Prisma client.
-3. Runs database migrations.
-4. Builds every package.
+`pnpm bootstrap` does the following:
+
+1. Preflight checks (Node 20+, pnpm, Docker).
+2. Installs workspace dependencies.
+3. Generates the Prisma client.
+4. Runs database migrations.
+5. Builds the `@kanon/mcp` and `@kanon-pm/setup` packages.
 
 `pnpm dev:start` boots PostgreSQL (via Docker), the API, the web frontend,
 and the Engram memory service.

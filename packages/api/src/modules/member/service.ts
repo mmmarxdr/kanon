@@ -116,7 +116,7 @@ export async function listMembers(workspaceId: string) {
       role: true,
       createdAt: true,
       user: {
-        select: { email: true, displayName: true, avatarUrl: true },
+        select: { id: true, email: true, displayName: true, avatarUrl: true },
       },
     },
     orderBy: { createdAt: "asc" },

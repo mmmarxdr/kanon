@@ -50,6 +50,16 @@ const envSchema = z.object({
     .string()
     .optional()
     .default("http://localhost:5173"),
+  BASE_URL: z
+    .string()
+    .optional()
+    .default("http://localhost:3000"),
+  ONBOARDING_TOKEN_TTL_HOURS: z
+    .string()
+    .optional()
+    .default("72")
+    .transform((val) => parseInt(val, 10))
+    .pipe(z.number().int().min(1).max(72)),
   CORS_ORIGIN: z
     .string()
     .optional()
