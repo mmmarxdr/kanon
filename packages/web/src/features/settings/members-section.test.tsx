@@ -40,14 +40,14 @@ const MEMBERS = [
     username: "alice",
     role: "member",
     createdAt: "2026-01-01T00:00:00Z",
-    user: { email: "alice@example.com", displayName: "Alice", avatarUrl: null },
+    user: { id: "u-alice", email: "alice@example.com", displayName: "Alice", avatarUrl: null },
   },
   {
     id: "m2",
     username: "bob",
     role: "admin",
     createdAt: "2026-01-02T00:00:00Z",
-    user: { email: "admin@example.com", displayName: "Bob", avatarUrl: null },
+    user: { id: "u-bob", email: "admin@example.com", displayName: "Bob", avatarUrl: null },
   },
 ];
 
@@ -128,7 +128,7 @@ describe("MembersSection — Generate onboarding link button", () => {
     fireEvent.click(btn);
 
     expect(mutateMock).toHaveBeenCalledWith(
-      { userId: MEMBERS[0]!.id },
+      { userId: MEMBERS[0]!.user.id },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
   });
