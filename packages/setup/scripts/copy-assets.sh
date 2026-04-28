@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ─── Prebuild: Copy skills, templates, and workflows into assets/ ────────────
 # Runs before `tsc` so assets are available at compile time.
-# Only copies the 5 PRODUCT skills (kanon-mcp, kanon-init, kanon-create-issue, kanon-roadmap, kanon-orchestrator-hooks).
+# Only copies the PRODUCT skills (kanon-mcp, kanon-init, kanon-create-issue, kanon-roadmap, kanon-cycle, kanon-orchestrator-hooks).
 
 set -euo pipefail
 
@@ -15,7 +15,7 @@ find "$ASSETS_DIR" -mindepth 1 ! -name '.gitkeep' -exec rm -rf {} + 2>/dev/null 
 
 # Copy product skills
 mkdir -p "$ASSETS_DIR/skills"
-for skill in kanon-mcp kanon-init kanon-create-issue kanon-roadmap kanon-orchestrator-hooks; do
+for skill in kanon-mcp kanon-init kanon-create-issue kanon-roadmap kanon-cycle kanon-orchestrator-hooks; do
   if [ -d "$MCP_DIR/skills/$skill" ]; then
     cp -r "$MCP_DIR/skills/$skill" "$ASSETS_DIR/skills/"
   fi

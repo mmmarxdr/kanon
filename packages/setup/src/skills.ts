@@ -8,6 +8,7 @@ const PRODUCT_SKILLS = [
   "kanon-init",
   "kanon-create-issue",
   "kanon-roadmap",
+  "kanon-cycle",
   "kanon-orchestrator-hooks",
 ];
 
