@@ -12,28 +12,64 @@
 import type { CredentialStore } from "./credential-store/index.js";
 import { getCredentialStore } from "./credential-store/factory.js";
 import { OnboardResponseSchema } from "./api-types.js";
-import type { McpServerEntry } from "./types.js";
+import { buildPlatformContext } from "./detect.js";
+import { detectTools } from "./registry.js";
+import {
+  buildWrapperMcpEntry,
+  mergeConfig,
+  resolveNodeBin,
+} from "./mcp-config.js";
+
+export interface OnboardedTool {
+  /** Tool registry name (e.g. "claude-code", "cursor"). */
+  name: string;
+  /** Display name (e.g. "Claude Code"). */
+  displayName: string;
+  /** Path to the config file that was updated. */
+  configPath: string;
+}
 
 export interface OnboardDeps {
   fetchFn?: typeof globalThis.fetch;
   credentialStore?: CredentialStore;
   /**
-   * Injectable MCP entry writer. In production this calls mergeConfig().
-   * In tests it's a vi.fn() that records invocations.
+   * Detect installed AI tools and write a wrapper-mode MCP entry into each.
+   * Production default uses `detectTools` + `mergeConfig`. Tests inject a mock.
    */
-  writeMcpEntry?: (opts: {
-    apiUrl: string;
-    mode: "wrapper";
-    entry: McpServerEntry;
-  }) => Promise<void>;
+  writeMcpEntries?: (apiUrl: string) => Promise<OnboardedTool[]>;
+  /** Stdout sink for progress messages (defaults to process.stdout). */
+  stdout?: { write: (s: string) => void };
+}
+
+async function defaultWriteMcpEntries(apiUrl: string): Promise<OnboardedTool[]> {
+  const ctx = await buildPlatformContext();
+  const tools = await detectTools(ctx);
+  const nodeBin = resolveNodeBin();
+  const written: OnboardedTool[] = [];
+
+  for (const tool of tools) {
+    const platformPaths = tool.platforms[ctx.platform];
+    if (!platformPaths) continue;
+
+    const configPath = platformPaths.config(ctx);
+    const entry = buildWrapperMcpEntry(apiUrl, platformPaths.mcpMode, nodeBin);
+    mergeConfig(configPath, tool.rootKey, entry);
+
+    written.push({
+      name: tool.name,
+      displayName: tool.displayName,
+      configPath,
+    });
+  }
+
+  return written;
 }
 
 /**
- * Parse a kanon:// URL and return { host, apiUrl, token }.
+ * Parse a kanon:// URL and return { apiUrl, token }.
  * Throws a formatted error if the URL is invalid.
  */
 function parseOnboardLink(link: string): {
-  host: string;
   apiUrl: string;
   token: string;
 } {
@@ -65,7 +101,7 @@ function parseOnboardLink(link: string): {
   const portStr = parsed.port ? `:${parsed.port}` : "";
   const apiUrl = `${scheme}://${host}${portStr}`;
 
-  return { host, apiUrl, token };
+  return { apiUrl, token };
 }
 
 /**
@@ -80,7 +116,7 @@ export async function onboardFromLink(
   const store = deps.credentialStore ?? getCredentialStore();
 
   // ── 1. Parse ──────────────────────────────────────────────────────────────
-  let parsed: { host: string; apiUrl: string; token: string };
+  let parsed: { apiUrl: string; token: string };
   try {
     parsed = parseOnboardLink(link);
   } catch {
@@ -161,15 +197,37 @@ export async function onboardFromLink(
     process.exit(1);
   }
 
-  // ── 5. Register MCP entry (wrapper mode) ─────────────────────────────────
-  if (deps.writeMcpEntry) {
-    // In tests / injected context: delegate to injected function
-    await deps.writeMcpEntry({
-      apiUrl: data.apiUrl,
-      mode: "wrapper",
-      entry: { command: process.execPath, args: ["--server", data.apiUrl] },
-    });
+  // ── 5. Surface progress so the dev knows the call succeeded ──────────────
+  const stdout = deps.stdout ?? process.stdout;
+  stdout.write(`✓ Onboarded as ${data.email}\n`);
+  stdout.write(`  Server: ${data.apiUrl}\n`);
+  stdout.write(`  Credentials saved to ~/.kanon/credentials\n`);
+  stdout.write("\n");
+
+  // ── 6. Register MCP entry (wrapper mode) for each detected tool ──────────
+  const writeMcpEntries = deps.writeMcpEntries ?? defaultWriteMcpEntries;
+  let registered: OnboardedTool[] = [];
+  try {
+    registered = await writeMcpEntries(data.apiUrl);
+  } catch (err) {
+    stdout.write(
+      `⚠  Failed to register MCP entry: ${err instanceof Error ? err.message : String(err)}\n` +
+        `   Credentials are saved — configure manually with: kanon-setup --tool <name>\n`,
+    );
+    return;
   }
-  // In production flow the caller (index.ts) handles MCP registration
-  // after onboardFromLink returns successfully.
+
+  if (registered.length === 0) {
+    stdout.write(
+      "No supported AI tools detected on this machine.\n" +
+        "Install Claude Code, Cursor, or Antigravity and re-run: kanon-setup --tool <name>\n",
+    );
+    return;
+  }
+
+  stdout.write(`✓ Configured ${registered.length} tool(s):\n`);
+  for (const tool of registered) {
+    stdout.write(`  - ${tool.displayName} (${tool.configPath})\n`);
+  }
+  stdout.write("\nRestart your AI coding tool(s) to pick up the new configuration.\n");
 }

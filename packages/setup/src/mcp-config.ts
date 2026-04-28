@@ -159,6 +159,62 @@ export function buildMcpEntry(
 }
 
 /**
+ * Resolve how to invoke the Kanon MCP wrapper-cli.
+ * Same precedence as resolveMcpServerPath but targets wrapper-cli.js so
+ * onboard-mode entries point at the wrapper (refresh→exchange→spawn) rather
+ * than the bare server (which expects KANON_API_KEY in env).
+ */
+export function resolveWrapperPath(): McpResolution {
+  const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+  const localWrapper = path.resolve(scriptDir, "../../mcp/dist/wrapper-cli.js");
+  if (fs.existsSync(localWrapper)) {
+    return { mode: "local", path: localWrapper };
+  }
+  try {
+    const resolved = path.resolve(
+      scriptDir,
+      "../../../node_modules/@kanon/mcp/dist/wrapper-cli.js",
+    );
+    if (fs.existsSync(resolved)) {
+      return { mode: "local", path: resolved };
+    }
+  } catch {
+    // ignore
+  }
+  return { mode: "npx" };
+}
+
+/**
+ * Build a wrapper-mode MCP server entry. The wrapper handles refresh→access
+ * exchange against the server before spawning the real MCP, so no
+ * KANON_API_KEY / KANON_API_URL env vars are baked in.
+ */
+export function buildWrapperMcpEntry(
+  apiUrl: string,
+  mcpMode: McpMode,
+  nodeBin: string = process.execPath,
+  resolution: McpResolution = resolveWrapperPath(),
+): McpServerEntry {
+  const isNpx = resolution.mode === "npx";
+
+  if (mcpMode === "wsl-bridge") {
+    return {
+      command: "wsl",
+      args: isNpx
+        ? ["npx", "-p", "@kanon/mcp@>=0.3.0", "kanon-mcp-wrapper", "--server", apiUrl]
+        : [nodeBin, resolution.path, "--server", apiUrl],
+    };
+  }
+
+  return isNpx
+    ? {
+        command: "npx",
+        args: ["-p", "@kanon/mcp@>=0.3.0", "kanon-mcp-wrapper", "--server", apiUrl],
+      }
+    : { command: nodeBin, args: [resolution.path, "--server", apiUrl] };
+}
+
+/**
  * Resolve how to invoke the Kanon MCP server.
  * When running from the monorepo or with @kanon/mcp installed locally,
  * returns a local path. Otherwise falls back to npx for dynamic resolution.

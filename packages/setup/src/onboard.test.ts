@@ -4,7 +4,7 @@
  * All external calls are injected via deps so no real HTTP / FS happens.
  *
  * Scenarios:
- *   S2.1 happy path  → store.writeCredentials() + writeMcpEntry() called
+ *   S2.1 happy path  → store.writeCredentials() + writeMcpEntries() called
  *   S2.3 invalid URL → process.exit(1) + stderr "Invalid onboarding link format"
  *   S2.4 expired token (400 TOKEN_EXPIRED)  → process.exit(1) + stderr msg
  *   S2.5 consumed token (400 TOKEN_CONSUMED) → process.exit(1) + stderr msg
@@ -48,21 +48,30 @@ function makeStore(): CredentialStore {
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
 describe("onboardFromLink()", () => {
-  let writeMcpEntry: ReturnType<typeof vi.fn>;
+  let writeMcpEntries: ReturnType<typeof vi.fn>;
+  let stdoutSink: { write: ReturnType<typeof vi.fn> };
   let store: CredentialStore;
 
   beforeEach(() => {
-    writeMcpEntry = vi.fn().mockResolvedValue(undefined);
+    writeMcpEntries = vi.fn().mockResolvedValue([
+      {
+        name: "claude-code",
+        displayName: "Claude Code",
+        configPath: "/home/test/.claude.json",
+      },
+    ]);
+    stdoutSink = { write: vi.fn() };
     store = makeStore();
   });
 
-  it("S2.1 happy path — writes credentials and MCP entry", async () => {
+  it("S2.1 happy path — writes credentials, registers MCP entry, prints progress", async () => {
     const fetchFn = makeFetch(200, ONBOARD_RESPONSE);
 
     await onboardFromLink(VALID_LINK, {
       fetchFn,
       credentialStore: store,
-      writeMcpEntry,
+      writeMcpEntries,
+      stdout: stdoutSink,
     });
 
     // POST to /api/auth/onboard with token
@@ -84,13 +93,34 @@ describe("onboardFromLink()", () => {
       }),
     );
 
-    // MCP entry registered in wrapper mode (no KANON_API_KEY)
-    expect(writeMcpEntry).toHaveBeenCalledOnce();
-    const [entry] = writeMcpEntry.mock.calls[0] as [
-      { apiUrl: string; mode: string },
-    ];
-    expect(entry.apiUrl).toBe("https://server.example.com");
-    expect(entry.mode).toBe("wrapper");
+    // MCP entries registered for detected tools
+    expect(writeMcpEntries).toHaveBeenCalledOnce();
+    expect(writeMcpEntries).toHaveBeenCalledWith("https://server.example.com");
+
+    // Progress messages surface identity, server, creds path, and tool list
+    const stdoutOutput = stdoutSink.write.mock.calls.map((c) => c[0]).join("");
+    expect(stdoutOutput).toMatch(/onboarded as dev@example\.com/i);
+    expect(stdoutOutput).toMatch(/server: https:\/\/server\.example\.com/i);
+    expect(stdoutOutput).toMatch(/credentials saved/i);
+    expect(stdoutOutput).toMatch(/claude code/i);
+    expect(stdoutOutput).toMatch(/restart your ai coding tool/i);
+  });
+
+  it("S2.1b prints a no-tools-detected hint when registry returns empty", async () => {
+    const fetchFn = makeFetch(200, ONBOARD_RESPONSE);
+    const emptyWrite = vi.fn().mockResolvedValue([]);
+
+    await onboardFromLink(VALID_LINK, {
+      fetchFn,
+      credentialStore: store,
+      writeMcpEntries: emptyWrite,
+      stdout: stdoutSink,
+    });
+
+    const stdoutOutput = stdoutSink.write.mock.calls.map((c) => c[0]).join("");
+    expect(stdoutOutput).toMatch(/onboarded as dev@example\.com/i);
+    expect(stdoutOutput).toMatch(/no supported ai tools detected/i);
+    expect(stdoutOutput).not.toMatch(/restart your ai coding tool/i);
   });
 
   it("S2.3 invalid URL format → exits 1", async () => {
@@ -130,7 +160,7 @@ describe("onboardFromLink()", () => {
       });
 
     await expect(
-      onboardFromLink(VALID_LINK, { fetchFn, credentialStore: store, writeMcpEntry }),
+      onboardFromLink(VALID_LINK, { fetchFn, credentialStore: store, writeMcpEntries }),
     ).rejects.toThrow("process.exit");
 
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -156,7 +186,7 @@ describe("onboardFromLink()", () => {
       });
 
     await expect(
-      onboardFromLink(VALID_LINK, { fetchFn, credentialStore: store, writeMcpEntry }),
+      onboardFromLink(VALID_LINK, { fetchFn, credentialStore: store, writeMcpEntries }),
     ).rejects.toThrow("process.exit");
 
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -181,7 +211,7 @@ describe("onboardFromLink()", () => {
       });
 
     await expect(
-      onboardFromLink(VALID_LINK, { fetchFn, credentialStore: store, writeMcpEntry }),
+      onboardFromLink(VALID_LINK, { fetchFn, credentialStore: store, writeMcpEntries }),
     ).rejects.toThrow("process.exit");
 
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -213,7 +243,7 @@ describe("onboardFromLink()", () => {
       onboardFromLink(VALID_LINK, {
         fetchFn,
         credentialStore: badStore,
-        writeMcpEntry,
+        writeMcpEntries,
       }),
     ).rejects.toThrow("process.exit");
 
