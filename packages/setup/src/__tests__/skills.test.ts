@@ -16,7 +16,7 @@ describe("skills", () => {
 
     // Create mock skills in the assets directory
     const skillsDir = path.join(assetsDir, "skills");
-    for (const skillName of ["kanon-mcp", "kanon-init", "kanon-create-issue", "kanon-roadmap", "kanon-cycle"]) {
+    for (const skillName of ["kanon-mcp", "kanon-init", "kanon-onboard", "kanon-create-issue", "kanon-roadmap", "kanon-cycle"]) {
       const skillDir = path.join(skillsDir, skillName);
       fs.mkdirSync(skillDir, { recursive: true });
       fs.writeFileSync(path.join(skillDir, "SKILL.md"), `# ${skillName}\nSkill content`);
@@ -31,7 +31,7 @@ describe("skills", () => {
     it("should create correct directory structure and copy skill files", () => {
       const installed = installSkills(skillDest, assetsDir);
 
-      expect(installed).toEqual(["kanon-mcp", "kanon-init", "kanon-create-issue", "kanon-roadmap", "kanon-cycle"]);
+      expect(installed).toEqual(["kanon-mcp", "kanon-init", "kanon-onboard", "kanon-create-issue", "kanon-roadmap", "kanon-cycle"]);
 
       for (const skillName of installed) {
         const skillFile = path.join(skillDest, skillName, "SKILL.md");
@@ -44,7 +44,7 @@ describe("skills", () => {
       installSkills(skillDest, assetsDir);
       const installed = installSkills(skillDest, assetsDir);
 
-      expect(installed).toEqual(["kanon-mcp", "kanon-init", "kanon-create-issue", "kanon-roadmap", "kanon-cycle"]);
+      expect(installed).toEqual(["kanon-mcp", "kanon-init", "kanon-onboard", "kanon-create-issue", "kanon-roadmap", "kanon-cycle"]);
 
       // Verify files are still correct
       for (const skillName of installed) {
@@ -64,7 +64,7 @@ describe("skills", () => {
       fs.rmSync(path.join(assetsDir, "skills", "kanon-roadmap"), { recursive: true });
 
       const installed = installSkills(skillDest, assetsDir);
-      expect(installed).toEqual(["kanon-mcp", "kanon-init", "kanon-create-issue", "kanon-cycle"]);
+      expect(installed).toEqual(["kanon-mcp", "kanon-init", "kanon-onboard", "kanon-create-issue", "kanon-cycle"]);
       expect(fs.existsSync(path.join(skillDest, "kanon-roadmap"))).toBe(false);
     });
   });
@@ -81,7 +81,7 @@ describe("skills", () => {
 
       const removed = removeSkills(skillDest);
 
-      expect(removed).toEqual(["kanon-mcp", "kanon-init", "kanon-create-issue", "kanon-roadmap", "kanon-cycle"]);
+      expect(removed).toEqual(["kanon-mcp", "kanon-init", "kanon-onboard", "kanon-create-issue", "kanon-roadmap", "kanon-cycle"]);
 
       // Kanon skills should be gone
       for (const skillName of removed) {

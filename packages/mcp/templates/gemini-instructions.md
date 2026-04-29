@@ -9,6 +9,7 @@ Available workflows:
 
 Available skills (auto-loaded when relevant):
 - kanon-mcp — Issue management, board updates, state transitions
+- kanon-onboard — Team invites and `kanon-setup <kanon://link>` per machine
 - kanon-roadmap — Capture deferred work as roadmap items
 - kanon-orchestrator-hooks — SDD phase launches, deferred_items processing, roadmap injection
 

@@ -6,6 +6,7 @@ import path from "node:path";
 const PRODUCT_SKILLS = [
   "kanon-mcp",
   "kanon-init",
+  "kanon-onboard",
   "kanon-create-issue",
   "kanon-roadmap",
   "kanon-cycle",
