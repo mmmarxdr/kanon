@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 // ─── Engram API Response Types ─────────────────────────────────────────────
 
 /**
@@ -131,6 +133,20 @@ export interface SpecArtifactRef {
   engramId: number;
   phase: SddPhase;
 }
+
+// ─── Kanon Cycle Types ──────────────────────────────────────────────────────
+
+/**
+ * Response shape returned by DELETE /cycles/:id (KAN-23).
+ * Consumed by KanonClient.deleteCycle and the API service.
+ */
+export const kanonCycleDeleteResultSchema = z.object({
+  auditLogId: z.string().uuid(),
+  deletedCycleId: z.string().uuid(),
+  cycleName: z.string(),
+  detachedIssueKeys: z.array(z.string()),
+});
+export type KanonCycleDeleteResult = z.infer<typeof kanonCycleDeleteResultSchema>;
 
 // ─── Sync Types ───────────────────────────────────────────────────────────
 

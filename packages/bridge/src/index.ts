@@ -12,6 +12,7 @@ export type {
   KanonIssuePriority,
   CreateIssuePayload,
   SpecArtifactRef,
+  KanonCycleDeleteResult,
   // Sync types (Phase B)
   SyncDirection,
   ConflictStrategy,
@@ -23,7 +24,7 @@ export type {
   SyncError,
   SyncResult,
 } from "./types.js";
-export { EngramConnectionError } from "./types.js";
+export { EngramConnectionError, kanonCycleDeleteResultSchema } from "./types.js";
 
 // ─── Classes ───────────────────────────────────────────────────────────────
 export { EngramClient } from "./engram-client.js";
