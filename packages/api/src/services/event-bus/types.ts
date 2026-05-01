@@ -19,7 +19,8 @@ export type DomainEventType =
   | "work_session.ended"
   | "invite.created"
   | "invite.revoked"
-  | "invite.accepted";
+  | "invite.accepted"
+  | "cycle.deleted"; // KAN-23: hard-delete cycle event; payload: { cycleId: string; projectId: string }
 
 /**
  * A typed domain event emitted after a successful mutation.
