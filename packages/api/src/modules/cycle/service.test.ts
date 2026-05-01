@@ -29,6 +29,7 @@ vi.mock("../../config/prisma.js", () => ({
       create: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
+      delete: vi.fn(),
     },
     cycleScopeEvent: {
       create: vi.fn(),
@@ -41,6 +42,9 @@ vi.mock("../../config/prisma.js", () => ({
     },
     project: {
       findFirst: vi.fn(),
+    },
+    adminAuditLog: {
+      create: vi.fn(),
     },
     $transaction: vi.fn(),
   },
