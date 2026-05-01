@@ -338,6 +338,7 @@ model Member {
   comments         Comment[]
   workSessions     WorkSession[]
   cycleScopeEvents CycleScopeEvent[] @relation("CycleScopeAuthor")
+  adminAuditLogs   AdminAuditLog[]
 
   @@unique([userId, workspaceId])
   @@unique([workspaceId, username])
@@ -501,4 +502,22 @@ model RefreshToken {
   @@index([userId, workspaceId])
   @@index([expiresAt])
   @@map("refresh_tokens")
+}
+
+model AdminAuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  action     String
+  payload    Json     @db.JsonB
+  authorId   String?  @map("author_id") @db.Uuid
+  reason     String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  author     Member?  @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([authorId])
+  @@index([createdAt])
+  @@map("admin_audit_logs")
 }
