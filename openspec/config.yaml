@@ -1,0 +1,58 @@
+schema: spec-driven
+
+context: |
+  Kanon — AI-native project management monorepo (pnpm workspaces, Node 20+).
+  Packages: api (Fastify 5 + Prisma 6 + Zod), web (React 19 + Vite + TanStack Query/Router + Tailwind),
+  mcp (@modelcontextprotocol/sdk + zod), cli (commander), bridge (shared zod types), e2e (Playwright), setup.
+  All packages ESM-only. Tests: vitest per-package, Playwright e2e.
+  SSE events on api mutations; web mutation cache invalidation must hit cycleKeys/issueKeys factories.
+  No admin AuditLog table today — KAN-23 introduces one.
+
+strict_tdd: true
+
+testing:
+  runner: vitest
+  per_package:
+    api: pnpm --filter @kanon/api test
+    web: pnpm --filter @kanon/web test
+    mcp: pnpm --filter @kanon/mcp test
+    cli: pnpm --filter @kanon/cli test
+    bridge: pnpm --filter @kanon/bridge test
+    setup: pnpm --filter @kanon-pm/setup test
+    e2e: pnpm e2e
+  coverage: pnpm --filter @kanon/api test:coverage
+  layers:
+    unit: vitest
+    integration: fastify .inject() + Prisma test DB (api), @testing-library/react (web)
+    e2e: Playwright
+
+rules:
+  proposal:
+    - State the user-visible win + the persona affected (dev/PM/Director)
+    - Identify affected packages explicitly
+    - Include rollback plan if it touches Prisma migrations
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+    - Spec the audit/observability surface alongside the behavior
+  design:
+    - Document architecture decisions with rationale + at least one alternative considered
+    - Include sequence diagrams for cross-package flows (api ↔ mcp ↔ web)
+    - Call out Prisma schema changes explicitly
+  tasks:
+    - Group by phase (test scaffolding → backend → mcp → docs → manual smoke)
+    - Hierarchical numbering (1.1, 1.2)
+    - Each task small enough for one session and one commit
+    - Strict TDD order — test before implement
+  apply:
+    - Conventional commits, scoped by package (fix(api): ..., feat(mcp): ...)
+    - NEVER add Co-Authored-By or AI attribution
+    - NEVER amend, always new commits
+    - NEVER run builds after changes
+  verify:
+    - Run vitest per package touched
+    - Compare implementation against every Given/When/Then scenario
+    - Flag missing tests as CRITICAL
+  archive:
+    - Warn before merging destructive deltas (large removals)
+    - Persist archive report to engram for cross-session recall

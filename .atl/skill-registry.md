@@ -1,6 +1,6 @@
 # Skill Registry — kanon
 
-Generated: 2026-04-27 (refreshed by `sdd-init`)
+Generated: 2026-05-01 (refreshed by `sdd-init`)
 
 ## User-Level Skills
 
@@ -31,8 +31,10 @@ Generated: 2026-04-27 (refreshed by `sdd-init`)
 |------|------|---------|
 | kanon-init | `.claude/skills/kanon-init/SKILL.md` | Automated project onboarding — scan a codebase, create a Kanon project, and seed initial issues from TODOs. Trigger: `/kanon-init` |
 | kanon-mcp | `.claude/skills/kanon-mcp/SKILL.md` | Human-facing project board integration — clean cards, meaningful titles, progressive enrichment from SDD and general work. Active during all SDD phases and issue management. |
-| kanon-nl-create | `.claude/skills/kanon-nl-create/SKILL.md` | Natural language issue creation — parse user descriptions of bugs, features, and tasks into well-structured Kanon issues. Trigger: user says "create an issue", "track this", "log a bug", or describes work to capture. |
+| kanon-create-issue | `.claude/skills/kanon-create-issue/SKILL.md` | Natural language issue creation — parse user descriptions of bugs, features, and tasks into well-structured Kanon issues. Trigger: user says "create an issue", "track this", "log a bug", or describes work to capture. |
 | kanon-roadmap | `.claude/skills/kanon-roadmap/SKILL.md` | Proactive roadmap capture — recognize future work during conversations and SDD workflows, create and enrich roadmap items. Trigger: user mentions deferred work, "someday", "eventually", or SDD phases surface out-of-scope items. |
+| kanon-cycle | `.claude/skills/kanon-cycle/SKILL.md` | Cycle planning, scope management, and close discipline — create cycles, attach/detach issues with audit trail, read burnup/risks, choose the right close disposition. Trigger: "start cycle", "close sprint", scope changes mid-cycle. |
+| kanon-onboard | `.claude/skills/kanon-onboard/SKILL.md` | Team invite + per-machine setup — admin sends `kanon://` invite, teammate runs `kanon-setup <link>`. Trigger: team onboarding, multi-machine setup, MCP wrapper-mode debugging. |
 | kanon-orchestrator-hooks | `.claude/skills/kanon-orchestrator-hooks/SKILL.md` | Kanon-specific hooks for the SDD orchestrator — ROADMAP injection into sub-agent prompts and post-phase deferred_items processing. Active when launching SDD phases in the kanon project. |
 
 ## Shared Configs
@@ -43,7 +45,7 @@ Generated: 2026-04-27 (refreshed by `sdd-init`)
 
 ## Project Conventions
 
-- `/home/mde/workspace/kanon/CLAUDE.md` — Kanon monorepo overview: packages (api, web, mcp, cli, bridge, e2e, setup), tech stack (TypeScript / Node 20+ / pnpm workspaces), dev setup (`pnpm setup && pnpm dev:start`), and note that `_shared/kanon-phase-common.md` is project-only (not part of global install).
+- `/home/marxdr/workspace/kanon/CLAUDE.md` — Kanon monorepo overview: packages (api, web, mcp, cli, bridge, e2e, setup), tech stack (TypeScript / Node 20+ / pnpm workspaces), dev setup (`pnpm bootstrap && pnpm dev:start`), and note that `_shared/kanon-phase-common.md` is project-only (not part of global install).
 
 ## Compact Rules (auto-resolved into sub-agent prompts)
 
