@@ -43,6 +43,13 @@ export function useDomainEvents(workspaceId: string | undefined): void {
     es.addEventListener("issue.transitioned", handleIssueEvent);
     es.addEventListener("issue.assigned", handleIssueEvent);
 
+    // ── Cycle events ──────────────────────────────────────────────────
+    const handleCycleEvent = () => {
+      void queryClient.invalidateQueries({ queryKey: cycleKeys.all });
+    };
+
+    es.addEventListener("cycle.deleted", handleCycleEvent);
+
     // ── Project events ────────────────────────────────────────────────
     const handleProjectEvent = () => {
       void queryClient.invalidateQueries({ queryKey: projectKeys.all });
