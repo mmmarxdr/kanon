@@ -366,3 +366,39 @@ describe("KanonClient auth headers", () => {
     expect(headers["X-API-Key"]).toBeUndefined();
   });
 });
+
+// ─── 204 No Content handling ────────────────────────────────────────────────
+
+describe("KanonClient 204 No Content", () => {
+  it("does not call response.json() on DELETE roadmap item (204)", async () => {
+    const jsonSpy = vi.fn().mockRejectedValue(new SyntaxError("Unexpected end of JSON input"));
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 204,
+      json: jsonSpy,
+      text: () => Promise.resolve(""),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      client.deleteRoadmapItem("KAN", "abc-123"),
+    ).resolves.toBeUndefined();
+    expect(jsonSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not call response.json() on DELETE dependency (204)", async () => {
+    const jsonSpy = vi.fn().mockRejectedValue(new SyntaxError("Unexpected end of JSON input"));
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 204,
+      json: jsonSpy,
+      text: () => Promise.resolve(""),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      client.removeDependency("KAN", "src-1", "dep-1"),
+    ).resolves.toBeUndefined();
+    expect(jsonSpy).not.toHaveBeenCalled();
+  });
+});

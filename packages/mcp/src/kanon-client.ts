@@ -747,6 +747,10 @@ export class KanonClient {
       throw new KanonApiError(response.status, code, message);
     }
 
+    if (response.status === 204) {
+      return undefined as T;
+    }
+
     return (await response.json()) as T;
   }
 }
