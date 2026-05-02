@@ -3,7 +3,6 @@ import { render, screen } from "@testing-library/react";
 import type { RoadmapItem } from "@/types/roadmap";
 import { AnalyticsDashboard } from "../analytics-dashboard";
 
-// Recharts uses ResizeObserver which jsdom doesn't have
 class ResizeObserverMock {
   observe() {}
   unobserve() {}
@@ -28,28 +27,37 @@ function makeItem(overrides: Partial<RoadmapItem> = {}): RoadmapItem {
 }
 
 const SAMPLE_ITEMS: RoadmapItem[] = [
-  makeItem({ id: "1", horizon: "now", status: "idea", effort: 3, impact: 4, promoted: true }),
+  makeItem({ id: "1", horizon: "now", status: "idea", effort: 3, impact: 4 }),
   makeItem({ id: "2", horizon: "next", status: "planned", effort: 2, impact: 5 }),
   makeItem({ id: "3", horizon: "later", status: "in_progress", effort: 4, impact: 2 }),
-  makeItem({ id: "4", horizon: "now", status: "done", promoted: true }),
-  makeItem({ id: "5", horizon: "someday", status: "idea", createdAt: "2025-01-01T00:00:00Z" }),
+  makeItem({ id: "4", horizon: "now", status: "done" }),
+  makeItem({ id: "5", horizon: "someday", status: "idea" }),
 ];
 
 describe("AnalyticsDashboard", () => {
-  it("renders all 5 chart card titles", () => {
+  it("renders the six chart cards from the redesign layout", () => {
     render(<AnalyticsDashboard items={SAMPLE_ITEMS} />);
 
     expect(screen.getByText("Effort vs Impact")).toBeInTheDocument();
-    expect(screen.getByText("Horizon Distribution")).toBeInTheDocument();
-    expect(screen.getByText("Status Breakdown")).toBeInTheDocument();
-    expect(screen.getByText("Promotion Rate")).toBeInTheDocument();
-    expect(screen.getByText("Aging Ideas")).toBeInTheDocument();
+    expect(screen.getByText("Pipeline")).toBeInTheDocument();
+    expect(screen.getByText("Dependency hotspots")).toBeInTheDocument();
+    expect(screen.getByText("Throughput")).toBeInTheDocument();
+    expect(screen.getByText("Horizon distribution")).toBeInTheDocument();
+    expect(screen.getByText("Predicted ship dates")).toBeInTheDocument();
+  });
+
+  it("does NOT render the legacy Promotion Rate or Aging Ideas cards", () => {
+    render(<AnalyticsDashboard items={SAMPLE_ITEMS} />);
+
+    expect(screen.queryByText("Promotion Rate")).not.toBeInTheDocument();
+    expect(screen.queryByText("Aging Ideas")).not.toBeInTheDocument();
   });
 
   it("renders with empty items without crashing", () => {
     render(<AnalyticsDashboard items={[]} />);
 
     expect(screen.getByText("Effort vs Impact")).toBeInTheDocument();
-    expect(screen.getByText("Promotion Rate")).toBeInTheDocument();
+    expect(screen.getByText("Throughput")).toBeInTheDocument();
+    expect(screen.getByText("Predicted ship dates")).toBeInTheDocument();
   });
 });
