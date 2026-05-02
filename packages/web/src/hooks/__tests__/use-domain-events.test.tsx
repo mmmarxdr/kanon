@@ -209,4 +209,90 @@ describe("useDomainEvents", () => {
       expect.objectContaining({ queryKey: cycleKeys.all }),
     );
   });
+
+  // ── cycle.deleted (REQ-WEB-CACHE-001) ────────────────────────────────────
+
+  it("cycle.deleted → invalidates cycleKeys.all", async () => {
+    const { queryClient, wrapper } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { useDomainEvents } = await import("../use-domain-events");
+    renderHook(() => useDomainEvents(WORKSPACE_ID), { wrapper });
+
+    act(() => {
+      FakeEventSource.lastInstance!.dispatch("cycle.deleted", {
+        cycleId: "cycle-123",
+        projectId: "project-1",
+      });
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: cycleKeys.all }),
+    );
+  });
+
+  it("cycle.deleted handler registered exactly once per mount (no duplicate listener on re-render)", async () => {
+    const { queryClient, wrapper } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { useDomainEvents } = await import("../use-domain-events");
+    const { rerender } = renderHook(() => useDomainEvents(WORKSPACE_ID), { wrapper });
+
+    // Re-render with same workspaceId — must not duplicate the listener
+    rerender();
+
+    act(() => {
+      FakeEventSource.lastInstance!.dispatch("cycle.deleted", {
+        cycleId: "cycle-123",
+        projectId: "project-1",
+      });
+    });
+
+    // cycleKeys.all should be invalidated exactly once
+    const cycleCalls = invalidateSpy.mock.calls.filter(
+      (call) =>
+        call[0] != null &&
+        typeof call[0] === "object" &&
+        "queryKey" in call[0] &&
+        JSON.stringify((call[0] as { queryKey: unknown }).queryKey) ===
+          JSON.stringify(cycleKeys.all),
+    );
+    expect(cycleCalls).toHaveLength(1);
+  });
+
+  it("cycle.deleted handler does NOT throw when a deleted cycle was in cache (graceful degradation)", async () => {
+    const { queryClient, wrapper } = createWrapper();
+
+    // Pre-populate cache with a cycle entry
+    queryClient.setQueryData(["cycles", "cycle-123"], {
+      id: "cycle-123",
+      name: "Sprint 7",
+      state: "done",
+    });
+
+    const { useDomainEvents } = await import("../use-domain-events");
+    renderHook(() => useDomainEvents(WORKSPACE_ID), { wrapper });
+
+    // Must not throw when the deleted cycle is in cache
+    expect(() => {
+      act(() => {
+        FakeEventSource.lastInstance!.dispatch("cycle.deleted", {
+          cycleId: "cycle-123",
+          projectId: "project-1",
+        });
+      });
+    }).not.toThrow();
+
+    // cycleKeys.all invalidated so the stale entry will be refetched
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    act(() => {
+      FakeEventSource.lastInstance!.dispatch("cycle.deleted", {
+        cycleId: "cycle-456",
+        projectId: "project-1",
+      });
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: cycleKeys.all }),
+    );
+  });
 });
