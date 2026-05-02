@@ -53,45 +53,9 @@ vi.mock("../../config/prisma.js", () => ({
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import { createCycle, getCycle, closeCycle } from "./service.js";
+import { makeTxMock } from "./__test-helpers__/tx-mock.js";
 
 const PROJECT = { id: "project-1", key: "ENG", workspaceId: "ws-1" };
-
-/**
- * Build a tx stub that records calls to the methods exercised by createCycle
- * (with optional attachIssueKeys). The stub returns sensible defaults so the
- * production code can chain calls without throwing.
- */
-function makeTxMock(overrides?: {
-  cycleCreateResult?: unknown;
-  shouldThrow?: boolean;
-}) {
-  const cycleCreateResult = overrides?.cycleCreateResult ?? {
-    id: "cycle-new",
-    name: "Sprint",
-    state: "upcoming",
-    projectId: PROJECT.id,
-    startDate: new Date("2026-04-20"),
-    endDate: new Date("2026-05-04"),
-  };
-
-  const tx = {
-    cycle: {
-      create: vi.fn().mockImplementation(async () => {
-        if (overrides?.shouldThrow) throw new Error("tx-fail");
-        return cycleCreateResult;
-      }),
-      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
-    },
-    issue: {
-      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
-    },
-    cycleScopeEvent: {
-      createMany: vi.fn().mockResolvedValue({ count: 0 }),
-      create: vi.fn().mockResolvedValue({}),
-    },
-  };
-  return tx;
-}
 
 describe("createCycle() — Batch B4 (atomic attachIssueKeys)", () => {
   beforeEach(() => {
