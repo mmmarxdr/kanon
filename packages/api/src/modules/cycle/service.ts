@@ -623,3 +623,7 @@ export async function attachIssues(cycleId: string, input: AttachIssuesInput) {
 
   return getCycle(cycleId);
 }
+
+// Re-export deleteCycle for symmetry with the existing service surface
+// so routes can import from "./service.js" consistently.
+export { deleteCycle } from "./delete-cycle.js";
