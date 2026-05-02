@@ -9,10 +9,10 @@ const DEFAULT_TIMEOUT_MS = 10_000;
  * because @kanon/bridge is not in this package's dependency graph.
  */
 export interface KanonCycleDeleteResult {
+  auditLogId: string;
   deletedCycleId: string;
   cycleName: string;
   detachedIssueKeys: string[];
-  auditLogId: string;
 }
 
 /**
