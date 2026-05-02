@@ -155,6 +155,156 @@ describe("Cycle Routes", () => {
     });
   });
 
+  // ── DELETE /api/cycles/:id ─────────────────────────────────────────────────
+
+  describe("DELETE /api/cycles/:id", () => {
+    // C.1 — REQ-AUTH-001 s3: non-existent cycleId → 404 from preHandler
+    it("returns 404 when cycle does not exist", async () => {
+      const ws = await seedTestWorkspace();
+      const member = await seedTestMember(ws.id);
+      const nonExistentId = "00000000-0000-0000-0000-000000000099";
+
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/cycles/${nonExistentId}`,
+        headers: { authorization: `Bearer ${member.token}` },
+        payload: {},
+      });
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json().code).toBe("CYCLE_NOT_FOUND");
+    });
+
+    // C.2 — REQ-AUTH-001 s1: viewer role → 403 before service is invoked
+    it("returns 403 when caller has viewer role", async () => {
+      const ws = await seedTestWorkspace();
+      const viewer = await seedTestMemberWithRole(ws.id, "viewer");
+      const project = await seedTestProject(ws.id);
+      const cycle = await seedCycle(project.id, { state: "done" });
+
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/cycles/${cycle.id}`,
+        headers: { authorization: `Bearer ${viewer.token}` },
+        payload: {},
+      });
+
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe("FORBIDDEN");
+    });
+
+    // C.3 — REQ-AUTH-001 s2: member role → request.member.id passed as authorId
+    it("returns 200 and passes member id as authorId for a successful delete", async () => {
+      const ws = await seedTestWorkspace();
+      const member = await seedTestMember(ws.id);
+      const project = await seedTestProject(ws.id);
+      const cycle = await seedCycle(project.id, { state: "done" });
+
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/cycles/${cycle.id}`,
+        headers: { authorization: `Bearer ${member.token}` },
+        payload: {},
+      });
+
+      expect(res.statusCode).toBe(200);
+      // Verify authorId was set: audit log must exist with the member's id
+      const auditLog = await prisma.adminAuditLog.findFirst({
+        where: { entityId: cycle.id, action: "delete" },
+      });
+      expect(auditLog).not.toBeNull();
+      expect(auditLog!.authorId).toBe(member.id);
+    });
+
+    // C.4 — REQ-API-RESPONSE-001: 200 happy path with full response shape
+    it("returns 200 with body { deletedCycleId, cycleName, detachedIssueKeys, auditLogId }", async () => {
+      const ws = await seedTestWorkspace();
+      const member = await seedTestMember(ws.id);
+      const project = await seedTestProject(ws.id);
+      const cycle = await seedCycle(project.id, { state: "done" });
+      // Seed a done issue so the non-terminal guard doesn't fire
+      const count = await prisma.issue.count();
+      const issue = await prisma.issue.create({
+        data: {
+          key: `DONE-${count + 1}`,
+          sequenceNum: count + 1,
+          title: "Done issue",
+          state: "done",
+          projectId: project.id,
+          cycleId: cycle.id,
+        },
+      });
+
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/cycles/${cycle.id}`,
+        headers: { authorization: `Bearer ${member.token}` },
+        payload: {},
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body).toHaveProperty("deletedCycleId", cycle.id);
+      expect(body).toHaveProperty("cycleName", cycle.name);
+      expect(body).toHaveProperty("detachedIssueKeys");
+      expect(body.detachedIssueKeys).toContain(issue.key);
+      expect(body).toHaveProperty("auditLogId");
+      expect(typeof body.auditLogId).toBe("string");
+    });
+
+    // C.5 — REQ-API-ERROR-001: 409 on active cycle
+    it("returns 409 CYCLE_ACTIVE when cycle.state === 'active'", async () => {
+      const ws = await seedTestWorkspace();
+      const member = await seedTestMember(ws.id);
+      const project = await seedTestProject(ws.id);
+      const cycle = await seedCycle(project.id, { state: "active" });
+
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/cycles/${cycle.id}`,
+        headers: { authorization: `Bearer ${member.token}` },
+        payload: {},
+      });
+
+      expect(res.statusCode).toBe(409);
+      const body = res.json();
+      expect(body.code).toBe("CYCLE_ACTIVE");
+    });
+
+    // C.6 — REQ-API-ERROR-001: 400 with non-terminal issues + details.issueKeys
+    it("returns 400 CYCLE_HAS_NON_TERMINAL_ISSUES with details.issueKeys when issues are in non-terminal state", async () => {
+      const ws = await seedTestWorkspace();
+      const member = await seedTestMember(ws.id);
+      const project = await seedTestProject(ws.id);
+      const cycle = await seedCycle(project.id, { state: "done" });
+      // Seed issue in non-terminal state
+      const count = await prisma.issue.count();
+      const issue = await prisma.issue.create({
+        data: {
+          key: `NT-${count + 1}`,
+          sequenceNum: count + 1,
+          title: "Non-terminal issue",
+          state: "in_progress",
+          projectId: project.id,
+          cycleId: cycle.id,
+        },
+      });
+
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/cycles/${cycle.id}`,
+        headers: { authorization: `Bearer ${member.token}` },
+        payload: {},
+      });
+
+      expect(res.statusCode).toBe(400);
+      const body = res.json();
+      expect(body.code).toBe("CYCLE_HAS_NON_TERMINAL_ISSUES");
+      expect(body.details).toBeDefined();
+      expect(body.details.issueKeys).toContain(issue.key);
+    });
+  });
+
   // ── POST /api/cycles/:id/issues ────────────────────────────────────────────
 
   describe("POST /api/cycles/:id/issues", () => {

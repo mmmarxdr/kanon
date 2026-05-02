@@ -42,6 +42,11 @@ const AttachIssuesBody = z.object({
   reason: z.string().max(500).optional(),
 });
 
+const DeleteCycleBody = z.object({
+  force: z.boolean().optional().default(false),
+  reason: z.string().min(1).max(500).optional(),
+});
+
 export default async function cycleRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -114,5 +119,23 @@ export default async function cycleRoutes(fastify: FastifyInstance): Promise<voi
         reason: request.body.reason,
         authorId: request.member!.id,
       }),
+  );
+
+  app.delete(
+    "/cycles/:id",
+    {
+      preHandler: [requireCycleRole("id", "member")],
+      schema: { params: CycleIdParam, body: DeleteCycleBody },
+    },
+    async (request, reply) => {
+      const cycleId = request.params.id;
+      const { force, reason } = request.body;
+      const result = await cycleService.deleteCycle(cycleId, { force, reason }, request.member!.id);
+      request.log.info(
+        { cycleId, detachedCount: result.detachedIssueKeys.length, force },
+        "cycle deleted",
+      );
+      return reply.send(result);
+    },
   );
 }
