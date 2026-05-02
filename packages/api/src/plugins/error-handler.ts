@@ -29,6 +29,7 @@ async function errorHandlerPlugin(fastify: FastifyInstance): Promise<void> {
         error: error.code,
         code: error.code,
         message: error.message,
+        ...(error.details !== undefined ? { details: error.details } : {}),
       });
     }
 
