@@ -232,6 +232,25 @@ describe("deleteCycle()", () => {
     });
   });
 
+  // ── C.0 ── cycleName in return (drift fix) ───────────────────────────────────
+  describe("C.0 — cycleName returned in DeleteCycleResult", () => {
+    it("includes cycleName in the returned result", async () => {
+      const cycle = buildCycle({
+        name: "Sprint 7",
+        issues: [{ id: "i1", key: "KAN-3", state: "done" }],
+      });
+      const tx = makeTxMock({
+        cycleFindUniqueResult: cycle,
+        auditLogCreateResult: { id: AUDIT_LOG_ID },
+      });
+      vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => cb(tx));
+
+      const result = await deleteCycle(CYCLE_ID, {}, AUTHOR_ID);
+
+      expect(result).toHaveProperty("cycleName", "Sprint 7");
+    });
+  });
+
   // ── B.5 ── REQ-CYCLE-DELETE-004 s1 + REQ-CYCLE-DELETE-005 ───────────────────
   describe("B.5 — detach before delete + detachedIssueKeys (REQ-CYCLE-DELETE-004 s1, REQ-CYCLE-DELETE-005)", () => {
     it("calls tx.issue.updateMany before tx.cycle.delete and returns correct detachedIssueKeys", async () => {

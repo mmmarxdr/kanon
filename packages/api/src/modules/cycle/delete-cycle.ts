@@ -25,6 +25,7 @@ interface DeleteCycleOpts {
 export interface DeleteCycleResult {
   auditLogId: string;
   deletedCycleId: string;
+  cycleName: string;
   detachedIssueKeys: string[];
 }
 
@@ -57,6 +58,7 @@ export async function deleteCycle(
   let txResult: {
     auditLogId: string;
     deletedCycleId: string;
+    cycleName: string;
     detachedIssueKeys: string[];
     projectId: string;
     workspaceId: string | undefined;
@@ -145,6 +147,7 @@ export async function deleteCycle(
       return {
         auditLogId: audit.id,
         deletedCycleId: cycle.id,
+        cycleName: cycle.name,
         detachedIssueKeys,
         projectId: cycle.projectId,
         workspaceId: cycle.project?.workspaceId,
@@ -192,6 +195,7 @@ export async function deleteCycle(
   return {
     auditLogId: txResult.auditLogId,
     deletedCycleId: txResult.deletedCycleId,
+    cycleName: txResult.cycleName,
     detachedIssueKeys: txResult.detachedIssueKeys,
   };
 }
