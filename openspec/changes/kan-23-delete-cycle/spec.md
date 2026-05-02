@@ -249,16 +249,18 @@ When two concurrent requests attempt to delete the same cycle, only one MUST suc
 ### REQ-API-RESPONSE-001: Response shape on success
 
 #### Scenario: 200 response body
-- **Given** a successful delete of cycle `id = "a1b2c3d4-0000-0000-0000-000000000010"` with detached issues `["KAN-4", "KAN-5"]` and audit id `"aud-0099"`
+- **Given** a successful delete of cycle `{ id: "a1b2c3d4-0000-0000-0000-000000000010", name: "Sprint 7" }` with detached issues `["KAN-4", "KAN-5"]` and audit id `"aud-0099"`
 - **When** the route returns
 - **Then** the response MUST be HTTP `200` with body:
   ```json
   {
+    "auditLogId": "aud-0099",
     "deletedCycleId": "a1b2c3d4-0000-0000-0000-000000000010",
-    "detachedIssueKeys": ["KAN-4", "KAN-5"],
-    "auditLogId": "aud-0099"
+    "cycleName": "Sprint 7",
+    "detachedIssueKeys": ["KAN-4", "KAN-5"]
   }
   ```
+- **Note**: `cycleName` is REQUIRED so the MCP `kanon_delete_cycle` ack tier can render `Deleted cycle "<name>" (<n> issues detached)` without an extra round-trip. Field order matches `kanonCycleDeleteResultSchema` in `packages/bridge/src/types.ts` (the authoritative shape).
 
 ---
 
