@@ -58,6 +58,7 @@ The user should never need to type a project key. Infer it from `cwd` basename, 
 | Create cycle | `kanon_create_cycle({ projectKey, name, goal, startDate, endDate, state?, attachIssueKeys? })` |
 | Attach / detach | `kanon_attach_issues_to_cycle({ cycleId, add[]?, remove[]?, reason? })` |
 | Close cycle | `kanon_close_cycle({ cycleId, disposition, projectKey?, reason? })` |
+| Hard-delete cycle | `kanon_delete_cycle({ cycleId, force?, reason?, format? })` — permanent; writes audit log; see "Hard delete vs close" |
 
 `startDate` and `endDate` accept `YYYY-MM-DD` (auto-normalized to ISO).
 
@@ -123,6 +124,62 @@ When the user asks "how is the cycle going?", answer with: dayIndex / days, comp
 Always pass `reason` for non-trivial closes. The default response is an `ack` with the moved issue keys; use `format: 'full'` only when the caller wants the closed cycle entity back.
 
 **Velocity is computed at close.** Do not try to set it manually.
+
+---
+
+## Hard Delete vs Close
+
+Two different operations — choose based on whether the cycle was real work.
+
+### When to close (`kanon_close_cycle`)
+
+Use close when the cycle **ran** or **was planned as real work** — even if it ended early or never fully executed. Closing preserves history:
+
+- State transitions to `done`.
+- Velocity is computed at close and stored on the cycle.
+- Unfinished issues are moved deliberately (via `disposition`).
+- The cycle remains queryable for retros, velocity charts, and burnup analysis.
+
+Decision test: **"Did this cycle exist for the team?"** If yes — close it.
+
+### When to hard-delete (`kanon_delete_cycle`)
+
+Use delete when the cycle is **noise** — it was never a real iteration and its existence pollutes reports or velocity history:
+
+- Synthetic seed cycles from `pnpm db:seed` (Cycles 7–11, etc.)
+- Accidentally created cycles with no real work attached
+- Aborted planning cycles that never activated
+
+Hard delete is **permanent**. The `Cycle` row and all `CycleScopeEvent` rows are removed from the database. An `AdminAuditLog` row is written with a full snapshot for forensic recovery, but there is no undo endpoint.
+
+Decision test: **"Was this cycle ever a real iteration?"** If no — delete it.
+
+### Active-cycle refusal
+
+`kanon_delete_cycle` unconditionally refuses `state === "active"` cycles. You MUST close or change the cycle's state first. This guard is NOT bypassable with `force: true`.
+
+### The `force` flag
+
+`force: true` bypasses the non-terminal-issues guard — it allows deleting a cycle that has issues in `backlog`, `todo`, `in_progress`, or `review` state. Those issues are detached (their `cycleId` is set to null) but NOT deleted.
+
+**NEVER use `force: true` on a cycle with real work in progress.** If a cycle has actual `in_progress` or `review` issues, close it instead. Detaching active work silently removes it from the cycle's scope without surfacing it to the team.
+
+### Sample output tiers
+
+```text
+# format: ack (default)
+Deleted cycle "Sprint 7" (3 issues detached)
+
+# format: slim
+Deleted cycle "Sprint 7"
+  Detached issues: KAN-12, KAN-13, KAN-14
+
+# format: full
+Deleted cycle "Sprint 7"
+  cycleId: a1b2c3d4-0001-0001-0001-000000000001
+  detachedIssueKeys: KAN-12, KAN-13, KAN-14
+  auditLogId: aud-0099
+```
 
 ---
 
