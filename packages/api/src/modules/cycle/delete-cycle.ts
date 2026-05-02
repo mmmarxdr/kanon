@@ -8,6 +8,13 @@ import { eventBus } from "../../services/event-bus/index.js";
 const NON_TERMINAL_STATES = ["backlog", "todo", "in_progress", "review"] as const;
 type NonTerminalState = (typeof NON_TERMINAL_STATES)[number];
 
+type CycleWithIssuesAndProject = Prisma.CycleGetPayload<{
+  include: {
+    issues: { select: { id: true; key: true; state: true } };
+    project: { select: { workspaceId: true } };
+  };
+}>;
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface DeleteCycleOpts {
@@ -58,7 +65,7 @@ export async function deleteCycle(
   try {
     txResult = await prisma.$transaction(async (tx) => {
       // 1. Re-fetch cycle with attached issues and project for workspaceId
-      const cycle = await tx.cycle.findUnique({
+      const cycle: CycleWithIssuesAndProject | null = await tx.cycle.findUnique({
         where: { id: cycleId },
         include: {
           issues: { select: { id: true, key: true, state: true } },
@@ -140,7 +147,7 @@ export async function deleteCycle(
         deletedCycleId: cycle.id,
         detachedIssueKeys,
         projectId: cycle.projectId,
-        workspaceId: (cycle as any).project?.workspaceId as string | undefined,
+        workspaceId: cycle.project?.workspaceId,
       };
     });
   } catch (err) {
