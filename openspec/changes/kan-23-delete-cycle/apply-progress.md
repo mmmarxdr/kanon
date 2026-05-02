@@ -122,3 +122,54 @@ Phase B — service TDD (16 tasks: B.1–B.16). Gated on Phase A green (confirme
 - `packages/mcp/src/kanon-client.ts` (EXTENDED — deleteCycle method + KanonCycleDeleteResult interface)
 - `packages/mcp/src/transforms.ts` (EXTENDED — formatCycleDelete helper added)
 - `packages/mcp/src/types.ts` (EXTENDED — DeleteCycleShape added)
+
+---
+
+## Batch 4 — Phase E + Phase F + Phase G
+
+### Phase E — Web SSE handler
+- [x] E.1 Test harness verified — `packages/web/src/hooks/__tests__/use-domain-events.test.tsx` exists (FakeEventSource + real QueryClient + vi.spyOn pattern)
+- [x] E.2 TEST cycle.deleted invalidates cycleKeys.all — commit `f40ae34` (3 failing tests written first; confirmed red before impl)
+- [x] E.3 IMPL listener — commit `b345ebc` (cycle.deleted listener block added between Issue events and Project events sections, matches existing addEventListener pattern)
+- [x] E.4 TEST no-crash on deleted-selected-cycle — commit `f40ae34` (combined with E.2 commit; graceful degradation test verifies no throw + cycleKeys.all invalidated)
+
+### Phase F — PR Notes (in this file, see "PR Notes" section below)
+- [x] F.1 SSE shape verification — documented
+- [x] F.2 Concurrency code-review note — documented
+- [x] F.3 Migration deploy ordering — documented
+- commit `<see-docs-openspec-commit-below>`
+
+### Phase G — Skill docs
+- [x] G.1 Tools at a glance row added (`kanon_delete_cycle` with description and force/format params) — commit `2e0ac93`
+- [x] G.2 Hard delete vs close section added (decision tests, active-cycle refusal, force flag risk, output samples) — commit `2e0ac93` (combined with G.1)
+
+### Verification
+- pnpm --filter @kanon/web test: 250 passed / 5 todo (34 test files, 1 skipped) — PASS
+- typecheck (web): clean (cd packages/web && npx tsc --noEmit)
+
+### Files
+- `packages/web/src/hooks/use-domain-events.ts` (EXTENDED — cycle.deleted listener block added)
+- `packages/web/src/hooks/__tests__/use-domain-events.test.tsx` (EXTENDED — 3 new tests: invalidation, no-duplicate-listener, graceful degradation)
+- `packages/mcp/skills/kanon-cycle/SKILL.md` (EXTENDED — kanon_delete_cycle table row + "Hard delete vs close" section)
+- `openspec/changes/kan-23-delete-cycle/apply-progress.md` (EXTENDED — Batch 4 progress + PR Notes)
+
+---
+
+## PR Notes (Phase F)
+
+### F.1 SSE event shape verification
+The `cycle.deleted` event payload `{ cycleId, projectId }` is verified at:
+- API service: `packages/api/src/modules/cycle/delete-cycle.ts` — emitted post-commit via `eventBus.emit("cycle.deleted", { cycleId, projectId })`
+- API event-bus type: `packages/api/src/services/event-bus/types.ts` — `"cycle.deleted"` added to `DomainEventType` union; payload shape documented in design.md section 4
+- Web handler: `packages/web/src/hooks/use-domain-events.ts` — new `handleCycleEvent` listener registered via `es.addEventListener("cycle.deleted", handleCycleEvent)`
+- Service test B.9 asserts `eventBus.emit` is called with `{ type: "cycle.deleted", payload: { cycleId, projectId } }` — full payload shape verified
+
+### F.2 Concurrency (REQ-CONCURRENCY-001)
+This requirement is verified by code review only — concurrent delete races are not testable with mock-based unit tests. The implementation uses a single `prisma.$transaction` with implicit row lock on `cycle.delete`; the second concurrent caller hits Prisma's `P2025` and is mapped to `AppError(404, "CYCLE_NOT_FOUND")`. Reviewers should confirm: (1) the P2025 catch wraps the entire `prisma.$transaction(...)` call, NOT inside the callback; (2) the tx is single, not split.
+
+Service test B.14 validates the P2025 mapping contract (mock-based): `Prisma.PrismaClientKnownRequestError` with `code === "P2025"` thrown inside the tx callback is caught outside and rethrown as `AppError(404, "CYCLE_NOT_FOUND")`.
+
+### F.3 Migration deploy ordering
+The `add_admin_audit_log` migration MUST run before the API restarts in any environment. Standard pnpm deploy command: `pnpm --filter @kanon/api db:migrate` (which runs `prisma migrate deploy`). If the API starts before the migration applies, Prisma client will panic on first reference to `prisma.adminAuditLog.create`. Recommend documenting this in the deploy runbook / PR description.
+
+MCP and web tolerate the absence of `cycle.deleted` events — both changes are purely additive. The new SSE listener in the web is a no-op until the first `cycle.deleted` event arrives; the new MCP tool is a new entry point with no side effects until called.
