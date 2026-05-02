@@ -59,3 +59,15 @@ export type {
   SyncKanonClient,
   SyncEngineConfig,
 } from "./sync-engine.js";
+
+// ─── Dashboard schemas (inbox-redesign-cycle-c) ──────────────────────────────
+export {
+  activeCycleKPIsSchema,
+  mentionDashboardItemSchema,
+  dashboardResponseSchema,
+} from "./dashboard.js";
+export type {
+  ActiveCycleKPIs,
+  MentionDashboardItem,
+  DashboardData,
+} from "./dashboard.js";
