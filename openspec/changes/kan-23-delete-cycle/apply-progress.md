@@ -70,3 +70,55 @@ Phase B — service TDD (16 tasks: B.1–B.16). Gated on Phase A green (confirme
 ### Verification
 - `pnpm --filter @kanon/api test`: 388 passed / 1 skipped (29 test files)
 - `cd packages/api && npx tsc --noEmit`: clean (no errors)
+
+---
+
+## Batch 3 — Phase C + Phase D (Route + MCP tool)
+
+### Pre-step (drift fix from Batch 2)
+- [x] C.0 Add `cycleName: string` to `DeleteCycleResult` interface and propagate `cycle.name` from tx result. Updated `delete-cycle.test.ts` to assert `result.cycleName === "Sprint 7"`. — commit `e6ca1b3`
+
+### Phase C — Route (DELETE /cycles/:id)
+- [x] C.1 Test: 404 when cycle does not exist (preHandler) — `routes.test.ts`
+- [x] C.2 Test: 403 when caller has viewer role — `routes.test.ts`
+- [x] C.3 Test: 200 + audit log authorId equals member.id — `routes.test.ts`
+- [x] C.4 Test: 200 with body `{ deletedCycleId, cycleName, detachedIssueKeys, auditLogId }` — `routes.test.ts`
+- [x] C.5 Test: 409 CYCLE_ACTIVE when cycle.state === 'active' — `routes.test.ts`
+- [x] C.6 Test: 400 CYCLE_HAS_NON_TERMINAL_ISSUES with details.issueKeys — `routes.test.ts`
+- [x] C.7 IMPL: Registered DELETE /cycles/:id with `requireCycleRole("id","member")`, `DeleteCycleBody` Zod schema, request.log.info post-success — commit `01d3a6a`
+
+### Phase D — MCP tool (kanon_delete_cycle)
+- [x] D.1 Test: tool registered with cycleId (uuid), force?, reason?, format? schema
+- [x] D.2 Test: delegates to client.deleteCycle(cycleId, { force: false, reason })
+- [x] D.3 Test: ack format → "Deleted cycle Sprint 7 (3 issues detached)", no auditLogId
+- [x] D.4 Test: slim → detachedIssueKeys list; full → includes auditLogId
+- [x] D.5 Test: KanonApiError propagated as errorResult
+- [x] D.6 IMPL: `kanon_delete_cycle` registered in `packages/mcp/src/tools/cycles.ts`
+- [x] D.7 IMPL: `KanonClient.deleteCycle(id, opts)` in `packages/mcp/src/kanon-client.ts` — issues `DELETE /api/cycles/:id`
+- [x] D.8 IMPL: `formatCycleDelete(result, format)` in `packages/mcp/src/transforms.ts`
+- [x] D (descriptions): Updated `descriptions.test.ts` tool count 29→30 and BASELINE_BYTES 5393→5730
+- commit `b9c6d7f`
+
+### Infrastructure discoveries (Batch 3)
+- **Test DB migration gap**: `kanon_test` DB was missing migration `20260501233422_add_admin_audit_log`. Fixed with `DATABASE_URL=...kanon_test prisma migrate deploy`.
+- **cleanDatabase() missing adminAuditLog**: Added `prisma.adminAuditLog.deleteMany()` to `packages/api/src/test/helpers.ts` `cleanDatabase()` helper — required to prevent test pollution from audit log rows created by the DELETE route.
+- **@kanon/bridge NOT in MCP deps**: `KanonCycleDeleteResult` defined locally in `kanon-client.ts` (with a comment pointing to bridge) to avoid adding an unresolved dependency.
+
+### Verification
+- `pnpm --filter @kanon/api test`: 395 passed / 1 skipped (29 test files) — PASS
+- `pnpm --filter @kanon/mcp test`: 218 passed (12 test files) — PASS
+- `cd packages/api && npx tsc --noEmit`: clean
+- `cd packages/mcp && npx tsc --noEmit`: clean
+
+### Files
+- `packages/api/src/modules/cycle/routes.ts` (EXTENDED — DELETE /cycles/:id route added)
+- `packages/api/src/modules/cycle/routes.test.ts` (EXTENDED — 6 DELETE route tests added)
+- `packages/api/src/modules/cycle/delete-cycle.ts` (EXTENDED — cycleName added to return type and value)
+- `packages/api/src/modules/cycle/delete-cycle.test.ts` (EXTENDED — C.0 cycleName assertion added)
+- `packages/api/src/test/helpers.ts` (EXTENDED — adminAuditLog.deleteMany() added to cleanDatabase)
+- `packages/mcp/src/tools/cycles.ts` (EXTENDED — kanon_delete_cycle tool registered)
+- `packages/mcp/src/tools/cycles.test.ts` (EXTENDED — D.1–D.5 tests added)
+- `packages/mcp/src/tools/descriptions.test.ts` (EXTENDED — count 29→30, BASELINE updated)
+- `packages/mcp/src/kanon-client.ts` (EXTENDED — deleteCycle method + KanonCycleDeleteResult interface)
+- `packages/mcp/src/transforms.ts` (EXTENDED — formatCycleDelete helper added)
+- `packages/mcp/src/types.ts` (EXTENDED — DeleteCycleShape added)
