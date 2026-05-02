@@ -8,6 +8,7 @@ import {
   CreateCycleInput,
   AttachIssuesToCycleShape,
   CloseCycleShape,
+  DeleteCycleShape,
 } from "../types.js";
 import { errorResult, dataResult } from "../errors.js";
 import {
@@ -15,6 +16,7 @@ import {
   formatCycle,
   formatCycleDetail,
   formatAck,
+  formatCycleDelete,
 } from "../transforms.js";
 import type { Format } from "../transforms.js";
 
@@ -232,6 +234,24 @@ export function registerCycleTools(server: McpServer, client: KanonClient): void
           movedIssueKeys: summary.movedIssueKeys,
           disposition: summary.disposition,
         });
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
+  server.tool(
+    "kanon_delete_cycle",
+    "PERMANENT hard-delete a cycle (cycleId, force?, reason?). Active cycles are ALWAYS refused (409). Non-terminal issues block unless force:true. Returns ack with cycle name + detach count; slim adds detachedIssueKeys; full adds auditLogId.",
+    DeleteCycleShape,
+    async (args) => {
+      try {
+        const result = await client.deleteCycle(args.cycleId, {
+          force: args.force ?? false,
+          reason: args.reason,
+        });
+        const fmt = args.format ?? "ack";
+        return dataResult(formatCycleDelete(result, fmt as "ack" | "slim" | "full"));
       } catch (err) {
         return errorResult(err);
       }

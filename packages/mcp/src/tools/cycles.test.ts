@@ -4,7 +4,9 @@ import type {
   KanonClient,
   KanonCycle,
   KanonCycleDetail,
+  KanonCycleDeleteResult,
 } from "../kanon-client.js";
+import { KanonApiError } from "../kanon-client.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 // ─── Harness ────────────────────────────────────────────────────────────────
@@ -91,6 +93,7 @@ interface MockClient {
   getCycle: ReturnType<typeof vi.fn>;
   attachIssuesToCycle: ReturnType<typeof vi.fn>;
   listCycles: ReturnType<typeof vi.fn>;
+  deleteCycle: ReturnType<typeof vi.fn>;
 }
 
 function makeClient(): MockClient {
@@ -99,6 +102,7 @@ function makeClient(): MockClient {
     getCycle: vi.fn(),
     attachIssuesToCycle: vi.fn(),
     listCycles: vi.fn(),
+    deleteCycle: vi.fn(),
   };
 }
 
@@ -684,5 +688,124 @@ describe("kanon_close_cycle — format tier", () => {
     expect(parsed).toHaveProperty("movedIssueKeys");
     expect(parsed).toHaveProperty("disposition", "leave");
     expect(parsed).not.toHaveProperty("ok");
+  });
+});
+
+// ─── D1–D5: kanon_delete_cycle ───────────────────────────────────────────────
+
+const DELETE_CYCLE_ID = "a1b2c3d4-0001-0001-0001-000000000001";
+const DELETE_AUDIT_ID = "aud-0099";
+
+function makeDeleteResult(overrides: Partial<KanonCycleDeleteResult> = {}): KanonCycleDeleteResult {
+  return {
+    deletedCycleId: DELETE_CYCLE_ID,
+    cycleName: "Sprint 7",
+    detachedIssueKeys: ["KAN-12", "KAN-13", "KAN-14"],
+    auditLogId: DELETE_AUDIT_ID,
+    ...overrides,
+  };
+}
+
+describe("kanon_delete_cycle — D.1 schema registration", () => {
+  it("registers kanon_delete_cycle with cycleId, force?, reason?, format?", () => {
+    const mockClient = makeClient();
+    const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
+    const tool = tools.get("kanon_delete_cycle");
+
+    expect(tool).toBeDefined();
+    expect(tool!.name).toBe("kanon_delete_cycle");
+
+    const shape = tool!.shape as Record<string, { _def?: { typeName?: string; innerType?: unknown } }>;
+    // cycleId should be a uuid string
+    expect(shape["cycleId"]).toBeDefined();
+    // force should be optional boolean
+    expect(shape["force"]).toBeDefined();
+    // reason should be optional string
+    expect(shape["reason"]).toBeDefined();
+    // format should be from WriteFormatField
+    expect(shape["format"]).toBeDefined();
+  });
+});
+
+describe("kanon_delete_cycle — D.2 delegates to client.deleteCycle", () => {
+  it("calls client.deleteCycle with cycleId and normalized opts exactly once", async () => {
+    const mockClient = makeClient();
+    mockClient.deleteCycle.mockResolvedValueOnce(makeDeleteResult());
+    const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
+    const tool = tools.get("kanon_delete_cycle")!;
+
+    await tool.handler({
+      cycleId: DELETE_CYCLE_ID,
+      reason: "cleanup placeholder",
+    });
+
+    expect(mockClient.deleteCycle).toHaveBeenCalledTimes(1);
+    expect(mockClient.deleteCycle).toHaveBeenCalledWith(DELETE_CYCLE_ID, {
+      force: false,
+      reason: "cleanup placeholder",
+    });
+  });
+});
+
+describe("kanon_delete_cycle — D.3 ack format (default)", () => {
+  it("ack format returns cycle name + detach count and does NOT include auditLogId", async () => {
+    const mockClient = makeClient();
+    mockClient.deleteCycle.mockResolvedValueOnce(makeDeleteResult());
+    const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
+    const tool = tools.get("kanon_delete_cycle")!;
+
+    const result = await tool.handler({ cycleId: DELETE_CYCLE_ID });
+
+    expect(result.isError).toBeUndefined();
+    const text = result.content[0]!.text;
+    expect(text).toContain("Sprint 7");
+    expect(text).toContain("3 issues detached");
+    expect(text).not.toContain(DELETE_AUDIT_ID);
+  });
+});
+
+describe("kanon_delete_cycle — D.4 slim and full formats", () => {
+  it("slim format includes detachedIssueKeys list", async () => {
+    const mockClient = makeClient();
+    mockClient.deleteCycle.mockResolvedValueOnce(makeDeleteResult());
+    const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
+    const tool = tools.get("kanon_delete_cycle")!;
+
+    const result = await tool.handler({ cycleId: DELETE_CYCLE_ID, format: "slim" });
+
+    expect(result.isError).toBeUndefined();
+    const text = result.content[0]!.text;
+    expect(text).toContain("KAN-12");
+    expect(text).toContain("KAN-13");
+    expect(text).toContain("KAN-14");
+  });
+
+  it("full format includes auditLogId", async () => {
+    const mockClient = makeClient();
+    mockClient.deleteCycle.mockResolvedValueOnce(makeDeleteResult());
+    const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
+    const tool = tools.get("kanon_delete_cycle")!;
+
+    const result = await tool.handler({ cycleId: DELETE_CYCLE_ID, format: "full" });
+
+    expect(result.isError).toBeUndefined();
+    const text = result.content[0]!.text;
+    expect(text).toContain(DELETE_AUDIT_ID);
+  });
+});
+
+describe("kanon_delete_cycle — D.5 KanonApiError propagated as error result", () => {
+  it("propagates KanonApiError as errorResult (parity with sibling tools)", async () => {
+    const mockClient = makeClient();
+    mockClient.deleteCycle.mockRejectedValueOnce(
+      new KanonApiError(409, "CYCLE_ACTIVE", "Cannot delete an active cycle"),
+    );
+    const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
+    const tool = tools.get("kanon_delete_cycle")!;
+
+    const result = await tool.handler({ cycleId: DELETE_CYCLE_ID });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain("CYCLE_ACTIVE");
   });
 });

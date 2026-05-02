@@ -334,6 +334,16 @@ export const AttachIssuesToCycleInput = z.object(AttachIssuesToCycleShape).refin
   { message: "add or remove must contain at least one issue key" },
 );
 
+/** kanon_delete_cycle */
+export const DeleteCycleShape = {
+  cycleId: z.string().uuid().describe("Cycle ID to delete (UUID)"),
+  force: z.boolean().optional()
+    .describe("When true, bypasses the non-terminal issue guard. Active cycles are always refused."),
+  reason: z.string().min(1).max(500).optional()
+    .describe("Reason for deletion — stored in the audit log"),
+  ...WriteFormatField,
+};
+
 /** kanon_close_cycle (raw shape — refine is applied at the schema level below) */
 export const CloseCycleShape = {
   cycleId: z.string().uuid().describe("Cycle ID (UUID)"),

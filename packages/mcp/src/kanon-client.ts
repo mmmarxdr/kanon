@@ -4,6 +4,18 @@
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 /**
+ * Result shape returned by DELETE /api/cycles/:id.
+ * Mirrors packages/bridge/src/types.ts#KanonCycleDeleteResult — kept local
+ * because @kanon/bridge is not in this package's dependency graph.
+ */
+export interface KanonCycleDeleteResult {
+  deletedCycleId: string;
+  cycleName: string;
+  detachedIssueKeys: string[];
+  auditLogId: string;
+}
+
+/**
  * Typed error for Kanon API failures.
  */
 export class KanonApiError extends Error {
@@ -579,6 +591,23 @@ export class KanonClient {
       "POST",
       `/api/cycles/${cycleId}/close`,
       {},
+    );
+  }
+
+  /**
+   * Hard-delete a cycle by ID.
+   * Active cycles are always refused (409). Non-terminal issues block deletion
+   * unless force:true is passed. Returns a full KanonCycleDeleteResult.
+   * Route: DELETE /api/cycles/:id
+   */
+  async deleteCycle(
+    cycleId: string,
+    opts: { force?: boolean; reason?: string },
+  ): Promise<KanonCycleDeleteResult> {
+    return this.request<KanonCycleDeleteResult>(
+      "DELETE",
+      `/api/cycles/${cycleId}`,
+      { force: opts.force ?? false, reason: opts.reason },
     );
   }
 

@@ -10,6 +10,7 @@ import type {
   GroupSummary,
   KanonCycle,
   KanonCycleDetail,
+  KanonCycleDeleteResult,
 } from "./kanon-client.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -264,6 +265,43 @@ export function formatCycle(cycle: KanonCycle, format: Format = "slim"): unknown
 export function formatCycleDetail(cycle: KanonCycleDetail, format: Format = "slim"): unknown {
   if (format === "full") return cycle;
   return slimCycleDetail(cycle);
+}
+
+// ─── Cycle Delete Format Tier ────────────────────────────────────────────────
+
+/**
+ * Format a cycle delete result for the three output tiers.
+ *
+ * ack  — one-liner: `Deleted cycle "Sprint 7" (3 issues detached)`
+ * slim — adds detachedIssueKeys list
+ * full — adds cycleId + auditLogId
+ */
+export function formatCycleDelete(
+  result: KanonCycleDeleteResult,
+  format: "ack" | "slim" | "full" = "ack",
+): string {
+  const count = result.detachedIssueKeys.length;
+  const header = `Deleted cycle "${result.cycleName}" (${count} ${count === 1 ? "issue" : "issues"} detached)`;
+
+  if (format === "ack") {
+    return header;
+  }
+
+  if (format === "slim") {
+    const keyList = result.detachedIssueKeys.length > 0
+      ? `  Detached issues: ${result.detachedIssueKeys.join(", ")}`
+      : "  No issues detached";
+    return [header, keyList].join("\n");
+  }
+
+  // full
+  const lines = [header];
+  lines.push(`  cycleId: ${result.deletedCycleId}`);
+  if (result.detachedIssueKeys.length > 0) {
+    lines.push(`  detachedIssueKeys: ${result.detachedIssueKeys.join(", ")}`);
+  }
+  lines.push(`  auditLogId: ${result.auditLogId}`);
+  return lines.join("\n");
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────
