@@ -3,6 +3,12 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { prisma } from "../../config/prisma.js";
 import { requireMember } from "../../middleware/require-role.js";
+import type { ActiveCycleKPIs } from "@kanon/bridge";
+import {
+  getCycle,
+  computeAvgLeadDays,
+  resolveActiveCycleForWorkspace,
+} from "../cycle/service.js";
 
 const WorkspaceIdParam = z.object({ id: z.string().uuid() });
 
@@ -15,7 +21,9 @@ const WorkspaceIdParam = z.object({ id: z.string().uuid() });
  *   - Awaiting review (review state)
  *   - Active agents (work sessions whose member.isAgent is true)
  *   - Issues assigned to the current user
- *   - Mentions placeholder (returned as []) until @mention parsing exists
+ *   - Mentions for the current member (REQ-API-DASHBOARD-003, REQ-MENTION-006)
+ *   - activeCycle: ActiveCycleKPIs | null (REQ-API-DASHBOARD-002)
+ *   - multipleActiveProjects: boolean (REQ-API-DASHBOARD-005)
  */
 export default async function dashboardRoutes(
   fastify: FastifyInstance,
@@ -44,7 +52,7 @@ export default async function dashboardRoutes(
       });
       const projectIds = projects.map((p) => p.id);
 
-      // Counts in parallel
+      // Run all parallel queries together: existing 7 + activeCycleResult + mentionsRaw
       const [
         open,
         inProgress,
@@ -53,71 +61,138 @@ export default async function dashboardRoutes(
         assignedRaw,
         proposalsRaw,
         agentSessionsRaw,
+        activeCycleResult,
+        mentionsRaw,
       ] = await Promise.all([
-          prisma.issue.count({
-            where: {
-              projectId: { in: projectIds },
-              state: { not: "done" },
-            },
-          }),
-          prisma.issue.count({
-            where: {
-              projectId: { in: projectIds },
-              state: "in_progress",
-            },
-          }),
-          prisma.issue.count({
-            where: {
-              projectId: { in: projectIds },
-              state: "review",
-            },
-          }),
-          prisma.workSession.count({
-            where: {
-              issue: { projectId: { in: projectIds } },
-              member: { isAgent: true },
-            },
-          }),
-          member
-            ? prisma.issue.findMany({
-                where: {
-                  projectId: { in: projectIds },
-                  assigneeId: member.id,
-                  state: { not: "done" },
-                },
-                orderBy: { updatedAt: "desc" },
-                take: 8,
-                select: {
-                  id: true,
-                  key: true,
-                  title: true,
-                  type: true,
-                  priority: true,
-                  state: true,
-                  labels: true,
-                  updatedAt: true,
-                  assignee: { select: { id: true, username: true } },
-                },
-              })
-            : [],
-          prisma.mcpProposal.findMany({
-            where: { workspaceId, status: "pending" },
-            orderBy: { proposedAt: "desc" },
-            take: 6,
-          }),
-          prisma.workSession.findMany({
-            where: {
-              issue: { projectId: { in: projectIds } },
-              member: { isAgent: true },
-            },
-            include: {
-              issue: { select: { key: true } },
-              member: { select: { id: true, username: true, isAgent: true } },
-            },
-            orderBy: { startedAt: "desc" },
-            take: 8,
-          }),
-        ]);
+        prisma.issue.count({
+          where: {
+            projectId: { in: projectIds },
+            state: { not: "done" },
+          },
+        }),
+        prisma.issue.count({
+          where: {
+            projectId: { in: projectIds },
+            state: "in_progress",
+          },
+        }),
+        prisma.issue.count({
+          where: {
+            projectId: { in: projectIds },
+            state: "review",
+          },
+        }),
+        prisma.workSession.count({
+          where: {
+            issue: { projectId: { in: projectIds } },
+            member: { isAgent: true },
+          },
+        }),
+        member
+          ? prisma.issue.findMany({
+              where: {
+                projectId: { in: projectIds },
+                assigneeId: member.id,
+                state: { not: "done" },
+              },
+              orderBy: { updatedAt: "desc" },
+              take: 8,
+              select: {
+                id: true,
+                key: true,
+                title: true,
+                type: true,
+                priority: true,
+                state: true,
+                labels: true,
+                updatedAt: true,
+                assignee: { select: { id: true, username: true } },
+              },
+            })
+          : [],
+        prisma.mcpProposal.findMany({
+          where: { workspaceId, status: "pending" },
+          orderBy: { proposedAt: "desc" },
+          take: 6,
+        }),
+        prisma.workSession.findMany({
+          where: {
+            issue: { projectId: { in: projectIds } },
+            member: { isAgent: true },
+          },
+          include: {
+            issue: { select: { key: true } },
+            member: { select: { id: true, username: true, isAgent: true } },
+          },
+          orderBy: { startedAt: "desc" },
+          take: 8,
+        }),
+        // NEW — REQ-API-DASHBOARD-002: resolve active cycle for the workspace
+        resolveActiveCycleForWorkspace(workspaceId),
+        // NEW — REQ-API-DASHBOARD-003/004: mentions for current member only
+        // scoped by workspaceId (multi-tenant isolation, REQ-MENTION-006)
+        member
+          ? prisma.mention.findMany({
+              where: { workspaceId, mentionedMemberId: member.id },
+              include: {
+                issue: { select: { key: true, title: true } },
+                mentionedByMember: { select: { username: true } },
+              },
+              orderBy: { createdAt: "desc" },
+              take: 20,                                // cap payload (design §3.4)
+            })
+          : ([] as Array<never>),
+      ]);
+
+      // ── Compose ActiveCycleKPIs (only if an active cycle was found) ─────────
+
+      let activeCycle: ActiveCycleKPIs | null = null;
+
+      if (activeCycleResult) {
+        const cycleDetail = await getCycle(activeCycleResult.cycle.id);
+        const avgLeadDays = await computeAvgLeadDays(activeCycleResult.cycle.id);
+
+        const donePct =
+          cycleDetail.scope > 0
+            ? Math.round((cycleDetail.completed / cycleDetail.scope) * 100)
+            : 0;
+
+        activeCycle = {
+          id: activeCycleResult.cycle.id,
+          name: activeCycleResult.cycle.name,
+          projectName: activeCycleResult.projectName,
+          startDate: activeCycleResult.cycle.startDate.toISOString(),
+          endDate: activeCycleResult.cycle.endDate.toISOString(),
+          completed: cycleDetail.completed,
+          scope: cycleDetail.scope,
+          donePct,
+          // decisions-batch-4-velocity: velocity = completed count (NOT cycle.velocity stored field)
+          // cycle.velocity is null while the cycle is active (only set on closeCycle).
+          velocity: cycleDetail.completed,
+          avgLeadDays,
+          burnup: cycleDetail.burnup,
+        };
+      }
+
+      // ── Map mention rows to MentionDashboardItem shape (REQ-MENTION-007) ────
+
+      const mentions = (mentionsRaw as Array<{
+        id: string;
+        issueId: string;
+        commentId: string | null;
+        context: string;
+        createdAt: Date;
+        issue: { key: string; title: string };
+        mentionedByMember: { username: string };
+      }>).map((m) => ({
+        id: m.id,
+        issueKey: m.issue.key,
+        issueTitle: m.issue.title,
+        commentId: m.commentId,
+        mentionedByUsername: m.mentionedByMember.username,
+        context: m.context,
+        createdAt: m.createdAt.toISOString(),
+      }));
 
       return {
         counts: {
@@ -127,7 +202,7 @@ export default async function dashboardRoutes(
           activeAgents,
         },
         assigned: assignedRaw,
-        mentions: [] as unknown[],
+        mentions,
         proposals: proposalsRaw,
         agents: agentSessionsRaw.map((s) => ({
           memberId: s.memberId,
@@ -137,6 +212,8 @@ export default async function dashboardRoutes(
           source: s.source,
           startedAt: s.startedAt.toISOString(),
         })),
+        activeCycle,
+        multipleActiveProjects: activeCycleResult?.multipleActiveProjects ?? false,
       };
     },
   );
