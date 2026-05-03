@@ -117,11 +117,12 @@ export function AgentThread({ comments, isLoading }: AgentThreadProps) {
             background: "var(--panel)",
             opacity: 0.7,
           }}
-          title="Direct prompts to agents arrive in Phase 3"
+          title="View only — agents act via MCP. See KAN-50 for upcoming Ask Kanon roundtrip."
         >
           <Icon.Spark style={{ color: "var(--ai)" }} />
           <input
-            placeholder="Direct the agent… (coming soon)"
+            data-testid="agent-thread-input"
+            placeholder="View only · agents act via MCP"
             disabled
             style={{
               flex: 1,

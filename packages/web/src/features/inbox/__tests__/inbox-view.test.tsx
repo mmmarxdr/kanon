@@ -3,12 +3,17 @@
  * B5.2 — Integración: activeCycle y multipleActiveProjects pasan correctamente.
  * C2.1 — InboxView con mentions: [] → sección Mentions muestra "No mentions."
  * C2.2 — InboxView con mentions: [m1, m2] → sección Mentions renderiza 2 filas MentionRow
+ * D2.1 — Quick Actions: exactamente 4 filas en orden (new-issue, ask-kanon, dep-graph, plan-cycle)
+ * D2.2 — Quick Actions con 0 proyectos: dep-graph y plan-cycle tienen aria-disabled="true"
+ * D2.3 — Click en "Open dependency graph" con 1 proyecto → navigate /dependencies/$projectKey
+ * D2.4 — Click en "Plan next cycle" con 1 proyecto → navigate /cycles/$projectKey
  *
  * Refs: REQ-INBOX-CYCLE-007 escenario 3, design §4.1 data flow
  *       REQ-MENTION-007 escenario 3, REQ-API-DASHBOARD-003 escenario 1 (frontend)
+ *       REQ-INBOX-QUICK-001..005, design §4.4
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
@@ -28,12 +33,19 @@ vi.mock("@/stores/command-palette-store", () => ({
     selector({ open: vi.fn() }),
 }));
 
+const navigateSpy = vi.fn();
 vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => vi.fn(),
+  useNavigate: () => navigateSpy,
 }));
 
 vi.mock("@/lib/api-client", () => ({
   fetchApi: vi.fn(),
+}));
+
+// useProjectsQuery mock — controlled per test via a module-level ref
+const mockProjects: { key: string; name: string }[] = [];
+vi.mock("@/hooks/use-projects-query", () => ({
+  useProjectsQuery: () => ({ data: mockProjects }),
 }));
 
 // ─── Dashboard data fixtures ──────────────────────────────────────────────────
@@ -189,5 +201,77 @@ describe("InboxView (B5)", () => {
     const firstChild = rightRail?.firstElementChild;
     // El primer elemento del rail debe contener el cycle card o ser el cycle card
     expect(firstChild?.querySelector("[data-testid='current-cycle-card']") ?? firstChild).toBeTruthy();
+  });
+});
+
+// ─── D2 — QuickActions rows ───────────────────────────────────────────────────
+
+describe("InboxView (D2) — Quick Actions", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Reset mockProjects to empty for each test; each test sets it
+    mockProjects.length = 0;
+  });
+
+  it("D2.1 — exactamente 4 filas quick-action-row en orden: new-issue, ask-kanon, dep-graph, plan-cycle", async () => {
+    mockProjects.push({ key: "ATLAS", name: "Atlas" });
+    const { wrapper } = createWrapper(DASHBOARD_NO_CYCLE);
+    const { InboxView } = await import("../inbox-view");
+    render(<InboxView />, { wrapper });
+
+    const rows = screen.getAllByTestId("quick-action-row");
+    expect(rows).toHaveLength(4);
+    expect(rows[0]?.getAttribute("data-action")).toBe("new-issue");
+    expect(rows[1]?.getAttribute("data-action")).toBe("ask-kanon");
+    expect(rows[2]?.getAttribute("data-action")).toBe("dep-graph");
+    expect(rows[3]?.getAttribute("data-action")).toBe("plan-cycle");
+
+    // "Search…" row no debe existir
+    expect(screen.queryByText("Search…")).toBeNull();
+  });
+
+  it("D2.2 — con 0 proyectos: dep-graph y plan-cycle tienen aria-disabled='true'", async () => {
+    // mockProjects already empty
+    const { wrapper } = createWrapper(DASHBOARD_NO_CYCLE);
+    const { InboxView } = await import("../inbox-view");
+    render(<InboxView />, { wrapper });
+
+    const rows = screen.getAllByTestId("quick-action-row");
+    const depGraph = rows[2];
+    const planCycle = rows[3];
+    expect(depGraph?.getAttribute("aria-disabled")).toBe("true");
+    expect(planCycle?.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("D2.3 — click en 'Open dependency graph' con 1 proyecto → navigate /dependencies/ATLAS", async () => {
+    mockProjects.push({ key: "ATLAS", name: "Atlas" });
+    const { wrapper } = createWrapper(DASHBOARD_NO_CYCLE);
+    const { InboxView } = await import("../inbox-view");
+    render(<InboxView />, { wrapper });
+
+    const rows = screen.getAllByTestId("quick-action-row");
+    const depGraph = rows[2]!;
+    fireEvent.click(depGraph);
+
+    expect(navigateSpy).toHaveBeenCalledWith({
+      to: "/dependencies/$projectKey",
+      params: { projectKey: "ATLAS" },
+    });
+  });
+
+  it("D2.4 — click en 'Plan next cycle' con 1 proyecto → navigate /cycles/ATLAS", async () => {
+    mockProjects.push({ key: "ATLAS", name: "Atlas" });
+    const { wrapper } = createWrapper(DASHBOARD_NO_CYCLE);
+    const { InboxView } = await import("../inbox-view");
+    render(<InboxView />, { wrapper });
+
+    const rows = screen.getAllByTestId("quick-action-row");
+    const planCycle = rows[3]!;
+    fireEvent.click(planCycle);
+
+    expect(navigateSpy).toHaveBeenCalledWith({
+      to: "/cycles/$projectKey",
+      params: { projectKey: "ATLAS" },
+    });
   });
 });

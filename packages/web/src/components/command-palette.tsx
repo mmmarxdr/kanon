@@ -4,6 +4,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { issueKeys } from "@/lib/query-keys";
 import type { Issue } from "@/types/issue";
 import { useCommandPaletteStore } from "@/stores/command-palette-store";
+import { useActiveWorkspaceId } from "@/hooks/use-workspace-query";
+import { useProjectsQuery } from "@/hooks/use-projects-query";
 import { Icon } from "@/components/ui/icons";
 import { Kbd, StatePip, TypeGlyph } from "@/components/ui/primitives";
 
@@ -31,6 +33,11 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
   const queryClient = useQueryClient();
   const mode = useCommandPaletteStore((s) => s.mode);
   const isAI = mode === "ai";
+
+  // Resolve active workspace and projects for AI mode navigations (design §4.5)
+  const workspaceId = useActiveWorkspaceId();
+  const { data: projectsData } = useProjectsQuery(workspaceId);
+  const firstActiveProjectKey = projectsData?.find((p) => !(p as { archived?: boolean }).archived)?.key;
 
   const cachedIssues = useMemo(() => {
     const allQueries = queryClient.getQueriesData<Issue[]>({
@@ -78,9 +85,40 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
     const actions: { id: string; label: string; sub?: string; onSelect: () => void }[] =
       isAI
         ? [
-            { id: "ai-plan", label: "Plan the next cycle", sub: "based on velocity, capacity, and dependency graph", onSelect: onClose },
-            { id: "ai-blockers", label: "Find issues blocking the cycle", sub: "scan deps for stuck items", onSelect: onClose },
-            { id: "ai-digest", label: "Draft a digest for #standup", sub: "last 24h activity", onSelect: onClose },
+            {
+              id: "ai-plan",
+              label: "Plan the next cycle",
+              sub: "based on velocity, capacity, and dependency graph",
+              onSelect: () => {
+                // TODO(KAN-50): swap navigation for MCP roundtrip when wiring lands
+                if (firstActiveProjectKey) {
+                  void navigate({ to: "/cycles/$projectKey", params: { projectKey: firstActiveProjectKey } });
+                } else {
+                  void navigate({ to: "/inbox" }); // fallback honesto si no hay proyecto
+                }
+                onClose();
+              },
+            },
+            {
+              id: "ai-blockers",
+              label: "Find issues blocking the cycle",
+              sub: "scan deps for stuck items",
+              onSelect: () => {
+                // TODO(KAN-50): swap navigation for MCP roundtrip when wiring lands
+                void navigate({ to: "/inbox", search: { blocked: true } });
+                onClose();
+              },
+            },
+            {
+              id: "ai-digest",
+              label: "Draft a digest for #standup",
+              sub: "last 24h activity",
+              onSelect: () => {
+                // TODO(KAN-50): swap navigation for MCP roundtrip when wiring lands
+                void navigate({ to: "/inbox" });
+                onClose();
+              },
+            },
           ]
         : [
             {
@@ -129,7 +167,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
     }
 
     return result;
-  }, [search, cachedIssues, navigate, onClose, onCreateIssue, isAI]);
+  }, [search, cachedIssues, navigate, onClose, onCreateIssue, isAI, firstActiveProjectKey]);
 
   useEffect(() => {
     setSelectedIndex(0);

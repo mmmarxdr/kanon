@@ -7,7 +7,9 @@ import {
 import { ProposalRow } from "./proposal-row";
 import { CurrentCycleCard } from "./current-cycle-card";
 import { MentionRow } from "./mention-row";
+import { ProjectPickerPopover } from "./project-picker-popover";
 import { useActiveWorkspaceId } from "@/hooks/use-workspace-query";
+import { useProjectsQuery } from "@/hooks/use-projects-query";
 import { useAuthStore } from "@/stores/auth-store";
 import { useCommandPaletteStore } from "@/stores/command-palette-store";
 import { Icon } from "@/components/ui/icons";
@@ -19,11 +21,14 @@ import type { ActiveAgentSession } from "./use-dashboard-query";
 export function InboxView() {
   const workspaceId = useActiveWorkspaceId();
   const { data, isLoading } = useDashboardQuery(workspaceId ?? null);
+  const { data: projects } = useProjectsQuery(workspaceId ?? undefined);
   const apply = useApplyProposalMutation(workspaceId ?? null, "inbox");
   const dismiss = useDismissProposalMutation(workspaceId ?? null, "inbox");
   const user = useAuthStore((s) => s.user);
   const openPalette = useCommandPaletteStore((s) => s.open);
   const navigate = useNavigate();
+
+  const activeProjects = projects ?? [];
 
   const today = new Date().toLocaleDateString(undefined, {
     weekday: "long",
@@ -214,24 +219,65 @@ export function InboxView() {
         </RailCard>
 
         <RailCard title="Quick actions">
+          {/* Row 1: New issue — REQ-INBOX-QUICK-005 */}
           <QuickRow
             icon={<Icon.Plus />}
             label="New issue"
             kbd="C"
+            data-testid="quick-action-row"
+            data-action="new-issue"
             onClick={() => useCommandPaletteStore.getState().requestCreateIssue()}
           />
+          {/* Row 2: Ask Kanon — REQ-INBOX-QUICK-005 */}
           <QuickRow
             icon={<Icon.Spark style={{ color: "var(--ai)" }} />}
             label="Ask Kanon"
             kbd="⌘J"
+            data-testid="quick-action-row"
+            data-action="ask-kanon"
             onClick={() => openPalette("ai")}
           />
-          <QuickRow
-            icon={<Icon.Search />}
-            label="Search…"
-            kbd="⌘K"
-            onClick={() => openPalette("search")}
-          />
+          {/* Row 3: Open dependency graph — REQ-INBOX-QUICK-001, design §4.4 */}
+          <ProjectPickerPopover
+            projects={activeProjects}
+            onSelect={(projectKey) =>
+              void navigate({ to: "/dependencies/$projectKey", params: { projectKey } })
+            }
+            data-testid="quick-dep-graph"
+          >
+            {(open, disabled) => (
+              <QuickRow
+                icon={<Icon.Graph />}
+                label="Open dependency graph"
+                data-testid="quick-action-row"
+                data-action="dep-graph"
+                aria-disabled={disabled}
+                onClick={open}
+                title={disabled ? "No active project" : undefined}
+              />
+            )}
+          </ProjectPickerPopover>
+          {/* Row 4: Plan next cycle — REQ-INBOX-QUICK-002, design §4.4 */}
+          {/* NOTE: "Search…" row removed (REQ-INBOX-QUICK-005 — 4 rows; search accessible via ⌘K + topbar lupa) */}
+          <ProjectPickerPopover
+            projects={activeProjects}
+            onSelect={(projectKey) =>
+              void navigate({ to: "/cycles/$projectKey", params: { projectKey } })
+            }
+            data-testid="quick-plan-cycle"
+          >
+            {(open, disabled) => (
+              <QuickRow
+                icon={<Icon.Road style={{ color: "var(--ai)" }} />}
+                label="Plan next cycle"
+                data-testid="quick-action-row"
+                data-action="plan-cycle"
+                aria-disabled={disabled}
+                onClick={open}
+                title={disabled ? "No active project" : undefined}
+              />
+            )}
+          </ProjectPickerPopover>
         </RailCard>
       </div>
     </div>
@@ -449,16 +495,28 @@ function QuickRow({
   label,
   kbd,
   onClick,
+  "data-testid": testId,
+  "data-action": dataAction,
+  "aria-disabled": ariaDisabled,
+  title,
 }: {
   icon: React.ReactNode;
   label: string;
   kbd?: string;
   onClick?: () => void;
+  "data-testid"?: string;
+  "data-action"?: string;
+  "aria-disabled"?: boolean | "true" | "false";
+  title?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      data-testid={testId}
+      data-action={dataAction}
+      aria-disabled={ariaDisabled}
+      title={title}
       style={{
         display: "flex",
         alignItems: "center",
@@ -469,10 +527,11 @@ function QuickRow({
         textAlign: "left",
         color: "var(--ink-2)",
         fontSize: 12,
-        cursor: "pointer",
+        cursor: ariaDisabled ? "not-allowed" : "pointer",
+        opacity: ariaDisabled ? 0.5 : 1,
       }}
       onMouseEnter={(e) =>
-        (e.currentTarget.style.background = "var(--bg-3)")
+        (e.currentTarget.style.background = ariaDisabled ? "transparent" : "var(--bg-3)")
       }
       onMouseLeave={(e) =>
         (e.currentTarget.style.background = "transparent")
