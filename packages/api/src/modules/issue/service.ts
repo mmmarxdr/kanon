@@ -25,6 +25,7 @@ import {
   validateCycleBelongsToProject,
   dayIndex,
 } from "../cycle/service.js";
+import { parseAndUpsertMentions } from "../mentions/service.js";
 
 /**
  * Generate the next issue key for a project using MAX+1 in a transaction.
@@ -161,6 +162,22 @@ export async function createIssue(
     });
   } catch {
     // Never let event emission break the mutation
+  }
+
+  // Parse @mentions in description — best-effort (must not block issue creation)
+  // workspaceId comes from project (issue has no direct workspaceId field)
+  if (issue.description) {
+    try {
+      await parseAndUpsertMentions({
+        workspaceId: project.workspaceId,
+        issueId: issue.id,
+        commentId: null,
+        body: issue.description,
+        authorMemberId: memberId,
+      });
+    } catch {
+      // Mention parsing failure is non-fatal — continue
+    }
   }
 
   return issue;
@@ -503,6 +520,22 @@ export async function updateIssue(
     }
   } catch {
     // Never let event emission break the mutation
+  }
+
+  // Parse @mentions in description if it was part of this update — best-effort
+  // workspaceId comes from issue.project (issue has no direct workspaceId field)
+  if (body.description !== undefined) {
+    try {
+      await parseAndUpsertMentions({
+        workspaceId: issue.project.workspaceId,
+        issueId: issue.id,
+        commentId: null,
+        body: body.description ?? "",
+        authorMemberId: memberId,
+      });
+    } catch {
+      // Mention parsing failure is non-fatal — continue
+    }
   }
 
   return updated;

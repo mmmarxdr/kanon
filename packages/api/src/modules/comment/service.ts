@@ -12,9 +12,13 @@ export async function createComment(
   body: CreateCommentBody,
   memberId: string,
 ) {
+  // Note: Issue does NOT have workspaceId directly — it lives in issue.project.workspaceId
   const issue = await prisma.issue.findUnique({
     where: { key: issueKey },
-    select: { id: true },
+    select: {
+      id: true,
+      project: { select: { workspaceId: true } },
+    },
   });
   if (!issue) {
     throw new AppError(
@@ -49,6 +53,19 @@ export async function createComment(
     action: "commented",
     details: { commentId: comment.id, source: comment.source },
   });
+
+  // Parse @mentions — best-effort (must not break comment creation)
+  try {
+    await parseAndUpsertMentions({
+      workspaceId: issue.project.workspaceId,
+      issueId: issue.id,
+      commentId: comment.id,
+      body: body.body,
+      authorMemberId: memberId,
+    });
+  } catch {
+    // Mention parsing failure is non-fatal — log silently and continue
+  }
 
   return comment;
 }
