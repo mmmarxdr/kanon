@@ -29,12 +29,13 @@ beforeEach(() => {
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
-const makeComment = (id: string, source: string, body = "hello"): Comment => ({
+const makeComment = (id: string, source: Comment["source"], body = "hello"): Comment => ({
   id,
   body,
   source,
   createdAt: "2026-05-01T10:00:00.000Z",
-  author: { username: "alice" },
+  updatedAt: "2026-05-01T10:00:00.000Z",
+  author: { id: "u-alice", username: "alice" },
 });
 
 const HUMAN_COMMENT = makeComment("cmt-human-1", "human", "Human comment");

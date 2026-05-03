@@ -30,7 +30,8 @@ const makeComment = (id: string, body: string): Comment => ({
   body,
   source: "human",
   createdAt: "2026-05-01T10:00:00.000Z",
-  author: { username: "alice" },
+  updatedAt: "2026-05-01T10:00:00.000Z",
+  author: { id: "u-alice", username: "alice" },
 });
 
 const COMMENTS: Comment[] = [

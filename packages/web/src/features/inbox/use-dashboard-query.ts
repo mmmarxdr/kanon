@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchApi } from "@/lib/api-client";
 import { dashboardKeys, proposalKeys } from "@/lib/query-keys";
 import type { DashboardData } from "@kanon/bridge";
+import type { McpProposal } from "@/types/proposal";
 
 // Re-export for convenience — consumers that need fine-grained types can
 // import directly from @kanon/bridge.

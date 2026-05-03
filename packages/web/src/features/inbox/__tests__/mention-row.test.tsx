@@ -77,7 +77,8 @@ describe("MentionRow (C1)", () => {
     fireEvent.click(button);
 
     expect(mockNavigate).toHaveBeenCalledTimes(1);
-    const callArgs = mockNavigate.mock.calls[0][0];
+    const callArgs = mockNavigate.mock.calls[0]?.[0];
+    expect(callArgs).toBeDefined();
     expect(callArgs.to).toBe("/issue/$key");
     expect(callArgs.params.key).toBe("T-99");
     expect(callArgs.search.from).toBe("inbox");
