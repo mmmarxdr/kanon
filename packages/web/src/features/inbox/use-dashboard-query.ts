@@ -1,8 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchApi } from "@/lib/api-client";
 import { dashboardKeys, proposalKeys } from "@/lib/query-keys";
-import type { Issue } from "@/types/issue";
-import type { McpProposal } from "@/types/proposal";
+import type { DashboardData } from "@kanon/bridge";
+
+// Re-export for convenience — consumers that need fine-grained types can
+// import directly from @kanon/bridge.
+export type { ActiveCycleKPIs, MentionDashboardItem, DashboardData } from "@kanon/bridge";
 
 export interface ActiveAgentSession {
   memberId: string;
@@ -11,19 +14,6 @@ export interface ActiveAgentSession {
   issueKey: string;
   source: string;
   startedAt: string;
-}
-
-export interface DashboardData {
-  counts: {
-    openIssues: number;
-    inProgress: number;
-    awaitingReview: number;
-    activeAgents: number;
-  };
-  assigned: Issue[];
-  mentions: unknown[];
-  proposals: McpProposal[];
-  agents: ActiveAgentSession[];
 }
 
 /**

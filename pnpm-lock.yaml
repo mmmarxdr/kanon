@@ -174,6 +174,9 @@ importers:
       '@dnd-kit/utilities':
         specifier: ^3.2.2
         version: 3.2.2(react@19.2.4)
+      '@kanon/bridge':
+        specifier: workspace:*
+        version: link:../bridge
       '@tanstack/react-query':
         specifier: ^5.62.0
         version: 5.94.5(react@19.2.4)

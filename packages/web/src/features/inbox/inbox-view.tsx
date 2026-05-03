@@ -5,6 +5,7 @@ import {
   useDismissProposalMutation,
 } from "./use-dashboard-query";
 import { ProposalRow } from "./proposal-row";
+import { CurrentCycleCard } from "./current-cycle-card";
 import { useActiveWorkspaceId } from "@/hooks/use-workspace-query";
 import { useAuthStore } from "@/stores/auth-store";
 import { useCommandPaletteStore } from "@/stores/command-palette-store";
@@ -171,6 +172,15 @@ export function InboxView() {
           flexShrink: 0,
         }}
       >
+        {/* Current cycle card — FIRST in right rail (REQ-INBOX-CYCLE-007) */}
+        <RailCard title="Current cycle">
+          <CurrentCycleCard
+            activeCycle={data?.activeCycle ?? null}
+            multipleActiveProjects={data?.multipleActiveProjects ?? false}
+            isLoading={isLoading}
+          />
+        </RailCard>
+
         <RailCard title="Active agents" sub="MCP runners">
           {(data?.agents ?? []).length === 0 ? (
             <EmptyHint>No agents currently active.</EmptyHint>
