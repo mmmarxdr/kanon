@@ -6,6 +6,7 @@ import {
 } from "./use-dashboard-query";
 import { ProposalRow } from "./proposal-row";
 import { CurrentCycleCard } from "./current-cycle-card";
+import { MentionRow } from "./mention-row";
 import { useActiveWorkspaceId } from "@/hooks/use-workspace-query";
 import { useAuthStore } from "@/stores/auth-store";
 import { useCommandPaletteStore } from "@/stores/command-palette-store";
@@ -155,9 +156,22 @@ export function InboxView() {
           )}
         </Section>
 
-        {/* Mentions — placeholder */}
-        <Section title="Mentions" hint="@mention parsing pending">
-          <EmptyHint>No mentions.</EmptyHint>
+        {/* Mentions */}
+        <Section
+          title="Mentions"
+          hint={
+            (data?.mentions?.length ?? 0) > 0
+              ? `${data?.mentions?.length}`
+              : undefined
+          }
+        >
+          {(data?.mentions ?? []).length === 0 ? (
+            <EmptyHint>No mentions.</EmptyHint>
+          ) : (
+            (data?.mentions ?? []).map((m) => (
+              <MentionRow key={m.id} mention={m} />
+            ))
+          )}
         </Section>
       </div>
 

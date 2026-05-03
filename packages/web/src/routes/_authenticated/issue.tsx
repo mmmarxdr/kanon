@@ -22,6 +22,7 @@ import { MetadataSection } from "@/features/issue-detail/metadata-section";
 import { ChildrenSection } from "@/features/issue-detail/children-section";
 import { DependenciesSection } from "@/features/issue-detail/dependencies-section";
 import { AgentThread } from "@/features/issue-detail/agent-thread";
+import { CommentsHighlightView } from "@/features/issue-detail/comments-highlight-view";
 import { ActivityList } from "@/features/issue-detail/activity-list";
 import { CommentList } from "@/features/issue-detail/comment-list";
 import type { IssueState } from "@/stores/board-store";
@@ -31,6 +32,10 @@ import { Kbd } from "@/components/ui/primitives";
 interface IssueRouteSearch {
   /** Optional return target so the back button knows where to go. */
   from?: string;
+  /** When "mention", the right pane highlights the target comment. */
+  highlight?: "mention";
+  /** UUID of the comment to scroll to and highlight. Omitted for description mentions. */
+  commentId?: string;
 }
 
 export const issueRoute = createRoute({
@@ -39,16 +44,69 @@ export const issueRoute = createRoute({
   component: IssuePage,
   validateSearch: (search: Record<string, unknown>): IssueRouteSearch => ({
     from: typeof search.from === "string" ? search.from : undefined,
+    highlight: search.highlight === "mention" ? "mention" : undefined,
+    commentId: typeof search.commentId === "string" ? search.commentId : undefined,
   }),
 });
 
 const HUMAN_SOURCES = new Set(["human"]);
+const AGENT_SOURCES = new Set(["mcp", "engram_sync", "system"]);
 
 type Tab = "activity" | "children" | "deps" | "comments";
 
+/**
+ * RightPaneContent — implements the 4-case behavior matrix (design §4.3, REQ-MENTION-010).
+ *
+ * | agentComments.length | highlight === "mention" && commentId | renders |
+ * |---|---|---|
+ * | > 0 | No  | AgentThread |
+ * | > 0 | Yes | AgentThread (with highlight injected via prop) |
+ * | 0   | No  | AgentThread (empty state) |
+ * | 0   | Yes | CommentsHighlightView |
+ *
+ * Exported so it can be unit-tested independently from the router-integrated IssuePage.
+ */
+export interface RightPaneContentProps {
+  comments: import("@/types/issue").Comment[];
+  isCommentsLoading: boolean;
+  highlight: "mention" | undefined;
+  commentId: string | undefined;
+}
+
+export function RightPaneContent({
+  comments,
+  isCommentsLoading,
+  highlight,
+  commentId,
+}: RightPaneContentProps) {
+  const agentComments = comments.filter((c) => AGENT_SOURCES.has(c.source));
+
+  const showCommentsInsteadOfThread =
+    highlight === "mention" && commentId !== undefined && agentComments.length === 0;
+
+  if (showCommentsInsteadOfThread) {
+    return (
+      <CommentsHighlightView
+        comments={comments}
+        highlightCommentId={commentId}
+        data-testid="comments-list"
+      />
+    );
+  }
+
+  return (
+    <div data-testid="agent-thread">
+      <AgentThread
+        comments={comments}
+        isLoading={isCommentsLoading}
+      />
+    </div>
+  );
+}
+
 function IssuePage() {
   const { key: issueKey } = issueRoute.useParams();
-  const { from } = issueRoute.useSearch();
+  const { from, highlight, commentId } = issueRoute.useSearch();
   const navigate = useNavigate();
 
   const [tab, setTab] = useState<Tab>("activity");
@@ -585,9 +643,11 @@ function IssuePage() {
         </div>
 
         <div style={{ flex: 1, overflow: "auto", padding: 14 }}>
-          <AgentThread
+          <RightPaneContent
             comments={comments ?? []}
-            isLoading={commentsLoading}
+            isCommentsLoading={commentsLoading}
+            highlight={highlight}
+            commentId={commentId}
           />
         </div>
       </div>

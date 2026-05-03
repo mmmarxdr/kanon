@@ -1,8 +1,11 @@
 /**
  * B5.1 — InboxView renderiza CurrentCycleCard como primera RailCard del right rail.
  * B5.2 — Integración: activeCycle y multipleActiveProjects pasan correctamente.
+ * C2.1 — InboxView con mentions: [] → sección Mentions muestra "No mentions."
+ * C2.2 — InboxView con mentions: [m1, m2] → sección Mentions renderiza 2 filas MentionRow
  *
  * Refs: REQ-INBOX-CYCLE-007 escenario 3, design §4.1 data flow
+ *       REQ-MENTION-007 escenario 3, REQ-API-DASHBOARD-003 escenario 1 (frontend)
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
@@ -34,6 +37,26 @@ vi.mock("@/lib/api-client", () => ({
 }));
 
 // ─── Dashboard data fixtures ──────────────────────────────────────────────────
+
+const MENTION_1 = {
+  id: "mention-1",
+  issueKey: "T-10",
+  issueTitle: "Fix login bug",
+  mentionedByUsername: "alice",
+  context: "@bob please review",
+  commentId: "cmt-1",
+  createdAt: "2026-05-01T10:00:00.000Z",
+};
+
+const MENTION_2 = {
+  id: "mention-2",
+  issueKey: "T-11",
+  issueTitle: "Update docs",
+  mentionedByUsername: "charlie",
+  context: "@bob check this",
+  commentId: null,
+  createdAt: "2026-05-02T08:00:00.000Z",
+};
 
 const DASHBOARD_NO_CYCLE = {
   counts: { openIssues: 2, inProgress: 1, awaitingReview: 0, activeAgents: 0 },
@@ -107,6 +130,44 @@ describe("InboxView (B5)", () => {
     expect(screen.getByTestId("current-cycle-card")).toBeTruthy();
     expect(screen.getByTestId("sparkline")).toBeTruthy();
     expect(screen.getByTestId("done-pct-value").textContent).toBe("62%");
+  });
+
+  // ─── C2 — MentionsSection ─────────────────────────────────────────────────
+
+  it("C2.1 — con mentions: [] → sección Mentions muestra 'No mentions.'", async () => {
+    const { wrapper } = createWrapper(DASHBOARD_NO_CYCLE);
+    const { InboxView } = await import("../inbox-view");
+    render(<InboxView />, { wrapper });
+
+    // The empty hint text should be present
+    expect(screen.getByText("No mentions.")).toBeTruthy();
+
+    // No MentionRow buttons in the mentions section
+    // All buttons should be quick-action or inbox-row buttons, not mention buttons
+    // We verify by checking that no element with mention-related text is present
+    const mentionButtons = screen
+      .queryAllByRole("button")
+      .filter((b) => b.getAttribute("data-testid") === "mention-row");
+    expect(mentionButtons).toHaveLength(0);
+  });
+
+  it("C2.2 — con mentions: [m1, m2] → sección Mentions renderiza 2 filas MentionRow", async () => {
+    const dashboardWithMentions = {
+      ...DASHBOARD_NO_CYCLE,
+      mentions: [MENTION_1, MENTION_2],
+    };
+    const { wrapper } = createWrapper(dashboardWithMentions);
+    const { InboxView } = await import("../inbox-view");
+    render(<InboxView />, { wrapper });
+
+    // Both mention users should be visible
+    expect(screen.getByText("alice")).toBeTruthy();
+    expect(screen.getByText("charlie")).toBeTruthy();
+    // Context text for each mention
+    expect(screen.getByText("@bob please review")).toBeTruthy();
+    expect(screen.getByText("@bob check this")).toBeTruthy();
+    // "No mentions." should NOT be shown when there are mentions
+    expect(screen.queryByText("No mentions.")).toBeNull();
   });
 
   it("B5.3 — current-cycle-card aparece ANTES de Active agents (orden correcto)", async () => {
