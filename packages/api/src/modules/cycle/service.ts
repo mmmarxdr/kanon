@@ -624,6 +624,129 @@ export async function attachIssues(cycleId: string, input: AttachIssuesInput) {
   return getCycle(cycleId);
 }
 
+// ---------------------------------------------------------------------------
+// computeAvgLeadDays — REQ-CYCLE-LEAD-TIME-001..003, REQ-INBOX-CYCLE-004
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the average lead time (in decimal days) for issues that were
+ * transitioned to "done" within the given cycle.
+ *
+ * Algorithm (anti N+1, design §3.1):
+ *  1. Fetch all issues in the cycle (id + createdAt). If empty → null early return.
+ *  2. ONE batch query for all state_changed activity logs for those issueIds.
+ *  3. In-memory: filter to logs where details.newValue === "done", take the
+ *     most-recent log per issue, compute delta in days, average.
+ *
+ * Edge cases:
+ *  - 0 issues → null (no activityLog query issued)
+ *  - Issues exist but none have a state_changed→done log → null
+ *  - Issue with doneAt === createdAt → 0.0 (not null)
+ *  - Mixed (some with, some without log) → average over those that have a log
+ */
+export async function computeAvgLeadDays(cycleId: string): Promise<number | null> {
+  // 1. Fetch all issues in the cycle
+  const issues = await prisma.issue.findMany({
+    where: { cycleId },
+    select: { id: true, createdAt: true },
+  });
+
+  if (issues.length === 0) return null;
+
+  // 2. One batch query: all state_changed logs for these issueIds
+  const logs = await prisma.activityLog.findMany({
+    where: {
+      issueId: { in: issues.map((i) => i.id) },
+      action: "state_changed",
+    },
+    select: { issueId: true, createdAt: true, details: true },
+  });
+
+  // 3. Group into a Map<issueId, latestDoneAt> — take the most recent done event per issue
+  const lastDoneByIssue = new Map<string, Date>();
+  for (const log of logs) {
+    const det = log.details as { newValue?: string } | null;
+    if (det?.newValue !== "done") continue;
+    const prev = lastDoneByIssue.get(log.issueId);
+    if (!prev || log.createdAt > prev) {
+      lastDoneByIssue.set(log.issueId, log.createdAt);
+    }
+  }
+
+  // 4. Compute deltas in days; average only over issues that have a done event
+  const deltas: number[] = [];
+  for (const issue of issues) {
+    const doneAt = lastDoneByIssue.get(issue.id);
+    if (!doneAt) continue; // exclude — no done log (REQ-CYCLE-LEAD-TIME-001 MUST NOT)
+    deltas.push((doneAt.getTime() - issue.createdAt.getTime()) / ONE_DAY_MS);
+  }
+
+  if (deltas.length === 0) return null;
+  return deltas.reduce((sum, d) => sum + d, 0) / deltas.length;
+}
+
+// ---------------------------------------------------------------------------
+// resolveActiveCycleForWorkspace — REQ-INBOX-CYCLE-001, REQ-API-DASHBOARD-005
+// ---------------------------------------------------------------------------
+
+/**
+ * Find the "winning" active cycle for a workspace — the one the Inbox will
+ * surface in the CurrentCycleCard.
+ *
+ * Algorithm (design §3.2):
+ *  - ONE query: all cycles with state "active" in non-archived projects of
+ *    the workspace, ordered by (startDate DESC, id ASC) for deterministic
+ *    tie-breaking.
+ *  - If none → null.
+ *  - multipleActiveProjects = count of distinct projectIds among all active
+ *    cycles > 1.
+ *  - Winner = first result (most recent startDate, smallest id on tie).
+ */
+export async function resolveActiveCycleForWorkspace(workspaceId: string): Promise<{
+  cycle: {
+    id: string;
+    name: string;
+    startDate: Date;
+    endDate: Date;
+    projectId: string;
+  };
+  projectName: string;
+  multipleActiveProjects: boolean;
+} | null> {
+  const activeCycles = await prisma.cycle.findMany({
+    where: {
+      state: "active",
+      project: { workspaceId, archived: false },
+    },
+    orderBy: [{ startDate: "desc" }, { id: "asc" }],
+    select: {
+      id: true,
+      name: true,
+      startDate: true,
+      endDate: true,
+      projectId: true,
+      project: { select: { name: true } },
+    },
+  });
+
+  if (activeCycles.length === 0) return null;
+
+  const distinctProjects = new Set(activeCycles.map((c) => c.projectId));
+  const winner = activeCycles[0]!;
+
+  return {
+    cycle: {
+      id: winner.id,
+      name: winner.name,
+      startDate: winner.startDate,
+      endDate: winner.endDate,
+      projectId: winner.projectId,
+    },
+    projectName: winner.project.name,
+    multipleActiveProjects: distinctProjects.size > 1,
+  };
+}
+
 // Re-export deleteCycle for symmetry with the existing service surface
 // so routes can import from "./service.js" consistently.
 export { deleteCycle } from "./delete-cycle.js";
