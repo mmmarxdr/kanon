@@ -257,7 +257,7 @@ function IssuePage() {
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "1fr 380px",
+        gridTemplateColumns: "minmax(0, 1fr) 380px",
         height: "100%",
         overflow: "hidden",
         background: "var(--bg)",
@@ -328,9 +328,9 @@ function IssuePage() {
         />
 
         {/* Description */}
-        <div style={{ padding: "16px 28px 0" }}>
+        <div style={{ padding: "16px 28px 0", minWidth: 0 }}>
           <div
-            style={{ display: "flex", flexDirection: "column", gap: 6 }}
+            style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}
           >
             <span
               className="mono"
@@ -362,6 +362,7 @@ function IssuePage() {
                 style={{
                   width: "100%",
                   minHeight: 96,
+                  maxHeight: "40vh",
                   padding: "10px 12px",
                   background: "var(--panel)",
                   border: "1px solid var(--line)",
@@ -372,32 +373,63 @@ function IssuePage() {
                   outline: "none",
                   resize: "vertical",
                   fontFamily: "Inter Tight",
+                  boxSizing: "border-box",
                 }}
               />
             ) : (
-              <button
-                type="button"
+              <div
+                role="button"
+                tabIndex={0}
                 onClick={() => setIsEditingDescription(true)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setIsEditingDescription(true);
+                  }
+                }}
                 style={{
+                  display: "block",
                   width: "100%",
+                  minWidth: 0,
+                  maxWidth: "100%",
                   minHeight: 56,
+                  maxHeight: 240,
+                  overflowY: "auto",
+                  overflowX: "clip",
                   padding: "10px 12px",
                   background: "var(--panel)",
                   border: "1px solid var(--line)",
                   borderRadius: 6,
                   textAlign: "left",
                   cursor: "text",
+                  boxSizing: "border-box",
+                  whiteSpace: "normal",
+                  overflowWrap: "anywhere",
+                  wordBreak: "break-word",
                 }}
               >
                 {issue.description ? (
                   <div
+                    className="markdown-body"
                     style={{
                       color: "var(--ink-2)",
                       fontSize: 13,
                       lineHeight: 1.55,
+                      overflowWrap: "anywhere",
+                      wordBreak: "break-word",
+                      minWidth: 0,
                     }}
                   >
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        table: ({ node: _node, ...props }) => (
+                          <div style={{ overflowX: "auto", maxWidth: "100%" }}>
+                            <table {...props} />
+                          </div>
+                        ),
+                      }}
+                    >
                       {issue.description}
                     </ReactMarkdown>
                   </div>
@@ -412,7 +444,7 @@ function IssuePage() {
                     Click to add a description…
                   </span>
                 )}
-              </button>
+              </div>
             )}
           </div>
         </div>
@@ -425,6 +457,7 @@ function IssuePage() {
             gap: 16,
             padding: "16px 28px 0",
             borderBottom: "1px solid var(--line)",
+            flexShrink: 0,
           }}
         >
           {tabs.map((t) => {
@@ -475,6 +508,7 @@ function IssuePage() {
         <div
           style={{
             flex: 1,
+            minHeight: 0,
             overflow: "auto",
             padding: "16px 28px 24px",
           }}

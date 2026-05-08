@@ -207,3 +207,57 @@ input, textarea, select { font: inherit; color: inherit; }
   from { transform: translateY(8px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
 }
+
+/* ===========================================================================
+   Markdown body — used for rendered issue descriptions / comments
+   --------------------------------------------------------------------------- */
+.markdown-body {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.markdown-body p,
+.markdown-body li,
+.markdown-body pre,
+.markdown-body blockquote,
+.markdown-body div { min-width: 0; }
+.markdown-body p,
+.markdown-body li,
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6,
+.markdown-body blockquote,
+.markdown-body a {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.markdown-body pre {
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.markdown-body code {
+  background: var(--bg-2);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+.markdown-body img { max-width: 100%; height: auto; }
+.markdown-body table { border-collapse: collapse; }
