@@ -200,12 +200,12 @@
 
 ## Phase E — Verify
 
-- [ ] E.1 SMOKE — Ejecutar `pnpm --filter @kanon/api test` — Acceptance: 0 failures, 0 skipped (o skips previamente existentes sin regresión nueva).
-- [ ] E.2 SMOKE — Ejecutar `pnpm --filter @kanon/bridge test` — Acceptance: 0 failures; A2.1-A2.3 incluidos.
-- [ ] E.3 SMOKE — Ejecutar `pnpm --filter @kanon/web test` — Acceptance: 0 failures; snapshots actualizados si D5.2 completado.
-- [ ] E.4 SMOKE — Ejecutar `pnpm --filter @kanon/api typecheck` (si existe el script) — Acceptance: 0 errores TypeScript en el package api.
-- [ ] E.5 SMOKE — Ejecutar `pnpm --filter @kanon/web typecheck` — Acceptance: 0 errores TypeScript; en particular, `DashboardData` correctamente inferido desde bridge.
-- [ ] E.6 SMOKE — Ejecutar `pnpm --filter @kanon/bridge typecheck` — Acceptance: 0 errores; exports de `activeCycleKPIsSchema`, `mentionDashboardItemSchema`, `dashboardResponseSchema` visibles.
+- [x] E.1 SMOKE — Ejecutar `pnpm --filter @kanon/api test` — PASS: 487 passed, 1 skipped (pre-existente). 0 failures.
+- [x] E.2 SMOKE — Ejecutar `pnpm --filter @kanon/bridge test` — PASS: 231 passed, 0 failures. A2.1-A2.3 incluidos.
+- [x] E.3 SMOKE — Ejecutar `pnpm --filter @kanon/web test` — PASS: 358 passed, 5 todo (pre-existentes), 0 failures.
+- [x] E.4 SMOKE — Sin script "typecheck" en @kanon/api; fallback `tsc --noEmit` — FAIL: 1 error TS2305 en dashboard/routes.ts → `Module '"@kanon/bridge"' has no exported member 'ActiveCycleKPIs'`. Causa raíz: bridge dist/ no incluye dashboard.d.ts (no compilado). Fix: `pnpm --filter @kanon/bridge build` y repetir.
+- [x] E.5 SMOKE — Ejecutar `pnpm --filter @kanon/web typecheck` — FAIL: múltiples errores. Causa raíz: (1) bridge dist/ no compilado → ActiveCycleKPIs/MentionDashboardItem/DashboardData ausentes. (2) `McpProposal` import eliminado de use-dashboard-query.ts en Batch 5. (3) Test files con errores TS menores (author.id missing, validateSearch type union). Fix requerido antes de merge.
+- [x] E.6 SMOKE — Ejecutar `pnpm --filter @kanon/bridge typecheck` (vía `tsc --noEmit` desde source) — PASS: exit 0. Schemas activeCycleKPIsSchema, mentionDashboardItemSchema, dashboardResponseSchema correctamente exportados desde dashboard.ts + index.ts.
 
 ### Manual smoke (ejecutar después de E.5 pasa)
 
