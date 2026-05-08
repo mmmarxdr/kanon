@@ -29,7 +29,7 @@ import type { IssueState } from "@/stores/board-store";
 import { Icon } from "@/components/ui/icons";
 import { Kbd } from "@/components/ui/primitives";
 
-interface IssueRouteSearch {
+export interface IssueRouteSearch {
   /** Optional return target so the back button knows where to go. */
   from?: string;
   /** When "mention", the right pane highlights the target comment. */
