@@ -248,13 +248,15 @@ export function InboxView() {
             }
             data-testid="quick-dep-graph"
           >
-            {(open, disabled) => (
+            {(open, disabled, isOpen) => (
               <QuickRow
                 icon={<Icon.Graph />}
                 label="Open dependency graph"
                 data-testid="quick-action-row"
                 data-action="dep-graph"
-                aria-disabled={disabled}
+                disabled={disabled}
+                aria-haspopup={disabled ? undefined : "menu"}
+                aria-expanded={disabled ? undefined : isOpen}
                 onClick={open}
                 title={disabled ? "No active project" : undefined}
               />
@@ -269,13 +271,15 @@ export function InboxView() {
             }
             data-testid="quick-plan-cycle"
           >
-            {(open, disabled) => (
+            {(open, disabled, isOpen) => (
               <QuickRow
                 icon={<Icon.Road style={{ color: "var(--ai)" }} />}
                 label="Plan next cycle"
                 data-testid="quick-action-row"
                 data-action="plan-cycle"
-                aria-disabled={disabled}
+                disabled={disabled}
+                aria-haspopup={disabled ? undefined : "menu"}
+                aria-expanded={disabled ? undefined : isOpen}
                 onClick={open}
                 title={disabled ? "No active project" : undefined}
               />
@@ -498,27 +502,37 @@ function QuickRow({
   label,
   kbd,
   onClick,
+  disabled,
   "data-testid": testId,
   "data-action": dataAction,
   "aria-disabled": ariaDisabled,
+  "aria-haspopup": ariaHasPopup,
+  "aria-expanded": ariaExpanded,
   title,
 }: {
   icon: React.ReactNode;
   label: string;
   kbd?: string;
   onClick?: () => void;
+  disabled?: boolean;
   "data-testid"?: string;
   "data-action"?: string;
   "aria-disabled"?: boolean | "true" | "false";
+  "aria-haspopup"?: boolean | "true" | "false" | "menu" | "listbox" | "tree" | "grid" | "dialog";
+  "aria-expanded"?: boolean | "true" | "false";
   title?: string;
 }) {
+  const isDisabled = disabled ?? !!ariaDisabled;
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       data-testid={testId}
       data-action={dataAction}
       aria-disabled={ariaDisabled}
+      aria-haspopup={ariaHasPopup}
+      aria-expanded={ariaExpanded}
       title={title}
       style={{
         display: "flex",
@@ -530,11 +544,11 @@ function QuickRow({
         textAlign: "left",
         color: "var(--ink-2)",
         fontSize: 12,
-        cursor: ariaDisabled ? "not-allowed" : "pointer",
-        opacity: ariaDisabled ? 0.5 : 1,
+        cursor: isDisabled ? "not-allowed" : "pointer",
+        opacity: isDisabled ? 0.5 : 1,
       }}
       onMouseEnter={(e) =>
-        (e.currentTarget.style.background = ariaDisabled ? "transparent" : "var(--bg-3)")
+        (e.currentTarget.style.background = isDisabled ? "transparent" : "var(--bg-3)")
       }
       onMouseLeave={(e) =>
         (e.currentTarget.style.background = "transparent")
