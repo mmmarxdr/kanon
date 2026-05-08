@@ -4,7 +4,7 @@
  * C2.1 — InboxView con mentions: [] → sección Mentions muestra "No mentions."
  * C2.2 — InboxView con mentions: [m1, m2] → sección Mentions renderiza 2 filas MentionRow
  * D2.1 — Quick Actions: exactamente 4 filas en orden (new-issue, ask-kanon, dep-graph, plan-cycle)
- * D2.2 — Quick Actions con 0 proyectos: dep-graph y plan-cycle tienen aria-disabled="true"
+ * D2.2 — Quick Actions con 0 proyectos: dep-graph y plan-cycle quedan inertes vía native `disabled`
  * D2.3 — Click en "Open dependency graph" con 1 proyecto → navigate /dependencies/$projectKey
  * D2.4 — Click en "Plan next cycle" con 1 proyecto → navigate /cycles/$projectKey
  *
@@ -230,17 +230,17 @@ describe("InboxView (D2) — Quick Actions", () => {
     expect(screen.queryByText("Search…")).toBeNull();
   });
 
-  it("D2.2 — con 0 proyectos: dep-graph y plan-cycle tienen aria-disabled='true'", async () => {
+  it("D2.2 — con 0 proyectos: dep-graph y plan-cycle quedan inertes vía native `disabled`", async () => {
     // mockProjects already empty
     const { wrapper } = createWrapper(DASHBOARD_NO_CYCLE);
     const { InboxView } = await import("../inbox-view");
     render(<InboxView />, { wrapper });
 
     const rows = screen.getAllByTestId("quick-action-row");
-    const depGraph = rows[2];
-    const planCycle = rows[3];
-    expect(depGraph?.getAttribute("aria-disabled")).toBe("true");
-    expect(planCycle?.getAttribute("aria-disabled")).toBe("true");
+    const depGraph = rows[2] as HTMLButtonElement | undefined;
+    const planCycle = rows[3] as HTMLButtonElement | undefined;
+    expect(depGraph?.disabled).toBe(true);
+    expect(planCycle?.disabled).toBe(true);
   });
 
   it("D2.3 — click en 'Open dependency graph' con 1 proyecto → navigate /dependencies/ATLAS", async () => {
