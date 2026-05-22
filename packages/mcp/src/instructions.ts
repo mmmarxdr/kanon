@@ -1,0 +1,54 @@
+// ─── MCP Server Instructions — Deferred Tool Declarations ───────────────────
+//
+// Claude Code (and compatible MCP hosts) read the `instructions` field from the
+// MCP `initialize` response. This block follows the engram MCP convention:
+// tools that are rarely needed in hot-path flows are declared here so the host
+// can hide them behind a ToolSearch step rather than surfacing them eagerly in
+// every turn's context.
+//
+// The server still registers all 30 tools normally — hosts that ignore
+// `instructions` simply surface every tool. No SDK feature detection needed.
+// See design ADR-1 and ADR-2 for rationale.
+
+/**
+ * The 5 admin/rare tools that should be deferred behind ToolSearch.
+ * Canonical list — consumed by index.ts and instructions.test.ts.
+ */
+export const DEFERRED_TOOLS = [
+  "kanon_create_project",
+  "kanon_update_project",
+  "kanon_delete_cycle",
+  "kanon_delete_roadmap_item",
+  "kanon_who_is_working",
+] as const;
+
+/**
+ * Instructions block passed to `new McpServer({ instructions })`.
+ * Follows the engram MCP pattern: a DEFERRED TOOLS section lists tools the
+ * host should hide from eager context; a CORE TOOLS section names always-on tools.
+ */
+export const SERVER_INSTRUCTIONS = `
+## Kanon MCP — Tool Usage Guide
+
+Kanon is a project management platform. Use these tools to manage issues,
+roadmap items, cycles, and work sessions.
+
+## DEFERRED TOOLS (use ToolSearch when needed)
+
+The following tools are admin-only or rarely needed in standard flows.
+Do NOT surface them eagerly — retrieve via ToolSearch only when explicitly requested:
+
+- ${DEFERRED_TOOLS.join("\n- ")}
+
+## CORE TOOLS (always available)
+
+Standard issue and project management flows use these tools:
+kanon_list_issues, kanon_get_issue, kanon_create_issue, kanon_update_issue,
+kanon_transition_issue, kanon_batch_transition, kanon_list_groups,
+kanon_start_work, kanon_stop_work, kanon_get_issue_context,
+kanon_list_workspaces, kanon_list_projects, kanon_get_project,
+kanon_list_roadmap, kanon_create_roadmap_item, kanon_update_roadmap_item,
+kanon_promote_roadmap_item, kanon_add_dependency, kanon_remove_dependency,
+kanon_sync_observation, kanon_list_cycles, kanon_get_cycle,
+kanon_create_cycle, kanon_attach_issues_to_cycle, kanon_close_cycle
+`.trim();
