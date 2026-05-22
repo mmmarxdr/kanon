@@ -71,7 +71,7 @@ export const COMMENT_WRITE_FIELDS = [
 
 // ─── Pagination Constants ───────────────────────────────────────────────────
 
-export const DEFAULT_LIMIT = 20;
+export const DEFAULT_LIMIT = 10;
 export const MAX_LIMIT = 100;
 
 // ─── Utility ────────────────────────────────────────────────────────────────

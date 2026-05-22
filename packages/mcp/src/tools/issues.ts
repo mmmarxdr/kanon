@@ -72,7 +72,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient): void
 
   server.tool(
     "kanon_create_issue",
-    "Create issue (projectKey,title,description,type,priority,labels,groupKey,assigneeId,cycleId,parentId,dueDate,template). Title: imperative verb. kanon_list_groups for groupKey. cycleId attaches on create. Returns ack {ok,id,key}; format:'full' for entity.",
+    "Create issue. Title: imperative verb. Call kanon_list_groups for groupKey. cycleId attaches on create. Returns ack {ok,id,key}; format:'full' for entity.",
     CreateIssueInputShape,
     async (input) => {
       try {
@@ -106,7 +106,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient): void
 
   server.tool(
     "kanon_update_issue",
-    "Update issue (issueKey,title,description,priority,labels,assigneeId,cycleId,dueDate,roadmapItemId). Read first, append don't overwrite. cycleId=null detaches. Returns ack {ok,id,key}; format:'full' for entity.",
+    "Update issue fields. Read first, append don't overwrite. cycleId=null detaches. Returns ack {ok,id,key}; format:'full' for entity.",
     UpdateIssueInput.shape,
     async ({ issueKey, title, description, priority, labels, assigneeId, cycleId, dueDate, roadmapItemId, format }) => {
       try {

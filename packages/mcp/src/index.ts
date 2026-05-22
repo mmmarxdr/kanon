@@ -13,6 +13,7 @@ import { registerWorkSessionTools } from "./tools/work-sessions.js";
 import { registerCycleTools } from "./tools/cycles.js";
 import { shutdownAllHeartbeats } from "./heartbeat.js";
 import { startSseClient, stopSseClient } from "./sse-client.js";
+import { SERVER_INSTRUCTIONS, DEFERRED_TOOLS } from "./instructions.js";
 
 // ─── Env Validation (fail-fast) ────────────────────────────────────────────
 
@@ -38,7 +39,8 @@ const client = new KanonClient({
 
 const server = new McpServer({
   name: "kanon-mcp",
-  version: "0.3.0",
+  version: "0.4.0",
+  instructions: SERVER_INSTRUCTIONS,
 });
 
 // ─── Register Tools ─────────────────────────────────────────────────────────
@@ -57,7 +59,7 @@ registerCycleTools(server, client);
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Kanon MCP Server running on stdio");
+  console.error(`Kanon MCP v0.4.0 — 30 tools registered, ${DEFERRED_TOOLS.length} declared deferred via instructions`);
 
   // Start background SSE client if workspace ID is configured
   const workspaceId = process.env["KANON_WORKSPACE_ID"];

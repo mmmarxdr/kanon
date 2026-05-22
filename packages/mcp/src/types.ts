@@ -42,8 +42,8 @@ export const FormatParam = z.enum(["slim", "full", "compact"]).default("slim")
 export const ListFormatParam = z.enum(["slim", "full", "compact"]).default("compact")
   .describe("Response format for lists: compact (default, markdown table), slim (JSON), or full (raw API response)");
 
-export const LimitParam = z.number().int().min(1).max(100).default(20)
-  .describe("Max items to return (default 20, max 100)");
+export const LimitParam = z.number().int().min(1).max(100).default(10)
+  .describe("Max items to return (default 10, max 100). Pass limit explicitly for bulk listings.");
 
 export const OffsetParam = z.number().int().min(0).default(0)
   .describe("Number of items to skip for pagination");

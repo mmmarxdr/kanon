@@ -43,7 +43,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
 
   server.tool(
     "kanon_create_roadmap_item",
-    "Create roadmap item (projectKey,title,description,horizon,status,effort,impact,labels,sortOrder,targetDate). Returns ack {ok,id,status}; format:'full' for entity.",
+    "Create roadmap item (title,horizon,status,effort,impact,labels,targetDate). Returns ack {ok,id,status}; format:'full' for entity.",
     CreateRoadmapItemInput.shape,
     async ({ projectKey, title, description, horizon, status, effort, impact, labels, sortOrder, targetDate, format }) => {
       try {
@@ -71,7 +71,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
 
   server.tool(
     "kanon_update_roadmap_item",
-    "Update roadmap item (projectKey,itemId,title,description,horizon,status,effort,impact,labels,sortOrder,targetDate). Returns ack {ok,id,status}; format:'full' for entity.",
+    "Update roadmap item fields (itemId,title,horizon,status,effort,impact,labels,targetDate). Returns ack {ok,id,status}; format:'full' for entity.",
     UpdateRoadmapItemInput.shape,
     async ({ projectKey, itemId, title, description, horizon, status, effort, impact, labels, sortOrder, targetDate, format }) => {
       try {
@@ -112,7 +112,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
 
   server.tool(
     "kanon_promote_roadmap_item",
-    "Promote roadmap item to issue (projectKey,itemId,title,type,priority,labels,groupKey). Returns ack {ok,id,key}; format:'full' for entity.",
+    "Promote roadmap item to issue (itemId,title,type,priority,labels,groupKey). Returns ack {ok,id,key}; format:'full' for entity.",
     PromoteRoadmapItemInput.shape,
     async ({ projectKey, itemId, title, type, priority, labels, groupKey, format }) => {
       try {
@@ -137,7 +137,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
 
   server.tool(
     "kanon_add_dependency",
-    "Add dependency (projectKey,sourceItemId,targetItemId,type): source blocks target. Errors if circular. Returns ack {ok,id,projectId}; format:'full' for entity.",
+    "Add dependency: source blocks target. Errors if circular. Returns ack {ok,id,projectId}; format:'full' for entity.",
     AddDependencyInput.shape,
     async ({ projectKey, sourceItemId, targetItemId, type, format }) => {
       try {

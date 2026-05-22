@@ -45,7 +45,7 @@ export function registerCommentTools(
 ): void {
   server.tool(
     "kanon_sync_observation",
-    "Post Engram observation as issue comment (issueKey,title,content,observationType,observationId,topicKey). Only when directly relevant — not every mem_save. Returns ack {ok,id,issueKey}; format:'full' for entity.",
+    "Post Engram observation as issue comment. Only when directly relevant — not every mem_save. Returns ack {ok,id,issueKey}; format:'full' for entity.",
     SyncObservationInput.shape,
     async ({
       issueKey,

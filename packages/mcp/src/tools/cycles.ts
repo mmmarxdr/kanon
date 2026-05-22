@@ -146,7 +146,7 @@ export function registerCycleTools(server: McpServer, client: KanonClient): void
 
   server.tool(
     "kanon_create_cycle",
-    "Create cycle (projectKey,name,goal,startDate,endDate,state,attachIssueKeys[]). Dates: YYYY-MM-DD or ISO. active state demotes current active. Returns ack {ok,id,name,state}; format:'full' for entity.",
+    "Create cycle (name,startDate,endDate,state,attachIssueKeys[]). Dates: YYYY-MM-DD or ISO. state:active demotes current active cycle. Returns ack {ok,id,name,state}; format:'full' for entity.",
     CreateCycleInput.shape,
     async ({ projectKey, name, goal, startDate, endDate, state, attachIssueKeys, format }) => {
       try {
@@ -178,7 +178,7 @@ export function registerCycleTools(server: McpServer, client: KanonClient): void
 
   server.tool(
     "kanon_attach_issues_to_cycle",
-    "Add/remove issues (cycleId,add[],remove[],reason). reason logged in scope audit trail. Returns ack {ok,cycleId,added,removed,scope,completed}; format:'full' for cycle detail.",
+    "Add/remove issues in a cycle (add[],remove[],reason). reason logged in audit trail. Returns ack {ok,cycleId,added,removed,scope,completed}; format:'full' for cycle detail.",
     AttachIssuesToCycleShape,
     async ({ cycleId, add, remove, reason, format }) => {
       try {
@@ -211,7 +211,7 @@ export function registerCycleTools(server: McpServer, client: KanonClient): void
 
   server.tool(
     "kanon_close_cycle",
-    "Close cycle (cycleId,disposition,projectKey,reason). disposition: move_to_next (needs projectKey), move_to_backlog, leave. Returns ack {ok,cycleId,disposition,movedIssueKeys}; format:'full' for {closed,movedIssueKeys,disposition}.",
+    "Close cycle with disposition: move_to_next (needs projectKey), move_to_backlog, leave. Returns ack {ok,cycleId,disposition,movedIssueKeys}; format:'full' for detail.",
     CloseCycleShape,
     async (args) => {
       try {
@@ -242,7 +242,7 @@ export function registerCycleTools(server: McpServer, client: KanonClient): void
 
   server.tool(
     "kanon_delete_cycle",
-    "PERMANENT hard-delete a cycle (cycleId, force?, reason?). Active cycles are ALWAYS refused (409). Non-terminal issues block unless force:true. Returns ack with cycle name + detach count; slim adds detachedIssueKeys; full adds auditLogId.",
+    "Hard-delete a cycle. Active cycles always refused (409). Non-terminal issues block unless force:true. Returns ack with detach count; slim adds detachedIssueKeys; full adds auditLogId.",
     DeleteCycleShape,
     async (args) => {
       try {
