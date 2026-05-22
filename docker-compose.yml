@@ -50,6 +50,7 @@ services:
       - kanon-api
     environment:
       NODE_ENV: "development"
+      API_URL: "http://kanon-api:3000"
     ports:
       - "${KANON_WEB_PORT:-5173}:${KANON_WEB_PORT:-5173}"
 
