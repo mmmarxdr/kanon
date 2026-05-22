@@ -99,21 +99,25 @@ describe.skipIf(!SKILL_DIR)("kanon skills byte budget and quality (Win E/G/H)", 
   });
 
   it("H2: kanon-mcp frontmatter trigger does NOT match generic PM prose", () => {
-    // The trigger is a frontmatter field — this tests its content doesn't contain
-    // the problematic broad phrase that would match generic queries.
-    // Specifically: the trigger should NOT be just a broad description.
+    // Spec H scenario 3: evaluating the trigger against "let's plan the next quarter
+    // deliverables" (generic PM prose, no kanon-specific action verb) must NOT match.
+    //
+    // The trigger is a comma-separated list of verb-anchored phrases.
+    // We verify that none of those phrases appear in the generic prose sentence —
+    // confirming the trigger is genuinely verb-anchored, not a broad description.
     const content = readSkill("kanon-mcp");
     const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
     expect(fmMatch).not.toBeNull();
     const fm = fmMatch![1]!;
-    // The trigger value should not contain generic PM prose without action verbs
-    // Validate by checking it doesn't match the broad description pattern
-    // (the old description was a broad phrase; the new trigger must be verb-anchored)
     const triggerMatch = fm.match(/trigger\s*:\s*(.+)/);
-    if (triggerMatch) {
-      const triggerValue = triggerMatch[1]!;
-      // Generic planning prose without kanon-specific verb should not be the trigger
-      expect(triggerValue).not.toMatch(/^plan.*quarter/i);
-    }
+    expect(triggerMatch).not.toBeNull();
+    const triggerValue = triggerMatch![1]!;
+    // Split the trigger into individual verb-anchored keywords
+    const keywords = triggerValue.split(",").map((k) => k.trim().toLowerCase()).filter(Boolean);
+    expect(keywords.length).toBeGreaterThanOrEqual(3); // sanity: must be a list
+    // None of the verb keywords should appear in generic planning prose
+    const genericProse = "let's plan the next quarter deliverables";
+    const matchedKeywords = keywords.filter((kw) => genericProse.includes(kw));
+    expect(matchedKeywords).toHaveLength(0);
   });
 });
