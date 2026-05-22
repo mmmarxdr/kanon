@@ -131,7 +131,7 @@ export function registerContextTools(server: McpServer): void {
 
   server.tool(
     "kanon_get_issue_context",
-    "Get prior Engram sessions for issueKey. Call at session start. Returns {sessions[{goal,discoveries,accomplished,nextSteps,relevantFiles}],sessionCount}.",
+    "Get prior Engram sessions for issueKey. Call at session start. Returns {sessions[],sessionCount}.",
     GetIssueContextInput.shape,
     async ({ issueKey, limit }) => {
       const sessionLimit = limit ?? 5;
