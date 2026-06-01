@@ -430,6 +430,121 @@ describe("Workspace Member Management", () => {
     });
   });
 
+  // ── B-01: Cascade — ws removeMember deletes ProjectMember rows ───
+
+  describe("DELETE /api/workspaces/:wid/members/:mid — cascade PM cleanup (R-PMM-cascade)", () => {
+    it("B-01a: removes PM rows scoped to the workspace when the ws member is deleted", async () => {
+      const ws = await seedTestWorkspace();
+      const owner = await seedTestMemberWithRole(ws.id, "owner");
+      const target = await seedTestMemberWithRole(ws.id, "member");
+
+      // Seed two projects in the same workspace with PM rows for the target
+      const proj1 = await seedTestProject(ws.id);
+      const proj2 = await seedTestProject(ws.id);
+      await seedTestProjectMember(target.userId, proj1.id, "member");
+      await seedTestProjectMember(target.userId, proj2.id, "admin");
+
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/workspaces/${ws.id}/members/${target.id}`,
+        headers: { authorization: `Bearer ${owner.token}` },
+      });
+
+      expect(res.statusCode).toBe(204);
+
+      // Confirm PM rows are gone
+      const remaining = await prisma.projectMember.findMany({
+        where: { userId: target.userId },
+      });
+      expect(remaining).toHaveLength(0);
+    });
+
+    it("B-01b: cascade does not delete PM rows of other users in same workspace", async () => {
+      const ws = await seedTestWorkspace();
+      const owner = await seedTestMemberWithRole(ws.id, "owner");
+      const target = await seedTestMemberWithRole(ws.id, "member");
+      const bystander = await seedTestMemberWithRole(ws.id, "member");
+
+      const proj = await seedTestProject(ws.id);
+      await seedTestProjectMember(target.userId, proj.id, "member");
+      await seedTestProjectMember(bystander.userId, proj.id, "admin");
+
+      await app.inject({
+        method: "DELETE",
+        url: `/api/workspaces/${ws.id}/members/${target.id}`,
+        headers: { authorization: `Bearer ${owner.token}` },
+      });
+
+      // Bystander's PM row must still exist
+      const bystanderPm = await prisma.projectMember.findUnique({
+        where: { userId_projectId: { userId: bystander.userId, projectId: proj.id } },
+      });
+      expect(bystanderPm).not.toBeNull();
+    });
+
+    it("B-01c: cascade does not delete PM rows in OTHER workspaces for the same user", async () => {
+      const ws = await seedTestWorkspace();
+      const owner = await seedTestMemberWithRole(ws.id, "owner");
+      const target = await seedTestMemberWithRole(ws.id, "member");
+
+      // Other workspace — same user is a member there too
+      const otherWs = await seedTestWorkspace();
+      // Create a fresh ws membership for the same user in the other workspace
+      await prisma.member.create({
+        data: {
+          username: `cross-ws-${target.userId.slice(0, 6)}`,
+          role: "member",
+          userId: target.userId,
+          workspaceId: otherWs.id,
+        },
+      });
+      const otherProj = await seedTestProject(otherWs.id);
+      await seedTestProjectMember(target.userId, otherProj.id, "owner");
+
+      // Also seed a PM row in the target workspace to ensure cascade fires there
+      const wsProj = await seedTestProject(ws.id);
+      await seedTestProjectMember(target.userId, wsProj.id, "member");
+
+      await app.inject({
+        method: "DELETE",
+        url: `/api/workspaces/${ws.id}/members/${target.id}`,
+        headers: { authorization: `Bearer ${owner.token}` },
+      });
+
+      // PM row in other workspace's project must survive
+      const crossWsPm = await prisma.projectMember.findUnique({
+        where: { userId_projectId: { userId: target.userId, projectId: otherProj.id } },
+      });
+      expect(crossWsPm).not.toBeNull();
+    });
+
+    it("B-01d: cascade bypasses project LAST_OWNER — no 422 when removed user is sole project owner", async () => {
+      const ws = await seedTestWorkspace();
+      // Two ws owners so the ws LAST_OWNER guard does not fire
+      const owner1 = await seedTestMemberWithRole(ws.id, "owner");
+      const target = await seedTestMemberWithRole(ws.id, "owner");
+
+      const proj = await seedTestProject(ws.id);
+      // target is the SOLE project owner
+      await seedTestProjectMember(target.userId, proj.id, "owner");
+
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/workspaces/${ws.id}/members/${target.id}`,
+        headers: { authorization: `Bearer ${owner1.token}` },
+      });
+
+      // Must succeed — no LAST_OWNER error from the project side
+      expect(res.statusCode).toBe(204);
+
+      // PM row gone
+      const pm = await prisma.projectMember.findUnique({
+        where: { userId_projectId: { userId: target.userId, projectId: proj.id } },
+      });
+      expect(pm).toBeNull();
+    });
+  });
+
   // ── Task 5.5: Auto-owner on workspace creation ────────────────────
 
   describe("Auto-owner on workspace creation", () => {
