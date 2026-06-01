@@ -92,8 +92,14 @@ export default async function projectMemberRoutes(
         body: ChangeProjectMemberRoleBody,
       },
     },
-    async (_request, reply) => {
-      return reply.status(501).send({ message: "Not yet implemented" });
+    async (request, reply) => {
+      const result = await changeProjectMemberRole(
+        request.projectId!,
+        request.params.pmId,
+        request.body.role,
+        request.projectRole!,
+      );
+      return reply.status(200).send(result);
     },
   );
 

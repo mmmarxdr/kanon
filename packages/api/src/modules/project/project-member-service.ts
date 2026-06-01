@@ -158,6 +158,7 @@ export async function addProjectMember(
  *
  * Guards (in order):
  *   1. Find PM row scoped to (id:pmId, projectId) → 404 PM_NOT_FOUND
+ *      R-INV1: scoping by projectId means a ws Member.id (not in projectMember) → 404
  *   2. Owner-cap: newRole==='owner' && actingRole!=='owner' → 403 ROLE_CAP_EXCEEDED
  *   3. LAST_OWNER: sole owner demotion → 422 LAST_OWNER
  *   4. Actor level >= target current role (403 FORBIDDEN)
@@ -168,8 +169,48 @@ export async function changeProjectMemberRole(
   newRole: MemberRole,
   actingRole: MemberRole,
 ): Promise<EffectiveMemberRow> {
-  // TODO: implement in A-04
-  throw new AppError(501, "NOT_IMPLEMENTED", "Not yet implemented");
+  // 1. Find PM row scoped to this project (R-INV1: ws Member.id won't match → 404)
+  const pm = await prisma.projectMember.findFirst({
+    where: { id: pmId, projectId },
+    include: { user: { select: { email: true, displayName: true } } },
+  });
+  if (!pm) {
+    throw new AppError(404, "PM_NOT_FOUND", "Project member not found");
+  }
+
+  // 2. Owner-cap: only effective project owner can set role:owner
+  if (newRole === "owner" && actingRole !== "owner") {
+    throw new AppError(403, "ROLE_CAP_EXCEEDED", "Only a project owner can assign the owner role");
+  }
+
+  // 3. LAST_OWNER guard: cannot demote the last project owner
+  if (pm.role === "owner" && newRole !== "owner") {
+    const ownerCount = await prisma.projectMember.count({
+      where: { projectId, role: "owner" },
+    });
+    if (ownerCount <= 1) {
+      throw new AppError(422, "LAST_OWNER", "Cannot demote the last project owner");
+    }
+  }
+
+  // 4. Actor level must be >= target's current role
+  if (roleLevel(actingRole) < roleLevel(pm.role)) {
+    throw new AppError(403, "FORBIDDEN", "Insufficient permissions to change this member's role");
+  }
+
+  const updated = await prisma.projectMember.update({
+    where: { id: pmId },
+    data: { role: newRole },
+  });
+
+  return {
+    userId: pm.userId,
+    email: pm.user.email,
+    displayName: pm.user.displayName,
+    role: updated.role,
+    source: "project",
+    pmId: pm.id,
+  };
 }
 
 /**
