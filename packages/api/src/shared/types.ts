@@ -63,6 +63,10 @@ declare module "fastify" {
   interface FastifyRequest {
     user: AuthUser;
     member?: MemberContext;
+    /** Per-project role resolved by the effective-role gate (KAN-16).
+     *  Set when a project-scoped preHandler runs. Undefined on workspace-only routes.
+     *  INVARIANT: member.id is always the workspace Member.id, never ProjectMember.id. */
+    projectRole?: MemberRole;
   }
   interface FastifyInstance {
     bridgeSyncService?: BridgeSyncService;

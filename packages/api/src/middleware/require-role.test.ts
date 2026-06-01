@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { requireRole, requireCycleRole, requireCycleMember } from "./require-role.js";
+import {
+  requireRole,
+  requireCycleRole,
+  requireCycleMember,
+  requireProjectRole,
+  requireProjectMember,
+  enforceProjectAccess,
+} from "./require-role.js";
 import type { FastifyRequest, FastifyReply } from "fastify";
 
 /**
@@ -21,12 +28,20 @@ vi.mock("../config/prisma.js", () => ({
     cycle: {
       findUnique: vi.fn(),
     },
+    project: {
+      findFirst: vi.fn(),
+    },
+    projectMember: {
+      findUnique: vi.fn(),
+    },
   },
 }));
 
 import { prisma } from "../config/prisma.js";
 const mockFindUnique = vi.mocked(prisma.member.findUnique);
 const mockCycleFindUnique = vi.mocked(prisma.cycle.findUnique);
+const mockProjectFindFirst = vi.mocked(prisma.project.findFirst);
+const mockProjectMemberFindUnique = vi.mocked(prisma.projectMember.findUnique);
 
 function makeRequest(user: any, params?: Record<string, string>): FastifyRequest {
   return {
@@ -323,19 +338,20 @@ describe("requireCycleRole", () => {
 
   it("passes and sets request.member when cycle exists and user is a member with sufficient role", async () => {
     mockCycleFindUnique.mockResolvedValue({
-      project: { workspaceId: WORKSPACE_ID },
+      project: { id: "proj-cycle-1", workspaceId: WORKSPACE_ID },
     } as any);
     mockFindUnique.mockResolvedValue({ id: "m1", role: "member" } as any);
+    mockProjectMemberFindUnique.mockResolvedValue({ id: "pm-1", role: "member" } as any);
 
     const handler = requireCycleRole("id", "member");
     const request = makeRequest(
       { userId: "u1", email: "u@test.com" },
       { id: CYCLE_ID },
-    );
+    ) as any;
     await expect(handler(request, dummyReply, vi.fn())).resolves.toBeUndefined();
     expect(mockCycleFindUnique).toHaveBeenCalledWith({
       where: { id: CYCLE_ID },
-      select: { project: { select: { workspaceId: true } } },
+      select: { project: { select: { id: true, workspaceId: true } } },
     });
     expect(request.member).toEqual({
       id: "m1",
@@ -343,6 +359,7 @@ describe("requireCycleRole", () => {
       workspaceId: WORKSPACE_ID,
       userId: "u1",
     });
+    expect(request.projectRole).toBe("member");
   });
 
   it("throws 401 when user is not authenticated", async () => {
@@ -380,9 +397,9 @@ describe("requireCycleRole", () => {
 
   it("throws 403 when user is not a member of the cycle's workspace", async () => {
     mockCycleFindUnique.mockResolvedValue({
-      project: { workspaceId: WORKSPACE_ID },
+      project: { id: "proj-cycle-2", workspaceId: WORKSPACE_ID },
     } as any);
-    mockFindUnique.mockResolvedValue(null); // not a member
+    mockFindUnique.mockResolvedValue(null); // not a workspace member
 
     const handler = requireCycleRole("id", "member");
     const request = makeRequest(
@@ -398,11 +415,13 @@ describe("requireCycleRole", () => {
     }
   });
 
-  it("throws 403 when user role is below the minimum required", async () => {
+  it("throws 403 when user PM role is below the minimum required", async () => {
     mockCycleFindUnique.mockResolvedValue({
-      project: { workspaceId: WORKSPACE_ID },
+      project: { id: "proj-cycle-3", workspaceId: WORKSPACE_ID },
     } as any);
     mockFindUnique.mockResolvedValue({ id: "m1", role: "viewer" } as any);
+    // viewer with PM row but PM role is also viewer → fails member-minimum route
+    mockProjectMemberFindUnique.mockResolvedValue({ id: "pm-v", role: "viewer" } as any);
 
     const handler = requireCycleRole("id", "member");
     const request = makeRequest(
@@ -427,20 +446,243 @@ describe("requireCycleMember", () => {
   beforeEach(() => {
     mockFindUnique.mockReset();
     mockCycleFindUnique.mockReset();
+    mockProjectMemberFindUnique.mockReset();
   });
 
   it("delegates to requireCycleRole with no minimum role (any membership passes)", async () => {
     mockCycleFindUnique.mockResolvedValue({
-      project: { workspaceId: WORKSPACE_ID },
+      project: { id: "proj-cycle-9999", workspaceId: WORKSPACE_ID },
     } as any);
     mockFindUnique.mockResolvedValue({ id: "m2", role: "viewer" } as any);
+    mockProjectMemberFindUnique.mockResolvedValue({ id: "pm-v", role: "viewer" } as any);
 
     const handler = requireCycleMember("id");
     const request = makeRequest(
       { userId: "u2", email: "u2@test.com" },
       { id: CYCLE_ID },
-    );
+    ) as any;
     await expect(handler(request, dummyReply, vi.fn())).resolves.toBeUndefined();
     expect(request.member).toMatchObject({ id: "m2", role: "viewer" });
+    expect(request.projectRole).toBe("viewer");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// enforceProjectAccess — unit tests (KAN-16, R-INV1, R-KAN16-bug)
+// ---------------------------------------------------------------------------
+
+describe("enforceProjectAccess", () => {
+  const USER_ID = "user-uuid-1";
+  const PROJECT_ID = "proj-uuid-1";
+  const WORKSPACE_ID = "ws-uuid-1";
+
+  beforeEach(() => {
+    mockFindUnique.mockReset();
+    mockProjectMemberFindUnique.mockReset();
+  });
+
+  // ── (d) Workspace owner/admin bypass — no ProjectMember lookup ──────────
+  it("(d) owner bypasses: skips ProjectMember lookup, returns workspace role", async () => {
+    mockFindUnique.mockResolvedValue({ id: "wm-owner", role: "owner" } as any);
+
+    const result = await enforceProjectAccess(USER_ID, PROJECT_ID, WORKSPACE_ID, "member");
+
+    expect(mockProjectMemberFindUnique).not.toHaveBeenCalled();
+    expect(result.member.id).toBe("wm-owner");
+    expect(result.projectRole).toBe("owner");
+  });
+
+  it("(d) admin bypasses: skips ProjectMember lookup, returns workspace role", async () => {
+    mockFindUnique.mockResolvedValue({ id: "wm-admin", role: "admin" } as any);
+
+    const result = await enforceProjectAccess(USER_ID, PROJECT_ID, WORKSPACE_ID, "admin");
+
+    expect(mockProjectMemberFindUnique).not.toHaveBeenCalled();
+    expect(result.member.id).toBe("wm-admin");
+    expect(result.projectRole).toBe("admin");
+  });
+
+  // ── (b) member with PM row + sufficient role → pass ─────────────────────
+  it("(b) member with PM row and sufficient role passes", async () => {
+    mockFindUnique.mockResolvedValue({ id: "wm-1", role: "member" } as any);
+    mockProjectMemberFindUnique.mockResolvedValue({ id: "pm-1", role: "member" } as any);
+
+    const result = await enforceProjectAccess(USER_ID, PROJECT_ID, WORKSPACE_ID, "member");
+
+    expect(mockProjectMemberFindUnique).toHaveBeenCalledWith({
+      where: { userId_projectId: { userId: USER_ID, projectId: PROJECT_ID } },
+      select: { id: true, role: true },
+    });
+    expect(result.projectRole).toBe("member");
+  });
+
+  it("(b) viewer with PM row and viewer-minimum route passes", async () => {
+    mockFindUnique.mockResolvedValue({ id: "wm-v", role: "viewer" } as any);
+    mockProjectMemberFindUnique.mockResolvedValue({ id: "pm-v", role: "viewer" } as any);
+
+    const result = await enforceProjectAccess(USER_ID, PROJECT_ID, WORKSPACE_ID, "viewer");
+
+    expect(result.projectRole).toBe("viewer");
+  });
+
+  // ── (c) viewer on member-minimum route → 403 ────────────────────────────
+  it("(c) viewer PM role on member-minimum route returns 403", async () => {
+    mockFindUnique.mockResolvedValue({ id: "wm-v", role: "viewer" } as any);
+    mockProjectMemberFindUnique.mockResolvedValue({ id: "pm-v", role: "viewer" } as any);
+
+    await expect(
+      enforceProjectAccess(USER_ID, PROJECT_ID, WORKSPACE_ID, "member"),
+    ).rejects.toMatchObject({ statusCode: 403, code: "FORBIDDEN" });
+  });
+
+  // ── (a) member with no PM row → 403 ─────────────────────────────────────
+  it("(a) member with no ProjectMember row returns 403", async () => {
+    mockFindUnique.mockResolvedValue({ id: "wm-1", role: "member" } as any);
+    mockProjectMemberFindUnique.mockResolvedValue(null);
+
+    await expect(
+      enforceProjectAccess(USER_ID, PROJECT_ID, WORKSPACE_ID, "member"),
+    ).rejects.toMatchObject({ statusCode: 403, code: "FORBIDDEN" });
+  });
+
+  // ── R-INV1: member.id MUST be workspace Member.id, not PM.id ────────────
+  it("(R-INV1) result.member.id is workspace Member.id, NOT ProjectMember.id", async () => {
+    mockFindUnique.mockResolvedValue({ id: "workspace-member-42", role: "member" } as any);
+    mockProjectMemberFindUnique.mockResolvedValue({ id: "pm-id-999", role: "member" } as any);
+
+    const result = await enforceProjectAccess(USER_ID, PROJECT_ID, WORKSPACE_ID, "member");
+
+    // INVARIANT: id must be the workspace member id
+    expect(result.member.id).toBe("workspace-member-42");
+    expect(result.member.id).not.toBe("pm-id-999");
+  });
+
+  // ── Not a workspace member at all → 403 ─────────────────────────────────
+  it("non-member of workspace returns 403", async () => {
+    mockFindUnique.mockResolvedValue(null);
+
+    await expect(
+      enforceProjectAccess(USER_ID, PROJECT_ID, WORKSPACE_ID, "member"),
+    ).rejects.toMatchObject({ statusCode: 403, code: "FORBIDDEN" });
+    expect(mockProjectMemberFindUnique).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// requireProjectRole with enforceProjectAccess — key-scoped routes (KAN-16, R-KAN16-bug)
+// ---------------------------------------------------------------------------
+
+describe("requireProjectRole (with enforceProjectAccess gate)", () => {
+  const PROJECT_KEY = "KAN";
+  const PROJECT_ID = "proj-uuid-kan";
+  const WORKSPACE_ID = "ws-uuid-kan";
+
+  beforeEach(() => {
+    mockFindUnique.mockReset();
+    mockProjectFindFirst.mockReset();
+    mockProjectMemberFindUnique.mockReset();
+  });
+
+  it("resolves project key scoped to user's workspaces (R-KAN16-bug)", async () => {
+    mockProjectFindFirst.mockResolvedValue({ id: PROJECT_ID, workspaceId: WORKSPACE_ID } as any);
+    mockFindUnique.mockResolvedValue({ id: "wm-1", role: "member" } as any);
+    mockProjectMemberFindUnique.mockResolvedValue({ id: "pm-1", role: "member" } as any);
+
+    const handler = requireProjectRole("key", "member");
+    const request = makeRequest(
+      { userId: "u1", email: "u@test.com" },
+      { key: PROJECT_KEY },
+    );
+    await handler(request, dummyReply, vi.fn());
+
+    // The project findFirst MUST be scoped to the user's workspaces
+    expect(mockProjectFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          key: PROJECT_KEY,
+          workspace: expect.objectContaining({
+            members: expect.objectContaining({
+              some: expect.objectContaining({ userId: "u1" }),
+            }),
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("member with PM row passes and sets request.member + request.projectRole", async () => {
+    mockProjectFindFirst.mockResolvedValue({ id: PROJECT_ID, workspaceId: WORKSPACE_ID } as any);
+    mockFindUnique.mockResolvedValue({ id: "wm-42", role: "member" } as any);
+    mockProjectMemberFindUnique.mockResolvedValue({ id: "pm-1", role: "member" } as any);
+
+    const handler = requireProjectRole("key", "member");
+    const request = makeRequest(
+      { userId: "u1", email: "u@test.com" },
+      { key: PROJECT_KEY },
+    ) as any;
+    await handler(request, dummyReply, vi.fn());
+
+    expect(request.member.id).toBe("wm-42");
+    expect(request.projectRole).toBe("member");
+  });
+
+  it("admin bypasses ProjectMember check and passes", async () => {
+    mockProjectFindFirst.mockResolvedValue({ id: PROJECT_ID, workspaceId: WORKSPACE_ID } as any);
+    mockFindUnique.mockResolvedValue({ id: "wm-admin", role: "admin" } as any);
+
+    const handler = requireProjectRole("key", "admin");
+    const request = makeRequest(
+      { userId: "u1", email: "u@test.com" },
+      { key: PROJECT_KEY },
+    ) as any;
+    await handler(request, dummyReply, vi.fn());
+
+    expect(mockProjectMemberFindUnique).not.toHaveBeenCalled();
+    expect(request.member.id).toBe("wm-admin");
+    expect(request.projectRole).toBe("admin");
+  });
+
+  it("member with no PM row returns 403", async () => {
+    mockProjectFindFirst.mockResolvedValue({ id: PROJECT_ID, workspaceId: WORKSPACE_ID } as any);
+    mockFindUnique.mockResolvedValue({ id: "wm-1", role: "member" } as any);
+    mockProjectMemberFindUnique.mockResolvedValue(null);
+
+    const handler = requireProjectRole("key", "member");
+    const request = makeRequest(
+      { userId: "u1", email: "u@test.com" },
+      { key: PROJECT_KEY },
+    );
+    await expect(handler(request, dummyReply, vi.fn())).rejects.toMatchObject({
+      statusCode: 403,
+      code: "FORBIDDEN",
+    });
+  });
+});
+
+describe("requireProjectMember (with enforceProjectAccess gate)", () => {
+  const PROJECT_KEY = "TEST";
+  const PROJECT_ID = "proj-uuid-test";
+  const WORKSPACE_ID = "ws-uuid-test";
+
+  beforeEach(() => {
+    mockFindUnique.mockReset();
+    mockProjectFindFirst.mockReset();
+    mockProjectMemberFindUnique.mockReset();
+  });
+
+  it("viewer with PM row passes (no minimum role)", async () => {
+    mockProjectFindFirst.mockResolvedValue({ id: PROJECT_ID, workspaceId: WORKSPACE_ID } as any);
+    mockFindUnique.mockResolvedValue({ id: "wm-v", role: "viewer" } as any);
+    mockProjectMemberFindUnique.mockResolvedValue({ id: "pm-v", role: "viewer" } as any);
+
+    const handler = requireProjectMember("key");
+    const request = makeRequest(
+      { userId: "u1", email: "u@test.com" },
+      { key: PROJECT_KEY },
+    ) as any;
+    await handler(request, dummyReply, vi.fn());
+
+    expect(request.member.id).toBe("wm-v");
+    expect(request.projectRole).toBe("viewer");
   });
 });

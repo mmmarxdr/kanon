@@ -57,6 +57,87 @@ async function resolveAndCheckMember(
   };
 }
 
+/**
+ * Effective-role gate helper for project-scoped routes (KAN-16).
+ *
+ * Design (ADR A2 + A3):
+ * - owner/admin → bypass (no ProjectMember lookup), returns workspace role as effectiveRole
+ * - member/viewer → requires a ProjectMember row; absent → 403
+ * - effectiveRole is checked against minRole via the role hierarchy
+ * - INVARIANT: result.member.id === workspace Member.id (never ProjectMember.id)
+ * - Per-project role is returned as `projectRole`; set on request by callers
+ *
+ * @param userId      - Authenticated user's userId
+ * @param projectId   - Resolved project UUID
+ * @param workspaceId - Resolved workspace UUID
+ * @param minRole     - Minimum required role (optional; if absent, any access is sufficient)
+ */
+export async function enforceProjectAccess(
+  userId: string,
+  projectId: string,
+  workspaceId: string,
+  minRole?: MemberRole,
+): Promise<{ member: MemberContext; projectRole: MemberRole }> {
+  // Step 1: resolve workspace member (establishes member.id = workspace Member.id)
+  const wsMember = await prisma.member.findUnique({
+    where: {
+      userId_workspaceId: { userId, workspaceId },
+    },
+    select: { id: true, role: true },
+  });
+
+  if (!wsMember) {
+    throw new AppError(403, "FORBIDDEN", "You are not a member of this workspace");
+  }
+
+  const memberContext: MemberContext = {
+    id: wsMember.id,      // INVARIANT: always workspace Member.id
+    role: wsMember.role,
+    workspaceId,
+    userId,
+  };
+
+  // Step 2: owner/admin bypass — no ProjectMember lookup required
+  if (wsMember.role === "owner" || wsMember.role === "admin") {
+    const effectiveRole = wsMember.role;
+    if (minRole && !meetsMinimumRole(effectiveRole, minRole)) {
+      throw new AppError(
+        403,
+        "FORBIDDEN",
+        `This action requires at least the "${minRole}" role`,
+      );
+    }
+    return { member: memberContext, projectRole: effectiveRole };
+  }
+
+  // Step 3: member/viewer — require explicit ProjectMember row
+  const pm = await prisma.projectMember.findUnique({
+    where: {
+      userId_projectId: { userId, projectId },
+    },
+    select: { id: true, role: true },
+  });
+
+  if (!pm) {
+    throw new AppError(
+      403,
+      "FORBIDDEN",
+      "You are not assigned to this project",
+    );
+  }
+
+  const effectiveRole = pm.role;
+  if (minRole && !meetsMinimumRole(effectiveRole, minRole)) {
+    throw new AppError(
+      403,
+      "FORBIDDEN",
+      `This action requires at least the "${minRole}" role`,
+    );
+  }
+
+  return { member: memberContext, projectRole: effectiveRole };
+}
+
 // ---------------------------------------------------------------------------
 // Workspace-scoped factories (routes like /api/workspaces/:wid/...)
 // ---------------------------------------------------------------------------
@@ -107,16 +188,21 @@ export function requireMember(workspaceIdParam: string): preHandlerHookHandler {
 
 // ---------------------------------------------------------------------------
 // Project-scoped factories (routes like /api/projects/:key/...)
+// Uses the effective-role gate (enforceProjectAccess) for KAN-16 enforcement.
 // ---------------------------------------------------------------------------
 
 /**
  * Like requireRole, but resolves the workspace from a project key URL param
- * instead of a direct workspace ID param.
+ * and then enforces the effective-role gate (KAN-16).
  *
- * Sets `request.member` with the resolved MemberContext.
+ * Project key is resolved scoped to workspaces the requesting user belongs to
+ * (R-KAN16-bug: prevents cross-workspace key collision security issue).
+ * Tie-break when user is in two workspaces with same key: oldest workspace (createdAt ASC).
+ *
+ * Sets `request.member` (workspace Member.id — INVARIANT) and `request.projectRole`.
  *
  * @param projectKeyParam - The name of the URL param holding the project key (e.g. 'key')
- * @param roles - Allowed MemberRole values. If empty, any membership is sufficient.
+ * @param roles - Allowed MemberRole values. If empty, any project membership is sufficient.
  */
 export function requireProjectRole(projectKeyParam: string, ...roles: MemberRole[]): preHandlerHookHandler {
   return async (request, _reply) => {
@@ -131,9 +217,21 @@ export function requireProjectRole(projectKeyParam: string, ...roles: MemberRole
       throw new AppError(400, "PROJECT_KEY_REQUIRED", "Project key is required");
     }
 
+    // R-KAN16-bug: scope project lookup to workspaces the user belongs to.
+    // Deterministic tie-break: oldest workspace (orderBy workspace.createdAt ASC).
     const project = await prisma.project.findFirst({
-      where: { key: projectKey },
-      select: { workspaceId: true },
+      where: {
+        key: projectKey,
+        workspace: {
+          members: {
+            some: { userId: user.userId },
+          },
+        },
+      },
+      orderBy: {
+        workspace: { createdAt: "asc" },
+      },
+      select: { id: true, workspaceId: true },
     });
 
     if (!project) {
@@ -146,12 +244,20 @@ export function requireProjectRole(projectKeyParam: string, ...roles: MemberRole
         )
       : undefined;
 
-    request.member = await resolveAndCheckMember(user.userId, project.workspaceId, minimumRole);
+    const { member, projectRole } = await enforceProjectAccess(
+      user.userId,
+      project.id,
+      project.workspaceId,
+      minimumRole,
+    );
+
+    request.member = member;
+    request.projectRole = projectRole;
   };
 }
 
 /**
- * Shorthand: require project workspace membership with no minimum role.
+ * Shorthand: require project membership with no minimum role.
  */
 export function requireProjectMember(projectKeyParam: string): preHandlerHookHandler {
   return requireProjectRole(projectKeyParam);
@@ -159,16 +265,18 @@ export function requireProjectMember(projectKeyParam: string): preHandlerHookHan
 
 // ---------------------------------------------------------------------------
 // Issue-scoped factories (routes like /api/issues/:key/...)
+// Issue key is globally unique — no workspace-scope fix needed for issue lookup (A4).
+// Uses enforceProjectAccess after resolving projectId from the issue.
 // ---------------------------------------------------------------------------
 
 /**
- * Like requireRole, but resolves the workspace from an issue key URL param
- * by looking up the issue's project workspace.
+ * Like requireRole, but resolves the workspace + project from an issue key URL param
+ * and then enforces the effective-role gate (KAN-16).
  *
- * Sets `request.member` with the resolved MemberContext.
+ * Sets `request.member` and `request.projectRole`.
  *
  * @param issueKeyParam - The name of the URL param holding the issue key (e.g. 'key')
- * @param roles - Allowed MemberRole values. If empty, any membership is sufficient.
+ * @param roles - Allowed MemberRole values. If empty, any project membership is sufficient.
  */
 export function requireIssueRole(issueKeyParam: string, ...roles: MemberRole[]): preHandlerHookHandler {
   return async (request, _reply) => {
@@ -183,11 +291,12 @@ export function requireIssueRole(issueKeyParam: string, ...roles: MemberRole[]):
       throw new AppError(400, "ISSUE_KEY_REQUIRED", "Issue key is required");
     }
 
+    // Issue key is globally unique — no workspace-scope needed here (ADR A4)
     const issue = await prisma.issue.findFirst({
       where: { key: issueKey },
       select: {
         project: {
-          select: { workspaceId: true },
+          select: { id: true, workspaceId: true },
         },
       },
     });
@@ -202,12 +311,20 @@ export function requireIssueRole(issueKeyParam: string, ...roles: MemberRole[]):
         )
       : undefined;
 
-    request.member = await resolveAndCheckMember(user.userId, issue.project.workspaceId, minimumRole);
+    const { member, projectRole } = await enforceProjectAccess(
+      user.userId,
+      issue.project.id,
+      issue.project.workspaceId,
+      minimumRole,
+    );
+
+    request.member = member;
+    request.projectRole = projectRole;
   };
 }
 
 /**
- * Shorthand: require issue workspace membership with no minimum role.
+ * Shorthand: require issue project membership with no minimum role.
  */
 export function requireIssueMember(issueKeyParam: string): preHandlerHookHandler {
   return requireIssueRole(issueKeyParam);
@@ -215,16 +332,18 @@ export function requireIssueMember(issueKeyParam: string): preHandlerHookHandler
 
 // ---------------------------------------------------------------------------
 // Cycle-scoped factories (routes like /api/cycles/:id/...)
+// Cycle id is a PK — no workspace-scope fix needed (A4).
+// Uses enforceProjectAccess after resolving projectId from the cycle.
 // ---------------------------------------------------------------------------
 
 /**
- * Like requireRole, but resolves the workspace from a cycle ID URL param
- * by looking up the cycle's project workspace.
+ * Like requireRole, but resolves the workspace + project from a cycle ID URL param
+ * and then enforces the effective-role gate (KAN-16).
  *
- * Sets `request.member` with the resolved MemberContext.
+ * Sets `request.member` and `request.projectRole`.
  *
  * @param cycleIdParam - The name of the URL param holding the cycle ID (e.g. 'id')
- * @param roles - Allowed MemberRole values. If empty, any membership is sufficient.
+ * @param roles - Allowed MemberRole values. If empty, any project membership is sufficient.
  */
 export function requireCycleRole(cycleIdParam: string, ...roles: MemberRole[]): preHandlerHookHandler {
   return async (request, _reply) => {
@@ -241,7 +360,7 @@ export function requireCycleRole(cycleIdParam: string, ...roles: MemberRole[]): 
 
     const cycle = await prisma.cycle.findUnique({
       where: { id: cycleId },
-      select: { project: { select: { workspaceId: true } } },
+      select: { project: { select: { id: true, workspaceId: true } } },
     });
 
     if (!cycle) {
@@ -254,12 +373,20 @@ export function requireCycleRole(cycleIdParam: string, ...roles: MemberRole[]): 
         )
       : undefined;
 
-    request.member = await resolveAndCheckMember(user.userId, cycle.project.workspaceId, minimumRole);
+    const { member, projectRole } = await enforceProjectAccess(
+      user.userId,
+      cycle.project.id,
+      cycle.project.workspaceId,
+      minimumRole,
+    );
+
+    request.member = member;
+    request.projectRole = projectRole;
   };
 }
 
 /**
- * Shorthand: require cycle workspace membership with no minimum role.
+ * Shorthand: require cycle project membership with no minimum role.
  */
 export function requireCycleMember(cycleIdParam: string): preHandlerHookHandler {
   return requireCycleRole(cycleIdParam);
