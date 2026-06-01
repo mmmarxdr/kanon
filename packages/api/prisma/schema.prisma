@@ -484,10 +484,11 @@ model WorkspaceInvite {
   revokedAt  DateTime?  @map("revoked_at")
   label      String?                                   // optional description
   email      String?    @map("email")                  // optional recipient email
-  kind       InviteKind @default(MEMBER)
-  consumedAt DateTime?  @map("consumed_at")
-  createdAt  DateTime   @default(now()) @map("created_at")
-  updatedAt  DateTime   @updatedAt @map("updated_at")
+  kind               InviteKind @default(MEMBER)
+  consumedAt         DateTime?  @map("consumed_at")
+  projectAssignments Json?      @map("project_assignments")
+  createdAt          DateTime   @default(now()) @map("created_at")
+  updatedAt          DateTime   @updatedAt @map("updated_at")
 
   workspaceId String    @map("workspace_id") @db.Uuid
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)

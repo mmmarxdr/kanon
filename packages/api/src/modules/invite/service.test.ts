@@ -19,6 +19,9 @@ vi.mock("../../config/prisma.js", () => ({
     workspace: {
       findUniqueOrThrow: vi.fn(),
     },
+    project: {
+      findMany: vi.fn(),
+    },
     $transaction: vi.fn(),
   },
 }));
@@ -38,13 +41,14 @@ vi.mock("../../services/event-bus/index.js", () => ({
 }));
 
 import { prisma } from "../../config/prisma.js";
-import { createOnboardingInvite, acceptInvite } from "./service.js";
+import { createInvite, createOnboardingInvite, acceptInvite } from "./service.js";
 
 const mockPrisma = prisma as unknown as {
   user: { findUnique: ReturnType<typeof vi.fn> };
   member: { findUnique: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
   workspaceInvite: { create: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
   workspace: { findUniqueOrThrow: ReturnType<typeof vi.fn> };
+  project: { findMany: ReturnType<typeof vi.fn> };
   $transaction: ReturnType<typeof vi.fn>;
 };
 
@@ -171,6 +175,248 @@ describe("createOnboardingInvite()", () => {
     expect(createCall.data.maxUses).toBe(1);
     // consumedAt is not set on create (null by default)
     expect(createCall.data.consumedAt).toBeUndefined();
+  });
+});
+
+// ── createInvite() — project-assignment validation + owner-cap ───────────────
+
+const PROJECT_ID_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+const PROJECT_ID_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+const OTHER_WS_PROJECT_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+
+const mockInviteCreatedBy = {
+  id: INVITE_ID,
+  token: "test-token",
+  role: "member",
+  maxUses: 0,
+  useCount: 0,
+  expiresAt: new Date(Date.now() + 168 * 60 * 60 * 1000),
+  revokedAt: null,
+  label: null,
+  email: null,
+  kind: "MEMBER",
+  consumedAt: null,
+  projectAssignments: null,
+  createdAt: new Date(),
+  createdBy: { email: "admin@example.com", displayName: "Admin" },
+  workspace: { name: "Test Workspace" },
+};
+
+describe("createInvite() — project-assignment validation + owner-cap", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Default: both projects belong to the workspace
+    mockPrisma.project.findMany.mockResolvedValue([
+      { id: PROJECT_ID_A },
+      { id: PROJECT_ID_B },
+    ]);
+    mockPrisma.workspaceInvite.create.mockResolvedValue(mockInviteCreatedBy);
+  });
+
+  // 2.1-T1: no assignments — existing behavior unchanged, no project lookup
+  it("no assignments: creates invite without project validation", async () => {
+    const result = await createInvite(
+      WORKSPACE_ID,
+      CREATED_BY_ID,
+      { role: "member", maxUses: 0, expiresInHours: 48 },
+      "member",
+    );
+
+    expect(mockPrisma.project.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.workspaceInvite.create).toHaveBeenCalledOnce();
+    expect(result).toHaveProperty("id");
+  });
+
+  // 2.1-T2: valid multi-project — stored on invite
+  it("valid assignments: stores projectAssignments JSON on invite", async () => {
+    const assignments = [
+      { projectId: PROJECT_ID_A, role: "member" as const },
+      { projectId: PROJECT_ID_B, role: "viewer" as const },
+    ];
+
+    await createInvite(
+      WORKSPACE_ID,
+      CREATED_BY_ID,
+      { role: "member", maxUses: 0, expiresInHours: 48, projectAssignments: assignments },
+      "admin",
+    );
+
+    expect(mockPrisma.project.findMany).toHaveBeenCalledWith({
+      where: { id: { in: [PROJECT_ID_A, PROJECT_ID_B] }, workspaceId: WORKSPACE_ID },
+      select: { id: true },
+    });
+    const createCall = mockPrisma.workspaceInvite.create.mock.calls[0][0];
+    expect(createCall.data.projectAssignments).toEqual(assignments);
+  });
+
+  // 2.1-T3: projectId from another workspace → 422 INVALID_PROJECT, no invite persisted
+  it("out-of-workspace projectId → 422 INVALID_PROJECT, no invite created", async () => {
+    // Only PROJECT_ID_A belongs to workspace; OTHER_WS_PROJECT_ID does not
+    mockPrisma.project.findMany.mockResolvedValue([{ id: PROJECT_ID_A }]);
+
+    await expect(
+      createInvite(
+        WORKSPACE_ID,
+        CREATED_BY_ID,
+        {
+          role: "member",
+          maxUses: 0,
+          expiresInHours: 48,
+          projectAssignments: [
+            { projectId: PROJECT_ID_A, role: "member" },
+            { projectId: OTHER_WS_PROJECT_ID, role: "viewer" },
+          ],
+        },
+        "admin",
+      ),
+    ).rejects.toMatchObject({
+      statusCode: 422,
+      code: "INVALID_PROJECT",
+    });
+
+    expect(mockPrisma.workspaceInvite.create).not.toHaveBeenCalled();
+  });
+
+  // 2.1-T4: role:'owner' with admin inviter → 403 ROLE_CAP_EXCEEDED, no invite persisted
+  it("role:owner by admin inviter → 403 ROLE_CAP_EXCEEDED, no invite created", async () => {
+    mockPrisma.project.findMany.mockResolvedValue([{ id: PROJECT_ID_A }]);
+
+    await expect(
+      createInvite(
+        WORKSPACE_ID,
+        CREATED_BY_ID,
+        {
+          role: "member",
+          maxUses: 0,
+          expiresInHours: 48,
+          projectAssignments: [{ projectId: PROJECT_ID_A, role: "owner" }],
+        },
+        "admin", // inviterRole
+      ),
+    ).rejects.toMatchObject({
+      statusCode: 403,
+      code: "ROLE_CAP_EXCEEDED",
+    });
+
+    expect(mockPrisma.workspaceInvite.create).not.toHaveBeenCalled();
+  });
+
+  // 2.1-T5: role:'owner' by ws-owner → invite persisted
+  it("role:owner by owner inviter → invite created successfully", async () => {
+    mockPrisma.project.findMany.mockResolvedValue([{ id: PROJECT_ID_A }]);
+
+    await expect(
+      createInvite(
+        WORKSPACE_ID,
+        CREATED_BY_ID,
+        {
+          role: "member",
+          maxUses: 0,
+          expiresInHours: 48,
+          projectAssignments: [{ projectId: PROJECT_ID_A, role: "owner" }],
+        },
+        "owner", // inviterRole — allowed
+      ),
+    ).resolves.toHaveProperty("id");
+
+    expect(mockPrisma.workspaceInvite.create).toHaveBeenCalledOnce();
+  });
+});
+
+// ── createOnboardingInvite() — project-assignment validation + owner-cap ──────
+
+describe("createOnboardingInvite() — project-assignment validation + owner-cap", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.user.findUnique.mockResolvedValue(mockUser);
+    mockPrisma.member.findUnique.mockResolvedValue(mockMember);
+    mockPrisma.workspaceInvite.create.mockResolvedValue(mockInvite);
+    mockPrisma.project.findMany.mockResolvedValue([{ id: PROJECT_ID_A }]);
+  });
+
+  // 2.3-T1: out-of-workspace projectId → 422 INVALID_PROJECT, no invite persisted
+  it("out-of-workspace projectId → 422 INVALID_PROJECT, no invite created", async () => {
+    mockPrisma.project.findMany.mockResolvedValue([]); // no matching projects
+
+    await expect(
+      createOnboardingInvite(
+        WORKSPACE_ID,
+        CREATED_BY_ID,
+        {
+          userId: USER_ID,
+          ttlHours: 72,
+          role: "member",
+          projectAssignments: [{ projectId: OTHER_WS_PROJECT_ID, role: "viewer" }],
+        },
+        "admin",
+      ),
+    ).rejects.toMatchObject({
+      statusCode: 422,
+      code: "INVALID_PROJECT",
+    });
+
+    expect(mockPrisma.workspaceInvite.create).not.toHaveBeenCalled();
+  });
+
+  // 2.3-T2: role:'owner' with admin inviter → 403 ROLE_CAP_EXCEEDED
+  it("role:owner by admin inviter → 403 ROLE_CAP_EXCEEDED, no invite created", async () => {
+    await expect(
+      createOnboardingInvite(
+        WORKSPACE_ID,
+        CREATED_BY_ID,
+        {
+          userId: USER_ID,
+          ttlHours: 72,
+          role: "member",
+          projectAssignments: [{ projectId: PROJECT_ID_A, role: "owner" }],
+        },
+        "admin",
+      ),
+    ).rejects.toMatchObject({
+      statusCode: 403,
+      code: "ROLE_CAP_EXCEEDED",
+    });
+
+    expect(mockPrisma.workspaceInvite.create).not.toHaveBeenCalled();
+  });
+
+  // 2.3-T3: role:'owner' by ws-owner → invite persisted
+  it("role:owner by owner inviter → invite created successfully", async () => {
+    await expect(
+      createOnboardingInvite(
+        WORKSPACE_ID,
+        CREATED_BY_ID,
+        {
+          userId: USER_ID,
+          ttlHours: 72,
+          role: "member",
+          projectAssignments: [{ projectId: PROJECT_ID_A, role: "owner" }],
+        },
+        "owner",
+      ),
+    ).resolves.toHaveProperty("inviteId");
+
+    expect(mockPrisma.workspaceInvite.create).toHaveBeenCalledOnce();
+  });
+
+  // 2.3-T4: valid assignments stored on invite
+  it("valid assignments: stored as projectAssignments JSON on invite", async () => {
+    const assignments = [{ projectId: PROJECT_ID_A, role: "member" as const }];
+
+    await createOnboardingInvite(
+      WORKSPACE_ID,
+      CREATED_BY_ID,
+      {
+        userId: USER_ID,
+        ttlHours: 72,
+        role: "member",
+        projectAssignments: assignments,
+      },
+      "admin",
+    );
+
+    const createCall = mockPrisma.workspaceInvite.create.mock.calls[0][0];
+    expect(createCall.data.projectAssignments).toEqual(assignments);
   });
 });
 

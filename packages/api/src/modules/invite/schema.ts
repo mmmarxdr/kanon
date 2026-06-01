@@ -3,6 +3,38 @@ import { z } from "zod";
 const InviteRoleEnum = z.enum(["member", "admin", "viewer"]);
 
 /**
+ * Full MemberRole enum — includes 'owner' unlike InviteRoleEnum.
+ * Required for project assignment roles so owner-cap is expressible.
+ */
+const MemberRoleEnum = z.enum(["viewer", "member", "admin", "owner"]);
+
+/**
+ * A single project assignment carried on an invite.
+ * role uses the full MemberRole (incl. 'owner') — owner-cap is enforced at service layer.
+ */
+export const ProjectAssignmentSchema = z.object({
+  projectId: z.string().uuid(),
+  role: MemberRoleEnum,
+});
+export type ProjectAssignment = z.infer<typeof ProjectAssignmentSchema>;
+
+/**
+ * Deduplicate project assignments — first-wins on duplicate projectId.
+ * Handles undefined input (optional field passes undefined through).
+ */
+function dedupeFirstWins(
+  assignments: ProjectAssignment[] | undefined,
+): ProjectAssignment[] | undefined {
+  if (!assignments) return undefined;
+  const seen = new Set<string>();
+  return assignments.filter((a) => {
+    if (seen.has(a.projectId)) return false;
+    seen.add(a.projectId);
+    return true;
+  });
+}
+
+/**
  * Create invite request body — used by POST /api/workspaces/:wid/invites.
  */
 export const CreateInviteBody = z.object({
@@ -11,6 +43,7 @@ export const CreateInviteBody = z.object({
   expiresInHours: z.number().int().min(1).max(720).optional().default(168),
   label: z.string().max(200).optional(),
   email: z.string().email().optional(),
+  projectAssignments: z.array(ProjectAssignmentSchema).optional().transform(dedupeFirstWins),
 });
 export type CreateInviteBody = z.infer<typeof CreateInviteBody>;
 
@@ -95,6 +128,7 @@ export const OnboardingInviteBody = z.object({
   userId: z.string().uuid("Invalid user ID"),
   role: z.enum(["member", "admin", "viewer"]).optional().default("member"),
   ttlHours: z.number().int().min(1).max(72).optional().default(72),
+  projectAssignments: z.array(ProjectAssignmentSchema).optional().transform(dedupeFirstWins),
 });
 export type OnboardingInviteBody = z.infer<typeof OnboardingInviteBody>;
 

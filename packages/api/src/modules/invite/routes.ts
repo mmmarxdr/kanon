@@ -45,6 +45,7 @@ export async function workspaceInviteRoutes(
         request.params.wid,
         request.user.userId,
         request.body,
+        request.member!.role,
         emailProvider,
       );
       return reply.status(201).send(invite);
@@ -89,6 +90,7 @@ export async function workspaceInviteRoutes(
         request.params.wid,
         request.user.userId,
         request.body,
+        request.member!.role,
       );
       return reply.status(201).send(result);
     },
