@@ -56,7 +56,7 @@ export default async function cycleRoutes(fastify: FastifyInstance): Promise<voi
       preHandler: [requireProjectMember("key")],
       schema: { params: ProjectKeyParam },
     },
-    async (request, _reply) => cycleService.listCycles(request.params.key),
+    async (request, _reply) => cycleService.listCycles(request.projectId!),
   );
 
   app.post(
@@ -67,7 +67,7 @@ export default async function cycleRoutes(fastify: FastifyInstance): Promise<voi
     },
     async (request, reply) => {
       const created = await cycleService.createCycle(
-        request.params.key,
+        request.projectId!,
         {
           name: request.body.name,
           goal: request.body.goal,

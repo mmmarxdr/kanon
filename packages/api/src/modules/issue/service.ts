@@ -51,20 +51,26 @@ async function nextIssueKey(
 
 /**
  * Create a new issue with auto-generated key.
+ *
+ * @param projectId - Gate-resolved project UUID (KAN-16 security fix).
+ *   Callers downstream of requireProjectRole pass request.projectId so
+ *   issue creation targets the SAME project the gate authorized.
+ *   Internal callers (e.g. roadmap promoteToIssue) resolve the id themselves
+ *   before calling this function.
  */
 export async function createIssue(
-  projectKey: string,
+  projectId: string,
   body: CreateIssueBody,
   memberId: string,
 ) {
-  const project = await prisma.project.findFirst({
-    where: { key: projectKey },
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
   if (!project) {
     throw new AppError(
       404,
       "PROJECT_NOT_FOUND",
-      `Project "${projectKey}" not found`,
+      `Project not found`,
     );
   }
 
@@ -185,19 +191,21 @@ export async function createIssue(
 
 /**
  * List issues for a project with optional filters.
+ *
+ * @param projectId - Gate-resolved project UUID (KAN-16 security fix).
  */
 export async function listIssues(
-  projectKey: string,
+  projectId: string,
   filters: IssueFilterQuery,
 ) {
-  const project = await prisma.project.findFirst({
-    where: { key: projectKey },
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
   if (!project) {
     throw new AppError(
       404,
       "PROJECT_NOT_FOUND",
-      `Project "${projectKey}" not found`,
+      `Project not found`,
     );
   }
 
@@ -263,16 +271,18 @@ export async function listIssues(
 /**
  * List issue groups for a project.
  * Uses Prisma groupBy for count/updatedAt, then fetches representative titles.
+ *
+ * @param projectId - Gate-resolved project UUID (KAN-16 security fix).
  */
-export async function listIssueGroups(projectKey: string) {
-  const project = await prisma.project.findFirst({
-    where: { key: projectKey },
+export async function listIssueGroups(projectId: string) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
   if (!project) {
     throw new AppError(
       404,
       "PROJECT_NOT_FOUND",
-      `Project "${projectKey}" not found`,
+      `Project not found`,
     );
   }
 
@@ -611,19 +621,19 @@ const MAX_GROUP_TRANSITION_SIZE = 100;
  * Used when a group card is dragged across columns on the board.
  */
 export async function transitionGroup(
-  projectKey: string,
+  projectId: string,
   groupKey: string,
   toState: string,
   memberId: string,
 ) {
-  const project = await prisma.project.findFirst({
-    where: { key: projectKey },
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
   if (!project) {
     throw new AppError(
       404,
       "PROJECT_NOT_FOUND",
-      `Project "${projectKey}" not found`,
+      `Project not found`,
     );
   }
 
@@ -640,7 +650,7 @@ export async function transitionGroup(
     throw new AppError(
       404,
       "GROUP_NOT_FOUND",
-      `No issues found with groupKey "${groupKey}" in project "${projectKey}"`,
+      `No issues found with groupKey "${groupKey}" in project "${project.key}"`,
     );
   }
 
@@ -744,18 +754,18 @@ export async function transitionGroup(
  * `transitionGroup` pre-validate-then-tx pattern for consistency.
  */
 export async function batchTransitionByKeys(
-  projectKey: string,
+  projectId: string,
   body: BatchTransitionByKeysBody,
   memberId: string,
 ) {
-  const project = await prisma.project.findFirst({
-    where: { key: projectKey },
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
   if (!project) {
     throw new AppError(
       404,
       "PROJECT_NOT_FOUND",
-      `Project "${projectKey}" not found`,
+      `Project not found`,
     );
   }
 
@@ -788,7 +798,7 @@ export async function batchTransitionByKeys(
     throw new AppError(
       400,
       "CROSS_PROJECT_ISSUE",
-      `The following issue keys do not belong to project "${projectKey}": ${offendingKeys.join(", ")}`,
+      `The following issue keys do not belong to project "${project.key}": ${offendingKeys.join(", ")}`,
     );
   }
 

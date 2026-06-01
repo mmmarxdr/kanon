@@ -51,19 +51,21 @@ function mapDependencies<
 
 /**
  * List roadmap items for a project with optional filters.
+ *
+ * @param projectId - Gate-resolved project UUID (KAN-16 security fix).
  */
 export async function listRoadmapItems(
-  projectKey: string,
+  projectId: string,
   filters: RoadmapFilterQuery,
 ) {
-  const project = await prisma.project.findFirst({
-    where: { key: projectKey },
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
   if (!project) {
     throw new AppError(
       404,
       "PROJECT_NOT_FOUND",
-      `Project "${projectKey}" not found`,
+      `Project not found`,
     );
   }
 
@@ -85,16 +87,18 @@ export async function listRoadmapItems(
 
 /**
  * Get a single roadmap item by ID.
+ *
+ * @param projectId - Gate-resolved project UUID (KAN-16 security fix).
  */
-export async function getRoadmapItem(projectKey: string, itemId: string) {
-  const project = await prisma.project.findFirst({
-    where: { key: projectKey },
+export async function getRoadmapItem(projectId: string, itemId: string) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
   if (!project) {
     throw new AppError(
       404,
       "PROJECT_NOT_FOUND",
-      `Project "${projectKey}" not found`,
+      `Project not found`,
     );
   }
 
@@ -119,19 +123,21 @@ export async function getRoadmapItem(projectKey: string, itemId: string) {
 
 /**
  * Create a new roadmap item.
+ *
+ * @param projectId - Gate-resolved project UUID (KAN-16 security fix).
  */
 export async function createRoadmapItem(
-  projectKey: string,
+  projectId: string,
   body: CreateRoadmapItemBody,
 ) {
-  const project = await prisma.project.findFirst({
-    where: { key: projectKey },
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
   if (!project) {
     throw new AppError(
       404,
       "PROJECT_NOT_FOUND",
-      `Project "${projectKey}" not found`,
+      `Project not found`,
     );
   }
 
@@ -153,21 +159,23 @@ export async function createRoadmapItem(
 
 /**
  * Update a roadmap item by ID.
+ *
+ * @param projectId - Gate-resolved project UUID (KAN-16 security fix).
  */
 export async function updateRoadmapItem(
-  projectKey: string,
+  projectId: string,
   itemId: string,
   body: UpdateRoadmapItemBody,
   memberId?: string,
 ) {
-  const project = await prisma.project.findFirst({
-    where: { key: projectKey },
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
   if (!project) {
     throw new AppError(
       404,
       "PROJECT_NOT_FOUND",
-      `Project "${projectKey}" not found`,
+      `Project not found`,
     );
   }
 
@@ -209,7 +217,7 @@ export async function updateRoadmapItem(
     });
 
     if (linkedCount === 0) {
-      await promoteToIssue(projectKey, itemId, {}, memberId);
+      await promoteToIssue(project.id, itemId, {}, memberId);
       await prisma.roadmapItem.update({
         where: { id: itemId },
         data: { status: "in_progress" },
@@ -223,16 +231,18 @@ export async function updateRoadmapItem(
 /**
  * Delete a roadmap item by ID.
  * Linked issues have their roadmapItemId set to null (onDelete: SetNull in schema).
+ *
+ * @param projectId - Gate-resolved project UUID (KAN-16 security fix).
  */
-export async function deleteRoadmapItem(projectKey: string, itemId: string) {
-  const project = await prisma.project.findFirst({
-    where: { key: projectKey },
+export async function deleteRoadmapItem(projectId: string, itemId: string) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
   if (!project) {
     throw new AppError(
       404,
       "PROJECT_NOT_FOUND",
-      `Project "${projectKey}" not found`,
+      `Project not found`,
     );
   }
 
@@ -256,21 +266,25 @@ export async function deleteRoadmapItem(projectKey: string, itemId: string) {
  * Promote a roadmap item to an issue.
  * Creates an issue using existing issue creation logic, links it back via roadmapItemId,
  * and sets promoted=true on the roadmap item.
+ *
+ * @param projectId - Gate-resolved project UUID (KAN-16 security fix).
+ *   HTTP callers pass request.projectId; internal callers (updateRoadmapItem)
+ *   pass the already-resolved project.id.
  */
 export async function promoteToIssue(
-  projectKey: string,
+  projectId: string,
   itemId: string,
   body: PromoteBody,
   memberId: string,
 ) {
-  const project = await prisma.project.findFirst({
-    where: { key: projectKey },
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
   if (!project) {
     throw new AppError(
       404,
       "PROJECT_NOT_FOUND",
-      `Project "${projectKey}" not found`,
+      `Project not found`,
     );
   }
 
@@ -285,9 +299,11 @@ export async function promoteToIssue(
     );
   }
 
-  // Create the issue using existing issue service
+  // Create the issue using existing issue service.
+  // Pass the already-resolved project.id (not projectKey) so createIssue
+  // uses the same project this function already validated — no re-resolution by key.
   const issue = await createIssue(
-    projectKey,
+    project.id,
     {
       title: body.title ?? item.title,
       description: item.description ?? undefined,
@@ -361,20 +377,22 @@ async function detectCycle(
 
 /**
  * Add a dependency: sourceId (the item) blocks targetId.
+ *
+ * @param projectId - Gate-resolved project UUID (KAN-16 security fix).
  */
 export async function addDependency(
-  projectKey: string,
+  projectId: string,
   sourceId: string,
   body: AddDependencyBody,
 ) {
-  const project = await prisma.project.findFirst({
-    where: { key: projectKey },
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
   if (!project) {
     throw new AppError(
       404,
       "PROJECT_NOT_FOUND",
-      `Project "${projectKey}" not found`,
+      `Project not found`,
     );
   }
 
@@ -449,20 +467,22 @@ export async function addDependency(
 
 /**
  * Remove a dependency by ID.
+ *
+ * @param projectId - Gate-resolved project UUID (KAN-16 security fix).
  */
 export async function removeDependency(
-  projectKey: string,
+  projectId: string,
   itemId: string,
   depId: string,
 ) {
-  const project = await prisma.project.findFirst({
-    where: { key: projectKey },
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
   if (!project) {
     throw new AppError(
       404,
       "PROJECT_NOT_FOUND",
-      `Project "${projectKey}" not found`,
+      `Project not found`,
     );
   }
 
@@ -493,16 +513,18 @@ export async function removeDependency(
 
 /**
  * Get all dependencies for a roadmap item (both blocks and blockedBy).
+ *
+ * @param projectId - Gate-resolved project UUID (KAN-16 security fix).
  */
-export async function getDependencies(projectKey: string, itemId: string) {
-  const project = await prisma.project.findFirst({
-    where: { key: projectKey },
+export async function getDependencies(projectId: string, itemId: string) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
   if (!project) {
     throw new AppError(
       404,
       "PROJECT_NOT_FOUND",
-      `Project "${projectKey}" not found`,
+      `Project not found`,
     );
   }
 

@@ -67,6 +67,11 @@ declare module "fastify" {
      *  Set when a project-scoped preHandler runs. Undefined on workspace-only routes.
      *  INVARIANT: member.id is always the workspace Member.id, never ProjectMember.id. */
     projectRole?: MemberRole;
+    /** Gate-resolved project UUID (KAN-16 security fix).
+     *  Set by requireProjectRole/requireProjectMember so downstream handlers and
+     *  services use the SAME project the gate authorized, preventing gate↔handler
+     *  divergence on key-collision across workspaces. */
+    projectId?: string;
   }
   interface FastifyInstance {
     bridgeSyncService?: BridgeSyncService;

@@ -238,6 +238,12 @@ export function requireProjectRole(projectKeyParam: string, ...roles: MemberRole
       throw new AppError(404, "PROJECT_NOT_FOUND", `Project "${projectKey}" not found`);
     }
 
+    // KAN-16 security fix: set gate-resolved id BEFORE enforceProjectAccess so
+    // it is populated on EVERY path (bypass and non-bypass). Downstream handlers
+    // pass request.projectId to services instead of re-resolving by key, closing
+    // the gate↔handler divergence that allows cross-tenant mutations.
+    request.projectId = project.id;
+
     const minimumRole = roles.length > 0
       ? roles.reduce((least, r) =>
           ROLE_HIERARCHY.indexOf(r) < ROLE_HIERARCHY.indexOf(least) ? r : least,

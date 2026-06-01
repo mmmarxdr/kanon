@@ -39,7 +39,7 @@ export default async function roadmapRoutes(
     },
     async (request, _reply) => {
       return roadmapService.listRoadmapItems(
-        request.params.key,
+        request.projectId!,
         request.query,
       );
     },
@@ -59,7 +59,7 @@ export default async function roadmapRoutes(
     },
     async (request, reply) => {
       const item = await roadmapService.createRoadmapItem(
-        request.params.key,
+        request.projectId!,
         request.body,
       );
       return reply.status(201).send(item);
@@ -79,7 +79,7 @@ export default async function roadmapRoutes(
     },
     async (request, _reply) => {
       return roadmapService.getRoadmapItem(
-        request.params.key,
+        request.projectId!,
         request.params.id,
       );
     },
@@ -99,7 +99,7 @@ export default async function roadmapRoutes(
     },
     async (request, _reply) => {
       return roadmapService.updateRoadmapItem(
-        request.params.key,
+        request.projectId!,
         request.params.id,
         request.body,
         request.member!.id,
@@ -120,7 +120,7 @@ export default async function roadmapRoutes(
     },
     async (request, reply) => {
       await roadmapService.deleteRoadmapItem(
-        request.params.key,
+        request.projectId!,
         request.params.id,
       );
       return reply.status(204).send();
@@ -141,7 +141,7 @@ export default async function roadmapRoutes(
     },
     async (request, reply) => {
       const issue = await roadmapService.promoteToIssue(
-        request.params.key,
+        request.projectId!,
         request.params.id,
         request.body,
         request.member!.id,
@@ -165,7 +165,7 @@ export default async function roadmapRoutes(
     },
     async (request, _reply) => {
       return roadmapService.getDependencies(
-        request.params.key,
+        request.projectId!,
         request.params.id,
       );
     },
@@ -185,7 +185,7 @@ export default async function roadmapRoutes(
     },
     async (request, reply) => {
       const dep = await roadmapService.addDependency(
-        request.params.key,
+        request.projectId!,
         request.params.id,
         request.body,
       );
@@ -206,7 +206,7 @@ export default async function roadmapRoutes(
     },
     async (request, reply) => {
       await roadmapService.removeDependency(
-        request.params.key,
+        request.projectId!,
         request.params.id,
         request.params.depId,
       );

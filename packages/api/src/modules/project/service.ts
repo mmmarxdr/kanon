@@ -88,34 +88,36 @@ export async function listProjects(workspaceId: string) {
 }
 
 /**
- * Get a project by key.
+ * Get a project by gate-resolved id (KAN-16 security fix).
+ * Callers downstream of requireProjectRole/requireProjectMember pass
+ * request.projectId so the handler uses the SAME project the gate authorized.
  */
-export async function getProject(key: string) {
-  const project = await prisma.project.findFirst({
-    where: { key },
+export async function getProject(projectId: string) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
   if (!project) {
     throw new AppError(
       404,
       "PROJECT_NOT_FOUND",
-      `Project "${key}" not found`,
+      `Project not found`,
     );
   }
   return project;
 }
 
 /**
- * Update a project by key.
+ * Update a project by gate-resolved id (KAN-16 security fix).
  */
-export async function updateProject(key: string, body: UpdateProjectBody, actorId?: string) {
-  const project = await prisma.project.findFirst({
-    where: { key },
+export async function updateProject(projectId: string, body: UpdateProjectBody, actorId?: string) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
   if (!project) {
     throw new AppError(
       404,
       "PROJECT_NOT_FOUND",
-      `Project "${key}" not found`,
+      `Project not found`,
     );
   }
 
@@ -140,17 +142,17 @@ export async function updateProject(key: string, body: UpdateProjectBody, actorI
 }
 
 /**
- * Soft delete (archive) a project by key.
+ * Soft delete (archive) a project by gate-resolved id (KAN-16 security fix).
  */
-export async function archiveProject(key: string, actorId?: string) {
-  const project = await prisma.project.findFirst({
-    where: { key },
+export async function archiveProject(projectId: string, actorId?: string) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
   if (!project) {
     throw new AppError(
       404,
       "PROJECT_NOT_FOUND",
-      `Project "${key}" not found`,
+      `Project not found`,
     );
   }
 
