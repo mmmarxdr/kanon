@@ -5,9 +5,12 @@ import {
   generateTestToken,
   generateTestRefreshToken,
   seedTestWorkspace,
+  seedTestMemberWithRole,
+  seedTestProject,
   cleanDatabase,
   disconnectTestDb,
 } from "../../test/helpers.js";
+import { prisma } from "../../config/prisma.js";
 
 /**
  * Integration tests for the auth module.
@@ -321,6 +324,159 @@ describe("Auth Integration", () => {
       const body = res.json();
       expect(body.status).toBe("ok");
       expect(body.db).toBe("connected");
+    });
+  });
+
+  // ── Phase 6 (PR2): onboard applies project assignments ─────────────────────
+
+  describe("POST /api/auth/onboard — project assignment application (R-INV-onboard)", () => {
+    /**
+     * Helper: create an onboarding invite directly in DB with projectAssignments.
+     * Returns the signed JWT token needed to call /api/auth/onboard.
+     */
+    async function createOnboardingInviteWithAssignments(
+      workspaceId: string,
+      createdById: string,
+      targetEmail: string,
+      projectAssignments: Array<{ projectId: string; role: string }>,
+    ): Promise<string> {
+      const { randomBytes } = await import("node:crypto");
+      const jwt = await import("jsonwebtoken");
+      const opaqueToken = randomBytes(32).toString("base64url");
+      const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000);
+
+      const invite = await prisma.workspaceInvite.create({
+        data: {
+          token: opaqueToken,
+          role: "member",
+          maxUses: 1,
+          expiresAt,
+          label: "Onboarding link",
+          email: targetEmail,
+          kind: "ONBOARDING",
+          workspaceId,
+          createdById,
+          projectAssignments: projectAssignments as any,
+        },
+      });
+
+      // Sign the JWT the same way createOnboardingInvite does
+      return jwt.sign(
+        { sub: invite.id, scope: "onboard" },
+        process.env["JWT_SECRET"]!,
+        { expiresIn: "72h" },
+      );
+    }
+
+    // 6.3-T1: onboard with assignments → PM rows created + invite consumed
+    it("onboard with assignments → PM rows created and invite consumed", async () => {
+      const ws = await seedTestWorkspace();
+      const admin = await seedTestMemberWithRole(ws.id, "admin");
+      const dev = await seedTestMemberWithRole(ws.id, "member");
+      const projectA = await seedTestProject(ws.id, "OPA1");
+      const projectB = await seedTestProject(ws.id, "OPB1");
+
+      const onboardToken = await createOnboardingInviteWithAssignments(
+        ws.id,
+        admin.userId,
+        dev.email,
+        [
+          { projectId: projectA.id, role: "member" },
+          { projectId: projectB.id, role: "viewer" },
+        ],
+      );
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/auth/onboard",
+        payload: { token: onboardToken },
+      });
+
+      expect(res.statusCode).toBe(200);
+
+      // PM rows created for dev.userId (not member.id)
+      const pmRows = await prisma.projectMember.findMany({
+        where: { userId: dev.userId },
+        orderBy: { projectId: "asc" },
+      });
+      expect(pmRows).toHaveLength(2);
+      for (const pm of pmRows) {
+        expect(pm.userId).toBe(dev.userId);
+      }
+
+      // Invite consumed
+      const invite = await prisma.workspaceInvite.findFirst({
+        where: { email: dev.email, kind: "ONBOARDING" },
+      });
+      expect(invite?.consumedAt).not.toBeNull();
+    });
+
+    // 6.3-T2: stale project → skipped + invite still consumed (R-INV-idempotent)
+    it("stale project in assignments → skipped, invite consumed normally", async () => {
+      const ws = await seedTestWorkspace();
+      const admin = await seedTestMemberWithRole(ws.id, "admin");
+      const dev = await seedTestMemberWithRole(ws.id, "member");
+      const liveProject = await seedTestProject(ws.id, "OLIV1");
+      const STALE_ID = "00000000-dead-dead-dead-000000000002";
+
+      const onboardToken = await createOnboardingInviteWithAssignments(
+        ws.id,
+        admin.userId,
+        dev.email,
+        [
+          { projectId: liveProject.id, role: "admin" },
+          { projectId: STALE_ID, role: "member" },
+        ],
+      );
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/auth/onboard",
+        payload: { token: onboardToken },
+      });
+
+      expect(res.statusCode).toBe(200);
+
+      // Only one PM row — for the live project
+      const pmRows = await prisma.projectMember.findMany({
+        where: { userId: dev.userId },
+      });
+      expect(pmRows).toHaveLength(1);
+      expect(pmRows[0]!.projectId).toBe(liveProject.id);
+      expect(pmRows[0]!.role).toBe("admin");
+
+      // Invite consumed (stale project doesn't block consumption)
+      const invite = await prisma.workspaceInvite.findFirst({
+        where: { email: dev.email, kind: "ONBOARDING" },
+      });
+      expect(invite?.consumedAt).not.toBeNull();
+    });
+
+    // 6.3-T3: no assignments → existing behavior preserved (invite consumed, no PM rows)
+    it("onboard with no assignments → invite consumed, no PM rows", async () => {
+      const ws = await seedTestWorkspace();
+      const admin = await seedTestMemberWithRole(ws.id, "admin");
+      const dev = await seedTestMemberWithRole(ws.id, "member");
+
+      const onboardToken = await createOnboardingInviteWithAssignments(
+        ws.id,
+        admin.userId,
+        dev.email,
+        [], // no assignments
+      );
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/auth/onboard",
+        payload: { token: onboardToken },
+      });
+
+      expect(res.statusCode).toBe(200);
+
+      const pmRows = await prisma.projectMember.findMany({
+        where: { userId: dev.userId },
+      });
+      expect(pmRows).toHaveLength(0);
     });
   });
 });
