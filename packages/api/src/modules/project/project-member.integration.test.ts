@@ -464,5 +464,130 @@ describe("KAN-17: Project Member Management", () => {
 
       expect(res.statusCode).toBe(404);
     });
+
+    /**
+     * W-1: Service-level actor>=target guard (service.ts line 252).
+     *
+     * The existing A-05a(4) gives the actor ws:member+PM:member — the gate
+     * rejects them (effectiveRole='member' < 'admin') so service.ts is never
+     * reached.  This test constructs a case that BYPASSES the gate but is
+     * blocked by the service guard:
+     *
+     *   actor:  ws role 'member' + PM role 'admin'
+     *           → enforceProjectAccess Step 3: effectiveRole = pm.role = 'admin'
+     *           → requireProjectRole("key","admin") passes (admin >= admin)
+     *
+     *   target: PM role 'owner' (LAST_OWNER bypassed: a 2nd PM owner exists)
+     *
+     *   service guard: roleLevel('admin'=2) < roleLevel('owner'=3) → 403 FORBIDDEN
+     *   message: "Insufficient permissions to remove this member" (NOT gate message)
+     *
+     * Positive control: same actor successfully removes a PM:member target first,
+     * proving the gate was passed before the protected delete.
+     */
+    it("W-1: actor PM:admin passes gate but is blocked by service guard when target is PM:owner (not gate 403)", async () => {
+      // Actor: ws:member but PM:admin — passes requireProjectRole("key","admin")
+      const actor = await seedTestMemberWithRole(workspaceId, "member");
+      // Two owners so LAST_OWNER guard does NOT fire
+      const owner1 = await seedTestMemberWithRole(workspaceId, "owner");
+      const owner2 = await seedTestMemberWithRole(workspaceId, "owner");
+      // A plain member target for the positive-control delete
+      const plainTarget = await seedTestMemberWithRole(workspaceId, "member");
+      const project = await seedTestProject(workspaceId, "W1SVC");
+
+      await seedTestProjectMember(actor.userId, project.id, "admin");
+      const ownerPm1 = await seedTestProjectMember(owner1.userId, project.id, "owner");
+      await seedTestProjectMember(owner2.userId, project.id, "owner");
+      const plainPm = await seedTestProjectMember(plainTarget.userId, project.id, "member");
+
+      // Positive control: actor (effectiveRole='admin') CAN remove a PM:member target.
+      // This proves the gate passed — if the gate were blocking, this would also be 403.
+      const controlRes = await app.inject({
+        method: "DELETE",
+        url: `/api/projects/${project.key}/members/${plainPm.id}`,
+        headers: { authorization: `Bearer ${actor.token}` },
+      });
+      expect(controlRes.statusCode).toBe(204);
+
+      // Primary assertion: actor (effectiveRole='admin') CANNOT remove a PM:owner target.
+      // LAST_OWNER is NOT in play (owner2 still exists). Only the service actor-level
+      // guard at service.ts line 252 can produce this 403.
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/projects/${project.key}/members/${ownerPm1.id}`,
+        headers: { authorization: `Bearer ${actor.token}` },
+      });
+
+      expect(res.statusCode).toBe(403);
+      // Discriminate: service message, NOT gate message ("requires at least the...")
+      expect(res.json().message).toBe("Insufficient permissions to remove this member");
+
+      // Target PM row must still exist — confirm via DB
+      const stillThere = await prisma.projectMember.findUnique({
+        where: { id: ownerPm1.id },
+      });
+      expect(stillThere).not.toBeNull();
+      expect(stillThere?.role).toBe("owner");
+    });
+  });
+
+  // ── Owner-cap positive path ────────────────────────────────────────────────
+
+  describe("Owner-cap positive path (W-2)", () => {
+    /**
+     * W-2: A project owner (effectiveRole='owner') CAN assign role:'owner'.
+     *
+     * The owner-cap guard in addProjectMember and changeProjectMemberRole only
+     * blocks when actingRole !== 'owner'.  This test confirms the permitted path:
+     *
+     *   actor:  ws role 'owner' → bypass path, effectiveRole = 'owner'
+     *
+     *   POST role:'owner'  → 201, response.role === 'owner'
+     *   PATCH role:'owner' → 200, response.role === 'owner'
+     *
+     * Both assertions verify the actual persisted value, not just the status code.
+     */
+    it("W-2: project owner can assign role:owner via POST and PATCH", async () => {
+      // Actor: ws owner → bypass gives effectiveRole='owner'
+      const wsOwner = await seedTestMemberWithRole(workspaceId, "owner");
+      // Two targets: one to POST-add as owner, another to PATCH up to owner
+      const newTarget = await seedTestMemberWithRole(workspaceId, "member");
+      const existingTarget = await seedTestMemberWithRole(workspaceId, "member");
+      const project = await seedTestProject(workspaceId, "W2CAP");
+
+      // Seed existing target as member (will be promoted to owner)
+      const existingPm = await seedTestProjectMember(existingTarget.userId, project.id, "member");
+
+      // W-2a: POST with role:'owner' → 201
+      const postRes = await app.inject({
+        method: "POST",
+        url: `/api/projects/${project.key}/members`,
+        headers: {
+          authorization: `Bearer ${wsOwner.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ email: newTarget.email, role: "owner" }),
+      });
+
+      expect(postRes.statusCode).toBe(201);
+      const postBody = postRes.json();
+      expect(postBody.role).toBe("owner");
+      expect(postBody.source).toBe("project");
+      expect(typeof postBody.pmId).toBe("string");
+
+      // W-2b: PATCH existing member up to role:'owner' → 200
+      const patchRes = await app.inject({
+        method: "PATCH",
+        url: `/api/projects/${project.key}/members/${existingPm.id}`,
+        headers: {
+          authorization: `Bearer ${wsOwner.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ role: "owner" }),
+      });
+
+      expect(patchRes.statusCode).toBe(200);
+      expect(patchRes.json().role).toBe("owner");
+    });
   });
 });
