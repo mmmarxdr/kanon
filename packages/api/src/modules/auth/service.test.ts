@@ -421,6 +421,138 @@ describe("onboard()", () => {
   });
 });
 
+// ── onboard() — project assignment application (Phase 6) ─────────────────────
+
+describe("onboard() — project assignment application (Phase 6)", () => {
+  const PROJECT_ID_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  const PROJECT_ID_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+
+  const mockInviteWithAssignments = {
+    id: INVITE_ID,
+    kind: "ONBOARDING",
+    email: USER_EMAIL,
+    workspaceId: WORKSPACE_ID,
+    revokedAt: null,
+    consumedAt: null,
+    expiresAt: new Date(Date.now() + 72 * 60 * 60 * 1000),
+    projectAssignments: [
+      { projectId: PROJECT_ID_A, role: "member" },
+      { projectId: PROJECT_ID_B, role: "viewer" },
+    ],
+  };
+
+  const mockUser = { id: USER_ID, email: USER_EMAIL };
+
+  const mockMember = {
+    id: "member-id-99", // different from USER_ID — must NOT appear in PM rows
+    userId: USER_ID,
+    workspaceId: WORKSPACE_ID,
+    role: "member",
+    workspace: { id: WORKSPACE_ID, name: "Test WS", slug: "test-ws" },
+  };
+
+  const mockRefreshTokenRow = {
+    id: "refresh-token-row-1",
+    tokenHash: "hash",
+    userId: USER_ID,
+    workspaceId: WORKSPACE_ID,
+    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+  };
+
+  function makeOnboardTxWithPM(opts: {
+    invite?: object;
+    liveProjectIds?: string[];
+    pmCreateError?: Error;
+  } = {}) {
+    const invite = opts.invite ?? mockInviteWithAssignments;
+    const liveProjectIds = opts.liveProjectIds ?? [PROJECT_ID_A, PROJECT_ID_B];
+    const updateFn = vi.fn().mockResolvedValue(invite);
+    const pmCreateFn = opts.pmCreateError
+      ? vi.fn().mockRejectedValue(opts.pmCreateError)
+      : vi.fn().mockResolvedValue({ count: liveProjectIds.length });
+    const tx = {
+      workspaceInvite: {
+        findFirst: vi.fn().mockResolvedValue(invite),
+        update: updateFn,
+      },
+      user: { findUnique: vi.fn().mockResolvedValue(mockUser) },
+      member: { findUnique: vi.fn().mockResolvedValue(mockMember) },
+      refreshToken: { create: vi.fn().mockResolvedValue(mockRefreshTokenRow) },
+      project: {
+        findMany: vi.fn().mockResolvedValue(liveProjectIds.map((id) => ({ id }))),
+      },
+      projectMember: {
+        createMany: pmCreateFn,
+      },
+    };
+    return { tx, updateFn, pmCreateFn };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // 6.1-T1: createProjectMembersInTx called inside existing tx (not a second tx)
+  it("6.1-T1: PM helper called inside existing tx; no second $transaction", async () => {
+    const { tx } = makeOnboardTxWithPM();
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => cb(tx));
+
+    const token = makeOnboardToken();
+    await onboard(token);
+
+    // PM rows were created
+    expect(tx.projectMember.createMany).toHaveBeenCalledOnce();
+    const call = tx.projectMember.createMany.mock.calls[0][0];
+    expect(call.skipDuplicates).toBe(true);
+
+    // $transaction was called exactly once — no second transaction
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  // 6.1-T2: userId discipline — PM rows carry user.id, NOT member.id
+  it("6.1-T2: PM rows carry invitee user.id, not member.id", async () => {
+    const { tx } = makeOnboardTxWithPM();
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => cb(tx));
+
+    const token = makeOnboardToken();
+    await onboard(token);
+
+    const call = tx.projectMember.createMany.mock.calls[0][0];
+    for (const row of call.data) {
+      expect(row.userId).toBe(USER_ID);
+      expect(row.userId).not.toBe("member-id-99"); // must NOT be Member.id
+    }
+  });
+
+  // 6.1-T3: consumedAt NOT updated when PM creation fails (atomic boundary)
+  it("6.1-T3: PM failure → consumedAt NOT committed (invite stays usable)", async () => {
+    const { tx, updateFn } = makeOnboardTxWithPM({
+      pmCreateError: new Error("PM DB failure"),
+    });
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => cb(tx));
+
+    const token = makeOnboardToken();
+    await expect(onboard(token)).rejects.toThrow("PM DB failure");
+
+    // consumedAt update must NOT have been called
+    expect(updateFn).not.toHaveBeenCalled();
+  });
+
+  // 6.2-T1: no assignments → PM helper not called, invite consumed normally
+  it("6.2-T1: invite with no projectAssignments → no PM call, consumedAt set", async () => {
+    const inviteNoAssignments = { ...mockInviteWithAssignments, projectAssignments: null };
+    const { tx, updateFn } = makeOnboardTxWithPM({ invite: inviteNoAssignments, liveProjectIds: [] });
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => cb(tx));
+
+    const token = makeOnboardToken();
+    await onboard(token);
+
+    expect(tx.projectMember.createMany).not.toHaveBeenCalled();
+    // consumedAt was updated (invite consumed normally)
+    expect(updateFn).toHaveBeenCalledOnce();
+  });
+});
+
 // ── exchange() tests ──────────────────────────────────────────────────────────
 
 describe("exchange()", () => {

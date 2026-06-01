@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { randomBytes, createHash } from "node:crypto";
+import { z } from "zod";
 import { prisma } from "../../config/prisma.js";
 import { env } from "../../config/env.js";
 import { AppError } from "../../shared/types.js";
@@ -8,6 +9,8 @@ import { BCRYPT_COST, TOKEN_EXPIRY } from "../../shared/constants.js";
 import type { TokenPayload } from "../../shared/types.js";
 import type { RegisterBody, LoginBody } from "./schema.js";
 import type { EmailProvider } from "../../services/email/types.js";
+import { ProjectAssignmentSchema } from "../invite/schema.js";
+import { createProjectMembersInTx } from "../project/project-member-service.js";
 
 // ── D6 helpers ────────────────────────────────────────────────────────────────
 
@@ -459,7 +462,14 @@ export async function onboard(token: string) {
       },
     });
 
-    // 8. Mark invite as consumed (atomic — same tx)
+    // 8. Apply project assignments (R-INV-onboard, R-INV-inv, R-INV-idempotent)
+    // Must be BEFORE consumedAt update so a PM failure prevents the invite from being consumed.
+    // invite.projectAssignments is a Prisma.JsonValue — parse safely; null → [] (existing invites safe).
+    const parsedAssignments = z.array(ProjectAssignmentSchema).safeParse(invite.projectAssignments);
+    const assignments = parsedAssignments.success ? parsedAssignments.data : [];
+    await createProjectMembersInTx(tx, user.id, assignments, invite.workspaceId);
+
+    // 9. Mark invite as consumed (atomic — same tx)
     await (tx as typeof prisma).workspaceInvite.update({
       where: { id: inviteId },
       data: { consumedAt: new Date() },
