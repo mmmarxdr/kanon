@@ -111,6 +111,7 @@ model User {
   createdInvites WorkspaceInvite[]
   passwordResetTokens PasswordResetToken[]
   refreshTokens RefreshToken[]
+  projectMembers ProjectMember[]
 
   @@map("users")
 }
@@ -174,10 +175,11 @@ model Project {
   workspaceId String    @map("workspace_id") @db.Uuid
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  issues       Issue[]
-  cycles       Cycle[]
-  roadmapItems RoadmapItem[]
-  proposals    McpProposal[]
+  issues         Issue[]
+  cycles         Cycle[]
+  roadmapItems   RoadmapItem[]
+  proposals      McpProposal[]
+  projectMembers ProjectMember[]
 
   @@unique([workspaceId, key])
   @@index([workspaceId])
@@ -550,4 +552,20 @@ model AdminAuditLog {
   @@index([authorId])
   @@index([createdAt])
   @@map("admin_audit_logs")
+}
+
+model ProjectMember {
+  id        String     @id @default(uuid()) @db.Uuid
+  role      MemberRole
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+
+  userId    String  @map("user_id") @db.Uuid
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  projectId String  @map("project_id") @db.Uuid
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, projectId])
+  @@map("project_members")
 }
