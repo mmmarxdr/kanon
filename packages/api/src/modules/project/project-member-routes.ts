@@ -115,8 +115,14 @@ export default async function projectMemberRoutes(
         params: ProjectMemberParams,
       },
     },
-    async (_request, reply) => {
-      return reply.status(501).send({ message: "Not yet implemented" });
+    async (request, reply) => {
+      await removeProjectMember(
+        request.projectId!,
+        request.params.pmId,
+        request.member!.userId,
+        request.projectRole!,
+      );
+      return reply.status(204).send();
     },
   );
 }

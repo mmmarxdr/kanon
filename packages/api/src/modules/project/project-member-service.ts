@@ -218,8 +218,9 @@ export async function changeProjectMemberRole(
  *
  * Guards (in order):
  *   1. Find PM row scoped to (id:pmId, projectId) → 404 PM_NOT_FOUND
- *   2. LAST_OWNER: sole owner removal → 422 LAST_OWNER (bypass on self-removal)
- *   3. Actor level >= target role (403 FORBIDDEN, bypass on self-removal)
+ *      R-INV1: ws Member.id won't match a projectMember row → 404
+ *   2. LAST_OWNER: sole owner removal → 422 LAST_OWNER (no bypass — even self-removal blocked)
+ *   3. Actor level >= target role (403 FORBIDDEN, bypass on self-removal of non-last-owner)
  */
 export async function removeProjectMember(
   projectId: string,
@@ -227,6 +228,30 @@ export async function removeProjectMember(
   actingUserId: string,
   actingRole: MemberRole,
 ): Promise<void> {
-  // TODO: implement in A-05
-  throw new AppError(501, "NOT_IMPLEMENTED", "Not yet implemented");
+  // 1. Find PM row scoped to this project (R-INV1: ws Member.id won't match → 404)
+  const pm = await prisma.projectMember.findFirst({
+    where: { id: pmId, projectId },
+  });
+  if (!pm) {
+    throw new AppError(404, "PM_NOT_FOUND", "Project member not found");
+  }
+
+  const isSelf = pm.userId === actingUserId;
+
+  // 2. LAST_OWNER guard: cannot remove the last project owner (no bypass — even self)
+  if (pm.role === "owner") {
+    const ownerCount = await prisma.projectMember.count({
+      where: { projectId, role: "owner" },
+    });
+    if (ownerCount <= 1) {
+      throw new AppError(422, "LAST_OWNER", "Cannot remove the last project owner");
+    }
+  }
+
+  // 3. Actor level gate (bypass on self-removal)
+  if (!isSelf && roleLevel(actingRole) < roleLevel(pm.role)) {
+    throw new AppError(403, "FORBIDDEN", "Insufficient permissions to remove this member");
+  }
+
+  await prisma.projectMember.delete({ where: { id: pmId } });
 }
