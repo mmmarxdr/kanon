@@ -31,6 +31,7 @@ import roadmapRoutes from "./modules/roadmap/routes.js";
 import cycleRoutes from "./modules/cycle/routes.js";
 import workSessionRoutes from "./modules/work-session/routes.js";
 import { workspaceInviteRoutes, publicInviteRoutes } from "./modules/invite/routes.js";
+import projectMemberRoutes from "./modules/project/project-member-routes.js";
 import { EngramClient } from "@kanon/bridge";
 import { BridgeSyncService } from "./services/bridge-sync-service.js";
 import { eventBus } from "./services/event-bus/index.js";
@@ -112,6 +113,7 @@ export async function buildApp() {
   await app.register(workSessionRoutes, { prefix: "/api" });
   await app.register(workspaceInviteRoutes, { prefix: "/api/workspaces/:wid/invites" });
   await app.register(publicInviteRoutes, { prefix: "/api/invites" });
+  await app.register(projectMemberRoutes, { prefix: "/api/projects/:key/members" });
 
   // ─── Work Session Cleanup (background interval) ──────────────────────
   let cleanupInterval: ReturnType<typeof setInterval> | undefined;
