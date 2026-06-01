@@ -7,6 +7,9 @@ import { AppError } from "../../shared/types.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import type { EmailProvider } from "../../services/email/types.js";
 import type { CreateInviteBody, OnboardingInviteBody, ProjectAssignment } from "./schema.js";
+import { ProjectAssignmentSchema } from "./schema.js";
+import { createProjectMembersInTx } from "../project/project-member-service.js";
+import { z } from "zod";
 
 /**
  * Validate project assignments for a given workspace:
@@ -442,8 +445,9 @@ export async function acceptInvite(token: string, userId: string, userEmail: str
       revoked_at: Date | null;
       workspace_id: string;
       kind: string | null;
+      project_assignments: unknown;
     }>>`
-      SELECT id, token, role, max_uses, use_count, expires_at, revoked_at, workspace_id, kind
+      SELECT id, token, role, max_uses, use_count, expires_at, revoked_at, workspace_id, kind, project_assignments
       FROM workspace_invites
       WHERE token = ${token}
       FOR UPDATE
@@ -547,6 +551,12 @@ export async function acceptInvite(token: string, userId: string, userEmail: str
         },
       },
     });
+
+    // Apply project assignments (R-INV-accept, R-INV-inv, R-INV-idempotent)
+    // Safely parse the JSON column — null/undefined falls back to [] (existing invites safe)
+    const parsedAssignments = z.array(ProjectAssignmentSchema).safeParse(row.project_assignments);
+    const assignments = parsedAssignments.success ? parsedAssignments.data : [];
+    await createProjectMembersInTx(tx, userId, assignments, invite.workspaceId);
 
     // Emit domain event (fire-and-forget, outside tx is fine)
     try {

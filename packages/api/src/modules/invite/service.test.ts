@@ -472,6 +472,76 @@ const BASE_MEMBER_ROW = {
   kind: "MEMBER",
 };
 
+const PROJECT_ID_C = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+
+/**
+ * Extended tx mock that includes project + projectMember for PM-creation tests.
+ * Used in Phase 5 acceptInvite tests. The base makeTx lacks these; adding here
+ * keeps the existing E1 tests untouched.
+ */
+function makeTxWithPM(
+  row: Record<string, unknown> | null,
+  opts: {
+    liveProjectIds?: string[];
+    pmCreateError?: Error;
+  } = {},
+) {
+  const tx = {
+    $queryRaw: vi.fn().mockResolvedValue(row ? [row] : []),
+    workspace: {
+      findUniqueOrThrow: vi.fn().mockResolvedValue({
+        id: WORKSPACE_ID,
+        name: "Test Workspace",
+        allowedDomains: [],
+      }),
+    },
+    member: {
+      findUnique: vi.fn().mockResolvedValue(null), // not yet a member
+      create: vi.fn().mockResolvedValue({
+        id: "member-new",
+        username: "dev",
+        role: "MEMBER",
+        userId: USER_ID,
+        workspaceId: WORKSPACE_ID,
+        user: { email: USER_EMAIL, displayName: null, avatarUrl: null },
+      }),
+    },
+    workspaceInvite: {
+      update: vi.fn().mockResolvedValue({}),
+    },
+    project: {
+      findMany: vi.fn().mockResolvedValue(
+        (opts.liveProjectIds ?? []).map((id) => ({ id })),
+      ),
+    },
+    projectMember: {
+      createMany: opts.pmCreateError
+        ? vi.fn().mockRejectedValue(opts.pmCreateError)
+        : vi.fn().mockResolvedValue({ count: 1 }),
+    },
+  };
+  return tx;
+}
+
+// Base row with project_assignments (for Phase 5 tests)
+const BASE_MEMBER_ROW_WITH_ASSIGNMENTS = {
+  ...{
+    id: INVITE_ID,
+    token: "member-token",
+    role: "MEMBER",
+    max_uses: 10,
+    use_count: 0,
+    expires_at: new Date(Date.now() + 72 * 60 * 60 * 1000),
+    revoked_at: null,
+    workspace_id: WORKSPACE_ID,
+    kind: "MEMBER",
+  },
+  project_assignments: [
+    { projectId: PROJECT_ID_A, role: "member" },
+    { projectId: PROJECT_ID_B, role: "viewer" },
+  ],
+};
+
 describe("acceptInvite() — kind guard (E1)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -517,5 +587,97 @@ describe("acceptInvite() — kind guard (E1)", () => {
 
     expect(tx.member.create).toHaveBeenCalledOnce();
     expect(result).toMatchObject({ username: "dev" });
+  });
+
+  // E1-T4 (regression safeguard): null project_assignments → no PM creation, no error
+  it("null project_assignments → no PM creation attempt (regression: existing invites)", async () => {
+    const rowWithNull = { ...BASE_MEMBER_ROW, project_assignments: null };
+    const tx = makeTxWithPM(rowWithNull, { liveProjectIds: [] });
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: typeof tx) => Promise<unknown>) => cb(tx));
+
+    const result = await acceptInvite("member-token", USER_ID, USER_EMAIL);
+
+    expect(tx.member.create).toHaveBeenCalledOnce();
+    expect(tx.projectMember.createMany).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ username: "dev" });
+  });
+});
+
+// ── acceptInvite() — project assignment application (Phase 5) ─────────────────
+
+describe("acceptInvite() — project assignment application (Phase 5)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // 5.1-T1: project_assignments in raw SELECT row → helper called with userId (not Member.id)
+  it("5.1-T1: assignments in row → createProjectMembersInTx called with invitee userId", async () => {
+    const tx = makeTxWithPM(BASE_MEMBER_ROW_WITH_ASSIGNMENTS, {
+      liveProjectIds: [PROJECT_ID_A, PROJECT_ID_B],
+    });
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: typeof tx) => Promise<unknown>) => cb(tx));
+
+    await acceptInvite("member-token", USER_ID, USER_EMAIL);
+
+    expect(tx.projectMember.createMany).toHaveBeenCalledOnce();
+    const call = tx.projectMember.createMany.mock.calls[0][0];
+    // All rows must carry the invitee's userId, not member-new (Member.id)
+    for (const row of call.data) {
+      expect(row.userId).toBe(USER_ID);
+    }
+    expect(call.skipDuplicates).toBe(true);
+  });
+
+  // 5.1-T2: invite with no assignments → only Member created, no PM rows
+  it("5.1-T2: invite with no assignments → no PM creation", async () => {
+    const rowNoAssignments = {
+      ...BASE_MEMBER_ROW_WITH_ASSIGNMENTS,
+      project_assignments: null,
+    };
+    const tx = makeTxWithPM(rowNoAssignments, { liveProjectIds: [] });
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: typeof tx) => Promise<unknown>) => cb(tx));
+
+    await acceptInvite("member-token", USER_ID, USER_EMAIL);
+
+    expect(tx.member.create).toHaveBeenCalledOnce();
+    expect(tx.projectMember.createMany).not.toHaveBeenCalled();
+  });
+
+  // 5.1-T3: stale project skipped — helper filters via project.findMany
+  it("5.1-T3: stale project in assignments → skipped (helper does the filtering)", async () => {
+    const rowWithStale = {
+      ...BASE_MEMBER_ROW_WITH_ASSIGNMENTS,
+      project_assignments: [
+        { projectId: PROJECT_ID_A, role: "member" },
+        { projectId: PROJECT_ID_C, role: "viewer" }, // stale
+      ],
+    };
+    const tx = makeTxWithPM(rowWithStale, {
+      liveProjectIds: [PROJECT_ID_A], // PROJECT_ID_C filtered out
+    });
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: typeof tx) => Promise<unknown>) => cb(tx));
+
+    await acceptInvite("member-token", USER_ID, USER_EMAIL);
+
+    // createMany called with only the live project
+    expect(tx.projectMember.createMany).toHaveBeenCalledWith({
+      data: [{ userId: USER_ID, projectId: PROJECT_ID_A, role: "member" }],
+      skipDuplicates: true,
+    });
+    // Member still created (accept succeeds despite stale project)
+    expect(tx.member.create).toHaveBeenCalledOnce();
+  });
+
+  // 5.4: atomic boundary — PM failure rolls back Member (tx throws → member not committed)
+  it("5.4: PM createMany failure → transaction throws (Member not committed)", async () => {
+    const tx = makeTxWithPM(BASE_MEMBER_ROW_WITH_ASSIGNMENTS, {
+      liveProjectIds: [PROJECT_ID_A, PROJECT_ID_B],
+      pmCreateError: new Error("DB constraint failure"),
+    });
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: typeof tx) => Promise<unknown>) => cb(tx));
+
+    await expect(
+      acceptInvite("member-token", USER_ID, USER_EMAIL),
+    ).rejects.toThrow("DB constraint failure");
   });
 });
