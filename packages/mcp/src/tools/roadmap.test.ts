@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerRoadmapTools } from "./roadmap.js";
+import { KanonApiError } from "../kanon-client.js";
 import type { KanonClient, KanonRoadmapItem } from "../kanon-client.js";
 
 // ─── Harness ────────────────────────────────────────────────────────────────
@@ -287,5 +288,28 @@ describe("kanon_remove_dependency — format tier (C12)", () => {
     expect(parsed).toHaveProperty("ok", true);
     expect(parsed).toHaveProperty("deleted", true);
     expect(parsed).toHaveProperty("dependencyId", "dep_001");
+  });
+});
+
+// ─── KAN-20: 403 FORBIDDEN surfacing — roadmap tools ─────────────────────────
+//
+// Confirms each tool FORWARDS the credential and SURFACES a 403 as
+// { isError: true, code: "FORBIDDEN" }. Enforcement lives in the API layer.
+
+describe("kanon_create_roadmap_item — surfaces 403 as FORBIDDEN", () => {
+  it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
+    const mockClient = {
+      createRoadmapItem: vi.fn().mockRejectedValue(
+        new KanonApiError(403, "FORBIDDEN", "You are not assigned to this project"),
+      ),
+    };
+    const tools = captureTools(registerRoadmapTools, mockClient as unknown as KanonClient);
+    const handler = tools.get("kanon_create_roadmap_item")!.handler;
+
+    const result = await handler({ projectKey: "KAN", title: "Add dark mode" });
+
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed.code).toBe("FORBIDDEN");
   });
 });
