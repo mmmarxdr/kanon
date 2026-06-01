@@ -58,7 +58,7 @@ async function resolveAndCheckMember(
 }
 
 /**
- * Effective-role gate helper for project-scoped routes (KAN-16).
+ * Effective-role gate helper for project-scoped routes (KAN-16 + KAN-19).
  *
  * Design (ADR A2 + A3):
  * - owner/admin → bypass (no ProjectMember lookup), returns workspace role as effectiveRole
@@ -67,17 +67,29 @@ async function resolveAndCheckMember(
  * - INVARIANT: result.member.id === workspace Member.id (never ProjectMember.id)
  * - Per-project role is returned as `projectRole`; set on request by callers
  *
- * @param userId      - Authenticated user's userId
- * @param projectId   - Resolved project UUID
- * @param workspaceId - Resolved workspace UUID
- * @param minRole     - Minimum required role (optional; if absent, any access is sufficient)
+ * KAN-19 — credential-scope FIRST-GUARD (fires before any DB lookup and before bypass):
+ * If allowedProjectIds has length > 0 and does NOT include projectId → 403.
+ * Empty/absent allowedProjectIds = unscoped → no restriction (backward-compat).
+ *
+ * @param userId             - Authenticated user's userId
+ * @param projectId          - Resolved project UUID
+ * @param workspaceId        - Resolved workspace UUID
+ * @param minRole            - Minimum required role (optional; if absent, any access is sufficient)
+ * @param allowedProjectIds  - Token-scope claim from request.user (KAN-19); absent/[] = unscoped
  */
 export async function enforceProjectAccess(
   userId: string,
   projectId: string,
   workspaceId: string,
   minRole?: MemberRole,
+  allowedProjectIds?: string[],
 ): Promise<{ member: MemberContext; projectRole: MemberRole }> {
+  // KAN-19 FIRST-GUARD: credential-scope check — MUST precede bypass AND Member lookup.
+  // Discriminator: .length > 0 ([] = unscoped; legacy tokens default to []).
+  if (allowedProjectIds && allowedProjectIds.length > 0 && !allowedProjectIds.includes(projectId)) {
+    throw new AppError(403, "FORBIDDEN", "Token scope does not allow access to this project");
+  }
+
   // Step 1: resolve workspace member (establishes member.id = workspace Member.id)
   const wsMember = await prisma.member.findUnique({
     where: {
@@ -255,6 +267,7 @@ export function requireProjectRole(projectKeyParam: string, ...roles: MemberRole
       project.id,
       project.workspaceId,
       minimumRole,
+      user.allowedProjectIds,
     );
 
     request.member = member;
@@ -322,6 +335,7 @@ export function requireIssueRole(issueKeyParam: string, ...roles: MemberRole[]):
       issue.project.id,
       issue.project.workspaceId,
       minimumRole,
+      user.allowedProjectIds,
     );
 
     request.member = member;
@@ -384,6 +398,7 @@ export function requireCycleRole(cycleIdParam: string, ...roles: MemberRole[]): 
       cycle.project.id,
       cycle.project.workspaceId,
       minimumRole,
+      user.allowedProjectIds,
     );
 
     request.member = member;
