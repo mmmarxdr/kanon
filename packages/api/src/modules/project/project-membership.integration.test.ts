@@ -352,6 +352,169 @@ describe("KAN-16: Project Membership Enforcement", () => {
     expect(dbIssue?.assigneeId).toBe(member.id);
   });
 
+  // ── W2: gate↔handler divergence — mutation hits gate-resolved project, not colliding one ──
+
+  it("W2-PATCH: PATCH /projects/:key mutates gate-resolved WA project, never WB", async () => {
+    // WA: explicitly older workspace; WB: newer.
+    const [wsA, wsB] = await Promise.all([
+      prisma.workspace.create({
+        data: {
+          name: "W2 WA",
+          slug: `w2wa-${Math.random().toString(36).slice(2, 7)}`,
+          createdAt: new Date("2020-01-01T00:00:00.000Z"),
+        },
+      }),
+      prisma.workspace.create({
+        data: {
+          name: "W2 WB",
+          slug: `w2wb-${Math.random().toString(36).slice(2, 7)}`,
+          createdAt: new Date("2021-01-01T00:00:00.000Z"),
+        },
+      }),
+    ]);
+
+    // Both have "W2KEY" project.
+    const [projectA, projectB] = await Promise.all([
+      prisma.project.create({ data: { key: "W2KEY", name: "WA Project", workspaceId: wsA.id } }),
+      prisma.project.create({ data: { key: "W2KEY", name: "WB Project", workspaceId: wsB.id } }),
+    ]);
+
+    // User is admin in WA (admin can PATCH without PM row — admin bypass applies).
+    const memberInWA = await seedTestMemberWithRole(wsA.id, "admin");
+    // Add same user to WB as admin.
+    await prisma.member.create({
+      data: {
+        username: `w2wb-adm-${Math.random().toString(36).slice(2, 7)}`,
+        role: "admin",
+        userId: memberInWA.userId,
+        workspaceId: wsB.id,
+      },
+    });
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/projects/W2KEY`,
+      headers: {
+        authorization: `Bearer ${memberInWA.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ name: "WA Mutated" }),
+    });
+
+    expect(res.statusCode).toBe(200);
+
+    // GATE resolves to WA (oldest workspace). The handler MUST mutate WA, not WB.
+    const [dbA, dbB] = await Promise.all([
+      prisma.project.findUnique({ where: { id: projectA.id }, select: { name: true } }),
+      prisma.project.findUnique({ where: { id: projectB.id }, select: { name: true } }),
+    ]);
+    expect(dbA?.name).toBe("WA Mutated");   // gate-resolved project must be updated
+    expect(dbB?.name).toBe("WB Project");   // colliding WB must be untouched
+  });
+
+  it("W2-POST-ISSUE: POST /projects/:key/issues creates issue in gate-resolved WA, never WB", async () => {
+    // WB is created FIRST (older insertion order) so unscoped findFirst picks WB.
+    // The gate scopes to user's workspaces and picks WA (oldest by createdAt).
+    // After the fix, createIssue must use the gate-resolved WA id, not re-resolve by key.
+    const wsB = await prisma.workspace.create({
+      data: {
+        name: "W2I WB",
+        slug: `w2iwb-${Math.random().toString(36).slice(2, 7)}`,
+        createdAt: new Date("2021-01-01T00:00:00.000Z"),
+      },
+    });
+    const wsA = await prisma.workspace.create({
+      data: {
+        name: "W2I WA",
+        slug: `w2iwa-${Math.random().toString(36).slice(2, 7)}`,
+        createdAt: new Date("2020-01-01T00:00:00.000Z"),
+      },
+    });
+
+    // projectB inserted first → unscoped findFirst returns WB
+    const projectB = await prisma.project.create({ data: { key: "W2IKEY", name: "WB Project", workspaceId: wsB.id } });
+    const projectA = await prisma.project.create({ data: { key: "W2IKEY", name: "WA Project", workspaceId: wsA.id } });
+
+    // User is member in WA (older createdAt → gate picks WA) with PM row.
+    const memberInWA = await seedTestMemberWithRole(wsA.id, "member");
+    await prisma.member.create({
+      data: {
+        username: `w2iwb-${Math.random().toString(36).slice(2, 7)}`,
+        role: "member",
+        userId: memberInWA.userId,
+        workspaceId: wsB.id,
+      },
+    });
+    await seedTestProjectMember(memberInWA.userId, projectA.id, "member");
+    // No PM row for WB → if handler re-resolves by key (unscoped), it picks WB, issue lands there.
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/projects/W2IKEY/issues`,
+      headers: {
+        authorization: `Bearer ${memberInWA.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ title: "cross-tenant safety check", type: "task", priority: "medium" }),
+    });
+
+    expect(res.statusCode).toBe(201);
+    const issue = res.json();
+
+    // Issue MUST belong to gate-resolved WA project, not WB.
+    expect(issue.projectId).toBe(projectA.id);
+    expect(issue.projectId).not.toBe(projectB.id);
+  });
+
+  it("W2-DELETE: DELETE /projects/:key archives gate-resolved WA project, never WB", async () => {
+    // WB inserted first (older insertion order) so unscoped findFirst picks WB.
+    // Gate resolves WA (oldest by createdAt 2020 < 2021).
+    const wsB = await prisma.workspace.create({
+      data: {
+        name: "W2D WB",
+        slug: `w2dwb-${Math.random().toString(36).slice(2, 7)}`,
+        createdAt: new Date("2021-01-01T00:00:00.000Z"),
+      },
+    });
+    const wsA = await prisma.workspace.create({
+      data: {
+        name: "W2D WA",
+        slug: `w2dwa-${Math.random().toString(36).slice(2, 7)}`,
+        createdAt: new Date("2020-01-01T00:00:00.000Z"),
+      },
+    });
+
+    // projectB inserted first → unscoped findFirst returns WB
+    const projectB = await prisma.project.create({ data: { key: "W2DKEY", name: "WB Project", workspaceId: wsB.id } });
+    const projectA = await prisma.project.create({ data: { key: "W2DKEY", name: "WA Project", workspaceId: wsA.id } });
+
+    // User must be owner in WA (owner required for DELETE — no PM row needed due to bypass).
+    const ownerInWA = await seedTestMemberWithRole(wsA.id, "owner");
+    await prisma.member.create({
+      data: {
+        username: `w2dwb-own-${Math.random().toString(36).slice(2, 7)}`,
+        role: "owner",
+        userId: ownerInWA.userId,
+        workspaceId: wsB.id,
+      },
+    });
+
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/api/projects/W2DKEY`,
+      headers: { authorization: `Bearer ${ownerInWA.token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+
+    const [dbA, dbB] = await Promise.all([
+      prisma.project.findUnique({ where: { id: projectA.id }, select: { archived: true } }),
+      prisma.project.findUnique({ where: { id: projectB.id }, select: { archived: true } }),
+    ]);
+    expect(dbA?.archived).toBe(true);   // gate-resolved WA must be archived
+    expect(dbB?.archived).toBe(false);  // WB must be untouched
+  });
+
   // ── R-KAN14: distinct users can both have PM rows for same project ────────
 
   it("R-KAN14: two distinct members can both hold PM rows for the same project", async () => {
