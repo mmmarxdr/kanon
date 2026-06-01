@@ -1,4 +1,4 @@
-import type { MemberRole } from "@prisma/client";
+import type { MemberRole, Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 
@@ -254,4 +254,38 @@ export async function removeProjectMember(
   }
 
   await prisma.projectMember.delete({ where: { id: pmId } });
+}
+
+/**
+ * Create ProjectMember rows for a set of invite assignments inside an existing transaction.
+ *
+ * Rules (R-INV-accept, R-INV-onboard, R-INV-idempotent, R-INV-inv):
+ *   - Empty assignments → no-op (no DB calls).
+ *   - Stale/deleted projects (no longer in workspace) → skipped silently.
+ *   - skipDuplicates: re-applying an existing (userId, projectId) pair is not an error.
+ *   - userId param is the invitee's userId — NEVER a Member.id.
+ *   - No owner-cap: gating happens at invite CREATION time only.
+ */
+export async function createProjectMembersInTx(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  assignments: { projectId: string; role: MemberRole }[],
+  workspaceId: string,
+): Promise<void> {
+  if (assignments.length === 0) return;
+
+  const ids = assignments.map((a) => a.projectId);
+  const live = await tx.project.findMany({
+    where: { id: { in: ids }, workspaceId },
+    select: { id: true },
+  });
+
+  const liveSet = new Set(live.map((p) => p.id));
+  const data = assignments
+    .filter((a) => liveSet.has(a.projectId))
+    .map((a) => ({ userId, projectId: a.projectId, role: a.role }));
+
+  if (data.length === 0) return;
+
+  await tx.projectMember.createMany({ data, skipDuplicates: true });
 }
