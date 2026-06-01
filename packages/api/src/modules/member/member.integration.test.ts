@@ -6,6 +6,7 @@ import {
   seedTestMember,
   seedTestMemberWithRole,
   seedTestProject,
+  seedTestProjectMember,
   cleanDatabase,
   disconnectTestDb,
 } from "../../test/helpers.js";
@@ -284,12 +285,12 @@ describe("Workspace Member Management", () => {
   // ── Task 5.4: Route authorization enforcement ─────────────────────
 
   describe("Route Authorization", () => {
-    it("non-member gets 403 on project read", async () => {
+    it("non-member gets 404 on project read (project not in their workspace)", async () => {
       const ws = await seedTestWorkspace();
       await seedTestMemberWithRole(ws.id, "owner");
       const project = await seedTestProject(ws.id);
 
-      // Create an outsider user
+      // Create an outsider user — belongs to a different workspace, not ws
       const otherWs = await seedTestWorkspace();
       const outsider = await seedTestMemberWithRole(otherWs.id, "owner");
 
@@ -299,7 +300,9 @@ describe("Workspace Member Management", () => {
         headers: { authorization: `Bearer ${outsider.token}` },
       });
 
-      expect(res.statusCode).toBe(403);
+      // R-KAN16-bug: project lookup is scoped to user's workspaces.
+      // Since outsider is NOT in ws, the project is invisible → 404 (not 403).
+      expect(res.statusCode).toBe(404);
     });
 
     it("viewer can read projects (200)", async () => {
@@ -307,6 +310,8 @@ describe("Workspace Member Management", () => {
       await seedTestMemberWithRole(ws.id, "owner");
       const viewer = await seedTestMemberWithRole(ws.id, "viewer");
       const project = await seedTestProject(ws.id);
+      // KAN-16: viewer needs an explicit PM row to access project-scoped routes
+      await seedTestProjectMember(viewer.userId, project.id, "viewer");
 
       const res = await app.inject({
         method: "GET",
@@ -338,6 +343,8 @@ describe("Workspace Member Management", () => {
       await seedTestMemberWithRole(ws.id, "owner");
       const member = await seedTestMemberWithRole(ws.id, "member");
       const project = await seedTestProject(ws.id);
+      // KAN-16: member needs an explicit PM row to access project-scoped routes
+      await seedTestProjectMember(member.userId, project.id, "member");
 
       const res = await app.inject({
         method: "POST",
