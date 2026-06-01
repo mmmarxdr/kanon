@@ -6,7 +6,48 @@ import { env } from "../../config/env.js";
 import { AppError } from "../../shared/types.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import type { EmailProvider } from "../../services/email/types.js";
-import type { CreateInviteBody, OnboardingInviteBody } from "./schema.js";
+import type { CreateInviteBody, OnboardingInviteBody, ProjectAssignment } from "./schema.js";
+
+/**
+ * Validate project assignments for a given workspace:
+ * - All projectIds must belong to the workspace (else 422 INVALID_PROJECT)
+ * - If any assignment role is 'owner' and inviterRole !== 'owner' → 403 ROLE_CAP_EXCEEDED
+ *
+ * Must be called BEFORE any workspaceInvite.create call.
+ */
+async function validateProjectAssignments(
+  assignments: ProjectAssignment[],
+  workspaceId: string,
+  inviterRole: MemberRole,
+): Promise<void> {
+  if (assignments.length === 0) return;
+
+  // Check owner-cap first (cheaper — no DB call needed if we can short-circuit)
+  const hasOwnerAssignment = assignments.some((a) => a.role === "owner");
+  if (hasOwnerAssignment && inviterRole !== "owner") {
+    throw new AppError(
+      403,
+      "ROLE_CAP_EXCEEDED",
+      "Only workspace owners may assign the owner role to projects",
+    );
+  }
+
+  // Validate all projectIds belong to the workspace
+  const ids = assignments.map((a) => a.projectId);
+  const liveProjects = await prisma.project.findMany({
+    where: { id: { in: ids }, workspaceId },
+    select: { id: true },
+  });
+  const liveSet = new Set(liveProjects.map((p) => p.id));
+  const mismatch = ids.find((id) => !liveSet.has(id));
+  if (mismatch) {
+    throw new AppError(
+      422,
+      "INVALID_PROJECT",
+      `Project ${mismatch} does not belong to this workspace`,
+    );
+  }
+}
 
 /**
  * Generate a cryptographically secure invite token.
@@ -126,13 +167,22 @@ function buildInviteEmail(opts: {
 /**
  * Create a new workspace invite link.
  * If an email is provided and an emailProvider is available, sends an invite email.
+ *
+ * @param inviterRole - The workspace role of the user creating the invite.
+ *   Required to enforce owner-cap on project assignments.
  */
 export async function createInvite(
   workspaceId: string,
   createdById: string,
   body: CreateInviteBody,
+  inviterRole: MemberRole,
   emailProvider?: EmailProvider,
 ) {
+  // Validate project assignments before creating the invite (fail fast, no partial state)
+  if (body.projectAssignments && body.projectAssignments.length > 0) {
+    await validateProjectAssignments(body.projectAssignments, workspaceId, inviterRole);
+  }
+
   const token = generateToken();
   const expiresAt = new Date(Date.now() + body.expiresInHours * 60 * 60 * 1000);
 
@@ -146,6 +196,7 @@ export async function createInvite(
       email: body.email ?? null,
       workspaceId,
       createdById,
+      projectAssignments: body.projectAssignments ?? null,
     },
     include: {
       createdBy: {
@@ -293,11 +344,15 @@ export async function getInviteMetadata(token: string) {
  * CRITICAL (option 1): The target user MUST already exist AND be a member of
  * the workspace. This function does NOT create users. Returns a signed JWT
  * (scope=onboard) embedded in a kanon:// URL.
+ *
+ * @param inviterRole - The workspace role of the user creating the invite.
+ *   Required to enforce owner-cap on project assignments.
  */
 export async function createOnboardingInvite(
   workspaceId: string,
   createdById: string,
   body: OnboardingInviteBody,
+  inviterRole: MemberRole,
 ) {
   // 1. Resolve user — must exist
   const user = await prisma.user.findUnique({
@@ -317,6 +372,11 @@ export async function createOnboardingInvite(
     throw new AppError(403, "NOT_A_MEMBER", "User is not a member of this workspace");
   }
 
+  // 2b. Validate project assignments before creating the invite (fail fast)
+  if (body.projectAssignments && body.projectAssignments.length > 0) {
+    await validateProjectAssignments(body.projectAssignments, workspaceId, inviterRole);
+  }
+
   const ttlHours = body.ttlHours ?? env.ONBOARDING_TOKEN_TTL_HOURS;
   const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000);
 
@@ -333,6 +393,7 @@ export async function createOnboardingInvite(
       kind: "ONBOARDING",
       workspaceId,
       createdById,
+      projectAssignments: body.projectAssignments ?? null,
     },
     include: {
       createdBy: { select: { email: true, displayName: true } },
