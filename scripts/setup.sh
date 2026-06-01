@@ -56,14 +56,23 @@ bash "$ROOT_DIR/scripts/upgrade.sh"
 
 echo ""
 
-# ── 3. Build MCP package ──────────────────────────────────────────────────────
+# ── 3. Build shared @kanon/bridge package ─────────────────────────────────────
+# Shared Zod schemas/types used by api/cli/mcp; api integration tests import it
+# via buildApp, so its dist/ must exist before tests run.
+info "Building @kanon/bridge..."
+pnpm --filter @kanon/bridge build
+ok "@kanon/bridge built"
+
+echo ""
+
+# ── 4. Build MCP package ──────────────────────────────────────────────────────
 info "Building @kanon/mcp..."
 pnpm --filter @kanon/mcp build
 ok "@kanon/mcp built"
 
 echo ""
 
-# ── 4. Build setup package ────────────────────────────────────────────────────
+# ── 5. Build setup package ────────────────────────────────────────────────────
 info "Building @kanon-pm/setup..."
 pnpm --filter @kanon-pm/setup build
 ok "@kanon-pm/setup built"
