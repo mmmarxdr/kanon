@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { prisma } from "../config/prisma.js";
 import { env } from "../config/env.js";
 import { AppError } from "../shared/types.js";
-import type { AuthUser, TokenPayload } from "../shared/types.js";
+import type { AuthUser, TokenPayload, AccessTokenPayload } from "../shared/types.js";
 import { COOKIE_NAMES } from "../shared/constants.js";
 
 /**
@@ -93,9 +93,18 @@ async function authHook(
     const token = authHeader.slice(7);
     const payload = verifyAccessToken(token);
 
+    // KAN-19: decode allowedProjectIds claim from access JWT (scope: "access").
+    // Cast via unknown to avoid mutating TokenPayload — the access token carries
+    // workspace + scope fields not present on the cookie TokenPayload.
+    const scopedPayload = payload as unknown as Partial<AccessTokenPayload>;
+    const allowedProjectIds = Array.isArray(scopedPayload.allowedProjectIds)
+      ? scopedPayload.allowedProjectIds
+      : undefined;
+
     request.user = {
       userId: payload.sub,
       email: payload.email,
+      ...(allowedProjectIds !== undefined ? { allowedProjectIds } : {}),
     };
     return;
   }

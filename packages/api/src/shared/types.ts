@@ -28,12 +28,18 @@ export class AppError extends Error {
 
 /**
  * Authenticated user context, attached to request by auth plugin.
- * Contains only user-level identity — no workspace or role info.
+ * Contains user-level identity and optional token scope (KAN-19).
  * Workspace context comes from URL params for scoped endpoints.
+ * allowedProjectIds is present only when the Bearer access token carries the
+ * allowedProjectIds claim (scoped token). Absent or [] means unscoped.
  */
 export interface AuthUser {
   userId: string;
   email: string;
+  /** Project-scope restriction from the Bearer JWT claim (KAN-19).
+   *  Present and non-empty → token is scoped; enforceProjectAccess applies FIRST-GUARD.
+   *  Absent or [] → unscoped; full access (backward-compat + X-API-Key + cookie paths). */
+  allowedProjectIds?: string[];
 }
 
 /**
