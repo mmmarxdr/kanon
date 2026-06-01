@@ -67,8 +67,15 @@ export default async function projectMemberRoutes(
         body: AddProjectMemberBody,
       },
     },
-    async (_request, reply) => {
-      return reply.status(501).send({ message: "Not yet implemented" });
+    async (request, reply) => {
+      const result = await addProjectMember(
+        request.projectId!,
+        request.member!.workspaceId,
+        request.body.email,
+        request.body.role,
+        request.projectRole!,
+      );
+      return reply.status(201).send(result);
     },
   );
 

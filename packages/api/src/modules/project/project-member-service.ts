@@ -107,8 +107,50 @@ export async function addProjectMember(
   role: MemberRole,
   actingRole: MemberRole,
 ): Promise<EffectiveMemberRow> {
-  // TODO: implement in A-03
-  throw new AppError(501, "NOT_IMPLEMENTED", "Not yet implemented");
+  // 1. Resolve user by email
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, email: true, displayName: true },
+  });
+  if (!user) {
+    throw new AppError(404, "USER_NOT_FOUND", "User not found");
+  }
+
+  // 2. Assert target is a workspace member
+  const wsMember = await prisma.member.findUnique({
+    where: { userId_workspaceId: { userId: user.id, workspaceId } },
+    select: { id: true },
+  });
+  if (!wsMember) {
+    throw new AppError(422, "NOT_WORKSPACE_MEMBER", "Target user is not a member of this workspace");
+  }
+
+  // 3. Assert no existing PM row
+  const existing = await prisma.projectMember.findUnique({
+    where: { userId_projectId: { userId: user.id, projectId } },
+  });
+  if (existing) {
+    throw new AppError(409, "ALREADY_PROJECT_MEMBER", "User is already a project member");
+  }
+
+  // 4. Owner-cap: only an effective project owner can set role:owner
+  if (role === "owner" && actingRole !== "owner") {
+    throw new AppError(403, "ROLE_CAP_EXCEEDED", "Only a project owner can assign the owner role");
+  }
+
+  // Create PM row
+  const pm = await prisma.projectMember.create({
+    data: { userId: user.id, projectId, role },
+  });
+
+  return {
+    userId: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    role: pm.role,
+    source: "project",
+    pmId: pm.id, // ProjectMember.id — R-INV1
+  };
 }
 
 /**
