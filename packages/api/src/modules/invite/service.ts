@@ -196,7 +196,10 @@ export async function createInvite(
       email: body.email ?? null,
       workspaceId,
       createdById,
-      projectAssignments: body.projectAssignments ?? null,
+      projectAssignments:
+        body.projectAssignments && body.projectAssignments.length > 0
+          ? body.projectAssignments
+          : undefined,
     },
     include: {
       createdBy: {
@@ -393,7 +396,10 @@ export async function createOnboardingInvite(
       kind: "ONBOARDING",
       workspaceId,
       createdById,
-      projectAssignments: body.projectAssignments ?? null,
+      projectAssignments:
+        body.projectAssignments && body.projectAssignments.length > 0
+          ? body.projectAssignments
+          : undefined,
     },
     include: {
       createdBy: { select: { email: true, displayName: true } },
