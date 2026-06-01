@@ -311,9 +311,17 @@ export async function removeMember(
     throw new AppError(403, "FORBIDDEN", "Insufficient permissions to remove this member");
   }
 
-  await prisma.member.delete({
-    where: { id: memberId },
-  });
+  await prisma.$transaction([
+    prisma.projectMember.deleteMany({
+      where: {
+        userId: member.userId,
+        project: { workspaceId },
+      },
+    }),
+    prisma.member.delete({
+      where: { id: memberId },
+    }),
+  ]);
 
   // Emit domain event (fire-and-forget)
   try {

@@ -17,9 +17,13 @@ vi.mock("../../config/prisma.js", () => ({
       delete: vi.fn(),
       count: vi.fn(),
     },
+    projectMember: {
+      deleteMany: vi.fn(),
+    },
     user: {
       findUnique: vi.fn(),
     },
+    $transaction: vi.fn(),
   },
 }));
 
@@ -34,6 +38,7 @@ const mockMemberUpdate = vi.mocked(prisma.member.update);
 const mockMemberDelete = vi.mocked(prisma.member.delete);
 const mockMemberCount = vi.mocked(prisma.member.count);
 const mockUserFindUnique = vi.mocked(prisma.user.findUnique);
+const mockTransaction = vi.mocked(prisma.$transaction);
 
 describe("Member Service", () => {
   beforeEach(() => {
@@ -205,19 +210,20 @@ describe("Member Service", () => {
   // ── removeMember ────────────────────────────────────────────────────
 
   describe("removeMember", () => {
-    it("removes a member successfully", async () => {
+    it("removes a member successfully (cascade via $transaction)", async () => {
       mockMemberFindFirst.mockResolvedValue({
         id: "m1",
         role: "member",
         workspaceId: "ws-1",
         userId: "u-target",
       } as any);
-      mockMemberDelete.mockResolvedValue({} as any);
+      // $transaction receives an array of pending operations; resolve with void array
+      mockTransaction.mockResolvedValue([{ count: 0 }, {}] as any);
 
       await expect(
         removeMember("ws-1", "m1", "u-acting", "admin"),
       ).resolves.toBeUndefined();
-      expect(mockMemberDelete).toHaveBeenCalledWith({ where: { id: "m1" } });
+      expect(mockTransaction).toHaveBeenCalledTimes(1);
     });
 
     it("throws 422 when removing the last owner", async () => {
