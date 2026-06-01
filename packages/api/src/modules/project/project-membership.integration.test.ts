@@ -254,6 +254,64 @@ describe("KAN-16: Project Membership Enforcement", () => {
     expect(res.statusCode).toBe(404);
   });
 
+  // ── R-KAN16-bug: deterministic tie-break (oldest workspace wins) ──────────
+
+  it("R-KAN16-bug: same key in two workspaces the user belongs to — tie-break resolves to oldest workspace", async () => {
+    // WA: explicitly older workspace (2020-01-01); WB: explicitly newer (2021-01-01).
+    // Using prisma.workspace.create directly to control createdAt — bypassing the
+    // seedTestWorkspace helper which does not expose createdAt.
+    const [wsA, wsB] = await Promise.all([
+      prisma.workspace.create({
+        data: {
+          name: "WA Older",
+          slug: `wa-older-${Math.random().toString(36).slice(2, 7)}`,
+          createdAt: new Date("2020-01-01T00:00:00.000Z"),
+        },
+      }),
+      prisma.workspace.create({
+        data: {
+          name: "WB Newer",
+          slug: `wb-newer-${Math.random().toString(36).slice(2, 7)}`,
+          createdAt: new Date("2021-01-01T00:00:00.000Z"),
+        },
+      }),
+    ]);
+
+    // Projects: both keyed "TIEBRK" — one in each workspace.
+    const [projectA, _projectB] = await Promise.all([
+      seedTestProject(wsA.id, "TIEBRK"),
+      seedTestProject(wsB.id, "TIEBRK"),
+    ]);
+
+    // Create the user as a member of WA via the helper (creates user + token).
+    const memberInWA = await seedTestMemberWithRole(wsA.id, "member");
+
+    // Add the SAME user as a member of WB directly (same userId, no PM row in WB).
+    await prisma.member.create({
+      data: {
+        username: `wb-member-${Math.random().toString(36).slice(2, 7)}`,
+        role: "member",
+        userId: memberInWA.userId,
+        workspaceId: wsB.id,
+      },
+    });
+
+    // Grant access ONLY to WA's project (role=member → no admin/owner bypass).
+    // WB has no PM row for this user — a wrong tie-break to WB → 403.
+    await seedTestProjectMember(memberInWA.userId, projectA.id, "member");
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/projects/TIEBRK`,
+      headers: { authorization: `Bearer ${memberInWA.token}` },
+    });
+
+    // Tie-break must select WA (oldest workspace, createdAt 2020 < 2021).
+    // If WB were selected instead, the user has no PM row there → 403.
+    expect(res.statusCode).toBe(200);
+    expect(res.json().id).toBe(projectA.id);
+  });
+
   // ── R-INV1: issue creation uses workspace Member.id, not PM.id ───────────
 
   it("R-INV1: created issue uses workspace Member.id as assigneeId (not ProjectMember.id)", async () => {
