@@ -5,6 +5,7 @@ import {
   seedTestWorkspace,
   seedTestMemberWithRole,
   seedTestProject,
+  seedTestProjectMember,
   cleanDatabase,
   disconnectTestDb,
 } from "../../test/helpers.js";
@@ -33,6 +34,11 @@ describe("Work Session Routes", () => {
     await seedTestMemberWithRole(ws.id, "owner");
     const member = await seedTestMemberWithRole(ws.id, role);
     const project = await seedTestProject(ws.id);
+
+    // KAN-16: member/viewer require a ProjectMember row; owner/admin bypass
+    if (role === "member" || role === "viewer") {
+      await seedTestProjectMember(member.userId, project.id, role);
+    }
 
     const issue = await prisma.issue.create({
       data: {
@@ -73,6 +79,9 @@ describe("Work Session Routes", () => {
       const memberA = await seedTestMemberWithRole(ws.id, "member");
       const memberB = await seedTestMemberWithRole(ws.id, "member");
       const project = await seedTestProject(ws.id);
+      // KAN-16: both members need PM rows to access issue-scoped routes
+      await seedTestProjectMember(memberA.userId, project.id, "member");
+      await seedTestProjectMember(memberB.userId, project.id, "member");
       const issue = await prisma.issue.create({
         data: {
           key: `${project.key}-1`,

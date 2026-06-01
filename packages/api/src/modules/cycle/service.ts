@@ -247,10 +247,10 @@ function computeRisks(
   return out;
 }
 
-export async function listCycles(projectKey: string) {
-  const project = await prisma.project.findFirst({ where: { key: projectKey } });
+export async function listCycles(projectId: string) {
+  const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project)
-    throw new AppError(404, "PROJECT_NOT_FOUND", `Project "${projectKey}" not found`);
+    throw new AppError(404, "PROJECT_NOT_FOUND", `Project not found`);
   return prisma.cycle.findMany({
     where: { projectId: project.id },
     orderBy: { startDate: "desc" },
@@ -358,13 +358,13 @@ interface CreateCycleInput {
 }
 
 export async function createCycle(
-  projectKey: string,
+  projectId: string,
   input: CreateCycleInput,
   authorId?: string,
 ) {
-  const project = await prisma.project.findFirst({ where: { key: projectKey } });
+  const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project)
-    throw new AppError(404, "PROJECT_NOT_FOUND", `Project "${projectKey}" not found`);
+    throw new AppError(404, "PROJECT_NOT_FOUND", `Project not found`);
 
   const attachKeys = input.attachIssueKeys ?? [];
   const shouldAttach = attachKeys.length > 0;
@@ -407,7 +407,7 @@ export async function createCycle(
     throw new AppError(
       400,
       "CROSS_PROJECT_ISSUE",
-      `The following issue keys do not belong to project "${projectKey}": ${offendingKeys.join(", ")}`,
+      `The following issue keys do not belong to project "${project.key}": ${offendingKeys.join(", ")}`,
     );
   }
 

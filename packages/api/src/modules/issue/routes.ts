@@ -42,7 +42,7 @@ export default async function issueRoutes(
     },
     async (request, reply) => {
       const issue = await issueService.createIssue(
-        request.params.key,
+        request.projectId!,
         request.body,
         request.member!.id,
       );
@@ -63,7 +63,7 @@ export default async function issueRoutes(
       },
     },
     async (request, _reply) => {
-      return issueService.listIssues(request.params.key, request.query);
+      return issueService.listIssues(request.projectId!, request.query);
     },
   );
 
@@ -138,7 +138,7 @@ export default async function issueRoutes(
       },
     },
     async (request, _reply) => {
-      return issueService.listIssueGroups(request.params.key);
+      return issueService.listIssueGroups(request.projectId!);
     },
   );
 
@@ -174,7 +174,7 @@ export default async function issueRoutes(
     },
     async (request, _reply) => {
       return issueService.transitionGroup(
-        request.params.key,
+        request.projectId!,
         request.params.groupKey,
         request.body.to_state,
         request.member!.id,
@@ -199,7 +199,7 @@ export default async function issueRoutes(
     },
     async (request, _reply) => {
       return issueService.batchTransitionByKeys(
-        request.params.key,
+        request.projectId!,
         request.body,
         request.member!.id,
       );

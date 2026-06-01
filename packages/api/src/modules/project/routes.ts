@@ -69,7 +69,7 @@ export default async function projectRoutes(
       },
     },
     async (request, _reply) => {
-      return projectService.getProject(request.params.key);
+      return projectService.getProject(request.projectId!);
     },
   );
 
@@ -86,7 +86,7 @@ export default async function projectRoutes(
       },
     },
     async (request, _reply) => {
-      return projectService.updateProject(request.params.key, request.body, request.member?.id);
+      return projectService.updateProject(request.projectId!, request.body, request.member?.id);
     },
   );
 
@@ -102,7 +102,7 @@ export default async function projectRoutes(
       },
     },
     async (request, _reply) => {
-      return projectService.archiveProject(request.params.key, request.member?.id);
+      return projectService.archiveProject(request.projectId!, request.member?.id);
     },
   );
 }

@@ -28,13 +28,38 @@ export async function createProject(
     );
   }
 
-  const project = await prisma.project.create({
-    data: {
-      key: body.key,
-      name: body.name,
-      description: body.description,
-      workspaceId,
-    },
+  // Create project and insert owner ProjectMember row in one transaction (KAN-16 A5).
+  // The creator gets role=owner so they can access their own project immediately,
+  // even if their workspace role is only "member".
+  const project = await prisma.$transaction(async (tx) => {
+    const created = await tx.project.create({
+      data: {
+        key: body.key,
+        name: body.name,
+        description: body.description,
+        workspaceId,
+      },
+    });
+
+    // Resolve the workspace Member row for this user (actorId is member.id)
+    // We need userId to insert into ProjectMember; look it up from Member table.
+    if (actorId) {
+      const wsMember = await tx.member.findUnique({
+        where: { id: actorId },
+        select: { userId: true },
+      });
+      if (wsMember) {
+        await tx.projectMember.create({
+          data: {
+            userId: wsMember.userId,
+            projectId: created.id,
+            role: "owner",
+          },
+        });
+      }
+    }
+
+    return created;
   });
 
   // Emit domain event (fire-and-forget)
@@ -63,34 +88,36 @@ export async function listProjects(workspaceId: string) {
 }
 
 /**
- * Get a project by key.
+ * Get a project by gate-resolved id (KAN-16 security fix).
+ * Callers downstream of requireProjectRole/requireProjectMember pass
+ * request.projectId so the handler uses the SAME project the gate authorized.
  */
-export async function getProject(key: string) {
-  const project = await prisma.project.findFirst({
-    where: { key },
+export async function getProject(projectId: string) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
   if (!project) {
     throw new AppError(
       404,
       "PROJECT_NOT_FOUND",
-      `Project "${key}" not found`,
+      `Project not found`,
     );
   }
   return project;
 }
 
 /**
- * Update a project by key.
+ * Update a project by gate-resolved id (KAN-16 security fix).
  */
-export async function updateProject(key: string, body: UpdateProjectBody, actorId?: string) {
-  const project = await prisma.project.findFirst({
-    where: { key },
+export async function updateProject(projectId: string, body: UpdateProjectBody, actorId?: string) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
   if (!project) {
     throw new AppError(
       404,
       "PROJECT_NOT_FOUND",
-      `Project "${key}" not found`,
+      `Project not found`,
     );
   }
 
@@ -115,17 +142,17 @@ export async function updateProject(key: string, body: UpdateProjectBody, actorI
 }
 
 /**
- * Soft delete (archive) a project by key.
+ * Soft delete (archive) a project by gate-resolved id (KAN-16 security fix).
  */
-export async function archiveProject(key: string, actorId?: string) {
-  const project = await prisma.project.findFirst({
-    where: { key },
+export async function archiveProject(projectId: string, actorId?: string) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
   });
   if (!project) {
     throw new AppError(
       404,
       "PROJECT_NOT_FOUND",
-      `Project "${key}" not found`,
+      `Project not found`,
     );
   }
 

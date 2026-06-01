@@ -39,6 +39,7 @@ vi.mock("../../config/prisma.js", () => ({
     },
     project: {
       findFirst: vi.fn(),
+      findUnique: vi.fn(),
     },
     issueDependency: {
       findMany: vi.fn(),
@@ -201,7 +202,7 @@ describe("createIssue() — cycleId integration", () => {
     vi.clearAllMocks();
     setupNextIssueKey(1);
     vi.mocked(prisma.activityLog.create).mockResolvedValue({} as any);
-    vi.mocked(prisma.project.findFirst).mockResolvedValue(PROJECT as any);
+    vi.mocked(prisma.project.findUnique).mockResolvedValue(PROJECT as any);
   });
 
   it("TEST 1: createIssue with cycleId records a CycleScopeEvent (kind=add)", async () => {
@@ -214,7 +215,7 @@ describe("createIssue() — cycleId integration", () => {
     } as any);
 
     await createIssue(
-      "TEST",
+      PROJECT.id,
       { title: "x", labels: [], cycleId: CYCLE_A.id } as any,
       "member-1",
     );
@@ -236,7 +237,7 @@ describe("createIssue() — cycleId integration", () => {
 
     await expect(
       createIssue(
-        "TEST",
+        PROJECT.id,
         { title: "x", labels: [], cycleId: CYCLE_OTHER.id } as any,
         "member-1",
       ),
@@ -259,7 +260,7 @@ describe("createIssue() — cycleId integration", () => {
       projectId: PROJECT.id,
     } as any);
 
-    await createIssue("TEST", { title: "x", labels: [] } as any, "member-1");
+    await createIssue(PROJECT.id, { title: "x", labels: [] } as any, "member-1");
 
     expect(prisma.cycleScopeEvent.create).not.toHaveBeenCalled();
     expect(prisma.cycle.findUnique).not.toHaveBeenCalled();
@@ -387,12 +388,12 @@ describe("updateIssue() — cycleId scope events", () => {
 describe("listIssues() — keys filter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(prisma.project.findFirst).mockResolvedValue(PROJECT as any);
+    vi.mocked(prisma.project.findUnique).mockResolvedValue(PROJECT as any);
     vi.mocked(prisma.issue.findMany).mockResolvedValue([] as any);
   });
 
   it("B1.1 — keys filter passes where.key = { in: [...] } to Prisma", async () => {
-    await listIssues("TEST", { keys: "TEST-1,TEST-2,TEST-99" } as any);
+    await listIssues(PROJECT.id, { keys: "TEST-1,TEST-2,TEST-99" } as any);
 
     expect(prisma.issue.findMany).toHaveBeenCalledOnce();
     const arg = vi.mocked(prisma.issue.findMany).mock.calls[0]![0] as any;
@@ -403,7 +404,7 @@ describe("listIssues() — keys filter", () => {
   it("B1.2 — more than 100 keys throws KEY_LIMIT_EXCEEDED 400", async () => {
     const manyKeys = Array.from({ length: 101 }, (_, i) => `TEST-${i + 1}`).join(",");
 
-    await expect(listIssues("TEST", { keys: manyKeys } as any)).rejects.toMatchObject({
+    await expect(listIssues(PROJECT.id, { keys: manyKeys } as any)).rejects.toMatchObject({
       statusCode: 400,
       code: "KEY_LIMIT_EXCEEDED",
     });
@@ -412,7 +413,7 @@ describe("listIssues() — keys filter", () => {
   });
 
   it("B1.3 — empty keys CSV is treated as no-op (no key filter)", async () => {
-    await listIssues("TEST", { keys: "" } as any);
+    await listIssues(PROJECT.id, { keys: "" } as any);
 
     expect(prisma.issue.findMany).toHaveBeenCalledOnce();
     const arg = vi.mocked(prisma.issue.findMany).mock.calls[0]![0] as any;
@@ -420,7 +421,7 @@ describe("listIssues() — keys filter", () => {
   });
 
   it("B1.4 — keys + state combined apply AND semantics", async () => {
-    await listIssues("TEST", { keys: "TEST-1,TEST-2", state: "todo" } as any);
+    await listIssues(PROJECT.id, { keys: "TEST-1,TEST-2", state: "todo" } as any);
 
     const arg = vi.mocked(prisma.issue.findMany).mock.calls[0]![0] as any;
     expect(arg.where.key).toEqual({ in: ["TEST-1", "TEST-2"] });
@@ -429,7 +430,7 @@ describe("listIssues() — keys filter", () => {
   });
 
   it("B1.5 — whitespace and empty entries are stripped", async () => {
-    await listIssues("TEST", { keys: " TEST-1 , ,TEST-2 ,," } as any);
+    await listIssues(PROJECT.id, { keys: " TEST-1 , ,TEST-2 ,," } as any);
 
     const arg = vi.mocked(prisma.issue.findMany).mock.calls[0]![0] as any;
     expect(arg.where.key).toEqual({ in: ["TEST-1", "TEST-2"] });
@@ -457,7 +458,7 @@ describe("batchTransitionByKeys()", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(prisma.project.findFirst).mockResolvedValue(PROJECT as any);
+    vi.mocked(prisma.project.findUnique).mockResolvedValue(PROJECT as any);
   });
 
   it("B7.1 — transitions all matched issues in one transaction", async () => {
@@ -468,7 +469,7 @@ describe("batchTransitionByKeys()", () => {
     ] as any);
 
     const res = await batchTransitionByKeys(
-      "TEST",
+      PROJECT.id,
       { keys: ["TEST-1", "TEST-2"], to_state: "in_progress" } as any,
       "member-1",
     );
@@ -486,7 +487,7 @@ describe("batchTransitionByKeys()", () => {
 
     await expect(
       batchTransitionByKeys(
-        "TEST",
+        PROJECT.id,
         { keys: ["TEST-1", "OTHER-9"], to_state: "in_progress" } as any,
         "member-1",
       ),
@@ -506,7 +507,7 @@ describe("batchTransitionByKeys()", () => {
 
     await expect(
       batchTransitionByKeys(
-        "TEST",
+        PROJECT.id,
         { keys: ["TEST-1", "TEST-999"], to_state: "in_progress" } as any,
         "member-1",
       ),

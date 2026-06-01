@@ -42,6 +42,7 @@ vi.mock("../../config/prisma.js", () => ({
     },
     project: {
       findFirst: vi.fn(),
+      findUnique: vi.fn(),
     },
     adminAuditLog: {
       create: vi.fn(),
@@ -60,7 +61,7 @@ const PROJECT = { id: "project-1", key: "ENG", workspaceId: "ws-1" };
 describe("createCycle() — Batch B4 (atomic attachIssueKeys)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(prisma.project.findFirst).mockResolvedValue(PROJECT as any);
+    vi.mocked(prisma.project.findUnique).mockResolvedValue(PROJECT as any);
   });
 
   it("B4.1 — without attachIssueKeys, just creates cycle (no tx)", async () => {
@@ -71,7 +72,7 @@ describe("createCycle() — Batch B4 (atomic attachIssueKeys)", () => {
       projectId: PROJECT.id,
     } as any);
 
-    await createCycle("ENG", {
+    await createCycle(PROJECT.id, {
       name: "Sprint",
       startDate: new Date("2026-04-20"),
       endDate: new Date("2026-05-04"),
@@ -92,7 +93,7 @@ describe("createCycle() — Batch B4 (atomic attachIssueKeys)", () => {
       projectId: PROJECT.id,
     } as any);
 
-    await createCycle("ENG", {
+    await createCycle(PROJECT.id, {
       name: "Sprint",
       startDate: new Date("2026-04-20"),
       endDate: new Date("2026-05-04"),
@@ -166,7 +167,7 @@ describe("createCycle() — Batch B4 (atomic attachIssueKeys)", () => {
 
     await expect(
       createCycle(
-        "ENG",
+        PROJECT.id,
         {
           name: "Sprint",
           startDate: new Date("2026-04-20"),
@@ -192,7 +193,7 @@ describe("createCycle() — Batch B4 (atomic attachIssueKeys)", () => {
 
     await expect(
       createCycle(
-        "ENG",
+        PROJECT.id,
         {
           name: "Sprint",
           startDate: new Date("2026-04-20"),
@@ -226,7 +227,7 @@ describe("createCycle() — Batch B4 (atomic attachIssueKeys)", () => {
 
     await expect(
       createCycle(
-        "ENG",
+        PROJECT.id,
         {
           name: "Sprint",
           startDate: new Date("2026-04-20"),

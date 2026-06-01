@@ -70,6 +70,7 @@ import { createIssue, updateIssue } from "../service.js";
 
 const mockPrismaTransaction = vi.mocked(prisma.$transaction);
 const mockProjectFindFirst = vi.mocked(prisma.project.findFirst);
+const mockProjectFindUnique = vi.mocked(prisma.project.findUnique);
 const mockIssueFindUnique = vi.mocked(prisma.issue.findUnique);
 const mockIssueCreate = vi.mocked(prisma.issue.create);
 const mockIssueUpdate = vi.mocked(prisma.issue.update);
@@ -150,6 +151,7 @@ describe("A6.2 — createIssue wires parseAndUpsertMentions", () => {
     });
 
     mockProjectFindFirst.mockResolvedValue(makeProject() as any);
+    mockProjectFindUnique.mockResolvedValue(makeProject() as any);
   });
 
   it("calls parseAndUpsertMentions with commentId=null when description is non-empty", async () => {
@@ -157,7 +159,7 @@ describe("A6.2 — createIssue wires parseAndUpsertMentions", () => {
     mockIssueCreate.mockResolvedValue(created as any);
 
     await createIssue(
-      "TEST",
+      "proj-1",
       { title: "Test issue", description: "@bob check this" },
       "m-alice",
     );
@@ -178,7 +180,7 @@ describe("A6.2 — createIssue wires parseAndUpsertMentions", () => {
     mockIssueCreate.mockResolvedValue(created as any);
 
     await createIssue(
-      "TEST",
+      "proj-1",
       { title: "Test issue" }, // no description
       "m-alice",
     );
@@ -191,7 +193,7 @@ describe("A6.2 — createIssue wires parseAndUpsertMentions", () => {
     mockIssueCreate.mockResolvedValue(created as any);
 
     await createIssue(
-      "TEST",
+      "proj-1",
       { title: "Test issue", description: "" },
       "m-alice",
     );
@@ -206,7 +208,7 @@ describe("A6.2 — createIssue wires parseAndUpsertMentions", () => {
 
     // Should resolve — mention parsing must not block issue creation
     await expect(
-      createIssue("TEST", { title: "Test issue", description: "@carol hi" }, "m-alice"),
+      createIssue("proj-1", { title: "Test issue", description: "@carol hi" }, "m-alice"),
     ).resolves.toBeDefined();
   });
 });

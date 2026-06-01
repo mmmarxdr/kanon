@@ -22,6 +22,7 @@ import {
   seedTestWorkspace,
   seedTestMember,
   seedTestProject,
+  seedTestProjectMember,
   cleanDatabase,
   disconnectTestDb,
 } from "../../../test/helpers.js";
@@ -410,6 +411,8 @@ describe("Dashboard route extension (A9 — inbox-redesign-cycle-c)", () => {
     const alice = await seedTestMember(ws.id, { username: "alice" });
     const bob = await seedTestMember(ws.id, { username: "bob" });
     const project = await seedTestProject(ws.id);
+    // KAN-16: bob needs a PM row to create issues and comments on this project
+    await seedTestProjectMember(bob.userId, project.id, "member");
 
     // Create an issue via API (route: POST /api/projects/:key/issues)
     const issueRes = await app.inject({

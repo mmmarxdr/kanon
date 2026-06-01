@@ -6,6 +6,7 @@ import {
   seedTestMember,
   seedTestMemberWithRole,
   seedTestProject,
+  seedTestProjectMember,
   cleanDatabase,
   disconnectTestDb,
 } from "../../test/helpers.js";
@@ -31,6 +32,8 @@ describe("Roadmap API", () => {
     const ws = await seedTestWorkspace();
     const member = await seedTestMember(ws.id);
     const project = await seedTestProject(ws.id);
+    // KAN-16: member needs a PM row to access project-scoped routes
+    await seedTestProjectMember(member.userId, project.id, "member");
 
     projectKey = project.key;
     token = member.token;

@@ -6,6 +6,7 @@ import {
   seedTestMember,
   seedTestMemberWithRole,
   seedTestProject,
+  seedTestProjectMember,
   cleanDatabase,
   disconnectTestDb,
 } from "../../test/helpers.js";
@@ -102,6 +103,7 @@ describe("Cycle Routes", () => {
       const ws = await seedTestWorkspace();
       const member = await seedTestMember(ws.id);
       const project = await seedTestProject(ws.id);
+      await seedTestProjectMember(member.userId, project.id, "member");
       const cycle = await seedCycle(project.id);
 
       const res = await app.inject({
@@ -140,6 +142,7 @@ describe("Cycle Routes", () => {
       const ws = await seedTestWorkspace();
       const member = await seedTestMember(ws.id);
       const project = await seedTestProject(ws.id);
+      await seedTestProjectMember(member.userId, project.id, "member");
       const cycle = await seedCycle(project.id, { state: "active" });
 
       const res = await app.inject({
@@ -198,6 +201,7 @@ describe("Cycle Routes", () => {
       const ws = await seedTestWorkspace();
       const member = await seedTestMember(ws.id);
       const project = await seedTestProject(ws.id);
+      await seedTestProjectMember(member.userId, project.id, "member");
       const cycle = await seedCycle(project.id, { state: "done" });
 
       const res = await app.inject({
@@ -221,6 +225,7 @@ describe("Cycle Routes", () => {
       const ws = await seedTestWorkspace();
       const member = await seedTestMember(ws.id);
       const project = await seedTestProject(ws.id);
+      await seedTestProjectMember(member.userId, project.id, "member");
       const cycle = await seedCycle(project.id, { state: "done" });
       // Seed a done issue so the non-terminal guard doesn't fire
       const count = await prisma.issue.count();
@@ -257,6 +262,7 @@ describe("Cycle Routes", () => {
       const ws = await seedTestWorkspace();
       const member = await seedTestMember(ws.id);
       const project = await seedTestProject(ws.id);
+      await seedTestProjectMember(member.userId, project.id, "member");
       const cycle = await seedCycle(project.id, { state: "active" });
 
       const res = await app.inject({
@@ -276,6 +282,7 @@ describe("Cycle Routes", () => {
       const ws = await seedTestWorkspace();
       const member = await seedTestMember(ws.id);
       const project = await seedTestProject(ws.id);
+      await seedTestProjectMember(member.userId, project.id, "member");
       const cycle = await seedCycle(project.id, { state: "done" });
       // Seed issue in non-terminal state
       const count = await prisma.issue.count();
@@ -312,6 +319,7 @@ describe("Cycle Routes", () => {
       const ws = await seedTestWorkspace();
       const member = await seedTestMember(ws.id);
       const project = await seedTestProject(ws.id);
+      await seedTestProjectMember(member.userId, project.id, "member");
       const cycle = await seedCycle(project.id);
       const issue = await seedIssue(project.id);
 
@@ -335,6 +343,7 @@ describe("Cycle Routes", () => {
       const ws = await seedTestWorkspace();
       const member = await seedTestMember(ws.id);
       const project = await seedTestProject(ws.id);
+      await seedTestProjectMember(member.userId, project.id, "member");
       const cycleA = await seedCycle(project.id);
       const cycleB = await seedCycle(project.id, { state: "upcoming" });
       const issue1 = await seedIssue(project.id, cycleA.id);
@@ -376,6 +385,7 @@ describe("Cycle Routes", () => {
       const ws = await seedTestWorkspace();
       const member = await seedTestMember(ws.id);
       const project = await seedTestProject(ws.id);
+      await seedTestProjectMember(member.userId, project.id, "member");
       const cycle = await seedCycle(project.id);
       const issue = await seedIssue(project.id, cycle.id);
 
@@ -400,6 +410,7 @@ describe("Cycle Routes", () => {
       const member = await seedTestMember(ws.id);
       const projectA = await seedTestProject(ws.id, "AAA");
       const projectB = await seedTestProject(ws.id, "BBB");
+      await seedTestProjectMember(member.userId, projectA.id, "member");
       const cycle = await seedCycle(projectA.id);
       // Issue belongs to projectB — different project from cycle
       const foreignIssue = await seedIssue(projectB.id);
@@ -431,6 +442,7 @@ describe("Cycle Routes", () => {
       const member = await seedTestMember(ws.id);
       const projectA = await seedTestProject(ws.id, "CCC");
       const projectB = await seedTestProject(ws.id, "DDD");
+      await seedTestProjectMember(member.userId, projectA.id, "member");
       const cycle = await seedCycle(projectA.id);
       // Issue belongs to projectB (and is attached to the cycle — simulating a bad state)
       const foreignIssue = await prisma.issue.create({
