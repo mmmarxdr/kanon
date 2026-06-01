@@ -526,6 +526,8 @@ model RefreshToken {
   revokedAt   DateTime?     @map("revoked_at")
   metadata    Json?
 
+  allowedProjectIds String[]      @default([]) @map("allowed_project_ids") @db.Uuid
+
   userId      String        @map("user_id") @db.Uuid
   user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
 
