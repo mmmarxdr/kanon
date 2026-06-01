@@ -7,6 +7,12 @@ import {
   ProjectKeyParam,
 } from "./project-member.schema.js";
 import { requireProjectMember, requireProjectRole } from "../../middleware/require-role.js";
+import {
+  listEffectiveMembers,
+  addProjectMember,
+  changeProjectMemberRole,
+  removeProjectMember,
+} from "./project-member-service.js";
 
 /**
  * Project member routes plugin.
@@ -39,8 +45,12 @@ export default async function projectMemberRoutes(
         params: ProjectKeyParam,
       },
     },
-    async (_request, reply) => {
-      return reply.status(501).send({ message: "Not yet implemented" });
+    async (request, reply) => {
+      const members = await listEffectiveMembers(
+        request.projectId!,
+        request.member!.workspaceId,
+      );
+      return reply.status(200).send({ members });
     },
   );
 

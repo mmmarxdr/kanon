@@ -35,13 +35,60 @@ export interface EffectiveMemberRow {
  *   - Workspace owner/admin rows (source:'workspace', implicit:true, NO pmId)
  *
  * Merge key: userId — explicit PM row wins on collision.
+ *
+ * R-INV1: pmId is ONLY set on source:'project' rows. Workspace Member.id
+ *          MUST NEVER appear in any response field.
  */
 export async function listEffectiveMembers(
   projectId: string,
   workspaceId: string,
 ): Promise<EffectiveMemberRow[]> {
-  // TODO: implement in A-02
-  throw new AppError(501, "NOT_IMPLEMENTED", "Not yet implemented");
+  // Step 1: explicit PM rows
+  const pmRows = await prisma.projectMember.findMany({
+    where: { projectId },
+    include: {
+      user: { select: { email: true, displayName: true } },
+    },
+  });
+
+  // Step 2: ws owner/admin rows
+  const wsRows = await prisma.member.findMany({
+    where: { workspaceId, role: { in: ["owner", "admin"] } },
+    include: {
+      user: { select: { email: true, displayName: true } },
+    },
+  });
+
+  // Step 3: merge keyed by userId — explicit wins
+  const merged = new Map<string, EffectiveMemberRow>();
+
+  // Add ws implicit rows first (lower priority)
+  for (const ws of wsRows) {
+    merged.set(ws.userId, {
+      userId: ws.userId,
+      email: ws.user.email,
+      displayName: ws.user.displayName,
+      role: ws.role,
+      source: "workspace",
+      implicit: true,
+      // NO pmId on workspace rows (R-INV1)
+    });
+  }
+
+  // Add explicit PM rows second (override ws rows for same userId)
+  for (const pm of pmRows) {
+    merged.set(pm.userId, {
+      userId: pm.userId,
+      email: pm.user.email,
+      displayName: pm.user.displayName,
+      role: pm.role,
+      source: "project",
+      pmId: pm.id, // ProjectMember.id — ONLY on source:'project' (R-INV1)
+      // NO implicit on project rows
+    });
+  }
+
+  return Array.from(merged.values());
 }
 
 /**
