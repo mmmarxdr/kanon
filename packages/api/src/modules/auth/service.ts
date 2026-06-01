@@ -43,10 +43,20 @@ export function signOnboardingToken(inviteId: string, ttlHours: number): string 
 /**
  * Sign a short-lived access token for the CLI/MCP path.
  * Payload: { sub: userId, workspace: workspaceId, scope: "access" }
+ * When ids is non-empty, embeds an allowedProjectIds claim (project-scoping, KAN-19).
  */
-export function signAccessToken(userId: string, workspaceId: string): string {
+export function signAccessToken(
+  userId: string,
+  workspaceId: string,
+  ids?: string[],
+): string {
   return jwt.sign(
-    { sub: userId, workspace: workspaceId, scope: "access" },
+    {
+      sub: userId,
+      workspace: workspaceId,
+      scope: "access",
+      ...(ids && ids.length > 0 ? { allowedProjectIds: ids } : {}),
+    },
     env.JWT_SECRET,
     { expiresIn: TOKEN_EXPIRY.ACCESS },
   );
@@ -446,7 +456,13 @@ export async function onboard(token: string) {
       throw new AppError(403, "NOT_A_MEMBER", "User is not a member of this workspace");
     }
 
-    // 7. Generate opaque refresh token and store its hash
+    // 7. Parse project assignments BEFORE creating the RefreshToken row so
+    //    allowedProjectIds is available at create time (KAN-19, design risk #1).
+    // invite.projectAssignments is a Prisma.JsonValue — parse safely; null → [] (existing invites safe).
+    const parsedAssignments = z.array(ProjectAssignmentSchema).safeParse(invite.projectAssignments);
+    const assignments = parsedAssignments.success ? parsedAssignments.data : [];
+
+    // 8. Generate opaque refresh token and store its hash
     const rawToken = generateOpaqueToken();
     const tokenHash = sha256Hex(rawToken);
     const refreshExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
@@ -459,17 +475,15 @@ export async function onboard(token: string) {
         workspaceId: invite.workspaceId,
         expiresAt: refreshExpiresAt,
         metadata: {},
+        allowedProjectIds: assignments.map((a) => a.projectId),
       },
     });
 
-    // 8. Apply project assignments (R-INV-onboard, R-INV-inv, R-INV-idempotent)
+    // 9a. Apply project assignments (R-INV-onboard, R-INV-inv, R-INV-idempotent)
     // Must be BEFORE consumedAt update so a PM failure prevents the invite from being consumed.
-    // invite.projectAssignments is a Prisma.JsonValue — parse safely; null → [] (existing invites safe).
-    const parsedAssignments = z.array(ProjectAssignmentSchema).safeParse(invite.projectAssignments);
-    const assignments = parsedAssignments.success ? parsedAssignments.data : [];
     await createProjectMembersInTx(tx, user.id, assignments, invite.workspaceId);
 
-    // 9. Mark invite as consumed (atomic — same tx)
+    // 9b. Mark invite as consumed (atomic — same tx)
     await (tx as typeof prisma).workspaceInvite.update({
       where: { id: inviteId },
       data: { consumedAt: new Date() },
@@ -508,6 +522,7 @@ export async function exchange(refreshToken: string) {
       expiresAt: true,
       revokedAt: true,
       lastUsedAt: true,
+      allowedProjectIds: true,  // KAN-19: must be selected or claim is always-empty (design risk #2)
     },
   });
 
@@ -531,8 +546,8 @@ export async function exchange(refreshToken: string) {
     // Best-effort: never let this block the response
   });
 
-  // 3. Issue short-lived access token
-  const accessToken = signAccessToken(row.userId, row.workspaceId);
+  // 3. Issue short-lived access token (KAN-19: pass allowedProjectIds for conditional claim)
+  const accessToken = signAccessToken(row.userId, row.workspaceId, row.allowedProjectIds);
 
   return { accessToken, expiresIn: 900 };
 }

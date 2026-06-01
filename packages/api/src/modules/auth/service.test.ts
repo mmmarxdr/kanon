@@ -6,6 +6,7 @@ import {
   verifyPassword,
   signTokens,
   verifyRefreshToken,
+  signAccessToken,
 } from "./service.js";
 import { AppError } from "../../shared/types.js";
 
@@ -635,6 +636,50 @@ describe("exchange()", () => {
         data: expect.objectContaining({ lastUsedAt: expect.any(Date) }),
       }),
     );
+  });
+});
+
+// ── signAccessToken() — T1.1 (KAN-19 PR1) ────────────────────────────────────
+
+describe("signAccessToken() — allowedProjectIds claim (T1.1)", () => {
+  const PROJECT_P = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  const PROJECT_Q = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+
+  // T1.1-a: scoped — allowedProjectIds=[P] embeds claim in JWT
+  it("embeds allowedProjectIds claim when ids=[P] (non-empty)", () => {
+    const token = signAccessToken(USER_ID, WORKSPACE_ID, [PROJECT_P]);
+    const decoded = jwt.decode(token) as Record<string, unknown>;
+
+    expect(decoded["sub"]).toBe(USER_ID);
+    expect(decoded["workspace"]).toBe(WORKSPACE_ID);
+    expect(decoded["scope"]).toBe("access");
+    expect(decoded["allowedProjectIds"]).toEqual([PROJECT_P]);
+  });
+
+  // T1.1-b: scoped — multiple ids embeds full array
+  it("embeds full allowedProjectIds array when ids=[P,Q]", () => {
+    const token = signAccessToken(USER_ID, WORKSPACE_ID, [PROJECT_P, PROJECT_Q]);
+    const decoded = jwt.decode(token) as Record<string, unknown>;
+
+    expect(decoded["allowedProjectIds"]).toEqual([PROJECT_P, PROJECT_Q]);
+  });
+
+  // T1.1-c (triangulation): unscoped — empty array → NO claim in JWT
+  it("omits allowedProjectIds claim when ids=[] (unscoped)", () => {
+    const token = signAccessToken(USER_ID, WORKSPACE_ID, []);
+    const decoded = jwt.decode(token) as Record<string, unknown>;
+
+    expect(decoded["sub"]).toBe(USER_ID);
+    expect(decoded).not.toHaveProperty("allowedProjectIds");
+  });
+
+  // T1.1-d (triangulation): no ids arg → NO claim in JWT (backward compat)
+  it("omits allowedProjectIds claim when ids param absent (backward compat)", () => {
+    const token = signAccessToken(USER_ID, WORKSPACE_ID);
+    const decoded = jwt.decode(token) as Record<string, unknown>;
+
+    expect(decoded["sub"]).toBe(USER_ID);
+    expect(decoded).not.toHaveProperty("allowedProjectIds");
   });
 });
 

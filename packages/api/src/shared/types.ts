@@ -50,10 +50,23 @@ export interface MemberContext {
 /**
  * JWT token payload structure.
  * Contains only user identity — no workspace or role claims.
+ * Used by the cookie-based auth path (kanon_at).
  */
 export interface TokenPayload {
   sub: string; // userId
   email: string;
+}
+
+/**
+ * Access token payload for the Bearer/CLI/MCP path (KAN-19).
+ * Distinct from TokenPayload — the access token carries workspace + scope,
+ * not email. allowedProjectIds is present only when the token is scoped.
+ */
+export interface AccessTokenPayload {
+  sub: string;        // userId
+  workspace: string;  // workspaceId
+  scope: "access";
+  allowedProjectIds?: string[];
 }
 
 /**
