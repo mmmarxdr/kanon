@@ -136,8 +136,10 @@ export async function seedTestProject(
 /**
  * Clean all test data from the database.
  * Deletes in reverse dependency order.
+ * ProjectMember must come before project and member (FK constraints).
  */
 export async function cleanDatabase(): Promise<void> {
+  await prisma.projectMember.deleteMany();
   await prisma.workSession.deleteMany();
   await prisma.activityLog.deleteMany();
   await prisma.comment.deleteMany();
@@ -234,6 +236,23 @@ export async function seedTestMemberWithRole(
   });
 
   return { id: member.id, email, token, userId: user.id };
+}
+
+/**
+ * Seed a ProjectMember row for a given user + project combination.
+ * Used in PR2 tests to establish per-project membership before enforcement tests.
+ */
+export async function seedTestProjectMember(
+  userId: string,
+  projectId: string,
+  role: "owner" | "admin" | "member" | "viewer",
+): Promise<{ id: string; userId: string; projectId: string; role: string }> {
+  const pm = await prisma.projectMember.upsert({
+    where: { userId_projectId: { userId, projectId } },
+    update: { role },
+    create: { userId, projectId, role },
+  });
+  return pm;
 }
 
 /**

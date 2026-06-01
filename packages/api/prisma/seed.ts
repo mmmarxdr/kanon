@@ -69,7 +69,29 @@ async function main() {
   });
   console.log(`  Project: ${project.name} (${project.key})`);
 
-  // ── 5. Mock cycles + issues for the Cycles view ─────────────────────────
+  // ── 5. Upsert ProjectMember rows for member/viewer workspace members ────
+  // owner and admin bypass the gate (A2/A7) — no rows needed for them.
+  // The dev seed's primary user is owner, so this is a no-op for the default
+  // seed but ensures the pattern is correct for any future member/viewer seeds.
+  if (member.role === "member" || member.role === "viewer") {
+    await prisma.projectMember.upsert({
+      where: {
+        userId_projectId: {
+          userId: user.id,
+          projectId: project.id,
+        },
+      },
+      update: { role: member.role },
+      create: {
+        userId: user.id,
+        projectId: project.id,
+        role: member.role,
+      },
+    });
+    console.log(`  ProjectMember: ${member.username} → ${project.key} (${member.role})`);
+  }
+
+  // ── 6. Mock cycles + issues for the Cycles view ─────────────────────────
   await seedCyclesMock(workspace.id, project.id, project.key, member.id);
 
   console.log("\nSeed complete! Structural data (workspace, user, member, project) is ready.");
