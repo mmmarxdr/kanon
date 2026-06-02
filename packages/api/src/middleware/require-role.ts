@@ -412,3 +412,86 @@ export function requireCycleRole(cycleIdParam: string, ...roles: MemberRole[]): 
 export function requireCycleMember(cycleIdParam: string): preHandlerHookHandler {
   return requireCycleRole(cycleIdParam);
 }
+
+// ---------------------------------------------------------------------------
+// Dependency-scoped factories (routes like /api/issue-dependencies/:id)
+// Dependency id is a UUID PK — no workspace-scope fix needed (A4).
+// Gates on the SOURCE issue's project (matching how POST gates on the source
+// issue key — only members of the source project may add/remove the edge).
+// ---------------------------------------------------------------------------
+
+/**
+ * Like requireCycleRole, but resolves the workspace + project from a
+ * dependency ID URL param and then enforces the effective-role gate (KAN-16).
+ *
+ * Resolution chain: dependency id → issueDependency row → source issue's
+ * project → enforceProjectAccess.  Gates on the SOURCE side because POST
+ * (create) gates on the issue key of the source issue; DELETE must mirror that.
+ *
+ * 404 is returned when the dependency does not exist, consistent with other
+ * workspace-scoped resolution patterns (do not leak existence).
+ *
+ * Sets `request.member` (workspace Member.id — INVARIANT R-INV1) and
+ * `request.projectRole`.
+ *
+ * @param depIdParam - The name of the URL param holding the dependency UUID (e.g. 'id')
+ * @param roles - Allowed MemberRole values. If empty, any project membership is sufficient.
+ */
+export function requireDependencyRole(depIdParam: string, ...roles: MemberRole[]): preHandlerHookHandler {
+  return async (request, _reply) => {
+    const user = request.user;
+
+    if (!user) {
+      throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+    }
+
+    const depId = (request.params as Record<string, string>)[depIdParam];
+    if (!depId) {
+      throw new AppError(400, "DEPENDENCY_ID_REQUIRED", "Dependency ID is required");
+    }
+
+    const dep = await prisma.issueDependency.findUnique({
+      where: { id: depId },
+      select: {
+        source: {
+          select: {
+            project: { select: { id: true, workspaceId: true } },
+          },
+        },
+      },
+    });
+
+    if (!dep) {
+      throw new AppError(404, "DEPENDENCY_NOT_FOUND", "Dependency not found");
+    }
+
+    const minimumRole = roles.length > 0
+      ? roles.reduce((least, r) =>
+          ROLE_HIERARCHY.indexOf(r) < ROLE_HIERARCHY.indexOf(least) ? r : least,
+        )
+      : undefined;
+
+    // KAN-19: set request.projectId before enforceProjectAccess so it is
+    // populated on every path (bypass and non-bypass), consistent with other
+    // project-scoped factories.
+    request.projectId = dep.source.project.id;
+
+    const { member, projectRole } = await enforceProjectAccess(
+      user.userId,
+      dep.source.project.id,
+      dep.source.project.workspaceId,
+      minimumRole,
+      user.allowedProjectIds,
+    );
+
+    request.member = member;
+    request.projectRole = projectRole;
+  };
+}
+
+/**
+ * Shorthand: require dependency project membership with no minimum role.
+ */
+export function requireDependencyMember(depIdParam: string): preHandlerHookHandler {
+  return requireDependencyRole(depIdParam);
+}
