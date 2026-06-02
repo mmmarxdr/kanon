@@ -138,6 +138,33 @@ describe("LoginForm — invite accept error surfacing (G1 / R-NUI-surface)", () 
     );
   });
 
+  it("surfaces a 429 INVITE_EXHAUSTED error on invite accept", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(makeOkJson({}))
+      .mockResolvedValueOnce(
+        makeOkJson({ id: "u1", email: "alice@co.com", displayName: "Alice", avatarUrl: null }),
+      )
+      .mockResolvedValueOnce(
+        makeErrorJson(429, "INVITE_EXHAUSTED", "This invite has reached its maximum number of uses"),
+      );
+
+    render(<LoginForm invite="tok" onNavigate={mockNavigate} />);
+    await submitForm();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("login-error")).toBeTruthy(),
+    );
+    expect(screen.getByTestId("login-error").textContent).toContain(
+      "maximum number of uses",
+    );
+
+    // Must NOT navigate to /workspaces on exhausted invite
+    const workspaceNavCalls = mockNavigate.mock.calls.filter(
+      (call) => JSON.stringify(call).includes("/workspaces"),
+    );
+    expect(workspaceNavCalls).toHaveLength(0);
+  });
+
   it("navigates to /workspaces when there is no invite token (no accept call)", async () => {
     fetchSpy
       .mockResolvedValueOnce(makeOkJson({}))
