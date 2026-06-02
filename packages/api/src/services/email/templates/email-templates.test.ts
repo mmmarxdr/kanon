@@ -280,4 +280,35 @@ describe("buildInviteEmail", () => {
     expect(html).toContain("Beta Inc");
     expect(html.toLowerCase()).toContain("owner");
   });
+
+  // Security: HTML injection prevention — user-controlled values must be escaped
+  it("escapes HTML special chars in workspaceName to prevent injection", () => {
+    const { html } = buildInviteEmail({
+      ...baseOpts,
+      workspaceName: '<script>alert(1)</script>',
+    });
+    expect(html).not.toContain("<script>");
+    expect(html).not.toContain("</script>");
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).toContain("&lt;/script&gt;");
+  });
+
+  it("escapes HTML special chars in inviterName to prevent injection", () => {
+    const { html } = buildInviteEmail({
+      ...baseOpts,
+      inviterName: '<img src=x onerror=alert(1)>',
+    });
+    expect(html).not.toContain("<img");
+    expect(html).toContain("&lt;img");
+  });
+
+  it("escapes HTML special chars in role to prevent injection", () => {
+    const { html } = buildInviteEmail({
+      ...baseOpts,
+      role: 'admin"><a href="http://evil.example">click',
+    });
+    expect(html).not.toContain('"><a href=');
+    expect(html).toContain("&gt;");
+    expect(html).toContain("&lt;a");
+  });
 });

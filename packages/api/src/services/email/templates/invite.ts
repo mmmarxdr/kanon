@@ -1,4 +1,4 @@
-import { renderEmailLayout } from "../layout.js";
+import { renderEmailLayout, escapeHtml } from "../layout.js";
 
 const E_ink = "#0E1011";
 const E_ink2 = "#3A3D40";
@@ -34,8 +34,8 @@ export interface EmailContent {
  *   - Expiry from actual expiresAt date (NOT hardcoded "7 days")
  *
  * DEFERRED: inviter avatar card, teammate count, inviter subtitle.
- * Note: workspaceName, inviterName, role are interpolated without HTML escaping —
- * this is a pre-existing pattern; escaping deferred per design spec.
+ * Security: workspaceName, inviterName, and role are HTML-escaped via escapeHtml()
+ * before interpolation into the HTML template (KAN-42 W1).
  */
 export function buildInviteEmail(opts: BuildInviteEmailOptions): EmailContent {
   const { workspaceName, role, inviterName, inviteUrl, expiresAt } = opts;
@@ -48,20 +48,24 @@ export function buildInviteEmail(opts: BuildInviteEmailOptions): EmailContent {
     day: "numeric",
   });
 
+  const safeWorkspaceName = escapeHtml(workspaceName);
+  const safeInviterName = escapeHtml(inviterName);
+  const safeRoleLabel = escapeHtml(roleLabel);
+
   const bodyHtml = `
     <p style="margin:10px 0 0;font-family:${E_sans};font-size:14px;line-height:1.55;color:${E_ink2};letter-spacing:-0.005em;">
       You&#8217;ve been invited to join
-      <strong style="color:${E_ink};">${workspaceName}</strong> as a&#32;
-      <span style="font-family:${E_mono};padding:1px 6px;border:1px solid ${E_line2};border-radius:3px;font-size:12px;color:${E_ink2};">${roleLabel}</span>.
+      <strong style="color:${E_ink};">${safeWorkspaceName}</strong> as a&#32;
+      <span style="font-family:${E_mono};padding:1px 6px;border:1px solid ${E_line2};border-radius:3px;font-size:12px;color:${E_ink2};">${safeRoleLabel}</span>.
     </p>
     <p style="margin:10px 0 0;font-family:${E_sans};font-size:12px;line-height:1.5;color:${E_ink3};">
       This invite expires on <strong style="color:${E_ink2};">${expiresDate}</strong>.
     </p>`;
 
   const html = renderEmailLayout({
-    eyebrow: `Invitation · ${workspaceName}`,
+    eyebrow: `Invitation · ${safeWorkspaceName}`,
     eyebrowTone: "default",
-    heading: `${inviterName} invited you to<br/>Kanon · ${workspaceName}.`,
+    heading: `${safeInviterName} invited you to<br/>Kanon · ${safeWorkspaceName}.`,
     bodyHtml,
     cta: { label: "Accept invitation →", href: inviteUrl },
     disclaimerText:

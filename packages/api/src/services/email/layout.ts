@@ -31,6 +31,19 @@ const E = {
   mono: "'Courier New',Courier,monospace",
 };
 
+/**
+ * Escape user-controlled strings before interpolating them into HTML.
+ * Replacement order matters: & must come first to avoid double-encoding.
+ */
+export function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export type EyebrowTone = "default" | "warn" | "ok" | "bad" | "ai";
 
 export interface RenderEmailLayoutOptions {
