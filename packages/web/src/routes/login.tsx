@@ -26,10 +26,15 @@ export const loginRoute = createRoute({
   }),
 });
 
-function LoginPage() {
-  const navigate = useNavigate();
+// ─── Presentational form — extracted for testability ─────────────────────────
+
+interface LoginFormProps {
+  invite?: string;
+  onNavigate: ReturnType<typeof useNavigate>;
+}
+
+export function LoginForm({ invite, onNavigate }: LoginFormProps) {
   const { setUser } = useAuthStore();
-  const { invite } = loginRoute.useSearch();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -67,17 +72,19 @@ function LoginPage() {
       setUser(user);
 
       if (invite) {
-        try {
-          await fetchApi(`/api/invites/${invite}/accept`, {
-            method: "POST",
-            body: JSON.stringify({}),
-          });
-        } catch {
-          // Don't block the auth flow
-        }
+        // Surface accept failures inline — do NOT silently swallow them.
+        // Spec R-NUI-surface: any 4xx (expired, exhausted, email-mismatch) must
+        // be shown; navigating to /workspaces without membership is prohibited.
+        // Design note: original design said navigate('/invite/:token') on error,
+        // but email-mismatch (403) leaves the invite "valid" so that page shows
+        // no error reason. Inline error on login covers all failure modes.
+        await fetchApi(`/api/invites/${invite}/accept`, {
+          method: "POST",
+          body: JSON.stringify({}),
+        });
       }
 
-      void navigate({ to: "/workspaces" });
+      void onNavigate({ to: "/workspaces" });
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message);
@@ -108,7 +115,7 @@ function LoginPage() {
           <button
             type="button"
             onClick={() =>
-              void navigate({
+              void onNavigate({
                 to: "/register",
                 search: invite ? { invite } : {},
               })
@@ -161,7 +168,7 @@ function LoginPage() {
               </label>
               <button
                 type="button"
-                onClick={() => void navigate({ to: "/forgot-password" })}
+                onClick={() => void onNavigate({ to: "/forgot-password" })}
                 style={{
                   fontSize: 11,
                   color: "var(--accent-ink)",
@@ -202,7 +209,11 @@ function LoginPage() {
           </div>
         </div>
 
-        {error && <div data-testid="login-error"><ErrorBox>{error}</ErrorBox></div>}
+        {error && (
+          <div data-testid="login-error">
+            <ErrorBox>{error}</ErrorBox>
+          </div>
+        )}
 
         <PrimaryBtn disabled={loading}>
           {loading ? "Signing in…" : "Sign in →"}
@@ -210,4 +221,13 @@ function LoginPage() {
       </form>
     </AuthLayout>
   );
+}
+
+// ─── Route wrapper — reads router state and delegates to LoginForm ────────────
+
+function LoginPage() {
+  const navigate = useNavigate();
+  const { invite } = loginRoute.useSearch();
+
+  return <LoginForm invite={invite} onNavigate={navigate} />;
 }
