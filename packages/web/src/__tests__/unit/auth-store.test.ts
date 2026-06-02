@@ -31,6 +31,7 @@ describe("useAuthStore", () => {
         email: "alice@example.com",
         displayName: "Alice",
         avatarUrl: null,
+        emailVerified: true,
       };
 
       useAuthStore.getState().setUser(user);
@@ -49,6 +50,7 @@ describe("useAuthStore", () => {
         email: "test@test.com",
         displayName: "Tester",
         avatarUrl: null,
+        emailVerified: false,
       });
 
       useAuthStore.getState().clearUser();
@@ -76,6 +78,7 @@ describe("useAuthStore", () => {
         email: "test@test.com",
         displayName: "Tester",
         avatarUrl: null,
+        emailVerified: true,
       });
 
       await useAuthStore.getState().logout();
@@ -98,6 +101,7 @@ describe("useAuthStore", () => {
         email: "test@test.com",
         displayName: "Tester",
         avatarUrl: null,
+        emailVerified: true,
       });
 
       await useAuthStore.getState().logout();
@@ -115,6 +119,7 @@ describe("useAuthStore", () => {
         email: "test@test.com",
         displayName: "Tester",
         avatarUrl: null,
+        emailVerified: true,
       };
       fetchMock.mockResolvedValueOnce(
         new Response(JSON.stringify(user), {

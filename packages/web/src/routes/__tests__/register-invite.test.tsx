@@ -62,6 +62,7 @@ const ME_RESPONSE = {
   email: "alice@co.com",
   displayName: "Alice",
   avatarUrl: null,
+  emailVerified: false,
 };
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
