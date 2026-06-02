@@ -3,7 +3,7 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
-import { requireIssueRole } from "../../middleware/require-role.js";
+import { requireIssueRole, requireDependencyRole } from "../../middleware/require-role.js";
 
 const IssueKeyParam = z.object({ key: z.string() });
 const DependencyIdParam = z.object({ id: z.string().uuid() });
@@ -142,10 +142,12 @@ export default async function issueDependencyRoutes(
 
   /**
    * DELETE /api/issue-dependencies/:id
+   * Requires at least "member" role on the source issue's project (mirrors POST).
    */
   app.delete(
     "/issue-dependencies/:id",
     {
+      preHandler: [requireDependencyRole("id", "member")],
       schema: { params: DependencyIdParam },
     },
     async (request, _reply) => {
