@@ -809,3 +809,49 @@ describe("kanon_delete_cycle — D.5 KanonApiError propagated as error result", 
     expect(result.content[0]!.text).toContain("CYCLE_ACTIVE");
   });
 });
+
+// ─── KAN-20: 403 FORBIDDEN surfacing — cycle tools ───────────────────────────
+//
+// Confirms each tool FORWARDS the credential and SURFACES a 403 as
+// { isError: true, code: "FORBIDDEN" }. Enforcement lives in the API layer.
+
+describe("kanon_create_cycle — surfaces 403 as FORBIDDEN", () => {
+  it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
+    const mockClient = {
+      createCycle: vi.fn().mockRejectedValue(
+        new KanonApiError(403, "FORBIDDEN", "You are not assigned to this project"),
+      ),
+    };
+    const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
+    const handler = tools.get("kanon_create_cycle")!.handler;
+
+    const result = await handler({
+      projectKey: "KAN",
+      name: "Sprint 1",
+      startDate: "2026-05-01",
+      endDate: "2026-05-14",
+    });
+
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed.code).toBe("FORBIDDEN");
+  });
+});
+
+describe("kanon_list_cycles — surfaces 403 as FORBIDDEN", () => {
+  it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
+    const mockClient = {
+      listCycles: vi.fn().mockRejectedValue(
+        new KanonApiError(403, "FORBIDDEN", "You are not assigned to this project"),
+      ),
+    };
+    const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
+    const handler = tools.get("kanon_list_cycles")!.handler;
+
+    const result = await handler({ projectKey: "KAN" });
+
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed.code).toBe("FORBIDDEN");
+  });
+});

@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerIssueTools } from "./issues.js";
+import { KanonApiError } from "../kanon-client.js";
 import type { KanonClient, KanonIssue } from "../kanon-client.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -254,5 +255,82 @@ describe("kanon_list_issues — keys[] filter (D3)", () => {
       "KAN",
       expect.objectContaining({ keys: ["KAN-1", "KAN-2"] }),
     );
+  });
+});
+
+// ─── KAN-20: 403 FORBIDDEN surfacing — issue tools ───────────────────────────
+//
+// Confirms each tool FORWARDS the credential and SURFACES a 403 as
+// { isError: true, code: "FORBIDDEN" }. Enforcement lives in the API layer.
+
+describe("kanon_create_issue — surfaces 403 as FORBIDDEN", () => {
+  it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
+    const mockClient = {
+      createIssue: vi.fn().mockRejectedValue(
+        new KanonApiError(403, "FORBIDDEN", "You are not assigned to this project"),
+      ),
+    };
+    const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
+    const handler = tools.get("kanon_create_issue")!.handler;
+
+    const result = await handler({ projectKey: "KAN", title: "Test" });
+
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed.code).toBe("FORBIDDEN");
+  });
+});
+
+describe("kanon_update_issue — surfaces 403 as FORBIDDEN", () => {
+  it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
+    const mockClient = {
+      updateIssue: vi.fn().mockRejectedValue(
+        new KanonApiError(403, "FORBIDDEN", "You are not assigned to this project"),
+      ),
+    };
+    const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
+    const handler = tools.get("kanon_update_issue")!.handler;
+
+    const result = await handler({ issueKey: "KAN-1", title: "Updated" });
+
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed.code).toBe("FORBIDDEN");
+  });
+});
+
+describe("kanon_transition_issue — surfaces 403 as FORBIDDEN", () => {
+  it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
+    const mockClient = {
+      transitionIssue: vi.fn().mockRejectedValue(
+        new KanonApiError(403, "FORBIDDEN", "You are not assigned to this project"),
+      ),
+    };
+    const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
+    const handler = tools.get("kanon_transition_issue")!.handler;
+
+    const result = await handler({ issueKey: "KAN-1", state: "done" });
+
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed.code).toBe("FORBIDDEN");
+  });
+});
+
+describe("kanon_list_issues — surfaces 403 as FORBIDDEN", () => {
+  it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
+    const mockClient = {
+      listIssues: vi.fn().mockRejectedValue(
+        new KanonApiError(403, "FORBIDDEN", "You are not assigned to this project"),
+      ),
+    };
+    const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
+    const handler = tools.get("kanon_list_issues")!.handler;
+
+    const result = await handler({ projectKey: "KAN" });
+
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed.code).toBe("FORBIDDEN");
   });
 });

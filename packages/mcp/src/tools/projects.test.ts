@@ -352,3 +352,63 @@ describe("kanon_update_project — format tier (C14)", () => {
     expect(result).not.toHaveProperty("ok");
   });
 });
+
+// ─── KAN-20: 403 FORBIDDEN surfacing — project tools ─────────────────────────
+//
+// Confirms each tool FORWARDS the credential and SURFACES a 403 as
+// { isError: true, code: "FORBIDDEN" }. Enforcement lives in the API layer.
+
+describe("kanon_create_project — surfaces 403 as FORBIDDEN", () => {
+  let server: ReturnType<typeof createMockServer>;
+
+  beforeEach(() => {
+    server = createMockServer();
+  });
+
+  it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
+    const client = createMockClient({
+      createProject: vi.fn().mockRejectedValue(
+        new KanonApiError(403, "FORBIDDEN", "You are not assigned to this project"),
+      ),
+    });
+    registerProjectTools(server as any, client);
+
+    const handler = server.getHandler("kanon_create_project");
+    const raw = await handler({
+      workspaceId: "ws1",
+      key: "KAN",
+      name: "Kanon",
+    }) as { isError?: boolean; content: Array<{ text: string }> };
+
+    expect(raw.isError).toBe(true);
+    const parsed = JSON.parse(raw.content[0].text);
+    expect(parsed.code).toBe("FORBIDDEN");
+  });
+});
+
+describe("kanon_update_project — surfaces 403 as FORBIDDEN", () => {
+  let server: ReturnType<typeof createMockServer>;
+
+  beforeEach(() => {
+    server = createMockServer();
+  });
+
+  it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
+    const client = createMockClient({
+      updateProject: vi.fn().mockRejectedValue(
+        new KanonApiError(403, "FORBIDDEN", "You are not assigned to this project"),
+      ),
+    });
+    registerProjectTools(server as any, client);
+
+    const handler = server.getHandler("kanon_update_project");
+    const raw = await handler({
+      projectKey: "KAN",
+      name: "Updated",
+    }) as { isError?: boolean; content: Array<{ text: string }> };
+
+    expect(raw.isError).toBe(true);
+    const parsed = JSON.parse(raw.content[0].text);
+    expect(parsed.code).toBe("FORBIDDEN");
+  });
+});

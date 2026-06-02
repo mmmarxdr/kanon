@@ -367,6 +367,30 @@ describe("KanonClient auth headers", () => {
   });
 });
 
+// ─── KAN-20: JWT path 403 surfacing ─────────────────────────────────────────
+//
+// Confirms that a KanonClient using a JWT (Bearer) apiKey surfaces a 403
+// response as KanonApiError with statusCode 403 and code "FORBIDDEN".
+// Enforcement lives in the API layer; this verifies the client throws correctly.
+
+describe("KanonClient JWT path — surfaces 403 as KanonApiError FORBIDDEN", () => {
+  it("throws KanonApiError with statusCode 403 and code FORBIDDEN for JWT-keyed client", async () => {
+    const jwtKey = "eyJhbGciOiJIUzI1NiJ9.test.payload";
+    const jwtClient = new KanonClient({ baseUrl: BASE_URL, apiKey: jwtKey });
+    const fetchMock = mockFetch({ code: "FORBIDDEN", message: "Not a project member" }, 403);
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await jwtClient.listWorkspaces();
+      expect.unreachable("Should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(KanonApiError);
+      expect((err as KanonApiError).statusCode).toBe(403);
+      expect((err as KanonApiError).code).toBe("FORBIDDEN");
+    }
+  });
+});
+
 // ─── 204 No Content handling ────────────────────────────────────────────────
 
 describe("KanonClient 204 No Content", () => {
