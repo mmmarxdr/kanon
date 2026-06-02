@@ -5,6 +5,7 @@ import { loginRoute } from "./routes/login";
 import { registerRoute } from "./routes/register";
 import { forgotPasswordRoute } from "./routes/forgot-password";
 import { resetPasswordRoute } from "./routes/reset-password";
+import { verifyEmailRoute } from "./routes/verify-email";
 import { inviteRoute } from "./routes/invite";
 import { authenticatedRoute } from "./routes/_authenticated";
 import { workspaceSelectRoute } from "./routes/_authenticated/workspace-select";
@@ -24,6 +25,7 @@ const routeTree = rootRoute.addChildren([
   registerRoute,
   forgotPasswordRoute,
   resetPasswordRoute,
+  verifyEmailRoute,
   inviteRoute,
   authenticatedRoute.addChildren([
     workspaceSelectRoute,
