@@ -152,6 +152,12 @@ export async function login(body: LoginBody) {
     throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email or password");
   }
 
+  // Null-guard: passwordless users (null passwordHash) cannot log in via password.
+  // Treat identically to wrong password — no user enumeration.
+  if (!user.passwordHash) {
+    throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email or password");
+  }
+
   const valid = await verifyPassword(body.password, user.passwordHash);
   if (!valid) {
     throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email or password");
@@ -197,6 +203,12 @@ export async function changePassword(
 
   if (!user) {
     throw new AppError(404, "USER_NOT_FOUND", "User not found");
+  }
+
+  // Null-guard: passwordless users have no hash to verify against.
+  // Reject with the same generic error as a wrong password.
+  if (!user.passwordHash) {
+    throw new AppError(400, "INVALID_PASSWORD", "Current password is incorrect");
   }
 
   const valid = await verifyPassword(currentPassword, user.passwordHash);
