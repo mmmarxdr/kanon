@@ -98,6 +98,13 @@ export const proposalKeys = {
     [...proposalKeys.all, "pending", workspaceId] as const,
 };
 
+export const projectMemberKeys = {
+  all: ["project-members"] as const,
+  lists: () => [...projectMemberKeys.all, "list"] as const,
+  list: (projectKey: string) =>
+    [...projectMemberKeys.lists(), projectKey] as const,
+};
+
 export const dashboardKeys = {
   all: ["dashboard"] as const,
   details: () => [...dashboardKeys.all, "detail"] as const,
