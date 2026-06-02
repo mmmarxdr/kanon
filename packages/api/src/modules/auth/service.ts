@@ -379,6 +379,15 @@ export async function verifyEmail(token: string): Promise<void> {
       where: { id: verifyToken.id },
       data: { usedAt: new Date() },
     }),
+    // Clean up any other tokens for this user (mirrors resetPassword tx, design §6).
+    // sendVerificationEmail already deleteMany's before creating, so in practice
+    // there is only one token, but we match the design spec for robustness.
+    prisma.emailVerificationToken.deleteMany({
+      where: {
+        userId: verifyToken.userId,
+        id: { not: verifyToken.id },
+      },
+    }),
   ]);
 }
 

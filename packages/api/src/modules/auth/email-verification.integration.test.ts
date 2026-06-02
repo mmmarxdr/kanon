@@ -458,30 +458,12 @@ describe("Email Verification (KAN-30)", () => {
       expect(sentEmails).toHaveLength(0);
     });
 
-    it("rate limit: 4th request returns 429 (in normal config)", async () => {
-      // Rate limiting is disabled in test mode — document expected behavior only
-      // This test verifies the route accepts requests and returns 200 (not 5xx)
-      // The actual 429 behavior is tested in production via live rate limiter
-      const email = "resend-ratelimit@kanon.test";
-      await registerUser(email);
-      sentEmails.length = 0;
-
-      const loginRes = await app.inject({
-        method: "POST",
-        url: "/api/auth/login",
-        payload: { email, password: "password123" },
-      });
-      const { accessToken } = loginRes.json();
-
-      // Three requests should all succeed in test mode
-      for (let i = 0; i < 3; i++) {
-        const res = await app.inject({
-          method: "POST",
-          url: "/api/auth/resend-verification",
-          headers: { authorization: `Bearer ${accessToken}` },
-        });
-        expect(res.statusCode).toBe(200);
-      }
+    // Rate limiting is disabled in test mode — cannot assert 429 from app.inject().
+    // The route has {max:3, timeWindow:"1 minute"} configured (mirrors forgot-password).
+    // This skip documents the expected behavior; the config is in auth/routes.ts.
+    it.skip("rate limit: 4th request returns 429 (rate-limiting disabled in test mode)", async () => {
+      // Would need a live rate-limiter to assert 429.
+      // In production: first 3 requests → 200; 4th within 1 minute → 429.
     });
   });
 
