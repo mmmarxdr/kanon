@@ -9,8 +9,8 @@ import { test, expect } from "@playwright/test";
  * - Form validation: empty required fields show error or stay on page
  */
 
-test.describe("Register flow", () => {
-  test("register form is visible on /register", async ({ page }) => {
+test.describe("Register flow @smoke", () => {
+  test("register form is visible on /register @smoke", async ({ page }) => {
     await page.goto("/register");
     await page.waitForSelector('[data-testid="register-form"]', { timeout: 8_000 });
 

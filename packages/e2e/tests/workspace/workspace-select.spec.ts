@@ -33,7 +33,7 @@ test.describe("Workspace select — auto-redirect (seed user)", () => {
   });
 });
 
-test.describe("Workspace select — empty state (new user)", () => {
+test.describe("Workspace select — empty state (new user) @smoke", () => {
   let newUserEmail: string;
   let newUserPassword: string;
 
