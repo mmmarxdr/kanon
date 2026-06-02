@@ -148,6 +148,7 @@ function CreateWorkspaceForm({ onCreated }: CreateWorkspaceFormProps) {
 
       <button
         type="submit"
+        data-testid="create-workspace-submit"
         disabled={createMutation.isPending || !name.trim() || !slug.trim()}
         style={{
           padding: "9px 16px",
@@ -382,6 +383,7 @@ export function WorkspaceSelectPage() {
 
           {workspacesQuery.data && workspacesQuery.data.length === 0 && (
             <div
+              data-testid="workspace-empty-state"
               style={{
                 padding: 24,
                 border: "1px solid var(--line)",
@@ -444,6 +446,7 @@ export function WorkspaceSelectPage() {
                   <button
                     key={ws.id}
                     type="button"
+                    data-testid={`workspace-item-${ws.slug}`}
                     onClick={() => handleSelectWorkspace(ws)}
                     style={{
                       display: "flex",

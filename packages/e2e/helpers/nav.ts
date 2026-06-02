@@ -21,23 +21,3 @@ export async function navigateToBoard(
   // Wait for board to load
   await page.waitForURL(`**/board/${projectKey}**`, { timeout: 10_000 });
 }
-
-/**
- * Open the issue detail panel by clicking on an issue card.
- *
- * @param page - Playwright page
- * @param issueKeyOrSelector - Issue key like "KAN-1" or a custom selector
- */
-export async function openIssueDetail(
-  page: Page,
-  issueKeyOrSelector: string,
-): Promise<void> {
-  // Try to find by issue key text first
-  const card = page.getByText(issueKeyOrSelector).first();
-  await card.click();
-
-  // Wait for the detail panel to appear
-  await page.waitForSelector('[data-testid="issue-detail-panel"]', {
-    timeout: 5_000,
-  });
-}

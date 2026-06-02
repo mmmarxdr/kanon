@@ -42,19 +42,74 @@ export default async function globalSetup(): Promise<void> {
     stdio: "pipe",
   });
 
-  // Step 2: Query the workspace UUID from the seeded database
+  // Step 2: Query the workspace UUID + seed extra test data from the seeded DB
   // Write a temp script to avoid shell escaping issues with inline code
-  console.log("[e2e] Resolving seed data constants...");
+  console.log("[e2e] Resolving seed data constants and creating extra test fixtures...");
   // Write the temp script into the API package dir so @prisma/client resolves correctly
   const tmpScript = path.resolve(API_PKG_DIR, ".tmp-resolve-workspace.mjs");
   fs.writeFileSync(
     tmpScript,
     [
       `import { PrismaClient } from '@prisma/client';`,
+      `import bcrypt from 'bcryptjs';`,
       `const prisma = new PrismaClient();`,
       `try {`,
       `  const w = await prisma.workspace.findFirst({ where: { slug: 'kanon-dev' } });`,
-      `  console.log(JSON.stringify(w));`,
+      ``,
+      `  // Seed admin user's emailVerifiedAt so login flow is clean`,
+      `  await prisma.user.update({`,
+      `    where: { email: 'dev@kanon.io' },`,
+      `    data: { emailVerifiedAt: new Date() },`,
+      `  });`,
+      ``,
+      `  // Seed an unverified user (for verify-email banner testing)`,
+      `  const unverifiedHash = await bcrypt.hash('Password1!', 10);`,
+      `  const unverified = await prisma.user.upsert({`,
+      `    where: { email: 'unverified@kanon.io' },`,
+      `    update: {},`,
+      `    create: {`,
+      `      email: 'unverified@kanon.io',`,
+      `      passwordHash: unverifiedHash,`,
+      `      displayName: 'Unverified User',`,
+      `      emailVerifiedAt: null,`,
+      `    },`,
+      `  });`,
+      ``,
+      `  // Add unverified user as workspace member`,
+      `  await prisma.member.upsert({`,
+      `    where: { userId_workspaceId: { userId: unverified.id, workspaceId: w.id } },`,
+      `    update: {},`,
+      `    create: {`,
+      `      username: 'unverified',`,
+      `      role: 'member',`,
+      `      userId: unverified.id,`,
+      `      workspaceId: w.id,`,
+      `    },`,
+      `  });`,
+      ``,
+      `  // Seed an invite for an external email (for invite flow testing)`,
+      `  // Use a fixed token so tests can reference it`,
+      `  const inviteToken = 'e2e-test-invite-token-fixed';`,
+      `  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days`,
+      `  // Get the seed admin user id for createdById (required field)`,
+      `  const adminUser = await prisma.user.findUnique({ where: { email: 'dev@kanon.io' } });`,
+      `  const invite = await prisma.workspaceInvite.upsert({`,
+      `    where: { token: inviteToken },`,
+      `    update: { expiresAt, revokedAt: null, useCount: 0 },`,
+      `    create: {`,
+      `      token: inviteToken,`,
+      `      workspaceId: w.id,`,
+      `      email: 'invitee@example.com',`,
+      `      role: 'member',`,
+      `      kind: 'MEMBER',`,
+      `      maxUses: 1,`,
+      `      useCount: 0,`,
+      `      expiresAt,`,
+      `      createdById: adminUser.id,`,
+      `    },`,
+      `  });`,
+      ``,
+      `  console.log(JSON.stringify({ workspace: w, inviteId: invite.id, inviteToken }));`,
       `} finally {`,
       `  await prisma.$disconnect();`,
       `}`,
@@ -69,11 +124,13 @@ export default async function globalSetup(): Promise<void> {
       stdio: ["pipe", "pipe", "pipe"],
     });
 
-    const workspace = JSON.parse(result.toString().trim()) as {
-      id: string;
-      slug: string;
-      name: string;
+    const data = JSON.parse(result.toString().trim()) as {
+      workspace: { id: string; slug: string; name: string };
+      inviteId: string;
+      inviteToken: string;
     };
+
+    const { workspace, inviteToken } = data;
 
     // Write seed constants to a file that test helpers can import
     const envTestPath = path.resolve(__dirname, ".env.test");
@@ -83,12 +140,16 @@ export default async function globalSetup(): Promise<void> {
       `SEED_WORKSPACE_SLUG=${workspace.slug}`,
       `SEED_USER_EMAIL=dev@kanon.io`,
       `SEED_USER_PASSWORD=Password1!`,
+      `SEED_UNVERIFIED_USER_EMAIL=unverified@kanon.io`,
+      `SEED_UNVERIFIED_USER_PASSWORD=Password1!`,
+      `SEED_INVITE_TOKEN=${inviteToken}`,
       "",
     ].join("\n");
 
     fs.writeFileSync(envTestPath, envContent, "utf-8");
     console.log(`[e2e] Wrote seed constants to ${envTestPath}`);
     console.log(`[e2e] Workspace ID: ${workspace.id}`);
+    console.log(`[e2e] Invite token: ${inviteToken}`);
   } finally {
     // Clean up temp script
     if (fs.existsSync(tmpScript)) {
