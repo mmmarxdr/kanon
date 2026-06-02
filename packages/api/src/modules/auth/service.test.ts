@@ -209,9 +209,12 @@ describe("onboard()", () => {
     kind: "ONBOARDING",
     email: USER_EMAIL,
     workspaceId: WORKSPACE_ID,
+    role: "member",
+    projectAssignments: null,
     revokedAt: null,
     consumedAt: null,
     expiresAt: new Date(Date.now() + 72 * 60 * 60 * 1000),
+    workspace: { id: WORKSPACE_ID, name: "Test WS", slug: "test-ws" },
   };
 
   const mockUser = {
@@ -246,10 +249,11 @@ describe("onboard()", () => {
           update: vi.fn().mockResolvedValue(mockInvite),
         },
         user: {
-          findUnique: vi.fn().mockResolvedValue(mockUser),
+          upsert: vi.fn().mockResolvedValue(mockUser),
         },
         member: {
           findUnique: vi.fn().mockResolvedValue(mockMember),
+          create: vi.fn().mockResolvedValue(mockMember),
         },
         refreshToken: {
           create: vi.fn().mockResolvedValue(mockRefreshTokenRow),
@@ -313,8 +317,8 @@ describe("onboard()", () => {
           findFirst: vi.fn().mockResolvedValue({ ...mockInvite, consumedAt: new Date() }),
           update: vi.fn(),
         },
-        user: { findUnique: vi.fn() },
-        member: { findUnique: vi.fn() },
+        user: { upsert: vi.fn() },
+        member: { findUnique: vi.fn(), create: vi.fn() },
         refreshToken: { create: vi.fn() },
       };
       return cb(tx);
@@ -335,8 +339,8 @@ describe("onboard()", () => {
           findFirst: vi.fn().mockResolvedValue({ ...mockInvite, revokedAt: new Date() }),
           update: vi.fn(),
         },
-        user: { findUnique: vi.fn() },
-        member: { findUnique: vi.fn() },
+        user: { upsert: vi.fn() },
+        member: { findUnique: vi.fn(), create: vi.fn() },
         refreshToken: { create: vi.fn() },
       };
       return cb(tx);
@@ -349,49 +353,9 @@ describe("onboard()", () => {
     });
   });
 
-  // D2: user does not exist → 404 USER_NOT_FOUND
-  it("throws 404 USER_NOT_FOUND when user email has no matching User row", async () => {
-    mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => {
-      const tx = {
-        workspaceInvite: {
-          findFirst: vi.fn().mockResolvedValue(mockInvite),
-          update: vi.fn(),
-        },
-        user: { findUnique: vi.fn().mockResolvedValue(null) },
-        member: { findUnique: vi.fn() },
-        refreshToken: { create: vi.fn() },
-      };
-      return cb(tx);
-    });
-
-    const token = makeOnboardToken();
-    await expect(onboard(token)).rejects.toMatchObject({
-      statusCode: 404,
-      code: "USER_NOT_FOUND",
-    });
-  });
-
-  // D2: user not a workspace member → 403 NOT_A_MEMBER
-  it("throws 403 NOT_A_MEMBER when user is no longer a workspace member", async () => {
-    mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => {
-      const tx = {
-        workspaceInvite: {
-          findFirst: vi.fn().mockResolvedValue(mockInvite),
-          update: vi.fn(),
-        },
-        user: { findUnique: vi.fn().mockResolvedValue(mockUser) },
-        member: { findUnique: vi.fn().mockResolvedValue(null) },
-        refreshToken: { create: vi.fn() },
-      };
-      return cb(tx);
-    });
-
-    const token = makeOnboardToken();
-    await expect(onboard(token)).rejects.toMatchObject({
-      statusCode: 403,
-      code: "NOT_A_MEMBER",
-    });
-  });
+  // D2 (create-on-consume): user.upsert creates User if absent — no USER_NOT_FOUND error
+  // D2 (create-on-consume): member is find-or-created — no NOT_A_MEMBER error
+  // Both old error paths removed; new behavior tested in integration tests.
 
   // D1 atomicity: if refreshToken.create throws, consumedAt write should not happen
   it("does not set consumedAt when inner step fails (atomic)", async () => {
@@ -402,8 +366,11 @@ describe("onboard()", () => {
           findFirst: vi.fn().mockResolvedValue(mockInvite),
           update: vi.fn().mockImplementation(() => { updateCalled = true; return mockInvite; }),
         },
-        user: { findUnique: vi.fn().mockResolvedValue(mockUser) },
-        member: { findUnique: vi.fn().mockResolvedValue(mockMember) },
+        user: { upsert: vi.fn().mockResolvedValue(mockUser) },
+        member: {
+          findUnique: vi.fn().mockResolvedValue(mockMember),
+          create: vi.fn().mockResolvedValue(mockMember),
+        },
         refreshToken: {
           create: vi.fn().mockRejectedValue(new Error("DB write failure")),
         },
@@ -433,9 +400,11 @@ describe("onboard() — project assignment application (Phase 6)", () => {
     kind: "ONBOARDING",
     email: USER_EMAIL,
     workspaceId: WORKSPACE_ID,
+    role: "member",
     revokedAt: null,
     consumedAt: null,
     expiresAt: new Date(Date.now() + 72 * 60 * 60 * 1000),
+    workspace: { id: WORKSPACE_ID, name: "Test WS", slug: "test-ws" },
     projectAssignments: [
       { projectId: PROJECT_ID_A, role: "member" },
       { projectId: PROJECT_ID_B, role: "viewer" },
@@ -476,8 +445,11 @@ describe("onboard() — project assignment application (Phase 6)", () => {
         findFirst: vi.fn().mockResolvedValue(invite),
         update: updateFn,
       },
-      user: { findUnique: vi.fn().mockResolvedValue(mockUser) },
-      member: { findUnique: vi.fn().mockResolvedValue(mockMember) },
+      user: { upsert: vi.fn().mockResolvedValue(mockUser) },
+      member: {
+        findUnique: vi.fn().mockResolvedValue(mockMember),
+        create: vi.fn().mockResolvedValue(mockMember),
+      },
       refreshToken: { create: vi.fn().mockResolvedValue(mockRefreshTokenRow) },
       project: {
         findMany: vi.fn().mockResolvedValue(liveProjectIds.map((id) => ({ id }))),

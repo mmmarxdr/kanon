@@ -11,7 +11,7 @@ import type { RegisterBody, LoginBody } from "./schema.js";
 import type { EmailProvider } from "../../services/email/types.js";
 import { ProjectAssignmentSchema } from "../invite/schema.js";
 import { createProjectMembersInTx } from "../project/project-member-service.js";
-import { acceptInvite } from "../invite/service.js";
+import { acceptInvite, deriveUsername } from "../invite/service.js";
 
 // ── D6 helpers ────────────────────────────────────────────────────────────────
 
@@ -432,16 +432,23 @@ export async function issueRefreshFromLogin(userId: string): Promise<{
 /**
  * Consume a single-use onboarding JWT and issue a long-lived opaque refresh token.
  *
- * CRITICAL (option 1): validates that the user EXISTS and is already a workspace
- * member. Does NOT create users, does NOT touch passwordHash.
+ * Create-on-consume (R-NUI-cli-consume): atomically upserts the User (passwordless if
+ * absent, reuses existing User if present), finds-or-creates the workspace Member
+ * (role from invite), applies ProjectMember rows from invite's projectAssignments,
+ * sets consumedAt, and issues the refresh token — all in one transaction.
+ *
+ * Atomic + idempotent:
+ *   - If ANY step fails, the WHOLE tx rolls back — token NOT consumed, NO partial state.
+ *   - consumedAt guard blocks replay on success.
+ *   - Member find-or-create is idempotent (existing Member reused, no dup, no error).
+ *
+ * Email is always sourced from the invite row (admin-controlled at creation time).
  *
  * Error map:
  *   - 400 INVALID_TOKEN   — bad/wrong-scope JWT
  *   - 410 TOKEN_EXPIRED   — JWT exp in the past
  *   - 410 TOKEN_CONSUMED  — invite.consumedAt already set
  *   - 400 TOKEN_REVOKED   — invite.revokedAt set
- *   - 404 USER_NOT_FOUND  — no User row matching invite.email
- *   - 403 NOT_A_MEMBER    — user not a member of invite.workspaceId
  */
 export async function onboard(token: string) {
   // 1. Verify JWT — check signature and expiry
@@ -463,9 +470,10 @@ export async function onboard(token: string) {
   const inviteId = payload.sub;
 
   return prisma.$transaction(async (tx) => {
-    // 3. Lock and fetch invite
+    // 3. Fetch invite
     const invite = await (tx as typeof prisma).workspaceInvite.findFirst({
       where: { id: inviteId, kind: "ONBOARDING" },
+      include: { workspace: { select: { id: true, name: true, slug: true } } },
     });
 
     if (!invite) {
@@ -484,25 +492,36 @@ export async function onboard(token: string) {
       throw new AppError(410, "TOKEN_EXPIRED", "Onboarding token has expired");
     }
 
-    // 5. Resolve user by email stored on invite (MUST exist — option 1)
-    const user = await (tx as typeof prisma).user.findUnique({
-      where: { email: invite.email! },
+    // Email is admin-controlled — always sourced from the invite row, never from caller input.
+    const email = invite.email!;
+
+    // 5. Upsert User by email (R-NUI-cli-consume, ADR-5):
+    //    - Create passwordless (passwordHash: null) if absent → escape hatch via forgot-password
+    //    - Reuse existing User unchanged if present (update: {} is a no-op)
+    const user = await (tx as typeof prisma).user.upsert({
+      where: { email },
+      create: { email, passwordHash: null },
+      update: {},
       select: { id: true, email: true },
     });
-    if (!user) {
-      throw new AppError(404, "USER_NOT_FOUND", "User not found");
-    }
 
-    // 6. Assert workspace membership
-    const member = await (tx as typeof prisma).member.findUnique({
+    // 6. Find-or-create workspace Member with role from invite (idempotent).
+    //    Do NOT throw on existing member — reuse it silently (contrast with acceptInvite).
+    let existingMember = await (tx as typeof prisma).member.findUnique({
       where: { userId_workspaceId: { userId: user.id, workspaceId: invite.workspaceId } },
-      select: {
-        id: true,
-        workspace: { select: { id: true, name: true, slug: true } },
-      },
     });
-    if (!member) {
-      throw new AppError(403, "NOT_A_MEMBER", "User is not a member of this workspace");
+
+    if (!existingMember) {
+      // Derive a unique username within the workspace (ADR-6)
+      const username = await deriveUsername(tx, invite.workspaceId, email);
+      existingMember = await (tx as typeof prisma).member.create({
+        data: {
+          username,
+          role: invite.role as import("@prisma/client").MemberRole,
+          userId: user.id,
+          workspaceId: invite.workspaceId,
+        },
+      });
     }
 
     // 7. Parse project assignments BEFORE creating the RefreshToken row so
@@ -511,7 +530,11 @@ export async function onboard(token: string) {
     const parsedAssignments = z.array(ProjectAssignmentSchema).safeParse(invite.projectAssignments);
     const assignments = parsedAssignments.success ? parsedAssignments.data : [];
 
-    // 8. Generate opaque refresh token and store its hash
+    // 8. Apply project assignments (idempotent — skipDuplicates:true in createProjectMembersInTx).
+    //    Must be BEFORE consumedAt update so a PM failure rolls back the whole tx.
+    await createProjectMembersInTx(tx, user.id, assignments, invite.workspaceId);
+
+    // 9. Generate opaque refresh token and store its hash
     const rawToken = generateOpaqueToken();
     const tokenHash = sha256Hex(rawToken);
     const refreshExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
@@ -528,11 +551,7 @@ export async function onboard(token: string) {
       },
     });
 
-    // 9a. Apply project assignments (R-INV-onboard, R-INV-inv, R-INV-idempotent)
-    // Must be BEFORE consumedAt update so a PM failure prevents the invite from being consumed.
-    await createProjectMembersInTx(tx, user.id, assignments, invite.workspaceId);
-
-    // 9b. Mark invite as consumed (atomic — same tx)
+    // 10. Mark invite as consumed (atomic — same tx, last step so any earlier failure rolls back)
     await (tx as typeof prisma).workspaceInvite.update({
       where: { id: inviteId },
       data: { consumedAt: new Date() },
@@ -541,7 +560,7 @@ export async function onboard(token: string) {
     return {
       refreshToken: rawToken,
       apiUrl: env.BASE_URL,
-      workspace: member.workspace,
+      workspace: invite.workspace,
       email: user.email,
       expiresAt: refreshTokenRow.expiresAt.toISOString(),
     };
