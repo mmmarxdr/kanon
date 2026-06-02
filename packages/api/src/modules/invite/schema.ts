@@ -122,10 +122,17 @@ export type WorkspaceIdParam = z.infer<typeof WorkspaceIdParam>;
 
 /**
  * Onboarding invite request body — used by POST /api/workspaces/:wid/invites/onboarding.
- * Requires an existing user (by userId) who must already be a workspace member.
+ *
+ * Two modes:
+ *   - userId (existing member path): backward-compatible; user must exist and be a workspace member.
+ *   - email (new-user path, R-NUI-cli-create): no User or Member row required; invite is
+ *     email-targeted and will be consumed via onboard() which creates the user on first use.
+ *
+ * Exactly one of userId or email must be provided (validated at service layer).
  */
 export const OnboardingInviteBody = z.object({
-  userId: z.string().uuid("Invalid user ID"),
+  userId: z.string().uuid("Invalid user ID").optional(),
+  email: z.string().email("Invalid email address").optional(),
   role: z.enum(["member", "admin", "viewer"]).optional().default("member"),
   ttlHours: z.number().int().min(1).max(72).optional().default(72),
   projectAssignments: z.array(ProjectAssignmentSchema).optional().transform(dedupeFirstWins),

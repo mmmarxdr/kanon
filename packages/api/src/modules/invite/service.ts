@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import jwt from "jsonwebtoken";
-import type { MemberRole } from "@prisma/client";
+import type { MemberRole, Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { env } from "../../config/env.js";
 import { AppError } from "../../shared/types.js";
@@ -10,6 +10,33 @@ import type { CreateInviteBody, OnboardingInviteBody, ProjectAssignment } from "
 import { ProjectAssignmentSchema } from "./schema.js";
 import { createProjectMembersInTx } from "../project/project-member-service.js";
 import { z } from "zod";
+
+/**
+ * Derive a unique username within a workspace from an email address.
+ *
+ * Logic:
+ *   1. Take the local-part (before @), lowercase, replace non-alphanumeric runs with "-", strip
+ *      leading/trailing dashes. Fallback to "user" if empty.
+ *   2. If the candidate is already taken in this workspace, append a base-36 timestamp suffix.
+ *
+ * Exported so onboard() in auth/service.ts can reuse it without duplication (ADR-6).
+ */
+export async function deriveUsername(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  email: string,
+): Promise<string> {
+  const local = email.split("@")[0] ?? "user";
+  let username = local.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "user";
+
+  const existingUsername = await tx.member.findUnique({
+    where: { workspaceId_username: { workspaceId, username } },
+  });
+  if (existingUsername) {
+    username = `${username}-${Date.now().toString(36)}`;
+  }
+  return username;
+}
 
 /**
  * Validate project assignments for a given workspace:
@@ -365,22 +392,39 @@ export async function createOnboardingInvite(
   body: OnboardingInviteBody,
   inviterRole: MemberRole,
 ) {
-  // 1. Resolve user — must exist
-  const user = await prisma.user.findUnique({
-    where: { id: body.userId },
-    select: { id: true, email: true },
-  });
-  if (!user) {
-    throw new AppError(404, "USER_NOT_FOUND", "User not found");
+  // Validate: exactly one of userId or email must be provided
+  if (!body.userId && !body.email) {
+    throw new AppError(400, "MISSING_IDENTIFIER", "Either userId or email must be provided");
   }
 
-  // 2. Assert workspace membership
-  const member = await prisma.member.findUnique({
-    where: { userId_workspaceId: { userId: user.id, workspaceId } },
-    select: { id: true },
-  });
-  if (!member) {
-    throw new AppError(403, "NOT_A_MEMBER", "User is not a member of this workspace");
+  let targetEmail: string;
+
+  if (body.userId) {
+    // ── Path A: existing-member path (backward-compatible) ──────────────────
+    // 1. Resolve user — must exist
+    const user = await prisma.user.findUnique({
+      where: { id: body.userId },
+      select: { id: true, email: true },
+    });
+    if (!user) {
+      throw new AppError(404, "USER_NOT_FOUND", "User not found");
+    }
+
+    // 2. Assert workspace membership
+    const member = await prisma.member.findUnique({
+      where: { userId_workspaceId: { userId: user.id, workspaceId } },
+      select: { id: true },
+    });
+    if (!member) {
+      throw new AppError(403, "NOT_A_MEMBER", "User is not a member of this workspace");
+    }
+
+    targetEmail = user.email;
+  } else {
+    // ── Path B: new-user path (R-NUI-cli-create) ────────────────────────────
+    // No User or Member row required — onboard() will create them on first use.
+    // Email comes from the admin-controlled request body.
+    targetEmail = body.email!;
   }
 
   // 2b. Validate project assignments before creating the invite (fail fast)
@@ -400,7 +444,7 @@ export async function createOnboardingInvite(
       maxUses: 1,
       expiresAt,
       label: "Onboarding link",
-      email: user.email,
+      email: targetEmail,
       kind: "ONBOARDING",
       workspaceId,
       createdById,
@@ -537,22 +581,8 @@ export async function acceptInvite(token: string, userId: string, userEmail: str
       data: { useCount: { increment: 1 } },
     });
 
-    // Derive username from email
-    const local = userEmail.split("@")[0] ?? "user";
-    let username = local.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "user";
-
-    // Ensure username is unique within workspace
-    const existingUsername = await tx.member.findUnique({
-      where: {
-        workspaceId_username: {
-          workspaceId: invite.workspaceId,
-          username,
-        },
-      },
-    });
-    if (existingUsername) {
-      username = `${username}-${Date.now().toString(36)}`;
-    }
+    // Derive username from email (shared helper — ADR-6)
+    const username = await deriveUsername(tx, invite.workspaceId, userEmail);
 
     // Create member
     const member = await tx.member.create({
