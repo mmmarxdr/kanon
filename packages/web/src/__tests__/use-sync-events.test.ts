@@ -49,6 +49,7 @@ function setAuthenticated() {
       email: "test@test.com",
       displayName: "Tester",
       avatarUrl: null,
+      emailVerified: true,
     },
     isAuthenticated: true,
     isLoading: false,
