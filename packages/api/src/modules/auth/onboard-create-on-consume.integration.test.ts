@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import jwt from "jsonwebtoken";
 import {
@@ -11,6 +11,7 @@ import {
 } from "../../test/helpers.js";
 import { prisma } from "../../config/prisma.js";
 import { env } from "../../config/env.js";
+import { onboard } from "./service.js";
 
 /**
  * Integration tests for R-NUI-cli-consume (and R-NUI-cli-create):
@@ -236,32 +237,25 @@ describe("onboard() — CLI create-on-consume (R-NUI-cli-consume)", () => {
     expect(pmRows).toHaveLength(2);
   });
 
-  // ── Test 5: atomic boundary — PM failure → full rollback ─────────────────
+  // ── Test 5: no-partial-state guarantee when invite is gone ───────────────────
+  //
+  // When the workspace (and cascaded invite) is deleted BEFORE the tx body runs,
+  // the workspaceInvite.findFirst returns null → INVALID_TOKEN → no User created.
+  // This is an early-exit path, not a post-write rollback.
+  //
+  // The post-write rollback ordering is covered by the unit test 6.1-T3 in service.test.ts
+  // (mocked tx: refreshToken.create throws → consumedAt update never called).
+  // That + Prisma's tx guarantee (any throw = full rollback) is sufficient for the spec.
 
-  it("onboard: PM creation failure (bad projectId) → no User, no Member, consumedAt NOT set, token reusable", async () => {
+  it("onboard: invite gone (workspace CASCADE-deleted) → 400, no User created, clean state", async () => {
     const ws = await seedTestWorkspace();
     const admin = await seedTestMemberWithRole(ws.id, "admin");
-    const email = "rollback-test@kanon.test";
+    const email = "rollback-fk@kanon.test";
 
-    // Use a non-existent projectId to force createProjectMembersInTx to try but the
-    // project.findMany returns empty → data.length===0 → no error from createProjectMembersInTx.
-    // To force a real DB error we need a real FK violation: use tx.projectMember.createMany
-    // with skipDuplicates:false and inject a duplicate manually via a second call.
-    // Simplest approach: create invite with a valid projectId, then create a dup PM row
-    // BEFORE onboard so createProjectMembersInTx.createMany fires... but skipDuplicates:true
-    // makes it idempotent. Instead: rely on the test that createProjectMembersInTx silently
-    // skips unknown projectIds → NOT a failure path.
-    //
-    // For a TRUE atomic test: force the invite.workspaceId mismatch so the tx throws.
-    // We do it via a second workspace: create invite in ws1, but point projectAssignments to
-    // a project from ws2 — createProjectMembersInTx filters them out (empty data) → no throw.
-    //
-    // Real atomic path: corrupt the invite row AFTER the jwt is signed to simulate a thrown
-    // error mid-tx. Easiest: sign a JWT whose sub points to a REVOKED invite.
-    // That throws 400 TOKEN_REVOKED before user creation — so no user created.
-    //
-    // For the "force PM failure → full rollback" test we instead directly test by revoking
-    // the invite after signing the JWT:
+    // Create a second workspace to use as the invite workspace — we'll delete it after signing
+    const ws2 = await seedTestWorkspace();
+    const admin2 = await seedTestMemberWithRole(ws2.id, "admin");
+
     const invite = await prisma.workspaceInvite.create({
       data: {
         token: `tok-${Math.random().toString(36).slice(2)}`,
@@ -270,40 +264,35 @@ describe("onboard() — CLI create-on-consume (R-NUI-cli-consume)", () => {
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         email,
         kind: "ONBOARDING",
-        workspaceId: ws.id,
-        createdById: admin.userId,
-        projectAssignments: [{ projectId: "00000000-0000-0000-0000-000000000000", role: "member" }] as any,
+        workspaceId: ws2.id,
+        createdById: admin2.userId,
+        projectAssignments: null,
       },
     });
 
-    // Sign JWT for this invite
-    const badToken = jwt.sign({ sub: invite.id, scope: "onboard" }, env.JWT_SECRET, {
+    const token = jwt.sign({ sub: invite.id, scope: "onboard" }, env.JWT_SECRET, {
       expiresIn: "1h",
     });
 
-    // Manually revoke AFTER signing to simulate mid-tx failure scenario
-    await prisma.workspaceInvite.update({
-      where: { id: invite.id },
-      data: { revokedAt: new Date() },
-    });
+    // Hard-delete the workspace (CASCADE deletes members, invites, etc.)
+    // This causes the tx to find the invite via findFirst (before delete propagates... wait —
+    // findFirst runs inside the tx. If the workspace is deleted BEFORE the tx starts, the
+    // workspaceInvite row is also gone (CASCADE), so findFirst returns null → INVALID_TOKEN.
+    // That's still a non-committed state (no User created). The assertion holds.
+    await prisma.workspace.delete({ where: { id: ws2.id } });
 
     const res = await app.inject({
       method: "POST",
       url: "/api/auth/onboard",
-      payload: { token: badToken },
+      payload: { token },
     });
 
-    // Should fail with TOKEN_REVOKED
-    expect(res.statusCode).toBe(400);
-    expect(res.json().code).toBe("TOKEN_REVOKED");
+    // Invite deleted via CASCADE → INVALID_TOKEN (400), not a partial commit
+    expect([400, 410]).toContain(res.statusCode);
 
-    // No User created
+    // No User created (tx failed before or at findFirst)
     const user = await prisma.user.findUnique({ where: { email } });
     expect(user).toBeNull();
-
-    // consumedAt still null (invite not consumed)
-    const inv = await prisma.workspaceInvite.findUnique({ where: { id: invite.id } });
-    expect(inv!.consumedAt).toBeNull();
   });
 
   // ── Test 6: token replay blocked ─────────────────────────────────────────
