@@ -15,7 +15,7 @@ export function useCurrentProject(): {
   // Extract projectKey from any project-scoped route.
   const projectKey =
     location.pathname.match(
-      /^\/(board|roadmap|dependencies|cycles)\/([^/]+)/,
+      /^\/(board|roadmap|dependencies|cycles|project-settings)\/([^/]+)/,
     )?.[2] ?? "";
 
   const project = projects?.find((p) => p.key === projectKey);

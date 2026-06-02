@@ -104,7 +104,7 @@ export function AppSidebar() {
   } = useSyncEvents();
 
   const projectKey =
-    location.pathname.match(/^\/(board|roadmap|dependencies|cycles)\/([^/]+)/)?.[2] ?? "";
+    location.pathname.match(/^\/(board|roadmap|dependencies|cycles|project-settings)\/([^/]+)/)?.[2] ?? "";
   const navItems = buildNavItems(projectKey);
 
   const displayName = user?.displayName ?? user?.email ?? "User";
