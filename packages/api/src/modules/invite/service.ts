@@ -6,6 +6,7 @@ import { env } from "../../config/env.js";
 import { AppError } from "../../shared/types.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import type { EmailProvider } from "../../services/email/types.js";
+import { buildInviteEmail } from "../../services/email/templates/invite.js";
 import type { CreateInviteBody, OnboardingInviteBody, ProjectAssignment } from "./schema.js";
 import { ProjectAssignmentSchema } from "./schema.js";
 import { createProjectMembersInTx } from "../project/project-member-service.js";
@@ -137,61 +138,6 @@ function toInviteResponse(invite: {
     },
     createdAt: invite.createdAt.toISOString(),
   };
-}
-
-/**
- * Build the HTML email for a workspace invite.
- */
-function buildInviteEmail(opts: {
-  workspaceName: string;
-  role: string;
-  inviterName: string;
-  inviteUrl: string;
-  expiresAt: Date;
-}): { subject: string; html: string; text: string } {
-  const expiresDate = opts.expiresAt.toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-  const roleLabel = opts.role.charAt(0).toUpperCase() + opts.role.slice(1);
-
-  const subject = `You've been invited to join ${opts.workspaceName} on Kanon`;
-
-  const html = `
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
-      <h2 style="color: #111; margin-bottom: 16px;">You're invited!</h2>
-      <p style="color: #333; font-size: 15px; line-height: 1.5;">
-        <strong>${opts.inviterName}</strong> has invited you to join
-        <strong>${opts.workspaceName}</strong> as a <strong>${roleLabel}</strong>.
-      </p>
-      <div style="margin: 32px 0; text-align: center;">
-        <a href="${opts.inviteUrl}"
-           style="display: inline-block; background-color: #111; color: #fff; padding: 12px 32px; border-radius: 6px; text-decoration: none; font-size: 14px; font-weight: 500;">
-          Accept Invite
-        </a>
-      </div>
-      <p style="color: #666; font-size: 13px;">
-        This invite expires on ${expiresDate}.
-      </p>
-      <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;" />
-      <p style="color: #999; font-size: 12px;">
-        If you didn't expect this invitation, you can safely ignore this email.
-      </p>
-    </div>
-  `.trim();
-
-  const text = [
-    `You've been invited to join ${opts.workspaceName} on Kanon!`,
-    "",
-    `${opts.inviterName} has invited you to join as a ${roleLabel}.`,
-    "",
-    `Accept the invite: ${opts.inviteUrl}`,
-    "",
-    `This invite expires on ${expiresDate}.`,
-  ].join("\n");
-
-  return { subject, html, text };
 }
 
 /**

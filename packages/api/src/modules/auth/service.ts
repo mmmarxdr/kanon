@@ -9,6 +9,8 @@ import { BCRYPT_COST, TOKEN_EXPIRY } from "../../shared/constants.js";
 import type { TokenPayload } from "../../shared/types.js";
 import type { RegisterBody, LoginBody } from "./schema.js";
 import type { EmailProvider } from "../../services/email/types.js";
+import { buildVerifyEmail } from "../../services/email/templates/verify.js";
+import { buildResetEmail } from "../../services/email/templates/reset.js";
 import { ProjectAssignmentSchema } from "../invite/schema.js";
 import { createProjectMembersInTx } from "../project/project-member-service.js";
 import { acceptInvite, deriveUsername } from "../invite/service.js";
@@ -332,17 +334,13 @@ export async function sendVerificationEmail(
   });
 
   const verifyUrl = `${env.APP_URL}/verify-email?token=${token}`;
+  const verifyEmail = buildVerifyEmail({ verifyUrl });
 
   await emailProvider.send({
     to: email,
-    subject: "Verify your email",
-    html: `
-      <p>Please verify your email address to complete your registration.</p>
-      <p><a href="${verifyUrl}">Click here to verify your email</a></p>
-      <p>This link expires in 24 hours.</p>
-      <p>If you didn't create an account, you can safely ignore this email.</p>
-    `,
-    text: `Please verify your email address. Visit this link: ${verifyUrl}\n\nThis link expires in 24 hours. If you didn't create an account, you can safely ignore this email.`,
+    subject: verifyEmail.subject,
+    html: verifyEmail.html,
+    text: verifyEmail.text,
   });
 }
 
@@ -451,17 +449,13 @@ export async function requestPasswordReset(
 
   // Build reset URL and send email
   const resetUrl = `${env.APP_URL}/reset-password?token=${token}`;
+  const resetEmail = buildResetEmail({ resetUrl });
 
   await emailProvider.send({
     to: user.email,
-    subject: "Reset your password",
-    html: `
-      <p>You requested a password reset.</p>
-      <p><a href="${resetUrl}">Click here to reset your password</a></p>
-      <p>This link expires in 1 hour.</p>
-      <p>If you didn't request this, you can safely ignore this email.</p>
-    `,
-    text: `You requested a password reset. Visit this link to reset your password: ${resetUrl}\n\nThis link expires in 1 hour. If you didn't request this, you can safely ignore this email.`,
+    subject: resetEmail.subject,
+    html: resetEmail.html,
+    text: resetEmail.text,
   });
 }
 
