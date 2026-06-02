@@ -1,17 +1,171 @@
 import { createRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { authenticatedRoute } from "../_authenticated";
-import { fetchApi } from "@/lib/api-client";
+import { fetchApi, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/stores/auth-store";
 import { workspaceKeys } from "@/lib/query-keys";
 import { Monogram } from "@/components/ui/icons";
+import { useCreateWorkspaceMutation } from "@/hooks/use-create-workspace-mutation";
+import { deriveSlug } from "@/lib/derive-slug";
 
 export const workspaceSelectRoute = createRoute({
   path: "/workspaces",
   getParentRoute: () => authenticatedRoute,
   component: WorkspaceSelectPage,
 });
+
+// ---------------------------------------------------------------------------
+// CreateWorkspaceForm — rendered in empty-state and when "New workspace" toggled
+// ---------------------------------------------------------------------------
+
+interface CreateWorkspaceFormProps {
+  /** Called with the returned workspace id on successful creation. */
+  onCreated: (workspaceId: string) => void;
+}
+
+function CreateWorkspaceForm({ onCreated }: CreateWorkspaceFormProps) {
+  const [name, setName] = useState("");
+  const [slug, setSlug] = useState("");
+  const [slugEdited, setSlugEdited] = useState(false);
+  const [slugError, setSlugError] = useState<string | null>(null);
+
+  const createMutation = useCreateWorkspaceMutation();
+
+  function handleNameChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const value = e.target.value;
+    setName(value);
+    if (!slugEdited) {
+      setSlug(deriveSlug(value));
+    }
+    if (slugError) setSlugError(null);
+  }
+
+  function handleSlugChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setSlug(e.target.value);
+    setSlugEdited(true);
+    if (slugError) setSlugError(null);
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim() || !slug.trim()) return;
+
+    setSlugError(null);
+    createMutation.mutate(
+      { name: name.trim(), slug: slug.trim() },
+      {
+        onSuccess: (workspace) => {
+          onCreated(workspace.id);
+        },
+        onError: (err) => {
+          if (err instanceof ApiError && err.status === 409) {
+            setSlugError(
+              "This slug is already taken — please change the slug and try again.",
+            );
+          }
+        },
+      },
+    );
+  }
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%",
+    padding: "8px 10px",
+    fontSize: 13,
+    border: "1px solid var(--line)",
+    borderRadius: 5,
+    background: "var(--panel)",
+    color: "var(--ink)",
+    boxSizing: "border-box" as const,
+    outline: "none",
+  };
+
+  const labelStyle: React.CSSProperties = {
+    display: "block",
+    fontSize: 11,
+    fontWeight: 500,
+    color: "var(--ink-3)",
+    marginBottom: 4,
+    letterSpacing: "0.02em",
+  };
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      style={{ display: "flex", flexDirection: "column", gap: 12 }}
+    >
+      <div>
+        <label htmlFor="ws-name" style={labelStyle}>
+          Workspace name
+        </label>
+        <input
+          id="ws-name"
+          type="text"
+          aria-label="Workspace name"
+          value={name}
+          onChange={handleNameChange}
+          placeholder="e.g. Acme Corp"
+          style={inputStyle}
+          autoFocus
+        />
+      </div>
+
+      <div>
+        <label htmlFor="ws-slug" style={labelStyle}>
+          Slug
+        </label>
+        <input
+          id="ws-slug"
+          type="text"
+          aria-label="Slug"
+          value={slug}
+          onChange={handleSlugChange}
+          placeholder="e.g. acme-corp"
+          style={{
+            ...inputStyle,
+            ...(slugError
+              ? {
+                  borderColor:
+                    "color-mix(in oklch, var(--bad) 60%, transparent)",
+                }
+              : {}),
+          }}
+          className="mono"
+        />
+        {slugError && (
+          <p
+            style={{
+              margin: "4px 0 0",
+              fontSize: 12,
+              color: "var(--bad)",
+            }}
+          >
+            {slugError}
+          </p>
+        )}
+      </div>
+
+      <button
+        type="submit"
+        disabled={createMutation.isPending || !name.trim() || !slug.trim()}
+        style={{
+          padding: "9px 16px",
+          fontSize: 13,
+          fontWeight: 500,
+          background: "var(--accent)",
+          color: "var(--accent-ink)",
+          border: "none",
+          borderRadius: 5,
+          cursor: createMutation.isPending ? "wait" : "pointer",
+          opacity: !name.trim() || !slug.trim() ? 0.5 : 1,
+        }}
+      >
+        {createMutation.isPending ? "Creating…" : "Create workspace"}
+      </button>
+    </form>
+  );
+}
 
 interface Workspace {
   id: string;
@@ -27,10 +181,11 @@ interface Project {
   description: string | null;
 }
 
-function WorkspaceSelectPage() {
+export function WorkspaceSelectPage() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const didAutoRedirect = useRef(false);
+  const [showCreateForm, setShowCreateForm] = useState(false);
 
   const workspacesQuery = useQuery({
     queryKey: workspaceKeys.list(),
@@ -105,6 +260,16 @@ function WorkspaceSelectPage() {
     });
   }
 
+  function handleWorkspaceCreated(workspaceId: string) {
+    // Set the ref BEFORE navigating so the auto-redirect effect (length===1)
+    // cannot race and fire a second navigation when the list refetches.
+    didAutoRedirect.current = true;
+    void navigate({
+      to: "/workspaces/$workspaceId/projects",
+      params: { workspaceId },
+    });
+  }
+
   return (
     <div
       style={{
@@ -134,6 +299,21 @@ function WorkspaceSelectPage() {
           kanon
         </span>
         <span style={{ flex: 1 }} />
+        {workspacesQuery.data && workspacesQuery.data.length > 1 && (
+          <button
+            type="button"
+            aria-label="New workspace"
+            onClick={() => setShowCreateForm((v) => !v)}
+            style={{
+              fontSize: 12,
+              color: "var(--accent)",
+              marginRight: 12,
+              fontWeight: 500,
+            }}
+          >
+            + New workspace
+          </button>
+        )}
         <button
           type="button"
           onClick={() => {
@@ -203,15 +383,55 @@ function WorkspaceSelectPage() {
           {workspacesQuery.data && workspacesQuery.data.length === 0 && (
             <div
               style={{
-                padding: 32,
-                textAlign: "center",
-                fontSize: 13,
-                color: "var(--ink-3)",
-                border: "1px dashed var(--line-2)",
+                padding: 24,
+                border: "1px solid var(--line)",
                 borderRadius: 6,
+                background: "var(--panel)",
               }}
             >
-              No workspaces found. You may need to be invited to a workspace.
+              <p
+                style={{
+                  margin: "0 0 16px",
+                  fontSize: 13,
+                  color: "var(--ink-3)",
+                }}
+              >
+                Create your first workspace to get started.
+              </p>
+              <CreateWorkspaceForm onCreated={handleWorkspaceCreated} />
+            </div>
+          )}
+
+          {showCreateForm && workspacesQuery.data && workspacesQuery.data.length >= 1 && (
+            <div
+              style={{
+                padding: 24,
+                border: "1px solid var(--line)",
+                borderRadius: 6,
+                background: "var(--panel)",
+                marginBottom: 16,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: 16,
+                }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 500 }}>
+                  New workspace
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowCreateForm(false)}
+                  style={{ fontSize: 12, color: "var(--ink-3)" }}
+                >
+                  Cancel
+                </button>
+              </div>
+              <CreateWorkspaceForm onCreated={handleWorkspaceCreated} />
             </div>
           )}
 
