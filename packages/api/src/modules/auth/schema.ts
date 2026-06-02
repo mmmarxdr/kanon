@@ -84,6 +84,31 @@ export const MeResponse = z.object({
   email: z.string(),
   displayName: z.string().nullable(),
   avatarUrl: z.string().nullable(),
+  emailVerified: z.boolean(),
+});
+
+// ── Email Verification ────────────────────────────────────────────────────────
+
+/**
+ * POST /api/auth/verify-email request body.
+ */
+export const VerifyEmailBody = z.object({
+  token: z.string().min(1, "Verification token is required"),
+});
+export type VerifyEmailBody = z.infer<typeof VerifyEmailBody>;
+
+/**
+ * POST /api/auth/verify-email response.
+ */
+export const VerifyEmailResponse = z.object({
+  message: z.string(),
+});
+
+/**
+ * POST /api/auth/resend-verification response.
+ */
+export const ResendVerificationResponse = z.object({
+  message: z.string(),
 });
 
 /**

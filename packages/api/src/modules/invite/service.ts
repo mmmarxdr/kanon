@@ -605,6 +605,17 @@ export async function acceptInvite(token: string, userId: string, userEmail: str
     const assignments = parsedAssignments.success ? parsedAssignments.data : [];
     await createProjectMembersInTx(tx, userId, assignments, invite.workspaceId);
 
+    // Auto-verify user for targeted invites (R-EV-autoverify, ADR-2).
+    // Guard: invite.email != null (targeted only — link invites must still verify).
+    // Use updateMany with compound where {id, emailVerifiedAt:null} — Prisma `update`
+    // requires a unique where and cannot express the null guard without compound filter.
+    if (invite.email != null) {
+      await tx.user.updateMany({
+        where: { id: userId, emailVerifiedAt: null },
+        data: { emailVerifiedAt: new Date() },
+      });
+    }
+
     // Emit domain event (fire-and-forget, outside tx is fine)
     try {
       eventBus.emit({

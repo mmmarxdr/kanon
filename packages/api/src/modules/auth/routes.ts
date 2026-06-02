@@ -25,6 +25,9 @@ import {
   ExchangeBody,
   ExchangeResponse,
   RefreshIssueResponse,
+  VerifyEmailBody,
+  VerifyEmailResponse,
+  ResendVerificationResponse,
 } from "./schema.js";
 import * as authService from "./service.js";
 import { createEmailProvider } from "../../services/email/index.js";
@@ -127,7 +130,7 @@ export default async function authRoutes(
       },
     },
     async (request, reply) => {
-      const result = await authService.register(request.body);
+      const result = await authService.register(request.body, emailProvider);
       // When invite was accepted, result contains accessToken + refreshToken.
       // Set auth cookies (mirrors login) so browser clients are immediately authenticated.
       if (result.accessToken && result.refreshToken) {
@@ -226,6 +229,7 @@ export default async function authRoutes(
           email: true,
           displayName: true,
           avatarUrl: true,
+          emailVerifiedAt: true,
         },
       });
 
@@ -238,6 +242,7 @@ export default async function authRoutes(
         email: user.email,
         displayName: user.displayName,
         avatarUrl: user.avatarUrl,
+        emailVerified: user.emailVerifiedAt !== null,
       };
     },
   );
@@ -405,6 +410,51 @@ export default async function authRoutes(
 
       const result = await authService.generateApiKey(authUser.userId);
       return reply.status(201).send(result);
+    },
+  );
+
+  /**
+   * POST /api/auth/verify-email
+   * Public route (all /api/auth/* are public-skipped by auth plugin).
+   * Consumes a single-use verification token and marks the user's email as verified.
+   */
+  app.post(
+    "/verify-email",
+    {
+      schema: {
+        body: VerifyEmailBody,
+        response: { 200: VerifyEmailResponse },
+      },
+    },
+    async (request, _reply) => {
+      const body = request.body as VerifyEmailBody;
+      await authService.verifyEmail(body.token);
+      return { message: "Email verified successfully" };
+    },
+  );
+
+  /**
+   * POST /api/auth/resend-verification
+   * Requires manual authentication (public /api/auth/* prefix bypasses auth hook).
+   * Always returns 200 (no-enumeration). Rate-limited: 3/min.
+   */
+  app.post(
+    "/resend-verification",
+    {
+      config: {
+        rateLimit: {
+          max: 3,
+          timeWindow: "1 minute",
+        },
+      },
+      schema: {
+        response: { 200: ResendVerificationResponse },
+      },
+    },
+    async (request, _reply) => {
+      const authUser = manualAuth(request);
+      await authService.resendVerification(authUser.userId, authUser.email, emailProvider);
+      return { message: "If your email is unverified, a new verification email has been sent" };
     },
   );
 }
