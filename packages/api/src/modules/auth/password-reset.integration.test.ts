@@ -75,7 +75,10 @@ describe("Password Reset", () => {
   }
 
   // ── Helper: call forgot-password and extract the raw token ──────────
+  // Clears sentEmails before requesting reset so assertions count only the reset email.
+  // (register now also sends a verification email — ADR-3, KAN-30)
   async function requestResetToken(email: string): Promise<string> {
+    sentEmails.length = 0;
     const res = await app.inject({
       method: "POST",
       url: "/api/auth/forgot-password",
@@ -95,6 +98,8 @@ describe("Password Reset", () => {
   describe("POST /api/auth/forgot-password", () => {
     it("existing email — 200, token created in DB", async () => {
       const { email, userId } = await registerUser();
+      // Register now sends a verification email (KAN-30) — clear before forgot-password
+      sentEmails.length = 0;
 
       const res = await app.inject({
         method: "POST",
@@ -113,7 +118,7 @@ describe("Password Reset", () => {
       expect(tokens[0]!.usedAt).toBeNull();
       expect(tokens[0]!.expiresAt.getTime()).toBeGreaterThan(Date.now());
 
-      // Verify email was sent
+      // Verify reset email was sent
       expect(sentEmails).toHaveLength(1);
       expect(sentEmails[0]!.to).toBe(email);
       expect(sentEmails[0]!.subject).toContain("Reset");
