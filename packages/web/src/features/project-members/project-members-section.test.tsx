@@ -370,6 +370,107 @@ describe("ProjectMembersSection — add member form", () => {
   });
 });
 
+describe("ProjectMembersSection — change-role error surface", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  async function renderWithChangeRoleError(error: unknown) {
+    const {
+      useProjectMembersQuery,
+      useAddProjectMemberMutation,
+      useChangeProjectMemberRoleMutation,
+      useRemoveProjectMemberMutation,
+    } = await import("./use-project-members-queries");
+
+    vi.mocked(useProjectMembersQuery).mockReturnValue({
+      data: [ADMIN_ROW, MEMBER_ROW],
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useProjectMembersQuery>);
+
+    vi.mocked(useAddProjectMemberMutation).mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+      isError: false,
+      error: null,
+      reset: vi.fn(),
+    } as unknown as ReturnType<typeof useAddProjectMemberMutation>);
+
+    vi.mocked(useChangeProjectMemberRoleMutation).mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+      isError: true,
+      error,
+    } as unknown as ReturnType<typeof useChangeProjectMemberRoleMutation>);
+
+    vi.mocked(useRemoveProjectMemberMutation).mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+      isError: false,
+      error: null,
+    } as unknown as ReturnType<typeof useRemoveProjectMemberMutation>);
+
+    const { ProjectMembersSection } = await import("./project-members-section");
+    const wrapper = createWrapper();
+    render(<ProjectMembersSection projectKey={PROJECT_KEY} />, { wrapper });
+  }
+
+  it("shows friendly message for ROLE_CAP_EXCEEDED when change-role fails", async () => {
+    const { ApiError } = await import("@/lib/api-client");
+    await renderWithChangeRoleError(
+      new ApiError(403, "ROLE_CAP_EXCEEDED", "Role cap exceeded"),
+    );
+
+    expect(screen.getByTestId("change-role-error")).toBeInTheDocument();
+    expect(screen.getByTestId("change-role-error")).toHaveTextContent(
+      /role cap/i,
+    );
+  });
+
+  it("shows friendly message for LAST_OWNER when change-role fails", async () => {
+    const { ApiError } = await import("@/lib/api-client");
+    await renderWithChangeRoleError(
+      new ApiError(422, "LAST_OWNER", "Cannot demote last owner"),
+    );
+
+    expect(screen.getByTestId("change-role-error")).toBeInTheDocument();
+    expect(screen.getByTestId("change-role-error")).toHaveTextContent(
+      /last owner/i,
+    );
+  });
+
+  it("shows friendly message for FORBIDDEN when change-role fails", async () => {
+    const { ApiError } = await import("@/lib/api-client");
+    await renderWithChangeRoleError(
+      new ApiError(403, "FORBIDDEN", "Forbidden"),
+    );
+
+    expect(screen.getByTestId("change-role-error")).toBeInTheDocument();
+    expect(screen.getByTestId("change-role-error")).toHaveTextContent(
+      /permission/i,
+    );
+  });
+
+  it("shows generic fallback for unexpected change-role errors", async () => {
+    await renderWithChangeRoleError(new Error("network failure"));
+
+    expect(screen.getByTestId("change-role-error")).toBeInTheDocument();
+    expect(screen.getByTestId("change-role-error")).toHaveTextContent(
+      /unexpected/i,
+    );
+  });
+
+  it("does NOT show change-role error when mutation has no error", async () => {
+    await renderSection();
+    expect(screen.queryByTestId("change-role-error")).toBeNull();
+  });
+});
+
 describe("ProjectMembersSection — owner cap on role select", () => {
   beforeEach(() => {
     vi.clearAllMocks();

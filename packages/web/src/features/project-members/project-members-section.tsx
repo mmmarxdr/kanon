@@ -63,6 +63,22 @@ function friendlyRemoveError(err: unknown): string {
   return "An unexpected error occurred.";
 }
 
+function friendlyChangeRoleError(err: unknown): string {
+  if (err instanceof ApiError) {
+    switch (err.code) {
+      case "ROLE_CAP_EXCEEDED":
+        return "Role cap exceeded — you cannot assign that role.";
+      case "LAST_OWNER":
+        return "Cannot demote the last owner of the project.";
+      case "FORBIDDEN":
+        return "You do not have permission to change this member's role.";
+      default:
+        return err.message;
+    }
+  }
+  return "An unexpected error occurred while changing the role.";
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function ProjectMembersSection({
@@ -120,6 +136,16 @@ export function ProjectMembersSection({
           className="mb-4 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
         >
           {friendlyRemoveError(removeMember.error)}
+        </div>
+      )}
+
+      {/* Change-role mutation error */}
+      {changeRole.isError && (
+        <div
+          data-testid="change-role-error"
+          className="mb-4 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          {friendlyChangeRoleError(changeRole.error)}
         </div>
       )}
 
