@@ -119,16 +119,23 @@ export function verifyRefreshToken(token: string): TokenPayload {
  *   2. Call acceptInvite — which validates the invite (including email-match guard)
  *      and creates the Member row in its own transaction. If acceptInvite throws,
  *      the user is left with no workspace membership (same state as plain register).
- *   3. Sign tokens + return session shape (accessToken + refreshToken + user).
+ *   3. RE-READ user.emailVerifiedAt (ADR-1): if acceptInvite was targeted, it set
+ *      emailVerifiedAt inside its tx. If null (link invite), send verification email.
+ *   4. Sign tokens + return session shape (accessToken + refreshToken + user).
  *
- * Without invite: create user only, return user shape (existing behavior).
+ * Without invite (self-serve): create user, then send verification email.
+ *   Atomicity (ADR-3): if emailProvider.send throws → delete user (cascade removes
+ *   token) → rethrow 500. No partial state.
  *
  * Note: register-with-invite is non-atomic by design. A failed acceptInvite leaves a
  * committed user with no workspace membership. Callers can retry acceptInvite
  * separately. Deviation from design's "same tx" wording — acceptInvite owns its own
  * transaction and its signature cannot be changed in this slice.
  */
-export async function register(body: RegisterBody): Promise<{
+export async function register(
+  body: RegisterBody,
+  emailProvider: EmailProvider,
+): Promise<{
   id: string;
   email: string;
   displayName: string | null;
@@ -165,6 +172,19 @@ export async function register(body: RegisterBody): Promise<{
     // only then sign tokens. This avoids issuing a session if accept fails.
     await acceptInvite(body.invite, user.id, user.email);
 
+    // ADR-1: re-read emailVerifiedAt to determine if targeted invite auto-verified the user.
+    // acceptInvite sets emailVerifiedAt inside its own tx for targeted invites.
+    // We cannot branch on invite.email here — it's not returned from acceptInvite.
+    const freshUser = await prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+      select: { emailVerifiedAt: true },
+    });
+
+    if (freshUser.emailVerifiedAt === null) {
+      // Link invite: not auto-verified → send verification email
+      await sendVerificationEmail(user.id, user.email, emailProvider);
+    }
+
     const payload: TokenPayload = {
       sub: user.id,
       email: user.email,
@@ -172,6 +192,18 @@ export async function register(body: RegisterBody): Promise<{
     const tokens = signTokens(payload);
 
     return { ...user, ...tokens };
+  }
+
+  // Self-serve path: send verification email (ADR-3 atomicity).
+  // If send fails, delete the user (cascade removes the token row) and rethrow.
+  try {
+    await sendVerificationEmail(user.id, user.email, emailProvider);
+  } catch (err) {
+    // Roll back: delete the just-created user (FK cascade removes token row)
+    await prisma.user.delete({ where: { id: user.id } }).catch(() => {
+      // Best-effort cleanup — ignore secondary errors
+    });
+    throw err;
   }
 
   return user;
@@ -264,6 +296,123 @@ export async function changePassword(
  * Password reset token expiry duration (1 hour).
  */
 const RESET_TOKEN_EXPIRY_MS = 60 * 60 * 1000;
+
+/**
+ * Email verification token expiry duration (24 hours).
+ */
+const VERIFICATION_TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Create a verification token for the given user and send a verification email.
+ * Deletes any prior verification tokens for the user before creating a new one.
+ *
+ * Callers are responsible for atomicity: on email failure, the caller must
+ * roll back the user row (ADR-3).
+ */
+export async function sendVerificationEmail(
+  userId: string,
+  email: string,
+  emailProvider: EmailProvider,
+): Promise<void> {
+  // Delete all existing verification tokens for this user
+  await prisma.emailVerificationToken.deleteMany({
+    where: { userId },
+  });
+
+  // Generate token and hash for storage
+  const token = randomBytes(32).toString("base64url");
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+
+  await prisma.emailVerificationToken.create({
+    data: {
+      tokenHash,
+      userId,
+      expiresAt: new Date(Date.now() + VERIFICATION_TOKEN_EXPIRY_MS),
+    },
+  });
+
+  const verifyUrl = `${env.APP_URL}/verify-email?token=${token}`;
+
+  await emailProvider.send({
+    to: email,
+    subject: "Verify your email",
+    html: `
+      <p>Please verify your email address to complete your registration.</p>
+      <p><a href="${verifyUrl}">Click here to verify your email</a></p>
+      <p>This link expires in 24 hours.</p>
+      <p>If you didn't create an account, you can safely ignore this email.</p>
+    `,
+    text: `Please verify your email address. Visit this link: ${verifyUrl}\n\nThis link expires in 24 hours. If you didn't create an account, you can safely ignore this email.`,
+  });
+}
+
+/**
+ * Verify an email address using a single-use token.
+ * Throws INVALID_VERIFICATION_TOKEN (400) if the token is invalid, expired, or already used.
+ * Sets emailVerifiedAt and marks the token as used atomically.
+ */
+export async function verifyEmail(token: string): Promise<void> {
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+
+  const verifyToken = await prisma.emailVerificationToken.findFirst({
+    where: {
+      tokenHash,
+      usedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+  });
+
+  if (!verifyToken) {
+    throw new AppError(
+      400,
+      "INVALID_VERIFICATION_TOKEN",
+      "Invalid or expired verification token",
+    );
+  }
+
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: verifyToken.userId },
+      data: { emailVerifiedAt: new Date() },
+    }),
+    prisma.emailVerificationToken.update({
+      where: { id: verifyToken.id },
+      data: { usedAt: new Date() },
+    }),
+    // Clean up any other tokens for this user (mirrors resetPassword tx, design §6).
+    // sendVerificationEmail already deleteMany's before creating, so in practice
+    // there is only one token, but we match the design spec for robustness.
+    prisma.emailVerificationToken.deleteMany({
+      where: {
+        userId: verifyToken.userId,
+        id: { not: verifyToken.id },
+      },
+    }),
+  ]);
+}
+
+/**
+ * Resend a verification email for the given user.
+ * If the user is already verified, this is a no-op.
+ * Always resolves without throwing (callers always return 200).
+ */
+export async function resendVerification(
+  userId: string,
+  email: string,
+  emailProvider: EmailProvider,
+): Promise<void> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { emailVerifiedAt: true },
+  });
+
+  if (!user || user.emailVerifiedAt !== null) {
+    // Already verified or user not found — no-op
+    return;
+  }
+
+  await sendVerificationEmail(userId, email, emailProvider);
+}
 
 /**
  * Request a password reset for the given email.
@@ -497,10 +646,11 @@ export async function onboard(token: string) {
 
     // 5. Upsert User by email (R-NUI-cli-consume, ADR-5):
     //    - Create passwordless (passwordHash: null) if absent → escape hatch via forgot-password
+    //    - Set emailVerifiedAt on create (admin-vouched, R-EV-autoverify)
     //    - Reuse existing User unchanged if present (update: {} is a no-op)
     const user = await (tx as typeof prisma).user.upsert({
       where: { email },
-      create: { email, passwordHash: null },
+      create: { email, passwordHash: null, emailVerifiedAt: new Date() },
       update: {},
       select: { id: true, email: true },
     });
