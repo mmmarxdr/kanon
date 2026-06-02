@@ -39,7 +39,7 @@ function dedupeFirstWins(
  */
 export const CreateInviteBody = z.object({
   role: InviteRoleEnum.optional().default("member"),
-  maxUses: z.number().int().min(0).optional().default(0),
+  maxUses: z.number().int().min(0).optional(),
   expiresInHours: z.number().int().min(1).max(720).optional().default(168),
   label: z.string().max(200).optional(),
   email: z.string().email().optional(),

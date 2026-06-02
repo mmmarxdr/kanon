@@ -189,11 +189,16 @@ export async function createInvite(
   const token = generateToken();
   const expiresAt = new Date(Date.now() + body.expiresInHours * 60 * 60 * 1000);
 
+  // R-NUI-maxuses: email-targeted invites default to single-use (maxUses=1).
+  // Link invites (no email) default to unlimited (maxUses=0).
+  // An explicit maxUses in the body always wins.
+  const maxUses = body.maxUses ?? (body.email ? 1 : 0);
+
   const invite = await prisma.workspaceInvite.create({
     data: {
       token,
       role: body.role,
-      maxUses: body.maxUses,
+      maxUses,
       expiresAt,
       label: body.label ?? null,
       email: body.email ?? null,
@@ -446,8 +451,9 @@ export async function acceptInvite(token: string, userId: string, userEmail: str
       workspace_id: string;
       kind: string | null;
       project_assignments: unknown;
+      email: string | null;
     }>>`
-      SELECT id, token, role, max_uses, use_count, expires_at, revoked_at, workspace_id, kind, project_assignments
+      SELECT id, token, role, max_uses, use_count, expires_at, revoked_at, workspace_id, kind, project_assignments, email
       FROM workspace_invites
       WHERE token = ${token}
       FOR UPDATE
@@ -477,6 +483,7 @@ export async function acceptInvite(token: string, userId: string, userEmail: str
       expiresAt: row.expires_at,
       revokedAt: row.revoked_at,
       workspaceId: row.workspace_id,
+      email: row.email,
       workspace,
     };
 
@@ -498,6 +505,16 @@ export async function acceptInvite(token: string, userId: string, userEmail: str
         403,
         "DOMAIN_NOT_ALLOWED",
         "Your email domain is not allowed for this workspace",
+      );
+    }
+
+    // Email-match guard (R-NUI-emailmatch): if invite is targeted at a specific
+    // email address, only that address may accept it.
+    if (invite.email != null && invite.email !== userEmail) {
+      throw new AppError(
+        403,
+        "EMAIL_MISMATCH",
+        "This invite was created for a different email address",
       );
     }
 

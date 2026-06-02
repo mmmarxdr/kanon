@@ -15,6 +15,8 @@ export const RegisterBody = z.object({
     .min(1, "Display name must be at least 1 character")
     .max(100, "Display name must be at most 100 characters")
     .optional(),
+  /** Optional invite token — when present, register auto-accepts the invite and issues a session. */
+  invite: z.string().min(1).optional(),
 });
 export type RegisterBody = z.infer<typeof RegisterBody>;
 
@@ -38,11 +40,17 @@ export type RefreshBody = z.infer<typeof RefreshBody>;
 
 /**
  * Registration response.
+ * Without invite: { id, email, displayName } — no session issued.
+ * With invite: also includes accessToken + refreshToken (mirrors login).
+ * Auth cookies are also set when invite is present.
  */
 export const RegisterResponse = z.object({
   id: z.string().uuid(),
   email: z.string(),
   displayName: z.string().nullable(),
+  // Present only when invite was accepted (auto-login path)
+  accessToken: z.string().optional(),
+  refreshToken: z.string().optional(),
 });
 
 /**

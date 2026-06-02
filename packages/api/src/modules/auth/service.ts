@@ -11,6 +11,7 @@ import type { RegisterBody, LoginBody } from "./schema.js";
 import type { EmailProvider } from "../../services/email/types.js";
 import { ProjectAssignmentSchema } from "../invite/schema.js";
 import { createProjectMembersInTx } from "../project/project-member-service.js";
+import { acceptInvite } from "../invite/service.js";
 
 // ── D6 helpers ────────────────────────────────────────────────────────────────
 
@@ -112,8 +113,28 @@ export function verifyRefreshToken(token: string): TokenPayload {
 
 /**
  * Register a new user (globally — no workspace).
+ *
+ * When body.invite is present (R-NUI-autologin):
+ *   1. Create user (committed).
+ *   2. Call acceptInvite — which validates the invite (including email-match guard)
+ *      and creates the Member row in its own transaction. If acceptInvite throws,
+ *      the user is left with no workspace membership (same state as plain register).
+ *   3. Sign tokens + return session shape (accessToken + refreshToken + user).
+ *
+ * Without invite: create user only, return user shape (existing behavior).
+ *
+ * Note: register-with-invite is non-atomic by design. A failed acceptInvite leaves a
+ * committed user with no workspace membership. Callers can retry acceptInvite
+ * separately. Deviation from design's "same tx" wording — acceptInvite owns its own
+ * transaction and its signature cannot be changed in this slice.
  */
-export async function register(body: RegisterBody) {
+export async function register(body: RegisterBody): Promise<{
+  id: string;
+  email: string;
+  displayName: string | null;
+  accessToken?: string;
+  refreshToken?: string;
+}> {
   // Check for duplicate email globally
   const existingUser = await prisma.user.findUnique({
     where: { email: body.email },
@@ -137,6 +158,22 @@ export async function register(body: RegisterBody) {
     },
   });
 
+  // Auto-login path: accept invite + issue session
+  if (body.invite) {
+    // acceptInvite validates the invite (expiry, email-match, already-member) and
+    // creates the Member row. Correct order: accept first (may throw 403/410) →
+    // only then sign tokens. This avoids issuing a session if accept fails.
+    await acceptInvite(body.invite, user.id, user.email);
+
+    const payload: TokenPayload = {
+      sub: user.id,
+      email: user.email,
+    };
+    const tokens = signTokens(payload);
+
+    return { ...user, ...tokens };
+  }
+
   return user;
 }
 
@@ -149,6 +186,12 @@ export async function login(body: LoginBody) {
   });
 
   if (!user) {
+    throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email or password");
+  }
+
+  // Null-guard: passwordless users (null passwordHash) cannot log in via password.
+  // Treat identically to wrong password — no user enumeration.
+  if (!user.passwordHash) {
     throw new AppError(401, "INVALID_CREDENTIALS", "Invalid email or password");
   }
 
@@ -197,6 +240,12 @@ export async function changePassword(
 
   if (!user) {
     throw new AppError(404, "USER_NOT_FOUND", "User not found");
+  }
+
+  // Null-guard: passwordless users have no hash to verify against.
+  // Reject with the same generic error as a wrong password.
+  if (!user.passwordHash) {
+    throw new AppError(400, "INVALID_PASSWORD", "Current password is incorrect");
   }
 
   const valid = await verifyPassword(currentPassword, user.passwordHash);
