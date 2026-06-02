@@ -1,7 +1,9 @@
 import { createRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { rootRoute } from "./__root";
+import { useAuthStore } from "@/stores/auth-store";
 import { fetchApi, ApiError } from "@/lib/api-client";
+import type { AuthUser } from "@/stores/auth-store";
 import {
   AuthLayout,
   ErrorBox,
@@ -24,9 +26,15 @@ export const registerRoute = createRoute({
   }),
 });
 
-function RegisterPage() {
-  const navigate = useNavigate();
-  const { invite } = registerRoute.useSearch();
+// ─── Presentational form — extracted for testability ─────────────────────────
+
+interface RegisterFormProps {
+  invite?: string;
+  onNavigate: ReturnType<typeof useNavigate>;
+}
+
+export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
+  const { setUser } = useAuthStore();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -40,19 +48,39 @@ function RegisterPage() {
     setLoading(true);
 
     try {
-      await fetchApi("/api/auth/register", {
-        method: "POST",
-        body: JSON.stringify({
-          email,
-          password,
-          displayName: displayName || undefined,
-        }),
-      });
+      if (invite) {
+        // 1-hop flow: register WITH invite token.
+        // Server creates the User, accepts the invite, and issues a session
+        // (auth cookies + tokens) in a single request (R-NUI-autologin).
+        await fetchApi("/api/auth/register", {
+          method: "POST",
+          body: JSON.stringify({
+            email,
+            password,
+            displayName: displayName || undefined,
+            invite,
+          }),
+        });
 
-      void navigate({
-        to: "/login",
-        search: invite ? { invite } : {},
-      });
+        // Bootstrap the auth store from the session cookie that was just set.
+        // Mirror login.tsx: GET /me → setUser — the session cookie is live.
+        const user = await fetchApi<AuthUser>("/api/auth/me");
+        setUser(user);
+
+        void onNavigate({ to: "/workspaces" });
+      } else {
+        // No invite: original behavior — register, then redirect to /login.
+        await fetchApi("/api/auth/register", {
+          method: "POST",
+          body: JSON.stringify({
+            email,
+            password,
+            displayName: displayName || undefined,
+          }),
+        });
+
+        void onNavigate({ to: "/login", search: {} });
+      }
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message);
@@ -83,7 +111,7 @@ function RegisterPage() {
           <button
             type="button"
             onClick={() =>
-              void navigate({
+              void onNavigate({
                 to: "/login",
                 search: invite ? { invite } : {},
               })
@@ -97,6 +125,7 @@ function RegisterPage() {
     >
       <form
         onSubmit={handleSubmit}
+        data-testid="register-form"
         style={{ display: "flex", flexDirection: "column", gap: 22 }}
       >
         <div>
@@ -136,7 +165,11 @@ function RegisterPage() {
           />
         </div>
 
-        {error && <ErrorBox>{error}</ErrorBox>}
+        {error && (
+          <div data-testid="register-error">
+            <ErrorBox>{error}</ErrorBox>
+          </div>
+        )}
 
         <PrimaryBtn disabled={loading}>
           {loading ? "Creating account…" : "Create account →"}
@@ -144,4 +177,13 @@ function RegisterPage() {
       </form>
     </AuthLayout>
   );
+}
+
+// ─── Route wrapper — reads router state and delegates to RegisterForm ─────────
+
+function RegisterPage() {
+  const navigate = useNavigate();
+  const { invite } = registerRoute.useSearch();
+
+  return <RegisterForm invite={invite} onNavigate={navigate} />;
 }
