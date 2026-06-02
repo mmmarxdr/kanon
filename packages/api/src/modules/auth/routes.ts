@@ -127,8 +127,13 @@ export default async function authRoutes(
       },
     },
     async (request, reply) => {
-      const user = await authService.register(request.body);
-      return reply.status(201).send(user);
+      const result = await authService.register(request.body);
+      // When invite was accepted, result contains accessToken + refreshToken.
+      // Set auth cookies (mirrors login) so browser clients are immediately authenticated.
+      if (result.accessToken && result.refreshToken) {
+        setAuthCookies(reply, result.accessToken, result.refreshToken);
+      }
+      return reply.status(201).send(result);
     },
   );
 
