@@ -70,6 +70,11 @@ function InvitePage() {
       void navigate({ to: "/workspaces" });
     } catch (err) {
       if (err instanceof ApiError) {
+        if (err.status === 409) {
+          // Already a member — navigate gracefully instead of showing an error.
+          void navigate({ to: "/workspaces" });
+          return;
+        }
         setAcceptError(err.message);
       } else {
         setAcceptError("Failed to accept invite. Please try again.");
