@@ -37,11 +37,15 @@ const client = new KanonClient({
   apiKey: KANON_API_KEY,
 });
 
-const server = new McpServer({
-  name: "kanon-mcp",
-  version: "0.4.0",
-  instructions: SERVER_INSTRUCTIONS,
-});
+const server = new McpServer(
+  {
+    name: "kanon-mcp",
+    version: "0.4.0",
+  },
+  {
+    instructions: SERVER_INSTRUCTIONS,
+  },
+);
 
 // ─── Register Tools ─────────────────────────────────────────────────────────
 
