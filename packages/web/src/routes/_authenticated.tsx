@@ -4,6 +4,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { AppSidebar } from "@/components/app-sidebar";
 import { AppTopbar } from "@/components/app-topbar";
 import { CommandPalette } from "@/components/command-palette";
+import { EmailVerificationBanner } from "@/components/email-verification-banner";
 import { useCommandPalette } from "@/hooks/use-command-palette";
 import { useCommandPaletteStore } from "@/stores/command-palette-store";
 import { useDomainEvents } from "@/hooks/use-domain-events";
@@ -95,6 +96,7 @@ function AuthenticatedLayout() {
         }}
       >
         <AppTopbar />
+        <EmailVerificationBanner />
         <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
           <Outlet />
         </div>
