@@ -1,19 +1,28 @@
 # Stage 1: Build the Vite app
 FROM node:20-alpine AS builder
 
-RUN corepack enable
+RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+# Workspace manifests first (better layer caching). web depends on @kanon/bridge.
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
+COPY tsconfig.base.json ./
 COPY packages/web/package.json packages/web/
+COPY packages/web/tsconfig.json packages/web/
+COPY packages/bridge/package.json packages/bridge/
+COPY packages/bridge/tsconfig.json packages/bridge/
 
-RUN pnpm install --frozen-lockfile --filter @kanon/web || pnpm install --filter @kanon/web
+# Full workspace install so the @kanon/bridge link resolves.
+RUN pnpm install --frozen-lockfile || pnpm install
 
+# Source
+COPY packages/bridge/ packages/bridge/
 COPY packages/web/ packages/web/
 
-WORKDIR /app/packages/web
-RUN pnpm build
+# Build bridge first (web imports @kanon/bridge), then the web app.
+RUN pnpm --filter @kanon/bridge build
+RUN pnpm --filter @kanon/web build
 
 # Stage 2: Serve with nginx
 FROM nginx:alpine
