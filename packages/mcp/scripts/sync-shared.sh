@@ -22,5 +22,6 @@ copy_shared() {
 }
 
 copy_shared "canonical-url.ts"
+copy_shared "kanon-binding.ts"
 
 echo "Shared sync complete."
