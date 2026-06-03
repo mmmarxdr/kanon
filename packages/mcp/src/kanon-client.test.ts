@@ -42,7 +42,10 @@ describe("KanonClient.listWorkspaces", () => {
     expect(opts.method).toBe("GET");
   });
 
-  it("sends X-API-Key header for non-JWT keys", async () => {
+  it("sends Bearer Authorization header for any apiKey (X-API-Key removed in PR1)", async () => {
+    // PR1 (KAN-35): Bearer-only path. Any key value — JWT or not — is sent as Bearer.
+    // The wrapper always supplies a short-lived access JWT; this test verifies there
+    // is no X-API-Key fallback remaining.
     const fetchMock = mockFetch([]);
     vi.stubGlobal("fetch", fetchMock);
 
@@ -50,8 +53,8 @@ describe("KanonClient.listWorkspaces", () => {
 
     const [, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
     const headers = opts.headers as Record<string, string>;
-    expect(headers["X-API-Key"]).toBe(API_KEY);
-    expect(headers["Authorization"]).toBeUndefined();
+    expect(headers["Authorization"]).toBe(`Bearer ${API_KEY}`);
+    expect(headers["X-API-Key"]).toBeUndefined();
   });
 
   it("throws KanonApiError on non-OK response", async () => {

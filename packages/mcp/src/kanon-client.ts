@@ -706,12 +706,9 @@ export class KanonClient {
       Accept: "application/json",
     };
     if (this.apiKey) {
-      // Support both JWT tokens (Bearer) and API keys
-      if (this.apiKey.startsWith("eyJ")) {
-        headers["Authorization"] = `Bearer ${this.apiKey}`;
-      } else {
-        headers["X-API-Key"] = this.apiKey;
-      }
+      // Bearer-only — X-API-Key path removed in PR1 (KAN-35).
+      // The wrapper always supplies a short-lived access JWT (eyJ…) from the exchange endpoint.
+      headers["Authorization"] = `Bearer ${this.apiKey}`;
     }
     if (body !== undefined) {
       headers["Content-Type"] = "application/json";
