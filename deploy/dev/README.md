@@ -89,6 +89,26 @@ cd deploy/dev && docker compose up -d --build
 DB migrations run automatically on api start
 (`prisma migrate deploy` in the api container CMD).
 
+## Prebuilt images (instead of building on the box)
+
+CI publishes arm64 images to GHCR (`ghcr.io/<org>/kanon-api`, `kanon-web` — see
+`.github/workflows/publish-images.yml`). To run those instead of building
+locally — which is what the CD does, avoiding builds on a small box:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.images.yml pull
+docker compose -f docker-compose.yml -f docker-compose.images.yml up -d
+```
+
+Pin a version with `KANON_IMAGE_TAG=sha-<...>` in `.env`; point at a fork with
+`KANON_IMAGE_PREFIX`.
+
+> **CD / automated deploy** is intentionally *not* in this open-source repo —
+> it targets a specific AWS account. It lives in the private `kanon-infra`
+> repo (Terraform + a GitHub Actions workflow that assumes an OIDC role and
+> runs `aws ssm send-command` on the box: `git pull` + the two-file
+> `compose pull && up -d` above). No SSH, no manual commands.
+
 ## Operate
 
 ```bash
