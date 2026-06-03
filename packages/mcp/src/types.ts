@@ -66,7 +66,7 @@ export const GetProjectInput = z.object({
 
 /** kanon_list_issues */
 export const ListIssuesInput = z.object({
-  projectKey: z.string().describe("Project key (e.g. 'KAN')"),
+  projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   state: z.enum(ISSUE_STATES).optional().describe("Filter by issue state"),
   type: z.enum(ISSUE_TYPES).optional().describe("Filter by issue type"),
   priority: z.enum(ISSUE_PRIORITIES).optional().describe("Filter by priority"),
@@ -88,7 +88,7 @@ export const GetIssueInput = z.object({
 
 /** kanon_list_groups */
 export const ListGroupsInput = z.object({
-  projectKey: z.string().describe("Project key (e.g. 'KAN')"),
+  projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   format: ListFormatParam.optional(),
   limit: LimitParam.optional(),
   offset: OffsetParam.optional(),
@@ -96,7 +96,7 @@ export const ListGroupsInput = z.object({
 
 /** kanon_create_issue */
 export const CreateIssueInput = z.object({
-  projectKey: z.string().describe("Project key to create the issue in"),
+  projectKey: z.string().optional().describe("Project key to create the issue in. Resolved from .kanon if omitted."),
   title: z.string().min(1, "Title must not be empty").describe("Issue title"),
   description: z.string().optional().describe("Issue description (markdown)"),
   type: z.enum(ISSUE_TYPES).optional().describe("Issue type"),
@@ -137,7 +137,7 @@ export const TransitionIssueInput = z.object({
 
 /** kanon_batch_transition (raw shape — used for MCP server.tool registration) */
 export const BatchTransitionInputShape = z.object({
-  projectKey: z.string().describe("Project key"),
+  projectKey: z.string().optional().describe("Project key. Resolved from .kanon if omitted."),
   groupKey: z.string().optional().describe("Group key to transition (mutually exclusive with keys)"),
   keys: z.array(z.string()).optional().describe("Specific issue keys to transition (mutually exclusive with groupKey)"),
   state: z.enum(ISSUE_STATES).describe("Target state for all issues"),
@@ -182,7 +182,7 @@ export const UpdateProjectInput = z.object({
 
 /** kanon_list_roadmap */
 export const ListRoadmapInput = z.object({
-  projectKey: z.string().describe("Project key (e.g. 'KAN')"),
+  projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   horizon: z.enum(HORIZONS).optional().describe("Filter by horizon"),
   status: z.enum(ROADMAP_STATUSES).optional().describe("Filter by roadmap status"),
   label: z.string().optional().describe("Filter by label"),
@@ -193,7 +193,7 @@ export const ListRoadmapInput = z.object({
 
 /** kanon_create_roadmap_item */
 export const CreateRoadmapItemInput = z.object({
-  projectKey: z.string().describe("Project key to create the roadmap item in"),
+  projectKey: z.string().optional().describe("Project key to create the roadmap item in. Resolved from .kanon if omitted."),
   title: z.string().min(1, "Title must not be empty").describe("Roadmap item title"),
   description: z.string().optional().describe("Item description (markdown)"),
   horizon: z.enum(HORIZONS).optional().describe("Planning horizon (default: later)"),
@@ -294,7 +294,7 @@ export const CYCLE_DISPOSITIONS = ["move_to_next", "move_to_backlog", "leave"] a
 
 /** kanon_list_cycles */
 export const ListCyclesInput = z.object({
-  projectKey: z.string().describe("Project key (e.g. 'KAN')"),
+  projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   format: ListFormatParam.optional(),
 });
 
@@ -308,7 +308,7 @@ export const GetCycleInput = z.object({
 
 /** kanon_create_cycle */
 export const CreateCycleInput = z.object({
-  projectKey: z.string().describe("Project key (e.g. 'KAN')"),
+  projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   name: z.string().min(1).max(200).describe("Cycle name (e.g. 'Sprint 12')"),
   goal: z.string().optional().describe("Cycle goal / one-line objective"),
   startDate: z.string().describe("Start date — accepts YYYY-MM-DD or full ISO datetime"),

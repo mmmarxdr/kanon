@@ -19,6 +19,8 @@ import {
   formatCycleDelete,
 } from "../transforms.js";
 import type { Format } from "../transforms.js";
+import { resolveProjectKey } from "../binding-resolver.js";
+import type { KanonBinding } from "../kanon-binding.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -110,14 +112,16 @@ export async function closeCycleWithDisposition(
 
 // ─── Registration ───────────────────────────────────────────────────────────
 
-export function registerCycleTools(server: McpServer, client: KanonClient): void {
+export function registerCycleTools(server: McpServer, client: KanonClient, binding: KanonBinding | null = null): void {
   server.tool(
     "kanon_list_cycles",
     "List cycles for projectKey. isActive boolean per entry — use it, don't infer from dates.",
     ListCyclesInput.shape,
     async ({ projectKey, format }) => {
       try {
-        const cycles = await client.listCycles(projectKey);
+        const resolved = resolveProjectKey(projectKey, binding);
+        if (!resolved.ok) return errorResult(new Error(resolved.error));
+        const cycles = await client.listCycles(resolved.projectKey);
         const result = formatList(
           cycles as unknown[],
           "cycle",
@@ -150,6 +154,9 @@ export function registerCycleTools(server: McpServer, client: KanonClient): void
     CreateCycleInput.shape,
     async ({ projectKey, name, goal, startDate, endDate, state, attachIssueKeys, format }) => {
       try {
+        const resolved = resolveProjectKey(projectKey, binding);
+        if (!resolved.ok) return errorResult(new Error(resolved.error));
+
         const body: {
           name: string;
           goal?: string;
@@ -166,7 +173,7 @@ export function registerCycleTools(server: McpServer, client: KanonClient): void
         if (state !== undefined) body.state = state;
         if (attachIssueKeys !== undefined) body.attachIssueKeys = attachIssueKeys;
 
-        const cycle = await client.createCycle(projectKey, body);
+        const cycle = await client.createCycle(resolved.projectKey, body);
         const fmt = format ?? "ack";
         if (fmt === "ack") return dataResult(formatAck(cycle, "cycle"));
         return dataResult(formatCycle(cycle, fmt as Format));

@@ -2,6 +2,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import * as nodeFs from "node:fs";
 import { KanonClient } from "./kanon-client.js";
 import { registerProjectTools } from "./tools/projects.js";
 import { registerGroupTools } from "./tools/groups.js";
@@ -14,6 +15,8 @@ import { registerCycleTools } from "./tools/cycles.js";
 import { shutdownAllHeartbeats } from "./heartbeat.js";
 import { startSseClient, stopSseClient } from "./sse-client.js";
 import { SERVER_INSTRUCTIONS, DEFERRED_TOOLS } from "./instructions.js";
+import { findKanonConfig } from "./kanon-binding.js";
+import type { KanonBinding } from "./kanon-binding.js";
 
 // ─── Env Validation (fail-fast) ────────────────────────────────────────────
 
@@ -37,6 +40,23 @@ const client = new KanonClient({
   apiKey: KANON_API_KEY,
 });
 
+// ─── .kanon Binding (cwd-snapshot-at-spawn) ─────────────────────────────────
+// Resolved ONCE from process.cwd() at process start. The cwd is snapshotted
+// at spawn time by the agent (e.g. Claude Code) — it reflects the working
+// directory when the wrapper was launched, not any later cd. For repos with
+// nested .kanon files, the nearest ancestor (up to .git) wins.
+const kanonBinding: KanonBinding | null = (() => {
+  try {
+    return findKanonConfig(process.cwd(), {
+      existsSync: nodeFs.existsSync,
+      readFileSync: (p: string) => nodeFs.readFileSync(p, "utf-8"),
+    });
+  } catch (err) {
+    console.error(`[kanon] Warning: .kanon file found but invalid: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+})();
+
 const server = new McpServer(
   {
     name: "kanon-mcp",
@@ -50,13 +70,13 @@ const server = new McpServer(
 // ─── Register Tools ─────────────────────────────────────────────────────────
 
 registerProjectTools(server, client);
-registerGroupTools(server, client);
-registerIssueTools(server, client);
+registerGroupTools(server, client, kanonBinding);
+registerIssueTools(server, client, kanonBinding);
 registerCommentTools(server, client);
-registerRoadmapTools(server, client);
+registerRoadmapTools(server, client, kanonBinding);
 registerContextTools(server);
 registerWorkSessionTools(server, client);
-registerCycleTools(server, client);
+registerCycleTools(server, client, kanonBinding);
 
 // ─── Connect ────────────────────────────────────────────────────────────────
 
