@@ -174,10 +174,9 @@ describe("findKanonConfig", () => {
     expect(result?.projectKey).toBe("INNER");
   });
 
-  it("returns null and does not throw on malformed .kanon", () => {
+  it("throws on malformed .kanon content (does not swallow parse errors)", () => {
     const fs = makeFakeFs({ "/repo/.kanon": "{ bad json " });
-    // The resolver should surface malformed content as an error, not swallow it.
-    // Spec says clear, actionable errors — so we expect throw on bad content.
+    // Spec says clear, actionable errors — malformed content surfaces as a throw.
     expect(() => findKanonConfig("/repo/src", fs)).toThrow();
   });
 

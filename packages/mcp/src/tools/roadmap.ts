@@ -83,6 +83,8 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient, bin
     UpdateRoadmapItemInput.shape,
     async ({ projectKey, itemId, title, description, horizon, status, effort, impact, labels, sortOrder, targetDate, format }) => {
       try {
+        const resolved = resolveProjectKey(projectKey, binding);
+        if (!resolved.ok) return errorResult(new Error(resolved.error));
         const body: Record<string, unknown> = {};
         if (title !== undefined) body["title"] = title;
         if (description !== undefined) body["description"] = description;
@@ -94,7 +96,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient, bin
         if (sortOrder !== undefined) body["sortOrder"] = sortOrder;
         if (targetDate !== undefined) body["targetDate"] = targetDate;
 
-        const item = await client.updateRoadmapItem(projectKey, itemId, body);
+        const item = await client.updateRoadmapItem(resolved.projectKey, itemId, body);
         const fmt = format ?? "ack";
         if (fmt === "ack") return dataResult(formatAck(item, "roadmap-item"));
         return dataResult(formatEntity(item, "roadmap-write", fmt as Format));
@@ -110,7 +112,9 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient, bin
     DeleteRoadmapItemInput.shape,
     async ({ projectKey, itemId }) => {
       try {
-        await client.deleteRoadmapItem(projectKey, itemId);
+        const resolved = resolveProjectKey(projectKey, binding);
+        if (!resolved.ok) return errorResult(new Error(resolved.error));
+        await client.deleteRoadmapItem(resolved.projectKey, itemId);
         return dataResult({ deleted: true, itemId });
       } catch (err) {
         return errorResult(err);
@@ -124,6 +128,8 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient, bin
     PromoteRoadmapItemInput.shape,
     async ({ projectKey, itemId, title, type, priority, labels, groupKey, format }) => {
       try {
+        const resolved = resolveProjectKey(projectKey, binding);
+        if (!resolved.ok) return errorResult(new Error(resolved.error));
         const body: Record<string, unknown> = {};
         if (title !== undefined) body["title"] = title;
         if (type !== undefined) body["type"] = type;
@@ -131,7 +137,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient, bin
         if (labels !== undefined) body["labels"] = labels;
         if (groupKey !== undefined) body["groupKey"] = groupKey;
 
-        const issue = await client.promoteRoadmapItem(projectKey, itemId, body);
+        const issue = await client.promoteRoadmapItem(resolved.projectKey, itemId, body);
         const fmt = format ?? "ack";
         if (fmt === "ack") return dataResult(formatAck(issue, "issue"));
         return dataResult(formatEntity(issue, "issue-write", fmt as Format));
@@ -149,10 +155,12 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient, bin
     AddDependencyInput.shape,
     async ({ projectKey, sourceItemId, targetItemId, type, format }) => {
       try {
+        const resolved = resolveProjectKey(projectKey, binding);
+        if (!resolved.ok) return errorResult(new Error(resolved.error));
         const body: Record<string, unknown> = { targetId: targetItemId };
         if (type !== undefined) body["type"] = type;
 
-        const dep = await client.addDependency(projectKey, sourceItemId, body);
+        const dep = await client.addDependency(resolved.projectKey, sourceItemId, body);
         const fmt = format ?? "ack";
         if (fmt === "ack") return dataResult(formatAck(dep, "issue-dependency"));
         return dataResult(dep);
@@ -168,7 +176,9 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient, bin
     RemoveDependencyInput.shape,
     async ({ projectKey, sourceItemId, dependencyId }) => {
       try {
-        await client.removeDependency(projectKey, sourceItemId, dependencyId);
+        const resolved = resolveProjectKey(projectKey, binding);
+        if (!resolved.ok) return errorResult(new Error(resolved.error));
+        await client.removeDependency(resolved.projectKey, sourceItemId, dependencyId);
         return dataResult({ ok: true, deleted: true, dependencyId });
       } catch (err) {
         return errorResult(err);

@@ -69,7 +69,7 @@ const server = new McpServer(
 
 // ─── Register Tools ─────────────────────────────────────────────────────────
 
-registerProjectTools(server, client);
+registerProjectTools(server, client, kanonBinding);
 registerGroupTools(server, client, kanonBinding);
 registerIssueTools(server, client, kanonBinding);
 registerCommentTools(server, client);

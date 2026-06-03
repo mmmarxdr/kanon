@@ -60,7 +60,7 @@ export const ListProjectsInput = z.object({
 
 /** kanon_get_project */
 export const GetProjectInput = z.object({
-  projectKey: z.string().describe("Project key (e.g. 'KAN')"),
+  projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   format: FormatParam.optional(),
 });
 
@@ -171,7 +171,7 @@ export const CreateProjectInput = z.object({
 
 /** kanon_update_project */
 export const UpdateProjectInput = z.object({
-  projectKey: z.string().describe("Project key (e.g. 'KAN')"),
+  projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   name: z.string().min(1).max(100).optional().describe("New name"),
   description: z.string().max(500).nullable().optional().describe("New description"),
   engramNamespace: z.string().max(100).nullable().optional().describe("Engram namespace"),
@@ -208,7 +208,7 @@ export const CreateRoadmapItemInput = z.object({
 
 /** kanon_update_roadmap_item */
 export const UpdateRoadmapItemInput = z.object({
-  projectKey: z.string().describe("Project key (e.g. 'KAN')"),
+  projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   itemId: z.string().describe("Roadmap item ID (UUID)"),
   title: z.string().min(1).optional().describe("New title"),
   description: z.string().nullable().optional().describe("New description"),
@@ -224,13 +224,13 @@ export const UpdateRoadmapItemInput = z.object({
 
 /** kanon_delete_roadmap_item */
 export const DeleteRoadmapItemInput = z.object({
-  projectKey: z.string().describe("Project key (e.g. 'KAN')"),
+  projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   itemId: z.string().describe("Roadmap item ID to delete (UUID)"),
 });
 
 /** kanon_promote_roadmap_item */
 export const PromoteRoadmapItemInput = z.object({
-  projectKey: z.string().describe("Project key (e.g. 'KAN')"),
+  projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   itemId: z.string().describe("Roadmap item ID to promote"),
   title: z.string().optional().describe("Override issue title (defaults to roadmap item title)"),
   type: z.enum(ISSUE_TYPES).optional().describe("Issue type (default: task)"),
@@ -246,7 +246,7 @@ export const DEPENDENCY_TYPES = ["blocks"] as const;
 
 /** kanon_add_dependency */
 export const AddDependencyInput = z.object({
-  projectKey: z.string().describe("Project key (e.g. 'KAN')"),
+  projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   sourceItemId: z.string().describe("Source roadmap item ID (the item that blocks)"),
   targetItemId: z.string().describe("Target roadmap item ID (the item being blocked)"),
   type: z.enum(DEPENDENCY_TYPES).optional().describe("Dependency type (default: blocks)"),
@@ -255,7 +255,7 @@ export const AddDependencyInput = z.object({
 
 /** kanon_remove_dependency */
 export const RemoveDependencyInput = z.object({
-  projectKey: z.string().describe("Project key (e.g. 'KAN')"),
+  projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   sourceItemId: z.string().describe("Roadmap item ID that owns the dependency"),
   dependencyId: z.string().describe("Dependency ID to remove (UUID)"),
 });

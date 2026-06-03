@@ -222,10 +222,12 @@ export function registerCycleTools(server: McpServer, client: KanonClient, bindi
     CloseCycleShape,
     async (args) => {
       try {
+        // Resolve projectKey from binding when disposition='move_to_next' needs it.
+        const effectiveProjectKey = args.projectKey ?? binding?.projectKey;
         const summary = await closeCycleWithDisposition(client, {
           cycleId: args.cycleId,
           disposition: args.disposition,
-          ...(args.projectKey !== undefined ? { projectKey: args.projectKey } : {}),
+          ...(effectiveProjectKey !== undefined ? { projectKey: effectiveProjectKey } : {}),
           ...(args.reason !== undefined ? { reason: args.reason } : {}),
         });
         const fmt = args.format ?? "ack";
