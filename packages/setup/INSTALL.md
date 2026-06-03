@@ -40,9 +40,8 @@ The installer always fetches an exact version (`0.4.0`) — never `latest`.
 At release time, the CI workflow:
 
 1. Builds the tarball and computes its sha256.
-2. Stamps `EXPECTED_SHA256="<hash>"` directly into `install.sh`.
-3. Commits that script to `main`.
-4. Tags that commit `mcp-v0.4.0`.
+2. Stamps `EXPECTED_SHA256="<hash>"` and `KANON_MCP_VERSION="<version>"` directly into `install.sh` on a detached HEAD commit.
+3. Tags that detached commit `mcp-v<version>` and pushes **only the tag** — `main` is never touched.
 
 When you fetch the script via the tag URL:
 
@@ -52,7 +51,9 @@ https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.4.0/install.sh
 
 The hash is embedded in the script itself — not downloaded from a separate file. A compromised CDN or release server **cannot** substitute a matching tarball+checksum pair, because the expected hash is not fetched from the network.
 
-> **Note:** Fetching via `main` (instead of the tag) does NOT guarantee tamper-resistance — an attacker who can push to `main` can update both the script and the tarball. Always pin to a tag for production or security-sensitive installations.
+**`main` intentionally carries `EXPECTED_SHA256=""`** (empty). Fetching via `main` gives you the latest release but provides *corruption detection only* — if the CDN serves a damaged file the sha256 check (against the downloaded `.sha256` companion file) will catch it. It does NOT protect against an attacker who controls the release server and can serve a matching tarball + checksum pair simultaneously.
+
+> **Summary:** pin to a tag (`mcp-v0.4.0`) for tamper-resistance; use `main` only if you always want the latest version and accept that trade-off.
 
 **Version scheme:** The release tag and tarball version track the MCP server version (`@kanon/mcp`). The setup package version is internal and not reflected in the artifact name.
 

@@ -17,6 +17,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    # F4: pass inputs.version through env once; all steps reference $VERSION (quoted).
+    # This prevents shell injection from a version string containing shell metacharacters.
+    env:
+      VERSION: ${{ inputs.version }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,6 +30,15 @@ jobs:
           fetch-depth: 0
           # Use a token with push rights (GITHUB_TOKEN is sufficient for same-repo push)
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      # F4: Validate version format early — fail fast before any expensive work.
+      # Also covers S2: rejects typos and non-semver inputs.
+      - name: Validate version format
+        run: |
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "ERROR: version '$VERSION' does not match ^[0-9]+\.[0-9]+\.[0-9]+$" >&2
+            exit 1
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -45,57 +59,69 @@ jobs:
 
       # ── Bundle + package the release tarball ─────────────────────────────────
       - name: Build release tarball
-        run: bash scripts/build-release-tarball.sh "${{ inputs.version }}"
+        run: bash scripts/build-release-tarball.sh "$VERSION"
 
       # ── Read the computed sha256 ──────────────────────────────────────────────
       - name: Read sha256
         id: sha256
         run: |
-          HASH="$(awk '{print $1}' dist/release/kanon-mcp-${{ inputs.version }}.tar.gz.sha256)"
+          HASH="$(awk '{print $1}' "dist/release/kanon-mcp-${VERSION}.tar.gz.sha256")"
           echo "hash=${HASH}" >> "$GITHUB_OUTPUT"
 
-      # ── Stamp EXPECTED_SHA256 in install.sh with the real hash ────────────────
-      # This is the hash-in-tag tamper-resistance mechanism:
-      # The script is committed with the hash embedded, THEN tagged at that commit.
-      # A curl to the tag URL retrieves a script that is its own trust root.
-      - name: Stamp EXPECTED_SHA256 in install.sh
-        run: |
-          sed -i 's|^EXPECTED_SHA256=""|EXPECTED_SHA256="${{ steps.sha256.outputs.hash }}"|' install.sh
-          # Verify the substitution worked
-          grep 'EXPECTED_SHA256=' install.sh
-
-      # ── Commit the updated install.sh to main ────────────────────────────────
+      # ── Configure git identity ────────────────────────────────────────────────
       - name: Configure git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Commit install.sh with pinned hash
+      # ── Stamp install.sh (tag-only commit — NOT pushed to main) ──────────────
+      # F1: sed pattern matches any current value (empty OR non-empty) so re-runs
+      #     are idempotent and never produce "nothing to commit".
+      # F2: also stamps KANON_MCP_VERSION so the tag's install.sh downloads the
+      #     correct asset, not the hardcoded 0.4.0.
+      # F3: changes land on a detached HEAD commit — only the tag is pushed.
+      #     main stays floating with EXPECTED_SHA256="" (correct model).
+      - name: Stamp install.sh and create tag commit
+        env:
+          HASH: ${{ steps.sha256.outputs.hash }}
         run: |
+          # Detach HEAD so the stamp commit is reachable only via the tag.
+          git checkout --detach
+
+          # F1: replace any current EXPECTED_SHA256 value (empty or prior hash).
+          sed -i 's|^EXPECTED_SHA256="[^"]*"|EXPECTED_SHA256="'"$HASH"'"|' install.sh
+
+          # F2: stamp the version so the script downloads the right tarball.
+          sed -i 's|^KANON_MCP_VERSION="[^"]*"|KANON_MCP_VERSION="'"$VERSION"'"|' install.sh
+
+          # Sanity-check both substitutions took effect.
+          grep 'EXPECTED_SHA256=' install.sh
+          grep 'KANON_MCP_VERSION=' install.sh
+
+          # Create an ephemeral commit carrying only the stamped install.sh.
           git add install.sh
-          git commit -m "chore(release): pin EXPECTED_SHA256 for mcp-v${{ inputs.version }}"
+          git commit -m "release: stamp mcp-v${VERSION} sha256 (tag-only, not on main)"
 
-      # ── Tag at the commit that contains the pinned hash ──────────────────────
-      # Tag AFTER commit so curl to raw.githubusercontent.com/<tag>/install.sh
-      # returns the version with the hash already stamped in.
-      - name: Tag release
-        run: |
-          git tag "mcp-v${{ inputs.version }}"
+          # Tag at this exact commit (hash baked in; tag URL = tamper-resistant).
+          git tag "mcp-v${VERSION}"
 
-      # ── Push commit + tag ─────────────────────────────────────────────────────
-      - name: Push commit and tag
+      # ── Push ONLY the tag — never main ───────────────────────────────────────
+      # F3: explicit refspec; branch protection on main is not touched.
+      - name: Push tag
         run: |
-          git push origin main
-          git push origin "mcp-v${{ inputs.version }}"
+          git push origin "refs/tags/mcp-v${VERSION}"
 
       # ── Create GitHub Release with both assets in one atomic call ────────────
       # Atomically uploads tarball + .sha256 so they are never visible separately.
+      # Tag already exists on the remote; gh attaches the release to it.
+      # On failure, clean up the remote tag so no dangling tag is left.
       - name: Create GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HASH: ${{ steps.sha256.outputs.hash }}
         run: |
-          gh release create "mcp-v${{ inputs.version }}" \
-            --title "Kanon MCP v${{ inputs.version }}" \
+          gh release create "mcp-v${VERSION}" \
+            --title "Kanon MCP v${VERSION}" \
             --notes "$(cat <<'EOF'
           ## Kanon MCP v${{ inputs.version }}
 
@@ -109,7 +135,7 @@ jobs:
 
           ### Tamper-resistance
 
-          `EXPECTED_SHA256` in `install.sh` is stamped with `${{ steps.sha256.outputs.hash }}` at release time, then the script is committed and tagged. The tag URL always resolves to this exact script.
+          `EXPECTED_SHA256` in `install.sh` is stamped at release time, then the script is committed to a tag-only detached commit. The tag URL always resolves to this exact script. `main` intentionally carries `EXPECTED_SHA256=""` (latest/floating — corruption detection only).
 
           ### Assets
 
@@ -119,5 +145,9 @@ jobs:
           | `kanon-mcp-${{ inputs.version }}.tar.gz.sha256` | SHA-256 checksum (`HASH  FILENAME` format) |
           EOF
           )" \
-            "dist/release/kanon-mcp-${{ inputs.version }}.tar.gz" \
-            "dist/release/kanon-mcp-${{ inputs.version }}.tar.gz.sha256"
+            "dist/release/kanon-mcp-${VERSION}.tar.gz" \
+            "dist/release/kanon-mcp-${VERSION}.tar.gz.sha256" || {
+            echo "gh release create failed — cleaning up remote tag to avoid dangling ref" >&2
+            git push origin --delete "refs/tags/mcp-v${VERSION}" || true
+            exit 1
+          }
