@@ -30,10 +30,11 @@ function isCsrfExempt(url: string): boolean {
  * CSRF validation hook using the double-submit cookie pattern.
  * Compares X-CSRF-Token header against kanon_csrf cookie value.
  * Skipped when:
- * - The request uses API-key authentication (X-API-Key header present)
  * - The request method is not a mutation (GET, HEAD, OPTIONS)
  * - The route is exempt (login, register, refresh)
- * - No CSRF cookie is present (non-cookie auth session)
+ * - No CSRF cookie is present (non-cookie auth session, e.g. Bearer token)
+ *
+ * NOTE: X-API-Key bypass removed in PR1 (KAN-35) — static API keys no longer exist.
  */
 async function csrfHook(
   request: FastifyRequest,
@@ -46,12 +47,6 @@ async function csrfHook(
 
   // Skip exempt routes
   if (isCsrfExempt(request.url)) {
-    return;
-  }
-
-  // Skip if using API key auth (programmatic clients)
-  const apiKey = request.headers["x-api-key"];
-  if (typeof apiKey === "string" && apiKey.length > 0) {
     return;
   }
 

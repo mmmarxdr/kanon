@@ -64,7 +64,8 @@ export interface AuthDeps {
   extractExisting?: (
     ctx: PlatformContext,
   ) => { apiUrl?: string; apiKey?: string };
-  autoGenerateKey?: (apiUrl: string) => Promise<string | null>;
+  // NOTE: autoGenerateKey was removed in PR1 (KAN-35) — POST /api/auth/api-key is gone.
+  // Use npx @kanon-pm/setup <kanon://link> for onboarding.
   promptUrl?: () => Promise<string>;
   promptKey?: () => Promise<string>;
   fetchFn?: typeof globalThis.fetch;

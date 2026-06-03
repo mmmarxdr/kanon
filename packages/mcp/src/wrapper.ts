@@ -2,7 +2,8 @@
  * kanon-mcp-wrapper — thin Node.js wrapper binary.
  *
  * Before speaking MCP protocol:
- *   1. If KANON_API_KEY is already set → legacy bypass: spawn MCP server directly.
+ *   1. If KANON_API_KEY is already set and is a JWT (eyJ…) → JWT passthrough: spawn MCP server directly.
+ *      If KANON_API_KEY is set but is NOT a JWT (static API key) → FAIL FAST with onboarding guidance.
  *   2. Read refresh token from credential store (keyed by --server <url>).
  *   3. POST <server>/api/auth/exchange { refreshToken } → receive accessToken.
  *   4. Spawn real MCP server with KANON_API_KEY=<accessToken> injected.
@@ -63,8 +64,19 @@ export async function runWrapper(deps?: Partial<WrapperDeps>): Promise<void> {
   // Canonicalize immediately so credential lookup and child env are always consistent.
   const server = rawServer ? canonicalizeApiUrl(rawServer) : undefined;
 
-  // ── S4.3: Legacy bypass ──────────────────────────────────────────────────
+  // ── S4.3: KANON_API_KEY preset ───────────────────────────────────────────
+  // If a JWT (eyJ…) is preset — e.g. dev/CI injects a real access token — pass it
+  // through directly (no store read, no exchange).
+  // If it's a non-JWT static API key, FAIL FAST: static keys were removed in PR1.
   if (env["KANON_API_KEY"]) {
+    if (!env["KANON_API_KEY"].startsWith("eyJ")) {
+      stderr.write(
+        "Error: KANON_API_KEY is a static API key, which is no longer supported.\n" +
+        "Run: npx @kanon-pm/setup <kanon://link> to onboard via the wrapper.\n"
+      );
+      exit(1);
+      return;
+    }
     await spawnMcpServer(
       spawnFn,
       {

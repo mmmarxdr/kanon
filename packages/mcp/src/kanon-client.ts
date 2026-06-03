@@ -202,7 +202,7 @@ export interface KanonClientOptions {
 /**
  * Typed HTTP client for Kanon's REST API.
  * Uses native `fetch` (Node 18+).
- * Authenticates via X-API-Key header.
+ * Authenticates via Authorization: Bearer header.
  */
 export class KanonClient {
   private readonly baseUrl: string;
