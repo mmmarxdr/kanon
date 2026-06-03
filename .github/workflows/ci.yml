@@ -96,8 +96,8 @@ jobs:
       - name: Run E2E tests (Playwright) — @smoke subset only
         # Staged rollout: run only @smoke-tagged tests (auth login+register + workspace-create).
         # This validates the harness/webServer/readiness without risking flaky non-smoke specs.
-        # To expand coverage: remove `-- --grep @smoke` once non-smoke specs are stable.
-        run: pnpm --filter @kanon/e2e test -- --grep @smoke
+        # To expand coverage: remove `--grep @smoke` once non-smoke specs are stable.
+        run: pnpm --filter @kanon/e2e exec playwright test --grep @smoke
         env:
           CI: true
           API_PORT: "3001"
