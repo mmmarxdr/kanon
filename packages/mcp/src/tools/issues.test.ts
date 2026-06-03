@@ -334,3 +334,67 @@ describe("kanon_list_issues — surfaces 403 as FORBIDDEN", () => {
     expect(parsed.code).toBe("FORBIDDEN");
   });
 });
+
+// ─── .kanon binding integration — handler wiring ─────────────────────────────
+//
+// Validates that the binding is threaded through registerIssueTools and that
+// handlers fall back to binding.projectKey when no explicit projectKey is given.
+
+function captureToolsWithBinding(
+  register: (server: McpServer, client: KanonClient, binding: KanonBinding | null) => void,
+  client: KanonClient,
+  binding: KanonBinding | null,
+): Map<string, RegisteredTool> {
+  const tools = new Map<string, RegisteredTool>();
+  const fakeServer = {
+    tool: (name: string, description: string, shape: unknown, handler: ToolHandler) => {
+      tools.set(name, { name, description, shape, handler });
+    },
+  } as unknown as McpServer;
+  register(fakeServer, client, binding);
+  return tools;
+}
+
+import type { KanonBinding } from "../kanon-binding.js";
+
+describe("kanon_list_issues — .kanon binding fallback", () => {
+  const binding: KanonBinding = {
+    projectKey: "BOUND",
+    workspaceId: "ws_abc",
+    apiUrl: "https://api.example.com",
+  };
+
+  it("uses binding.projectKey when no explicit projectKey is passed", async () => {
+    const mockClient = { listIssues: vi.fn().mockResolvedValue([]) };
+    const tools = captureToolsWithBinding(registerIssueTools, mockClient as unknown as KanonClient, binding);
+    const handler = tools.get("kanon_list_issues")!.handler;
+
+    const result = await handler({});
+
+    expect(result.isError).toBeUndefined();
+    expect(mockClient.listIssues).toHaveBeenCalledWith("BOUND", expect.any(Object));
+  });
+
+  it("explicit projectKey overrides binding", async () => {
+    const mockClient = { listIssues: vi.fn().mockResolvedValue([]) };
+    const tools = captureToolsWithBinding(registerIssueTools, mockClient as unknown as KanonClient, binding);
+    const handler = tools.get("kanon_list_issues")!.handler;
+
+    await handler({ projectKey: "EXPLICIT" });
+
+    expect(mockClient.listIssues).toHaveBeenCalledWith("EXPLICIT", expect.any(Object));
+  });
+
+  it("returns isError when no projectKey and no binding", async () => {
+    const mockClient = { listIssues: vi.fn().mockResolvedValue([]) };
+    const tools = captureToolsWithBinding(registerIssueTools, mockClient as unknown as KanonClient, null);
+    const handler = tools.get("kanon_list_issues")!.handler;
+
+    const result = await handler({});
+
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed.error).toMatch(/projectKey/i);
+    expect(mockClient.listIssues).not.toHaveBeenCalled();
+  });
+});

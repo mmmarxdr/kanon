@@ -13,20 +13,26 @@ import {
 } from "../types.js";
 import { errorResult, dataResult } from "../errors.js";
 import { formatList, formatEntity, formatAck, type Format } from "../transforms.js";
+import { resolveProjectKey } from "../binding-resolver.js";
+import type { InvalidBinding } from "../binding-resolver.js";
+import type { KanonBinding } from "../kanon-binding.js";
 
-export function registerRoadmapTools(server: McpServer, client: KanonClient): void {
+export function registerRoadmapTools(server: McpServer, client: KanonClient, binding: KanonBinding | InvalidBinding | null = null): void {
   server.tool(
     "kanon_list_roadmap",
     "List roadmap items for projectKey with filters (horizon,status,label). Returns compact list.",
     ListRoadmapInput.shape,
     async ({ projectKey, horizon, status, label, format, limit, offset }) => {
       try {
+        const resolved = resolveProjectKey(projectKey, binding);
+        if (!resolved.ok) return errorResult(new Error(resolved.error));
+
         const filters: Record<string, string> = {};
         if (horizon) filters["horizon"] = horizon;
         if (status) filters["status"] = status;
         if (label) filters["label"] = label;
 
-        const items = await client.listRoadmap(projectKey, filters);
+        const items = await client.listRoadmap(resolved.projectKey, filters);
         const result = formatList(
           items as unknown[],
           "roadmap",
@@ -47,6 +53,9 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
     CreateRoadmapItemInput.shape,
     async ({ projectKey, title, description, horizon, status, effort, impact, labels, sortOrder, targetDate, format }) => {
       try {
+        const resolved = resolveProjectKey(projectKey, binding);
+        if (!resolved.ok) return errorResult(new Error(resolved.error));
+
         const body: Record<string, unknown> = { title };
         if (description !== undefined) body["description"] = description;
         if (horizon !== undefined) body["horizon"] = horizon;
@@ -57,7 +66,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
         if (sortOrder !== undefined) body["sortOrder"] = sortOrder;
         if (targetDate !== undefined) body["targetDate"] = targetDate;
 
-        const item = await client.createRoadmapItem(projectKey, body);
+        const item = await client.createRoadmapItem(resolved.projectKey, body);
         const fmt = format ?? "ack";
         if (fmt === "ack") return dataResult(formatAck(item, "roadmap-item"));
         return dataResult(formatEntity(item, "roadmap-write", fmt as Format));
@@ -75,6 +84,8 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
     UpdateRoadmapItemInput.shape,
     async ({ projectKey, itemId, title, description, horizon, status, effort, impact, labels, sortOrder, targetDate, format }) => {
       try {
+        const resolved = resolveProjectKey(projectKey, binding);
+        if (!resolved.ok) return errorResult(new Error(resolved.error));
         const body: Record<string, unknown> = {};
         if (title !== undefined) body["title"] = title;
         if (description !== undefined) body["description"] = description;
@@ -86,7 +97,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
         if (sortOrder !== undefined) body["sortOrder"] = sortOrder;
         if (targetDate !== undefined) body["targetDate"] = targetDate;
 
-        const item = await client.updateRoadmapItem(projectKey, itemId, body);
+        const item = await client.updateRoadmapItem(resolved.projectKey, itemId, body);
         const fmt = format ?? "ack";
         if (fmt === "ack") return dataResult(formatAck(item, "roadmap-item"));
         return dataResult(formatEntity(item, "roadmap-write", fmt as Format));
@@ -102,7 +113,9 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
     DeleteRoadmapItemInput.shape,
     async ({ projectKey, itemId }) => {
       try {
-        await client.deleteRoadmapItem(projectKey, itemId);
+        const resolved = resolveProjectKey(projectKey, binding);
+        if (!resolved.ok) return errorResult(new Error(resolved.error));
+        await client.deleteRoadmapItem(resolved.projectKey, itemId);
         return dataResult({ deleted: true, itemId });
       } catch (err) {
         return errorResult(err);
@@ -116,6 +129,8 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
     PromoteRoadmapItemInput.shape,
     async ({ projectKey, itemId, title, type, priority, labels, groupKey, format }) => {
       try {
+        const resolved = resolveProjectKey(projectKey, binding);
+        if (!resolved.ok) return errorResult(new Error(resolved.error));
         const body: Record<string, unknown> = {};
         if (title !== undefined) body["title"] = title;
         if (type !== undefined) body["type"] = type;
@@ -123,7 +138,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
         if (labels !== undefined) body["labels"] = labels;
         if (groupKey !== undefined) body["groupKey"] = groupKey;
 
-        const issue = await client.promoteRoadmapItem(projectKey, itemId, body);
+        const issue = await client.promoteRoadmapItem(resolved.projectKey, itemId, body);
         const fmt = format ?? "ack";
         if (fmt === "ack") return dataResult(formatAck(issue, "issue"));
         return dataResult(formatEntity(issue, "issue-write", fmt as Format));
@@ -141,10 +156,12 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
     AddDependencyInput.shape,
     async ({ projectKey, sourceItemId, targetItemId, type, format }) => {
       try {
+        const resolved = resolveProjectKey(projectKey, binding);
+        if (!resolved.ok) return errorResult(new Error(resolved.error));
         const body: Record<string, unknown> = { targetId: targetItemId };
         if (type !== undefined) body["type"] = type;
 
-        const dep = await client.addDependency(projectKey, sourceItemId, body);
+        const dep = await client.addDependency(resolved.projectKey, sourceItemId, body);
         const fmt = format ?? "ack";
         if (fmt === "ack") return dataResult(formatAck(dep, "issue-dependency"));
         return dataResult(dep);
@@ -160,7 +177,9 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient): vo
     RemoveDependencyInput.shape,
     async ({ projectKey, sourceItemId, dependencyId }) => {
       try {
-        await client.removeDependency(projectKey, sourceItemId, dependencyId);
+        const resolved = resolveProjectKey(projectKey, binding);
+        if (!resolved.ok) return errorResult(new Error(resolved.error));
+        await client.removeDependency(resolved.projectKey, sourceItemId, dependencyId);
         return dataResult({ ok: true, deleted: true, dependencyId });
       } catch (err) {
         return errorResult(err);

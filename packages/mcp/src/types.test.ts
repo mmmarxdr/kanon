@@ -197,9 +197,10 @@ describe("UpdateProjectInput", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects missing projectKey", () => {
+  it("accepts missing projectKey (resolved from .kanon binding at runtime)", () => {
+    // projectKey is now optional — the handler resolves it from the .kanon walk-up binding.
     const result = UpdateProjectInput.safeParse({ name: "New Name" });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 });
 

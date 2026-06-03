@@ -12,8 +12,11 @@ import {
 import { errorResult, dataResult } from "../errors.js";
 import { formatList, formatEntity, formatAck } from "../transforms.js";
 import type { Format } from "../transforms.js";
+import { resolveProjectKey } from "../binding-resolver.js";
+import type { InvalidBinding } from "../binding-resolver.js";
+import type { KanonBinding } from "../kanon-binding.js";
 
-export function registerProjectTools(server: McpServer, client: KanonClient): void {
+export function registerProjectTools(server: McpServer, client: KanonClient, binding: KanonBinding | InvalidBinding | null = null): void {
   // ─── Workspace Tools ────────────────────────────────────────────────────
 
   server.tool(
@@ -56,7 +59,9 @@ export function registerProjectTools(server: McpServer, client: KanonClient): vo
     GetProjectInput.shape,
     async ({ projectKey, format }) => {
       try {
-        const project = await client.getProject(projectKey);
+        const resolved = resolveProjectKey(projectKey, binding);
+        if (!resolved.ok) return errorResult(new Error(resolved.error));
+        const project = await client.getProject(resolved.projectKey);
         return dataResult(formatEntity(project, "project", format));
       } catch (err) {
         return errorResult(err);
@@ -89,11 +94,13 @@ export function registerProjectTools(server: McpServer, client: KanonClient): vo
     async (args) => {
       try {
         const { projectKey, format, ...rest } = args;
+        const resolved = resolveProjectKey(projectKey, binding);
+        if (!resolved.ok) return errorResult(new Error(resolved.error));
         const body: Record<string, unknown> = {};
         if (rest["name"] !== undefined) body["name"] = rest["name"];
         if (rest["description"] !== undefined) body["description"] = rest["description"];
         if (rest["engramNamespace"] !== undefined) body["engramNamespace"] = rest["engramNamespace"];
-        const project = await client.updateProject(projectKey, body);
+        const project = await client.updateProject(resolved.projectKey, body);
         const fmt = format ?? "ack";
         if (fmt === "ack") return dataResult(formatAck(project, "project"));
         return dataResult(formatEntity(project, "project-write", fmt as Format));

@@ -19,6 +19,9 @@ import {
   formatCycleDelete,
 } from "../transforms.js";
 import type { Format } from "../transforms.js";
+import { resolveProjectKey } from "../binding-resolver.js";
+import type { InvalidBinding } from "../binding-resolver.js";
+import type { KanonBinding } from "../kanon-binding.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -110,14 +113,16 @@ export async function closeCycleWithDisposition(
 
 // ─── Registration ───────────────────────────────────────────────────────────
 
-export function registerCycleTools(server: McpServer, client: KanonClient): void {
+export function registerCycleTools(server: McpServer, client: KanonClient, binding: KanonBinding | InvalidBinding | null = null): void {
   server.tool(
     "kanon_list_cycles",
     "List cycles for projectKey. isActive boolean per entry — use it, don't infer from dates.",
     ListCyclesInput.shape,
     async ({ projectKey, format }) => {
       try {
-        const cycles = await client.listCycles(projectKey);
+        const resolved = resolveProjectKey(projectKey, binding);
+        if (!resolved.ok) return errorResult(new Error(resolved.error));
+        const cycles = await client.listCycles(resolved.projectKey);
         const result = formatList(
           cycles as unknown[],
           "cycle",
@@ -150,6 +155,9 @@ export function registerCycleTools(server: McpServer, client: KanonClient): void
     CreateCycleInput.shape,
     async ({ projectKey, name, goal, startDate, endDate, state, attachIssueKeys, format }) => {
       try {
+        const resolved = resolveProjectKey(projectKey, binding);
+        if (!resolved.ok) return errorResult(new Error(resolved.error));
+
         const body: {
           name: string;
           goal?: string;
@@ -166,7 +174,7 @@ export function registerCycleTools(server: McpServer, client: KanonClient): void
         if (state !== undefined) body.state = state;
         if (attachIssueKeys !== undefined) body.attachIssueKeys = attachIssueKeys;
 
-        const cycle = await client.createCycle(projectKey, body);
+        const cycle = await client.createCycle(resolved.projectKey, body);
         const fmt = format ?? "ack";
         if (fmt === "ack") return dataResult(formatAck(cycle, "cycle"));
         return dataResult(formatCycle(cycle, fmt as Format));
@@ -215,10 +223,22 @@ export function registerCycleTools(server: McpServer, client: KanonClient): void
     CloseCycleShape,
     async (args) => {
       try {
+        // For move_to_next, projectKey is required — route through resolveProjectKey
+        // so we get: explicit wins, binding fallback, invalid/.kanon guidance on error.
+        // leave / move_to_backlog do NOT need projectKey — skip resolution.
+        let effectiveProjectKey: string | undefined;
+        if (args.disposition === "move_to_next") {
+          const resolved = resolveProjectKey(args.projectKey, binding);
+          if (!resolved.ok) return errorResult(new Error(resolved.error));
+          effectiveProjectKey = resolved.projectKey;
+        } else {
+          effectiveProjectKey = args.projectKey ?? undefined;
+        }
+
         const summary = await closeCycleWithDisposition(client, {
           cycleId: args.cycleId,
           disposition: args.disposition,
-          ...(args.projectKey !== undefined ? { projectKey: args.projectKey } : {}),
+          ...(effectiveProjectKey !== undefined ? { projectKey: effectiveProjectKey } : {}),
           ...(args.reason !== undefined ? { reason: args.reason } : {}),
         });
         const fmt = args.format ?? "ack";
