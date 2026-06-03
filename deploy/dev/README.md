@@ -1,99 +1,66 @@
-# Kanon — DEV environment (AWS single-box)
+# Self-host Kanon (single box)
 
-The simplest possible hosted Kanon: **one EC2 instance** running the whole
-stack with `docker compose`. Same-origin, real HTTPS, behaves like production.
-Throwaway by design — `preprod`/`prod` come later as proper Terraform
-multi-AZ environments.
+Run the whole Kanon stack on **one Linux box** with `docker compose`:
+same-origin, real HTTPS, behaves like production. Good for a small/dev
+deployment. (Multi-AZ production is out of scope here.)
 
 ## Topology
 
 ```
-browser ──HTTPS──> Caddy (auto-TLS, <eip>.sslip.io)
-                     └─> kanon-web (nginx: SPA + proxy /api)
+browser ──HTTPS──> Caddy (auto-TLS)
+                     └─> kanon-web (nginx: serves SPA, proxies /api)
                            └─> kanon-api (Fastify :3000)
                                  └─> postgres (container, volume-backed)
 ```
 
-Everything is one origin, so auth cookies are first-party `SameSite=Lax` and
-there is no CORS. `NODE_ENV=production` + Caddy TLS means cookies are `Secure`
-and the prod config validations run — this box is also the target for the
-upcoming MCP installer (`kanon://` → this server), which needs a stable HTTPS
-URL.
+Everything is one origin → first-party `SameSite=Lax` cookies, no CORS.
+`NODE_ENV=production` + Caddy TLS means cookies are `Secure`, so you need a
+real hostname with HTTPS (see sslip.io trick below).
 
-What is **not** here: `mcp`, `cli`, `bridge` are client-side / libraries — they
-are not hosted. They talk to this box's API over HTTPS.
+`mcp`, `cli`, `bridge` are client-side / libraries — not hosted. They talk to
+this box's API over HTTPS.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `docker-compose.yml` | The dev stack (postgres, kanon-api, kanon-web, caddy). |
+| `docker-compose.yml` | The stack (postgres, kanon-api, kanon-web, caddy). Builds images locally. |
+| `docker-compose.images.yml` | Overlay to run prebuilt GHCR images instead of building. |
 | `Caddyfile` | TLS termination + reverse proxy (SSE-safe). |
 | `env.template` | Copy to `.env` and fill secrets + URL. |
-| `provision.sh` | aws CLI: security group + EC2 + Elastic IP. |
-| `user-data.sh` | EC2 bootstrap (Docker, swap). |
 
-## 1. Provision the box (run locally, aws CLI configured)
+## Prerequisites
 
-```bash
-export KEY_NAME=your-ec2-keypair                 # must already exist
-export MY_IP=$(curl -s https://checkip.amazonaws.com)
-bash deploy/dev/provision.sh
-```
+- A Linux box (arm64 or amd64) with Docker Engine + the compose plugin.
+- Ports 80 and 443 reachable from the internet (for Caddy + Let's Encrypt).
+- A hostname pointing at the box. No domain? Use **`<public-ip>.sslip.io`** —
+  `sslip.io` resolves `52.1.2.3.sslip.io` → `52.1.2.3`, so Caddy can get a
+  real cert with zero DNS setup.
 
-It prints the **Elastic IP** and the `SITE_ADDRESS` to use
-(`<eip>.sslip.io`). t4g.small (arm64) by default; set
-`INSTANCE_TYPE=t4g.medium` if image builds run out of memory.
-
-> sslip.io resolves `52.1.2.3.sslip.io` → `52.1.2.3` automatically, so Caddy
-> gets a real Let's Encrypt cert with no domain purchase. Move to a real
-> domain later by pointing an A-record at the EIP and changing the four URL
-> vars in `.env`.
-
-## 2. Deploy the app (over SSH)
+## Deploy
 
 ```bash
-ssh ubuntu@<eip>
-git clone <repo-url> /opt/kanon          # or: rsync -az ./ ubuntu@<eip>:/opt/kanon
+git clone <repo-url> /opt/kanon
 cd /opt/kanon/deploy/dev
 cp env.template .env
 ```
 
 Edit `.env`:
-- Set `SITE_ADDRESS`, `CORS_ORIGIN`, `APP_URL`, `BASE_URL` to `<eip>.sslip.io`
-  (the last three with the `https://` prefix).
+- `SITE_ADDRESS`, `CORS_ORIGIN`, `APP_URL`, `BASE_URL` → your hostname
+  (e.g. `<ip>.sslip.io`; the last three with `https://`).
 - Generate `JWT_SECRET`, `JWT_REFRESH_SECRET`, `COOKIE_SECRET`, and a DB
-  password: `openssl rand -hex 32` each. The `DATABASE_URL` password must
-  match `POSTGRES_PASSWORD`.
-- Leave `RESEND_API_KEY` blank to log emails to the console, or set it to send
-  invite/verify/reset emails for real.
+  password with `openssl rand -hex 32` (the `DATABASE_URL` password must match
+  `POSTGRES_PASSWORD`).
+- `RESEND_API_KEY` blank → emails are logged to the console (not sent); set it
+  to deliver invite/verify/reset emails for real.
 
-Then:
+Bring it up — build locally:
 
 ```bash
 docker compose up -d --build
-docker compose ps
-docker compose logs -f caddy        # watch the TLS cert get issued
 ```
 
-Open `https://<eip>.sslip.io`.
-
-## 3. Redeploy after changes
-
-```bash
-ssh ubuntu@<eip>
-cd /opt/kanon && git pull
-cd deploy/dev && docker compose up -d --build
-```
-
-DB migrations run automatically on api start
-(`prisma migrate deploy` in the api container CMD).
-
-## Prebuilt images (instead of building on the box)
-
-CI publishes arm64 images to GHCR (`ghcr.io/<org>/kanon-api`, `kanon-web` — see
-`.github/workflows/publish-images.yml`). To run those instead of building
-locally — which is what the CD does, avoiding builds on a small box:
+…or run **prebuilt** images from GHCR (no build on the box):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.images.yml pull
@@ -101,31 +68,27 @@ docker compose -f docker-compose.yml -f docker-compose.images.yml up -d
 ```
 
 Pin a version with `KANON_IMAGE_TAG=sha-<...>` in `.env`; point at a fork with
-`KANON_IMAGE_PREFIX`.
-
-> **CD / automated deploy** is intentionally *not* in this open-source repo —
-> it targets a specific AWS account. It lives in the private `kanon-infra`
-> repo (Terraform + a GitHub Actions workflow that assumes an OIDC role and
-> runs `aws ssm send-command` on the box: `git pull` + the two-file
-> `compose pull && up -d` above). No SSH, no manual commands.
+`KANON_IMAGE_PREFIX`. Open `https://<your-host>`. DB migrations run
+automatically on api start.
 
 ## Operate
 
 ```bash
 docker compose logs -f kanon-api          # app logs
-docker compose exec postgres psql -U kanon -d kanon   # DB shell
-docker compose down                       # stop (keeps volumes/data)
+docker compose logs -f caddy              # watch the TLS cert get issued
+docker compose exec postgres psql -U kanon -d kanon
+docker compose down                       # stop (keeps data)
 docker compose down -v                    # stop + wipe DB + certs
 ```
 
-## Notes carried forward to prod (Terraform, later)
+## Redeploy
 
-- **Migrations**: the api container runs `prisma migrate deploy` on start —
-  fine for one container; with multiple Fargate tasks, move migrations to a
-  one-shot pre-deploy task to avoid a boot race.
-- **DB TLS**: container Postgres has no TLS; RDS will need `sslmode=require`
-  in `DATABASE_URL`.
-- **Connections**: at ~70 devs a single RDS instance is fine; add
-  `?connection_limit=` or RDS Proxy only when scaling api horizontally.
-- **SSE**: keep the ALB idle timeout high (≥ the 30s heartbeat) and buffering
-  off for `/api/events/*`, same as the nginx/Caddy config here.
+```bash
+cd /opt/kanon && git pull
+cd deploy/dev && docker compose -f docker-compose.yml -f docker-compose.images.yml pull && \
+  docker compose -f docker-compose.yml -f docker-compose.images.yml up -d
+```
+
+> Automated AWS provisioning + CD for the maintainers' own hosting lives in a
+> separate private infra repo (Terraform + an OIDC GitHub Actions workflow that
+> deploys via SSM). This repo stays deployment-agnostic.
