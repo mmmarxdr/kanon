@@ -11,7 +11,10 @@
 # Tests:
 #   1. Happy path: correct sha256 → exit 0, tarball extracted
 #   2. Idempotent: re-run → "already installed" message, exit 0
-#   3. Sha256 mismatch: corrupt checksum → non-zero exit, NO binary written
+#   3. Sha256 mismatch: corrupt checksum → non-zero exit, NO binary written, honest error
+#   4. Setup-invocation path: fixture with 2 index.js matches, no SKIP_SETUP →
+#      locate_setup_bin resolves correctly (proves F1 SIGPIPE fix non-vacuous)
+#   5. Idempotent re-run without SKIP_SETUP → exec_setup via locate_setup_bin
 #
 # Exit 0 = all assertions passed. Exit 1 = at least one failure.
 #
@@ -105,7 +108,7 @@ fi
 echo "smoke-install.sh — testing install.sh with fixture assets"
 echo ""
 
-# ── Build fixture ─────────────────────────────────────────────────────────────
+# ── Build fixtures ────────────────────────────────────────────────────────────
 
 FIXTURE_DIR="$(mktemp -d)"
 INSTALL_DIR="$(mktemp -d)"
@@ -115,9 +118,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Create a minimal tarball structure: kanon-mcp-<ver>/package.json
+# ── Fixture A: standard tarball (T1, T2, T3)
+# Includes setup/dist/index.js so F2 integrity check (binary-present gate)
+# passes on the idempotency path (T2) without re-downloading.
 FIXTURE_PKG_DIR="$FIXTURE_DIR/pkg/kanon-mcp-${KANON_MCP_VERSION}"
-mkdir -p "$FIXTURE_PKG_DIR"
+mkdir -p "$FIXTURE_PKG_DIR/setup/dist"
 cat > "$FIXTURE_PKG_DIR/package.json" <<PKGJSON
 {
   "name": "@kanon/mcp",
@@ -125,12 +130,51 @@ cat > "$FIXTURE_PKG_DIR/package.json" <<PKGJSON
 }
 PKGJSON
 
-# Build the tarball
+# setup stub: just exits 0 (not invoked in T1/T2/T3 due to SKIP_SETUP=1)
+cat > "$FIXTURE_PKG_DIR/setup/dist/index.js" <<'SETUPSTUB'
+process.exit(0);
+SETUPSTUB
+
+# Build Fixture A tarball
 (cd "$FIXTURE_DIR/pkg" && tar -czf "$FIXTURE_DIR/${ASSET_NAME}" "kanon-mcp-${KANON_MCP_VERSION}")
 
-# Generate correct sha256
+# Generate correct sha256 for Fixture A
 CORRECT_HASH="$(shasum -a 256 "$FIXTURE_DIR/${ASSET_NAME}" | awk '{print $1}')"
 echo "${CORRECT_HASH}  ${ASSET_NAME}" > "$FIXTURE_DIR/${ASSET_NAME}.sha256"
+
+# ── Fixture B: two-index tarball (T4 — proves locate_setup_bin SIGPIPE fix)
+# Two distinct files matching */setup/*/index.js so head -1 must survive SIGPIPE.
+FIXTURE_B_PKG_DIR="$FIXTURE_DIR/pkgb/kanon-mcp-${KANON_MCP_VERSION}"
+mkdir -p "$FIXTURE_B_PKG_DIR/setup/dist"
+mkdir -p "$FIXTURE_B_PKG_DIR/setup/extra"
+
+# Primary stub: prints a marker line so T4 can assert invocation
+cat > "$FIXTURE_B_PKG_DIR/setup/dist/index.js" <<'SETUPB'
+console.log("kanon-setup-invoked");
+process.exit(0);
+SETUPB
+
+# Second stub: also exits 0; find may pick either one — both are valid
+cat > "$FIXTURE_B_PKG_DIR/setup/extra/index.js" <<'SETUPB2'
+console.log("kanon-setup-invoked");
+process.exit(0);
+SETUPB2
+
+cat > "$FIXTURE_B_PKG_DIR/package.json" <<PKGJSON2
+{
+  "name": "@kanon/mcp",
+  "version": "${KANON_MCP_VERSION}"
+}
+PKGJSON2
+
+FIXTURE_B_ASSET="$FIXTURE_DIR/b-${ASSET_NAME}"
+(cd "$FIXTURE_DIR/pkgb" && tar -czf "$FIXTURE_B_ASSET" "kanon-mcp-${KANON_MCP_VERSION}")
+FIXTURE_B_HASH="$(shasum -a 256 "$FIXTURE_B_ASSET" | awk '{print $1}')"
+# Fixture B is served as the same ASSET_NAME — copy into a separate dir
+FIXTURE_B_DIR="$(mktemp -d)"
+trap 'rm -rf "$FIXTURE_B_DIR"' EXIT
+cp "$FIXTURE_B_ASSET" "$FIXTURE_B_DIR/${ASSET_NAME}"
+echo "${FIXTURE_B_HASH}  ${ASSET_NAME}" > "$FIXTURE_B_DIR/${ASSET_NAME}.sha256"
 
 # ── Test 1: Happy path ────────────────────────────────────────────────────────
 
@@ -183,6 +227,45 @@ OUTPUT_3="$(
 
 assert_exit_nonzero "sha256 mismatch exit" "$EXIT_3"
 assert_file_absent "no binary written on mismatch" "$INSTALL_DIR/corrupt"
+assert_output_contains "honest abort message (corruption not tamper)" "$OUTPUT_3" "corrupted"
+
+echo ""
+
+# ── Test 4: setup-invocation path (F4 — exercises locate_setup_bin) ──────────
+# Fixture B has TWO files matching */setup/*/index.js so locate_setup_bin must
+# survive SIGPIPE from `find ... | head -1` — this is the non-vacuous proof of F1.
+# KANON_INSTALL_SKIP_SETUP is intentionally NOT set so exec flows into setup.
+# Stdin is redirected from /dev/null to prevent interactive TTY read hang.
+
+echo "Test 4: setup-invocation path — locate_setup_bin invoked (proves F1 SIGPIPE fix)"
+
+OUTPUT_4="$(
+  KANON_INSTALL_BASE_URL="file://$FIXTURE_B_DIR" \
+  KANON_INSTALL_DIR="$INSTALL_DIR/setup-invoke" \
+  bash "$INSTALL_SH" </dev/null 2>&1
+)"; EXIT_4=$?; true
+
+assert_exit_zero "setup-invocation path" "$EXIT_4"
+assert_file_exists "version file written" "$INSTALL_DIR/setup-invoke/version"
+assert_output_contains "setup stub invoked (locate_setup_bin found binary)" "$OUTPUT_4" "kanon-setup-invoked"
+
+echo ""
+
+# ── Test 5: idempotent re-run hits exec_setup via locate_setup_bin (F1 idempotency path) ──
+# Re-run with the same INSTALL_DIR (already has version file + setup binary).
+# SKIP_SETUP is NOT set — the idempotency branch must reach node via locate_setup_bin.
+
+echo "Test 5: idempotent re-run — exec_setup via locate_setup_bin (proves F1 fix on idempotency path)"
+
+OUTPUT_5="$(
+  KANON_INSTALL_BASE_URL="file://$FIXTURE_B_DIR" \
+  KANON_INSTALL_DIR="$INSTALL_DIR/setup-invoke" \
+  bash "$INSTALL_SH" </dev/null 2>&1
+)"; EXIT_5=$?; true
+
+assert_exit_zero "idempotent setup-invoke re-run" "$EXIT_5"
+assert_output_contains "already installed message" "$OUTPUT_5" "already installed"
+assert_output_contains "setup stub invoked on idempotency path" "$OUTPUT_5" "kanon-setup-invoked"
 
 echo ""
 

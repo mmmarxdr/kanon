@@ -21,7 +21,9 @@ When prompted, paste your `kanon://` onboarding link. Press Enter to skip and ru
 
 ## Pinned version + integrity
 
-The installer always fetches an exact version (`0.4.0`) — never `latest`. The sha256 checksum is fetched from the same GitHub Release and verified before any file is written to disk. On mismatch the installer exits non-zero with a clear error and leaves your system unchanged.
+The installer always fetches an exact version (`0.4.0`) — never `latest`. The sha256 checksum is verified before any file is written to disk — on mismatch the installer exits non-zero with a clear error and leaves your system unchanged.
+
+The checksum is currently fetched from the same GitHub Release as the tarball. This detects corruption (bit-rot, partial download, CDN glitch) but does **not** protect against a compromised release origin, since an attacker who controls the release server can serve a matching tarball+checksum pair. Full tamper-resistance will be added in a future release by pinning the expected hash directly in the installer script (so the script itself becomes the trust root, independent of the download origin).
 
 ## Idempotency
 
