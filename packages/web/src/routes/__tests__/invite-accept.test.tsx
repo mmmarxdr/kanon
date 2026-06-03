@@ -42,12 +42,16 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 // ─── auth-store mock — authenticated user ─────────────────────────────────────
 
 vi.mock("@/stores/auth-store", () => ({
-  useAuthStore: () => ({
-    isAuthenticated: true,
-    user: { id: "u1", email: "alice@co.com", displayName: "Alice", avatarUrl: null },
-    setUser: vi.fn(),
-    clearUser: vi.fn(),
-  }),
+  useAuthStore: Object.assign(
+    () => ({
+      isAuthenticated: true,
+      user: { id: "u1", email: "alice@co.com", displayName: "Alice", avatarUrl: null },
+      setUser: vi.fn(),
+      clearUser: vi.fn(),
+    }),
+    // InvitePage calls useAuthStore.getState().bootstrap() on mount.
+    { getState: () => ({ bootstrap: vi.fn() }) },
+  ),
 }));
 
 // ─── api-client mock ──────────────────────────────────────────────────────────
