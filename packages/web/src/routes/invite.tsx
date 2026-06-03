@@ -32,6 +32,14 @@ function InvitePage() {
   const [accepting, setAccepting] = useState(false);
   const [acceptError, setAcceptError] = useState<string | null>(null);
 
+  // The invite route lives outside the _authenticated layout, so nothing
+  // triggers bootstrap() on a fresh load (e.g. opening the link from an email).
+  // Without this, a logged-in user would be shown Sign up / Log in instead of
+  // Accept Invite. Bootstrap once on mount to hydrate auth state.
+  useEffect(() => {
+    void useAuthStore.getState().bootstrap();
+  }, []);
+
   useEffect(() => {
     async function fetchMetadata() {
       try {
