@@ -93,11 +93,10 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm --filter @kanon/e2e exec playwright install chromium --with-deps
 
-      - name: Run E2E tests (Playwright) — @smoke subset only
-        # Staged rollout: run only @smoke-tagged tests (auth login+register + workspace-create).
-        # This validates the harness/webServer/readiness without risking flaky non-smoke specs.
-        # To expand coverage: remove `--grep @smoke` once non-smoke specs are stable.
-        run: pnpm --filter @kanon/e2e exec playwright test --grep @smoke
+      - name: Run E2E tests (Playwright) — full suite
+        # Full e2e suite: auth, workspace, board, invite, project-settings, team-onboarding.
+        # Harness/webServer/readiness validated by the prior @smoke-only stage.
+        run: pnpm --filter @kanon/e2e exec playwright test
         env:
           CI: true
           API_PORT: "3001"
