@@ -16,6 +16,7 @@ vi.mock("../../config/prisma.js", () => ({
     workspaceInvite: {
       findFirst: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     user: {
       findUnique: vi.fn(),
@@ -181,6 +182,7 @@ const mockPrisma = prisma as unknown as {
   workspaceInvite: {
     findFirst: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
+    updateMany: ReturnType<typeof vi.fn>;
   };
   user: { findUnique: ReturnType<typeof vi.fn> };
   member: { findUnique: ReturnType<typeof vi.fn>; findFirst: ReturnType<typeof vi.fn> };
@@ -239,26 +241,50 @@ describe("onboard()", () => {
     expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
   };
 
+  /** Raw row shape returned by SELECT ... FOR UPDATE in onboard() */
+  const mockRawRow = {
+    id: INVITE_ID,
+    kind: "ONBOARDING",
+    email: USER_EMAIL,
+    workspace_id: WORKSPACE_ID,
+    role: "member",
+    project_assignments: null,
+    revoked_at: null,
+    consumed_at: null,
+    expires_at: new Date(Date.now() + 72 * 60 * 60 * 1000),
+  };
+
+  const mockWorkspace = { id: WORKSPACE_ID, name: "Test WS", slug: "test-ws" };
+
+  function buildDefaultTx(overrides: { rawRow?: object | null; updateFn?: ReturnType<typeof vi.fn> } = {}) {
+    const rawRow = overrides.rawRow !== undefined ? overrides.rawRow : mockRawRow;
+    return {
+      // KAN-37: SELECT ... FOR UPDATE — returns raw rows
+      $queryRaw: vi.fn().mockResolvedValue(rawRow === null ? [] : [rawRow]),
+      workspaceInvite: {
+        update: overrides.updateFn ?? vi.fn().mockResolvedValue(mockInvite),
+      },
+      workspace: {
+        findUniqueOrThrow: vi.fn().mockResolvedValue(mockWorkspace),
+      },
+      user: {
+        upsert: vi.fn().mockResolvedValue(mockUser),
+      },
+      member: {
+        findUnique: vi.fn().mockResolvedValue(mockMember),
+        create: vi.fn().mockResolvedValue(mockMember),
+      },
+      refreshToken: {
+        create: vi.fn().mockResolvedValue(mockRefreshTokenRow),
+      },
+    };
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
     // $transaction executes the callback with a tx proxy
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => {
-      const tx = {
-        workspaceInvite: {
-          findFirst: vi.fn().mockResolvedValue(mockInvite),
-          update: vi.fn().mockResolvedValue(mockInvite),
-        },
-        user: {
-          upsert: vi.fn().mockResolvedValue(mockUser),
-        },
-        member: {
-          findUnique: vi.fn().mockResolvedValue(mockMember),
-          create: vi.fn().mockResolvedValue(mockMember),
-        },
-        refreshToken: {
-          create: vi.fn().mockResolvedValue(mockRefreshTokenRow),
-        },
-      };
+      const tx = buildDefaultTx();
       return cb(tx);
     });
   });
@@ -310,17 +336,13 @@ describe("onboard()", () => {
   });
 
   // D2: invite already consumed → 410
-  it("throws 410 TOKEN_CONSUMED when invite already consumed", async () => {
+  // KAN-37: The FOR UPDATE lock means the second concurrent transaction sees consumed_at≠null
+  // after the first commits. In the unit test we simulate this by returning a row with consumed_at set.
+  it("throws 410 TOKEN_CONSUMED when FOR UPDATE sees consumed_at already set (race loser)", async () => {
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => {
-      const tx = {
-        workspaceInvite: {
-          findFirst: vi.fn().mockResolvedValue({ ...mockInvite, consumedAt: new Date() }),
-          update: vi.fn(),
-        },
-        user: { upsert: vi.fn() },
-        member: { findUnique: vi.fn(), create: vi.fn() },
-        refreshToken: { create: vi.fn() },
-      };
+      const tx = buildDefaultTx({
+        rawRow: { ...mockRawRow, consumed_at: new Date() }, // lock sees already-consumed row
+      });
       return cb(tx);
     });
 
@@ -334,15 +356,9 @@ describe("onboard()", () => {
   // D2: invite revoked → 400 TOKEN_REVOKED
   it("throws 400 TOKEN_REVOKED when invite is revoked", async () => {
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => {
-      const tx = {
-        workspaceInvite: {
-          findFirst: vi.fn().mockResolvedValue({ ...mockInvite, revokedAt: new Date() }),
-          update: vi.fn(),
-        },
-        user: { upsert: vi.fn() },
-        member: { findUnique: vi.fn(), create: vi.fn() },
-        refreshToken: { create: vi.fn() },
-      };
+      const tx = buildDefaultTx({
+        rawRow: { ...mockRawRow, revoked_at: new Date() },
+      });
       return cb(tx);
     });
 
@@ -357,35 +373,22 @@ describe("onboard()", () => {
   // D2 (create-on-consume): member is find-or-created — no NOT_A_MEMBER error
   // Both old error paths removed; new behavior tested in integration tests.
 
-  // D1 atomicity: if refreshToken.create throws, consumedAt write should not happen
-  it("does not set consumedAt when inner step fails (atomic)", async () => {
-    let updateCalled = false;
+  // D1 atomicity: if refreshToken.create throws, the whole transaction rolls back.
+  // KAN-37: consumedAt is set via update inside the locked tx BEFORE refreshToken.create.
+  // In real Postgres, the tx rollback undoes the update. Unit test verifies error propagates.
+  it("does not commit when inner step fails (atomic — integration verified)", async () => {
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => {
       const tx = {
-        workspaceInvite: {
-          findFirst: vi.fn().mockResolvedValue(mockInvite),
-          update: vi.fn().mockImplementation(() => { updateCalled = true; return mockInvite; }),
-        },
-        user: { upsert: vi.fn().mockResolvedValue(mockUser) },
-        member: {
-          findUnique: vi.fn().mockResolvedValue(mockMember),
-          create: vi.fn().mockResolvedValue(mockMember),
-        },
+        ...buildDefaultTx(),
         refreshToken: {
           create: vi.fn().mockRejectedValue(new Error("DB write failure")),
         },
       };
-      // The transaction callback will throw — prisma.$transaction propagates the error
-      // and rolls back (in real DB). In unit test, we verify update was not yet called
-      // before create (ordering check).
       return cb(tx);
     });
 
     const token = makeOnboardToken();
     await expect(onboard(token)).rejects.toThrow("DB write failure");
-    // consumedAt update happens AFTER refreshToken.create in the implementation
-    // so if create throws, update must NOT have been called
-    expect(updateCalled).toBe(false);
   });
 });
 
@@ -430,20 +433,39 @@ describe("onboard() — project assignment application (Phase 6)", () => {
   };
 
   function makeOnboardTxWithPM(opts: {
-    invite?: object;
+    invite?: {
+      id?: string; kind?: string; email?: string; workspace_id?: string;
+      role?: string; project_assignments?: unknown; revoked_at?: Date | null;
+      consumed_at?: Date | null; expires_at?: Date;
+    };
     liveProjectIds?: string[];
     pmCreateError?: Error;
   } = {}) {
-    const invite = opts.invite ?? mockInviteWithAssignments;
+    const rawInvite = {
+      id: INVITE_ID,
+      kind: "ONBOARDING",
+      email: USER_EMAIL,
+      workspace_id: WORKSPACE_ID,
+      role: "member",
+      project_assignments: mockInviteWithAssignments.projectAssignments,
+      revoked_at: null,
+      consumed_at: null,
+      expires_at: mockInviteWithAssignments.expiresAt,
+      ...opts.invite,
+    };
     const liveProjectIds = opts.liveProjectIds ?? [PROJECT_ID_A, PROJECT_ID_B];
-    const updateFn = vi.fn().mockResolvedValue(invite);
+    const updateFn = vi.fn().mockResolvedValue({});
     const pmCreateFn = opts.pmCreateError
       ? vi.fn().mockRejectedValue(opts.pmCreateError)
       : vi.fn().mockResolvedValue({ count: liveProjectIds.length });
     const tx = {
+      // KAN-37: FOR UPDATE via $queryRaw
+      $queryRaw: vi.fn().mockResolvedValue([rawInvite]),
       workspaceInvite: {
-        findFirst: vi.fn().mockResolvedValue(invite),
         update: updateFn,
+      },
+      workspace: {
+        findUniqueOrThrow: vi.fn().mockResolvedValue({ id: WORKSPACE_ID, name: "Test WS", slug: "test-ws" }),
       },
       user: { upsert: vi.fn().mockResolvedValue(mockUser) },
       member: {
@@ -497,31 +519,34 @@ describe("onboard() — project assignment application (Phase 6)", () => {
     }
   });
 
-  // 6.1-T3: consumedAt NOT updated when PM creation fails (atomic boundary)
-  it("6.1-T3: PM failure → consumedAt NOT committed (invite stays usable)", async () => {
-    const { tx, updateFn } = makeOnboardTxWithPM({
+  // 6.1-T3: consumedAt NOT committed when PM creation fails (atomic boundary).
+  // KAN-37: The CAS (updateMany) runs BEFORE PM creation inside the tx.
+  // In real Postgres, a tx rollback undoes the updateMany write.
+  // In unit tests (mocked tx), we verify the overall call rejects so real-DB
+  // integration tests can assert the rollback behavior end-to-end.
+  it("6.1-T3: PM failure → onboard() rejects (integration test proves tx rollback)", async () => {
+    const { tx } = makeOnboardTxWithPM({
       pmCreateError: new Error("PM DB failure"),
     });
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => cb(tx));
 
     const token = makeOnboardToken();
     await expect(onboard(token)).rejects.toThrow("PM DB failure");
-
-    // consumedAt update must NOT have been called
-    expect(updateFn).not.toHaveBeenCalled();
   });
 
-  // 6.2-T1: no assignments → PM helper not called, invite consumed normally
-  it("6.2-T1: invite with no projectAssignments → no PM call, consumedAt set", async () => {
-    const inviteNoAssignments = { ...mockInviteWithAssignments, projectAssignments: null };
-    const { tx, updateFn } = makeOnboardTxWithPM({ invite: inviteNoAssignments, liveProjectIds: [] });
+  // 6.2-T1: no assignments → PM helper not called, invite consumed via update
+  it("6.2-T1: invite with no projectAssignments → no PM call, consumedAt update called", async () => {
+    const { tx, updateFn } = makeOnboardTxWithPM({
+      invite: { project_assignments: null },
+      liveProjectIds: [],
+    });
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => cb(tx));
 
     const token = makeOnboardToken();
     await onboard(token);
 
     expect(tx.projectMember.createMany).not.toHaveBeenCalled();
-    // consumedAt was updated (invite consumed normally)
+    // consumedAt update was called (invite consumed normally)
     expect(updateFn).toHaveBeenCalledOnce();
   });
 });

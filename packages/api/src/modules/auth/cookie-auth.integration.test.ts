@@ -240,56 +240,10 @@ describe("Cookie Auth Flow", () => {
     });
   });
 
-  // ── API-key backward compatibility ────────────────────────────
+  // ── Bearer token auth (wrapper-only path) ────────────────────────────────
+  // API-key tests removed in PR1 (KAN-35): X-API-Key auth path is hard cut.
 
-  describe("API-key backward compatibility", () => {
-    it("API-key auth still works without cookies", async () => {
-      // Register + Login + generate API key
-      await app.inject({
-        method: "POST",
-        url: "/api/auth/register",
-        payload: {
-          email: "apikey@kanon.io",
-          password: "Secret123!",
-        },
-      });
-
-      const loginRes = await app.inject({
-        method: "POST",
-        url: "/api/auth/login",
-        payload: {
-          email: "apikey@kanon.io",
-          password: "Secret123!",
-        },
-      });
-
-      const cookies = parseCookies(loginRes.headers["set-cookie"]);
-
-      // Generate API key (requires auth)
-      const apiKeyRes = await app.inject({
-        method: "POST",
-        url: "/api/auth/api-key",
-        headers: {
-          cookie: buildCookieString(cookies),
-          "x-csrf-token": cookies["kanon_csrf"],
-        },
-      });
-
-      expect(apiKeyRes.statusCode).toBe(201);
-      const { apiKey } = apiKeyRes.json();
-
-      // Use API key to access protected route (no cookies)
-      const wsRes = await app.inject({
-        method: "GET",
-        url: "/api/workspaces",
-        headers: {
-          "x-api-key": apiKey,
-        },
-      });
-
-      expect(wsRes.statusCode).not.toBe(401);
-    });
-
+  describe("Bearer token auth", () => {
     it("Bearer token auth still works without cookies", async () => {
       // Register + Login
       await app.inject({

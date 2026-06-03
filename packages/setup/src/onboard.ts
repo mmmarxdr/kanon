@@ -19,6 +19,7 @@ import {
   mergeConfig,
   resolveNodeBin,
 } from "./mcp-config.js";
+import { canonicalizeApiUrl } from "./canonical-url.js";
 
 export interface OnboardedTool {
   /** Tool registry name (e.g. "claude-code", "cursor"). */
@@ -36,12 +37,12 @@ export interface OnboardDeps {
    * Detect installed AI tools and write a wrapper-mode MCP entry into each.
    * Production default uses `detectTools` + `mergeConfig`. Tests inject a mock.
    */
-  writeMcpEntries?: (apiUrl: string) => Promise<OnboardedTool[]>;
+  writeMcpEntries?: (apiUrl: string, workspaceId: string) => Promise<OnboardedTool[]>;
   /** Stdout sink for progress messages (defaults to process.stdout). */
   stdout?: { write: (s: string) => void };
 }
 
-async function defaultWriteMcpEntries(apiUrl: string): Promise<OnboardedTool[]> {
+async function defaultWriteMcpEntries(apiUrl: string, workspaceId: string): Promise<OnboardedTool[]> {
   const ctx = await buildPlatformContext();
   const tools = await detectTools(ctx);
   const nodeBin = resolveNodeBin();
@@ -52,7 +53,7 @@ async function defaultWriteMcpEntries(apiUrl: string): Promise<OnboardedTool[]> 
     if (!platformPaths) continue;
 
     const configPath = platformPaths.config(ctx);
-    const entry = buildWrapperMcpEntry(apiUrl, platformPaths.mcpMode, nodeBin);
+    const entry = buildWrapperMcpEntry(apiUrl, platformPaths.mcpMode, nodeBin, undefined, workspaceId);
     mergeConfig(configPath, tool.rootKey, entry);
 
     written.push({
@@ -179,12 +180,13 @@ export async function onboardFromLink(
   const data = parsed2.data;
 
   // ── 4. Write credentials ──────────────────────────────────────────────────
-  // Key the credential store by the full API URL (scheme + host + port).
-  // The MCP wrapper looks creds up by `--server <url>`, so writer and reader
-  // must use the same canonical key.
+  // Key the credential store by the CANONICAL API URL.
+  // The MCP wrapper looks creds up by canonicalize(--server <url>), so both
+  // writer (setup) and reader (mcp) must use the same canonical key to avoid drift.
+  const canonApiUrl = canonicalizeApiUrl(data.apiUrl);
   try {
-    await store.writeCredentials(data.apiUrl, {
-      server: data.apiUrl,
+    await store.writeCredentials(canonApiUrl, {
+      server: canonApiUrl,
       refreshToken: data.refreshToken,
       email: data.email,
       savedAt: new Date().toISOString(),
@@ -200,7 +202,7 @@ export async function onboardFromLink(
   // ── 5. Surface progress so the dev knows the call succeeded ──────────────
   const stdout = deps.stdout ?? process.stdout;
   stdout.write(`✓ Onboarded as ${data.email}\n`);
-  stdout.write(`  Server: ${data.apiUrl}\n`);
+  stdout.write(`  Server: ${canonApiUrl}\n`);
   stdout.write(`  Credentials saved to ~/.kanon/credentials\n`);
   stdout.write("\n");
 
@@ -208,7 +210,7 @@ export async function onboardFromLink(
   const writeMcpEntries = deps.writeMcpEntries ?? defaultWriteMcpEntries;
   let registered: OnboardedTool[] = [];
   try {
-    registered = await writeMcpEntries(data.apiUrl);
+    registered = await writeMcpEntries(canonApiUrl, data.workspace.id);
   } catch (err) {
     stdout.write(
       `⚠  Failed to register MCP entry: ${err instanceof Error ? err.message : String(err)}\n` +

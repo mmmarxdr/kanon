@@ -93,9 +93,12 @@ describe("onboardFromLink()", () => {
       }),
     );
 
-    // MCP entries registered for detected tools
+    // MCP entries registered for detected tools — now receives (apiUrl, workspaceId)
     expect(writeMcpEntries).toHaveBeenCalledOnce();
-    expect(writeMcpEntries).toHaveBeenCalledWith("https://server.example.com");
+    expect(writeMcpEntries).toHaveBeenCalledWith(
+      "https://server.example.com",
+      ONBOARD_RESPONSE.workspace.id,
+    );
 
     // Progress messages surface identity, server, creds path, and tool list
     const stdoutOutput = stdoutSink.write.mock.calls.map((c) => c[0]).join("");

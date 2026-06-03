@@ -479,4 +479,55 @@ describe("Auth Integration", () => {
       expect(pmRows).toHaveLength(0);
     });
   });
+
+  // ── X-API-Key hard cut (KAN-35 / PR1) ────────────────────────────────────
+  // After PR1, the X-API-Key auth path is removed. Any request carrying that
+  // header on a protected route MUST receive 401 — no silent fallback.
+
+  describe("X-API-Key header rejected (wrapper-only auth)", () => {
+    it("401 on protected route with X-API-Key header (no bearer)", async () => {
+      const ws = await seedTestWorkspace();
+      // Register a user to get a valid userId for a "well-formed" API key attempt
+      const reg = await app.inject({
+        method: "POST",
+        url: "/api/auth/register",
+        payload: { email: "apikey-test@example.com", password: "Secret123!" },
+      });
+      expect(reg.statusCode).toBe(201);
+
+      // Send a request to a protected route with only X-API-Key
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/workspaces/${ws.id}`,
+        headers: { "x-api-key": "some-key-that-should-no-longer-work" },
+      });
+
+      // Must be 401 — X-API-Key is no longer accepted
+      expect(res.statusCode).toBe(401);
+    });
+
+    it("401 on protected route with no auth at all", async () => {
+      const ws = await seedTestWorkspace();
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/workspaces/${ws.id}`,
+        // No Authorization header, no cookie, no X-API-Key
+      });
+
+      expect(res.statusCode).toBe(401);
+    });
+
+    it("POST /api/auth/api-key endpoint no longer exists (404 or 405)", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/auth/api-key",
+        headers: { authorization: "Bearer fake-token" },
+        payload: {},
+      });
+
+      // Route is removed — must be 404 (not found) after PR1
+      expect(res.statusCode).toBe(404);
+    });
+  });
 });

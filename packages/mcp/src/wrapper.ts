@@ -16,6 +16,7 @@ import { fileURLToPath } from "url";
 import { join, dirname } from "path";
 import { getCredentialStore as defaultGetCredentialStore } from "./credential-store/index.js";
 import type { CredentialStore } from "./credential-store/types.js";
+import { canonicalizeApiUrl } from "./canonical-url.js";
 
 // ─── Injectable deps interface ─────────────────────────────────────────────
 
@@ -58,7 +59,9 @@ export async function runWrapper(deps?: Partial<WrapperDeps>): Promise<void> {
   const exit = deps?.exit ?? process.exit;
   const spawnFn = deps?.spawn ?? nodeSpawn;
 
-  const server = parseServerArg(argv);
+  const rawServer = parseServerArg(argv);
+  // Canonicalize immediately so credential lookup and child env are always consistent.
+  const server = rawServer ? canonicalizeApiUrl(rawServer) : undefined;
 
   // ── S4.3: Legacy bypass ──────────────────────────────────────────────────
   if (env["KANON_API_KEY"]) {

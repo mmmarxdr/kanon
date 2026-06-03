@@ -102,6 +102,8 @@ model User {
   passwordHash    String?   @map("password_hash")
   displayName     String?   @map("display_name")
   avatarUrl       String?   @map("avatar_url")
+  /// @deprecated X-API-Key auth removed in PR1 (KAN-35). Column kept nullable for
+  /// restorative revert — drop in a later migration once PR1 is stable on prod.
   apiKeyHash      String?   @map("api_key_hash")
   emailVerifiedAt DateTime? @map("email_verified_at")
   createdAt       DateTime  @default(now()) @map("created_at")

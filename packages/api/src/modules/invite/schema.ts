@@ -130,13 +130,26 @@ export type WorkspaceIdParam = z.infer<typeof WorkspaceIdParam>;
  *
  * Exactly one of userId or email must be provided (validated at service layer).
  */
-export const OnboardingInviteBody = z.object({
-  userId: z.string().uuid("Invalid user ID").optional(),
-  email: z.string().email("Invalid email address").optional(),
-  role: z.enum(["member", "admin", "viewer"]).optional().default("member"),
-  ttlHours: z.number().int().min(1).max(72).optional().default(72),
-  projectAssignments: z.array(ProjectAssignmentSchema).optional().transform(dedupeFirstWins),
-});
+export const OnboardingInviteBody = z
+  .object({
+    userId: z.string().uuid("Invalid user ID").optional(),
+    email: z.string().email("Invalid email address").optional(),
+    role: z.enum(["member", "admin", "viewer"]).optional().default("member"),
+    ttlHours: z.number().int().min(1).max(72).optional().default(72),
+    projectAssignments: z.array(ProjectAssignmentSchema).optional().transform(dedupeFirstWins),
+  })
+  .refine(
+    (data) => {
+      const hasUserId = data.userId !== undefined && data.userId !== null;
+      const hasEmail = data.email !== undefined && data.email !== null;
+      // Exactly one of userId or email must be provided (XOR).
+      return hasUserId !== hasEmail;
+    },
+    {
+      message: "Exactly one of userId or email must be provided",
+      path: ["userId"],
+    },
+  );
 export type OnboardingInviteBody = z.infer<typeof OnboardingInviteBody>;
 
 /**

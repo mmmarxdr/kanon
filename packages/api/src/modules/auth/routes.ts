@@ -13,7 +13,6 @@ import {
   LoginResponse,
   RefreshBody,
   RefreshResponse,
-  ApiKeyResponse,
   MeResponse,
   ChangePasswordBody,
   ForgotPasswordBody,
@@ -381,35 +380,6 @@ export default async function authRoutes(
     async (request, _reply) => {
       const authUser = manualAuth(request);
       return authService.issueRefreshFromLogin(authUser.userId);
-    },
-  );
-
-  /**
-   * POST /api/auth/api-key
-   * This route is under /api/auth/* which the auth plugin skips.
-   * We manually verify the JWT in the handler since this endpoint requires auth.
-   * Rate limited: 5 attempts per minute per IP.
-   */
-  app.post(
-    "/api-key",
-    {
-      config: {
-        rateLimit: {
-          max: 5,
-          timeWindow: "1 minute",
-        },
-      },
-      schema: {
-        response: { 201: ApiKeyResponse },
-      },
-    },
-    async (request, reply) => {
-      // Manually authenticate since auth plugin skips /api/auth/* routes
-      const authUser = manualAuth(request);
-      request.user = authUser;
-
-      const result = await authService.generateApiKey(authUser.userId);
-      return reply.status(201).send(result);
     },
   );
 

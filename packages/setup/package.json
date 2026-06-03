@@ -7,7 +7,7 @@
     "kanon-setup": "./dist/index.js"
   },
   "scripts": {
-    "prebuild": "bash scripts/copy-assets.sh",
+    "prebuild": "bash scripts/sync-shared.sh && bash scripts/copy-assets.sh",
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "vitest run",

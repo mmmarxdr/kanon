@@ -505,22 +505,6 @@ export async function resetPassword(
   ]);
 }
 
-/**
- * Generate and store an API key for a user.
- * Returns the plain-text key (shown once).
- */
-export async function generateApiKey(userId: string) {
-  const rawKey = randomBytes(32).toString("hex");
-  const hash = createHash("sha256").update(rawKey).digest("hex");
-
-  await prisma.user.update({
-    where: { id: userId },
-    data: { apiKeyHash: hash },
-  });
-
-  return { apiKey: rawKey };
-}
-
 // ── D-extension: issueRefreshFromLogin() ────────────────────────────────────
 
 /**
@@ -613,30 +597,59 @@ export async function onboard(token: string) {
   const inviteId = payload.sub;
 
   return prisma.$transaction(async (tx) => {
-    // 3. Fetch invite
-    const invite = await (tx as typeof prisma).workspaceInvite.findFirst({
-      where: { id: inviteId, kind: "ONBOARDING" },
-      include: { workspace: { select: { id: true, name: true, slug: true } } },
-    });
+    // 3. KAN-37: SELECT ... FOR UPDATE — acquires a row-level lock on the invite row.
+    //    The second concurrent transaction blocks here until the first commits or rolls back.
+    //    This is the same pattern used in acceptInvite() for the same class of race.
+    //    Columns fetched must include everything needed for steps 4–10 below.
+    const rows = await (tx as typeof prisma).$queryRaw<Array<{
+      id: string;
+      kind: string;
+      email: string | null;
+      workspace_id: string;
+      role: string;
+      project_assignments: unknown;
+      revoked_at: Date | null;
+      consumed_at: Date | null;
+      expires_at: Date;
+    }>>`
+      SELECT id, kind, email, workspace_id, role, project_assignments, revoked_at, consumed_at, expires_at
+      FROM workspace_invites
+      WHERE id = ${inviteId}::uuid
+      FOR UPDATE
+    `;
 
-    if (!invite) {
+    const row = rows[0];
+    if (!row || row.kind !== "ONBOARDING") {
       throw new AppError(400, "INVALID_TOKEN", "Onboarding invite not found");
     }
 
-    // 4. Check invite status
-    if (invite.revokedAt) {
+    // 4. Check invite status — all guards after the lock so the second concurrent
+    //    transaction sees the committed state (consumedAt already set by first winner).
+    if (row.revoked_at) {
       throw new AppError(400, "TOKEN_REVOKED", "Onboarding token has been revoked");
     }
-    if (invite.consumedAt) {
+    if (row.consumed_at) {
       throw new AppError(410, "TOKEN_CONSUMED", "Onboarding token has already been used");
     }
     // DB-level expiry check (defense-in-depth beyond JWT exp)
-    if (invite.expiresAt < new Date()) {
+    if (row.expires_at < new Date()) {
       throw new AppError(410, "TOKEN_EXPIRED", "Onboarding token has expired");
     }
 
+    // Fetch workspace details separately (not available from $queryRaw inline join).
+    const workspace = await (tx as typeof prisma).workspace.findUniqueOrThrow({
+      where: { id: row.workspace_id },
+      select: { id: true, name: true, slug: true },
+    });
+
+    // 4b. Mark consumed — inside the locked tx so rollback reverts this.
+    await (tx as typeof prisma).workspaceInvite.update({
+      where: { id: inviteId },
+      data: { consumedAt: new Date() },
+    });
+
     // Email is admin-controlled — always sourced from the invite row, never from caller input.
-    const email = invite.email!;
+    const email = row.email!;
 
     // 5. Upsert User by email (R-NUI-cli-consume, ADR-5):
     //    - Create passwordless (passwordHash: null) if absent → escape hatch via forgot-password
@@ -652,31 +665,31 @@ export async function onboard(token: string) {
     // 6. Find-or-create workspace Member with role from invite (idempotent).
     //    Do NOT throw on existing member — reuse it silently (contrast with acceptInvite).
     let existingMember = await (tx as typeof prisma).member.findUnique({
-      where: { userId_workspaceId: { userId: user.id, workspaceId: invite.workspaceId } },
+      where: { userId_workspaceId: { userId: user.id, workspaceId: row.workspace_id } },
     });
 
     if (!existingMember) {
       // Derive a unique username within the workspace (ADR-6)
-      const username = await deriveUsername(tx, invite.workspaceId, email);
+      const username = await deriveUsername(tx, row.workspace_id, email);
       existingMember = await (tx as typeof prisma).member.create({
         data: {
           username,
-          role: invite.role as import("@prisma/client").MemberRole,
+          role: row.role as import("@prisma/client").MemberRole,
           userId: user.id,
-          workspaceId: invite.workspaceId,
+          workspaceId: row.workspace_id,
         },
       });
     }
 
     // 7. Parse project assignments BEFORE creating the RefreshToken row so
     //    allowedProjectIds is available at create time (KAN-19, design risk #1).
-    // invite.projectAssignments is a Prisma.JsonValue — parse safely; null → [] (existing invites safe).
-    const parsedAssignments = z.array(ProjectAssignmentSchema).safeParse(invite.projectAssignments);
+    // row.project_assignments is a raw JSON value — parse safely; null → [] (existing invites safe).
+    const parsedAssignments = z.array(ProjectAssignmentSchema).safeParse(row.project_assignments);
     const assignments = parsedAssignments.success ? parsedAssignments.data : [];
 
     // 8. Apply project assignments (idempotent — skipDuplicates:true in createProjectMembersInTx).
     //    Must be BEFORE consumedAt update so a PM failure rolls back the whole tx.
-    await createProjectMembersInTx(tx, user.id, assignments, invite.workspaceId);
+    await createProjectMembersInTx(tx, user.id, assignments, row.workspace_id);
 
     // 9. Generate opaque refresh token and store its hash
     const rawToken = generateOpaqueToken();
@@ -688,23 +701,20 @@ export async function onboard(token: string) {
         tokenHash,
         source: "ONBOARDING",
         userId: user.id,
-        workspaceId: invite.workspaceId,
+        workspaceId: row.workspace_id,
         expiresAt: refreshExpiresAt,
         metadata: {},
         allowedProjectIds: assignments.map((a) => a.projectId),
       },
     });
 
-    // 10. Mark invite as consumed (atomic — same tx, last step so any earlier failure rolls back)
-    await (tx as typeof prisma).workspaceInvite.update({
-      where: { id: inviteId },
-      data: { consumedAt: new Date() },
-    });
+    // consumedAt was set in step 4b (update inside the locked tx).
+    // If any step above throws, the whole transaction rolls back and consumedAt reverts.
 
     return {
       refreshToken: rawToken,
       apiUrl: env.BASE_URL,
-      workspace: invite.workspace,
+      workspace,
       email: user.email,
       expiresAt: refreshTokenRow.expiresAt.toISOString(),
     };

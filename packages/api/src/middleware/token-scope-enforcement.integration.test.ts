@@ -142,46 +142,8 @@ describe("KAN-19 PR2 — Token Scope Enforcement", () => {
     expect(res.statusCode).toBe(200);
   });
 
-  // ── T2.5: X-API-Key path → always unscoped (no scope restriction) ──
-
-  it("T2.5: X-API-Key authenticated request → no scope restriction applied", async () => {
-    const ws = await seedTestWorkspace();
-    const projectP = await seedTestProject(ws.id, "TSE_P5");
-
-    // Create a user with an API key
-    const { randomBytes, createHash } = await import("node:crypto");
-    const rawApiKey = randomBytes(32).toString("hex");
-    const apiKeyHash = createHash("sha256").update(rawApiKey).digest("hex");
-
-    const user = await prisma.user.create({
-      data: {
-        email: `api-user-${randomBytes(4).toString("hex")}@kanon.test`,
-        passwordHash: "not-used",
-        displayName: "API User",
-        apiKeyHash,
-      },
-    });
-
-    // Create workspace member with owner role so bypass grants access
-    await prisma.member.create({
-      data: {
-        username: `api-user-${randomBytes(4).toString("hex")}`,
-        role: "owner",
-        userId: user.id,
-        workspaceId: ws.id,
-      },
-    });
-
-    const res = await app.inject({
-      method: "GET",
-      url: `/api/projects/${projectP.key}`,
-      headers: { "x-api-key": rawApiKey },
-    });
-
-    // Should NOT be 403 due to scope — X-API-Key is always unscoped
-    // Owner bypass applies → 200
-    expect(res.statusCode).toBe(200);
-  });
+  // T2.5 removed in PR1 (KAN-35): X-API-Key auth path is hard cut.
+  // X-API-Key requests now receive 401; the wrapper-only path is the sole auth route.
 
   // ── T2.6: requireIssueRole and requireCycleRole with scoped [P], accessing Q → 403 ──
 
