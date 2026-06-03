@@ -31,11 +31,9 @@ test.describe("Project settings — members route", () => {
     await page.goto("/project-settings/KAN");
     await page.waitForURL(/\/project-settings\/KAN/, { timeout: 10_000 });
 
-    // Wait for page to hydrate — look for any heading or section
-    await page.waitForLoadState("networkidle", { timeout: 15_000 });
-
-    // The page should have meaningful content — at minimum the project key text
-    const bodyText = await page.textContent("body");
-    expect(bodyText).toMatch(/KAN/i);
+    // The page should hydrate with meaningful content — at minimum the project
+    // key text. Poll on content rather than networkidle: the app keeps the
+    // network busy (background polling) so it never reaches a network-idle state.
+    await expect(page.locator("body")).toContainText(/KAN/i, { timeout: 15_000 });
   });
 });

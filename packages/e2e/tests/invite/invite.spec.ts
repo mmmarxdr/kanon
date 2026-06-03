@@ -17,7 +17,8 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env.test") });
  * - Accepting invite as authenticated user redirects to /workspaces
  *
  * The SEED_INVITE_TOKEN is written by global-setup.ts (always valid, 7-day expiry,
- * kind=MEMBER, email=invitee@example.com).
+ * kind=MEMBER, email=dev@kanon.io — the seed user, who is already a member, so
+ * accepting resolves to 409 ALREADY_MEMBER and the UI redirects to /workspaces).
  */
 
 test.describe("Invite page — unauthenticated user", () => {
