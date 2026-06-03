@@ -356,7 +356,3 @@ export const CloseCycleShape = {
   reason: z.string().optional().describe("Reason for the disposition — surfaces in audit trail"),
   ...WriteFormatField,
 };
-export const CloseCycleInput = z.object(CloseCycleShape).refine(
-  (d) => d.disposition !== "move_to_next" || !!d.projectKey,
-  { message: "projectKey is required when disposition='move_to_next'", path: ["projectKey"] },
-);

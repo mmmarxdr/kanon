@@ -17,6 +17,7 @@ import { startSseClient, stopSseClient } from "./sse-client.js";
 import { SERVER_INSTRUCTIONS, DEFERRED_TOOLS } from "./instructions.js";
 import { findKanonConfig } from "./kanon-binding.js";
 import type { KanonBinding } from "./kanon-binding.js";
+import type { InvalidBinding } from "./binding-resolver.js";
 
 // ─── Env Validation (fail-fast) ────────────────────────────────────────────
 
@@ -45,15 +46,16 @@ const client = new KanonClient({
 // at spawn time by the agent (e.g. Claude Code) — it reflects the working
 // directory when the wrapper was launched, not any later cd. For repos with
 // nested .kanon files, the nearest ancestor (up to .git) wins.
-const kanonBinding: KanonBinding | null = (() => {
+const kanonBinding: KanonBinding | InvalidBinding | null = (() => {
   try {
     return findKanonConfig(process.cwd(), {
       existsSync: nodeFs.existsSync,
       readFileSync: (p: string) => nodeFs.readFileSync(p, "utf-8"),
     });
   } catch (err) {
-    console.error(`[kanon] Warning: .kanon file found but invalid: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error(`[kanon] Warning: .kanon file found but invalid: ${reason}`);
+    return { invalid: reason } satisfies InvalidBinding;
   }
 })();
 

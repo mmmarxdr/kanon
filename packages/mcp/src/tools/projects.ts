@@ -13,9 +13,10 @@ import { errorResult, dataResult } from "../errors.js";
 import { formatList, formatEntity, formatAck } from "../transforms.js";
 import type { Format } from "../transforms.js";
 import { resolveProjectKey } from "../binding-resolver.js";
+import type { InvalidBinding } from "../binding-resolver.js";
 import type { KanonBinding } from "../kanon-binding.js";
 
-export function registerProjectTools(server: McpServer, client: KanonClient, binding: KanonBinding | null = null): void {
+export function registerProjectTools(server: McpServer, client: KanonClient, binding: KanonBinding | InvalidBinding | null = null): void {
   // ─── Workspace Tools ────────────────────────────────────────────────────
 
   server.tool(

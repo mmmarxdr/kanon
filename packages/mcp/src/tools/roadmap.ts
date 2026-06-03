@@ -14,9 +14,10 @@ import {
 import { errorResult, dataResult } from "../errors.js";
 import { formatList, formatEntity, formatAck, type Format } from "../transforms.js";
 import { resolveProjectKey } from "../binding-resolver.js";
+import type { InvalidBinding } from "../binding-resolver.js";
 import type { KanonBinding } from "../kanon-binding.js";
 
-export function registerRoadmapTools(server: McpServer, client: KanonClient, binding: KanonBinding | null = null): void {
+export function registerRoadmapTools(server: McpServer, client: KanonClient, binding: KanonBinding | InvalidBinding | null = null): void {
   server.tool(
     "kanon_list_roadmap",
     "List roadmap items for projectKey with filters (horizon,status,label). Returns compact list.",

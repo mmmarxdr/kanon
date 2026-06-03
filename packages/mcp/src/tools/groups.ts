@@ -6,9 +6,10 @@ import { ListGroupsInput, BatchTransitionInput, BatchTransitionInputShape } from
 import { errorResult, dataResult } from "../errors.js";
 import { formatList } from "../transforms.js";
 import { resolveProjectKey } from "../binding-resolver.js";
+import type { InvalidBinding } from "../binding-resolver.js";
 import type { KanonBinding } from "../kanon-binding.js";
 
-export function registerGroupTools(server: McpServer, client: KanonClient, binding: KanonBinding | null = null): void {
+export function registerGroupTools(server: McpServer, client: KanonClient, binding: KanonBinding | InvalidBinding | null = null): void {
   server.tool(
     "kanon_list_groups",
     "List issue groups for projectKey. Call before kanon_create_issue to get valid groupKey values.",

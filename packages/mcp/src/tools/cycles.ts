@@ -20,6 +20,7 @@ import {
 } from "../transforms.js";
 import type { Format } from "../transforms.js";
 import { resolveProjectKey } from "../binding-resolver.js";
+import type { InvalidBinding } from "../binding-resolver.js";
 import type { KanonBinding } from "../kanon-binding.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -112,7 +113,7 @@ export async function closeCycleWithDisposition(
 
 // ─── Registration ───────────────────────────────────────────────────────────
 
-export function registerCycleTools(server: McpServer, client: KanonClient, binding: KanonBinding | null = null): void {
+export function registerCycleTools(server: McpServer, client: KanonClient, binding: KanonBinding | InvalidBinding | null = null): void {
   server.tool(
     "kanon_list_cycles",
     "List cycles for projectKey. isActive boolean per entry — use it, don't infer from dates.",
@@ -222,8 +223,18 @@ export function registerCycleTools(server: McpServer, client: KanonClient, bindi
     CloseCycleShape,
     async (args) => {
       try {
-        // Resolve projectKey from binding when disposition='move_to_next' needs it.
-        const effectiveProjectKey = args.projectKey ?? binding?.projectKey;
+        // For move_to_next, projectKey is required — route through resolveProjectKey
+        // so we get: explicit wins, binding fallback, invalid/.kanon guidance on error.
+        // leave / move_to_backlog do NOT need projectKey — skip resolution.
+        let effectiveProjectKey: string | undefined;
+        if (args.disposition === "move_to_next") {
+          const resolved = resolveProjectKey(args.projectKey, binding);
+          if (!resolved.ok) return errorResult(new Error(resolved.error));
+          effectiveProjectKey = resolved.projectKey;
+        } else {
+          effectiveProjectKey = args.projectKey ?? undefined;
+        }
+
         const summary = await closeCycleWithDisposition(client, {
           cycleId: args.cycleId,
           disposition: args.disposition,

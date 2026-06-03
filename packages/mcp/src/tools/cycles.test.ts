@@ -838,6 +838,75 @@ describe("kanon_create_cycle — surfaces 403 as FORBIDDEN", () => {
   });
 });
 
+// ─── close_cycle binding consistency (Fix 2b) ────────────────────────────────
+//
+// move_to_next must route through resolveProjectKey → actionable .kanon guidance.
+// leave / move_to_backlog must NOT require projectKey (no binding needed).
+
+describe("kanon_close_cycle — move_to_next without projectKey or binding → actionable error", () => {
+  it("returns isError with .kanon guidance when no projectKey and no binding", async () => {
+    const mockClient = makeClient();
+    // No closeCycle or listCycles needed — error fires before API call
+    const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
+    const handler = tools.get("kanon_close_cycle")!.handler;
+
+    const result = await handler({
+      cycleId: CYCLE_ID,
+      disposition: "move_to_next",
+      // no projectKey, captureTools passes no binding (null default)
+    });
+
+    expect(result.isError).toBe(true);
+    const text = result.content[0]!.text;
+    // Must mention .kanon (binding guidance) not just "projectKey required"
+    expect(text.toLowerCase()).toMatch(/\.kanon/);
+    // Must NOT say "not found" — .kanon might exist but be malformed, or just absent
+    expect(mockClient.listCycles).not.toHaveBeenCalled();
+    expect(mockClient.closeCycle).not.toHaveBeenCalled();
+  });
+});
+
+describe("kanon_close_cycle — leave works without projectKey or binding", () => {
+  it("succeeds with disposition:leave and no projectKey", async () => {
+    const mockClient = makeClient();
+    mockClient.closeCycle.mockResolvedValueOnce(makeClosed());
+    const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
+    const handler = tools.get("kanon_close_cycle")!.handler;
+
+    const result = await handler({
+      cycleId: CYCLE_ID,
+      disposition: "leave",
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed.ok).toBe(true);
+  });
+});
+
+describe("kanon_close_cycle — move_to_backlog works without projectKey or binding", () => {
+  it("succeeds with disposition:move_to_backlog and no projectKey", async () => {
+    const mockClient = makeClient();
+    const detail = makeDetail([
+      { id: "i1", key: "KAN-1", title: "Open", state: "todo" },
+    ]);
+    mockClient.getCycle.mockResolvedValueOnce(detail);
+    mockClient.attachIssuesToCycle.mockResolvedValueOnce(detail);
+    mockClient.closeCycle.mockResolvedValueOnce(makeClosed());
+    const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
+    const handler = tools.get("kanon_close_cycle")!.handler;
+
+    const result = await handler({
+      cycleId: CYCLE_ID,
+      disposition: "move_to_backlog",
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed.ok).toBe(true);
+  });
+});
+
 describe("kanon_list_cycles — surfaces 403 as FORBIDDEN", () => {
   it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
     const mockClient = {

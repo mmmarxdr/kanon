@@ -15,6 +15,7 @@ import { errorResult, dataResult } from "../errors.js";
 import { formatList, formatEntity, formatAck } from "../transforms.js";
 import type { Format } from "../transforms.js";
 import { resolveProjectKey } from "../binding-resolver.js";
+import type { InvalidBinding } from "../binding-resolver.js";
 import type { KanonBinding } from "../kanon-binding.js";
 
 // Extend CreateIssueInput's shape with the new write-format field. The legacy
@@ -23,7 +24,7 @@ import type { KanonBinding } from "../kanon-binding.js";
 // the rest).
 const CreateIssueInputShape = { ...CreateIssueInput.shape, ...WriteFormatField };
 
-export function registerIssueTools(server: McpServer, client: KanonClient, binding: KanonBinding | null = null): void {
+export function registerIssueTools(server: McpServer, client: KanonClient, binding: KanonBinding | InvalidBinding | null = null): void {
   server.tool(
     "kanon_list_issues",
     "List issues with filters (state,type,priority,assigneeId,cycleId,label,groupKey,keys[]). Returns slim list.",

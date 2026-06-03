@@ -73,4 +73,37 @@ describe("resolveProjectKey", () => {
       expect(result.error.toLowerCase()).toMatch(/\.kanon|projectkey/i);
     }
   });
+
+  // ── invalid binding (found-but-malformed .kanon) ──────────────────────────
+
+  it("returns an error mentioning 'invalid' when binding carries a load error", () => {
+    const result = resolveProjectKey(undefined, { invalid: "unexpected field 'foo'" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.toLowerCase()).toMatch(/invalid/);
+    }
+  });
+
+  it("error for invalid binding does NOT say 'not found'", () => {
+    const result = resolveProjectKey(undefined, { invalid: "bad json" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.toLowerCase()).not.toMatch(/not found/);
+    }
+  });
+
+  it("invalid binding error includes the parse reason", () => {
+    const reason = "missing required field workspaceId";
+    const result = resolveProjectKey(undefined, { invalid: reason });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain(reason);
+    }
+  });
+
+  it("explicit projectKey wins even when binding is invalid", () => {
+    const result = resolveProjectKey("MYPROJ", { invalid: "bad json" });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.projectKey).toBe("MYPROJ");
+  });
 });
