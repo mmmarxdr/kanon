@@ -16,7 +16,8 @@
  * (mcp, setup) receive a prebuild-copy so they stay self-contained at publish.
  */
 
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+// LOOPBACK_HOSTS: Node's WHATWG URL keeps IPv6 brackets in hostname, so use "[::1]" not "::1"
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /**
  * Return the canonical API base URL string.
@@ -35,6 +36,7 @@ export function canonicalizeApiUrl(input: string): string {
     return input.replace(/\/+$/, "");
   }
 
+  // Node's WHATWG URL keeps IPv6 brackets in hostname: "[2001:db8::1]"
   const host = parsed.hostname.toLowerCase();
   const isLoopback = LOOPBACK_HOSTS.has(host);
 
@@ -47,6 +49,7 @@ export function canonicalizeApiUrl(input: string): string {
     port = "";
   }
 
+  // host already includes brackets for IPv6 (e.g. "[2001:db8::1]") — use as-is.
   const portSuffix = port ? `:${port}` : "";
   return `${scheme}://${host}${portSuffix}`;
 }

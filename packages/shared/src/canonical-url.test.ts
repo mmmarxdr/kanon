@@ -111,4 +111,23 @@ describe("canonicalizeApiUrl", () => {
     const b = canonicalizeApiUrl("https://host.example.com");
     expect(a).toBe(b);
   });
+
+  // ── IPv6 host handling ────────────────────────────────────────────────────
+  it("preserves bracketed IPv6 host", () => {
+    expect(canonicalizeApiUrl("http://[2001:db8::1]/")).toBe("http://[2001:db8::1]");
+  });
+
+  it("preserves bracketed IPv6 host with port", () => {
+    expect(canonicalizeApiUrl("http://[2001:db8::1]:3000/api")).toBe("http://[2001:db8::1]:3000");
+  });
+
+  it("uses http for loopback IPv6 ::1", () => {
+    expect(canonicalizeApiUrl("https://[::1]:3000")).toBe("http://[::1]:3000");
+  });
+
+  it("two IPv6 installs with and without trailing slash produce identical keys", () => {
+    const a = canonicalizeApiUrl("http://[2001:db8::1]/api");
+    const b = canonicalizeApiUrl("http://[2001:db8::1]/api/");
+    expect(a).toBe(b);
+  });
 });
