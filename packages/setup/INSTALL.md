@@ -5,6 +5,18 @@ One command installs the Kanon MCP server, verifies its integrity, and configure
 ## Quick install
 
 ```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.4.0/install.sh)"
+```
+
+**Pin to a specific release** (recommended — tamper-resistant):
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.4.0/install.sh)"
+```
+
+Fetch `main` (always latest, no tamper-resistance guarantee):
+
+```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/main/install.sh)"
 ```
 
@@ -19,11 +31,41 @@ When prompted, paste your `kanon://` onboarding link. Press Enter to skip and ru
 | 3. Install | Extracts to `~/.kanon/mcp`; writes a version marker for idempotency |
 | 4. Configure | Invokes `node setup` to write MCP config for your detected tools |
 
-## Pinned version + integrity
+## Pinned version + tamper-resistance
 
-The installer always fetches an exact version (`0.4.0`) — never `latest`. The sha256 checksum is verified before any file is written to disk — on mismatch the installer exits non-zero with a clear error and leaves your system unchanged.
+The installer always fetches an exact version (`0.4.0`) — never `latest`.
 
-The checksum is currently fetched from the same GitHub Release as the tarball. This detects corruption (bit-rot, partial download, CDN glitch) but does **not** protect against a compromised release origin, since an attacker who controls the release server can serve a matching tarball+checksum pair. Full tamper-resistance will be added in a future release by pinning the expected hash directly in the installer script (so the script itself becomes the trust root, independent of the download origin).
+**How tamper-resistance works (hash-in-tag):**
+
+At release time, the CI workflow:
+
+1. Builds the tarball and computes its sha256.
+2. Stamps `EXPECTED_SHA256="<hash>"` and `KANON_MCP_VERSION="<version>"` directly into `install.sh` on a detached HEAD commit.
+3. Tags that detached commit `mcp-v<version>` and pushes **only the tag** — `main` is never touched.
+
+When you fetch the script via the tag URL:
+
+```
+https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.4.0/install.sh
+```
+
+The hash is embedded in the script itself — not downloaded from a separate file. A compromised CDN or release server **cannot** substitute a matching tarball+checksum pair, because the expected hash is not fetched from the network.
+
+**`main` intentionally carries `EXPECTED_SHA256=""`** (empty). Fetching via `main` gives you the latest release but provides *corruption detection only* — if the CDN serves a damaged file the sha256 check (against the downloaded `.sha256` companion file) will catch it. It does NOT protect against an attacker who controls the release server and can serve a matching tarball + checksum pair simultaneously.
+
+> **Summary:** pin to a tag (`mcp-v0.4.0`) for tamper-resistance; use `main` only if you always want the latest version and accept that trade-off.
+
+**Version scheme:** The release tag and tarball version track the MCP server version (`@kanon/mcp`). The setup package version is internal and not reflected in the artifact name.
+
+| Artifact | Naming |
+|----------|--------|
+| Tag | `mcp-v<version>` (e.g. `mcp-v0.4.0`) |
+| Tarball | `kanon-mcp-<version>.tar.gz` |
+| Checksum | `kanon-mcp-<version>.tar.gz.sha256` |
+
+## Distribution
+
+The tarball IS the distribution. There is no npm package for the installer. This eliminates the npx supply-chain path (`npx @kanon-pm/setup`) — the release tarball bundles everything needed (MCP server, wrapper, setup) as self-contained esbuild bundles.
 
 ## Idempotency
 
@@ -37,7 +79,7 @@ You can also pass the link non-interactively:
 
 ```bash
 # Via environment variable (highest priority)
-KANON_ONBOARD_LINK="kanon://your-link" bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/main/install.sh)"
+KANON_ONBOARD_LINK="kanon://your-link" bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.4.0/install.sh)"
 
 # Via piped stdin
 echo "kanon://your-link" | bash install.sh
