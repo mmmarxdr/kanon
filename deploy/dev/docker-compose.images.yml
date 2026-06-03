@@ -3,16 +3,17 @@
 #   docker compose -f docker-compose.yml -f docker-compose.images.yml pull
 #   docker compose -f docker-compose.yml -f docker-compose.images.yml up -d
 #
-# This is what the CD on the dev box uses (no build → no OOM on t4g.small).
-# Pin a version by setting KANON_IMAGE_TAG (default: latest) in .env; override
-# the registry/org with KANON_IMAGE_PREFIX if you forked.
-# Requires Docker Compose v2.24+ (for `!reset`).
+# This is what the CD on the dev box uses: `pull` fetches the GHCR image and
+# `up -d` (no --build) runs it — no build on the box, no OOM on t4g.small.
+# (The base file's `build:` stays defined but is never triggered without
+# --build, so no `!reset` / compose-version dependency is needed.)
+#
+# Pin a version by setting KANON_IMAGE_TAG (default: latest) in .env; point at
+# a fork with KANON_IMAGE_PREFIX.
 
 services:
   kanon-api:
-    build: !reset null
     image: ${KANON_IMAGE_PREFIX:-ghcr.io/mmmarxdr}/kanon-api:${KANON_IMAGE_TAG:-latest}
 
   kanon-web:
-    build: !reset null
     image: ${KANON_IMAGE_PREFIX:-ghcr.io/mmmarxdr}/kanon-web:${KANON_IMAGE_TAG:-latest}
