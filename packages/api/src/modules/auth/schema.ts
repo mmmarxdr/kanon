@@ -68,12 +68,7 @@ export const RefreshResponse = z.object({
   accessToken: z.string(),
 });
 
-/**
- * API key generation response.
- */
-export const ApiKeyResponse = z.object({
-  apiKey: z.string(),
-});
+// NOTE: ApiKeyResponse removed in PR1 (KAN-35) — POST /api/auth/api-key route was deleted.
 
 /**
  * /me endpoint response — current authenticated user.

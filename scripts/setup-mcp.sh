@@ -340,20 +340,7 @@ if [[ "$FLAG_REMOVE" != true ]]; then
     process.stdout.write(data.accessToken);
   " "$LOGIN_RESP") || fail "Could not extract accessToken from login response"
   ok "Logged in"
-
-  # Generate API key
-  info "Generating API key..."
-  APIKEY_RESP=$(curl -sf --max-time 10 \
-    -X POST "${API_URL}/api/auth/api-key" \
-    -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-    2>&1) || fail "API key generation failed"
-
-  API_KEY=$(node -e "
-    const data = JSON.parse(process.argv[1]);
-    if (!data.apiKey) { process.exit(1); }
-    process.stdout.write(data.apiKey);
-  " "$APIKEY_RESP") || fail "Could not extract apiKey from response"
-  ok "API key generated"
+  # DEPRECATED: POST /api/auth/api-key removed in PR1 (KAN-35). Use: npx @kanon-pm/setup <kanon://link>
 fi
 
 # ── Config functions ──────────────────────────────────────────────────────────

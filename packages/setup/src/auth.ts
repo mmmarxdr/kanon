@@ -12,10 +12,10 @@ export function isLocalhost(url: string): boolean {
   try {
     const parsed = new URL(url);
     const host = parsed.hostname;
+    // Node's WHATWG URL keeps IPv6 brackets in hostname — "[::1]" not "::1"
     return (
       host === "localhost" ||
       host === "127.0.0.1" ||
-      host === "::1" ||
       host === "[::1]" ||
       host === "0.0.0.0"
     );
@@ -25,62 +25,16 @@ export function isLocalhost(url: string): boolean {
 }
 
 /**
- * Auto-generate an API key by logging in with dev credentials.
- * Only works against localhost URLs — returns null for remote or on any error.
- */
-export async function autoGenerateApiKey(
-  apiUrl: string,
-  fetchFn: typeof globalThis.fetch = globalThis.fetch,
-): Promise<string | null> {
-  if (!isLocalhost(apiUrl)) {
-    return null;
-  }
-
-  try {
-    // Step 1: Login with dev credentials
-    const loginResp = await fetchFn(`${apiUrl}/api/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: "dev@kanon.io",
-        password: "Password1!",
-        workspaceId: "kanon-dev",
-      }),
-    });
-
-    if (!loginResp.ok) return null;
-
-    const loginData = (await loginResp.json()) as {
-      accessToken?: string;
-    };
-    const accessToken = loginData.accessToken;
-    if (!accessToken) return null;
-
-    // Step 2: Generate API key
-    const keyResp = await fetchFn(`${apiUrl}/api/auth/api-key`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-
-    if (!keyResp.ok) return null;
-
-    const keyData = (await keyResp.json()) as { apiKey?: string };
-    return keyData.apiKey ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Resolve API URL and key with a 5-step cascade:
+ * Resolve API URL and key with a cascade:
  *   1. CLI flags
  *   2. Environment variables
  *   3. Existing MCP config extraction
- *   4. Auto-generation (localhost only)
+ *   4. Auto-detect localhost URL (health check)
  *   5. Interactive prompt
  *
- * URL is resolved first (steps 1-5), then key (steps 1-5),
- * because auto-generating a key requires a resolved URL.
+ * NOTE: Auto-generation of API keys via POST /api/auth/api-key was removed in PR1 (KAN-35).
+ * Key resolution no longer has an auto-generate step — use npx @kanon-pm/setup <kanon://link>
+ * to onboard via the wrapper.
  */
 export async function resolveAuth(
   options: { apiUrl?: string; apiKey?: string; yes?: boolean },
@@ -88,7 +42,6 @@ export async function resolveAuth(
   deps?: AuthDeps,
 ): Promise<AuthResult> {
   const _extractExisting = deps?.extractExisting ?? extractExistingAuth;
-  const _autoGenerateKey = deps?.autoGenerateKey ?? autoGenerateApiKey;
   const _promptUrl = deps?.promptUrl ?? defaultPromptUrl;
   const _promptKey = deps?.promptKey ?? defaultPromptKey;
   const _fetchFn = deps?.fetchFn ?? globalThis.fetch;
@@ -176,16 +129,7 @@ export async function resolveAuth(
     }
   }
 
-  // Step 4: Auto-generate (localhost only)
-  if (!apiKey) {
-    const generated = await _autoGenerateKey(apiUrl);
-    if (generated) {
-      apiKey = generated;
-      keySource = "auto-generated";
-    }
-  }
-
-  // Step 5: Interactive prompt
+  // Step 4: Interactive prompt
   if (!apiKey) {
     if (options.yes || !process.stdin.isTTY) {
       throw new Error(

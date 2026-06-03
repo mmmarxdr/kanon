@@ -2,6 +2,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
 import type { CredentialStore, Creds } from "./types.js";
+import { canonicalizeApiUrl } from "../canonical-url.js";
 
 /**
  * FileCredentialStore — Linux/WSL2 credential adapter.
@@ -67,19 +68,20 @@ export class FileCredentialStore implements CredentialStore {
 
   async readCredentials(server: string): Promise<Creds | null> {
     const data = await this.readAll();
-    return data[server] ?? null;
+    return data[canonicalizeApiUrl(server)] ?? null;
   }
 
   async writeCredentials(server: string, creds: Creds): Promise<void> {
     const data = await this.readAll();
-    data[server] = creds;
+    data[canonicalizeApiUrl(server)] = creds;
     await this.writeAll(data);
   }
 
   async clearCredentials(server: string): Promise<void> {
+    const key = canonicalizeApiUrl(server);
     const data = await this.readAll();
-    if (!(server in data)) return;
-    delete data[server];
+    if (!(key in data)) return;
+    delete data[key];
 
     if (Object.keys(data).length === 0) {
       try {

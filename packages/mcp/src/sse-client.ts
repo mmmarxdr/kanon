@@ -77,6 +77,22 @@ export function getRecentEventsForIssue(
 
 // ─── Internal ───────────────────────────────────────────────────────────────
 
+/**
+ * Build the HTTP headers for an SSE connection.
+ * Bearer-only — X-API-Key path removed in PR1 (KAN-35).
+ * The wrapper always supplies a short-lived access JWT from the exchange endpoint.
+ */
+export function buildSseHeaders(apiKey: string, lastEventId?: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: "text/event-stream",
+    Authorization: `Bearer ${apiKey}`,
+  };
+  if (lastEventId) {
+    headers["Last-Event-ID"] = lastEventId;
+  }
+  return headers;
+}
+
 async function connect(
   baseUrl: string,
   workspaceId: string,
@@ -85,19 +101,7 @@ async function connect(
   if (!running) return;
 
   const url = `${baseUrl.replace(/\/+$/, "")}/api/events/workspace/${workspaceId}`;
-  const headers: Record<string, string> = {
-    Accept: "text/event-stream",
-  };
-
-  if (apiKey.startsWith("eyJ")) {
-    headers["Authorization"] = `Bearer ${apiKey}`;
-  } else {
-    headers["X-API-Key"] = apiKey;
-  }
-
-  if (lastEventId) {
-    headers["Last-Event-ID"] = lastEventId;
-  }
+  const headers = buildSseHeaders(apiKey, lastEventId);
 
   abortController = new AbortController();
 

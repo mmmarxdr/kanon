@@ -66,7 +66,7 @@ export interface KanonClientOptions {
 /**
  * Typed HTTP client for Kanon's REST API.
  * Uses native `fetch` (Node 18+).
- * Authenticates via X-API-Key header.
+ * Authenticates via Authorization: Bearer header.
  */
 export class KanonClient {
   private readonly baseUrl: string;
@@ -201,12 +201,9 @@ export class KanonClient {
       Accept: "application/json",
     };
     if (this.apiKey) {
-      // Support both JWT tokens (Bearer) and API keys
-      if (this.apiKey.startsWith("eyJ")) {
-        headers["Authorization"] = `Bearer ${this.apiKey}`;
-      } else {
-        headers["X-API-Key"] = this.apiKey;
-      }
+      // Bearer-only — X-API-Key path removed in PR1 (KAN-35).
+      // TODO: CLI remote token acquisition (refresh→exchange) is a separate follow-up.
+      headers["Authorization"] = `Bearer ${this.apiKey}`;
     }
     if (body !== undefined) {
       headers["Content-Type"] = "application/json";

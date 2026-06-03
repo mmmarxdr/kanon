@@ -9,6 +9,7 @@ import type {
   PlatformContext,
 } from "./types.js";
 import { toolRegistry } from "./registry.js";
+import { canonicalizeApiUrl } from "./canonical-url.js";
 
 /**
  * Merge a Kanon MCP server entry into a tool's JSON config file.
@@ -188,30 +189,53 @@ export function resolveWrapperPath(): McpResolution {
  * Build a wrapper-mode MCP server entry. The wrapper handles refresh→access
  * exchange against the server before spawning the real MCP, so no
  * KANON_API_KEY / KANON_API_URL env vars are baked in.
+ *
+ * @param apiUrl     - API base URL (will be canonicalized before embedding)
+ * @param mcpMode    - 'direct' or 'wsl-bridge'
+ * @param nodeBin    - path to node binary (default: process.execPath)
+ * @param resolution - how to resolve the wrapper binary (default: auto-detect)
+ * @param workspaceId - optional workspace ID; when present, emitted as
+ *                     KANON_WORKSPACE_ID env var to activate SSE in the MCP child
  */
 export function buildWrapperMcpEntry(
   apiUrl: string,
   mcpMode: McpMode,
   nodeBin: string = process.execPath,
   resolution: McpResolution = resolveWrapperPath(),
+  workspaceId?: string,
 ): McpServerEntry {
+  const canonUrl = canonicalizeApiUrl(apiUrl);
   const isNpx = resolution.mode === "npx";
 
   if (mcpMode === "wsl-bridge") {
+    // wsl-bridge: no env object — args only
     return {
       command: "wsl",
       args: isNpx
-        ? ["npx", "-p", "@kanon/mcp@>=0.3.0", "kanon-mcp-wrapper", "--server", apiUrl]
-        : [nodeBin, resolution.path, "--server", apiUrl],
+        ? ["npx", "-p", "@kanon/mcp@>=0.3.0", "kanon-mcp-wrapper", "--server", canonUrl]
+        : [nodeBin, resolution.path, "--server", canonUrl],
     };
   }
 
-  return isNpx
-    ? {
-        command: "npx",
-        args: ["-p", "@kanon/mcp@>=0.3.0", "kanon-mcp-wrapper", "--server", apiUrl],
-      }
-    : { command: nodeBin, args: [resolution.path, "--server", apiUrl] };
+  if (isNpx) {
+    const entry: McpServerEntry = {
+      command: "npx",
+      args: ["-p", "@kanon/mcp@>=0.3.0", "kanon-mcp-wrapper", "--server", canonUrl],
+    };
+    if (workspaceId) {
+      entry.env = { KANON_WORKSPACE_ID: workspaceId };
+    }
+    return entry;
+  }
+
+  const entry: McpServerEntry = {
+    command: nodeBin,
+    args: [resolution.path, "--server", canonUrl],
+  };
+  if (workspaceId) {
+    entry.env = { KANON_WORKSPACE_ID: workspaceId };
+  }
+  return entry;
 }
 
 /**

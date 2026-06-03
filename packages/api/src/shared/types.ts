@@ -38,7 +38,7 @@ export interface AuthUser {
   email: string;
   /** Project-scope restriction from the Bearer JWT claim (KAN-19).
    *  Present and non-empty → token is scoped; enforceProjectAccess applies FIRST-GUARD.
-   *  Absent or [] → unscoped; full access (backward-compat + X-API-Key + cookie paths). */
+   *  Absent or [] → unscoped; full access (backward-compat + cookie paths). */
   allowedProjectIds?: string[];
 }
 

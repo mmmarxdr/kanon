@@ -1,8 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import fp from "fastify-plugin";
 import jwt from "jsonwebtoken";
-import { createHash } from "node:crypto";
-import { prisma } from "../config/prisma.js";
 import { env } from "../config/env.js";
 import { AppError } from "../shared/types.js";
 import type { AuthUser, TokenPayload, AccessTokenPayload } from "../shared/types.js";
@@ -53,15 +51,9 @@ function tryVerifyAccessToken(token: string): TokenPayload | null {
 }
 
 /**
- * Compute SHA-256 hash of an API key for database lookup.
- */
-function hashApiKey(key: string): string {
-  return createHash("sha256").update(key).digest("hex");
-}
-
-/**
  * Auth preHandler hook.
- * Waterfall: cookie kanon_at -> Bearer header -> X-API-Key header.
+ * Waterfall: cookie kanon_at -> Bearer header.
+ * X-API-Key is no longer accepted (removed in PR1, KAN-35).
  * Decorates request with `user: AuthUser` containing { userId, email }.
  */
 async function authHook(
@@ -109,29 +101,10 @@ async function authHook(
     return;
   }
 
-  // 3. Try API key — looks up User table
-  const apiKey = request.headers["x-api-key"];
-  if (typeof apiKey === "string" && apiKey.length > 0) {
-    const hash = hashApiKey(apiKey);
-    const user = await prisma.user.findFirst({
-      where: { apiKeyHash: hash },
-    });
-
-    if (!user) {
-      throw new AppError(401, "INVALID_API_KEY", "Invalid API key");
-    }
-
-    request.user = {
-      userId: user.id,
-      email: user.email,
-    };
-    return;
-  }
-
   throw new AppError(
     401,
     "UNAUTHORIZED",
-    "Authentication required. Provide a Bearer token or X-API-Key header.",
+    "Authentication required. Provide a Bearer token.",
   );
 }
 

@@ -8,6 +8,7 @@
     "kanon-mcp-wrapper": "./dist/wrapper-cli.js"
   },
   "scripts": {
+    "prebuild": "bash scripts/sync-shared.sh",
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "vitest run",

@@ -321,6 +321,47 @@ describe("onboard() — CLI create-on-consume (R-NUI-cli-consume)", () => {
     expect(res2.statusCode).toBe(410);
     expect(res2.json().code).toBe("TOKEN_CONSUMED");
   });
+
+  // ── KAN-37: Double-consume race guard ────────────────────────────────────
+  // Two concurrent onboard() calls with the same token MUST NOT both succeed.
+  // Only one can commit — the other must see TOKEN_CONSUMED (via FOR UPDATE lock).
+
+  it("KAN-37: concurrent onboard() calls — exactly one succeeds, other gets TOKEN_CONSUMED", async () => {
+    const ws = await seedTestWorkspace();
+    const admin = await seedTestMemberWithRole(ws.id, "admin");
+
+    const token = await createOnboardingInviteRow(ws.id, admin.userId, "race-victim@kanon.test", {});
+
+    // Fire both calls concurrently — no artificial delay, real race.
+    const [result1, result2] = await Promise.allSettled([
+      onboard(token),
+      onboard(token),
+    ]);
+
+    // Count successes and failures
+    const successes = [result1, result2].filter((r) => r.status === "fulfilled");
+    const failures = [result1, result2].filter((r) => r.status === "rejected");
+
+    // Exactly one must succeed
+    expect(successes).toHaveLength(1);
+    // Exactly one must fail with TOKEN_CONSUMED
+    expect(failures).toHaveLength(1);
+    const err = (failures[0] as PromiseRejectedResult).reason as { code?: string; statusCode?: number };
+    expect(err.statusCode ?? (err as any).status).toBe(410);
+    expect(err.code).toBe("TOKEN_CONSUMED");
+
+    // DB state: invite consumed exactly once, one refresh token issued
+    const invite = await prisma.workspaceInvite.findFirst({
+      where: { email: "race-victim@kanon.test", workspaceId: ws.id },
+    });
+    expect(invite!.consumedAt).not.toBeNull();
+
+    const user = await prisma.user.findUnique({ where: { email: "race-victim@kanon.test" } });
+    const refreshTokens = await prisma.refreshToken.findMany({
+      where: { userId: user!.id },
+    });
+    expect(refreshTokens).toHaveLength(1);
+  });
 });
 
 // ── createOnboardingInvite — R-NUI-cli-create ──────────────────────────────
@@ -407,5 +448,60 @@ describe("createOnboardingInvite — admit non-member email (R-NUI-cli-create)",
     expect(res.statusCode).toBe(201);
     const body = res.json();
     expect(body.url).toMatch(/^kanon:\/\//);
+  });
+
+  // ── KAN-38: OnboardingInviteBody schema reconciliation ───────────────────
+  // The spec requires exactly one of userId/email. The api schema currently
+  // accepts both (service validates). We reconcile by adding a Zod `.refine()`
+  // that enforces "exactly one" at the schema layer.
+
+  it("KAN-38: POST /invites/onboarding rejects body with both userId AND email", async () => {
+    const ws = await seedTestWorkspace();
+    const admin = await seedTestMemberWithRole(ws.id, "admin");
+
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { email: admin.email, password: "password123" },
+    });
+    const { accessToken } = loginRes.json();
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/workspaces/${ws.id}/invites/onboarding`,
+      headers: { Authorization: `Bearer ${accessToken}` },
+      payload: {
+        userId: admin.userId,
+        email: "extra@example.com",
+        role: "member",
+      },
+    });
+
+    // Must be 400 — both fields provided violates "exactly one" constraint
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("KAN-38: POST /invites/onboarding rejects body with neither userId nor email", async () => {
+    const ws = await seedTestWorkspace();
+    const admin = await seedTestMemberWithRole(ws.id, "admin");
+
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { email: admin.email, password: "password123" },
+    });
+    const { accessToken } = loginRes.json();
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/workspaces/${ws.id}/invites/onboarding`,
+      headers: { Authorization: `Bearer ${accessToken}` },
+      payload: {
+        role: "member",
+      },
+    });
+
+    // Must be 400 — neither userId nor email provided
+    expect(res.statusCode).toBe(400);
   });
 });

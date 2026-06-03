@@ -102,30 +102,8 @@ describe("CSRF Plugin", () => {
     });
   });
 
-  describe("API-key bypass", () => {
-    it("bypasses CSRF validation when X-API-Key header is present", async () => {
-      // API-key auth will fail at auth level (no real key in DB),
-      // but CSRF should NOT be the failure point.
-      // We use a Bearer token for auth and X-API-Key to trigger bypass
-      const token = generateTestToken();
-      const res = await app.inject({
-        method: "POST",
-        url: "/api/workspaces",
-        headers: {
-          cookie: cookieString({
-            [COOKIE_NAMES.ACCESS]: token,
-            [COOKIE_NAMES.CSRF]: csrfToken,
-          }),
-          "x-api-key": "some-api-key",
-          "content-type": "application/json",
-        },
-        payload: { name: "Test", slug: "test-ws" },
-      });
-      // Should not be 403 CSRF error — may fail with 401 (invalid API key)
-      // but the CSRF check is skipped
-      expect(res.json().code).not.toBe("CSRF_INVALID");
-    });
-  });
+  // NOTE: "API-key bypass" test block removed in PR1 (KAN-35).
+  // X-API-Key CSRF skip was dead code — auth plugin now rejects X-API-Key at 401 before CSRF runs.
 
   describe("Exempt routes", () => {
     it("skips CSRF for /api/auth/login", async () => {

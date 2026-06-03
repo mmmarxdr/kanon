@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { resolveAuth, isLocalhost, autoGenerateApiKey } from "../auth.js";
+import { resolveAuth, isLocalhost } from "../auth.js";
 import type { PlatformContext, AuthDeps } from "../types.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -61,64 +61,8 @@ describe("isLocalhost", () => {
   });
 });
 
-// ── autoGenerateApiKey ───────────────────────────────────────────────────────
-
-describe("autoGenerateApiKey", () => {
-  it("should return null for non-localhost URLs", async () => {
-    const result = await autoGenerateApiKey("https://remote.example.com");
-    expect(result).toBeNull();
-  });
-
-  it("should return API key on successful login + key generation", async () => {
-    const mockFetch = makeMockFetch([
-      { ok: true, data: { accessToken: "tok-123" } },
-      { ok: true, data: { apiKey: "k-generated" } },
-    ]);
-
-    const result = await autoGenerateApiKey("http://localhost:3000", mockFetch);
-    expect(result).toBe("k-generated");
-  });
-
-  it("should return null when login fails", async () => {
-    const mockFetch = makeMockFetch([
-      { ok: false, data: {} },
-    ]);
-
-    const result = await autoGenerateApiKey("http://localhost:3000", mockFetch);
-    expect(result).toBeNull();
-  });
-
-  it("should return null when login returns no accessToken", async () => {
-    const mockFetch = makeMockFetch([
-      { ok: true, data: {} },
-    ]);
-
-    const result = await autoGenerateApiKey("http://localhost:3000", mockFetch);
-    expect(result).toBeNull();
-  });
-
-  it("should return null when api-key generation fails", async () => {
-    const mockFetch = makeMockFetch([
-      { ok: true, data: { accessToken: "tok-123" } },
-      { ok: false, data: {} },
-    ]);
-
-    const result = await autoGenerateApiKey("http://localhost:3000", mockFetch);
-    expect(result).toBeNull();
-  });
-
-  it("should return null on network error", async () => {
-    const mockFetch = async () => {
-      throw new Error("ECONNREFUSED");
-    };
-
-    const result = await autoGenerateApiKey(
-      "http://localhost:3000",
-      mockFetch as unknown as typeof globalThis.fetch,
-    );
-    expect(result).toBeNull();
-  });
-});
+// NOTE: autoGenerateApiKey was removed in PR1 (KAN-35).
+// POST /api/auth/api-key no longer exists. Onboard via: npx @kanon-pm/setup <kanon://link>
 
 // ── resolveAuth cascade ──────────────────────────────────────────────────────
 
@@ -140,11 +84,10 @@ describe("resolveAuth", () => {
 
   const ctx = makeMockCtx();
 
-  // Deps that block prompts and auto-generation by default
+  // Deps that block prompts by default
   function baseDeps(overrides?: Partial<AuthDeps>): AuthDeps {
     return {
       extractExisting: () => ({}),
-      autoGenerateKey: async () => null,
       promptUrl: async () => { throw new Error("promptUrl should not be called"); },
       promptKey: async () => { throw new Error("promptKey should not be called"); },
       fetchFn: async () => { throw new Error("fetchFn should not be called"); },
@@ -217,8 +160,9 @@ describe("resolveAuth", () => {
     });
   });
 
-  describe("auto-generate fallback", () => {
-    it("should auto-detect localhost URL when health check passes", async () => {
+  describe("auto-detect localhost URL fallback", () => {
+    it("should auto-detect localhost URL when health check passes, then prompt for key", async () => {
+      // URL is auto-detected; key has no auto-generate step anymore (removed in PR1).
       const result = await resolveAuth({}, ctx, baseDeps({
         fetchFn: async (urlArg: string | URL | Request) => {
           const url = typeof urlArg === "string" ? urlArg : String(urlArg);
@@ -227,24 +171,13 @@ describe("resolveAuth", () => {
           }
           throw new Error("unexpected fetch");
         },
-        autoGenerateKey: async () => "k-auto",
+        promptKey: async () => "k-prompted",
       }));
 
       expect(result.apiUrl).toBe("http://localhost:3000");
       expect(result.urlSource).toBe("auto-generated");
-      expect(result.apiKey).toBe("k-auto");
-      expect(result.keySource).toBe("auto-generated");
-    });
-
-    it("should auto-generate key for localhost URL", async () => {
-      process.env["KANON_API_URL"] = "http://localhost:3000";
-
-      const result = await resolveAuth({}, ctx, baseDeps({
-        autoGenerateKey: async () => "k-generated",
-      }));
-
-      expect(result.apiKey).toBe("k-generated");
-      expect(result.keySource).toBe("auto-generated");
+      expect(result.apiKey).toBe("k-prompted");
+      expect(result.keySource).toBe("prompt");
     });
   });
 
@@ -277,9 +210,7 @@ describe("resolveAuth", () => {
       process.env["KANON_API_URL"] = "http://localhost:3000";
 
       await expect(
-        resolveAuth({ yes: true }, ctx, baseDeps({
-          autoGenerateKey: async () => null,
-        })),
+        resolveAuth({ yes: true }, ctx, baseDeps()),
       ).rejects.toThrow("API key could not be resolved automatically");
     });
 

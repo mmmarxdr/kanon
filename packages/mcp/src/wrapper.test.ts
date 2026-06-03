@@ -145,15 +145,15 @@ describe("runWrapper", () => {
   });
 
   /**
-   * S4.3 — KANON_API_KEY already set (legacy bypass): no store read, no exchange
+   * S4.3a — KANON_API_KEY is a static (non-JWT) key → FAIL FAST, no spawn
+   * Static API keys were removed in PR1 (KAN-35). Must redirect to onboarding.
    */
-  it("S4.3: KANON_API_KEY preset → skips exchange, spawns with existing key", async () => {
+  it("S4.3a: KANON_API_KEY is a static key → stderr onboarding message + exit 1, MCP not spawned", async () => {
     const { runWrapper } = await import("./wrapper.js");
 
     const mockFetch = vi.fn();
     const mockStore = makeCredStore({ refreshToken: "should-not-be-read" });
-    const mockChild = makeMockChild(0);
-    const spawnFn = makeSpawn(mockChild);
+    const spawnFn = vi.fn();
 
     const deps: WrapperDeps = {
       argv: ["node", "wrapper.js", "--server", "https://server.example.com"],
@@ -167,16 +167,54 @@ describe("runWrapper", () => {
 
     await runWrapper(deps);
 
+    // No credential store read, no exchange call, no spawn
+    expect(mockStore.readCredentials).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(spawnFn).not.toHaveBeenCalled();
+
+    // Must fail with a clear message pointing to onboarding
+    expect(exitCode).toBe(1);
+    expect(stderrOutput.join("")).toMatch(/static API key/i);
+    expect(stderrOutput.join("")).toMatch(/npx @kanon-pm\/setup/i);
+  });
+
+  /**
+   * S4.3b — KANON_API_KEY is a JWT (eyJ…) preset → JWT passthrough: no exchange, spawns directly
+   * Dev/CI environments injecting a real access token should still work.
+   */
+  it("S4.3b: KANON_API_KEY is a JWT preset → skips exchange, spawns with existing JWT", async () => {
+    const { runWrapper } = await import("./wrapper.js");
+
+    const mockFetch = vi.fn();
+    const mockStore = makeCredStore({ refreshToken: "should-not-be-read" });
+    const mockChild = makeMockChild(0);
+    const spawnFn = makeSpawn(mockChild);
+
+    const jwtToken = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.sig";
+
+    const deps: WrapperDeps = {
+      argv: ["node", "wrapper.js", "--server", "https://server.example.com"],
+      env: { KANON_API_KEY: jwtToken },
+      fetch: mockFetch,
+      getCredentialStore: () => mockStore,
+      stderr: { write: (s: string) => { stderrOutput.push(s); } },
+      exit: (code: number) => { exitCode = code; },
+      spawn: spawnFn as unknown as WrapperDeps["spawn"],
+    };
+
+    await runWrapper(deps);
+
     // No credential store read, no exchange call
     expect(mockStore.readCredentials).not.toHaveBeenCalled();
     expect(mockFetch).not.toHaveBeenCalled();
 
-    // Spawn called with passthrough key
+    // Spawn called with passthrough JWT
     expect(spawnFn).toHaveBeenCalledOnce();
     const [, , opts] = spawnFn.mock.calls[0] as [string, string[], SpawnOptions & { env: Record<string, string> }];
-    expect(opts.env["KANON_API_KEY"]).toBe("sk-statickey");
+    expect(opts.env["KANON_API_KEY"]).toBe(jwtToken);
 
     expect(exitCode).toBe(0);
+    expect(stderrOutput).toHaveLength(0);
   });
 
   /**
