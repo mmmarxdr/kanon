@@ -43,7 +43,7 @@ export default defineConfig({
   webServer: [
     {
       command: `pnpm --filter @kanon/api dev`,
-      port: Number(API_PORT),
+      url: `http://localhost:${API_PORT}/health`,
       env: {
         PORT: API_PORT,
         DATABASE_URL,
@@ -58,7 +58,7 @@ export default defineConfig({
     },
     {
       command: `pnpm --filter @kanon/web dev --port ${WEB_PORT}`,
-      port: Number(WEB_PORT),
+      url: `http://localhost:${WEB_PORT}`,
       env: {
         API_URL: `http://localhost:${API_PORT}`,
       },

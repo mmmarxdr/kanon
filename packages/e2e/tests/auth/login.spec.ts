@@ -1,8 +1,8 @@
 import { test, expect } from "@playwright/test";
 import { login } from "../../helpers/auth.js";
 
-test.describe("Auth flow", () => {
-  test("successful login redirects away from login", async ({ page }) => {
+test.describe("Auth flow @smoke", () => {
+  test("successful login redirects away from login @smoke", async ({ page }) => {
     await login(page);
 
     // After login the user is redirected away from /login
@@ -33,8 +33,9 @@ test.describe("Auth flow", () => {
     await page.goto("/login");
     await page.waitForSelector("#email", { timeout: 5_000 });
 
-    // The register link should be visible
-    const registerLink = page.getByText("Register");
+    // The register/create-workspace link should be visible
+    // login.tsx renders "Create workspace →" as the register CTA
+    const registerLink = page.getByText("Create workspace →");
     await expect(registerLink).toBeVisible();
   });
 });

@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState } from "react";
+import { useMemo, useCallback, useState, useEffect } from "react";
 import { createRoute, useNavigate, Link, redirect } from "@tanstack/react-router";
 import { authenticatedRoute } from "../_authenticated";
 import { useIssuesQuery, useGroupsQuery } from "@/features/board/use-issues-query";
@@ -17,6 +17,12 @@ export const boardRoute = createRoute({
   path: "/board/$projectKey",
   getParentRoute: () => authenticatedRoute,
   component: BoardPage,
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { view?: "grouped" | "flat" } => {
+    const view = search["view"];
+    return view === "grouped" || view === "flat" ? { view } : {};
+  },
   beforeLoad: ({ params }) => {
     if (!params.projectKey || params.projectKey.trim() === "") {
       throw redirect({ to: "/" });
@@ -26,10 +32,17 @@ export const boardRoute = createRoute({
 
 function BoardPage() {
   const { projectKey } = boardRoute.useParams();
+  const { view } = boardRoute.useSearch();
   const navigate = useNavigate();
   const { data: issues, isLoading, error } = useIssuesQuery(projectKey);
   const { data: groups, isLoading: groupsLoading } = useGroupsQuery(projectKey);
   const viewMode = useBoardStore((s) => s.viewMode);
+  const setViewMode = useBoardStore((s) => s.setViewMode);
+
+  // Allow deep-linking / forcing the board view mode via ?view= search param.
+  useEffect(() => {
+    if (view) setViewMode(view);
+  }, [view, setViewMode]);
 
   const [newIssueState, setNewIssueState] = useState<IssueState | null>(null);
 

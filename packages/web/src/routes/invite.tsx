@@ -32,6 +32,14 @@ function InvitePage() {
   const [accepting, setAccepting] = useState(false);
   const [acceptError, setAcceptError] = useState<string | null>(null);
 
+  // The invite route lives outside the _authenticated layout, so nothing
+  // triggers bootstrap() on a fresh load (e.g. opening the link from an email).
+  // Without this, a logged-in user would be shown Sign up / Log in instead of
+  // Accept Invite. Bootstrap once on mount to hydrate auth state.
+  useEffect(() => {
+    void useAuthStore.getState().bootstrap();
+  }, []);
+
   useEffect(() => {
     async function fetchMetadata() {
       try {
@@ -166,7 +174,7 @@ function InvitePage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center">
-      <div className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-sm animate-fade-in">
+      <div data-testid="invite-card" className="w-full max-w-sm rounded-lg border border-border bg-card p-6 shadow-sm animate-fade-in">
         <div className="mb-6 text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
             <svg className="h-6 w-6 text-primary" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
@@ -199,7 +207,7 @@ function InvitePage() {
         </div>
 
         {acceptError && (
-          <div className="mb-4 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          <div data-testid="invite-accept-error" className="mb-4 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {acceptError}
           </div>
         )}
@@ -210,6 +218,7 @@ function InvitePage() {
               Signed in as <span className="font-medium text-foreground">{user.email}</span>
             </p>
             <button
+              data-testid="invite-accept-btn"
               onClick={() => void handleAccept()}
               disabled={accepting}
               className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200 ease-out"
@@ -220,6 +229,7 @@ function InvitePage() {
         ) : (
           <div className="space-y-3">
             <button
+              data-testid="invite-signup-btn"
               onClick={() =>
                 void navigate({
                   to: "/register",
@@ -231,6 +241,7 @@ function InvitePage() {
               Sign up to join
             </button>
             <button
+              data-testid="invite-login-btn"
               onClick={() =>
                 void navigate({
                   to: "/login",

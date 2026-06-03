@@ -11,33 +11,17 @@ import { login } from "./auth.js";
 export async function navigateToBoard(
   page: Page,
   projectKey = "KAN",
+  view?: "flat" | "grouped",
 ): Promise<void> {
   // Ensure we're logged in first
   await login(page);
 
-  // Navigate directly to the board URL for the target project
-  await page.goto(`/board/${projectKey}`);
+  // Navigate directly to the board URL for the target project.
+  // Optionally force the view mode (flat = KanbanBoard, grouped = GroupedBoard)
+  // via the `?view=` search param so tests are deterministic.
+  const query = view ? `?view=${view}` : "";
+  await page.goto(`/board/${projectKey}${query}`);
 
   // Wait for board to load
   await page.waitForURL(`**/board/${projectKey}**`, { timeout: 10_000 });
-}
-
-/**
- * Open the issue detail panel by clicking on an issue card.
- *
- * @param page - Playwright page
- * @param issueKeyOrSelector - Issue key like "KAN-1" or a custom selector
- */
-export async function openIssueDetail(
-  page: Page,
-  issueKeyOrSelector: string,
-): Promise<void> {
-  // Try to find by issue key text first
-  const card = page.getByText(issueKeyOrSelector).first();
-  await card.click();
-
-  // Wait for the detail panel to appear
-  await page.waitForSelector('[data-testid="issue-detail-panel"]', {
-    timeout: 5_000,
-  });
 }
