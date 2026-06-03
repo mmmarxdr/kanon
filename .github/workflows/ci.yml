@@ -106,6 +106,9 @@ jobs:
       - name: Verify setup package assets
         run: pnpm --filter @kanon-pm/setup build && bash packages/setup/scripts/verify-assets.sh
 
+      - name: Smoke test install.sh (fixture sha256 verify + idempotency)
+        run: bash packages/setup/scripts/smoke-install.sh
+
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v4
