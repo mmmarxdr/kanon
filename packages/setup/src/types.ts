@@ -65,7 +65,7 @@ export interface AuthDeps {
     ctx: PlatformContext,
   ) => { apiUrl?: string; apiKey?: string };
   // NOTE: autoGenerateKey was removed in PR1 (KAN-35) — POST /api/auth/api-key is gone.
-  // Use npx @kanon-pm/setup <kanon://link> for onboarding.
+  // Use the installer for onboarding: bash -c "$(curl -fsSL .../install.sh)"
   promptUrl?: () => Promise<string>;
   promptKey?: () => Promise<string>;
   fetchFn?: typeof globalThis.fetch;

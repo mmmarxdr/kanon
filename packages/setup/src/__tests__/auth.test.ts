@@ -62,7 +62,7 @@ describe("isLocalhost", () => {
 });
 
 // NOTE: autoGenerateApiKey was removed in PR1 (KAN-35).
-// POST /api/auth/api-key no longer exists. Onboard via: npx @kanon-pm/setup <kanon://link>
+// POST /api/auth/api-key no longer exists. Onboard via the installer (install.sh).
 
 // ── resolveAuth cascade ──────────────────────────────────────────────────────
 
