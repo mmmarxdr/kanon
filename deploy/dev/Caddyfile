@@ -1,0 +1,17 @@
+# Caddy fronts the dev box: terminates TLS and reverse-proxies to the web
+# container (nginx), which serves the SPA and proxies /api → the API.
+#
+# SITE_ADDRESS is e.g. "52.1.2.3.sslip.io" — sslip.io resolves any
+# <ip>.sslip.io straight to that IP, so Caddy gets a real Let's Encrypt
+# certificate over HTTP-01 with no DNS ownership required. Swap in a real
+# domain later by changing SITE_ADDRESS (and CORS_ORIGIN/APP_URL/BASE_URL).
+
+{$SITE_ADDRESS} {
+	# Compress everything except SSE — compressing text/event-stream would
+	# buffer the API's /api/events/* streams. Caddy flushes streaming
+	# responses immediately, so SSE works through this hop unbuffered.
+	@compressible not path /api/events/*
+	encode @compressible zstd gzip
+
+	reverse_proxy kanon-web:80
+}

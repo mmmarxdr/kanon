@@ -1,0 +1,102 @@
+# Kanon — DEV single-box stack (AWS EC2 + docker compose).
+#
+# Topology (all on one box, one origin):
+#   browser ──HTTPS──> caddy (auto-TLS via <eip>.sslip.io)
+#                         └─> kanon-web (nginx: serves SPA, proxies /api → kanon-api)
+#                                 └─> kanon-api (Fastify :3000)
+#                                         └─> postgres (containerized, volume-backed)
+#
+# Same-origin (web + /api behind one host) → first-party SameSite=Lax cookies, no CORS.
+# Run from this directory:
+#   cp .env.example .env   # then fill secrets + SITE_ADDRESS
+#   docker compose up -d --build
+#
+# Requires Docker Compose v2.20+ (build context is the repo root, two levels up).
+
+name: kanon-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kanon}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-kanon}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - kanon-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kanon} -d ${POSTGRES_DB:-kanon}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kanon-api:
+    build:
+      context: ../..
+      dockerfile: packages/api/Dockerfile
+    restart: unless-stopped
+    # env_file injects ALL api vars (DATABASE_URL, JWT_*, APP_URL, BASE_URL,
+    # RESEND_API_KEY, EMAIL_FROM, …) directly into the container.
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - kanon-internal
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  kanon-web:
+    build:
+      context: ../..
+      dockerfile: packages/web/Dockerfile.production
+    restart: unless-stopped
+    depends_on:
+      kanon-api:
+        condition: service_healthy
+    networks:
+      - kanon-internal
+    # No published ports — Caddy is the only public entrypoint.
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      kanon-web:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - kanon-internal
+
+networks:
+  kanon-internal:
+    driver: bridge
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

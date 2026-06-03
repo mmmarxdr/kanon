@@ -1,0 +1,2 @@
+# Never commit the real dev secrets — only env.template is tracked.
+.env
