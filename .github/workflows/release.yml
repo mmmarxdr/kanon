@@ -1,0 +1,123 @@
+name: Release MCP
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 0.4.0). Must match @kanon/mcp package version."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build + Publish Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Fetch full history so we can commit + tag
+          fetch-depth: 0
+          # Use a token with push rights (GITHUB_TOKEN is sufficient for same-repo push)
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # ── Build setup assets first (copy-assets.sh populates packages/setup/assets) ──
+      - name: Build setup assets
+        run: pnpm --filter @kanon-pm/setup run prebuild
+
+      # ── Bundle + package the release tarball ─────────────────────────────────
+      - name: Build release tarball
+        run: bash scripts/build-release-tarball.sh "${{ inputs.version }}"
+
+      # ── Read the computed sha256 ──────────────────────────────────────────────
+      - name: Read sha256
+        id: sha256
+        run: |
+          HASH="$(awk '{print $1}' dist/release/kanon-mcp-${{ inputs.version }}.tar.gz.sha256)"
+          echo "hash=${HASH}" >> "$GITHUB_OUTPUT"
+
+      # ── Stamp EXPECTED_SHA256 in install.sh with the real hash ────────────────
+      # This is the hash-in-tag tamper-resistance mechanism:
+      # The script is committed with the hash embedded, THEN tagged at that commit.
+      # A curl to the tag URL retrieves a script that is its own trust root.
+      - name: Stamp EXPECTED_SHA256 in install.sh
+        run: |
+          sed -i 's|^EXPECTED_SHA256=""|EXPECTED_SHA256="${{ steps.sha256.outputs.hash }}"|' install.sh
+          # Verify the substitution worked
+          grep 'EXPECTED_SHA256=' install.sh
+
+      # ── Commit the updated install.sh to main ────────────────────────────────
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit install.sh with pinned hash
+        run: |
+          git add install.sh
+          git commit -m "chore(release): pin EXPECTED_SHA256 for mcp-v${{ inputs.version }}"
+
+      # ── Tag at the commit that contains the pinned hash ──────────────────────
+      # Tag AFTER commit so curl to raw.githubusercontent.com/<tag>/install.sh
+      # returns the version with the hash already stamped in.
+      - name: Tag release
+        run: |
+          git tag "mcp-v${{ inputs.version }}"
+
+      # ── Push commit + tag ─────────────────────────────────────────────────────
+      - name: Push commit and tag
+        run: |
+          git push origin main
+          git push origin "mcp-v${{ inputs.version }}"
+
+      # ── Create GitHub Release with both assets in one atomic call ────────────
+      # Atomically uploads tarball + .sha256 so they are never visible separately.
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "mcp-v${{ inputs.version }}" \
+            --title "Kanon MCP v${{ inputs.version }}" \
+            --notes "$(cat <<'EOF'
+          ## Kanon MCP v${{ inputs.version }}
+
+          ### Installation
+
+          ```bash
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/mcp-v${{ inputs.version }}/install.sh)"
+          ```
+
+          This command downloads and runs the pinned installer. The script is the trust root: the expected sha256 of the tarball is embedded directly in the script, so a compromised CDN cannot substitute a matching tarball+checksum pair.
+
+          ### Tamper-resistance
+
+          `EXPECTED_SHA256` in `install.sh` is stamped with `${{ steps.sha256.outputs.hash }}` at release time, then the script is committed and tagged. The tag URL always resolves to this exact script.
+
+          ### Assets
+
+          | File | Description |
+          |------|-------------|
+          | `kanon-mcp-${{ inputs.version }}.tar.gz` | Release tarball (esbuild-bundled MCP server + setup) |
+          | `kanon-mcp-${{ inputs.version }}.tar.gz.sha256` | SHA-256 checksum (`HASH  FILENAME` format) |
+          EOF
+          )" \
+            "dist/release/kanon-mcp-${{ inputs.version }}.tar.gz" \
+            "dist/release/kanon-mcp-${{ inputs.version }}.tar.gz.sha256"
