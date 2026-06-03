@@ -17,10 +17,11 @@ test.describe("Board rendering", () => {
   });
 
   test.beforeEach(async ({ page }) => {
-    await navigateToBoard(page, "KAN");
+    // Force flat view so KanbanBoard (data-testid="kanban-board") renders.
+    // The default grouped view hides ungrouped issues (the ones seeded above
+    // have no group), so flat is the correct target for card-level assertions.
+    await navigateToBoard(page, "KAN", "flat");
 
-    // Board renders in grouped mode by default — issue cards are directly visible
-    // inside board columns via data-testid="issue-card-*"
     await page.waitForSelector('[data-testid="kanban-board"]', { timeout: 10_000 });
   });
 
@@ -35,11 +36,11 @@ test.describe("Board rendering", () => {
     const columnCount = await columns.count();
     expect(columnCount).toBeGreaterThanOrEqual(1);
 
-    // Each column should have a header h3 with a column label
-    // Labels: BACKLOG, ANALYSIS, IN PROGRESS, TESTING, FINISHED
-    const firstColumnHeader = columns.first().locator("h3");
-    await expect(firstColumnHeader).toBeVisible();
-    await expect(firstColumnHeader).not.toBeEmpty();
+    // Each column header shows its state label (rendered in a <span>).
+    // Labels: Backlog, Todo, In progress, In review, Done.
+    await expect(columns.first()).toContainText(
+      /Backlog|Todo|In progress|In review|Done/i,
+    );
   });
 
   test("issue cards are visible inside columns", async ({ page }) => {
