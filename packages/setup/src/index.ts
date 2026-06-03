@@ -60,9 +60,12 @@ program.action(async (options: {
   yes?: boolean;
 }) => {
   try {
-    await dispatch(process.argv, options, {
-      cascade: () => run(options),
-    });
+    await dispatch(
+      process.argv,
+      options,
+      { cascade: () => run(options) },
+      // no io override — uses defaultDispatchIO() inside dispatch
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(chalk.red(`Error: ${message}`));
@@ -71,36 +74,103 @@ program.action(async (options: {
 });
 
 /**
+ * IO seam injected into dispatch() so tests can override process.env,
+ * process.stdin.isTTY, and stdin reading without spawning a subprocess.
+ */
+export interface DispatchIO {
+  /** process.env equivalent — caller provides the env map */
+  env: Record<string, string | undefined>;
+  /** whether stdin is a terminal (true = do NOT read stdin, would block) */
+  isTTY: boolean;
+  /**
+   * Read the first line from stdin (non-blocking, only called when isTTY=false).
+   * Returns null if stdin is empty or read fails.
+   */
+  readStdin: () => Promise<string | null>;
+}
+
+/**
+ * Build the default DispatchIO from the real process.
+ * Reads the first stdin line via an async readline (non-blocking).
+ */
+function defaultDispatchIO(): DispatchIO {
+  return {
+    env: process.env as Record<string, string | undefined>,
+    isTTY: !!process.stdin.isTTY,
+    readStdin: () =>
+      new Promise<string | null>((resolve) => {
+        const chunks: Buffer[] = [];
+        process.stdin.once("data", (chunk: Buffer) => {
+          chunks.push(chunk);
+          const line = (Buffer.concat(chunks).toString("utf8").split("\n")[0] ?? "").trim();
+          resolve(line || null);
+        });
+        process.stdin.once("error", () => resolve(null));
+        process.stdin.once("end", () => {
+          const line = (Buffer.concat(chunks).toString("utf8").split("\n")[0] ?? "").trim();
+          resolve(line || null);
+        });
+      }),
+  };
+}
+
+/**
  * Dispatcher — routes argv to the correct handler.
  *
  * Extracted as a named export so it can be unit-tested without
  * triggering Commander's parse() or process.exit().
  *
- * Routing order:
- *   1. argv[2] === "login"         → login()
- *   2. argv[2] starts with kanon:// → onboardFromLink()
- *   3. everything else              → deps.cascade() (existing cascade resolver)
+ * Routing order (KAN-36):
+ *   1. argv[2] === "login"              → login()
+ *   2. argv[2] starts with kanon://     → throw deprecation error (argv link path removed)
+ *   3. env KANON_ONBOARD_LINK set       → onboardFromLink(env value)
+ *   4. stdin piped (!isTTY) and first
+ *      line starts with kanon://        → onboardFromLink(stdin line)
+ *   5. everything else                  → deps.cascade() (existing cascade resolver)
  */
 export async function dispatch(
   argv: string[],
   _options: Record<string, unknown>,
   deps: { cascade: () => Promise<void> },
+  io?: DispatchIO,
 ): Promise<void> {
   const { onboardFromLink } = await import("./onboard.js");
   const { login } = await import("./login.js");
 
+  const resolvedIO = io ?? defaultDispatchIO();
   const positional = argv[2];
 
+  // 1. login subcommand — unchanged
   if (positional === "login") {
     await login();
     return;
   }
 
+  // 2. Deprecation: argv kanon:// path removed — emit clear error
   if (positional?.startsWith("kanon://")) {
-    await onboardFromLink(positional, {});
+    throw new Error(
+      "Passing a kanon:// link as a command-line argument is deprecated and no longer supported. " +
+        "Pipe the link via stdin or set the KANON_ONBOARD_LINK environment variable instead.",
+    );
+  }
+
+  // 3. Env override — highest priority for non-argv link sources
+  const envLink = resolvedIO.env["KANON_ONBOARD_LINK"];
+  if (envLink?.startsWith("kanon://")) {
+    await onboardFromLink(envLink, {});
     return;
   }
 
+  // 4. Piped stdin — only read when stdin is NOT a TTY (would block otherwise)
+  if (!resolvedIO.isTTY) {
+    const stdinLine = await resolvedIO.readStdin();
+    if (stdinLine?.startsWith("kanon://")) {
+      await onboardFromLink(stdinLine, {});
+      return;
+    }
+  }
+
+  // 5. Fall through to cascade (interactive resolver)
   await deps.cascade();
 }
 
