@@ -152,6 +152,28 @@ describe("CSRF Plugin", () => {
       });
       expect(res.json().code).not.toBe("CSRF_INVALID");
     });
+
+    // Pre-auth bootstrap route: the setup token (high-entropy, from logs) is the
+    // real authenticator. A claimant who already has a stale kanon_csrf cookie
+    // (e.g. registered earlier) must not be blocked by double-submit. Repro of
+    // the prod 403: cookie present, no X-CSRF-Token header.
+    it("skips CSRF for /api/instance/setup/claim even with a stale csrf cookie", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/instance/setup/claim",
+        headers: {
+          cookie: cookieString({ [COOKIE_NAMES.CSRF]: csrfToken }),
+          "content-type": "application/json",
+        },
+        payload: {
+          token: "invalid-setup-token",
+          email: "x@x.com",
+          password: "Secret123!abc",
+        },
+      });
+      // Should fail on the invalid setup token, not CSRF
+      expect(res.json().code).not.toBe("CSRF_INVALID");
+    });
   });
 
   describe("No CSRF cookie present", () => {
