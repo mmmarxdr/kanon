@@ -18,6 +18,7 @@ import {
 } from "../../test/helpers.js";
 import { prisma } from "../../config/prisma.js";
 import { randomUUID } from "node:crypto";
+import { INSTANCE_SETTINGS_ID } from "../../shared/constants.js";
 
 describe("POST /api/workspaces — requireInstanceAdmin guard", () => {
   let app: FastifyInstance;
@@ -74,5 +75,39 @@ describe("POST /api/workspaces — requireInstanceAdmin guard", () => {
       payload: { name: "Admin Workspace", slug: `ws-${randomUUID().slice(0, 8)}` },
     });
     expect(res.statusCode).toBe(201);
+  });
+
+  it("403 when user is ownerUserId (super-admin) but isInstanceAdmin=false (FIX3 regression guard)", async () => {
+    // Seed a user who IS the instance owner (ownerUserId) but has NOT been granted
+    // the instance-admin flag. This guards against a future || isSuperAdmin regression
+    // in requireInstanceAdmin — super-admin status alone must NOT satisfy the guard.
+    const user = await prisma.user.create({
+      data: {
+        email: `super-no-flag-${randomUUID().slice(0, 8)}@kanon.test`,
+        passwordHash: "$2b$04$placeholder",
+        isInstanceAdmin: false,
+        isSuperAdmin: true,
+      },
+    });
+
+    // Set this user as ownerUserId on the singleton
+    await prisma.instanceSettings.update({
+      where: { id: INSTANCE_SETTINGS_ID },
+      data: { ownerUserId: user.id },
+    });
+
+    const token = generateTestToken({ userId: user.id, email: user.email });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/workspaces",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: "Should Fail", slug: `ws-fail-${randomUUID().slice(0, 8)}` },
+    });
+
+    // requireInstanceAdmin checks ONLY isInstanceAdmin — ownerUserId/isSuperAdmin
+    // must NOT grant access. If this ever returns 201, a regression was introduced.
+    expect(res.statusCode).toBe(403);
+    expect(res.json().code).toBe("FORBIDDEN");
   });
 });
