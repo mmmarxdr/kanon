@@ -73,6 +73,8 @@ export const RefreshResponse = z.object({
 /**
  * /me endpoint response — current authenticated user.
  * Returns User-level data only, no workspace fields.
+ * isSuperAdmin: derived from InstanceSettings.ownerUserId === user.id
+ * isInstanceAdmin: derived from User.isInstanceAdmin (KAN-49 PR1a)
  */
 export const MeResponse = z.object({
   userId: z.string().uuid(),
@@ -80,6 +82,8 @@ export const MeResponse = z.object({
   displayName: z.string().nullable(),
   avatarUrl: z.string().nullable(),
   emailVerified: z.boolean(),
+  isSuperAdmin: z.boolean(),
+  isInstanceAdmin: z.boolean(),
 });
 
 // ── Email Verification ────────────────────────────────────────────────────────

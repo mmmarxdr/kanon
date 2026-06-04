@@ -526,3 +526,29 @@ export function requireSuperAdmin(): preHandlerHookHandler {
     }
   };
 }
+
+/**
+ * Fastify preHandler that checks the authenticated user holds the instance-admin role.
+ *
+ * Reads `User.isInstanceAdmin` from the DB (the JWT carries only userId + email,
+ * not the instance-admin flag). Orthogonal to super-admin and workspace roles.
+ *
+ * Throws 401 if unauthenticated; 403 if the flag is false or the user is not found.
+ */
+export function requireInstanceAdmin(): preHandlerHookHandler {
+  return async (request, _reply) => {
+    const user = request.user;
+    if (!user) {
+      throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+    }
+
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.userId },
+      select: { isInstanceAdmin: true },
+    });
+
+    if (!dbUser?.isInstanceAdmin) {
+      throw new AppError(403, "FORBIDDEN", "Instance-admin access required");
+    }
+  };
+}

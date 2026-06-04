@@ -550,6 +550,7 @@ describe("Workspace Member Management", () => {
   describe("Auto-owner on workspace creation", () => {
     it("creates workspace and automatically assigns creator as owner", async () => {
       // Create a user with auth token (not via seedTestMember which creates its own workspace membership)
+      // isInstanceAdmin=true required: POST /api/workspaces is guarded by requireInstanceAdmin (KAN-49 PR1a)
       const bcrypt = await import("bcryptjs");
       const hash = await bcrypt.hash("password123", 4);
       const user = await prisma.user.create({
@@ -557,6 +558,7 @@ describe("Workspace Member Management", () => {
           email: "creator@test.com",
           passwordHash: hash,
           displayName: "Creator",
+          isInstanceAdmin: true,
         },
       });
 
@@ -584,6 +586,7 @@ describe("Workspace Member Management", () => {
     });
 
     it("list members of new workspace returns exactly 1 owner", async () => {
+      // isInstanceAdmin=true required: POST /api/workspaces is guarded by requireInstanceAdmin (KAN-49 PR1a)
       const bcrypt = await import("bcryptjs");
       const hash = await bcrypt.hash("password123", 4);
       const user = await prisma.user.create({
@@ -591,6 +594,7 @@ describe("Workspace Member Management", () => {
           email: "autoowner@test.com",
           passwordHash: hash,
           displayName: "Auto Owner",
+          isInstanceAdmin: true,
         },
       });
 

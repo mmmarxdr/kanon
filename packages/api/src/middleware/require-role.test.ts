@@ -6,6 +6,7 @@ import {
   requireProjectRole,
   requireProjectMember,
   enforceProjectAccess,
+  requireInstanceAdmin,
 } from "./require-role.js";
 import type { FastifyRequest, FastifyReply } from "fastify";
 
@@ -34,6 +35,12 @@ vi.mock("../config/prisma.js", () => ({
     projectMember: {
       findUnique: vi.fn(),
     },
+    user: {
+      findUnique: vi.fn(),
+    },
+    instanceSettings: {
+      findUnique: vi.fn(),
+    },
   },
 }));
 
@@ -42,6 +49,7 @@ const mockFindUnique = vi.mocked(prisma.member.findUnique);
 const mockCycleFindUnique = vi.mocked(prisma.cycle.findUnique);
 const mockProjectFindFirst = vi.mocked(prisma.project.findFirst);
 const mockProjectMemberFindUnique = vi.mocked(prisma.projectMember.findUnique);
+const mockUserFindUnique = vi.mocked(prisma.user.findUnique);
 
 function makeRequest(user: any, params?: Record<string, string>): FastifyRequest {
   return {
@@ -684,5 +692,81 @@ describe("requireProjectMember (with enforceProjectAccess gate)", () => {
 
     expect(request.member.id).toBe("wm-v");
     expect(request.projectRole).toBe("viewer");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// requireInstanceAdmin (KAN-49 PR1a)
+// ---------------------------------------------------------------------------
+
+describe("requireInstanceAdmin", () => {
+  beforeEach(() => {
+    mockUserFindUnique.mockReset();
+  });
+
+  it("throws 401 when user is null (unauthenticated)", async () => {
+    const handler = requireInstanceAdmin();
+    const request = makeRequest(null, {});
+    try {
+      await handler(request, dummyReply, vi.fn());
+      expect.fail("Should have thrown");
+    } catch (err: any) {
+      expect(err.statusCode).toBe(401);
+      expect(err.code).toBe("UNAUTHORIZED");
+    }
+    expect(mockUserFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("throws 401 when user is undefined (unauthenticated)", async () => {
+    const handler = requireInstanceAdmin();
+    const request = makeRequest(undefined, {});
+    try {
+      await handler(request, dummyReply, vi.fn());
+      expect.fail("Should have thrown");
+    } catch (err: any) {
+      expect(err.statusCode).toBe(401);
+      expect(err.code).toBe("UNAUTHORIZED");
+    }
+    expect(mockUserFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("throws 403 when isInstanceAdmin is false", async () => {
+    mockUserFindUnique.mockResolvedValue({ isInstanceAdmin: false } as any);
+
+    const handler = requireInstanceAdmin();
+    const request = makeRequest({ userId: "u1", email: "u@test.com" }, {});
+    try {
+      await handler(request, dummyReply, vi.fn());
+      expect.fail("Should have thrown");
+    } catch (err: any) {
+      expect(err.statusCode).toBe(403);
+      expect(err.code).toBe("FORBIDDEN");
+    }
+  });
+
+  it("throws 403 when user row not found in DB", async () => {
+    mockUserFindUnique.mockResolvedValue(null);
+
+    const handler = requireInstanceAdmin();
+    const request = makeRequest({ userId: "u1", email: "u@test.com" }, {});
+    try {
+      await handler(request, dummyReply, vi.fn());
+      expect.fail("Should have thrown");
+    } catch (err: any) {
+      expect(err.statusCode).toBe(403);
+      expect(err.code).toBe("FORBIDDEN");
+    }
+  });
+
+  it("passes when isInstanceAdmin is true", async () => {
+    mockUserFindUnique.mockResolvedValue({ isInstanceAdmin: true } as any);
+
+    const handler = requireInstanceAdmin();
+    const request = makeRequest({ userId: "u1", email: "u@test.com" }, {});
+    await expect(handler(request, dummyReply, vi.fn())).resolves.toBeUndefined();
+    expect(mockUserFindUnique).toHaveBeenCalledWith({
+      where: { id: "u1" },
+      select: { isInstanceAdmin: true },
+    });
   });
 });

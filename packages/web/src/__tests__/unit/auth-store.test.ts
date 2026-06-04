@@ -32,6 +32,8 @@ describe("useAuthStore", () => {
         displayName: "Alice",
         avatarUrl: null,
         emailVerified: true,
+        isSuperAdmin: false,
+        isInstanceAdmin: false,
       };
 
       useAuthStore.getState().setUser(user);
@@ -51,6 +53,8 @@ describe("useAuthStore", () => {
         displayName: "Tester",
         avatarUrl: null,
         emailVerified: false,
+        isSuperAdmin: false,
+        isInstanceAdmin: false,
       });
 
       useAuthStore.getState().clearUser();
@@ -79,6 +83,8 @@ describe("useAuthStore", () => {
         displayName: "Tester",
         avatarUrl: null,
         emailVerified: true,
+        isSuperAdmin: false,
+        isInstanceAdmin: false,
       });
 
       await useAuthStore.getState().logout();
@@ -102,6 +108,8 @@ describe("useAuthStore", () => {
         displayName: "Tester",
         avatarUrl: null,
         emailVerified: true,
+        isSuperAdmin: false,
+        isInstanceAdmin: false,
       });
 
       await useAuthStore.getState().logout();
@@ -120,6 +128,8 @@ describe("useAuthStore", () => {
         displayName: "Tester",
         avatarUrl: null,
         emailVerified: true,
+        isSuperAdmin: false,
+        isInstanceAdmin: false,
       };
       fetchMock.mockResolvedValueOnce(
         new Response(JSON.stringify(user), {

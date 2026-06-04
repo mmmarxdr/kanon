@@ -273,6 +273,154 @@ describe("Auth Integration", () => {
 
       expect(meRes.statusCode).toBe(401);
     });
+
+    // 1a.10 / 1a.11 — isSuperAdmin + isInstanceAdmin flags (KAN-49 PR1a)
+
+    it("returns isSuperAdmin:true and isInstanceAdmin:true for patient-zero user", async () => {
+      // Seed a live token and claim the instance to create the patient-zero user
+      const { sha256Hex } = await import("../auth/service.js");
+      const { generateOpaqueToken } = await import("../auth/service.js");
+      const raw = generateOpaqueToken();
+      const hash = sha256Hex(raw);
+      await prisma.setupToken.create({
+        data: {
+          tokenHash: hash,
+          expiresAt: new Date(Date.now() + 7 * 86_400_000),
+        },
+      });
+
+      const claimRes = await app.inject({
+        method: "POST",
+        url: "/api/instance/setup/claim",
+        payload: {
+          token: raw,
+          email: "patient-zero@kanon.test",
+          password: "SecurePassword123!",
+        },
+      });
+      expect(claimRes.statusCode).toBe(200);
+      const { accessToken } = claimRes.json();
+
+      const meRes = await app.inject({
+        method: "GET",
+        url: "/api/auth/me",
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+
+      expect(meRes.statusCode).toBe(200);
+      const me = meRes.json();
+      expect(me.isSuperAdmin).toBe(true);
+      expect(me.isInstanceAdmin).toBe(true);
+    });
+
+    it("returns isSuperAdmin:false and isInstanceAdmin:false for workspace-only user", async () => {
+      // Plain registered user — no instance roles
+      await app.inject({
+        method: "POST",
+        url: "/api/auth/register",
+        payload: {
+          email: "plain-ws-user@kanon.test",
+          password: "Secret123!",
+        },
+      });
+
+      const loginRes = await app.inject({
+        method: "POST",
+        url: "/api/auth/login",
+        payload: {
+          email: "plain-ws-user@kanon.test",
+          password: "Secret123!",
+        },
+      });
+      const { accessToken } = loginRes.json();
+
+      const meRes = await app.inject({
+        method: "GET",
+        url: "/api/auth/me",
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+
+      expect(meRes.statusCode).toBe(200);
+      const me = meRes.json();
+      expect(me.isSuperAdmin).toBe(false);
+      expect(me.isInstanceAdmin).toBe(false);
+    });
+
+    // FIX 4 (MEDIUM-1) — isSuperAdmin column on User row
+    // claimInstance must set User.isSuperAdmin=true atomically;
+    // /me must derive isSuperAdmin from the user row (single query).
+
+    it("claimInstance sets User.isSuperAdmin=true on the owner row (FIX4)", async () => {
+      const { sha256Hex, generateOpaqueToken } = await import("../auth/service.js");
+      const raw = generateOpaqueToken();
+      const hash = sha256Hex(raw);
+      await prisma.setupToken.create({
+        data: {
+          tokenHash: hash,
+          expiresAt: new Date(Date.now() + 7 * 86_400_000),
+        },
+      });
+
+      await app.inject({
+        method: "POST",
+        url: "/api/instance/setup/claim",
+        payload: {
+          token: raw,
+          email: "fix4-owner@kanon.test",
+          password: "SecurePassword123!",
+        },
+      });
+
+      // The user row must have isSuperAdmin=true set atomically by claimInstance
+      const user = await prisma.user.findUnique({
+        where: { email: "fix4-owner@kanon.test" },
+        select: { isSuperAdmin: true, isInstanceAdmin: true },
+      });
+      expect(user?.isSuperAdmin).toBe(true);
+      expect(user?.isInstanceAdmin).toBe(true);
+    });
+
+    it("/me returns isSuperAdmin:true from user row (no extra InstanceSettings query) (FIX4)", async () => {
+      const { sha256Hex, generateOpaqueToken } = await import("../auth/service.js");
+      const raw = generateOpaqueToken();
+      const hash = sha256Hex(raw);
+      await prisma.setupToken.create({
+        data: {
+          tokenHash: hash,
+          expiresAt: new Date(Date.now() + 7 * 86_400_000),
+        },
+      });
+
+      const claimRes = await app.inject({
+        method: "POST",
+        url: "/api/instance/setup/claim",
+        payload: {
+          token: raw,
+          email: "fix4-me@kanon.test",
+          password: "SecurePassword123!",
+        },
+      });
+      expect(claimRes.statusCode).toBe(200);
+      const { accessToken } = claimRes.json();
+
+      // Nullify ownerUserId in InstanceSettings to prove /me does NOT rely on it
+      await prisma.instanceSettings.update({
+        where: { id: (await import("../../shared/constants.js")).INSTANCE_SETTINGS_ID },
+        data: { ownerUserId: null },
+      });
+
+      const meRes = await app.inject({
+        method: "GET",
+        url: "/api/auth/me",
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+
+      expect(meRes.statusCode).toBe(200);
+      const me = meRes.json();
+      // Must still be true — sourced from user row, not InstanceSettings
+      expect(me.isSuperAdmin).toBe(true);
+      expect(me.isInstanceAdmin).toBe(true);
+    });
   });
 
   // ── Route Protection ─────────────────────────────────────────────────

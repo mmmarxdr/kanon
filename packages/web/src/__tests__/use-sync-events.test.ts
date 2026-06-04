@@ -50,6 +50,8 @@ function setAuthenticated() {
       displayName: "Tester",
       avatarUrl: null,
       emailVerified: true,
+      isSuperAdmin: false,
+      isInstanceAdmin: false,
     },
     isAuthenticated: true,
     isLoading: false,

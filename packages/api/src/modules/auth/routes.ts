@@ -221,6 +221,8 @@ export default async function authRoutes(
     async (request, _reply) => {
       const authUser = manualAuth(request);
 
+      // Single-query /me (MEDIUM-1, KAN-49): isSuperAdmin and isInstanceAdmin are
+      // now columns on the User row — no InstanceSettings JOIN needed.
       const user = await prisma.user.findUnique({
         where: { id: authUser.userId },
         select: {
@@ -229,6 +231,8 @@ export default async function authRoutes(
           displayName: true,
           avatarUrl: true,
           emailVerifiedAt: true,
+          isInstanceAdmin: true,
+          isSuperAdmin: true,
         },
       });
 
@@ -242,6 +246,8 @@ export default async function authRoutes(
         displayName: user.displayName,
         avatarUrl: user.avatarUrl,
         emailVerified: user.emailVerifiedAt !== null,
+        isSuperAdmin: user.isSuperAdmin,
+        isInstanceAdmin: user.isInstanceAdmin,
       };
     },
   );
