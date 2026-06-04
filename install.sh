@@ -38,7 +38,7 @@ set -euo pipefail
 # until then we rely on the downloaded .sha256 for corruption detection only —
 # NOT tamper-resistance (both the tarball and its checksum come from the same
 # origin, so a compromised origin can serve a matching pair).
-EXPECTED_SHA256=""
+EXPECTED_SHA256="36bac80d3a004521d9581e26ae41ba05e9a10ea064cfc8f27843d018092b0614"
 
 KANON_MCP_VERSION="0.4.0"
 KANON_REPO="${KANON_REPO:-mmmarxdr/kanon}"
