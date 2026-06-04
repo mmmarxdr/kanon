@@ -88,6 +88,23 @@ async function seedLiveToken(ttlDays = 7): Promise<string> {
 }
 
 describe("claimInstance dual-grant", () => {
+  it("fresh claim sets ownerUserId AND isInstanceAdmin=true AND isSuperAdmin=true on the claimant (FIX4)", async () => {
+    const rawToken = await seedLiveToken();
+
+    await claimInstance({
+      token: rawToken,
+      email: "fix4-claim@kanon.test",
+      password: "SecurePassword123!",
+    });
+
+    const user = await prisma.user.findUnique({
+      where: { email: "fix4-claim@kanon.test" },
+      select: { isSuperAdmin: true, isInstanceAdmin: true },
+    });
+    expect(user?.isSuperAdmin).toBe(true);
+    expect(user?.isInstanceAdmin).toBe(true);
+  });
+
   it("fresh claim sets ownerUserId AND isInstanceAdmin=true on the claimant", async () => {
     const rawToken = await seedLiveToken();
 

@@ -3,7 +3,7 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { randomBytes } from "node:crypto";
 import jwt from "jsonwebtoken";
 import { AppError } from "../../shared/types.js";
-import { COOKIE_NAMES, getCookieConfig, INSTANCE_SETTINGS_ID } from "../../shared/constants.js";
+import { COOKIE_NAMES, getCookieConfig } from "../../shared/constants.js";
 import { env } from "../../config/env.js";
 import { prisma } from "../../config/prisma.js";
 import {
@@ -221,23 +221,20 @@ export default async function authRoutes(
     async (request, _reply) => {
       const authUser = manualAuth(request);
 
-      const [user, settings] = await Promise.all([
-        prisma.user.findUnique({
-          where: { id: authUser.userId },
-          select: {
-            id: true,
-            email: true,
-            displayName: true,
-            avatarUrl: true,
-            emailVerifiedAt: true,
-            isInstanceAdmin: true,
-          },
-        }),
-        prisma.instanceSettings.findUnique({
-          where: { id: INSTANCE_SETTINGS_ID },
-          select: { ownerUserId: true },
-        }),
-      ]);
+      // Single-query /me (MEDIUM-1, KAN-49): isSuperAdmin and isInstanceAdmin are
+      // now columns on the User row — no InstanceSettings JOIN needed.
+      const user = await prisma.user.findUnique({
+        where: { id: authUser.userId },
+        select: {
+          id: true,
+          email: true,
+          displayName: true,
+          avatarUrl: true,
+          emailVerifiedAt: true,
+          isInstanceAdmin: true,
+          isSuperAdmin: true,
+        },
+      });
 
       if (!user) {
         throw new AppError(401, "USER_NOT_FOUND", "User no longer exists");
@@ -249,7 +246,7 @@ export default async function authRoutes(
         displayName: user.displayName,
         avatarUrl: user.avatarUrl,
         emailVerified: user.emailVerifiedAt !== null,
-        isSuperAdmin: settings?.ownerUserId === user.id,
+        isSuperAdmin: user.isSuperAdmin,
         isInstanceAdmin: user.isInstanceAdmin,
       };
     },

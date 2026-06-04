@@ -39,7 +39,7 @@ async function main() {
 
   const owner = await prisma.user.findUnique({
     where: { id: settings.ownerUserId },
-    select: { id: true, email: true, isInstanceAdmin: true },
+    select: { id: true, email: true, isInstanceAdmin: true, isSuperAdmin: true },
   });
 
   if (!owner) {
@@ -47,23 +47,24 @@ async function main() {
     process.exit(1);
   }
 
-  if (owner.isInstanceAdmin) {
-    console.log(`[grant-existing-admin] User ${owner.email} already has isInstanceAdmin=true. Nothing to do.`);
+  // Only skip if BOTH flags are already set — partial state still needs a fix.
+  if (owner.isInstanceAdmin && owner.isSuperAdmin) {
+    console.log(`[grant-existing-admin] User ${owner.email} already has isInstanceAdmin=true AND isSuperAdmin=true. Nothing to do.`);
     return;
   }
 
   if (isDryRun) {
-    console.log(`[grant-existing-admin] DRY RUN — would set isInstanceAdmin=true for ${owner.email} (${owner.id})`);
+    console.log(`[grant-existing-admin] DRY RUN — would set isInstanceAdmin=true and isSuperAdmin=true for ${owner.email} (${owner.id})`);
     console.log("[grant-existing-admin] Re-run with --apply to commit the change.");
     return;
   }
 
   await prisma.user.update({
     where: { id: owner.id },
-    data: { isInstanceAdmin: true },
+    data: { isInstanceAdmin: true, isSuperAdmin: true },
   });
 
-  console.log(`[grant-existing-admin] SUCCESS — set isInstanceAdmin=true for ${owner.email} (${owner.id})`);
+  console.log(`[grant-existing-admin] SUCCESS — set isInstanceAdmin=true and isSuperAdmin=true for ${owner.email} (${owner.id})`);
 }
 
 main()

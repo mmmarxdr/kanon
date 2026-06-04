@@ -129,13 +129,17 @@ export async function claimInstance(body: ClaimBodyType): Promise<{
       throw new AppError(409, "EMAIL_EXISTS", "An account with this email already exists");
     }
 
-    // Step 4: Create fresh super-admin user (operator-vouched, emailVerifiedAt set)
+    // Step 4: Create fresh super-admin user (operator-vouched, emailVerifiedAt set).
+    // isSuperAdmin=true is set here atomically alongside isInstanceAdmin=true (MEDIUM-1,
+    // KAN-49): single source of truth on the user row, avoids InstanceSettings JOIN in /me.
     const passwordHash = await hashPassword(password);
     const user = await tx.user.create({
       data: {
         email,
         passwordHash,
         emailVerifiedAt: new Date(),
+        isSuperAdmin: true,
+        isInstanceAdmin: true,
       },
     });
 
@@ -145,8 +149,8 @@ export async function claimInstance(body: ClaimBodyType): Promise<{
       data: { ownerUserId: user.id },
     });
 
-    // Step 5b: Grant instance-admin to the claimant (dual-grant, PR1a KAN-49).
-    // grantInstanceAdmin is idempotent — set-true-twice is a no-op.
+    // Step 5b: grantInstanceAdmin is now a no-op (already set in Step 4), but kept
+    // for backward-compat and belt-and-suspenders idempotency.
     await grantInstanceAdmin(tx, user.id);
 
     // Step 6: Mark token used

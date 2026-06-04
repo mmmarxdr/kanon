@@ -110,6 +110,11 @@ model User {
   /// Granted by claimInstance() and grantInstanceAdmin(). Orthogonal to
   /// ownerUserId (super-admin) and per-workspace MemberRole.
   isInstanceAdmin Boolean   @default(false) @map("is_instance_admin")
+  /// Super-admin flag (KAN-49 first-run-bootstrap MEDIUM-1).
+  /// Set atomically alongside ownerUserId in claimInstance(). Allows /me to
+  /// derive isSuperAdmin from a single user-row read instead of a JOIN on
+  /// InstanceSettings. Default false — existing rows are unaffected.
+  isSuperAdmin    Boolean   @default(false) @map("is_super_admin")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
