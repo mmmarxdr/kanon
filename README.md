@@ -40,8 +40,9 @@ cadence of engineering work.
 - **Self-hosted** — your data stays in your Postgres, your infra, your network.
 - **SDD-aware lifecycle** — issues move through states that mirror real work:
   `backlog → explore → propose → spec → design → tasks → apply → verify → archive`.
-- **Zero-friction AI setup** — one command (`npx @kanon-pm/setup`) configures
-  your AI tools with MCP, skills and workflows.
+- **Zero-friction AI setup** — one script (`install.sh`) wires your AI tools to
+  any instance from a single `kanon://` onboarding link, over a sha256-pinned
+  MCP release.
 - **Real-time** — WebSocket-backed updates across clients.
 
 ## Inspiration
@@ -74,11 +75,12 @@ pnpm dev:start   # boot Postgres, API, web and Engram
 
 Open [http://localhost:5173](http://localhost:5173) and sign in with
 `dev@kanon.io` / `Password1!` (workspace: `kanon-dev`). This boots a ready-to-use
-dev workspace. To wire your AI tools to it:
+dev workspace.
 
-```bash
-npx @kanon-pm/setup
-```
+Wiring your AI tools to a local instance uses the **exact same flow** as a
+self-hosted one — generate an onboarding link, then run the installer. There is
+only one install path; see steps **3 → 4** in
+[Running your own instance](#running-your-own-instance) below.
 
 ---
 

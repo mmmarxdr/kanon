@@ -23,15 +23,20 @@ cp env.production.example .env.production
 # 3. Start
 docker compose -f docker-compose.production.yml --env-file .env.production up -d --build
 
-# 4. Create first user
-curl -X POST https://your-domain.com/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@example.com","password":"YourPassword1!","name":"Admin","workspaceName":"my-workspace"}'
+# 4. Claim the instance (become super-admin)
+# On first boot the API logs a one-time setup token:
+#   [SETUP-TOKEN do-not-store] ... claim at /setup: <token>
+docker compose -f docker-compose.production.yml logs kanon-api | grep SETUP-TOKEN
+# Open https://your-domain.com/setup, paste the token, set email + password.
 
-# 5. Share with team
-# Each developer runs:
-npx @kanon-pm/setup --api-url https://your-domain.com
+# 5. Invite + connect AI tools
+# In the web UI: create a workspace, then Settings -> Members ->
+# Generate Onboarding Link. Each developer runs the installer and pastes it:
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/main/install.sh)"
 ```
+
+> `BASE_URL` in `.env.production` must be your public API URL — it is embedded
+> in every `kanon://` onboarding link.
 
 With Engram (AI memory service):
 ```bash
@@ -80,13 +85,18 @@ server {
 
 ## Team Onboarding
 
-Once deployed, each developer configures their AI tools:
+Once deployed and claimed, generate a single-use onboarding link per teammate
+from **Settings → Members → Generate Onboarding Link**
+(`kanon://your-domain.com/onboard?token=…`). Each developer runs the installer
+and pastes their link:
 
 ```bash
-npx @kanon-pm/setup --api-url https://your-domain.com
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/main/install.sh)"
 ```
 
-This auto-detects Claude Code, Cursor, and Antigravity, then installs the MCP server config pointing to your production instance.
+The installer fetches the sha256-pinned MCP release, then auto-detects Claude
+Code, Cursor, and Antigravity and points their MCP config at your instance. See
+**[AI_TOOLS.md](AI_TOOLS.md)** for the full flow and non-interactive use.
 
 ## Updating
 
