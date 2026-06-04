@@ -7,6 +7,7 @@ import jwt from "jsonwebtoken";
 import { randomUUID } from "node:crypto";
 import { buildApp } from "../app.js";
 import { prisma } from "../config/prisma.js";
+import { INSTANCE_SETTINGS_ID } from "../shared/constants.js";
 
 /**
  * Build a fresh Fastify app instance for testing.
@@ -137,6 +138,8 @@ export async function seedTestProject(
  * Clean all test data from the database.
  * Deletes in reverse dependency order.
  * ProjectMember must come before project and member (FK constraints).
+ * Also resets instance-layer state (KAN-49): clears setup_tokens and
+ * nullifies the singleton ownerUserId so claim tests are hermetic.
  */
 export async function cleanDatabase(): Promise<void> {
   await prisma.projectMember.deleteMany();
@@ -151,8 +154,20 @@ export async function cleanDatabase(): Promise<void> {
   await prisma.workspaceInvite.deleteMany();
   await prisma.passwordResetToken.deleteMany();
   await prisma.member.deleteMany();
+  // Delete users BEFORE resetting singleton so FK SET NULL fires cleanly
+  // (ownerUserId FK → users.id; deleting user sets ownerUserId=NULL automatically,
+  // but we explicitly reset after to ensure consistency regardless of FK behaviour).
   await prisma.user.deleteMany();
   await prisma.workspace.deleteMany();
+  // Reset instance-layer state — setup_tokens have no FK to users, delete any
+  await prisma.setupToken.deleteMany();
+  // Re-assert singleton is present and reset with null owner (migration seed).
+  // Use upsert in case a test somehow deleted the singleton row.
+  await prisma.instanceSettings.upsert({
+    where: { id: INSTANCE_SETTINGS_ID },
+    update: { ownerUserId: null, instanceName: null, signupMode: "open", allowedSignupDomains: [] },
+    create: { id: INSTANCE_SETTINGS_ID, signupMode: "open", allowedSignupDomains: [] },
+  });
 }
 
 /**
