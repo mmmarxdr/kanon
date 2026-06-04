@@ -20,6 +20,8 @@ function makeUser(emailVerified: boolean) {
     displayName: "Alice",
     avatarUrl: null,
     emailVerified,
+    isSuperAdmin: false,
+    isInstanceAdmin: false,
   };
 }
 
