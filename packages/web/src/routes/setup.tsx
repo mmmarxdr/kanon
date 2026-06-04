@@ -123,7 +123,7 @@ export function SetupForm({ onNavigate }: SetupFormProps) {
           setErrors({
             email: "An account with this email already exists — use a new dedicated admin email",
           });
-        } else if (claimRes.status === 400 || code === "VALIDATION_ERROR") {
+        } else if (code === "VALIDATION_ERROR") {
           setErrors({
             password: "Password must be at least 12 characters and include a number or symbol",
           });
