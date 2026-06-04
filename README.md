@@ -61,7 +61,7 @@ refining how humans and agents share a project.
 
 ---
 
-## Quick start
+## Quick start (local)
 
 > Requires Node.js 20+, pnpm and Docker.
 
@@ -73,15 +73,100 @@ pnpm dev:start   # boot Postgres, API, web and Engram
 ```
 
 Open [http://localhost:5173](http://localhost:5173) and sign in with
-`dev@kanon.io` / `Password1!` (workspace: `kanon-dev`).
-
-To wire up your AI tools:
+`dev@kanon.io` / `Password1!` (workspace: `kanon-dev`). This boots a ready-to-use
+dev workspace. To wire your AI tools to it:
 
 ```bash
 npx @kanon-pm/setup
 ```
 
-For advanced install options (manual Postgres, no-Docker setup, CI scripting),
+---
+
+## Running your own instance
+
+Self-hosting Kanon is four steps: **run it → claim it → invite → install.**
+Kanon does not prescribe _where_ you host it — any box, container or PaaS that
+runs Node 20+ and can reach a PostgreSQL works. You bring the infrastructure;
+Kanon brings the onboarding flow.
+
+### 1. Run the stack, wherever you want
+
+Point the API at your own PostgreSQL and start it however suits your setup
+(systemd, Docker, a PaaS — your call). Kanon only asks for a handful of
+environment variables:
+
+| Variable | Required | Notes |
+| -------- | -------- | ----- |
+| `DATABASE_URL` | **yes** | Your PostgreSQL connection string |
+| `JWT_SECRET` | **yes** | ≥ 32 chars in production, not the dev default |
+| `JWT_REFRESH_SECRET` | **yes** | ≥ 32 chars in production, not the dev default |
+| `BASE_URL` | **yes (prod)** | Public API URL. It is embedded verbatim in every `kanon://` onboarding link — leave it as `localhost` and the links are unreachable from other machines. |
+| `APP_URL` | recommended | Public web URL |
+| `COOKIE_SECRET` | recommended | Cookie signing secret |
+| `SETUP_TOKEN_TTL_DAYS` | no | First-boot claim token lifetime (default `7`) |
+| `ONBOARDING_TOKEN_TTL_HOURS` | no | `kanon://` link lifetime (default `72`) |
+
+Apply migrations and launch the API against your database:
+
+```bash
+pnpm --filter @kanon/api prisma:migrate:deploy
+pnpm --filter @kanon/api build
+pnpm --filter @kanon/api start
+```
+
+### 2. Claim the instance (become super-admin)
+
+On its first boot the API mints a one-time **setup token** and prints it to
+its own logs:
+
+```
+[SETUP-TOKEN do-not-store] Instance setup token (valid 7 days) — claim at /setup: <token>
+```
+
+Grab that token from the API logs. _Missed it?_ Restart the API — a fresh token
+is minted on the next boot.
+
+Open `https://<your-host>/setup`, paste the token, and set your operator email
+and password. Claiming grants you **super-admin and instance-admin** in one
+shot — the account that configures the instance and creates workspaces.
+
+### 3. Create a workspace and generate an onboarding link
+
+After claiming you land on the admin panel. Create your first workspace, then
+open **Settings → Members → Generate Onboarding Link**. Kanon mints a
+single-use, time-boxed link:
+
+```
+kanon://<your-host>/onboard?token=<jwt>
+```
+
+Hand this link to anyone — including yourself — who wants their AI tools wired
+to this instance.
+
+### 4. Run the install script
+
+On the machine where your AI tools live (Claude Code, Cursor, Antigravity),
+run the installer:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/main/install.sh)"
+```
+
+It downloads the pinned MCP release, verifies its sha256 **before** extracting,
+installs to `~/.kanon/mcp`, then prompts:
+
+```
+Paste your kanon:// onboarding link:
+```
+
+Paste the link from step 3. Setup exchanges it for credentials, stores them in
+`~/.kanon/credentials`, and patches each detected AI tool's MCP config to point
+at your instance. Restart the tool and the `kanon_*` tools are live against your
+board.
+
+---
+
+For advanced install options (manual Postgres, no-Docker dev, CI scripting),
 see **[docs/INSTALL.md](docs/INSTALL.md)**.
 For AI tool setup details and supported clients, see
 **[docs/AI_TOOLS.md](docs/AI_TOOLS.md)**.
