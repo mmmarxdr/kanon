@@ -2,11 +2,13 @@
  * Instance Layer service (KAN-49).
  *
  * Exports:
- *  - bootstrapSetupToken: extracted onReady logic (unit-testable)
- *  - claimInstance:       atomic claim transaction
- *  - getSettings:         fetch singleton settings
- *  - patchSettings:       update singleton settings
+ *  - bootstrapSetupToken:  extracted onReady logic (unit-testable)
+ *  - grantInstanceAdmin:   idempotent instance-admin grant helper (PR1a)
+ *  - claimInstance:        atomic claim transaction
+ *  - getSettings:          fetch singleton settings
+ *  - patchSettings:        update singleton settings
  */
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 import { INSTANCE_SETTINGS_ID } from "../../shared/constants.js";
@@ -17,6 +19,27 @@ import {
   signTokens,
 } from "../auth/service.js";
 import type { ClaimBodyType, PatchSettingsBodyType } from "./schema.js";
+
+// ─── Instance-Admin Grant ────────────────────────────────────────────────────
+
+/**
+ * Idempotent instance-admin grant helper (PR1a, KAN-49 first-run-bootstrap).
+ *
+ * Sets `isInstanceAdmin = true` on the given user inside the caller's transaction.
+ * Calling this twice on the same userId is a no-op — the flag stays true.
+ *
+ * @param tx     - Prisma transaction client (caller owns the transaction)
+ * @param userId - The user to grant instance-admin to
+ */
+export async function grantInstanceAdmin(
+  tx: Prisma.TransactionClient,
+  userId: string,
+): Promise<void> {
+  await tx.user.update({
+    where: { id: userId },
+    data: { isInstanceAdmin: true },
+  });
+}
 
 // ─── Bootstrap / onReady ─────────────────────────────────────────────────────
 
@@ -121,6 +144,10 @@ export async function claimInstance(body: ClaimBodyType): Promise<{
       where: { id: INSTANCE_SETTINGS_ID },
       data: { ownerUserId: user.id },
     });
+
+    // Step 5b: Grant instance-admin to the claimant (dual-grant, PR1a KAN-49).
+    // grantInstanceAdmin is idempotent — set-true-twice is a no-op.
+    await grantInstanceAdmin(tx, user.id);
 
     // Step 6: Mark token used
     await tx.setupToken.update({

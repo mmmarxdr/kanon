@@ -106,6 +106,10 @@ model User {
   /// restorative revert — drop in a later migration once PR1 is stable on prod.
   apiKeyHash      String?   @map("api_key_hash")
   emailVerifiedAt DateTime? @map("email_verified_at")
+  /// Instance-level admin flag (KAN-49 first-run-bootstrap PR1a).
+  /// Granted by claimInstance() and grantInstanceAdmin(). Orthogonal to
+  /// ownerUserId (super-admin) and per-workspace MemberRole.
+  isInstanceAdmin Boolean   @default(false) @map("is_instance_admin")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
