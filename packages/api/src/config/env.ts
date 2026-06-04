@@ -60,6 +60,12 @@ const envSchema = z.object({
     .default("72")
     .transform((val) => parseInt(val, 10))
     .pipe(z.number().int().min(1).max(72)),
+  SETUP_TOKEN_TTL_DAYS: z
+    .string()
+    .optional()
+    .default("7")
+    .transform((val) => parseInt(val, 10))
+    .pipe(z.number().int().min(1).max(365)),
   CORS_ORIGIN: z
     .string()
     .optional()
