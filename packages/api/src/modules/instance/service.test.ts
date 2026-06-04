@@ -114,37 +114,49 @@ describe("claimInstance dual-grant", () => {
     expect(user?.id).toBe(settings?.ownerUserId);
   });
 
-  it("re-claim is idempotent — no duplicate grant, no error, ownerUserId unchanged", async () => {
+  it("second claim attempt with consumed token throws 410 TOKEN_USED and leaves state unchanged", async () => {
     const rawToken = await seedLiveToken();
 
-    // First claim
+    // First claim — succeeds, consumes the token
     await claimInstance({
       token: rawToken,
       email: "admin@kanon.test",
       password: "SecurePassword123!",
     });
 
+    // Capture DB state after first claim (fresh fetch)
     const settingsAfterFirst = await prisma.instanceSettings.findUnique({
       where: { id: INSTANCE_SETTINGS_ID },
       select: { ownerUserId: true },
     });
     const ownerIdAfterFirst = settingsAfterFirst?.ownerUserId;
+    expect(ownerIdAfterFirst).not.toBeNull();
 
-    // Seed a new live token (the first is consumed)
-    const rawToken2 = await seedLiveToken();
+    // Second claim attempt with the same (now-consumed) token — must throw 410
+    await expect(
+      claimInstance({
+        token: rawToken,
+        email: "admin2@kanon.test",
+        password: "SecurePassword123!",
+      }),
+    ).rejects.toMatchObject({ statusCode: 410, code: "TOKEN_USED" });
 
-    // Second claim attempt with a different email should fail (this is the idempotency
-    // guard — but to test same-user re-claim, we test the token-used path).
-    // The real idempotency test: grantInstanceAdmin was already called; calling it again
-    // (via a fresh token+same email) hits EMAIL_EXISTS. Let's assert token used state.
-    const usedHash = sha256Hex(rawToken);
-    const tok = await prisma.setupToken.findUnique({ where: { tokenHash: usedHash } });
-    expect(tok?.usedAt).not.toBeNull();
+    // Fresh DB fetch after the second attempt — ownerUserId must be UNCHANGED
+    const settingsAfterSecond = await prisma.instanceSettings.findUnique({
+      where: { id: INSTANCE_SETTINGS_ID },
+      select: { ownerUserId: true },
+    });
+    expect(settingsAfterSecond?.ownerUserId).toBe(ownerIdAfterFirst);
 
-    // Also verify no duplicate User rows for the same email
-    const users = await prisma.user.findMany({ where: { email: "admin@kanon.test" } });
-    expect(users).toHaveLength(1);
-    expect(users[0]!.isInstanceAdmin).toBe(true);
-    expect(settingsAfterFirst?.ownerUserId).toBe(ownerIdAfterFirst);
+    // The original user retains their instance-admin flag
+    const user = await prisma.user.findUnique({
+      where: { email: "admin@kanon.test" },
+      select: { isInstanceAdmin: true },
+    });
+    expect(user?.isInstanceAdmin).toBe(true);
+
+    // No second user was created
+    const users = await prisma.user.findMany({ where: { email: "admin2@kanon.test" } });
+    expect(users).toHaveLength(0);
   });
 });
