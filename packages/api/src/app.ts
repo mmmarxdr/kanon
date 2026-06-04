@@ -32,6 +32,8 @@ import cycleRoutes from "./modules/cycle/routes.js";
 import workSessionRoutes from "./modules/work-session/routes.js";
 import { workspaceInviteRoutes, publicInviteRoutes } from "./modules/invite/routes.js";
 import projectMemberRoutes from "./modules/project/project-member-routes.js";
+import instanceRoutes from "./modules/instance/routes.js";
+import { bootstrapSetupToken } from "./modules/instance/service.js";
 import { EngramClient } from "@kanon/bridge";
 import { BridgeSyncService } from "./services/bridge-sync-service.js";
 import { eventBus } from "./services/event-bus/index.js";
@@ -114,6 +116,22 @@ export async function buildApp() {
   await app.register(workspaceInviteRoutes, { prefix: "/api/workspaces/:wid/invites" });
   await app.register(publicInviteRoutes, { prefix: "/api/invites" });
   await app.register(projectMemberRoutes, { prefix: "/api/projects/:key/members" });
+  await app.register(instanceRoutes, { prefix: "/api/instance" });
+
+  // ─── Instance Setup Token (first-boot onReady hook) ───────────────────
+  app.addHook("onReady", async () => {
+    try {
+      const raw = await bootstrapSetupToken(env.SETUP_TOKEN_TTL_DAYS);
+      if (raw) {
+        app.log.info(
+          `[SETUP] No instance owner. Claim super-admin at /setup with token: ${raw} ` +
+          `(expires in ${env.SETUP_TOKEN_TTL_DAYS} days). Stored hash only; this is the ONLY time the raw token is shown.`,
+        );
+      }
+    } catch (err) {
+      app.log.error({ err }, "[SETUP] Failed to bootstrap instance setup token");
+    }
+  });
 
   // ─── Work Session Cleanup (background interval) ──────────────────────
   let cleanupInterval: ReturnType<typeof setInterval> | undefined;
