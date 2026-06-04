@@ -273,6 +273,78 @@ describe("Auth Integration", () => {
 
       expect(meRes.statusCode).toBe(401);
     });
+
+    // 1a.10 / 1a.11 — isSuperAdmin + isInstanceAdmin flags (KAN-49 PR1a)
+
+    it("returns isSuperAdmin:true and isInstanceAdmin:true for patient-zero user", async () => {
+      // Seed a live token and claim the instance to create the patient-zero user
+      const { sha256Hex } = await import("../auth/service.js");
+      const { generateOpaqueToken } = await import("../auth/service.js");
+      const raw = generateOpaqueToken();
+      const hash = sha256Hex(raw);
+      await prisma.setupToken.create({
+        data: {
+          tokenHash: hash,
+          expiresAt: new Date(Date.now() + 7 * 86_400_000),
+        },
+      });
+
+      const claimRes = await app.inject({
+        method: "POST",
+        url: "/api/instance/setup/claim",
+        payload: {
+          token: raw,
+          email: "patient-zero@kanon.test",
+          password: "SecurePassword123!",
+        },
+      });
+      expect(claimRes.statusCode).toBe(200);
+      const { accessToken } = claimRes.json();
+
+      const meRes = await app.inject({
+        method: "GET",
+        url: "/api/auth/me",
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+
+      expect(meRes.statusCode).toBe(200);
+      const me = meRes.json();
+      expect(me.isSuperAdmin).toBe(true);
+      expect(me.isInstanceAdmin).toBe(true);
+    });
+
+    it("returns isSuperAdmin:false and isInstanceAdmin:false for workspace-only user", async () => {
+      // Plain registered user — no instance roles
+      await app.inject({
+        method: "POST",
+        url: "/api/auth/register",
+        payload: {
+          email: "plain-ws-user@kanon.test",
+          password: "Secret123!",
+        },
+      });
+
+      const loginRes = await app.inject({
+        method: "POST",
+        url: "/api/auth/login",
+        payload: {
+          email: "plain-ws-user@kanon.test",
+          password: "Secret123!",
+        },
+      });
+      const { accessToken } = loginRes.json();
+
+      const meRes = await app.inject({
+        method: "GET",
+        url: "/api/auth/me",
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+
+      expect(meRes.statusCode).toBe(200);
+      const me = meRes.json();
+      expect(me.isSuperAdmin).toBe(false);
+      expect(me.isInstanceAdmin).toBe(false);
+    });
   });
 
   // ── Route Protection ─────────────────────────────────────────────────

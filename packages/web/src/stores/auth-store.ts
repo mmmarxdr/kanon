@@ -6,6 +6,9 @@ export interface AuthUser {
   displayName: string | null;
   avatarUrl: string | null;
   emailVerified: boolean;
+  /** Instance-level role flags from /me (KAN-49 PR1a). */
+  isSuperAdmin: boolean;
+  isInstanceAdmin: boolean;
 }
 
 interface AuthState {
