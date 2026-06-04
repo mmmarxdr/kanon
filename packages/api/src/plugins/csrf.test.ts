@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
-import { createTestApp, generateTestToken } from "../test/helpers.js";
+import {
+  createTestApp,
+  generateTestToken,
+  seedInstanceAdminUser,
+  cleanDatabase,
+  disconnectTestDb,
+} from "../test/helpers.js";
 import { COOKIE_NAMES } from "../shared/constants.js";
 
 /**
@@ -11,13 +17,20 @@ import { COOKIE_NAMES } from "../shared/constants.js";
 describe("CSRF Plugin", () => {
   let app: FastifyInstance;
   const csrfToken = "test-csrf-token-abc123";
+  // Token for a real instance-admin user so CSRF tests can exercise POST /api/workspaces
+  // past the requireInstanceAdmin guard without conflating CSRF and auth failures.
+  let instanceAdminToken: string;
 
   beforeAll(async () => {
+    await cleanDatabase();
     app = await createTestApp();
+    const { token } = await seedInstanceAdminUser();
+    instanceAdminToken = token;
   });
 
   afterAll(async () => {
     await app.close();
+    await disconnectTestDb();
   });
 
   // Helper: build cookie string for injection
@@ -44,13 +57,15 @@ describe("CSRF Plugin", () => {
 
   describe("Mutation requests with cookies", () => {
     it("passes when X-CSRF-Token header matches kanon_csrf cookie", async () => {
-      const token = generateTestToken();
+      // Use a real instance-admin token in the cookie: POST /api/workspaces now requires
+      // requireInstanceAdmin (KAN-49 PR1a). A fake-UUID token would 403 at the guard
+      // before CSRF logic can be verified.
       const res = await app.inject({
         method: "POST",
         url: "/api/workspaces",
         headers: {
           cookie: cookieString({
-            [COOKIE_NAMES.ACCESS]: token,
+            [COOKIE_NAMES.ACCESS]: instanceAdminToken,
             [COOKIE_NAMES.CSRF]: csrfToken,
           }),
           "x-csrf-token": csrfToken,

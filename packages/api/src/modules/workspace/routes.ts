@@ -6,7 +6,7 @@ import {
   WorkspaceIdParam,
 } from "./schema.js";
 import * as workspaceService from "./service.js";
-import { requireMember, requireRole } from "../../middleware/require-role.js";
+import { requireMember, requireRole, requireInstanceAdmin } from "../../middleware/require-role.js";
 
 /**
  * Workspace routes plugin.
@@ -19,10 +19,12 @@ export default async function workspaceRoutes(
 
   /**
    * POST /api/workspaces
+   * Requires instance-admin role (KAN-49 PR1a).
    */
   app.post(
     "/",
     {
+      preHandler: [requireInstanceAdmin()],
       schema: {
         body: CreateWorkspaceBody,
       },

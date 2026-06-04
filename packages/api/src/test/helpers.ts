@@ -276,3 +276,33 @@ export async function seedTestProjectMember(
 export async function disconnectTestDb(): Promise<void> {
   await prisma.$disconnect();
 }
+
+/**
+ * Seed a user with isInstanceAdmin=true and return their auth token.
+ *
+ * Use this helper wherever HTTP POST /api/workspaces is called in tests,
+ * so tests survive the requireInstanceAdmin guard added in PR1a (KAN-49).
+ *
+ * The user is NOT added to any workspace — instance-admin is a global flag.
+ */
+export async function seedInstanceAdminUser(overrides?: {
+  email?: string;
+}): Promise<{ userId: string; email: string; token: string }> {
+  const bcrypt = await import("bcryptjs");
+  const hash = await bcrypt.hash("password123", 4);
+
+  const email = overrides?.email ?? `instance-admin-${randomUUID().slice(0, 8)}@kanon.test`;
+
+  const user = await prisma.user.create({
+    data: {
+      email,
+      passwordHash: hash,
+      displayName: "Instance Admin",
+      isInstanceAdmin: true,
+    },
+  });
+
+  const token = generateTestToken({ userId: user.id, email });
+
+  return { userId: user.id, email, token };
+}
