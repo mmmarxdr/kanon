@@ -116,6 +116,7 @@ model User {
   refreshTokens            RefreshToken[]
   projectMembers           ProjectMember[]
   emailVerificationTokens  EmailVerificationToken[]
+  instanceOwnership        InstanceSettings?
 
   @@map("users")
 }
@@ -590,4 +591,33 @@ model ProjectMember {
 
   @@unique([userId, projectId])
   @@map("project_members")
+}
+
+// ─── Instance Layer (KAN-49) ─────────────────────────────────────────────────
+
+model InstanceSettings {
+  id                   String   @id @db.Uuid
+  instanceName         String?  @map("instance_name")
+  /// Stored-only placeholder for layer 2 enforcement (NOT enforced in foundation).
+  signupMode           String   @default("open") @map("signup_mode")
+  /// Stored-only placeholder for layer 2 enforcement (NOT enforced in foundation).
+  allowedSignupDomains String[] @default([]) @map("allowed_signup_domains")
+
+  ownerUserId String? @unique @map("owner_user_id") @db.Uuid
+  owner       User?   @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("instance_settings")
+}
+
+model SetupToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@map("setup_tokens")
 }

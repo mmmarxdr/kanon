@@ -3,6 +3,7 @@ import type { preHandlerHookHandler } from "fastify";
 import { prisma } from "../config/prisma.js";
 import { AppError } from "../shared/types.js";
 import type { MemberContext } from "../shared/types.js";
+import { INSTANCE_SETTINGS_ID } from "../shared/constants.js";
 
 /**
  * Role hierarchy — higher index = more privileged.
@@ -494,4 +495,34 @@ export function requireDependencyRole(depIdParam: string, ...roles: MemberRole[]
  */
 export function requireDependencyMember(depIdParam: string): preHandlerHookHandler {
   return requireDependencyRole(depIdParam);
+}
+
+// ---------------------------------------------------------------------------
+// Instance-scoped guard (KAN-49)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fastify preHandler that checks the authenticated user is the instance super-admin.
+ *
+ * Compares `request.user.userId` against `InstanceSettings.ownerUserId`.
+ * Takes no workspace parameter — orthogonal to workspace roles.
+ *
+ * Throws 401 if unauthenticated; 403 if not the owner.
+ */
+export function requireSuperAdmin(): preHandlerHookHandler {
+  return async (request, _reply) => {
+    const user = request.user;
+    if (!user) {
+      throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+    }
+
+    const settings = await prisma.instanceSettings.findUnique({
+      where: { id: INSTANCE_SETTINGS_ID },
+      select: { ownerUserId: true },
+    });
+
+    if (!settings?.ownerUserId || settings.ownerUserId !== user.userId) {
+      throw new AppError(403, "FORBIDDEN", "Super-admin access required");
+    }
+  };
 }

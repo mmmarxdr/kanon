@@ -1,6 +1,13 @@
 import type { IssueState } from "@prisma/client";
 
 /**
+ * Hardcoded singleton UUID for the InstanceSettings row (KAN-49).
+ * There is exactly one InstanceSettings row in the database at all times,
+ * seeded by the migration with this fixed id.
+ */
+export const INSTANCE_SETTINGS_ID = "00000000-0000-0000-0000-000000000001";
+
+/**
  * Ordered issue states for the Kanon workflow.
  * Index determines forward/backward direction for regression detection.
  */
