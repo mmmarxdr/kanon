@@ -18,6 +18,9 @@ const CSRF_EXEMPT_PREFIXES = [
   "/api/auth/refresh",
   "/api/auth/forgot-password",
   "/api/auth/reset-password",
+  // Pre-auth bootstrap: the setup token is the authenticator. A claimant with a
+  // stale kanon_csrf cookie would otherwise be blocked by double-submit.
+  "/api/instance/setup/claim",
   "/api/events/",
   "/health",
 ];
