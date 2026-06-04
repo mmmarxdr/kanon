@@ -41,3 +41,4 @@ coverage/
 *.pfx
 id_rsa*
 secrets/
+.db-backups/
