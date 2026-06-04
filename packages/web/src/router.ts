@@ -19,6 +19,8 @@ import { profileRoute } from "./routes/_authenticated/profile";
 import { roadmapRoute } from "./routes/_authenticated/roadmap";
 import { settingsRoute } from "./routes/_authenticated/settings";
 import { projectSettingsRoute } from "./routes/_authenticated/project-settings";
+import { setupRoute } from "./routes/setup";
+import { adminInstanceRoute } from "./routes/_authenticated/admin.instance";
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -28,6 +30,7 @@ const routeTree = rootRoute.addChildren([
   resetPasswordRoute,
   verifyEmailRoute,
   inviteRoute,
+  setupRoute,
   authenticatedRoute.addChildren([
     workspaceSelectRoute,
     projectSelectRoute,
@@ -41,6 +44,7 @@ const routeTree = rootRoute.addChildren([
     cyclesIndexRoute,
     settingsRoute,
     projectSettingsRoute,
+    adminInstanceRoute,
   ]),
 ]);
 
