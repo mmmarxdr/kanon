@@ -73,6 +73,11 @@ export default async function instanceRoutes(
   /**
    * Returns { claimed: boolean }.
    * Used by the unauthenticated /setup page to redirect away if already claimed.
+   *
+   * INTENTIONALLY PUBLIC: no auth required — the setup page must read this
+   * before any session exists. It discloses only whether the instance is claimed.
+   * Internet-facing deployments should restrict this endpoint at the network/proxy
+   * layer once setup is complete to avoid leaking unclaimed-instance state.
    */
   app.get(
     "/setup/status",

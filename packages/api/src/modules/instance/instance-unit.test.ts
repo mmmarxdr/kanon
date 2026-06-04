@@ -122,10 +122,37 @@ describe("requireSuperAdmin", () => {
 import { ClaimBody } from "./schema.js";
 
 describe("ClaimBody schema", () => {
-  it("accepts valid input", () => {
+  it("accepts valid input (>=12 chars, has digit)", () => {
+    expect(() =>
+      ClaimBody.parse({ token: "a".repeat(20), email: "admin@kanon.io", password: "password123!" })
+    ).not.toThrow();
+  });
+
+  it("accepts valid input (>=12 chars, has symbol)", () => {
+    expect(() =>
+      ClaimBody.parse({ token: "a".repeat(20), email: "admin@kanon.io", password: "passwordword!" })
+    ).not.toThrow();
+  });
+
+  it("rejects password < 12 chars (10-char with digit)", () => {
+    // 10 chars — fails min(12) before regex is checked
+    expect(() =>
+      ClaimBody.parse({ token: "a".repeat(20), email: "admin@kanon.io", password: "password12" })
+    ).toThrow();
+  });
+
+  it("rejects password 11 chars even with digit (< 12 min)", () => {
+    // password123 is exactly 11 chars — fails min(12)
     expect(() =>
       ClaimBody.parse({ token: "a".repeat(20), email: "admin@kanon.io", password: "password123" })
-    ).not.toThrow();
+    ).toThrow();
+  });
+
+  it("rejects password >=12 chars but no digit or symbol", () => {
+    // 12 chars, all alpha — fails regex
+    expect(() =>
+      ClaimBody.parse({ token: "a".repeat(20), email: "admin@kanon.io", password: "passwordword" })
+    ).toThrow();
   });
 
   it("rejects weak password (< 8 chars)", () => {
@@ -136,13 +163,13 @@ describe("ClaimBody schema", () => {
 
   it("rejects bad email", () => {
     expect(() =>
-      ClaimBody.parse({ token: "a".repeat(20), email: "not-an-email", password: "password123" })
+      ClaimBody.parse({ token: "a".repeat(20), email: "not-an-email", password: "password123!" })
     ).toThrow();
   });
 
   it("rejects short token (< 20 chars)", () => {
     expect(() =>
-      ClaimBody.parse({ token: "short", email: "admin@kanon.io", password: "password123" })
+      ClaimBody.parse({ token: "short", email: "admin@kanon.io", password: "password123!" })
     ).toThrow();
   });
 });

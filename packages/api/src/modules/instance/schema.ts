@@ -6,7 +6,11 @@ import { z } from "zod";
 export const ClaimBody = z.object({
   token: z.string().min(20, "Token must be at least 20 characters"),
   email: z.string().email("Must be a valid email address"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
+  password: z
+    .string()
+    .min(12, "Password must be at least 12 characters")
+    .max(128, "Password must be at most 128 characters")
+    .regex(/[0-9!@#$%^&*]/, "Password must contain a number or symbol"),
 });
 export type ClaimBodyType = z.infer<typeof ClaimBody>;
 

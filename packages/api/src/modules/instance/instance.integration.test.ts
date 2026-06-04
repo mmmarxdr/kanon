@@ -160,7 +160,7 @@ describe("Instance routes", () => {
         payload: {
           token: rawToken,
           email: "admin@kanon.io",
-          password: "password123",
+          password: "password123!",
         },
       });
 
@@ -198,7 +198,7 @@ describe("Instance routes", () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/instance/setup/claim",
-        payload: { token: rawToken, email: "admin@kanon.io", password: "password123" },
+        payload: { token: rawToken, email: "admin@kanon.io", password: "password123!" },
       });
 
       expect(res.statusCode).toBe(410);
@@ -217,7 +217,7 @@ describe("Instance routes", () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/instance/setup/claim",
-        payload: { token: rawToken, email: "admin@kanon.io", password: "password123" },
+        payload: { token: rawToken, email: "admin@kanon.io", password: "password123!" },
       });
 
       expect(res.statusCode).toBe(410);
@@ -228,11 +228,29 @@ describe("Instance routes", () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/instance/setup/claim",
-        payload: { token: "a".repeat(20), email: "admin@kanon.io", password: "password123" },
+        payload: { token: "a".repeat(20), email: "admin@kanon.io", password: "password123!" },
       });
 
       expect(res.statusCode).toBe(400);
       expect(res.json().code).toBe("INVALID_TOKEN");
+    });
+
+    it("(d2) weak password (< 12 chars) → 400 from schema validation, no super-admin created", async () => {
+      const rawToken = await seedLiveToken();
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/instance/setup/claim",
+        payload: { token: rawToken, email: "admin@kanon.io", password: "short1!" },
+      });
+
+      expect(res.statusCode).toBe(400);
+
+      // No user or owner created
+      const user = await prisma.user.findUnique({ where: { email: "admin@kanon.io" } });
+      expect(user).toBeNull();
+      const settings = await prisma.instanceSettings.findUnique({ where: { id: INSTANCE_SETTINGS_ID } });
+      expect(settings?.ownerUserId).toBeNull();
     });
 
     it("(e) email exists → 409 EMAIL_EXISTS, token NOT consumed, existing user untouched", async () => {
@@ -250,7 +268,7 @@ describe("Instance routes", () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/instance/setup/claim",
-        payload: { token: rawToken, email: "existing@kanon.io", password: "password123" },
+        payload: { token: rawToken, email: "existing@kanon.io", password: "password123!" },
       });
 
       expect(res.statusCode).toBe(409);
@@ -278,12 +296,12 @@ describe("Instance routes", () => {
         app.inject({
           method: "POST",
           url: "/api/instance/setup/claim",
-          payload: { token: rawToken, email: "racer1@kanon.io", password: "password123" },
+          payload: { token: rawToken, email: "racer1@kanon.io", password: "password123!" },
         }),
         app.inject({
           method: "POST",
           url: "/api/instance/setup/claim",
-          payload: { token: rawToken, email: "racer2@kanon.io", password: "password123" },
+          payload: { token: rawToken, email: "racer2@kanon.io", password: "password123!" },
         }),
       ]);
 
@@ -301,6 +319,12 @@ describe("Instance routes", () => {
       // Loser's 410 is TOKEN_USED
       const loser = res1.statusCode === 410 ? res1 : res2;
       expect(loser.json().code).toBe("TOKEN_USED");
+
+      // F2: loser must NOT have created an orphan user — exactly ONE user exists
+      const users = await prisma.user.findMany({
+        where: { email: { in: ["racer1@kanon.io", "racer2@kanon.io"] } },
+      });
+      expect(users).toHaveLength(1);
     });
   });
 

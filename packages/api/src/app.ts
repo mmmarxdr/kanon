@@ -124,8 +124,7 @@ export async function buildApp() {
       const raw = await bootstrapSetupToken(env.SETUP_TOKEN_TTL_DAYS);
       if (raw) {
         app.log.info(
-          `[SETUP] No instance owner. Claim super-admin at /setup with token: ${raw} ` +
-          `(expires in ${env.SETUP_TOKEN_TTL_DAYS} days). Stored hash only; this is the ONLY time the raw token is shown.`,
+          `[SETUP-TOKEN do-not-store] Instance setup token (valid ${env.SETUP_TOKEN_TTL_DAYS} days) — claim at /setup: ${raw}`,
         );
       }
     } catch (err) {
