@@ -2,6 +2,8 @@ import { test, expect } from "@playwright/test";
 import dotenv from "dotenv";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { execSync } from "node:child_process";
+import fs from "node:fs";
 import { login } from "../../helpers/auth.js";
 import { apiPost, getAuthToken } from "../../helpers/api.js";
 
@@ -47,6 +49,40 @@ test.describe("Workspace select — empty state (new user) @smoke", () => {
       password: newUserPassword,
       displayName: "WS Test User",
     });
+
+    // POST /api/workspaces is guarded by requireInstanceAdmin (KAN-49 / PR1a role model).
+    // Grant isInstanceAdmin so the create-workspace form submit succeeds.
+    // Plain-user-cannot-create-workspace (403 / UI-gated) E2E coverage is deferred to PR2
+    // when the web gates the create form behind isInstanceAdmin.
+    // Mirror the exact Prisma access pattern from global-setup.ts: run a temp script via
+    // npx tsx inside the api package dir where @prisma/client is installed.
+    const DATABASE_URL =
+      process.env["DATABASE_URL"] ??
+      "postgresql://kanon:kanon@localhost:5432/kanon_e2e?schema=public";
+    const apiPkgDir = path.resolve(__dirname, "../../../api");
+    const tmpScript = path.resolve(apiPkgDir, ".tmp-grant-instance-admin.mjs");
+    fs.writeFileSync(
+      tmpScript,
+      [
+        `import { PrismaClient } from '@prisma/client';`,
+        `const prisma = new PrismaClient();`,
+        `try {`,
+        `  await prisma.user.update({ where: { email: ${JSON.stringify(newUserEmail)} }, data: { isInstanceAdmin: true } });`,
+        `} finally {`,
+        `  await prisma.$disconnect();`,
+        `}`,
+      ].join("\n"),
+      "utf-8",
+    );
+    try {
+      execSync(`npx tsx ${tmpScript}`, {
+        cwd: apiPkgDir,
+        env: { ...process.env, DATABASE_URL },
+        stdio: "pipe",
+      });
+    } finally {
+      if (fs.existsSync(tmpScript)) fs.unlinkSync(tmpScript);
+    }
   });
 
   test("new user with no workspace sees create-workspace empty state", async ({
@@ -69,7 +105,7 @@ test.describe("Workspace select — empty state (new user) @smoke", () => {
     ).toBeVisible();
   });
 
-  test("new user can create a workspace and gets redirected", async ({
+  test("instance-admin user can create a workspace and gets redirected", async ({
     page,
   }) => {
     await login(page, { email: newUserEmail, password: newUserPassword });
