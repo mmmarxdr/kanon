@@ -760,10 +760,11 @@ export async function exchange(refreshToken: string) {
     throw new AppError(401, "TOKEN_EXPIRED", "Refresh token has expired");
   }
 
-  // 2. Update lastUsedAt (best-effort — do not abort on failure)
+  // 2. Update lastUsedAt + slide expiresAt (best-effort — do not abort on failure)
+  const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
   await prisma.refreshToken.update({
     where: { id: row.id },
-    data: { lastUsedAt: new Date() },
+    data: { lastUsedAt: new Date(), expiresAt: new Date(Date.now() + REFRESH_TTL_MS) },
   }).catch(() => {
     // Best-effort: never let this block the response
   });
@@ -771,5 +772,5 @@ export async function exchange(refreshToken: string) {
   // 3. Issue short-lived access token (KAN-19: pass allowedProjectIds for conditional claim)
   const accessToken = signAccessToken(row.userId, row.workspaceId, row.allowedProjectIds);
 
-  return { accessToken, expiresIn: 900 };
+  return { accessToken, expiresIn: 3600 };
 }
