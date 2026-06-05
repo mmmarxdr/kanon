@@ -97,7 +97,7 @@ export function DomainsSection({
                 setDomainError(null);
               }}
               placeholder="example.com"
-              className="w-full rounded-md border border-input bg-[#E8E8E8] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
             />
             {domainError && (
               <p className="mt-1 text-xs text-destructive">{domainError}</p>
