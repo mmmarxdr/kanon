@@ -429,3 +429,298 @@ describe("KanonClient 204 No Content", () => {
     expect(jsonSpy).not.toHaveBeenCalled();
   });
 });
+
+// ─── McpAuthError (T3.2 / T3.3) ─────────────────────────────────────────────
+// Fetch seam decision: vi.stubGlobal('fetch', mockFn) — global fetch already used in production.
+
+import { McpAuthError } from "./kanon-client.js";
+
+describe("McpAuthError", () => {
+  it("is an instance of McpAuthError and has code REFRESH_FAILED", () => {
+    const err = new McpAuthError({ code: "REFRESH_FAILED" });
+    expect(err).toBeInstanceOf(McpAuthError);
+    expect(err.code).toBe("REFRESH_FAILED");
+  });
+
+  it("is an instance of Error", () => {
+    const err = new McpAuthError({ code: "REFRESH_FAILED", message: "re-onboard" });
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe("re-onboard");
+  });
+});
+
+// ─── KanonClient 401-retry (R1) ──────────────────────────────────────────────
+
+/**
+ * Build a sequenced fetch mock that returns different responses per call.
+ * Each item in responses[] corresponds to one fetch() invocation (in order).
+ */
+function sequencedFetch(responses: Array<{ ok: boolean; status: number; body: unknown }>) {
+  let call = 0;
+  return vi.fn().mockImplementation(() => {
+    const r = responses[call++] ?? responses[responses.length - 1]!;
+    return Promise.resolve({
+      ok: r.ok,
+      status: r.status,
+      json: () => Promise.resolve(r.body),
+      text: () => Promise.resolve(JSON.stringify(r.body)),
+    });
+  });
+}
+
+const REFRESH_TOKEN = "rt-test-token";
+const NEW_ACCESS_TOKEN = "new-access-token-xyz";
+const EXCHANGE_RESPONSE = { accessToken: NEW_ACCESS_TOKEN, expiresIn: 3600 };
+
+describe("KanonClient 401-retry (R1)", () => {
+  let refreshClient: KanonClient;
+
+  beforeEach(() => {
+    vi.stubEnv("KANON_REFRESH_TOKEN", REFRESH_TOKEN);
+    refreshClient = new KanonClient({ baseUrl: BASE_URL, apiKey: "old-access-token" });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  // R1a: 401 → exchange(200) → retry(200) → resolves; exchange called once; retry uses new token
+  it("R1a: 401 → successful exchange → retry with new token → resolves", async () => {
+    const fetchMock = sequencedFetch([
+      { ok: false, status: 401, body: { code: "TOKEN_EXPIRED" } },           // original request 401
+      { ok: true,  status: 200, body: EXCHANGE_RESPONSE },                   // exchange succeeds
+      { ok: true,  status: 200, body: [{ id: "ws1", name: "Acme" }] },       // retry succeeds
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await refreshClient.listWorkspaces();
+    expect(result).toEqual([{ id: "ws1", name: "Acme" }]);
+
+    // Exchange called exactly once (second call to fetch)
+    const calls = fetchMock.mock.calls as [string, RequestInit][];
+    const exchangeCall = calls[1]!;
+    expect(exchangeCall[0]).toContain("/api/auth/exchange");
+
+    // Retry uses new access token
+    const retryCall = calls[2]!;
+    const retryHeaders = retryCall[1]!.headers as Record<string, string>;
+    expect(retryHeaders["Authorization"]).toBe(`Bearer ${NEW_ACCESS_TOKEN}`);
+  });
+
+  // R1b: 401 → exchange(401) → McpAuthError(REFRESH_FAILED); original NOT retried again
+  it("R1b: 401 → exchange returns 401 → throws McpAuthError(REFRESH_FAILED)", async () => {
+    const fetchMock = sequencedFetch([
+      { ok: false, status: 401, body: { code: "TOKEN_EXPIRED" } },
+      { ok: false, status: 401, body: { code: "TOKEN_REVOKED" } }, // exchange itself 401s
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(refreshClient.listWorkspaces()).rejects.toMatchObject({
+      code: "REFRESH_FAILED",
+    });
+    await expect(refreshClient.listWorkspaces().catch(e => e)).resolves.toBeInstanceOf(McpAuthError);
+
+    // Only 2 fetch calls total (original + exchange); no retry of original
+    expect(fetchMock).toHaveBeenCalledTimes(4); // 2 calls per listWorkspaces above
+  });
+
+  // R1c: 500 → exchange NOT called; error propagates as KanonApiError; no retry
+  it("R1c: 500 → exchange not called; KanonApiError propagates", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({ code: "INTERNAL_ERROR", message: "oops" }),
+      text: () => Promise.resolve(JSON.stringify({ code: "INTERNAL_ERROR", message: "oops" })),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(refreshClient.listWorkspaces()).rejects.toBeInstanceOf(KanonApiError);
+
+    // Only one fetch call — no exchange, no retry
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).not.toContain("/api/auth/exchange");
+  });
+
+  // R1d: 401 → exchange(200) → retry still 401 → McpAuthError; total exchange calls === 1
+  it("R1d: 401 → exchange succeeds → retry also 401 → McpAuthError; exchange called once", async () => {
+    const fetchMock = sequencedFetch([
+      { ok: false, status: 401, body: { code: "TOKEN_EXPIRED" } },
+      { ok: true,  status: 200, body: EXCHANGE_RESPONSE },
+      { ok: false, status: 401, body: { code: "TOKEN_EXPIRED" } }, // retry also 401
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const err = await refreshClient.listWorkspaces().catch(e => e);
+    expect(err).toBeInstanceOf(McpAuthError);
+    expect(err.code).toBe("REFRESH_FAILED");
+
+    // Exchange was called exactly once (call index 1)
+    const calls = fetchMock.mock.calls as [string, RequestInit][];
+    const exchangeCalls = calls.filter(([url]) => url.includes("/api/auth/exchange"));
+    expect(exchangeCalls).toHaveLength(1);
+  });
+
+  // R1e: exchange call itself returns 401 → McpAuthError; no recursion
+  it("R1e: exchange 401 → McpAuthError(REFRESH_FAILED); no recursive exchange", async () => {
+    const fetchMock = sequencedFetch([
+      { ok: false, status: 401, body: { code: "TOKEN_EXPIRED" } },
+      { ok: false, status: 401, body: { code: "EXCHANGE_401" } },
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const err = await refreshClient.listWorkspaces().catch(e => e);
+    expect(err).toBeInstanceOf(McpAuthError);
+    expect(err.code).toBe("REFRESH_FAILED");
+    expect(fetchMock).toHaveBeenCalledTimes(2); // original + exchange only
+  });
+
+  // T4: KANON_REFRESH_TOKEN unset → 401 propagates as KanonApiError, no exchange
+  it("T4: no KANON_REFRESH_TOKEN → 401 propagates as-is, no exchange attempted", async () => {
+    vi.unstubAllEnvs(); // clear KANON_REFRESH_TOKEN
+    const noRefreshClient = new KanonClient({ baseUrl: BASE_URL, apiKey: "old-token" });
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({ code: "TOKEN_EXPIRED", message: "expired" }),
+      text: () => Promise.resolve(JSON.stringify({ code: "TOKEN_EXPIRED", message: "expired" })),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const err = await noRefreshClient.listWorkspaces().catch(e => e);
+    expect(err).toBeInstanceOf(KanonApiError);
+    expect(err).not.toBeInstanceOf(McpAuthError);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // no exchange call
+  });
+});
+
+// ─── KanonClient single-flight guard (R2) ────────────────────────────────────
+
+describe("KanonClient single-flight exchange guard (R2)", () => {
+  let refreshClient: KanonClient;
+
+  beforeEach(() => {
+    vi.stubEnv("KANON_REFRESH_TOKEN", REFRESH_TOKEN);
+    refreshClient = new KanonClient({ baseUrl: BASE_URL, apiKey: "old-token" });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  // R2a + R2b: N concurrent 401s → exchange called exactly once; all N resolve
+  it("R2a/R2b: N concurrent 401s → exchange called once; all callers get successful response", async () => {
+    const N = 5;
+    let exchangeCallCount = 0;
+
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if ((url as string).includes("/api/auth/exchange")) {
+        exchangeCallCount++;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ accessToken: NEW_ACCESS_TOKEN, expiresIn: 3600 }),
+          text: () => Promise.resolve(JSON.stringify({ accessToken: NEW_ACCESS_TOKEN, expiresIn: 3600 })),
+        });
+      }
+      // All original requests 401
+      return Promise.resolve({
+        ok: false,
+        status: 401,
+        json: () => Promise.resolve({ code: "TOKEN_EXPIRED" }),
+        text: () => Promise.resolve(JSON.stringify({ code: "TOKEN_EXPIRED" })),
+      });
+    });
+
+    // Override the second call to /api/workspaces (retry) to succeed
+    let retryCount = 0;
+    const originalImpl = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url: string) => {
+      if (!(url as string).includes("/api/auth/exchange")) {
+        retryCount++;
+        if (retryCount > N) {
+          // These are retries — succeed
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve([{ id: "ws1" }]),
+            text: () => Promise.resolve(JSON.stringify([{ id: "ws1" }])),
+          });
+        }
+      }
+      return originalImpl(url);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const results = await Promise.all(
+      Array.from({ length: N }, () => refreshClient.listWorkspaces()),
+    );
+
+    expect(exchangeCallCount).toBe(1);
+    expect(results).toHaveLength(N);
+  });
+
+  // R2c: after first burst settles (exchange resolved), second 401 → new exchange (total === 2)
+  it("R2c: after first burst settles, second 401 triggers a new exchange (latch resets on resolve)", async () => {
+    let exchangeCallCount = 0;
+
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if ((url as string).includes("/api/auth/exchange")) {
+        exchangeCallCount++;
+        return Promise.resolve({
+          ok: true, status: 200,
+          json: () => Promise.resolve({ accessToken: NEW_ACCESS_TOKEN, expiresIn: 3600 }),
+          text: () => Promise.resolve(""),
+        });
+      }
+      return Promise.resolve({
+        ok: false, status: 401,
+        json: () => Promise.resolve({ code: "TOKEN_EXPIRED" }),
+        text: () => Promise.resolve(""),
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    // First burst
+    await refreshClient.listWorkspaces().catch(() => {});
+
+    // Second 401 after first burst settled
+    await refreshClient.listWorkspaces().catch(() => {});
+
+    expect(exchangeCallCount).toBe(2);
+  });
+
+  // R2d: after first burst settles (exchange rejected), second 401 → new exchange attempted (latch not stuck)
+  it("R2d: after failed burst, second 401 triggers a new exchange (latch resets on reject)", async () => {
+    let exchangeCallCount = 0;
+
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if ((url as string).includes("/api/auth/exchange")) {
+        exchangeCallCount++;
+        return Promise.resolve({
+          ok: false, status: 401,
+          json: () => Promise.resolve({ code: "REVOKED" }),
+          text: () => Promise.resolve(""),
+        });
+      }
+      return Promise.resolve({
+        ok: false, status: 401,
+        json: () => Promise.resolve({ code: "TOKEN_EXPIRED" }),
+        text: () => Promise.resolve(""),
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    // First burst → exchange fails
+    await refreshClient.listWorkspaces().catch(() => {});
+
+    // Second 401 → latch should be cleared; new exchange attempted
+    await refreshClient.listWorkspaces().catch(() => {});
+
+    expect(exchangeCallCount).toBe(2);
+  });
+});

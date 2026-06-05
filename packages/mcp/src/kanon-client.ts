@@ -31,6 +31,20 @@ export class KanonApiError extends Error {
 }
 
 /**
+ * Auth boundary error — thrown when token refresh fails at the request() boundary.
+ * Callers receiving this error should direct the user to re-run onboarding.
+ */
+export class McpAuthError extends Error {
+  public readonly code: string;
+
+  constructor({ code, message }: { code: string; message?: string }) {
+    super(message ?? "Refresh token expired or revoked — re-run onboarding to obtain new credentials.");
+    this.name = "McpAuthError";
+    this.code = code;
+  }
+}
+
+/**
  * Minimal project shape returned by the Kanon API.
  */
 export interface KanonProject {
@@ -206,12 +220,15 @@ export interface KanonClientOptions {
  */
 export class KanonClient {
   private readonly baseUrl: string;
-  private readonly apiKey: string | undefined;
+  private accessToken: string | undefined;
+  private readonly refreshToken: string | undefined;
   private readonly timeoutMs: number;
+  private inflightExchange: Promise<string> | null = null;
 
   constructor(options: KanonClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
-    this.apiKey = options.apiKey;
+    this.accessToken = options.apiKey;
+    this.refreshToken = process.env["KANON_REFRESH_TOKEN"];
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
@@ -695,7 +712,11 @@ export class KanonClient {
 
   // ─── Internal ───────────────────────────────────────────────────────────
 
-  private async request<T>(
+  /**
+   * Raw HTTP request — never retries. Reads this.accessToken at call time so
+   * retries after a token swap automatically pick up the new value.
+   */
+  private async doRequest<T>(
     method: string,
     path: string,
     body?: unknown,
@@ -705,10 +726,10 @@ export class KanonClient {
     const headers: Record<string, string> = {
       Accept: "application/json",
     };
-    if (this.apiKey) {
+    if (this.accessToken) {
       // Bearer-only — X-API-Key path removed in PR1 (KAN-35).
       // The wrapper always supplies a short-lived access JWT (eyJ…) from the exchange endpoint.
-      headers["Authorization"] = `Bearer ${this.apiKey}`;
+      headers["Authorization"] = `Bearer ${this.accessToken}`;
     }
     if (body !== undefined) {
       headers["Content-Type"] = "application/json";
@@ -749,5 +770,93 @@ export class KanonClient {
     }
 
     return (await response.json()) as T;
+  }
+
+  /**
+   * Outer request wrapper — intercepts 401 and triggers a single refresh exchange,
+   * then retries the original request exactly once. Non-401 errors propagate as-is.
+   * If no refresh token is available, behaves identically to doRequest (no retry).
+   */
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<T> {
+    try {
+      return await this.doRequest<T>(method, path, body);
+    } catch (err) {
+      if (
+        err instanceof KanonApiError &&
+        err.statusCode === 401 &&
+        this.refreshToken
+      ) {
+        try {
+          await this.refreshAccessToken();
+        } catch {
+          // Exchange failed — translate to boundary error
+          throw new McpAuthError({
+            code: "REFRESH_FAILED",
+            message: "Refresh token expired or revoked — re-run onboarding to obtain new credentials.",
+          });
+        }
+        // Retry once using doRequest (never loops — doRequest never retries)
+        try {
+          return await this.doRequest<T>(method, path, body);
+        } catch (retryErr) {
+          // Retry 401 or any error → boundary error
+          throw new McpAuthError({
+            code: "REFRESH_FAILED",
+            message: "Refresh token expired or revoked — re-run onboarding to obtain new credentials.",
+          });
+        }
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Single-flight exchange guard. Concurrent 401s all await the same promise.
+   * The latch is set BEFORE the async call and cleared in finally() so a later
+   * 401 can trigger a fresh exchange.
+   */
+  private async refreshAccessToken(): Promise<string> {
+    if (!this.inflightExchange) {
+      this.inflightExchange = this.doExchange()
+        .then((tok) => {
+          this.accessToken = tok;
+          return tok;
+        })
+        .finally(() => {
+          this.inflightExchange = null;
+        });
+    }
+    return this.inflightExchange;
+  }
+
+  /**
+   * Raw exchange call — POST /api/auth/exchange with the stored refresh token.
+   * Throws KanonApiError(REFRESH_EXCHANGE_FAILED) on non-2xx.
+   * NEVER logs the refresh token value — error messages contain HTTP status only.
+   */
+  private async doExchange(): Promise<string> {
+    const res = await fetch(`${this.baseUrl}/api/auth/exchange`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ refreshToken: this.refreshToken }),
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
+    if (!res.ok) {
+      // Generic message only — never echo token values
+      throw new KanonApiError(
+        res.status,
+        "REFRESH_EXCHANGE_FAILED",
+        `Token refresh failed (HTTP ${res.status}); re-run setup login`,
+      );
+    }
+    const data = (await res.json()) as { accessToken: string; expiresIn: number };
+    return data.accessToken;
   }
 }
