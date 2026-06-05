@@ -1,9 +1,11 @@
 import { createRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { authenticatedRoute } from "../_authenticated";
 import { fetchApi } from "@/lib/api-client";
 import { projectKeys } from "@/lib/query-keys";
 import type { Project } from "@/types/project";
+import { CreateProjectModal } from "@/features/projects/create-project-modal";
 
 export const projectSelectRoute = createRoute({
   path: "/workspaces/$workspaceId/projects",
@@ -11,9 +13,10 @@ export const projectSelectRoute = createRoute({
   component: ProjectSelectPage,
 });
 
-function ProjectSelectPage() {
+export function ProjectSelectPage() {
   const navigate = useNavigate();
   const { workspaceId } = projectSelectRoute.useParams();
+  const [showCreateProject, setShowCreateProject] = useState(false);
 
   const projectsQuery = useQuery({
     queryKey: projectKeys.list(workspaceId),
@@ -49,8 +52,17 @@ function ProjectSelectPage() {
         )}
 
         {projectsQuery.data && projectsQuery.data.length === 0 && (
-          <div className="py-8 text-center text-muted-foreground">
-            No projects in this workspace yet.
+          <div className="py-8 text-center">
+            <p className="mb-4 text-muted-foreground">
+              No projects in this workspace yet.
+            </p>
+            <button
+              data-testid="create-project-btn"
+              onClick={() => setShowCreateProject(true)}
+              className="rounded-md border border-border bg-card px-4 py-2 text-sm font-medium text-foreground hover:border-primary hover:bg-accent"
+            >
+              Create project
+            </button>
           </div>
         )}
 
@@ -85,6 +97,13 @@ function ProjectSelectPage() {
           </div>
         )}
       </div>
+
+      {showCreateProject && (
+        <CreateProjectModal
+          workspaceId={workspaceId}
+          onClose={() => setShowCreateProject(false)}
+        />
+      )}
     </div>
   );
 }
