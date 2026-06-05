@@ -5,8 +5,15 @@ import { z } from "zod";
 import { prisma } from "../../config/prisma.js";
 import { env } from "../../config/env.js";
 import { AppError } from "../../shared/types.js";
-import { BCRYPT_COST, TOKEN_EXPIRY } from "../../shared/constants.js";
+import { TOKEN_EXPIRY } from "../../shared/constants.js";
 import type { TokenPayload } from "../../shared/types.js";
+import {
+  generateOpaqueToken,
+  sha256Hex,
+  hashPassword,
+  signTokens,
+} from "./primitives.js";
+export { generateOpaqueToken, sha256Hex, hashPassword, signTokens };
 import type { RegisterBody, LoginBody } from "./schema.js";
 import type { EmailProvider } from "../../services/email/types.js";
 import { buildVerifyEmail } from "../../services/email/templates/verify.js";
@@ -14,23 +21,10 @@ import { buildResetEmail } from "../../services/email/templates/reset.js";
 import { ProjectAssignmentSchema } from "../invite/schema.js";
 import { createProjectMembersInTx } from "../project/project-member-service.js";
 import { acceptInvite, deriveUsername } from "../invite/service.js";
+import { consumeInstanceAdminInvite } from "../instance/service.js";
+import { INSTANCE_SETTINGS_ID } from "../../shared/constants.js";
 
 // ── D6 helpers ────────────────────────────────────────────────────────────────
-
-/**
- * Compute the SHA-256 hex digest of a string.
- * Used for hashing opaque refresh tokens before DB storage.
- */
-export function sha256Hex(input: string): string {
-  return createHash("sha256").update(input).digest("hex");
-}
-
-/**
- * Generate a cryptographically secure opaque token (256 bits, base64url).
- */
-export function generateOpaqueToken(): string {
-  return randomBytes(32).toString("base64url");
-}
 
 /**
  * Sign an onboarding JWT: scope=onboard, sub=inviteId, exp=ttlHours.
@@ -66,13 +60,6 @@ export function signAccessToken(
 }
 
 /**
- * Hash a password with bcrypt.
- */
-export async function hashPassword(password: string): Promise<string> {
-  return bcrypt.hash(password, BCRYPT_COST);
-}
-
-/**
  * Verify a password against a bcrypt hash.
  */
 export async function verifyPassword(
@@ -80,22 +67,6 @@ export async function verifyPassword(
   hash: string,
 ): Promise<boolean> {
   return bcrypt.compare(password, hash);
-}
-
-/**
- * Sign a JWT access + refresh token pair for a user.
- */
-export function signTokens(payload: TokenPayload): {
-  accessToken: string;
-  refreshToken: string;
-} {
-  const accessToken = jwt.sign(payload, env.JWT_SECRET, {
-    expiresIn: TOKEN_EXPIRY.ACCESS,
-  });
-  const refreshToken = jwt.sign(payload, env.JWT_REFRESH_SECRET, {
-    expiresIn: TOKEN_EXPIRY.REFRESH,
-  });
-  return { accessToken, refreshToken };
 }
 
 /**
@@ -134,6 +105,15 @@ export function verifyRefreshToken(token: string): TokenPayload {
  * separately. Deviation from design's "same tx" wording — acceptInvite owns its own
  * transaction and its signature cannot be changed in this slice.
  */
+/**
+ * Extract the domain from an email address (lowercase).
+ * Returns empty string if the email is malformed.
+ */
+function extractEmailDomain(email: string): string {
+  const parts = email.split("@");
+  return (parts[1] ?? "").toLowerCase();
+}
+
 export async function register(
   body: RegisterBody,
   emailProvider: EmailProvider,
@@ -144,6 +124,47 @@ export async function register(
   accessToken?: string;
   refreshToken?: string;
 }> {
+  // ── Signup policy gate (PR1b, KAN-49) ─────────────────────────────────────
+  // Precedence: invite token present → bypass gate entirely (invite path handles auth).
+  // Otherwise: read InstanceSettings and enforce signupMode + allowedSignupDomains.
+  // Default state (open + empty allowlist) = allow-all → existing tests unaffected (B5 guard).
+  if (!body.invite) {
+    const settings = await prisma.instanceSettings.findUnique({
+      where: { id: INSTANCE_SETTINGS_ID },
+      select: { signupMode: true, allowedSignupDomains: true },
+    });
+
+    if (settings) {
+      const { signupMode, allowedSignupDomains } = settings;
+
+      if (signupMode === "closed") {
+        throw new AppError(403, "SIGNUP_CLOSED", "Registrations are closed for this instance");
+      }
+
+      if (signupMode === "invite") {
+        // invite mode without a token — body.invite is falsy
+        throw new AppError(403, "INVITE_REQUIRED", "An invite is required to register");
+      }
+
+      // signupMode === "open": enforce domain allowlist if non-empty
+      if (signupMode === "open" && allowedSignupDomains.length > 0) {
+        const domain = extractEmailDomain(body.email);
+        const allowed = allowedSignupDomains.some(
+          (d) => d.toLowerCase() === domain,
+        );
+        if (!allowed) {
+          throw new AppError(
+            403,
+            "DOMAIN_NOT_ALLOWED",
+            "Your email domain is not permitted to register on this instance",
+          );
+        }
+      }
+      // open + empty allowlist → allow-all (no-op)
+    }
+  }
+  // ── End signup policy gate ─────────────────────────────────────────────────
+
   // Check for duplicate email globally
   const existingUser = await prisma.user.findUnique({
     where: { email: body.email },
@@ -589,7 +610,37 @@ export async function onboard(token: string) {
     throw new AppError(400, "INVALID_TOKEN", "Invalid onboarding token");
   }
 
-  // 2. Assert scope=onboard
+  // 2a. Instance-admin onboard branch (PR1b, KAN-49).
+  //     Runs BEFORE the workspace-member scope check so the generic "invalid scope" error
+  //     is never reached for legitimate instance_onboard tokens.
+  if (payload.scope === "instance_onboard") {
+    return prisma.$transaction(async (tx) => {
+      // Upsert user by email from the invite row (passwordless if absent,
+      // reuse unchanged if present — mirrors workspace onboard upsert).
+      // Email is admin-controlled — sourced from InstanceAdminInvite.email, not caller input.
+      const invite = await (tx as typeof prisma).instanceAdminInvite.findUnique({
+        where: { jwtSub: payload.sub },
+        select: { email: true },
+      });
+      if (!invite) {
+        throw new AppError(400, "INVALID_TOKEN", "Instance admin invite not found");
+      }
+
+      const user = await (tx as typeof prisma).user.upsert({
+        where: { email: invite.email },
+        create: { email: invite.email, passwordHash: null, emailVerifiedAt: new Date() },
+        update: {},
+        select: { id: true, email: true },
+      });
+
+      // consumeInstanceAdminInvite: verifies JWT again internally + grants isInstanceAdmin
+      await consumeInstanceAdminInvite(tx, token, user.id);
+
+      return { ok: true as const, email: user.email };
+    });
+  }
+
+  // 2b. Assert scope=onboard (workspace-member path)
   if (payload.scope !== "onboard") {
     throw new AppError(400, "INVALID_TOKEN", "Invalid token scope");
   }

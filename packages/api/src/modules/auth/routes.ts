@@ -21,6 +21,7 @@ import {
   ResetPasswordResponse,
   OnboardBody,
   OnboardResponse,
+  InstanceOnboardResponse,
   ExchangeBody,
   ExchangeResponse,
   RefreshIssueResponse,
@@ -28,6 +29,7 @@ import {
   VerifyEmailResponse,
   ResendVerificationResponse,
 } from "./schema.js";
+import { z } from "zod";
 import * as authService from "./service.js";
 import { createEmailProvider } from "../../services/email/index.js";
 
@@ -336,7 +338,11 @@ export default async function authRoutes(
 
   /**
    * POST /api/auth/onboard
-   * Consume a single-use onboarding JWT and issue a long-lived opaque refresh token.
+   * Consume a single-use onboarding JWT.
+   *
+   * - scope=onboard         → workspace-member path (existing): returns OnboardResponse
+   * - scope=instance_onboard → instance-admin path (PR1b): returns InstanceOnboardResponse
+   *
    * Public — all /api/auth/* routes are already in PUBLIC_PREFIXES.
    */
   app.post(
@@ -344,7 +350,7 @@ export default async function authRoutes(
     {
       schema: {
         body: OnboardBody,
-        response: { 200: OnboardResponse },
+        response: { 200: z.union([OnboardResponse, InstanceOnboardResponse]) },
       },
     },
     async (request, _reply) => {

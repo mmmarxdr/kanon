@@ -53,3 +53,24 @@ export const ClaimResponse = z.object({
   accessToken: z.string(),
   refreshToken: z.string(),
 });
+
+/**
+ * Body schema for POST /api/instance/admins/invites (PR1b, KAN-49).
+ * Super-admin mints an instance-level admin onboarding invite.
+ */
+export const MintInstanceAdminInviteBody = z.object({
+  email: z.string().email("Must be a valid email address"),
+  ttlHours: z.number().int().min(1).max(720).optional(),
+});
+export type MintInstanceAdminInviteBodyType = z.infer<typeof MintInstanceAdminInviteBody>;
+
+/**
+ * Response schema for POST /api/instance/admins/invites (PR1b, KAN-49).
+ * Mirrors OnboardingInviteResponse from invite/schema.ts.
+ */
+export const MintInstanceAdminInviteResponse = z.object({
+  inviteId: z.string().uuid(),
+  url: z.string(),       // kanon://<host>/onboard?token=<jwt>
+  token: z.string(),     // raw JWT — for the admin UI
+  expiresAt: z.string().datetime(),
+});

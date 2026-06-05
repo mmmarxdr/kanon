@@ -8,10 +8,13 @@ import {
   seedTestProject,
   cleanDatabase,
   disconnectTestDb,
+  seedInstanceAdminUser,
 } from "../../test/helpers.js";
 import { prisma } from "../../config/prisma.js";
+import { INSTANCE_SETTINGS_ID } from "../../shared/constants.js";
 import { env } from "../../config/env.js";
 import { onboard } from "./service.js";
+import { mintInstanceAdminInvite } from "../instance/service.js";
 
 /**
  * Integration tests for R-NUI-cli-consume (and R-NUI-cli-create):
@@ -503,5 +506,129 @@ describe("createOnboardingInvite — admit non-member email (R-NUI-cli-create)",
 
     // Must be 400 — neither userId nor email provided
     expect(res.statusCode).toBe(400);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1b.8 / 1b.9 — POST /api/auth/onboard with scope:instance_onboard
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("onboard() — instance_onboard scope (PR1b)", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await createTestApp();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await cleanDatabase();
+    await disconnectTestDb();
+  });
+
+  beforeEach(async () => {
+    await cleanDatabase();
+  });
+
+  /** Mint a real InstanceAdminInvite and return its JWT token */
+  async function mintInvite(email: string): Promise<string> {
+    const superAdmin = await prisma.user.create({
+      data: {
+        email: `super-${Math.random().toString(36).slice(2)}@kanon.test`,
+        isSuperAdmin: true,
+        isInstanceAdmin: true,
+      },
+    });
+    const result = await prisma.$transaction((tx) =>
+      mintInstanceAdminInvite(tx, { email, createdById: superAdmin.id }),
+    );
+    return result.token;
+  }
+
+  it("(a) valid instance_onboard token grants isInstanceAdmin=true and marks consumed", async () => {
+    const token = await mintInvite("invitee@kanon.test");
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/auth/onboard",
+      payload: { token },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.ok).toBe(true);
+    expect(body.email).toBe("invitee@kanon.test");
+
+    // User was upserted and granted instance-admin
+    const user = await prisma.user.findUnique({
+      where: { email: "invitee@kanon.test" },
+      select: { isInstanceAdmin: true },
+    });
+    expect(user?.isInstanceAdmin).toBe(true);
+
+    // Invite marked consumed
+    const invite = await prisma.instanceAdminInvite.findFirst({
+      where: { email: "invitee@kanon.test" },
+      select: { consumedAt: true },
+    });
+    expect(invite?.consumedAt).not.toBeNull();
+  });
+
+  it("(b) consumed token returns 4xx (TOKEN_CONSUMED)", async () => {
+    const token = await mintInvite("invitee2@kanon.test");
+
+    // First consume — succeeds
+    await app.inject({
+      method: "POST",
+      url: "/api/auth/onboard",
+      payload: { token },
+    });
+
+    // Second consume — must fail
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/auth/onboard",
+      payload: { token },
+    });
+
+    expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    expect(res.json().code).toBe("TOKEN_CONSUMED");
+  });
+
+  it("(c) workspace-scoped (scope=onboard) token still routes to existing workspace-member path (regression)", async () => {
+    // Create a workspace onboarding invite (scope=onboard, existing path)
+    const ws = await seedTestWorkspace();
+    const admin = await seedTestMemberWithRole(ws.id, "admin");
+
+    // Login to get access token for invite creation
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { email: admin.email, password: "password123" },
+    });
+    const { accessToken } = loginRes.json();
+
+    // Create workspace onboarding invite
+    const inviteRes = await app.inject({
+      method: "POST",
+      url: `/api/workspaces/${ws.id}/invites/onboarding`,
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { email: "ws-onboard@kanon.test" },
+    });
+    expect(inviteRes.statusCode).toBe(201);
+    const { token: wsToken } = inviteRes.json();
+
+    // Consume via /api/auth/onboard — should still work (workspace path)
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/auth/onboard",
+      payload: { token: wsToken },
+    });
+
+    // Workspace-scoped onboard returns refreshToken (not { ok, email })
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body).toHaveProperty("refreshToken");
+    expect(body).toHaveProperty("workspace");
   });
 });

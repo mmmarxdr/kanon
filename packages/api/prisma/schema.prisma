@@ -126,6 +126,7 @@ model User {
   projectMembers           ProjectMember[]
   emailVerificationTokens  EmailVerificationToken[]
   instanceOwnership        InstanceSettings?
+  createdInstanceInvites   InstanceAdminInvite[]
 
   @@map("users")
 }
@@ -629,4 +630,30 @@ model SetupToken {
   createdAt DateTime  @default(now()) @map("created_at")
 
   @@map("setup_tokens")
+}
+
+/// Instance-level admin invite (KAN-49 first-run-bootstrap PR1b).
+/// Separate from workspace_invites — no nullable surgery on that table.
+/// JWT scope="instance_onboard", sub=id. Single-use: consumedAt guards replay.
+model InstanceAdminInvite {
+  id          String    @id @default(uuid()) @db.Uuid
+  /// Raw JWT token (also the kanon:// payload)
+  token       String    @unique
+  /// Recipient email (admin-controlled at creation time)
+  email       String
+  /// JWT sub claim — equals id; stored for fast lookup in consumeInstanceAdminInvite
+  jwtSub      String    @unique @map("jwt_sub")
+  /// Set when the invite is consumed; blocks replay
+  consumedAt  DateTime? @map("consumed_at")
+  /// Set when the invite is manually revoked
+  revokedAt   DateTime? @map("revoked_at")
+  /// Token expiry (JWT exp mirrors this; DB check is defense-in-depth)
+  expiresAt   DateTime  @map("expires_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  createdById String @map("created_by_id") @db.Uuid
+  createdBy   User   @relation(fields: [createdById], references: [id])
+
+  @@index([jwtSub])
+  @@map("instance_admin_invites")
 }

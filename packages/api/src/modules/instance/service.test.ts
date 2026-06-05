@@ -9,10 +9,11 @@
  */
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
+import jwt from "jsonwebtoken";
 import { prisma } from "../../config/prisma.js";
 import { INSTANCE_SETTINGS_ID } from "../../shared/constants.js";
 import { cleanDatabase, disconnectTestDb } from "../../test/helpers.js";
-import { grantInstanceAdmin, claimInstance } from "./service.js";
+import { grantInstanceAdmin, claimInstance, mintInstanceAdminInvite, consumeInstanceAdminInvite } from "./service.js";
 import { sha256Hex, generateOpaqueToken } from "../auth/service.js";
 
 // ---------------------------------------------------------------------------
@@ -175,5 +176,95 @@ describe("claimInstance dual-grant", () => {
     // No second user was created
     const users = await prisma.user.findMany({ where: { email: "admin2@kanon.test" } });
     expect(users).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 1b.1 / 1b.3 / 1b.4 — mintInstanceAdminInvite + consumeInstanceAdminInvite
+// ---------------------------------------------------------------------------
+
+async function createSuperAdmin(): Promise<{ id: string; email: string }> {
+  const user = await prisma.user.create({
+    data: {
+      email: `super-${randomUUID().slice(0, 8)}@kanon.test`,
+      passwordHash: "$2b$04$placeholder",
+      isSuperAdmin: true,
+      isInstanceAdmin: true,
+    },
+  });
+  return user;
+}
+
+describe("mintInstanceAdminInvite + consumeInstanceAdminInvite", () => {
+  it("1b.1: consumeInstanceAdminInvite grants isInstanceAdmin=true and marks token consumed", async () => {
+    const admin = await createSuperAdmin();
+    // Mint invite
+    const { token, inviteId } = await prisma.$transaction((tx) =>
+      mintInstanceAdminInvite(tx, { email: "invitee@kanon.test", createdById: admin.id }),
+    );
+
+    // Create the invitee user (passwordless)
+    const invitee = await prisma.user.create({
+      data: { email: "invitee@kanon.test", passwordHash: null },
+    });
+
+    // Consume
+    await prisma.$transaction((tx) => consumeInstanceAdminInvite(tx, token, invitee.id));
+
+    // Assert isInstanceAdmin=true
+    const updated = await prisma.user.findUnique({
+      where: { id: invitee.id },
+      select: { isInstanceAdmin: true },
+    });
+    expect(updated?.isInstanceAdmin).toBe(true);
+
+    // Assert consumedAt set on invite row
+    const invite = await (prisma as any).instanceAdminInvite.findUnique({
+      where: { id: inviteId },
+      select: { consumedAt: true },
+    });
+    expect(invite?.consumedAt).not.toBeNull();
+  });
+
+  it("1b.1: reusing a consumed token returns 4xx (TOKEN_CONSUMED)", async () => {
+    const admin = await createSuperAdmin();
+    const { token } = await prisma.$transaction((tx) =>
+      mintInstanceAdminInvite(tx, { email: "invitee2@kanon.test", createdById: admin.id }),
+    );
+
+    const invitee = await prisma.user.create({
+      data: { email: "invitee2@kanon.test", passwordHash: null },
+    });
+
+    // First consume — succeeds
+    await prisma.$transaction((tx) => consumeInstanceAdminInvite(tx, token, invitee.id));
+
+    // Second consume — must reject
+    const invitee2 = await prisma.user.create({
+      data: { email: "invitee2b@kanon.test", passwordHash: null },
+    });
+    await expect(
+      prisma.$transaction((tx) => consumeInstanceAdminInvite(tx, token, invitee2.id)),
+    ).rejects.toMatchObject({ statusCode: 410, code: "TOKEN_CONSUMED" });
+  });
+
+  it("1b.3: mintInstanceAdminInvite returns { inviteId, url, token, expiresAt } with correct structure", async () => {
+    const admin = await createSuperAdmin();
+    const result = await prisma.$transaction((tx) =>
+      mintInstanceAdminInvite(tx, { email: "newinvitee@kanon.test", createdById: admin.id }),
+    );
+
+    expect(result).toHaveProperty("inviteId");
+    expect(result).toHaveProperty("url");
+    expect(result).toHaveProperty("token");
+    expect(result).toHaveProperty("expiresAt");
+
+    // url is kanon://
+    expect(result.url).toMatch(/^kanon:\/\//);
+
+    // token is a valid JWT with scope=instance_onboard
+    const payload = jwt.decode(result.token) as Record<string, unknown>;
+    expect(payload["scope"]).toBe("instance_onboard");
+    expect(typeof payload["sub"]).toBe("string");
   });
 });

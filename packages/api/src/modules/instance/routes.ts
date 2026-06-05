@@ -20,6 +20,8 @@ import { INSTANCE_SETTINGS_ID } from "../../shared/constants.js";
 import {
   ClaimBody,
   ClaimResponse,
+  MintInstanceAdminInviteBody,
+  MintInstanceAdminInviteResponse,
   PatchSettingsBody,
   SettingsResponse,
   StatusResponse,
@@ -133,6 +135,33 @@ export default async function instanceRoutes(
         createdAt: settings.createdAt.toISOString(),
         updatedAt: settings.updatedAt.toISOString(),
       });
+    },
+  );
+
+  // ─── POST /admins/invites (requireSuperAdmin) — PR1b ─────────────────────
+
+  /**
+   * Mint an instance-level admin invite (kanon:// URL + JWT).
+   * Guarded by requireSuperAdmin() — only the instance super-admin may mint.
+   */
+  app.post(
+    "/admins/invites",
+    {
+      preHandler: [requireSuperAdmin()],
+      schema: {
+        body: MintInstanceAdminInviteBody,
+        response: { 201: MintInstanceAdminInviteResponse },
+      },
+    },
+    async (request, reply) => {
+      const result = await prisma.$transaction((tx) =>
+        instanceService.mintInstanceAdminInvite(tx, {
+          email: request.body.email,
+          ttlHours: request.body.ttlHours,
+          createdById: request.user.userId,
+        }),
+      );
+      return reply.status(201).send(result);
     },
   );
 }
