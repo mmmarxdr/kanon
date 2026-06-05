@@ -274,4 +274,71 @@ describe("runWrapper", () => {
     expect(stderrOutput.join("")).toMatch(/No credentials found/i);
     expect(stderrOutput.join("")).toMatch(/npx @kanon-pm\/setup/i);
   });
+
+  /**
+   * R3a — Child env contains both KANON_API_KEY and KANON_REFRESH_TOKEN
+   */
+  it("R3a: spawns child with both KANON_API_KEY and KANON_REFRESH_TOKEN set", async () => {
+    const { runWrapper } = await import("./wrapper.js");
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ accessToken: "acc-token-r3a", expiresIn: 3600 }),
+    });
+
+    const mockChild = makeMockChild(0);
+    const spawnFn = makeSpawn(mockChild);
+
+    const deps: WrapperDeps = {
+      argv: ["node", "wrapper.js", "--server", "https://server.example.com"],
+      env: {},
+      fetch: mockFetch,
+      getCredentialStore: () => makeCredStore({ refreshToken: "refresh-tok-r3a" }),
+      stderr: { write: (s: string) => { stderrOutput.push(s); } },
+      exit: (code: number) => { exitCode = code; },
+      spawn: spawnFn as unknown as WrapperDeps["spawn"],
+    };
+
+    await runWrapper(deps);
+
+    expect(spawnFn).toHaveBeenCalledOnce();
+    const [, , opts] = spawnFn.mock.calls[0] as [string, string[], SpawnOptions & { env: Record<string, string> }];
+    expect(opts.env["KANON_API_KEY"]).toBe("acc-token-r3a");
+    expect(opts.env["KANON_REFRESH_TOKEN"]).toBe("refresh-tok-r3a");
+    expect(exitCode).toBe(0);
+  });
+
+  /**
+   * R3b — No refresh token: child spawns successfully, KANON_REFRESH_TOKEN absent/empty
+   * (This path uses KANON_API_KEY=JWT passthrough, so no exchange needed)
+   */
+  it("R3b: JWT passthrough path spawns without KANON_REFRESH_TOKEN causing errors", async () => {
+    const { runWrapper } = await import("./wrapper.js");
+
+    const mockFetch = vi.fn();
+    const mockChild = makeMockChild(0);
+    const spawnFn = makeSpawn(mockChild);
+    const jwtToken = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.sig";
+
+    const deps: WrapperDeps = {
+      argv: ["node", "wrapper.js", "--server", "https://server.example.com"],
+      env: { KANON_API_KEY: jwtToken },
+      fetch: mockFetch,
+      getCredentialStore: () => makeCredStore({ refreshToken: "should-not-be-read" }),
+      stderr: { write: (s: string) => { stderrOutput.push(s); } },
+      exit: (code: number) => { exitCode = code; },
+      spawn: spawnFn as unknown as WrapperDeps["spawn"],
+    };
+
+    await runWrapper(deps);
+
+    expect(spawnFn).toHaveBeenCalledOnce();
+    const [, , opts] = spawnFn.mock.calls[0] as [string, string[], SpawnOptions & { env: Record<string, string> }];
+    // Must spawn successfully — no error thrown
+    expect(exitCode).toBe(0);
+    // KANON_REFRESH_TOKEN may be absent or empty but no crash
+    const refreshInEnv = opts.env["KANON_REFRESH_TOKEN"];
+    expect(refreshInEnv === undefined || refreshInEnv === "").toBe(true);
+  });
 });

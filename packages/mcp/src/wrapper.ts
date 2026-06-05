@@ -152,6 +152,7 @@ export async function runWrapper(deps?: Partial<WrapperDeps>): Promise<void> {
       ...env,
       KANON_API_KEY: accessToken,
       KANON_API_URL: server,
+      ...(creds.refreshToken ? { KANON_REFRESH_TOKEN: creds.refreshToken } : {}),
     },
     exit
   );
