@@ -39,11 +39,13 @@ export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!agreedToTerms) return;
     setError(null);
     setLoading(true);
 
@@ -92,11 +94,19 @@ export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
     }
   }
 
+  // Invite-aware copy: when an invite is present, frame as joining.
+  const eyebrow = invite ? "You've been invited" : "New here";
+  const title = invite ? "Join your team." : "Create your account.";
+  const subtitle = invite
+    ? "Set up your account to start collaborating."
+    : "Free for teams under 10. No credit card.";
+  const submitLabel = invite ? "Join workspace →" : "Create account →";
+
   return (
     <AuthLayout
-      eyebrow="New here"
-      title="Set up your workspace."
-      subtitle="Two minutes to a working tracker. Invite your team after."
+      eyebrow={eyebrow}
+      title={title}
+      subtitle={subtitle}
       footer={
         <div
           style={{
@@ -129,8 +139,8 @@ export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
         style={{ display: "flex", flexDirection: "column", gap: 22 }}
       >
         <div>
-          <H2>Create your account</H2>
-          <Sub>Free for teams under 10. No credit card.</Sub>
+          <H2>{invite ? "Join your team" : "Create your account"}</H2>
+          <Sub>{subtitle}</Sub>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -165,14 +175,46 @@ export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
           />
         </div>
 
+        {/* Terms of Service — required gate, client-side only */}
+        <label
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 8,
+            fontSize: 11.5,
+            color: "var(--ink-3)",
+            lineHeight: 1.5,
+            cursor: "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            data-testid="tos-checkbox"
+            checked={agreedToTerms}
+            onChange={(e) => setAgreedToTerms(e.target.checked)}
+            style={{ marginTop: 2, accentColor: "var(--accent)" }}
+          />
+          <span>
+            I agree to Kanon's{" "}
+            <button type="button" style={{ color: "var(--accent-ink)" }}>
+              Terms of Service
+            </button>{" "}
+            and{" "}
+            <button type="button" style={{ color: "var(--accent-ink)" }}>
+              Privacy Policy
+            </button>
+            .
+          </span>
+        </label>
+
         {error && (
           <div data-testid="register-error">
             <ErrorBox>{error}</ErrorBox>
           </div>
         )}
 
-        <PrimaryBtn disabled={loading}>
-          {loading ? "Creating account…" : "Create account →"}
+        <PrimaryBtn disabled={loading || !agreedToTerms}>
+          {loading ? "Creating account…" : submitLabel}
         </PrimaryBtn>
       </form>
     </AuthLayout>

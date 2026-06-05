@@ -173,6 +173,10 @@ interface Workspace {
   name: string;
   slug: string;
   createdAt: string;
+  /** Optional — only rendered when present; not currently returned by GET /api/workspaces */
+  role?: string;
+  /** Optional — only rendered when present; not currently returned by GET /api/workspaces */
+  memberCount?: number;
 }
 
 interface Project {
@@ -511,6 +515,44 @@ export function WorkspaceSelectPage() {
                           {ws.slug}
                         </span>
                       </div>
+                      {/* Role badge + member count — rendered only when the API provides them */}
+                      {(ws.role !== undefined || ws.memberCount !== undefined) && (
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            fontSize: 11,
+                            color: "var(--ink-3)",
+                            marginTop: 1,
+                          }}
+                        >
+                          {ws.memberCount !== undefined && (
+                            <span>
+                              {ws.memberCount}{" "}
+                              {ws.memberCount === 1 ? "person" : "people"}
+                            </span>
+                          )}
+                          {ws.memberCount !== undefined && ws.role !== undefined && (
+                            <span style={{ color: "var(--ink-4)" }}>·</span>
+                          )}
+                          {ws.role !== undefined && (
+                            <span
+                              data-testid={`workspace-role-badge-${ws.slug}`}
+                              className="mono"
+                              style={{
+                                padding: "1px 5px",
+                                border: "1px solid var(--line-2)",
+                                borderRadius: 3,
+                                fontSize: 9.5,
+                                color: "var(--ink-2)",
+                              }}
+                            >
+                              {ws.role}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <span style={{ fontSize: 16, color: "var(--ink-4)" }}>
                       →

@@ -94,6 +94,8 @@ describe("RegisterForm — 1-hop invite auto-login (G2 / R-NUI-autologin)", () =
     fireEvent.change(screen.getByLabelText(/password/i), {
       target: { value: password },
     });
+    // ToS checkbox must be checked — otherwise the guard returns early.
+    fireEvent.click(screen.getByTestId("tos-checkbox"));
     fireEvent.submit(screen.getByTestId("register-form"));
   }
 

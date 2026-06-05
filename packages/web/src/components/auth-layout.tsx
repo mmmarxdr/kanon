@@ -464,3 +464,117 @@ export function SuccessBox({ children }: { children: ReactNode }) {
     </div>
   );
 }
+
+// ─── New primitives for the auth screen polish ────────────────────────────────
+
+interface GhostBtnProps {
+  children: ReactNode;
+  disabled?: boolean;
+  onClick?: () => void;
+  icon?: ReactNode;
+  /** forwarded to the button for testability */
+  "data-testid"?: string;
+}
+
+export function GhostBtn({
+  children,
+  disabled,
+  onClick,
+  icon,
+  "data-testid": testId,
+}: GhostBtnProps) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      data-testid={testId}
+      style={{
+        width: "100%",
+        height: 36,
+        background: "var(--panel)",
+        color: disabled ? "var(--ink-4)" : "var(--ink-2)",
+        border: "1px solid var(--line)",
+        borderRadius: 5,
+        fontSize: 13,
+        fontWeight: 500,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.55 : 1,
+      }}
+    >
+      {icon}
+      {children}
+    </button>
+  );
+}
+
+export function MonoDivider({ label }: { label: string }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        color: "var(--ink-4)",
+      }}
+    >
+      <span
+        style={{ flex: 1, height: 1, background: "var(--line)" }}
+      />
+      <span
+        className="mono"
+        style={{
+          fontSize: 10,
+          letterSpacing: "0.08em",
+          textTransform: "uppercase",
+        }}
+      >
+        {label}
+      </span>
+      <span
+        style={{ flex: 1, height: 1, background: "var(--line)" }}
+      />
+    </div>
+  );
+}
+
+/**
+ * Wraps a disabled affordance with a "Coming soon" tooltip on hover.
+ * Uses CSS title attribute via aria-label for accessibility, and a
+ * lightweight CSS tooltip for visual indication.
+ */
+export function ComingSoonTooltip({ children }: { children: ReactNode }) {
+  return (
+    <div
+      className="coming-soon-wrap"
+      title="Coming soon"
+      style={{ position: "relative", display: "block" }}
+    >
+      {children}
+      <style>{`
+        .coming-soon-wrap:hover::after {
+          content: "Coming soon";
+          position: absolute;
+          top: 50%;
+          right: 8px;
+          transform: translateY(-50%);
+          font-size: 9.5px;
+          font-family: var(--font-mono, monospace);
+          letter-spacing: 0.05em;
+          color: var(--ink-4);
+          background: var(--bg-2);
+          border: 1px solid var(--line);
+          padding: 2px 6px;
+          border-radius: 3px;
+          pointer-events: none;
+          white-space: nowrap;
+          z-index: 10;
+        }
+      `}</style>
+    </div>
+  );
+}
