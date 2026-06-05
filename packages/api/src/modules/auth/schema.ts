@@ -168,7 +168,7 @@ export const OnboardBody = z.object({
 export type OnboardBody = z.infer<typeof OnboardBody>;
 
 /**
- * POST /api/auth/onboard response.
+ * POST /api/auth/onboard response — workspace-member path (scope=onboard).
  * Returns a long-lived opaque refresh token for the CLI credential store.
  */
 export const OnboardResponse = z.object({
@@ -181,6 +181,15 @@ export const OnboardResponse = z.object({
   }),
   email: z.string().email(),
   expiresAt: z.string().datetime(),
+});
+
+/**
+ * POST /api/auth/onboard response — instance-admin path (scope=instance_onboard, PR1b).
+ * No workspace or RefreshToken row — the user sets their password via forgot-password flow.
+ */
+export const InstanceOnboardResponse = z.object({
+  ok: z.literal(true),
+  email: z.string().email(),
 });
 
 // ── Refresh-issue (login → opaque token) ─────────────────────────────────────

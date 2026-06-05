@@ -14,6 +14,7 @@ import { buildResetEmail } from "../../services/email/templates/reset.js";
 import { ProjectAssignmentSchema } from "../invite/schema.js";
 import { createProjectMembersInTx } from "../project/project-member-service.js";
 import { acceptInvite, deriveUsername } from "../invite/service.js";
+import { consumeInstanceAdminInvite } from "../instance/service.js";
 
 // ── D6 helpers ────────────────────────────────────────────────────────────────
 
@@ -589,7 +590,37 @@ export async function onboard(token: string) {
     throw new AppError(400, "INVALID_TOKEN", "Invalid onboarding token");
   }
 
-  // 2. Assert scope=onboard
+  // 2a. Instance-admin onboard branch (PR1b, KAN-49).
+  //     Runs BEFORE the workspace-member scope check so the generic "invalid scope" error
+  //     is never reached for legitimate instance_onboard tokens.
+  if (payload.scope === "instance_onboard") {
+    return prisma.$transaction(async (tx) => {
+      // Upsert user by email from the invite row (passwordless if absent,
+      // reuse unchanged if present — mirrors workspace onboard upsert).
+      // Email is admin-controlled — sourced from InstanceAdminInvite.email, not caller input.
+      const invite = await (tx as typeof prisma).instanceAdminInvite.findUnique({
+        where: { jwtSub: payload.sub },
+        select: { email: true },
+      });
+      if (!invite) {
+        throw new AppError(400, "INVALID_TOKEN", "Instance admin invite not found");
+      }
+
+      const user = await (tx as typeof prisma).user.upsert({
+        where: { email: invite.email },
+        create: { email: invite.email, passwordHash: null, emailVerifiedAt: new Date() },
+        update: {},
+        select: { id: true, email: true },
+      });
+
+      // consumeInstanceAdminInvite: verifies JWT again internally + grants isInstanceAdmin
+      await consumeInstanceAdminInvite(tx, token, user.id);
+
+      return { ok: true as const, email: user.email };
+    });
+  }
+
+  // 2b. Assert scope=onboard (workspace-member path)
   if (payload.scope !== "onboard") {
     throw new AppError(400, "INVALID_TOKEN", "Invalid token scope");
   }
