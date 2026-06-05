@@ -5,8 +5,15 @@ import { z } from "zod";
 import { prisma } from "../../config/prisma.js";
 import { env } from "../../config/env.js";
 import { AppError } from "../../shared/types.js";
-import { BCRYPT_COST, TOKEN_EXPIRY } from "../../shared/constants.js";
+import { TOKEN_EXPIRY } from "../../shared/constants.js";
 import type { TokenPayload } from "../../shared/types.js";
+import {
+  generateOpaqueToken,
+  sha256Hex,
+  hashPassword,
+  signTokens,
+} from "./primitives.js";
+export { generateOpaqueToken, sha256Hex, hashPassword, signTokens };
 import type { RegisterBody, LoginBody } from "./schema.js";
 import type { EmailProvider } from "../../services/email/types.js";
 import { buildVerifyEmail } from "../../services/email/templates/verify.js";
@@ -18,21 +25,6 @@ import { consumeInstanceAdminInvite } from "../instance/service.js";
 import { INSTANCE_SETTINGS_ID } from "../../shared/constants.js";
 
 // ── D6 helpers ────────────────────────────────────────────────────────────────
-
-/**
- * Compute the SHA-256 hex digest of a string.
- * Used for hashing opaque refresh tokens before DB storage.
- */
-export function sha256Hex(input: string): string {
-  return createHash("sha256").update(input).digest("hex");
-}
-
-/**
- * Generate a cryptographically secure opaque token (256 bits, base64url).
- */
-export function generateOpaqueToken(): string {
-  return randomBytes(32).toString("base64url");
-}
 
 /**
  * Sign an onboarding JWT: scope=onboard, sub=inviteId, exp=ttlHours.
@@ -68,13 +60,6 @@ export function signAccessToken(
 }
 
 /**
- * Hash a password with bcrypt.
- */
-export async function hashPassword(password: string): Promise<string> {
-  return bcrypt.hash(password, BCRYPT_COST);
-}
-
-/**
  * Verify a password against a bcrypt hash.
  */
 export async function verifyPassword(
@@ -82,22 +67,6 @@ export async function verifyPassword(
   hash: string,
 ): Promise<boolean> {
   return bcrypt.compare(password, hash);
-}
-
-/**
- * Sign a JWT access + refresh token pair for a user.
- */
-export function signTokens(payload: TokenPayload): {
-  accessToken: string;
-  refreshToken: string;
-} {
-  const accessToken = jwt.sign(payload, env.JWT_SECRET, {
-    expiresIn: TOKEN_EXPIRY.ACCESS,
-  });
-  const refreshToken = jwt.sign(payload, env.JWT_REFRESH_SECRET, {
-    expiresIn: TOKEN_EXPIRY.REFRESH,
-  });
-  return { accessToken, refreshToken };
 }
 
 /**

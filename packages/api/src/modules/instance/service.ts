@@ -22,7 +22,7 @@ import {
   sha256Hex,
   hashPassword,
   signTokens,
-} from "../auth/service.js";
+} from "../auth/primitives.js";
 import type { ClaimBodyType, PatchSettingsBodyType } from "./schema.js";
 
 // ─── Instance-Admin Grant ────────────────────────────────────────────────────
