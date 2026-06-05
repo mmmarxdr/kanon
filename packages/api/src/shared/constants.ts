@@ -23,7 +23,7 @@ export const ORDERED_STATES: readonly IssueState[] = [
  * Default token expiry durations.
  */
 export const TOKEN_EXPIRY = {
-  ACCESS: "15m",
+  ACCESS: "1h",
   REFRESH: "7d",
   KEYCHAIN_REFRESH: "30d",
 } as const;
@@ -80,7 +80,7 @@ export function getCookieConfig(isDev: boolean) {
       secure: !isDev,
       sameSite: "lax" as const,
       path: "/",
-      maxAge: 900, // 15 minutes in seconds
+      maxAge: 3600, // 1 hour in seconds
     },
     refresh: {
       httpOnly: true,

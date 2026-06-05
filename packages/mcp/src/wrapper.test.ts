@@ -75,7 +75,7 @@ describe("runWrapper", () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ accessToken: "acc-token-123", expiresIn: 900 }),
+      json: async () => ({ accessToken: "acc-token-123", expiresIn: 3600 }),
     });
 
     const mockChild = makeMockChild(0);
@@ -273,5 +273,125 @@ describe("runWrapper", () => {
     expect(exitCode).toBe(1);
     expect(stderrOutput.join("")).toMatch(/No credentials found/i);
     expect(stderrOutput.join("")).toMatch(/npx @kanon-pm\/setup/i);
+  });
+
+  /**
+   * R3a — Child env contains both KANON_API_KEY and KANON_REFRESH_TOKEN
+   */
+  it("R3a: spawns child with both KANON_API_KEY and KANON_REFRESH_TOKEN set", async () => {
+    const { runWrapper } = await import("./wrapper.js");
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ accessToken: "acc-token-r3a", expiresIn: 3600 }),
+    });
+
+    const mockChild = makeMockChild(0);
+    const spawnFn = makeSpawn(mockChild);
+
+    const deps: WrapperDeps = {
+      argv: ["node", "wrapper.js", "--server", "https://server.example.com"],
+      env: {},
+      fetch: mockFetch,
+      getCredentialStore: () => makeCredStore({ refreshToken: "refresh-tok-r3a" }),
+      stderr: { write: (s: string) => { stderrOutput.push(s); } },
+      exit: (code: number) => { exitCode = code; },
+      spawn: spawnFn as unknown as WrapperDeps["spawn"],
+    };
+
+    await runWrapper(deps);
+
+    expect(spawnFn).toHaveBeenCalledOnce();
+    const [, , opts] = spawnFn.mock.calls[0] as [string, string[], SpawnOptions & { env: Record<string, string> }];
+    expect(opts.env["KANON_API_KEY"]).toBe("acc-token-r3a");
+    expect(opts.env["KANON_REFRESH_TOKEN"]).toBe("refresh-tok-r3a");
+    expect(exitCode).toBe(0);
+  });
+
+  /**
+   * R3b-passthrough — JWT passthrough path: KANON_API_KEY is a JWT, credential store is bypassed,
+   * KANON_REFRESH_TOKEN is absent from child env (no exchange performed).
+   */
+  it("R3b-passthrough: JWT passthrough spawns without touching credential store or injecting KANON_REFRESH_TOKEN", async () => {
+    const { runWrapper } = await import("./wrapper.js");
+
+    const mockFetch = vi.fn();
+    const mockChild = makeMockChild(0);
+    const spawnFn = makeSpawn(mockChild);
+    const jwtToken = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.sig";
+
+    const deps: WrapperDeps = {
+      argv: ["node", "wrapper.js", "--server", "https://server.example.com"],
+      env: { KANON_API_KEY: jwtToken },
+      fetch: mockFetch,
+      getCredentialStore: () => makeCredStore({ refreshToken: "should-not-be-read" }),
+      stderr: { write: (s: string) => { stderrOutput.push(s); } },
+      exit: (code: number) => { exitCode = code; },
+      spawn: spawnFn as unknown as WrapperDeps["spawn"],
+    };
+
+    await runWrapper(deps);
+
+    expect(spawnFn).toHaveBeenCalledOnce();
+    const [, , opts] = spawnFn.mock.calls[0] as [string, string[], SpawnOptions & { env: Record<string, string> }];
+    expect(exitCode).toBe(0);
+    // Passthrough: no exchange, KANON_REFRESH_TOKEN not injected
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(opts.env["KANON_REFRESH_TOKEN"]).toBeUndefined();
+  });
+
+  /**
+   * R3b-credstore — Credential-store path with refreshToken absent:
+   * wrapper reads creds, exchange succeeds, KANON_API_KEY set to accessToken,
+   * but KANON_REFRESH_TOKEN is NOT injected (conditional spread omits it).
+   */
+  it("R3b-credstore: credential-store path with refreshToken undefined omits KANON_REFRESH_TOKEN from child env", async () => {
+    const { runWrapper } = await import("./wrapper.js");
+
+    // Provide a credential store that returns creds with refreshToken undefined
+    const credsWithoutRefresh = {
+      server: "https://server.example.com",
+      refreshToken: undefined as unknown as string,
+      email: "dev@example.com",
+      savedAt: new Date().toISOString(),
+    };
+    const mockStore: CredentialStore = {
+      readCredentials: vi.fn().mockResolvedValue(credsWithoutRefresh),
+      writeCredentials: vi.fn().mockResolvedValue(undefined),
+      clearCredentials: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ accessToken: "exchanged-acc-token", expiresIn: 3600 }),
+    });
+    const mockChild = makeMockChild(0);
+    const spawnFn = makeSpawn(mockChild);
+
+    const deps: WrapperDeps = {
+      argv: ["node", "wrapper.js", "--server", "https://server.example.com"],
+      env: {}, // no KANON_API_KEY → credential-store branch
+      fetch: mockFetch,
+      getCredentialStore: () => mockStore,
+      stderr: { write: (s: string) => { stderrOutput.push(s); } },
+      exit: (code: number) => { exitCode = code; },
+      spawn: spawnFn as unknown as WrapperDeps["spawn"],
+    };
+
+    await runWrapper(deps);
+
+    // Exchange was called (credential-store branch, not JWT passthrough)
+    expect(mockFetch).toHaveBeenCalledOnce();
+    expect((mockFetch.mock.calls[0] as [string])[0]).toContain("/api/auth/exchange");
+
+    expect(spawnFn).toHaveBeenCalledOnce();
+    const [, , opts] = spawnFn.mock.calls[0] as [string, string[], SpawnOptions & { env: Record<string, string> }];
+    expect(exitCode).toBe(0);
+    // Access token injected from exchange
+    expect(opts.env["KANON_API_KEY"]).toBe("exchanged-acc-token");
+    // refreshToken was falsy → conditional spread omits KANON_REFRESH_TOKEN
+    expect(opts.env["KANON_REFRESH_TOKEN"]).toBeUndefined();
   });
 });

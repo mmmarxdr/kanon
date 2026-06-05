@@ -574,17 +574,23 @@ describe("exchange()", () => {
     mockPrisma.refreshToken.update.mockResolvedValue(mockRow);
   });
 
-  // D3: happy path
-  it("happy path: returns accessToken and expiresIn=900", async () => {
+  // D3: happy path — R5a: expiresIn===3600; R5b: JWT exp ≈ now+3600
+  it("happy path: returns accessToken and expiresIn=3600", async () => {
+    const before = Math.floor(Date.now() / 1000);
     const result = await exchange(rawToken);
+    const after = Math.floor(Date.now() / 1000);
 
     expect(result).toHaveProperty("accessToken");
-    expect(result.expiresIn).toBe(900);
+    expect(result.expiresIn).toBe(3600); // R5a
 
     const decoded = jwt.decode(result.accessToken) as Record<string, unknown>;
     expect(decoded["sub"]).toBe(USER_ID);
     expect(decoded["workspace"]).toBe(WORKSPACE_ID);
     expect(decoded["scope"]).toBe("access");
+    // R5b: JWT exp ≈ now+3600 ±10s
+    const exp = decoded["exp"] as number;
+    expect(exp).toBeGreaterThanOrEqual(before + 3600 - 10);
+    expect(exp).toBeLessThanOrEqual(after + 3600 + 10);
   });
 
   // D3: token not in RefreshToken table → 401
@@ -633,6 +639,83 @@ describe("exchange()", () => {
         data: expect.objectContaining({ lastUsedAt: expect.any(Date) }),
       }),
     );
+  });
+
+  // R4a: sliding window — expiresAt bumped to ~now+30d on successful exchange
+  it("R4a: updates expiresAt to ~now+30d on successful exchange", async () => {
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+    const before = Date.now();
+    await exchange(rawToken);
+    const after = Date.now();
+
+    const updateCall = mockPrisma.refreshToken.update.mock.calls[0] as [{ where: { id: string }; data: { expiresAt: Date } }];
+    const newExpiresAt = updateCall[0].data.expiresAt.getTime();
+    expect(newExpiresAt).toBeGreaterThanOrEqual(before + THIRTY_DAYS_MS - 5000);
+    expect(newExpiresAt).toBeLessThanOrEqual(after + THIRTY_DAYS_MS + 5000);
+  });
+
+  // R4b: 29d idle (expiresAt = now+1d) — still succeeds and re-extends to ~now+30d
+  it("R4b: token with 1d left still succeeds and expiresAt extends to ~now+30d", async () => {
+    mockPrisma.refreshToken.findUnique.mockResolvedValue({
+      ...mockRow,
+      expiresAt: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000), // 1 day left
+    });
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+    const before = Date.now();
+    await exchange(rawToken);
+    const after = Date.now();
+
+    const updateCall = mockPrisma.refreshToken.update.mock.calls[0] as [{ where: { id: string }; data: { expiresAt: Date } }];
+    const newExpiresAt = updateCall[0].data.expiresAt.getTime();
+    expect(newExpiresAt).toBeGreaterThanOrEqual(before + THIRTY_DAYS_MS - 5000);
+    expect(newExpiresAt).toBeLessThanOrEqual(after + THIRTY_DAYS_MS + 5000);
+  });
+
+  // R4c: expired token (expiresAt in past) — throws; update NOT called
+  it("R4c: expired token throws TOKEN_EXPIRED; expiresAt not updated", async () => {
+    mockPrisma.refreshToken.findUnique.mockResolvedValue({
+      ...mockRow,
+      expiresAt: new Date(Date.now() - 1000), // in the past
+    });
+
+    await expect(exchange(rawToken)).rejects.toMatchObject({
+      statusCode: 401,
+      code: "TOKEN_EXPIRED",
+    });
+    expect(mockPrisma.refreshToken.update).not.toHaveBeenCalled();
+  });
+
+  // R4d: revoked token — throws; update NOT called
+  it("R4d: revoked token throws TOKEN_REVOKED; expiresAt not updated", async () => {
+    mockPrisma.refreshToken.findUnique.mockResolvedValue({
+      ...mockRow,
+      revokedAt: new Date(),
+    });
+
+    await expect(exchange(rawToken)).rejects.toMatchObject({
+      statusCode: 401,
+      code: "TOKEN_REVOKED",
+    });
+    expect(mockPrisma.refreshToken.update).not.toHaveBeenCalled();
+  });
+
+  // R4e: repeated exchanges keep extending (no cap)
+  it("R4e: repeated exchanges keep extending expiresAt with no ceiling", async () => {
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+    // Reset to fresh state for each call
+    mockPrisma.refreshToken.update.mockResolvedValue(mockRow);
+
+    await exchange(rawToken);
+    const before = Date.now();
+    await exchange(rawToken);
+    const after = Date.now();
+
+    // Second call also bumps (update called twice total)
+    expect(mockPrisma.refreshToken.update).toHaveBeenCalledTimes(2);
+    const lastCall = mockPrisma.refreshToken.update.mock.calls[1] as [{ where: { id: string }; data: { expiresAt: Date } }];
+    const newExpiresAt = lastCall[0].data.expiresAt.getTime();
+    expect(newExpiresAt).toBeGreaterThanOrEqual(before + THIRTY_DAYS_MS - 5000);
+    expect(newExpiresAt).toBeLessThanOrEqual(after + THIRTY_DAYS_MS + 5000);
   });
 });
 

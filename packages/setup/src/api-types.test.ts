@@ -99,13 +99,13 @@ describe("ExchangeBodySchema", () => {
 describe("ExchangeResponseSchema", () => {
   const valid = {
     accessToken: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyMSJ9.sig",
-    expiresIn: 900,
+    expiresIn: 3600,
   };
 
   it("parses valid response", () => {
     const result = ExchangeResponseSchema.parse(valid);
     expect(result.accessToken).toBe(valid.accessToken);
-    expect(result.expiresIn).toBe(900);
+    expect(result.expiresIn).toBe(3600);
   });
 
   it("rejects missing accessToken", () => {
