@@ -20,8 +20,16 @@ import { createRoute, useNavigate } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 import { authenticatedRoute } from "../_authenticated";
 import { fetchApi, ApiError } from "@/lib/api-client";
+import { useAuthStore } from "@/stores/auth-store";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+interface InstanceAdminInviteResponse {
+  inviteId: string;
+  url: string;
+  token: string;
+  expiresAt: string;
+}
 
 interface InstanceSettings {
   id: string;
@@ -48,12 +56,22 @@ interface AdminInstanceFormProps {
 }
 
 export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
+  const user = useAuthStore((s) => s.user);
+
   const [settings, setSettings] = useState<InstanceSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [instanceName, setInstanceName] = useState("");
+  const [signupMode, setSignupMode] = useState("open");
+  const [allowedDomains, setAllowedDomains] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Invite-admin state
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviting, setInviting] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteResult, setInviteResult] = useState<InstanceAdminInviteResponse | null>(null);
 
   // On mount: load settings; redirect on auth/authz failure
   useEffect(() => {
@@ -62,6 +80,8 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
         const data = await fetchApi<InstanceSettings>("/api/instance/settings");
         setSettings(data);
         setInstanceName(data.instanceName ?? "");
+        setSignupMode(data.signupMode);
+        setAllowedDomains(data.allowedSignupDomains.join(", "));
       } catch (err) {
         if (err instanceof ApiError) {
           if (err.status === 403) {
@@ -90,12 +110,24 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
     setSaveSuccess(false);
 
     try {
+      // Parse domains: split by comma/newline, trim, filter empty
+      const parsedDomains = allowedDomains
+        .split(/[\n,]/)
+        .map((d) => d.trim())
+        .filter(Boolean);
+
       const updated = await fetchApi<InstanceSettings>("/api/instance/settings", {
         method: "PATCH",
-        body: JSON.stringify({ instanceName: instanceName || null }),
+        body: JSON.stringify({
+          instanceName: instanceName || null,
+          signupMode,
+          allowedSignupDomains: parsedDomains,
+        }),
       });
       setSettings(updated);
       setInstanceName(updated.instanceName ?? "");
+      setSignupMode(updated.signupMode);
+      setAllowedDomains(updated.allowedSignupDomains.join(", "));
       setSaveSuccess(true);
     } catch (err) {
       if (err instanceof ApiError) {
@@ -105,6 +137,34 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
       }
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleInviteAdmin(e: React.FormEvent) {
+    e.preventDefault();
+    if (!inviteEmail.trim()) return;
+    setInviting(true);
+    setInviteError(null);
+    setInviteResult(null);
+
+    try {
+      const result = await fetchApi<InstanceAdminInviteResponse>(
+        "/api/instance/admins/invites",
+        {
+          method: "POST",
+          body: JSON.stringify({ email: inviteEmail.trim() }),
+        },
+      );
+      setInviteResult(result);
+      setInviteEmail("");
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setInviteError(err.message);
+      } else {
+        setInviteError("An unexpected error occurred");
+      }
+    } finally {
+      setInviting(false);
     }
   }
 
@@ -195,6 +255,141 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
         }}
       >
         <div style={{ maxWidth: 560, display: "flex", flexDirection: "column", gap: 24 }}>
+          {/* ── Invite-admin section (gated on isInstanceAdmin) ── */}
+          {user?.isInstanceAdmin && (
+            <div
+              data-testid="invite-admin-section"
+              style={{
+                padding: "16px",
+                background: "var(--bg-2)",
+                border: "1px solid var(--line)",
+                borderRadius: 6,
+                display: "flex",
+                flexDirection: "column",
+                gap: 12,
+              }}
+            >
+              <div>
+                <h2
+                  style={{
+                    margin: 0,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: "var(--ink)",
+                    marginBottom: 4,
+                  }}
+                >
+                  Invite instance admin
+                </h2>
+                <p style={{ margin: 0, fontSize: 11, color: "var(--ink-3)" }}>
+                  Generate a kanon:// onboarding link that grants the instance-admin role.
+                </p>
+              </div>
+
+              <form
+                onSubmit={(e) => { void handleInviteAdmin(e); }}
+                style={{ display: "flex", flexDirection: "column", gap: 10 }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    height: 36,
+                    border: "1px solid var(--line-2)",
+                    borderRadius: 5,
+                    background: "var(--panel)",
+                    padding: "0 10px",
+                  }}
+                >
+                  <input
+                    id="inviteAdminEmail"
+                    data-testid="invite-admin-email"
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    placeholder="newadmin@company.com"
+                    required
+                    style={{
+                      flex: 1,
+                      height: "100%",
+                      border: 0,
+                      outline: 0,
+                      background: "transparent",
+                      color: "var(--ink)",
+                      fontSize: 13,
+                    }}
+                  />
+                </div>
+
+                {inviteError && (
+                  <div
+                    data-testid="invite-admin-error"
+                    style={{
+                      padding: "6px 10px",
+                      background: "color-mix(in oklch, var(--bad) 12%, transparent)",
+                      border: "1px solid color-mix(in oklch, var(--bad) 40%, transparent)",
+                      borderRadius: 4,
+                      color: "var(--bad)",
+                      fontSize: 12,
+                    }}
+                  >
+                    {inviteError}
+                  </div>
+                )}
+
+                {inviteResult && (
+                  <div
+                    data-testid="invite-admin-result"
+                    style={{
+                      padding: "8px 10px",
+                      background: "color-mix(in oklch, var(--ok) 10%, transparent)",
+                      border: "1px solid color-mix(in oklch, var(--ok) 35%, transparent)",
+                      borderRadius: 4,
+                      fontSize: 12,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 4,
+                    }}
+                  >
+                    <span style={{ color: "var(--ok)", fontWeight: 500 }}>
+                      Invite link generated — share with the new admin:
+                    </span>
+                    <code
+                      style={{
+                        fontSize: 11,
+                        color: "var(--ink-2)",
+                        wordBreak: "break-all",
+                        fontFamily: "monospace",
+                      }}
+                    >
+                      {inviteResult.url}
+                    </code>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  data-testid="invite-admin-submit"
+                  disabled={inviting || !inviteEmail.trim()}
+                  style={{
+                    alignSelf: "flex-start",
+                    height: 32,
+                    padding: "0 16px",
+                    background: "var(--accent)",
+                    color: "var(--btn-ink)",
+                    borderRadius: 4,
+                    fontSize: 12,
+                    fontWeight: 500,
+                    opacity: inviting || !inviteEmail.trim() ? 0.55 : 1,
+                    cursor: inviting || !inviteEmail.trim() ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {inviting ? "Sending…" : "Generate invite link"}
+                </button>
+              </form>
+            </div>
+          )}
+
           <form
             onSubmit={handleSave}
             data-testid="admin-instance-form"
@@ -240,40 +435,87 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
               </div>
             </div>
 
-            {/* Deferred fields — read-only display */}
-            <div
-              style={{
-                padding: "12px 14px",
-                background: "var(--bg-2)",
-                border: "1px solid var(--line)",
-                borderRadius: 5,
-                display: "flex",
-                flexDirection: "column",
-                gap: 8,
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
-                  Signup mode
-                </span>
-                <span style={{ fontSize: 12, color: "var(--ink-2)" }}>
-                  {settings.signupMode}
-                </span>
+            {/* Signup mode — editable select */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <label
+                htmlFor="signupMode"
+                style={{ fontSize: 11, color: "var(--ink-3)", fontWeight: 500 }}
+              >
+                Signup mode
+              </label>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  height: 36,
+                  border: "1px solid var(--line-2)",
+                  borderRadius: 5,
+                  background: "var(--panel)",
+                  padding: "0 10px",
+                }}
+              >
+                <select
+                  id="signupMode"
+                  data-testid="signup-mode-select"
+                  value={signupMode}
+                  onChange={(e) => setSignupMode(e.target.value)}
+                  style={{
+                    flex: 1,
+                    height: "100%",
+                    border: 0,
+                    outline: 0,
+                    background: "transparent",
+                    color: "var(--ink)",
+                    fontSize: 13,
+                  }}
+                >
+                  <option value="open">open — anyone can register</option>
+                  <option value="invite">invite — invite token required</option>
+                  <option value="closed">closed — no new registrations</option>
+                </select>
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
-                  Allowed signup domains
+            </div>
+
+            {/* Allowed signup domains — editable */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <label
+                htmlFor="allowedDomains"
+                style={{ fontSize: 11, color: "var(--ink-3)", fontWeight: 500 }}
+              >
+                Allowed signup domains
+                <span style={{ marginLeft: 6, fontSize: 10, color: "var(--ink-4)", fontWeight: 400 }}>
+                  (comma-separated, leave empty to allow all)
                 </span>
-                <span style={{ fontSize: 12, color: "var(--ink-2)" }}>
-                  {settings.allowedSignupDomains.length > 0
-                    ? settings.allowedSignupDomains.join(", ")
-                    : "none"}
-                </span>
+              </label>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  height: 36,
+                  border: "1px solid var(--line-2)",
+                  borderRadius: 5,
+                  background: "var(--panel)",
+                  padding: "0 10px",
+                }}
+              >
+                <input
+                  id="allowedDomains"
+                  data-testid="allowed-domains-input"
+                  type="text"
+                  value={allowedDomains}
+                  onChange={(e) => setAllowedDomains(e.target.value)}
+                  placeholder="acme.com, corp.io"
+                  style={{
+                    flex: 1,
+                    height: "100%",
+                    border: 0,
+                    outline: 0,
+                    background: "transparent",
+                    color: "var(--ink)",
+                    fontSize: 13,
+                  }}
+                />
               </div>
-              <p style={{ margin: 0, fontSize: 11, color: "var(--ink-4)", fontStyle: "italic" }}>
-                Signup mode and allowed domains are stored but not enforced yet —
-                coming in signup-control (layer 2).
-              </p>
             </div>
 
             {saveError && (
