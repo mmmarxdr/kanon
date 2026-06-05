@@ -162,7 +162,7 @@ test.describe("Team onboarding — happy path (K1)", () => {
     // Step 7 — Simulate MCP wrapper: POST /api/auth/exchange
     const exchangeResp = await callExchange(onboardResp.refreshToken);
     expect(exchangeResp.accessToken).toBeTruthy();
-    expect(exchangeResp.expiresIn).toBe(900); // 15 min
+    expect(exchangeResp.expiresIn).toBe(3600); // 1h
 
     // Step 8 — Validate access token against GET /api/auth/me
     const me = await apiGet<MeResponse>("/api/auth/me", exchangeResp.accessToken);

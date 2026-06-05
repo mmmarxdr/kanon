@@ -75,7 +75,7 @@ describe("runWrapper", () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ accessToken: "acc-token-123", expiresIn: 900 }),
+      json: async () => ({ accessToken: "acc-token-123", expiresIn: 3600 }),
     });
 
     const mockChild = makeMockChild(0);
@@ -310,10 +310,10 @@ describe("runWrapper", () => {
   });
 
   /**
-   * R3b — No refresh token: child spawns successfully, KANON_REFRESH_TOKEN absent/empty
-   * (This path uses KANON_API_KEY=JWT passthrough, so no exchange needed)
+   * R3b-passthrough — JWT passthrough path: KANON_API_KEY is a JWT, credential store is bypassed,
+   * KANON_REFRESH_TOKEN is absent from child env (no exchange performed).
    */
-  it("R3b: JWT passthrough path spawns without KANON_REFRESH_TOKEN causing errors", async () => {
+  it("R3b-passthrough: JWT passthrough spawns without touching credential store or injecting KANON_REFRESH_TOKEN", async () => {
     const { runWrapper } = await import("./wrapper.js");
 
     const mockFetch = vi.fn();
@@ -335,10 +335,63 @@ describe("runWrapper", () => {
 
     expect(spawnFn).toHaveBeenCalledOnce();
     const [, , opts] = spawnFn.mock.calls[0] as [string, string[], SpawnOptions & { env: Record<string, string> }];
-    // Must spawn successfully — no error thrown
     expect(exitCode).toBe(0);
-    // KANON_REFRESH_TOKEN may be absent or empty but no crash
-    const refreshInEnv = opts.env["KANON_REFRESH_TOKEN"];
-    expect(refreshInEnv === undefined || refreshInEnv === "").toBe(true);
+    // Passthrough: no exchange, KANON_REFRESH_TOKEN not injected
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(opts.env["KANON_REFRESH_TOKEN"]).toBeUndefined();
+  });
+
+  /**
+   * R3b-credstore — Credential-store path with refreshToken absent:
+   * wrapper reads creds, exchange succeeds, KANON_API_KEY set to accessToken,
+   * but KANON_REFRESH_TOKEN is NOT injected (conditional spread omits it).
+   */
+  it("R3b-credstore: credential-store path with refreshToken undefined omits KANON_REFRESH_TOKEN from child env", async () => {
+    const { runWrapper } = await import("./wrapper.js");
+
+    // Provide a credential store that returns creds with refreshToken undefined
+    const credsWithoutRefresh = {
+      server: "https://server.example.com",
+      refreshToken: undefined as unknown as string,
+      email: "dev@example.com",
+      savedAt: new Date().toISOString(),
+    };
+    const mockStore: CredentialStore = {
+      readCredentials: vi.fn().mockResolvedValue(credsWithoutRefresh),
+      writeCredentials: vi.fn().mockResolvedValue(undefined),
+      clearCredentials: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ accessToken: "exchanged-acc-token", expiresIn: 3600 }),
+    });
+    const mockChild = makeMockChild(0);
+    const spawnFn = makeSpawn(mockChild);
+
+    const deps: WrapperDeps = {
+      argv: ["node", "wrapper.js", "--server", "https://server.example.com"],
+      env: {}, // no KANON_API_KEY → credential-store branch
+      fetch: mockFetch,
+      getCredentialStore: () => mockStore,
+      stderr: { write: (s: string) => { stderrOutput.push(s); } },
+      exit: (code: number) => { exitCode = code; },
+      spawn: spawnFn as unknown as WrapperDeps["spawn"],
+    };
+
+    await runWrapper(deps);
+
+    // Exchange was called (credential-store branch, not JWT passthrough)
+    expect(mockFetch).toHaveBeenCalledOnce();
+    expect((mockFetch.mock.calls[0] as [string])[0]).toContain("/api/auth/exchange");
+
+    expect(spawnFn).toHaveBeenCalledOnce();
+    const [, , opts] = spawnFn.mock.calls[0] as [string, string[], SpawnOptions & { env: Record<string, string> }];
+    expect(exitCode).toBe(0);
+    // Access token injected from exchange
+    expect(opts.env["KANON_API_KEY"]).toBe("exchanged-acc-token");
+    // refreshToken was falsy → conditional spread omits KANON_REFRESH_TOKEN
+    expect(opts.env["KANON_REFRESH_TOKEN"]).toBeUndefined();
   });
 });

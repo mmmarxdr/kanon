@@ -724,3 +724,63 @@ describe("KanonClient single-flight exchange guard (R2)", () => {
     expect(exchangeCallCount).toBe(2);
   });
 });
+
+// ─── Logging hygiene: refresh token must never leak into error messages ───────
+
+describe("KanonClient logging hygiene (W2)", () => {
+  const SENTINEL_REFRESH_TOKEN = "SECRET-RT-DO-NOT-LEAK";
+
+  beforeEach(() => {
+    vi.stubEnv("KANON_REFRESH_TOKEN", SENTINEL_REFRESH_TOKEN);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("W2: doExchange failure error message does not contain the refresh token value", async () => {
+    const client = new KanonClient({ baseUrl: BASE_URL, apiKey: "any-key" });
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({}),
+      text: () => Promise.resolve(""),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    let caughtError: unknown;
+    try {
+      // Trigger exchange by simulating a 401 that requires refresh
+      const refreshFetchMock = vi.fn().mockImplementation((url: string) => {
+        if ((url as string).includes("/api/auth/exchange")) {
+          return Promise.resolve({
+            ok: false,
+            status: 500,
+            json: () => Promise.resolve({}),
+            text: () => Promise.resolve(""),
+          });
+        }
+        return Promise.resolve({
+          ok: false,
+          status: 401,
+          json: () => Promise.resolve({ code: "TOKEN_EXPIRED" }),
+          text: () => Promise.resolve(""),
+        });
+      });
+      vi.stubGlobal("fetch", refreshFetchMock);
+      await client.listWorkspaces();
+    } catch (err) {
+      caughtError = err;
+    }
+
+    expect(caughtError).toBeDefined();
+    const errMessage = caughtError instanceof Error ? caughtError.message : "";
+    const errString = String(caughtError);
+
+    // The sentinel refresh token must NEVER appear in any serialized form of the error
+    expect(errMessage).not.toContain(SENTINEL_REFRESH_TOKEN);
+    expect(errString).not.toContain(SENTINEL_REFRESH_TOKEN);
+  });
+});
