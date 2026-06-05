@@ -9,6 +9,7 @@ import { useProjectsQuery } from "@/hooks/use-projects-query";
 import { useActiveWorkspaceId } from "@/hooks/use-workspace-query";
 import { Icon, Monogram } from "@/components/ui/icons";
 import { Avatar, avatarInitials } from "@/components/ui/primitives";
+import { CreateProjectModal } from "@/features/projects/create-project-modal";
 
 // ---------------------------------------------------------------------------
 // Nav config
@@ -92,6 +93,7 @@ export function AppSidebar() {
   const logoutFn = useAuthStore((s) => s.logout);
   const openPalette = useCommandPaletteStore((s) => s.open);
   const location = useLocation();
+  const [showCreateProject, setShowCreateProject] = useState(false);
 
   const workspaceId = useActiveWorkspaceId();
   const { data: projects, isLoading: projectsLoading } = useProjectsQuery(workspaceId);
@@ -310,6 +312,7 @@ export function AppSidebar() {
               type="button"
               style={{ color: "var(--ink-4)" }}
               title="New project"
+              onClick={() => setShowCreateProject(true)}
             >
               <Icon.Plus />
             </button>
@@ -434,6 +437,89 @@ export function AppSidebar() {
 
       <div style={{ flex: 1 }} />
 
+      {/* ── Admin affordances (conditional on /me flags) ── */}
+      {!collapsed && (user?.isSuperAdmin || user?.isInstanceAdmin) && (
+        <div
+          style={{
+            borderTop: "1px solid var(--line)",
+            padding: "8px 10px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+          }}
+        >
+          {user.isSuperAdmin && (
+            <Link to="/admin/instance">
+              <div
+                data-testid="admin-nav-link"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  height: 26,
+                  padding: "0 8px",
+                  borderRadius: 4,
+                  fontSize: 12,
+                  color: "var(--ink-3)",
+                  cursor: "pointer",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-3)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+              >
+                <Icon.Settings style={{ color: "var(--ink-4)" }} />
+                <span>Admin</span>
+              </div>
+            </Link>
+          )}
+          {user.isInstanceAdmin && (
+            <Link to="/workspaces">
+              <div
+                data-testid="workspace-create-link"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  height: 26,
+                  padding: "0 8px",
+                  borderRadius: 4,
+                  fontSize: 12,
+                  color: "var(--ink-3)",
+                  cursor: "pointer",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-3)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+              >
+                <Icon.Plus style={{ color: "var(--ink-4)" }} />
+                <span>New workspace</span>
+              </div>
+            </Link>
+          )}
+          {user.isSuperAdmin && (
+            <Link to="/admin/instance">
+              <div
+                data-testid="invite-admin-link"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  height: 26,
+                  padding: "0 8px",
+                  borderRadius: 4,
+                  fontSize: 12,
+                  color: "var(--ink-3)",
+                  cursor: "pointer",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-3)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+              >
+                <Icon.User style={{ color: "var(--ink-4)" }} />
+                <span>Invite admin</span>
+              </div>
+            </Link>
+          )}
+        </div>
+      )}
+
       {/* ── User ── */}
       <div
         style={{
@@ -541,6 +627,12 @@ export function AppSidebar() {
           {collapsed ? <Icon.ChevR /> : <Icon.ChevL />}
         </button>
       </div>
+      {showCreateProject && workspaceId && (
+        <CreateProjectModal
+          workspaceId={workspaceId}
+          onClose={() => setShowCreateProject(false)}
+        />
+      )}
     </aside>
   );
 }
