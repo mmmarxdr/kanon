@@ -44,8 +44,15 @@ describe("RegisterForm — ToS gate + copy (auth-screens-polish)", () => {
     expect(submit).toBeDisabled();
   });
 
-  it("RP-2: checking the ToS checkbox enables the submit button", () => {
+  it("RP-2: checking the ToS checkbox enables the submit button (with valid passwords)", () => {
     render(<RegisterForm invite={undefined} onNavigate={mockNavigate} />);
+    // Fill valid matching passwords so only ToS gates the button
+    fireEvent.change(screen.getByLabelText("Password", { exact: true }), {
+      target: { value: "validpassword" },
+    });
+    fireEvent.change(screen.getByLabelText("Confirm password"), {
+      target: { value: "validpassword" },
+    });
     const checkbox = screen.getByTestId("tos-checkbox");
     fireEvent.click(checkbox);
     const submit = screen.getByRole("button", { name: /create account/i });
@@ -57,7 +64,7 @@ describe("RegisterForm — ToS gate + copy (auth-screens-polish)", () => {
     fireEvent.change(screen.getByLabelText(/work email/i), {
       target: { value: "test@co.com" },
     });
-    fireEvent.change(screen.getByLabelText(/password/i), {
+    fireEvent.change(screen.getByLabelText("Password", { exact: true }), {
       target: { value: "password123" },
     });
     // Do NOT check the ToS box
