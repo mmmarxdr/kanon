@@ -254,7 +254,7 @@ export function LoginForm({ invite, onNavigate }: LoginFormProps) {
               style={{
                 height: 32,
                 fontSize: 12,
-                color: "var(--ink-4)",
+                color: "var(--ink-3)",
                 cursor: "not-allowed",
                 width: "100%",
                 opacity: 0.6,

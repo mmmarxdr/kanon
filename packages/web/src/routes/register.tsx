@@ -196,11 +196,23 @@ export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
           />
           <span>
             I agree to Kanon's{" "}
-            <button type="button" style={{ color: "var(--accent-ink)" }}>
+            {/* TODO: link to /terms when that page exists */}
+            <button
+              type="button"
+              tabIndex={-1}
+              aria-disabled
+              style={{ color: "var(--accent-ink)", cursor: "default" }}
+            >
               Terms of Service
             </button>{" "}
             and{" "}
-            <button type="button" style={{ color: "var(--accent-ink)" }}>
+            {/* TODO: link to /privacy when that page exists */}
+            <button
+              type="button"
+              tabIndex={-1}
+              aria-disabled
+              style={{ color: "var(--accent-ink)", cursor: "default" }}
+            >
               Privacy Policy
             </button>
             .

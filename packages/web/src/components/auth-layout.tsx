@@ -547,6 +547,35 @@ export function MonoDivider({ label }: { label: string }) {
  * Uses CSS title attribute via aria-label for accessibility, and a
  * lightweight CSS tooltip for visual indication.
  */
+// Inject the coming-soon tooltip CSS exactly once per document lifetime.
+// Doing it inside the component body caused one <style> node per render
+// (login alone renders 3 ComingSoonTooltip instances → 3 duplicate nodes).
+if (typeof document !== "undefined" && !document.getElementById("coming-soon-tooltip-style")) {
+  const s = document.createElement("style");
+  s.id = "coming-soon-tooltip-style";
+  s.textContent = `
+    .coming-soon-wrap:hover::after {
+      content: "Coming soon";
+      position: absolute;
+      top: 50%;
+      right: 8px;
+      transform: translateY(-50%);
+      font-size: 9.5px;
+      font-family: var(--font-mono, monospace);
+      letter-spacing: 0.05em;
+      color: var(--ink-4);
+      background: var(--bg-2);
+      border: 1px solid var(--line);
+      padding: 2px 6px;
+      border-radius: 3px;
+      pointer-events: none;
+      white-space: nowrap;
+      z-index: 10;
+    }
+  `;
+  document.head.appendChild(s);
+}
+
 export function ComingSoonTooltip({ children }: { children: ReactNode }) {
   return (
     <div
@@ -555,26 +584,6 @@ export function ComingSoonTooltip({ children }: { children: ReactNode }) {
       style={{ position: "relative", display: "block" }}
     >
       {children}
-      <style>{`
-        .coming-soon-wrap:hover::after {
-          content: "Coming soon";
-          position: absolute;
-          top: 50%;
-          right: 8px;
-          transform: translateY(-50%);
-          font-size: 9.5px;
-          font-family: var(--font-mono, monospace);
-          letter-spacing: 0.05em;
-          color: var(--ink-4);
-          background: var(--bg-2);
-          border: 1px solid var(--line);
-          padding: 2px 6px;
-          border-radius: 3px;
-          pointer-events: none;
-          white-space: nowrap;
-          z-index: 10;
-        }
-      `}</style>
     </div>
   );
 }
