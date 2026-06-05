@@ -24,6 +24,7 @@ import {
   generateTestToken,
   seedTestWorkspace,
   seedTestMember,
+  seedInstanceAdminUser,
 } from "../../test/helpers.js";
 
 // ─── 1.1: Singleton existence ────────────────────────────────────────────────
@@ -415,6 +416,88 @@ describe("Instance routes", () => {
       });
 
       expect(res.statusCode).toBe(403);
+    });
+  });
+
+  // ─── 1b.5 / 1b.7: POST /api/instance/admins/invites ──────────────────────
+
+  describe("POST /api/instance/admins/invites", () => {
+    async function seedSuperAdmin(): Promise<{ userId: string; email: string; token: string }> {
+      // super-admin: isSuperAdmin=true + ownerUserId set on singleton
+      const { userId, email } = await seedInstanceAdminUser();
+      await prisma.user.update({
+        where: { id: userId },
+        data: { isSuperAdmin: true },
+      });
+      await prisma.instanceSettings.update({
+        where: { id: INSTANCE_SETTINGS_ID },
+        data: { ownerUserId: userId },
+      });
+      const token = generateTestToken({ userId, email });
+      return { userId, email, token };
+    }
+
+    it("(a) 401 without auth", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/instance/admins/invites",
+        payload: { email: "new-admin@kanon.test" },
+      });
+      expect(res.statusCode).toBe(401);
+    });
+
+    it("(b) 403 without super-admin (instance-admin only)", async () => {
+      // instance-admin but NOT super-admin
+      const { token } = await seedInstanceAdminUser();
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/instance/admins/invites",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { email: "new-admin@kanon.test" },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it("(c) 201 with valid body returns { inviteId, url, token, expiresAt }", async () => {
+      const { token } = await seedSuperAdmin();
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/instance/admins/invites",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { email: "new-admin@kanon.test" },
+      });
+
+      expect(res.statusCode).toBe(201);
+      const body = res.json();
+      expect(body).toHaveProperty("inviteId");
+      expect(body).toHaveProperty("url");
+      expect(body).toHaveProperty("token");
+      expect(body).toHaveProperty("expiresAt");
+      expect(body.url).toMatch(/^kanon:\/\//);
+      // token is a JWT
+      const parts = body.token.split(".");
+      expect(parts).toHaveLength(3);
+    });
+
+    it("(d) 201 with optional ttlHours respects the TTL", async () => {
+      const { token } = await seedSuperAdmin();
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/instance/admins/invites",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { email: "new-admin2@kanon.test", ttlHours: 24 },
+      });
+
+      expect(res.statusCode).toBe(201);
+      const body = res.json();
+      const expiresAt = new Date(body.expiresAt);
+      const diffHours = (expiresAt.getTime() - Date.now()) / (60 * 60 * 1000);
+      // Should be within 1 hour of 24h from now
+      expect(diffHours).toBeGreaterThan(23);
+      expect(diffHours).toBeLessThan(25);
     });
   });
 });
