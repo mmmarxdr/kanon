@@ -9,8 +9,10 @@ import {
   seedTestProject,
   cleanDatabase,
   disconnectTestDb,
+  seedInstanceAdminUser,
 } from "../../test/helpers.js";
 import { prisma } from "../../config/prisma.js";
+import { INSTANCE_SETTINGS_ID } from "../../shared/constants.js";
 
 /**
  * Integration tests for the auth module.
@@ -677,5 +679,198 @@ describe("Auth Integration", () => {
       // Route is removed — must be 404 (not found) after PR1
       expect(res.statusCode).toBe(404);
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1b.10 / 1b.11 — register() signup policy enforcement (PR1b, KAN-49)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("POST /api/auth/register — signup policy enforcement", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await createTestApp();
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await cleanDatabase();
+    await disconnectTestDb();
+  });
+
+  beforeEach(async () => {
+    await cleanDatabase();
+  });
+
+  /** Patch InstanceSettings.signupMode (and optionally allowedSignupDomains) */
+  async function setSignupPolicy(
+    mode: "open" | "invite" | "closed",
+    domains: string[] = [],
+  ) {
+    await prisma.instanceSettings.update({
+      where: { id: INSTANCE_SETTINGS_ID },
+      data: { signupMode: mode, allowedSignupDomains: domains },
+    });
+  }
+
+  /** Create a valid workspace-member invite token (scope=onboard) for invite-mode tests */
+  async function createWorkspaceInviteToken(email: string): Promise<string> {
+    const ws = await seedTestWorkspace();
+    const admin = await seedInstanceAdminUser();
+    // Login admin to get access token
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { email: admin.email, password: "password123" },
+    });
+    // Create an onboarding invite with the email
+    const inviteRes = await app.inject({
+      method: "POST",
+      url: `/api/workspaces/${ws.id}/invites/onboarding`,
+      headers: { authorization: `Bearer ${loginRes.json().accessToken}` },
+      payload: { email },
+    });
+    // Fallback: use CreateInvite which returns a token field directly
+    if (inviteRes.statusCode !== 201) {
+      // Create member invite instead
+      const memberAdmin = await seedTestMemberWithRole(ws.id, "admin");
+      const inviteRes2 = await app.inject({
+        method: "POST",
+        url: `/api/workspaces/${ws.id}/invites`,
+        headers: { authorization: `Bearer ${memberAdmin.token}` },
+        payload: { email, role: "member" },
+      });
+      return inviteRes2.json().token;
+    }
+    return inviteRes.json().token;
+  }
+
+  // (a) closed mode → 403 for any registration
+  it("(a) signupMode=closed → 403 regardless of email", async () => {
+    await setSignupPolicy("closed");
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/auth/register",
+      payload: { email: "anyone@kanon.test", password: "Secret123!" },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json().code).toBe("SIGNUP_CLOSED");
+
+    // No user created
+    const user = await prisma.user.findUnique({ where: { email: "anyone@kanon.test" } });
+    expect(user).toBeNull();
+  });
+
+  // (b) invite mode, no token → 403
+  it("(b) signupMode=invite, no token → 403", async () => {
+    await setSignupPolicy("invite");
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/auth/register",
+      payload: { email: "noinvite@kanon.test", password: "Secret123!" },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json().code).toBe("INVITE_REQUIRED");
+  });
+
+  // (c) invite mode with valid workspace invite token → 201
+  it("(c) signupMode=invite, valid invite token → 201, token consumed", async () => {
+    await setSignupPolicy("invite");
+
+    // Seed a workspace-member invite
+    const ws = await seedTestWorkspace();
+    const memberAdmin = await seedTestMemberWithRole(ws.id, "admin");
+    const inviteRes = await app.inject({
+      method: "POST",
+      url: `/api/workspaces/${ws.id}/invites`,
+      headers: { authorization: `Bearer ${memberAdmin.token}` },
+      payload: { email: "invitee@kanon.test", role: "member" },
+    });
+    expect(inviteRes.statusCode).toBe(201);
+    const inviteToken = inviteRes.json().token;
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/auth/register",
+      payload: {
+        email: "invitee@kanon.test",
+        password: "Secret123!",
+        invite: inviteToken,
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+  });
+
+  // (d) open + allowlist + out-of-domain email → 403
+  it("(d) signupMode=open, allowedSignupDomains=[acme.com], user@other.com → 403", async () => {
+    await setSignupPolicy("open", ["acme.com"]);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/auth/register",
+      payload: { email: "user@other.com", password: "Secret123!" },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json().code).toBe("DOMAIN_NOT_ALLOWED");
+  });
+
+  // (e) open + allowlist + matching domain → 201
+  it("(e) signupMode=open, allowedSignupDomains=[acme.com], user@acme.com → 201", async () => {
+    await setSignupPolicy("open", ["acme.com"]);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/auth/register",
+      payload: { email: "user@acme.com", password: "Secret123!" },
+    });
+
+    expect(res.statusCode).toBe(201);
+  });
+
+  // (f) open + empty allowlist → 201 (allow-all, default behavior — guards B5)
+  it("(f) signupMode=open, empty allowedSignupDomains → 201 (allow-all, default)", async () => {
+    // Default state from cleanDatabase: signupMode=open, allowedSignupDomains=[]
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/auth/register",
+      payload: { email: "dev@kanon.io", password: "Secret123!", displayName: "Dev User" },
+    });
+
+    expect(res.statusCode).toBe(201);
+  });
+
+  // Invite token present → bypasses policy gate even in closed mode
+  it("invite token present → bypasses policy gate (even closed mode)", async () => {
+    await setSignupPolicy("closed");
+
+    // Seed a workspace-member invite
+    const ws = await seedTestWorkspace();
+    const memberAdmin = await seedTestMemberWithRole(ws.id, "admin");
+    const inviteRes = await app.inject({
+      method: "POST",
+      url: `/api/workspaces/${ws.id}/invites`,
+      headers: { authorization: `Bearer ${memberAdmin.token}` },
+      payload: { email: "bypass@kanon.test", role: "member" },
+    });
+    const inviteToken = inviteRes.json().token;
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/auth/register",
+      payload: {
+        email: "bypass@kanon.test",
+        password: "Secret123!",
+        invite: inviteToken,
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
   });
 });

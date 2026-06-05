@@ -15,6 +15,7 @@ import { ProjectAssignmentSchema } from "../invite/schema.js";
 import { createProjectMembersInTx } from "../project/project-member-service.js";
 import { acceptInvite, deriveUsername } from "../invite/service.js";
 import { consumeInstanceAdminInvite } from "../instance/service.js";
+import { INSTANCE_SETTINGS_ID } from "../../shared/constants.js";
 
 // ── D6 helpers ────────────────────────────────────────────────────────────────
 
@@ -135,6 +136,15 @@ export function verifyRefreshToken(token: string): TokenPayload {
  * separately. Deviation from design's "same tx" wording — acceptInvite owns its own
  * transaction and its signature cannot be changed in this slice.
  */
+/**
+ * Extract the domain from an email address (lowercase).
+ * Returns empty string if the email is malformed.
+ */
+function extractEmailDomain(email: string): string {
+  const parts = email.split("@");
+  return (parts[1] ?? "").toLowerCase();
+}
+
 export async function register(
   body: RegisterBody,
   emailProvider: EmailProvider,
@@ -145,6 +155,47 @@ export async function register(
   accessToken?: string;
   refreshToken?: string;
 }> {
+  // ── Signup policy gate (PR1b, KAN-49) ─────────────────────────────────────
+  // Precedence: invite token present → bypass gate entirely (invite path handles auth).
+  // Otherwise: read InstanceSettings and enforce signupMode + allowedSignupDomains.
+  // Default state (open + empty allowlist) = allow-all → existing tests unaffected (B5 guard).
+  if (!body.invite) {
+    const settings = await prisma.instanceSettings.findUnique({
+      where: { id: INSTANCE_SETTINGS_ID },
+      select: { signupMode: true, allowedSignupDomains: true },
+    });
+
+    if (settings) {
+      const { signupMode, allowedSignupDomains } = settings;
+
+      if (signupMode === "closed") {
+        throw new AppError(403, "SIGNUP_CLOSED", "Registrations are closed for this instance");
+      }
+
+      if (signupMode === "invite") {
+        // invite mode without a token — body.invite is falsy
+        throw new AppError(403, "INVITE_REQUIRED", "An invite is required to register");
+      }
+
+      // signupMode === "open": enforce domain allowlist if non-empty
+      if (signupMode === "open" && allowedSignupDomains.length > 0) {
+        const domain = extractEmailDomain(body.email);
+        const allowed = allowedSignupDomains.some(
+          (d) => d.toLowerCase() === domain,
+        );
+        if (!allowed) {
+          throw new AppError(
+            403,
+            "DOMAIN_NOT_ALLOWED",
+            "Your email domain is not permitted to register on this instance",
+          );
+        }
+      }
+      // open + empty allowlist → allow-all (no-op)
+    }
+  }
+  // ── End signup policy gate ─────────────────────────────────────────────────
+
   // Check for duplicate email globally
   const existingUser = await prisma.user.findUnique({
     where: { email: body.email },
