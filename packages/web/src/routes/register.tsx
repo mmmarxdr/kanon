@@ -12,6 +12,8 @@ import {
   PrimaryBtn,
   Sub,
 } from "@/components/auth-layout";
+import { PasswordRequirements } from "@/components/password-requirements";
+import { evaluatePassword, isPasswordValid } from "@/lib/password-policy";
 
 interface RegisterSearch {
   invite?: string;
@@ -38,14 +40,24 @@ export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [pwTouched, setPwTouched] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Derived at render — no redundant state
+  const requirements = evaluatePassword(password, confirmPassword);
+  const valid = isPasswordValid(requirements);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!agreedToTerms) return;
+    if (!valid) {
+      setError("Please ensure your password meets all requirements.");
+      return;
+    }
     setError(null);
     setLoading(true);
 
@@ -167,12 +179,31 @@ export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
             fieldLabel="Password"
             type="password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              if (!pwTouched) setPwTouched(true);
+            }}
             placeholder="At least 8 characters"
             required
             minLength={8}
             maxLength={128}
+            aria-describedby="password-requirements"
           />
+          <FormInput
+            id="confirmPassword"
+            fieldLabel="Confirm password"
+            type="password"
+            value={confirmPassword}
+            onChange={(e) => {
+              setConfirmPassword(e.target.value);
+              if (!pwTouched) setPwTouched(true);
+            }}
+            placeholder="Repeat your password"
+            required
+            minLength={8}
+            maxLength={128}
+          />
+          <PasswordRequirements requirements={pwTouched ? requirements : []} />
         </div>
 
         {/* Terms of Service — required gate, client-side only */}
@@ -225,7 +256,7 @@ export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
           </div>
         )}
 
-        <PrimaryBtn disabled={loading || !agreedToTerms}>
+        <PrimaryBtn disabled={loading || !agreedToTerms || !valid}>
           {loading ? "Creating account…" : submitLabel}
         </PrimaryBtn>
       </form>
