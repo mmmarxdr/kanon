@@ -124,10 +124,11 @@ export function InvitesSection({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <label className="text-xs font-medium text-card-foreground">Role</label>
+              <div className="relative">
               <select
                 value={role}
                 onChange={(e) => setRole(e.target.value)}
-                className="w-full rounded-md border border-input bg-[#E8E8E8] px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+                className="w-full appearance-none rounded-md border border-input bg-background px-2 py-1.5 pr-7 text-sm text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
               >
                 {INVITE_ROLES.map((r) => (
                   <option key={r} value={r}>
@@ -135,6 +136,8 @@ export function InvitesSection({
                   </option>
                 ))}
               </select>
+              <svg className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </div>
             </div>
             <div className="space-y-1">
               <label className="text-xs font-medium text-card-foreground">
@@ -145,7 +148,7 @@ export function InvitesSection({
                 min={0}
                 value={maxUses}
                 onChange={(e) => setMaxUses(e.target.value)}
-                className="w-full rounded-md border border-input bg-[#E8E8E8] px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+                className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
               />
             </div>
             <div className="space-y-1">
@@ -156,7 +159,7 @@ export function InvitesSection({
                 max={720}
                 value={expiresInHours}
                 onChange={(e) => setExpiresInHours(e.target.value)}
-                className="w-full rounded-md border border-input bg-[#E8E8E8] px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+                className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
               />
             </div>
             <div className="space-y-1">
@@ -166,7 +169,7 @@ export function InvitesSection({
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
                 placeholder="e.g. Team onboarding"
-                className="w-full rounded-md border border-input bg-[#E8E8E8] px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+                className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
               />
             </div>
           </div>
@@ -180,7 +183,7 @@ export function InvitesSection({
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="colleague@example.com"
-              className="w-full rounded-md border border-input bg-[#E8E8E8] px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+              className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
             />
             {email && (
               <p className="text-xs text-muted-foreground mt-1">

@@ -111,6 +111,7 @@ export function MembersSection({
 
                 {/* Role */}
                 {isAdmin && !isOwner && !isCurrentUser ? (
+                  <div className="relative">
                   <select
                     value={member.role}
                     onChange={(e) => {
@@ -119,7 +120,7 @@ export function MembersSection({
                         role: e.target.value,
                       });
                     }}
-                    className="rounded-md border border-input bg-[#E8E8E8] px-2 py-1 text-xs text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+                    className="appearance-none rounded-md border border-input bg-background px-2 py-1 pr-7 text-xs text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
                   >
                     {ROLES.filter((r) => r !== "owner").map((r) => (
                       <option key={r} value={r}>
@@ -127,6 +128,8 @@ export function MembersSection({
                       </option>
                     ))}
                   </select>
+                  <svg className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                  </div>
                 ) : (
                   <span className="text-xs font-medium text-muted-foreground px-2 py-1 rounded-md bg-secondary">
                     {roleLabel(member.role)}

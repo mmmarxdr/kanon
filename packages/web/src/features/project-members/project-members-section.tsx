@@ -200,6 +200,7 @@ export function ProjectMembersSection({
 
                 {/* Role select — explicit rows, admin actor, not current user, not owner row */}
                 {isExplicit && isAdmin && !isCurrentUser && !isOwnerRow && (
+                  <div className="relative">
                   <select
                     value={member.role}
                     onChange={(e) => {
@@ -208,7 +209,7 @@ export function ProjectMembersSection({
                         role: e.target.value as MemberRole,
                       });
                     }}
-                    className="rounded-md border border-input bg-[#E8E8E8] px-2 py-1 text-xs text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+                    className="appearance-none rounded-md border border-input bg-background px-2 py-1 pr-7 text-xs text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
                   >
                     {availableRoles.map((r) => (
                       <option key={r} value={r}>
@@ -216,6 +217,8 @@ export function ProjectMembersSection({
                       </option>
                     ))}
                   </select>
+                  <svg className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                  </div>
                 )}
 
                 {/* Role badge for rows without a select */}
@@ -301,7 +304,7 @@ export function ProjectMembersSection({
                 value={addEmail}
                 onChange={(e) => setAddEmail(e.target.value)}
                 placeholder="colleague@example.com"
-                className="w-full rounded-md border border-input bg-[#E8E8E8] px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+                className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
               />
             </div>
 
@@ -309,11 +312,12 @@ export function ProjectMembersSection({
               <label className="text-xs font-medium text-card-foreground">
                 Role
               </label>
+              <div className="relative">
               <select
                 data-testid="add-member-role"
                 value={addRole}
                 onChange={(e) => setAddRole(e.target.value as MemberRole)}
-                className="rounded-md border border-input bg-[#E8E8E8] px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+                className="appearance-none rounded-md border border-input bg-background px-2 py-1.5 pr-7 text-sm text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
               >
                 {availableRoles.map((r) => (
                   <option key={r} value={r}>
@@ -321,6 +325,8 @@ export function ProjectMembersSection({
                   </option>
                 ))}
               </select>
+              <svg className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </div>
             </div>
 
             <button
