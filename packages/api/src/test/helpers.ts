@@ -154,6 +154,8 @@ export async function cleanDatabase(): Promise<void> {
   await prisma.workspaceInvite.deleteMany();
   await prisma.passwordResetToken.deleteMany();
   await prisma.member.deleteMany();
+  // Must delete before users due to FK on createdById (KAN-49 PR1b)
+  await prisma.instanceAdminInvite.deleteMany();
   // Delete users BEFORE resetting singleton so FK SET NULL fires cleanly
   // (ownerUserId FK → users.id; deleting user sets ownerUserId=NULL automatically,
   // but we explicitly reset after to ensure consistency regardless of FK behaviour).
