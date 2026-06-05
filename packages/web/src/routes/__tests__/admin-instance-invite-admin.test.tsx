@@ -2,8 +2,8 @@
  * AdminInstanceForm — invite-admin UI tests (KAN-49 / PR2 tasks 2.11–2.12)
  *
  * Tests:
- *  (a) isInstanceAdmin:true → invite-admin section visible
- *  (b) isInstanceAdmin:false → invite-admin section NOT visible
+ *  (a) isSuperAdmin:true → invite-admin section visible
+ *  (b) isInstanceAdmin:true, isSuperAdmin:false → invite-admin section NOT visible
  *  (c) submitting invite form calls POST /api/instance/admins/invites
  *  (d) successful response displays the generated kanon:// link
  */
@@ -87,9 +87,10 @@ describe("AdminInstanceForm — invite-admin UI", () => {
     vi.restoreAllMocks();
   });
 
-  // ── (a) isInstanceAdmin:true → invite section visible ─────────────────────
+  // ── (a) isSuperAdmin:true → invite section visible ───────────────────────
 
-  it("(a) isInstanceAdmin:true → invite-admin section is visible", async () => {
+  it("(a) isSuperAdmin:true → invite-admin section is visible", async () => {
+    // beforeEach sets isSuperAdmin:true, isInstanceAdmin:true
     mockFetchApi.mockResolvedValueOnce(makeSettings());
     render(<AdminInstanceForm onNavigate={mockNavigate} />);
 
@@ -98,9 +99,9 @@ describe("AdminInstanceForm — invite-admin UI", () => {
     });
   });
 
-  // ── (b) isInstanceAdmin:false → invite section NOT visible ────────────────
+  // ── (b) isInstanceAdmin:true, isSuperAdmin:false → section NOT visible ────
 
-  it("(b) isInstanceAdmin:false → invite-admin section is NOT rendered", async () => {
+  it("(b) isInstanceAdmin:true, isSuperAdmin:false → invite-admin section is NOT rendered", async () => {
     mockUser.value = {
       id: "u1",
       email: "user@kanon.io",
@@ -108,7 +109,7 @@ describe("AdminInstanceForm — invite-admin UI", () => {
       avatarUrl: null,
       emailVerified: true,
       isSuperAdmin: false,
-      isInstanceAdmin: false,
+      isInstanceAdmin: true,  // pure instance-admin — should NOT see invite-admin UI
     };
     mockFetchApi.mockResolvedValueOnce(makeSettings());
     render(<AdminInstanceForm onNavigate={mockNavigate} />);

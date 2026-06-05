@@ -4,7 +4,8 @@
  * Tests:
  *  (a) sidebar + button click opens create-project modal
  *  (b) isSuperAdmin:true → "Admin" nav entry visible linking to /admin/instance
- *  (c) isInstanceAdmin:true → workspace-create + invite-admin affordances visible
+ *  (c1) isInstanceAdmin:true, isSuperAdmin:false → workspace-create visible; invite-admin NOT visible
+ *  (c2) isSuperAdmin:true (+ isInstanceAdmin:true) → invite-admin link visible
  *  (d) both flags false → no admin nav, no workspace-create, no invite-admin
  *  (e) isSuperAdmin:false but isInstanceAdmin:true → admin nav NOT shown, workspace-create shown
  */
@@ -171,13 +172,22 @@ describe("AppSidebar", () => {
     expect(screen.getByTestId("admin-nav-link")).toBeTruthy();
   });
 
-  // ── (c) isInstanceAdmin:true → workspace-create + invite-admin affordances ─
+  // ── (c1) isInstanceAdmin:true, isSuperAdmin:false → workspace-create visible; invite-admin NOT ─
 
-  it("(c) isInstanceAdmin:true → workspace-create and invite-admin affordances visible", () => {
-    mockUser.value = makeUser({ isInstanceAdmin: true });
+  it("(c1) isInstanceAdmin:true, isSuperAdmin:false → workspace-create visible, invite-admin NOT visible", () => {
+    mockUser.value = makeUser({ isInstanceAdmin: true, isSuperAdmin: false });
     render(<AppSidebar />);
 
     expect(screen.getByTestId("workspace-create-link")).toBeTruthy();
+    expect(screen.queryByTestId("invite-admin-link")).toBeNull();
+  });
+
+  // ── (c2) isSuperAdmin:true → invite-admin link visible ────────────────────
+
+  it("(c2) isSuperAdmin:true (with isInstanceAdmin:true) → invite-admin link visible", () => {
+    mockUser.value = makeUser({ isSuperAdmin: true, isInstanceAdmin: true });
+    render(<AppSidebar />);
+
     expect(screen.getByTestId("invite-admin-link")).toBeTruthy();
   });
 
@@ -192,13 +202,14 @@ describe("AppSidebar", () => {
     expect(screen.queryByTestId("invite-admin-link")).toBeNull();
   });
 
-  // ── (e) only isInstanceAdmin → no admin nav ────────────────────────────────
+  // ── (e) only isInstanceAdmin → no admin nav, no invite-admin ──────────────
 
-  it("(e) isInstanceAdmin:true but isSuperAdmin:false → admin nav NOT shown", () => {
+  it("(e) isInstanceAdmin:true but isSuperAdmin:false → admin nav NOT shown, invite-admin NOT shown", () => {
     mockUser.value = makeUser({ isInstanceAdmin: true, isSuperAdmin: false });
     render(<AppSidebar />);
 
     expect(screen.queryByTestId("admin-nav-link")).toBeNull();
     expect(screen.getByTestId("workspace-create-link")).toBeTruthy();
+    expect(screen.queryByTestId("invite-admin-link")).toBeNull();
   });
 });

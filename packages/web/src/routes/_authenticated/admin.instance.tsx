@@ -255,8 +255,8 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
         }}
       >
         <div style={{ maxWidth: 560, display: "flex", flexDirection: "column", gap: 24 }}>
-          {/* ── Invite-admin section (gated on isInstanceAdmin) ── */}
-          {user?.isInstanceAdmin && (
+          {/* ── Invite-admin section (gated on isSuperAdmin — only super-admin may mint invites) ── */}
+          {user?.isSuperAdmin && (
             <div
               data-testid="invite-admin-section"
               style={{
