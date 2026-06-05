@@ -212,5 +212,5 @@ export type ExchangeBody = z.infer<typeof ExchangeBody>;
  */
 export const ExchangeResponse = z.object({
   accessToken: z.string(),
-  expiresIn: z.number().int(), // seconds — 900
+  expiresIn: z.number().int(), // seconds — 3600
 });

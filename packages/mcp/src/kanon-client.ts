@@ -803,11 +803,15 @@ export class KanonClient {
         try {
           return await this.doRequest<T>(method, path, body);
         } catch (retryErr) {
-          // Retry 401 or any error → boundary error
-          throw new McpAuthError({
-            code: "REFRESH_FAILED",
-            message: "Refresh token expired or revoked — re-run onboarding to obtain new credentials.",
-          });
+          // Retry 401 → boundary error (spec R1d)
+          // Non-401 errors propagate as-is (spec R1c principle: non-401 never intercepted)
+          if (retryErr instanceof KanonApiError && retryErr.statusCode === 401) {
+            throw new McpAuthError({
+              code: "REFRESH_FAILED",
+              message: "Refresh token expired or revoked — re-run onboarding to obtain new credentials.",
+            });
+          }
+          throw retryErr;
         }
       }
       throw err;
