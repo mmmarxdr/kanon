@@ -28,7 +28,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 INSTALL_SH="$REPO_ROOT/install.sh"
 
-KANON_MCP_VERSION="0.4.0"
+# Derive the version from install.sh so release bumps can never drift
+# (a hardcoded value here broke main when install.sh moved 0.4.0 → 0.5.0).
+KANON_MCP_VERSION="$(grep -m1 '^KANON_MCP_VERSION=' "$INSTALL_SH" | cut -d'"' -f2)"
+if [ -z "$KANON_MCP_VERSION" ]; then
+  echo "FATAL: could not derive KANON_MCP_VERSION from $INSTALL_SH" >&2
+  exit 1
+fi
 ASSET_NAME="kanon-mcp-${KANON_MCP_VERSION}.tar.gz"
 
 PASS=0
@@ -123,7 +129,7 @@ trap cleanup EXIT
 # passes on the idempotency path (T2) without re-downloading.
 FIXTURE_PKG_DIR="$FIXTURE_DIR/pkg/kanon-mcp-${KANON_MCP_VERSION}"
 mkdir -p "$FIXTURE_PKG_DIR/setup/dist"
-cat > "$FIXTURE_PKG_DIR/package.json" <<PKGJSON
+cat >"$FIXTURE_PKG_DIR/package.json" <<PKGJSON
 {
   "name": "@kanon/mcp",
   "version": "${KANON_MCP_VERSION}"
@@ -131,7 +137,7 @@ cat > "$FIXTURE_PKG_DIR/package.json" <<PKGJSON
 PKGJSON
 
 # setup stub: just exits 0 (not invoked in T1/T2/T3 due to SKIP_SETUP=1)
-cat > "$FIXTURE_PKG_DIR/setup/dist/index.js" <<'SETUPSTUB'
+cat >"$FIXTURE_PKG_DIR/setup/dist/index.js" <<'SETUPSTUB'
 process.exit(0);
 SETUPSTUB
 
@@ -140,7 +146,7 @@ SETUPSTUB
 
 # Generate correct sha256 for Fixture A
 CORRECT_HASH="$(shasum -a 256 "$FIXTURE_DIR/${ASSET_NAME}" | awk '{print $1}')"
-echo "${CORRECT_HASH}  ${ASSET_NAME}" > "$FIXTURE_DIR/${ASSET_NAME}.sha256"
+echo "${CORRECT_HASH}  ${ASSET_NAME}" >"$FIXTURE_DIR/${ASSET_NAME}.sha256"
 
 # ── Fixture B: two-index tarball (T4 — proves locate_setup_bin SIGPIPE fix)
 # Two distinct files matching */setup/*/index.js so head -1 must survive SIGPIPE.
@@ -149,18 +155,18 @@ mkdir -p "$FIXTURE_B_PKG_DIR/setup/dist"
 mkdir -p "$FIXTURE_B_PKG_DIR/setup/extra"
 
 # Primary stub: prints a marker line so T4 can assert invocation
-cat > "$FIXTURE_B_PKG_DIR/setup/dist/index.js" <<'SETUPB'
+cat >"$FIXTURE_B_PKG_DIR/setup/dist/index.js" <<'SETUPB'
 console.log("kanon-setup-invoked");
 process.exit(0);
 SETUPB
 
 # Second stub: also exits 0; find may pick either one — both are valid
-cat > "$FIXTURE_B_PKG_DIR/setup/extra/index.js" <<'SETUPB2'
+cat >"$FIXTURE_B_PKG_DIR/setup/extra/index.js" <<'SETUPB2'
 console.log("kanon-setup-invoked");
 process.exit(0);
 SETUPB2
 
-cat > "$FIXTURE_B_PKG_DIR/package.json" <<PKGJSON2
+cat >"$FIXTURE_B_PKG_DIR/package.json" <<PKGJSON2
 {
   "name": "@kanon/mcp",
   "version": "${KANON_MCP_VERSION}"
@@ -174,7 +180,7 @@ FIXTURE_B_HASH="$(shasum -a 256 "$FIXTURE_B_ASSET" | awk '{print $1}')"
 FIXTURE_B_DIR="$(mktemp -d)"
 trap 'rm -rf "$FIXTURE_B_DIR"' EXIT
 cp "$FIXTURE_B_ASSET" "$FIXTURE_B_DIR/${ASSET_NAME}"
-echo "${FIXTURE_B_HASH}  ${ASSET_NAME}" > "$FIXTURE_B_DIR/${ASSET_NAME}.sha256"
+echo "${FIXTURE_B_HASH}  ${ASSET_NAME}" >"$FIXTURE_B_DIR/${ASSET_NAME}.sha256"
 
 # ── Test 1: Happy path ────────────────────────────────────────────────────────
 
@@ -182,10 +188,12 @@ echo "Test 1: Happy path — correct sha256 → extract succeeds"
 
 OUTPUT_1="$(
   KANON_INSTALL_BASE_URL="file://$FIXTURE_DIR" \
-  KANON_INSTALL_DIR="$INSTALL_DIR/happy" \
-  KANON_INSTALL_SKIP_SETUP=1 \
-  bash "$INSTALL_SH" 2>&1
-)"; EXIT_1=$?; true
+    KANON_INSTALL_DIR="$INSTALL_DIR/happy" \
+    KANON_INSTALL_SKIP_SETUP=1 \
+    bash "$INSTALL_SH" 2>&1
+)"
+EXIT_1=$?
+true
 
 assert_exit_zero "happy path" "$EXIT_1"
 assert_file_exists "marker version file" "$INSTALL_DIR/happy/version"
@@ -198,10 +206,12 @@ echo "Test 2: Idempotency — re-run → 'already installed', exit 0"
 
 OUTPUT_2="$(
   KANON_INSTALL_BASE_URL="file://$FIXTURE_DIR" \
-  KANON_INSTALL_DIR="$INSTALL_DIR/happy" \
-  KANON_INSTALL_SKIP_SETUP=1 \
-  bash "$INSTALL_SH" 2>&1
-)"; EXIT_2=$?; true
+    KANON_INSTALL_DIR="$INSTALL_DIR/happy" \
+    KANON_INSTALL_SKIP_SETUP=1 \
+    bash "$INSTALL_SH" 2>&1
+)"
+EXIT_2=$?
+true
 
 assert_exit_zero "idempotent re-run" "$EXIT_2"
 assert_output_contains "idempotent message" "$OUTPUT_2" "already installed"
@@ -214,16 +224,18 @@ echo "Test 3: Sha256 mismatch — corrupt checksum → abort, no extract"
 
 # Write a corrupt checksum file
 echo "0000000000000000000000000000000000000000000000000000000000000000  ${ASSET_NAME}" \
-  > "$FIXTURE_DIR/${ASSET_NAME}.sha256.corrupt"
+  >"$FIXTURE_DIR/${ASSET_NAME}.sha256.corrupt"
 
 cp "$FIXTURE_DIR/${ASSET_NAME}.sha256.corrupt" "$FIXTURE_DIR/${ASSET_NAME}.sha256"
 
 OUTPUT_3="$(
   KANON_INSTALL_BASE_URL="file://$FIXTURE_DIR" \
-  KANON_INSTALL_DIR="$INSTALL_DIR/corrupt" \
-  KANON_INSTALL_SKIP_SETUP=1 \
-  bash "$INSTALL_SH" 2>&1
-)"; EXIT_3=$?; true
+    KANON_INSTALL_DIR="$INSTALL_DIR/corrupt" \
+    KANON_INSTALL_SKIP_SETUP=1 \
+    bash "$INSTALL_SH" 2>&1
+)"
+EXIT_3=$?
+true
 
 assert_exit_nonzero "sha256 mismatch exit" "$EXIT_3"
 assert_file_absent "no binary written on mismatch" "$INSTALL_DIR/corrupt"
@@ -241,9 +253,11 @@ echo "Test 4: setup-invocation path — locate_setup_bin invoked (proves F1 SIGP
 
 OUTPUT_4="$(
   KANON_INSTALL_BASE_URL="file://$FIXTURE_B_DIR" \
-  KANON_INSTALL_DIR="$INSTALL_DIR/setup-invoke" \
-  bash "$INSTALL_SH" </dev/null 2>&1
-)"; EXIT_4=$?; true
+    KANON_INSTALL_DIR="$INSTALL_DIR/setup-invoke" \
+    bash "$INSTALL_SH" </dev/null 2>&1
+)"
+EXIT_4=$?
+true
 
 assert_exit_zero "setup-invocation path" "$EXIT_4"
 assert_file_exists "version file written" "$INSTALL_DIR/setup-invoke/version"
@@ -259,9 +273,11 @@ echo "Test 5: idempotent re-run — exec_setup via locate_setup_bin (proves F1 f
 
 OUTPUT_5="$(
   KANON_INSTALL_BASE_URL="file://$FIXTURE_B_DIR" \
-  KANON_INSTALL_DIR="$INSTALL_DIR/setup-invoke" \
-  bash "$INSTALL_SH" </dev/null 2>&1
-)"; EXIT_5=$?; true
+    KANON_INSTALL_DIR="$INSTALL_DIR/setup-invoke" \
+    bash "$INSTALL_SH" </dev/null 2>&1
+)"
+EXIT_5=$?
+true
 
 assert_exit_zero "idempotent setup-invoke re-run" "$EXIT_5"
 assert_output_contains "already installed message" "$OUTPUT_5" "already installed"
