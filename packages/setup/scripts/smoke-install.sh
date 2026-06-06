@@ -28,7 +28,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 INSTALL_SH="$REPO_ROOT/install.sh"
 
-KANON_MCP_VERSION="0.4.0"
+# Derive the version from install.sh so release bumps can never drift
+# (a hardcoded value here broke main when install.sh moved 0.4.0 → 0.5.0).
+KANON_MCP_VERSION="$(grep -m1 '^KANON_MCP_VERSION=' "$INSTALL_SH" | cut -d'"' -f2)"
+if [ -z "$KANON_MCP_VERSION" ]; then
+  echo "FATAL: could not derive KANON_MCP_VERSION from $INSTALL_SH" >&2
+  exit 1
+fi
 ASSET_NAME="kanon-mcp-${KANON_MCP_VERSION}.tar.gz"
 
 PASS=0
