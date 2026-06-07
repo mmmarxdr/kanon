@@ -1,10 +1,13 @@
 /**
- * baseline.fixture.ts — Phase 2 baseline capture (Task 1.1)
+ * baseline.fixture.ts — kanon-agent baseline capture (PR2)
  *
- * SKILL_BASELINE_BYTES: aggregate byte count of the three kanon skill files
- *   measured BEFORE any Phase 2 edits (2026-05-22).
- *   Files: kanon-mcp/SKILL.md + kanon-create-issue/SKILL.md + kanon-roadmap/SKILL.md
- *   Measured via: wc -c ~/.claude/skills/kanon-{mcp,create-issue,roadmap}/SKILL.md
+ * SKILL_BASELINE_BYTES: aggregate byte count of the kanon-agent skill files
+ *   measured at PR2 landing (2026-06-07).
+ *   Files: kanon-agent/SKILL.md + sections/issue-creation.md +
+ *          sections/roadmap.md + sections/cycle.md + sections/sdd-hooks.md
+ *   Measured via: node -e "..."  (Buffer.byteLength, utf8)
+ *   SKILL.md: 1539 B, issue-creation: 1171 B, roadmap: 1144 B,
+ *   cycle: 1029 B, sdd-hooks: 1303 B  → total: 6186 B
  *
  * DESCRIPTION_BASELINE_BYTES: sum of topline description string bytes across
  *   all 30 registered tools as parsed by parseAllToolDescriptions().
@@ -17,8 +20,8 @@
  * Downstream tests assert reductions relative to these values.
  */
 
-/** Aggregate byte count of all three kanon skill SKILL.md files before Phase 2 edits. */
-export const SKILL_BASELINE_BYTES = 23924;
+/** Aggregate byte count of kanon-agent SKILL.md + all 4 section files at PR2 landing. */
+export const SKILL_BASELINE_BYTES = 6186;
 
 /**
  * Sum of topline description bytes across all 30 MCP tools before Phase 2 trims.
