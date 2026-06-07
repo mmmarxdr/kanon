@@ -10,7 +10,7 @@
     "test:debug": "playwright test --debug"
   },
   "devDependencies": {
-    "@playwright/test": "^1.52.0",
+    "@playwright/test": "^1.60.0",
     "dotenv": "^16.4.0",
     "typescript": "^5.6.0"
   }
