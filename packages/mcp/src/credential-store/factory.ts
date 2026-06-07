@@ -3,7 +3,7 @@ import type { CredentialStore } from "./types.js";
 
 /**
  * Returns the appropriate CredentialStore for the current platform.
- * Copied from @kanon-pm/setup — self-contained runtime copy.
+ * Copied from packages/setup — self-contained runtime copy.
  */
 export function getCredentialStore(): CredentialStore {
   const platform = process.platform;
