@@ -18,6 +18,7 @@ import { describe, it, expect } from "vitest";
 import {
   activeCycleKPIsSchema,
   mentionDashboardItemSchema,
+  notificationDashboardItemSchema,
   dashboardResponseSchema,
 } from "../dashboard.js";
 
@@ -217,6 +218,8 @@ describe("dashboardResponseSchema", () => {
     agents: [],
     activeCycle: null,
     multipleActiveProjects: false,
+    notifications: [],
+    unreadCount: 0,
   };
 
   it("parses a valid response with activeCycle: null", () => {
@@ -275,5 +278,118 @@ describe("dashboardResponseSchema", () => {
     const result = dashboardResponseSchema.safeParse(baseResponse);
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.multipleActiveProjects).toBe(false);
+  });
+
+  it("notifications: [] is accepted", () => {
+    const result = dashboardResponseSchema.safeParse(baseResponse);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.notifications).toEqual([]);
+  });
+
+  it("unreadCount: 0 is accepted", () => {
+    const result = dashboardResponseSchema.safeParse(baseResponse);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.unreadCount).toBe(0);
+  });
+
+  it("unreadCount: 5 is accepted", () => {
+    const result = dashboardResponseSchema.safeParse({ ...baseResponse, unreadCount: 5 });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.unreadCount).toBe(5);
+  });
+
+  it("notifications: populated with NotificationDashboardItem is accepted", () => {
+    const validNotification = {
+      id: "00000000-0000-0000-0000-000000000030",
+      kind: "assignment" as const,
+      issueId: "00000000-0000-0000-0000-000000000031",
+      actorId: "00000000-0000-0000-0000-000000000032",
+      mentionId: null,
+      payload: { issueKey: "KAN-1" },
+      read: false,
+      via: "web",
+      createdAt: "2026-06-07T12:00:00.000Z",
+    };
+    const result = dashboardResponseSchema.safeParse({
+      ...baseResponse,
+      notifications: [validNotification],
+      unreadCount: 1,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.notifications).toHaveLength(1);
+      expect(result.data.notifications[0]!.kind).toBe("assignment");
+      expect(result.data.unreadCount).toBe(1);
+    }
+  });
+
+  it("rejects response missing notifications field", () => {
+    const { notifications, ...rest } = baseResponse;
+    const result = dashboardResponseSchema.safeParse(rest);
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects response missing unreadCount field", () => {
+    const { unreadCount, ...rest } = baseResponse;
+    const result = dashboardResponseSchema.safeParse(rest);
+    expect(result.success).toBe(false);
+  });
+});
+
+// ─── S3 — notificationDashboardItemSchema ─────────────────────────────────────
+
+describe("notificationDashboardItemSchema — S3 / KAN-27", () => {
+  const validNotification = {
+    id: "00000000-0000-0000-0000-000000000040",
+    kind: "mention" as const,
+    issueId: "00000000-0000-0000-0000-000000000041",
+    actorId: "00000000-0000-0000-0000-000000000042",
+    mentionId: "00000000-0000-0000-0000-000000000043",
+    payload: { context: "@bob check this" },
+    read: false,
+    via: "claude-code",
+    createdAt: "2026-06-07T15:00:00.000Z",
+  };
+
+  it("parses a valid notification item (kind=mention)", () => {
+    const result = notificationDashboardItemSchema.safeParse(validNotification);
+    expect(result.success).toBe(true);
+  });
+
+  it("parses a valid notification item with null fields (kind=assignment)", () => {
+    const result = notificationDashboardItemSchema.safeParse({
+      ...validNotification,
+      kind: "assignment",
+      mentionId: null,
+      via: null,
+      payload: null,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts all four kinds", () => {
+    for (const kind of ["mention", "assignment", "subscribed_activity", "cycle_closed"] as const) {
+      const result = notificationDashboardItemSchema.safeParse({
+        ...validNotification,
+        kind,
+        mentionId: null,
+        payload: null,
+      });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it("rejects unknown kind", () => {
+    const result = notificationDashboardItemSchema.safeParse({
+      ...validNotification,
+      kind: "unknown_kind",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects missing id", () => {
+    const { id, ...rest } = validNotification;
+    const result = notificationDashboardItemSchema.safeParse(rest);
+    expect(result.success).toBe(false);
   });
 });

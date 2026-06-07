@@ -52,7 +52,7 @@ export default async function dashboardRoutes(
       });
       const projectIds = projects.map((p) => p.id);
 
-      // Run all parallel queries together: existing 7 + activeCycleResult + mentionsRaw
+      // Run all parallel queries together: existing 7 + activeCycleResult + mentionsRaw + notifications
       const [
         open,
         inProgress,
@@ -63,6 +63,8 @@ export default async function dashboardRoutes(
         agentSessionsRaw,
         activeCycleResult,
         mentionsRaw,
+        notificationsRaw,
+        unreadCount,
       ] = await Promise.all([
         prisma.issue.count({
           where: {
@@ -142,6 +144,31 @@ export default async function dashboardRoutes(
               take: 20,                                // cap payload (design §3.4)
             })
           : ([] as Array<never>),
+        // S3 / KAN-27: latest 20 unread notifications (by [recipientId, read, createdAt] index)
+        member
+          ? prisma.notification.findMany({
+              where: { recipientId: member.id, workspaceId, read: false },
+              orderBy: { createdAt: "desc" },
+              take: 20,
+              select: {
+                id: true,
+                kind: true,
+                issueId: true,
+                actorId: true,
+                mentionId: true,
+                payload: true,
+                read: true,
+                via: true,
+                createdAt: true,
+              },
+            })
+          : ([] as Array<never>),
+        // S3 / KAN-27: total unread count (from Notification only — single source of truth)
+        member
+          ? prisma.notification.count({
+              where: { recipientId: member.id, workspaceId, read: false },
+            })
+          : 0,
       ]);
 
       // ── Compose ActiveCycleKPIs (only if an active cycle was found) ─────────
@@ -194,6 +221,30 @@ export default async function dashboardRoutes(
         createdAt: m.createdAt.toISOString(),
       }));
 
+      // ── Map notification rows to NotificationDashboardItem shape (S3/KAN-27) ──
+
+      const notifications = (notificationsRaw as Array<{
+        id: string;
+        kind: string;
+        issueId: string | null;
+        actorId: string | null;
+        mentionId: string | null;
+        payload: unknown;
+        read: boolean;
+        via: string | null;
+        createdAt: Date;
+      }>).map((n) => ({
+        id: n.id,
+        kind: n.kind,
+        issueId: n.issueId,
+        actorId: n.actorId,
+        mentionId: n.mentionId,
+        payload: n.payload as Record<string, unknown> | null,
+        read: n.read,
+        via: n.via,
+        createdAt: n.createdAt.toISOString(),
+      }));
+
       return {
         counts: {
           openIssues: open,
@@ -214,6 +265,9 @@ export default async function dashboardRoutes(
         })),
         activeCycle,
         multipleActiveProjects: activeCycleResult?.multipleActiveProjects ?? false,
+        // S3 / KAN-27 additive fields
+        notifications,
+        unreadCount: unreadCount as number,
       };
     },
   );
