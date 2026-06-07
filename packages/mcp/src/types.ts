@@ -282,7 +282,7 @@ export const GetIssueContextInput = z.object({
 
 // ─── Comment Tool Input Schemas ─────────────────────────────────────────────
 
-export const COMMENT_SOURCES = ["human", "mcp", "engram_sync", "system"] as const;
+export const COMMENT_SOURCES = ["human", "mcp", "engram_sync", "system", "adr"] as const;
 
 /** kanon_sync_observation */
 export const SyncObservationInput = z.object({
@@ -295,6 +295,8 @@ export const SyncObservationInput = z.object({
     .describe("Engram observation ID — included in comment footer for traceability"),
   topicKey: z.string().optional()
     .describe("Engram topic key (e.g. 'sdd/my-change/design')"),
+  source: z.enum(COMMENT_SOURCES).optional()
+    .describe("Comment source (default 'engram_sync'). Use source:'adr' for design records."),
   ...WriteFormatField,
 });
 

@@ -8,6 +8,8 @@ import {
   CreateIssueInput,
   UpdateIssueInput,
   TITLE_COACHING,
+  SyncObservationInput,
+  COMMENT_SOURCES,
 } from "./types.js";
 
 // ─── ListWorkspacesInput ─────────────────────────────────────────────────────
@@ -347,5 +349,42 @@ describe("UpdateIssueInput.title refine", () => {
       const msg = result.error.issues[0]?.message ?? "";
       expect(msg).toBe(TITLE_COACHING);
     }
+  });
+});
+
+// ─── SyncObservationInput ────────────────────────────────────────────────────
+
+describe("SyncObservationInput", () => {
+  const base = {
+    issueKey: "KAN-42",
+    title: "Switched to Postgres",
+    content: "We chose Postgres for reliability.",
+  };
+
+  it("accepts valid input without source (defaults to engram_sync)", () => {
+    const result = SyncObservationInput.safeParse(base);
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts source: adr", () => {
+    const result = SyncObservationInput.safeParse({ ...base, source: "adr" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.source).toBe("adr");
+    }
+  });
+
+  it("accepts source: engram_sync", () => {
+    const result = SyncObservationInput.safeParse({ ...base, source: "engram_sync" });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects unknown source value", () => {
+    const result = SyncObservationInput.safeParse({ ...base, source: "unknown_source" });
+    expect(result.success).toBe(false);
+  });
+
+  it("COMMENT_SOURCES array includes adr", () => {
+    expect(COMMENT_SOURCES).toContain("adr");
   });
 });

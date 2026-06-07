@@ -15,7 +15,7 @@ interface TabsSectionProps {
   isSubmittingComment: boolean;
 }
 
-const AGENT_SOURCES = new Set(["mcp", "engram_sync", "system"]);
+const AGENT_SOURCES = new Set(["mcp", "engram_sync", "system", "adr"]);
 
 export function TabsSection({
   comments,

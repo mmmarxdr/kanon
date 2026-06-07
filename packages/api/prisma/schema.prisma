@@ -64,6 +64,7 @@ enum CommentSource {
   mcp
   engram_sync
   system
+  adr
 }
 
 enum Horizon {

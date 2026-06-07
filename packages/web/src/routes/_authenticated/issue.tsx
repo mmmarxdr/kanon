@@ -49,7 +49,7 @@ export const issueRoute = createRoute({
 });
 
 const HUMAN_SOURCES = new Set(["human"]);
-const AGENT_SOURCES = new Set(["mcp", "engram_sync", "system"]);
+const AGENT_SOURCES = new Set(["mcp", "engram_sync", "system", "adr"]);
 
 type Tab = "activity" | "children" | "deps" | "comments";
 
