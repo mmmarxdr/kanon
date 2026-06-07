@@ -357,3 +357,32 @@ export function extractExistingAuth(
   if (apiKey) result.apiKey = apiKey;
   return result;
 }
+
+/**
+ * Extract the KANON_WORKSPACE_ID from an existing kanon-mcp entry in a tool's
+ * config file, if present.
+ *
+ * Used during re-run (wrapper-reuse path) to preserve the workspace binding
+ * already written by the initial onboarding flow.
+ *
+ * Returns undefined when the file doesn't exist, the entry is absent, or the
+ * workspace ID was not written (older install).
+ */
+export function extractExistingWorkspaceId(configPath: string, rootKey: string): string | undefined {
+  let config: Record<string, unknown>;
+  try {
+    const content = fs.readFileSync(configPath, "utf8");
+    config = JSON.parse(content) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+
+  const servers = config[rootKey] as Record<string, unknown> | undefined;
+  if (!servers) return undefined;
+
+  const entry = servers["kanon-mcp"] as
+    | { env?: Record<string, string> }
+    | undefined;
+
+  return entry?.env?.["KANON_WORKSPACE_ID"];
+}
