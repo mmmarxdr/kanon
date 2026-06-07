@@ -154,4 +154,11 @@ describe("Win C — description byte budget and firing pins", () => {
     expect(t).toBeDefined();
     expect(t!.description).toMatch(/demot/i);
   });
+
+  it("C10: kanon_create_issue — [Area] title pattern firing pin", () => {
+    const tools = collectDescriptions();
+    const t = tools.find((t) => t.toolName === "kanon_create_issue");
+    expect(t).toBeDefined();
+    expect(t!.description).toMatch(/\[Area\].*[Vv]erb|\[Area\]/);
+  });
 });

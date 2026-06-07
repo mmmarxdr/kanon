@@ -78,7 +78,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
 
   server.tool(
     "kanon_create_issue",
-    "Create issue. Title: imperative verb. Call kanon_list_groups for groupKey. cycleId attaches on create. Returns ack {ok,id,key}; format:'full' for entity.",
+    "Create issue. Title: [Area] imperative verb (e.g. [Auth] Fix OAuth redirect). Call kanon_list_groups for groupKey. cycleId attaches on create. Returns ack {ok,id,key}; format:'full' for entity.",
     CreateIssueInputShape,
     async (input) => {
       try {
