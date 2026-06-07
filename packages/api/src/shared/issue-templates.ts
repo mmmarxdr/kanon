@@ -38,7 +38,8 @@ export const ISSUE_TEMPLATES: Record<string, IssueTemplate> = {
     type: "task",
     priority: "medium",
     labels: [],
-    descriptionTemplate: "",
+    descriptionTemplate:
+      "## Context\n\n\n## Acceptance Criteria\n\n- [ ] \n\n## Notes\n\n",
   },
   spike: {
     key: "spike",

@@ -36,6 +36,7 @@ never touched the code.
 TITLE FORMAT (required): [Area] Imperative verb phrase
   Good: [Auth] Fix OAuth redirect | [API] Add rate limiting
   Bad: fix thing | sdd/change/path | KAN-42
+DESCRIPTION (recommended): ## Context / ## Acceptance Criteria / ## Notes.
 
 Before kanon_create_issue: kanon_list_groups(projectKey) -> assign groupKey.
 Before kanon_update_issue: kanon_get_issue first — never overwrite blindly.

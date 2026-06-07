@@ -89,3 +89,15 @@ describe("PM Persona — byte ceiling and firing pins", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/CORE TOOLS/i);
   });
 });
+
+// ─── PR-2 Firing Pins — description coaching ─────────────────────────────────
+
+describe("PR-2 firing pins — description coaching", () => {
+  it("P2a: SERVER_INSTRUCTIONS contains DESCRIPTION coaching", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/DESCRIPTION/);
+  });
+
+  it("P2b: SERVER_INSTRUCTIONS contains ## Context coaching", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/## Context/);
+  });
+});
