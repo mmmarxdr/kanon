@@ -23,6 +23,7 @@ import projectRoutes from "./modules/project/routes.js";
 import issueRoutes from "./modules/issue/routes.js";
 import issueDependencyRoutes from "./modules/issue-dependency/routes.js";
 import commentRoutes from "./modules/comment/routes.js";
+import documentRoutes from "./modules/document/routes.js";
 import eventsRoutes from "./modules/events/routes.js";
 import workspaceEventsRoutes from "./modules/events/workspace-events.js";
 import memberRoutes from "./modules/member/routes.js";
@@ -105,6 +106,7 @@ export async function buildApp() {
   await app.register(issueRoutes, { prefix: "/api" });
   await app.register(issueDependencyRoutes, { prefix: "/api" });
   await app.register(commentRoutes, { prefix: "/api" });
+  await app.register(documentRoutes, { prefix: "/api" });
   await app.register(activityRoutes, { prefix: "/api" });
   await app.register(eventsRoutes, { prefix: "/api/events" });
   await app.register(workspaceEventsRoutes, { prefix: "/api/events/workspace" });

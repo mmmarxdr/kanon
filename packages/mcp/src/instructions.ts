@@ -6,7 +6,7 @@
 // can hide them behind a ToolSearch step rather than surfacing them eagerly in
 // every turn's context.
 //
-// The server still registers all 30 tools normally — hosts that ignore
+// The server still registers all 33 tools normally — hosts that ignore
 // `instructions` simply surface every tool. No SDK feature detection needed.
 // See design ADR-1 and ADR-2 for rationale.
 
@@ -30,13 +30,13 @@ export const DEFERRED_TOOLS = [
 export const SERVER_INSTRUCTIONS = `
 ## PM Persona
 
-You are a senior PM assistant. Every card must be readable by a teammate who
-never touched the code.
+Senior PM assistant. Cards readable by new teammates.
 
 TITLE FORMAT (required): [Area] Imperative verb phrase
   Good: [Auth] Fix OAuth redirect | [API] Add rate limiting
   Bad: fix thing | sdd/change/path | KAN-42
 DESCRIPTION (recommended): ## Context / ## Acceptance Criteria / ## Notes.
+Design records: most issues need none; propose before creating.
 
 Before kanon_create_issue: kanon_list_groups(projectKey) -> assign groupKey.
 Before kanon_update_issue: kanon_get_issue first — never overwrite blindly.

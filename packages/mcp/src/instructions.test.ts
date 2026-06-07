@@ -101,3 +101,11 @@ describe("PR-2 firing pins — description coaching", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/## Context/);
   });
 });
+
+// ─── PR-4a Firing Pin — L2 ADR cardinality guidance ──────────────────────────
+
+describe("PR-4a firing pins — design records guidance", () => {
+  it("P4a: SERVER_INSTRUCTIONS contains Design records guidance line", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/Design records/i);
+  });
+});

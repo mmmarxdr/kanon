@@ -47,10 +47,11 @@ function collectDescriptions() {
 }
 
 describe("tool descriptions — trim ≥ 30% (Batch E)", () => {
-  it("E1: parses 30 tools (29 original + kanon_delete_cycle); BASELINE_BYTES is 5730", () => {
+  it("E1: parses 33 tools (30 pre-PR4a + 3 document tools added in PR-4a); BASELINE_BYTES is 5730", () => {
     const tools = collectDescriptions();
-    // Verify the parser finds exactly 30 tools (29 original + kanon_delete_cycle added in KAN-23).
-    expect(tools).toHaveLength(30);
+    // Verify the parser finds exactly 33 tools (30 pre-PR4a + kanon_create_document, kanon_list_documents,
+    // kanon_get_document added in PR-4a).
+    expect(tools).toHaveLength(33);
     // BASELINE_BYTES is the historical pre-trim value — used only as the
     // threshold denominator in E2. We don't assert the current total equals it
     // (E3 trimmed descriptions are in the same files the parser reads).

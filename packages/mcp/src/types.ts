@@ -369,3 +369,30 @@ export const CloseCycleShape = {
   reason: z.string().optional().describe("Reason for the disposition — surfaces in audit trail"),
   ...WriteFormatField,
 };
+
+// ─── Document Tools ──────────────────────────────────────────────────────────
+
+export const DOCUMENT_KINDS = ["adr", "pdr", "rfc", "note"] as const;
+
+/** kanon_create_document */
+export const CreateDocumentInput = z.object({
+  issueKey: z.string().describe("Issue key the document belongs to (e.g. 'KAN-42')"),
+  kind: z.enum(DOCUMENT_KINDS).default("note")
+    .describe("Document kind: adr (architecture decision), pdr (product decision), rfc (proposal), note"),
+  title: z.string().min(1).max(200).describe("Document title (max 200 chars)"),
+  body: z.string().min(1).max(50000)
+    .describe(
+      "Full document body in markdown (max 50 000 chars). " +
+      "Recommended structure: ## Context / ## Decision / ## Alternatives Considered / ## Consequences",
+    ),
+});
+
+/** kanon_list_documents */
+export const ListDocumentsInput = z.object({
+  issueKey: z.string().describe("Issue key (e.g. 'KAN-42')"),
+});
+
+/** kanon_get_document */
+export const GetDocumentInput = z.object({
+  documentId: z.string().uuid().describe("Document ID (UUID)"),
+});
