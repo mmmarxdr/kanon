@@ -14,12 +14,18 @@ const MIN_WORKLOG_DURATION_S = 60;
  * Start a work session on an issue.
  * Upserts on (userId, issueId) — if the user already has a session, it refreshes it.
  * Returns warnings if other users are actively working on the same issue.
+ *
+ * @param via - Normalized X-Kanon-Client value (request.via from viaPlugin).
+ *   When provided, it is stored as the session source so that cleanupExpired
+ *   can later set WorkLog.via correctly via normalizeVia(s.source).
+ *   Falls back to `source` when via is absent.
  */
 export async function startWork(
   issueKey: string,
   memberId: string,
   userId: string,
   source: string = "mcp",
+  via?: string | null,
 ) {
   const issue = await prisma.issue.findUnique({
     where: { key: issueKey },
@@ -30,6 +36,10 @@ export async function startWork(
   }
 
   const now = new Date();
+  // Prefer via as session source — it carries the normalized client identity
+  // (e.g. 'claude-code') so that cleanupExpired can carry it to WorkLog.via.
+  // Fall back to the body-provided source when via is absent.
+  const sessionSource = via ?? source;
 
   // Upsert: create or refresh existing session
   const session = await prisma.workSession.upsert({
@@ -40,13 +50,13 @@ export async function startWork(
       userId,
       issueId: issue.id,
       memberId,
-      source,
+      source: sessionSource,
       startedAt: now,
       lastHeartbeat: now,
     },
     update: {
       lastHeartbeat: now,
-      source,
+      source: sessionSource,
       startedAt: now,
     },
   });
@@ -199,22 +209,38 @@ export async function stopWork(
   let workLog: { id: string; durationS: number } | null = null;
 
   if (durationS >= MIN_WORKLOG_DURATION_S) {
-    // Atomic: create WorkLog + delete session in one transaction
-    const [createdWorkLog] = await prisma.$transaction([
-      prisma.workLog.create({
-        data: {
-          startedAt: existing.startedAt,
-          endedAt,
-          durationS,
-          reason: "stopped",
-          via,
-          issueId: issue.id,
-          memberId,
-        },
-      }),
-      prisma.workSession.delete({ where: { id: existing.id } }),
-    ]);
-    workLog = { id: createdWorkLog.id, durationS };
+    // Atomic: create WorkLog + delete session in one transaction.
+    // P2025 guard: cleanupExpired may have deleted the session between the
+    // findUnique above and this transaction.  Treat it as "already stopped"
+    // and return the same not-found shape rather than propagating a 500.
+    try {
+      const [createdWorkLog] = await prisma.$transaction([
+        prisma.workLog.create({
+          data: {
+            startedAt: existing.startedAt,
+            endedAt,
+            durationS,
+            reason: "stopped",
+            via,
+            issueId: issue.id,
+            memberId,
+          },
+        }),
+        prisma.workSession.delete({ where: { id: existing.id } }),
+      ]);
+      workLog = { id: createdWorkLog.id, durationS };
+    } catch (err: unknown) {
+      if (
+        typeof err === "object" &&
+        err !== null &&
+        (err as { code?: string }).code === "P2025"
+      ) {
+        // Session was already deleted concurrently (race with cleanupExpired).
+        // Return the not-found shape — no WorkLog created, no error surfaced.
+        return { ok: true, deleted: false, workLog: null };
+      }
+      throw err;
+    }
   } else {
     // Sub-minute session: discard, no WorkLog
     await prisma.workSession.delete({ where: { id: existing.id } });

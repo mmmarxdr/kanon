@@ -43,6 +43,7 @@ const mockSessionFindUnique = vi.mocked(prisma.workSession.findUnique);
 const mockSessionFindMany = vi.mocked(prisma.workSession.findMany);
 const mockSessionDelete = vi.mocked(prisma.workSession.delete);
 const mockTransaction = vi.mocked(prisma.$transaction);
+const mockWorkLogCreate = vi.mocked(prisma.workLog.create);
 const mockEmit = vi.mocked(eventBus.emit);
 
 const fakeIssue = {
@@ -165,6 +166,25 @@ describe("WorkSessionService", () => {
       mockIssueFind.mockResolvedValue(null);
 
       await expect(startWork("NOPE-1", "m-1", "u-1")).rejects.toThrow("not found");
+    });
+
+    // ── Fix 2: startWork stores request.via as session source ──────────────
+    // When via is provided (e.g. 'claude-code'), startWork must pass it as the
+    // session source so that cleanupExpired can carry it to WorkLog.via.
+
+    it("stores via as session source when via is provided", async () => {
+      mockIssueFind.mockResolvedValue({ ...fakeIssue, assigneeId: "existing" });
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+
+      await startWork("KAN-42", "member-1", "user-1", "claude-code");
+
+      expect(mockSessionUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({ source: "claude-code" }),
+          update: expect.objectContaining({ source: "claude-code" }),
+        }),
+      );
     });
   });
 
@@ -313,13 +333,89 @@ describe("WorkSessionService", () => {
 
       await stopWork("KAN-42", "user-1", "member-1", "claude-code");
 
-      // Check the $transaction was called with a workLog.create that has via: "claude-code"
-      expect(mockTransaction).toHaveBeenCalledWith(
-        expect.arrayContaining([
-          expect.objectContaining({}), // workLog.create promise (opaque)
-          expect.objectContaining({}), // workSession.delete promise (opaque)
-        ]),
+      // $transaction receives opaque PrismaPromises; assert workLog.create was called
+      // with data containing via: 'claude-code' (the array element at index 0).
+      expect(mockWorkLogCreate).toHaveBeenCalledOnce();
+      expect(mockWorkLogCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ via: "claude-code" }),
+        }),
       );
+    });
+
+    // ── Fix 1: P2025 race condition (stopWork) ─────────────────────────────
+    // cleanupExpired can delete the session between findUnique and $transaction.
+    // The P2025 from workSession.delete inside the transaction must be caught
+    // and return the same not-found shape: { ok: true, deleted: false, workLog: null }.
+
+    it("returns not-found shape when $transaction rejects with P2025 (race with cleanupExpired)", async () => {
+      const startedAt = new Date(Date.now() - 90_000);
+      const session90s = { ...fakeSession, startedAt, lastHeartbeat: new Date() };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(session90s);
+
+      // Simulate P2025: Prisma throws with code P2025 when the record is gone
+      const p2025 = Object.assign(new Error("Record to delete not found"), {
+        code: "P2025",
+      });
+      mockTransaction.mockRejectedValueOnce(p2025);
+
+      const result = await stopWork("KAN-42", "user-1", "member-1");
+
+      expect(result.ok).toBe(true);
+      expect(result.deleted).toBe(false);
+      expect(result.workLog).toBeNull();
+    });
+
+    it("still propagates non-P2025 transaction errors as HTTP 500", async () => {
+      const startedAt = new Date(Date.now() - 90_000);
+      const session90s = { ...fakeSession, startedAt, lastHeartbeat: new Date() };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(session90s);
+
+      const dbError = Object.assign(new Error("Constraint violation"), {
+        code: "P2002",
+      });
+      mockTransaction.mockRejectedValueOnce(dbError);
+
+      await expect(stopWork("KAN-42", "user-1", "member-1")).rejects.toThrow(
+        "Constraint violation",
+      );
+    });
+
+    // ── Fix 6: 60s exact boundary ──────────────────────────────────────────
+    // durationS === 60 → WorkLog written; durationS === 59 → discarded.
+
+    it("writes WorkLog when durationS is exactly 60 (boundary)", async () => {
+      const startedAt = new Date(Date.now() - 60_000);
+      const session60s = { ...fakeSession, startedAt, lastHeartbeat: new Date() };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(session60s);
+      const fakeWorkLog = { id: "wl-60", durationS: 60 };
+      mockTransaction.mockResolvedValue([fakeWorkLog, session60s]);
+
+      const result = await stopWork("KAN-42", "user-1", "member-1");
+
+      expect(result.workLog).not.toBeNull();
+      // $transaction used (workLog.create + workSession.delete built as PrismaPromises)
+      expect(mockTransaction).toHaveBeenCalledOnce();
+      expect(mockWorkLogCreate).toHaveBeenCalledOnce();
+    });
+
+    it("discards WorkLog when durationS is exactly 59 (boundary)", async () => {
+      const startedAt = new Date(Date.now() - 59_000);
+      const session59s = { ...fakeSession, startedAt, lastHeartbeat: new Date() };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(session59s);
+      mockSessionDelete.mockResolvedValue(session59s);
+
+      const result = await stopWork("KAN-42", "user-1", "member-1");
+
+      expect(result.workLog).toBeNull();
+      expect(mockTransaction).not.toHaveBeenCalled();
+      // Plain delete (awaited, not inside a transaction)
+      expect(mockSessionDelete).toHaveBeenCalledOnce();
+      expect(mockWorkLogCreate).not.toHaveBeenCalled();
     });
   });
 
@@ -540,6 +636,113 @@ describe("WorkSessionService", () => {
         { count: 1 },
         "Cleaned up expired work sessions",
       );
+    });
+
+    // ── Fix 6: 60s exact boundary (expiry path) ────────────────────────────
+
+    it("writes WorkLog when expiry durationS is exactly 60 (boundary)", async () => {
+      const now = Date.now();
+      // lastHeartbeat - startedAt = exactly 60s → $transaction used
+      const startedAt = new Date(now - 60_000);
+      const lastHeartbeat = new Date(now);
+      const expiredSessions = [
+        {
+          id: "s-exact60",
+          memberId: "m-1",
+          userId: "u-1",
+          issueId: "i-1",
+          source: "web",
+          startedAt,
+          lastHeartbeat,
+          issue: { key: "KAN-1", project: { workspaceId: "ws-1" } },
+        },
+      ] as any;
+
+      mockSessionFindMany.mockResolvedValue(expiredSessions);
+      mockTransaction.mockResolvedValue([{ id: "wl-exact60" }, {}]);
+
+      const count = await cleanupExpired();
+
+      expect(count).toBe(1);
+      // $transaction used for >= 60s (workLog.create is called to build PrismaPromise)
+      expect(mockTransaction).toHaveBeenCalledOnce();
+      expect(mockWorkLogCreate).toHaveBeenCalledOnce();
+    });
+
+    it("discards WorkLog when expiry durationS is exactly 59 (boundary)", async () => {
+      const now = Date.now();
+      // lastHeartbeat - startedAt = exactly 59s → plain delete, no WorkLog
+      const startedAt = new Date(now - 59_000);
+      const lastHeartbeat = new Date(now);
+      const expiredSessions = [
+        {
+          id: "s-exact59",
+          memberId: "m-1",
+          userId: "u-1",
+          issueId: "i-1",
+          source: "web",
+          startedAt,
+          lastHeartbeat,
+          issue: { key: "KAN-1", project: { workspaceId: "ws-1" } },
+        },
+      ] as any;
+
+      mockSessionFindMany.mockResolvedValue(expiredSessions);
+      mockSessionDelete.mockResolvedValue({} as any);
+
+      const count = await cleanupExpired();
+
+      expect(count).toBe(1);
+      expect(mockTransaction).not.toHaveBeenCalled();
+      // Plain delete (awaited, not part of a transaction)
+      expect(mockSessionDelete).toHaveBeenCalledOnce();
+      expect(mockWorkLogCreate).not.toHaveBeenCalled();
+    });
+
+    // ── Fix 2: session started with via 'claude-code' → expires → WorkLog.via='claude-code'
+    // This tests that when the session source is 'claude-code' (stored from request.via),
+    // cleanupExpired correctly normalizes it to WorkLog.via = 'claude-code'.
+
+    it("carries via from session source through expiry: claude-code → WorkLog.via=claude-code", async () => {
+      const startedAt = new Date(Date.now() - 120_000);
+      const lastHeartbeat = new Date(Date.now() - 10_000);
+      const expiredSessions = [
+        {
+          id: "s-cc",
+          memberId: "m-1",
+          userId: "u-1",
+          issueId: "i-1",
+          source: "claude-code", // stored from request.via at startWork
+          startedAt,
+          lastHeartbeat,
+          issue: { key: "KAN-1", project: { workspaceId: "ws-1" } },
+        },
+      ] as any;
+
+      mockSessionFindMany.mockResolvedValue(expiredSessions);
+      mockTransaction.mockResolvedValue([{ id: "wl-cc" }, {}]);
+
+      await cleanupExpired();
+
+      // workLog.create must be called with via: "claude-code"
+      expect(mockWorkLogCreate).toHaveBeenCalledOnce();
+      expect(mockWorkLogCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ via: "claude-code" }),
+        }),
+      );
+    });
+  });
+
+  // ── Fix 2: normalizeVia('mcp') → null ─────────────────────────────────────
+  // Documented in via.ts: 'mcp' is deliberately excluded from the vocabulary
+  // because it is a transport name, not a client identity.
+
+  describe("normalizeVia — mcp excluded", () => {
+    it("normalizeVia('mcp') returns null — mcp is transport, not client identity", async () => {
+      // Import normalizeVia inline to avoid circular mock issues
+      const { normalizeVia } = await import("../../shared/via.js");
+      expect(normalizeVia("mcp")).toBeNull();
     });
   });
 });
