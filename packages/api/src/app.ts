@@ -40,6 +40,7 @@ import { EngramClient } from "@kanon/bridge";
 import { BridgeSyncService } from "./services/bridge-sync-service.js";
 import { eventBus } from "./services/event-bus/index.js";
 import { cleanupExpired } from "./modules/work-session/service.js";
+import { registerNotificationService } from "./services/notification/index.js";
 
 /**
  * Build and configure the Fastify application.
@@ -87,6 +88,15 @@ export async function buildApp() {
 
   // ─── Domain EventBus ──────────────────────────────────────────────────
   app.decorate("eventBus", eventBus);
+
+  // ─── NotificationService ──────────────────────────────────────────────
+  // Subscribe to the EventBus at startup; unsubscribe on close (D3).
+  const unsubscribeNotifications = registerNotificationService(eventBus, {
+    logger: app.log,
+  });
+  app.addHook("onClose", async () => {
+    unsubscribeNotifications();
+  });
 
   // Health check with DB connectivity (always public, before auth)
   app.get("/health", async (_request, reply) => {

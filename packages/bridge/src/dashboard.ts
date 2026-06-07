@@ -67,6 +67,28 @@ export type MentionDashboardItem = z.infer<typeof mentionDashboardItemSchema>;
  * - multipleActiveProjects: boolean    (REQ-API-DASHBOARD-005)
  * - mentions: MentionDashboardItem[]   (REQ-MENTION-007, typed, no longer unknown[])
  */
+// ─── NotificationDashboardItem ────────────────────────────────────────────────
+
+/**
+ * A notification entry shown in the Inbox Notifications section.
+ * Added in S3 / KAN-27 (notifications core).
+ */
+export const notificationDashboardItemSchema = z.object({
+  id: z.string().uuid(),
+  kind: z.enum(["mention", "assignment", "subscribed_activity", "cycle_closed"]),
+  issueId: z.string().uuid().nullable(),
+  actorId: z.string().uuid().nullable(),
+  mentionId: z.string().uuid().nullable(),
+  payload: z.record(z.unknown()).nullable(),
+  read: z.boolean(),
+  via: z.string().nullable(),
+  createdAt: z.string(),           // ISO datetime
+});
+
+export type NotificationDashboardItem = z.infer<typeof notificationDashboardItemSchema>;
+
+// ─── DashboardResponse ────────────────────────────────────────────────────────
+
 export const dashboardResponseSchema = z.object({
   counts: z.object({
     openIssues: z.number().int(),
@@ -80,6 +102,9 @@ export const dashboardResponseSchema = z.object({
   agents: z.array(z.unknown()),
   activeCycle: activeCycleKPIsSchema.nullable(),
   multipleActiveProjects: z.boolean(),
+  // S3 / KAN-27: Additive fields — backward-compatible (existing clients ignore them)
+  notifications: z.array(notificationDashboardItemSchema),
+  unreadCount: z.number().int().min(0),
 });
 
 export type DashboardData = z.infer<typeof dashboardResponseSchema>;

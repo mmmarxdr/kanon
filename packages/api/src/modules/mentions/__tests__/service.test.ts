@@ -28,12 +28,19 @@ function makePrismaStub(overrides?: {
   deleteManyResult?: unknown;
   createManyResult?: unknown;
 }) {
+  const memberList = overrides?.memberFindMany ?? [];
   return {
     member: {
-      findMany: vi.fn().mockResolvedValue(overrides?.memberFindMany ?? []),
+      findMany: vi.fn().mockResolvedValue(memberList),
     },
     mention: {
+      // mention.findMany used for prior-set query (S3 delta, returns prior mentionedMemberIds)
+      findMany: vi.fn().mockResolvedValue([]),
       deleteMany: vi.fn().mockResolvedValue(overrides?.deleteManyResult ?? { count: 0 }),
+      // mention.create replaces createMany for individual ID return
+      create: vi.fn().mockImplementation((args: any) =>
+        Promise.resolve({ id: `generated-id-${args.data.mentionedMemberId}`, ...args.data }),
+      ),
       createMany: vi.fn().mockResolvedValue(overrides?.createManyResult ?? { count: 0 }),
     },
   };
@@ -50,7 +57,7 @@ const BASE_ARGS = {
 // ── A3.1 — Extrae exactamente las @menciones que coinciden con usernames activos ──
 
 describe("A3.1 — parseAndUpsertMentions: resolves workspace members by username", () => {
-  it("body '@alice @bob' with both members in workspace → createMany with 2 entries", async () => {
+  it("body '@alice @bob' with both members in workspace → mention.create called twice (once per target)", async () => {
     const stub = makePrismaStub({
       memberFindMany: [
         { id: "m-alice", username: "alice" },
@@ -68,14 +75,13 @@ describe("A3.1 — parseAndUpsertMentions: resolves workspace members by usernam
     const findCall = stub.member.findMany.mock.calls[0]![0] as any;
     expect(findCall.where.username.in).toEqual(expect.arrayContaining(["alice", "bob"]));
 
-    expect(stub.mention.createMany).toHaveBeenCalledOnce();
-    const createCall = stub.mention.createMany.mock.calls[0]![0] as any;
-    expect(createCall.data).toHaveLength(2);
-    const mentionedIds = createCall.data.map((d: any) => d.mentionedMemberId);
-    expect(mentionedIds).toEqual(expect.arrayContaining(["m-alice", "m-bob"]));
+    // create is called once per target (alice + bob)
+    expect(stub.mention.create).toHaveBeenCalledTimes(2);
+    const createCalls = stub.mention.create.mock.calls.map((c: any) => c[0].data.mentionedMemberId);
+    expect(createCalls).toEqual(expect.arrayContaining(["m-alice", "m-bob"]));
   });
 
-  it("body '@phantom' with no matching member → createMany NOT called", async () => {
+  it("body '@phantom' with no matching member → mention.create NOT called", async () => {
     const stub = makePrismaStub({ memberFindMany: [] });
 
     await parseAndUpsertMentions({
@@ -85,10 +91,10 @@ describe("A3.1 — parseAndUpsertMentions: resolves workspace members by usernam
     });
 
     expect(stub.member.findMany).toHaveBeenCalledOnce();
-    expect(stub.mention.createMany).not.toHaveBeenCalled();
+    expect(stub.mention.create).not.toHaveBeenCalled();
   });
 
-  it("body with no @ symbols → member.findMany NOT called, createMany NOT called", async () => {
+  it("body with no @ symbols → member.findMany NOT called, mention.create NOT called", async () => {
     const stub = makePrismaStub();
 
     await parseAndUpsertMentions({
@@ -98,14 +104,14 @@ describe("A3.1 — parseAndUpsertMentions: resolves workspace members by usernam
     });
 
     expect(stub.member.findMany).not.toHaveBeenCalled();
-    expect(stub.mention.createMany).not.toHaveBeenCalled();
+    expect(stub.mention.create).not.toHaveBeenCalled();
   });
 });
 
 // ── A3.2 — Deduplicates same username mentioned twice ─────────────────────────
 
 describe("A3.1 (dedup) — parseAndUpsertMentions: deduplicates same username twice", () => {
-  it("body '@alice @alice' → member.findMany called with ['alice'] (no duplicate), createMany with 1 entry", async () => {
+  it("body '@alice @alice' → member.findMany called with ['alice'] (no duplicate), mention.create called once", async () => {
     const stub = makePrismaStub({
       memberFindMany: [{ id: "m-alice", username: "alice" }],
     });
@@ -120,9 +126,7 @@ describe("A3.1 (dedup) — parseAndUpsertMentions: deduplicates same username tw
     // Must deduplicate before querying — only one "alice" in the `in` array
     expect(findCall.where.username.in).toEqual(["alice"]);
 
-    expect(stub.mention.createMany).toHaveBeenCalledOnce();
-    const createCall = stub.mention.createMany.mock.calls[0]![0] as any;
-    expect(createCall.data).toHaveLength(1);
+    expect(stub.mention.create).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -141,9 +145,9 @@ describe("A3.2 — parseAndUpsertMentions: excludes self-mentions", () => {
       tx: stub as any,
     });
 
-    // deleteMany must still run (cleanup), createMany must NOT be called
+    // deleteMany must still run (cleanup), mention.create must NOT be called
     expect(stub.mention.deleteMany).toHaveBeenCalledOnce();
-    expect(stub.mention.createMany).not.toHaveBeenCalled();
+    expect(stub.mention.create).not.toHaveBeenCalled();
   });
 
   it("body '@bob @alice', alice is author → only bob gets a mention row", async () => {
@@ -161,10 +165,10 @@ describe("A3.2 — parseAndUpsertMentions: excludes self-mentions", () => {
       tx: stub as any,
     });
 
-    expect(stub.mention.createMany).toHaveBeenCalledOnce();
-    const createCall = stub.mention.createMany.mock.calls[0]![0] as any;
-    expect(createCall.data).toHaveLength(1);
-    expect(createCall.data[0].mentionedMemberId).toBe("m-bob");
+    // mention.create called once for bob only
+    expect(stub.mention.create).toHaveBeenCalledTimes(1);
+    const createCall = stub.mention.create.mock.calls[0]![0] as any;
+    expect(createCall.data.mentionedMemberId).toBe("m-bob");
   });
 });
 
@@ -185,7 +189,7 @@ describe("A3.3 — parseAndUpsertMentions: idempotency (delete before insert)", 
 
     // Reset call counts
     stub.mention.deleteMany.mockClear();
-    stub.mention.createMany.mockClear();
+    stub.mention.create.mockClear();
     stub.member.findMany.mockClear();
 
     // Second call with SAME body
@@ -197,17 +201,16 @@ describe("A3.3 — parseAndUpsertMentions: idempotency (delete before insert)", 
 
     // deleteMany must have been called again to clear before re-insert
     expect(stub.mention.deleteMany).toHaveBeenCalledOnce();
-    expect(stub.mention.createMany).toHaveBeenCalledOnce();
-    const createCall = stub.mention.createMany.mock.calls[0]![0] as any;
-    // Still only 1 row (alice) — no duplicate rows from double-call
-    expect(createCall.data).toHaveLength(1);
+    // mention.create called once for alice (second sweep — she was in prior set, delta = 0,
+    // but create is still called to persist the row — delta only affects emitted events)
+    expect(stub.mention.create).toHaveBeenCalledTimes(1);
   });
 });
 
 // ── A3.4 — Update removes mentions (body changes to remove @mention) ───────────
 
 describe("A3.4 — parseAndUpsertMentions: update removes existing mentions", () => {
-  it("body changed from '@alice ...' to 'ok' → deleteMany called with commentId, createMany NOT called", async () => {
+  it("body changed from '@alice ...' to 'ok' → deleteMany called with commentId, mention.create NOT called", async () => {
     const stub = makePrismaStub({
       memberFindMany: [], // no new mentions in new body
     });
@@ -223,7 +226,7 @@ describe("A3.4 — parseAndUpsertMentions: update removes existing mentions", ()
     const deleteCall = stub.mention.deleteMany.mock.calls[0]![0] as any;
     expect(deleteCall.where).toMatchObject({ commentId: "cmt-1" });
 
-    expect(stub.mention.createMany).not.toHaveBeenCalled();
+    expect(stub.mention.create).not.toHaveBeenCalled();
   });
 });
 
@@ -247,5 +250,96 @@ describe("A3.5 — parseAndUpsertMentions: description mode (commentId = null)",
     expect(deleteCall.where).toMatchObject({ issueId: "iss-1", commentId: null });
     // Must NOT have a bare commentId key pointing to a string value
     expect(typeof deleteCall.where.commentId).toBe("object"); // null
+  });
+});
+
+// ── S3 Delta return (KAN-27) ──────────────────────────────────────────────────
+//
+// parseAndUpsertMentions must now return:
+//   { created: Array<{ mentionId: string; mentionedMemberId: string; context: string }> }
+// so callers can emit mention.created per new mention (D1).
+//
+// Delta logic: query prior mentionedMemberId set BEFORE sweep; created = targets not in prior set.
+
+function makePrismaStubWithCreate(overrides?: {
+  memberFindMany?: Array<{ id: string; username: string }>;
+  existingMentionIds?: string[];
+}) {
+  const existingMentionedMemberIds = overrides?.existingMentionIds ?? [];
+  return {
+    member: {
+      findMany: vi.fn().mockResolvedValue(overrides?.memberFindMany ?? []),
+    },
+    mention: {
+      findMany: vi.fn().mockResolvedValue(
+        existingMentionedMemberIds.map((id) => ({ mentionedMemberId: id })),
+      ),
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      create: vi.fn().mockImplementation((args: any) =>
+        Promise.resolve({ id: `generated-id-${args.data.mentionedMemberId}`, ...args.data }),
+      ),
+    },
+  };
+}
+
+describe("S3 — parseAndUpsertMentions: delta return value (KAN-27)", () => {
+  it("returns { created: [] } when body has no mentions", async () => {
+    const stub = makePrismaStubWithCreate({ memberFindMany: [] });
+    const result = await parseAndUpsertMentions({
+      ...BASE_ARGS,
+      body: "no mentions",
+      tx: stub as any,
+    });
+    expect(result).toEqual({ created: [] });
+  });
+
+  it("returns { created: [entry] } for a genuinely new mention (not in prior set)", async () => {
+    // Prior set is empty → alice is a new mention
+    const stub = makePrismaStubWithCreate({
+      memberFindMany: [{ id: "m-alice", username: "alice" }],
+      existingMentionIds: [], // no prior mentions
+    });
+    const result = await parseAndUpsertMentions({
+      ...BASE_ARGS,
+      body: "@alice check this",
+      tx: stub as any,
+    });
+    expect(result.created).toHaveLength(1);
+    expect(result.created[0]!.mentionedMemberId).toBe("m-alice");
+    expect(result.created[0]!.mentionId).toBeDefined();
+    expect(result.created[0]!.context).toContain("alice");
+  });
+
+  it("returns { created: [] } for a re-mention after edit (alice already in prior set)", async () => {
+    // Prior set contains alice → she was already notified, skip
+    const stub = makePrismaStubWithCreate({
+      memberFindMany: [{ id: "m-alice", username: "alice" }],
+      existingMentionIds: ["m-alice"], // alice already mentioned
+    });
+    const result = await parseAndUpsertMentions({
+      ...BASE_ARGS,
+      body: "@alice check this again",
+      tx: stub as any,
+    });
+    // Alice is re-mentioned but was in prior set → NOT in created delta
+    expect(result.created).toHaveLength(0);
+  });
+
+  it("returns only new mentions in delta when edit adds a new target", async () => {
+    // alice already mentioned, bob is new
+    const stub = makePrismaStubWithCreate({
+      memberFindMany: [
+        { id: "m-alice", username: "alice" },
+        { id: "m-bob", username: "bob" },
+      ],
+      existingMentionIds: ["m-alice"],
+    });
+    const result = await parseAndUpsertMentions({
+      ...BASE_ARGS,
+      body: "@alice and @bob",
+      tx: stub as any,
+    });
+    expect(result.created).toHaveLength(1);
+    expect(result.created[0]!.mentionedMemberId).toBe("m-bob");
   });
 });
