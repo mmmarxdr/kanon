@@ -323,16 +323,20 @@ describe("dashboardResponseSchema", () => {
     }
   });
 
-  it("rejects response missing notifications field", () => {
+  // Fix 6 — notifications and unreadCount are ADDITIVE: absent fields default to
+  // [] / 0 for parse-level backward compatibility with old API response shapes.
+  it("missing notifications field defaults to [] (backward-compatible parse)", () => {
     const { notifications, ...rest } = baseResponse;
     const result = dashboardResponseSchema.safeParse(rest);
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.notifications).toEqual([]);
   });
 
-  it("rejects response missing unreadCount field", () => {
+  it("missing unreadCount field defaults to 0 (backward-compatible parse)", () => {
     const { unreadCount, ...rest } = baseResponse;
     const result = dashboardResponseSchema.safeParse(rest);
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.unreadCount).toBe(0);
   });
 });
 

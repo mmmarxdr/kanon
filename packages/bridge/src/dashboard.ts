@@ -102,9 +102,13 @@ export const dashboardResponseSchema = z.object({
   agents: z.array(z.unknown()),
   activeCycle: activeCycleKPIsSchema.nullable(),
   multipleActiveProjects: z.boolean(),
-  // S3 / KAN-27: Additive fields — backward-compatible (existing clients ignore them)
-  notifications: z.array(notificationDashboardItemSchema),
-  unreadCount: z.number().int().min(0),
+  // S3 / KAN-27: Additive fields — parse-level backward-compatible.
+  // Absent in older API response shapes → default to empty array / zero so
+  // existing clients and the bridge sync engine do not fail to parse.
+  // The comment claiming backward-compat was misleading: these fields ARE required
+  // at the type level but default to safe values at parse time (Fix 6).
+  notifications: z.array(notificationDashboardItemSchema).default([]),
+  unreadCount: z.number().int().min(0).default(0),
 });
 
 export type DashboardData = z.infer<typeof dashboardResponseSchema>;

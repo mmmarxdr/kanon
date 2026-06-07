@@ -253,6 +253,47 @@ describe("A3.5 — parseAndUpsertMentions: description mode (commentId = null)",
   });
 });
 
+// ── Fix 3 — Atomicity: partial create failure must not orphan rows ────────────
+//
+// If mention.create fails on the 2nd target after the 1st has been inserted,
+// and the deleteMany already ran, we end up with 1 orphan row + 0 emitted events.
+// Fix: when called WITHOUT an external tx, wrap the delete+create loop in a
+// prisma.$transaction so all-or-nothing semantics are preserved.
+// (When an external tx IS provided the caller owns atomicity — no wrapping needed.)
+
+describe("Fix 3 — parseAndUpsertMentions: all-or-nothing on induced failure", () => {
+  it("create failure propagates out of the function (all-or-nothing semantics)", async () => {
+    // Create a stub where the 2nd mention.create call throws
+    let createCount = 0;
+    const stub = {
+      member: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "m-alice", username: "alice" },
+          { id: "m-bob", username: "bob" },
+        ]),
+      },
+      mention: {
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        create: vi.fn().mockImplementation((args: any) => {
+          createCount++;
+          if (createCount === 2) return Promise.reject(new Error("DB error on 2nd create"));
+          return Promise.resolve({ id: `id-${args.data.mentionedMemberId}`, ...args.data });
+        }),
+      },
+    };
+
+    // The function must propagate the error (not silently succeed with partial state)
+    await expect(
+      parseAndUpsertMentions({
+        ...BASE_ARGS,
+        body: "@alice and @bob",
+        tx: stub as any,
+      }),
+    ).rejects.toThrow("DB error on 2nd create");
+  });
+});
+
 // ── S3 Delta return (KAN-27) ──────────────────────────────────────────────────
 //
 // parseAndUpsertMentions must now return:

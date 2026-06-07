@@ -269,7 +269,9 @@ describe("Notification routes — S3 / KAN-27", () => {
         headers: { authorization: `Bearer ${other.token}` },
       });
 
-      expect([403, 404]).toContain(res.statusCode);
+      // Route always returns 403 (not 404) for cross-member access:
+      // it finds the notification but rejects because userId !== owner's userId
+      expect(res.statusCode).toBe(403);
 
       // Notification still unread
       const untouched = await prisma.notification.findUniqueOrThrow({
@@ -476,6 +478,99 @@ describe("Notification routes — S3 / KAN-27", () => {
       // Only member's notification — not the other's
       expect(body.notifications).toHaveLength(1);
       expect(body.notifications[0].recipientId).toBe(member.id);
+    });
+
+    // Fix 2 — invalid limit query param must return 400, not 500
+    it("?limit=abc returns 400 (NaN guard)", async () => {
+      const ws = await seedTestWorkspace();
+      const member = await seedTestMember(ws.id, { username: "member-limit-abc" });
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/workspaces/${ws.id}/notifications?limit=abc`,
+        headers: { authorization: `Bearer ${member.token}` },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it("?limit=200 is clamped or rejected (not 500)", async () => {
+      const ws = await seedTestWorkspace();
+      const member = await seedTestMember(ws.id, { username: "member-limit-200" });
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/workspaces/${ws.id}/notifications?limit=200`,
+        headers: { authorization: `Bearer ${member.token}` },
+      });
+
+      // Schema enforces max(50): Zod validation → 400
+      expect(res.statusCode).toBe(400);
+    });
+  });
+
+  // ── Fix 1 — mark-all-read interactive transaction (race safety) ───────────
+
+  describe("Fix 1 — read-all uses interactive $transaction (captured set consistency)", () => {
+    it("read-all sets all 3 notifications to read in one transaction", async () => {
+      const ws = await seedTestWorkspace();
+      const actor = await seedTestMember(ws.id, { username: "actor-tx" });
+      const recipient = await seedTestMember(ws.id, { username: "recipient-tx" });
+      const project = await seedTestProject(ws.id);
+      const issue = await seedIssue(project.id, "tx");
+
+      const mention = await prisma.mention.create({
+        data: {
+          workspaceId: ws.id,
+          issueId: issue.id,
+          commentId: null,
+          mentionedMemberId: recipient.id,
+          mentionedByMemberId: actor.id,
+          context: "@recipient-tx",
+        },
+      });
+
+      await prisma.notification.createMany({
+        data: [
+          {
+            kind: "mention",
+            workspaceId: ws.id,
+            recipientId: recipient.id,
+            actorId: actor.id,
+            issueId: issue.id,
+            mentionId: mention.id,
+            read: false,
+          },
+          {
+            kind: "assignment",
+            workspaceId: ws.id,
+            recipientId: recipient.id,
+            actorId: actor.id,
+            issueId: issue.id,
+            read: false,
+          },
+        ],
+      });
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/workspaces/${ws.id}/notifications/read-all`,
+        headers: { authorization: `Bearer ${recipient.token}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+
+      // ALL notifications for recipient must be read
+      const remaining = await prisma.notification.findMany({
+        where: { recipientId: recipient.id, read: false },
+      });
+      expect(remaining).toHaveLength(0);
+
+      // The linked mention must be read too (captured inside transaction)
+      const updatedMention = await prisma.mention.findUniqueOrThrow({
+        where: { id: mention.id },
+      });
+      expect(updatedMention.read).toBe(true);
     });
   });
 });

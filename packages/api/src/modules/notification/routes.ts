@@ -17,6 +17,34 @@ import { AppError } from "../../shared/types.js";
 const WorkspaceIdParam = z.object({ id: z.string().uuid() });
 const NotificationIdParam = z.object({ id: z.string().uuid() });
 
+/**
+ * Response schema for a single notification list item.
+ * Mirrors the Prisma select + ISO createdAt serialisation used by the list route.
+ */
+const NotificationItemSchema = z.object({
+  id: z.string().uuid(),
+  kind: z.enum(["mention", "assignment", "subscribed_activity", "cycle_closed"]),
+  recipientId: z.string().uuid(),
+  actorId: z.string().uuid().nullable(),
+  issueId: z.string().uuid().nullable(),
+  mentionId: z.string().uuid().nullable(),
+  payload: z.record(z.unknown()).nullable(),
+  read: z.boolean(),
+  via: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+const NotificationListResponseSchema = z.object({
+  notifications: z.array(NotificationItemSchema),
+});
+
+const ReadAllResponseSchema = z.object({ updated: z.number().int().min(0) });
+
+const MarkReadResponseSchema = z.object({
+  id: z.string().uuid(),
+  read: z.literal(true),
+});
+
 export default async function notificationRoutes(
   fastify: FastifyInstance,
 ): Promise<void> {
@@ -36,13 +64,14 @@ export default async function notificationRoutes(
         params: WorkspaceIdParam,
         querystring: z.object({
           unreadOnly: z.string().optional(),
-          limit: z.string().optional(),
+          limit: z.coerce.number().int().min(1).max(50).default(20),
         }),
+        response: { 200: NotificationListResponseSchema },
       },
     },
     async (request, _reply) => {
       const workspaceId = request.params.id;
-      const limit = Math.min(parseInt(request.query.limit ?? "20", 10), 50);
+      const limit = request.query.limit;
       const unreadOnly = request.query.unreadOnly === "true";
 
       // Resolve member in workspace
@@ -78,6 +107,8 @@ export default async function notificationRoutes(
       return {
         notifications: notifications.map((n) => ({
           ...n,
+          // Prisma returns JsonValue for Json columns; cast to schema-expected type.
+          payload: (n.payload ?? null) as Record<string, unknown> | null,
           createdAt: n.createdAt.toISOString(),
         })),
       };
@@ -93,7 +124,10 @@ export default async function notificationRoutes(
     "/:id/notifications/read-all",
     {
       preHandler: [requireMember("id")],
-      schema: { params: WorkspaceIdParam },
+      schema: {
+        params: WorkspaceIdParam,
+        response: { 200: ReadAllResponseSchema },
+      },
     },
     async (request, _reply) => {
       const workspaceId = request.params.id;
@@ -106,33 +140,40 @@ export default async function notificationRoutes(
 
       if (!member) return { updated: 0 };
 
-      // Fetch all unread notifications to get mentionIds for dual-write
-      const unreadNotifications = await prisma.notification.findMany({
-        where: { recipientId: member.id, workspaceId, read: false },
-        select: { id: true, kind: true, mentionId: true },
+      // Interactive transaction: capture the unread set and update it atomically.
+      // This prevents a race where a notification arriving between findMany and
+      // updateMany gets its Notification.read flipped but its linked Mention left
+      // unread (permanent divergence).
+      const updatedCount = await prisma.$transaction(async (tx) => {
+        const unreadNotifications = await tx.notification.findMany({
+          where: { recipientId: member.id, workspaceId, read: false },
+          select: { id: true, kind: true, mentionId: true },
+        });
+
+        if (unreadNotifications.length === 0) return 0;
+
+        const capturedIds = unreadNotifications.map((n) => n.id);
+        const mentionIds = unreadNotifications
+          .filter((n) => n.kind === "mention" && n.mentionId)
+          .map((n) => n.mentionId!);
+
+        // Update only the captured set (not a broad updateMany by memberId)
+        await tx.notification.updateMany({
+          where: { id: { in: capturedIds }, read: false },
+          data: { read: true },
+        });
+
+        if (mentionIds.length > 0) {
+          await tx.mention.updateMany({
+            where: { id: { in: mentionIds }, read: false },
+            data: { read: true },
+          });
+        }
+
+        return unreadNotifications.length;
       });
 
-      const mentionIds = unreadNotifications
-        .filter((n) => n.kind === "mention" && n.mentionId)
-        .map((n) => n.mentionId!);
-
-      // Execute in a transaction: mark notifications + linked mentions read
-      await prisma.$transaction([
-        prisma.notification.updateMany({
-          where: { recipientId: member.id, workspaceId, read: false },
-          data: { read: true },
-        }),
-        ...(mentionIds.length > 0
-          ? [
-              prisma.mention.updateMany({
-                where: { id: { in: mentionIds }, read: false },
-                data: { read: true },
-              }),
-            ]
-          : []),
-      ]);
-
-      return { updated: unreadNotifications.length };
+      return { updated: updatedCount };
     },
   );
 }
@@ -154,7 +195,10 @@ export async function notificationActionRoutes(
   app.patch(
     "/notifications/:id/read",
     {
-      schema: { params: NotificationIdParam },
+      schema: {
+        params: NotificationIdParam,
+        response: { 200: MarkReadResponseSchema },
+      },
     },
     async (request, reply) => {
       const { id: notificationId } = request.params;

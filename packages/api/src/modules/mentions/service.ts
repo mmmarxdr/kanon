@@ -46,31 +46,20 @@ export interface ParseAndUpsertMentionsResult {
 }
 
 /**
- * Parse @mentions from a body text, resolve them to workspace members,
- * and perform an idempotent DELETE+INSERT for the given source
- * (comment or issue description).
- *
- * Algorithm (per design D1):
- *  1. Extract unique usernames via /@(\w+)/g regex.
- *  2. Resolve usernames → memberIds within the workspace (case-sensitive).
- *  3. Exclude self-mentions (mentionedMemberId === authorMemberId).
- *  4. Query PRIOR mentionedMemberId set BEFORE sweep (for delta computation).
- *  5. DELETE existing mentions for this source (commentId or issueId+commentId=null).
- *  6. INSERT new mention rows using individual create (to get back IDs).
- *  7. Return delta: { created: entries not in prior set }.
- *
- * @param args.tx - Optional Prisma transaction client. Falls back to global prisma.
+ * Core mention upsert implementation.
+ * Receives a transaction-or-plain client; all DB operations go through it.
+ * The delete+create loop is atomic when `client` is a Prisma transaction client.
  */
-export async function parseAndUpsertMentions(args: {
-  workspaceId: string;
-  issueId: string;
-  commentId: string | null;
-  body: string;
-  authorMemberId: string;
-  tx?: PrismaTransactionClient;
-}): Promise<ParseAndUpsertMentionsResult> {
-  const client = (args.tx ?? prisma) as PrismaTransactionClient;
-
+async function _impl(
+  args: {
+    workspaceId: string;
+    issueId: string;
+    commentId: string | null;
+    body: string;
+    authorMemberId: string;
+  },
+  client: PrismaTransactionClient,
+): Promise<ParseAndUpsertMentionsResult> {
   // 1. Extract unique usernames (preserve first-occurrence order)
   const matches = Array.from(args.body.matchAll(MENTION_REGEX));
   const uniqueUsernames = [...new Set(matches.map((m) => m[1]!))];
@@ -151,4 +140,46 @@ export async function parseAndUpsertMentions(args: {
   }
 
   return { created };
+}
+
+/**
+ * Parse @mentions from a body text, resolve them to workspace members,
+ * and perform an idempotent DELETE+INSERT for the given source
+ * (comment or issue description).
+ *
+ * Algorithm (per design D1):
+ *  1. Extract unique usernames via /@(\w+)/g regex.
+ *  2. Resolve usernames → memberIds within the workspace (case-sensitive).
+ *  3. Exclude self-mentions (mentionedMemberId === authorMemberId).
+ *  4. Query PRIOR mentionedMemberId set BEFORE sweep (for delta computation).
+ *  5. DELETE existing mentions for this source (commentId or issueId+commentId=null).
+ *  6. INSERT new mention rows using individual create (to get back IDs).
+ *  7. Return delta: { created: entries not in prior set }.
+ *
+ * Atomicity (Fix 3 — S3 review):
+ *  - When an external `tx` is provided, it owns atomicity (caller's transaction).
+ *  - When NO `tx` is provided, the delete+create loop is wrapped in an internal
+ *    `prisma.$transaction` so a partial create failure cannot orphan rows or
+ *    silently suppress event emission.
+ *
+ * @param args.tx - Optional Prisma transaction client. Falls back to internal tx.
+ */
+export async function parseAndUpsertMentions(args: {
+  workspaceId: string;
+  issueId: string;
+  commentId: string | null;
+  body: string;
+  authorMemberId: string;
+  tx?: PrismaTransactionClient;
+}): Promise<ParseAndUpsertMentionsResult> {
+  const { tx, ...coreArgs } = args;
+
+  // If an external transaction is provided, use it directly (caller owns atomicity).
+  if (tx) {
+    return _impl(coreArgs, tx);
+  }
+
+  // No external tx: wrap in an internal interactive transaction to ensure
+  // delete+create is atomic (partial create failure rolls back the delete too).
+  return prisma.$transaction((innerTx) => _impl(coreArgs, innerTx));
 }
