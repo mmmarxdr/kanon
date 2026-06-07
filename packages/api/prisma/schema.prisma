@@ -98,6 +98,13 @@ enum InviteKind {
   ONBOARDING
 }
 
+enum NotificationKind {
+  mention
+  assignment
+  subscribed_activity
+  cycle_closed
+}
+
 enum RefreshSource {
   ONBOARDING
   LOGIN
@@ -149,12 +156,13 @@ model Workspace {
 
   allowedDomains String[] @default([]) @map("allowed_domains")
 
-  projects Project[]
-  members  Member[]
-  invites  WorkspaceInvite[]
-  proposals McpProposal[]
-  refreshTokens RefreshToken[]
-  mentions Mention[]
+  projects       Project[]
+  members        Member[]
+  invites        WorkspaceInvite[]
+  proposals      McpProposal[]
+  refreshTokens  RefreshToken[]
+  mentions       Mention[]
+  notifications  Notification[]
 
   @@map("workspaces")
 }
@@ -251,11 +259,14 @@ model Issue {
   roadmapItemId String?      @map("roadmap_item_id") @db.Uuid
   roadmapItem   RoadmapItem? @relation(fields: [roadmapItemId], references: [id], onDelete: SetNull)
 
-  activityLogs ActivityLog[]
-  comments     Comment[]
-  workSessions WorkSession[]
-  mentions     Mention[]
-  documents    IssueDocument[]
+  activityLogs      ActivityLog[]
+  comments          Comment[]
+  workSessions      WorkSession[]
+  workLogs          WorkLog[]
+  mentions          Mention[]
+  documents         IssueDocument[]
+  notifications     Notification[]
+  subscriptions     IssueSubscription[]
 
   // Issue→Issue dependencies (semantically distinct from RoadmapDependency)
   blocks    IssueDependency[] @relation("IssueBlocks")
@@ -362,15 +373,20 @@ model Member {
   workspaceId String    @map("workspace_id") @db.Uuid
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  assignedIssues   Issue[]           @relation("AssignedIssues")
-  activityLogs     ActivityLog[]
-  comments         Comment[]
-  documents        IssueDocument[]
-  workSessions     WorkSession[]
-  cycleScopeEvents CycleScopeEvent[] @relation("CycleScopeAuthor")
-  adminAuditLogs   AdminAuditLog[]
-  mentionsReceived Mention[]         @relation("MentionedMember")
-  mentionsSent     Mention[]         @relation("MentionedByMember")
+  assignedIssues              Issue[]            @relation("AssignedIssues")
+  activityLogs                ActivityLog[]
+  comments                    Comment[]
+  documents                   IssueDocument[]
+  workSessions                WorkSession[]
+  workLogs                    WorkLog[]
+  cycleScopeEvents            CycleScopeEvent[]  @relation("CycleScopeAuthor")
+  adminAuditLogs              AdminAuditLog[]
+  mentionsReceived            Mention[]          @relation("MentionedMember")
+  mentionsSent                Mention[]          @relation("MentionedByMember")
+  notificationsReceived       Notification[]     @relation("NotificationRecipient")
+  notificationsAsActor        Notification[]     @relation("NotificationActor")
+  issueSubscriptions          IssueSubscription[]
+  notificationPreference      NotificationPreference?
 
   @@unique([userId, workspaceId])
   @@unique([workspaceId, username])
@@ -381,6 +397,7 @@ model ActivityLog {
   id        String         @id @default(uuid()) @db.Uuid
   action    ActivityAction
   details   Json?
+  via       String?
   createdAt DateTime       @default(now()) @map("created_at")
 
   issueId String @map("issue_id") @db.Uuid
@@ -397,6 +414,7 @@ model Comment {
   id        String        @id @default(uuid()) @db.Uuid
   body      String
   source    CommentSource @default(human)
+  via       String?
   createdAt DateTime      @default(now()) @map("created_at")
   updatedAt DateTime      @updatedAt @map("updated_at")
 
@@ -406,7 +424,8 @@ model Comment {
   authorId String @map("author_id") @db.Uuid
   author   Member @relation(fields: [authorId], references: [id], onDelete: Cascade)
 
-  mentions Mention[]
+  mentions      Mention[]
+  notifications Notification[]
 
   @@index([issueId, createdAt])
   @@map("comments")
@@ -441,11 +460,12 @@ model Mention {
   read                Boolean  @default(false)
   createdAt           DateTime @default(now()) @map("created_at")
 
-  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  issue            Issue     @relation(fields: [issueId], references: [id], onDelete: Cascade)
-  comment          Comment?  @relation(fields: [commentId], references: [id], onDelete: Cascade)
-  mentionedMember  Member    @relation("MentionedMember",   fields: [mentionedMemberId],   references: [id], onDelete: Cascade)
-  mentionedByMember Member   @relation("MentionedByMember", fields: [mentionedByMemberId], references: [id], onDelete: Cascade)
+  workspace         Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  issue             Issue          @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  comment           Comment?       @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  mentionedMember   Member         @relation("MentionedMember",   fields: [mentionedMemberId],   references: [id], onDelete: Cascade)
+  mentionedByMember Member         @relation("MentionedByMember", fields: [mentionedByMemberId], references: [id], onDelete: Cascade)
+  notifications     Notification[]
 
   @@unique([commentId, mentionedMemberId], map: "uniq_mention_per_comment_member")
   @@index([workspaceId, mentionedMemberId, read, createdAt(sort: Desc)], map: "idx_mention_dashboard_query")
@@ -685,4 +705,84 @@ model InstanceAdminInvite {
 
   @@index([jwtSub])
   @@map("instance_admin_invites")
+}
+
+// ─── Capture & Notify Models (S1 / KAN-30) ──────────────────────────────────
+
+model WorkLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  startedAt DateTime @map("started_at")
+  endedAt   DateTime @map("ended_at")
+  durationS Int      @map("duration_s")
+  reason    String   @default("stopped") // "stopped" | "expired"
+  via       String?
+
+  issueId  String @map("issue_id") @db.Uuid
+  issue    Issue  @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  memberId String @map("member_id") @db.Uuid
+  member   Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([issueId, endedAt(sort: Desc)])  // GET /issues/:key/worklogs
+  @@index([memberId, endedAt(sort: Desc)]) // GET /me/worklogs
+  @@map("work_logs")
+}
+
+model Notification {
+  id          String           @id @default(uuid()) @db.Uuid
+  kind        NotificationKind
+  workspaceId String           @map("workspace_id") @db.Uuid
+  workspace   Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  recipientId String           @map("recipient_id") @db.Uuid
+  recipient   Member           @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  actorId     String?          @map("actor_id") @db.Uuid
+  actor       Member?          @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  issueId     String?          @map("issue_id") @db.Uuid
+  issue       Issue?           @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  mentionId   String?          @map("mention_id") @db.Uuid
+  mention     Mention?         @relation(fields: [mentionId], references: [id], onDelete: SetNull) // D2
+  commentId   String?          @map("comment_id") @db.Uuid
+  comment     Comment?         @relation(fields: [commentId], references: [id], onDelete: SetNull)
+  payload     Json?            // {issueKey,issueTitle,context,...} kind-specific
+  read        Boolean          @default(false)
+  via         String?
+  createdAt   DateTime         @default(now()) @map("created_at")
+
+  @@index([recipientId, read, createdAt(sort: Desc)]) // unread count + inbox list
+  @@index([issueId])    // cascade + per-issue lookups
+  @@index([mentionId])  // SetNull sweep perf
+  @@index([actorId])    // SetNull on member delete
+  @@index([commentId])  // SetNull on comment delete
+  @@map("notifications")
+}
+
+model IssueSubscription {
+  id       String @id @default(uuid()) @db.Uuid
+  origin   String @default("manual") // manual|creator|assignee|commenter
+
+  issueId  String @map("issue_id") @db.Uuid
+  issue    Issue  @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  memberId String @map("member_id") @db.Uuid
+  member   Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([issueId, memberId]) // doubles as subscribers-per-issue index
+  @@index([memberId])
+  @@map("issue_subscriptions")
+}
+
+model NotificationPreference {
+  id               String  @id @default(uuid()) @db.Uuid
+  memberId         String  @unique @map("member_id") @db.Uuid
+  member           Member  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  emailMention     Boolean @default(true) @map("email_mention")
+  emailAssignment  Boolean @default(true) @map("email_assignment")
+  emailCycleClosed Boolean @default(true) @map("email_cycle_closed")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("notification_preferences")
 }
