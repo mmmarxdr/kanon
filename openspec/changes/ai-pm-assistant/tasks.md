@@ -73,68 +73,68 @@ Chain strategy: stacked-to-main
 
 ### Phase 2.1: Red — Rewrite skills.test.ts in @kanon/setup (new behaviors)
 
-- [ ] 2.1.1 In `packages/setup/src/__tests__/skills.test.ts`, rewrite test suite to reflect ADR-4: replace old `PRODUCT_SKILLS` list with `["kanon-agent", "kanon-init", "kanon-onboard"]`; add failing test for recursive copy of `sections/issue-creation.md` (`installSkills` must produce `dest/kanon-agent/sections/issue-creation.md`).
-- [ ] 2.1.2 Add failing tests: `RETIRED_SKILLS` removal on fresh install (5 dirs absent after install), retired skills removal on upgrade (pre-populate 5 dirs, call `installSkills`, assert all 5 absent and `kanon-agent` present), cleanup idempotent (second call does not throw).
-- [ ] 2.1.3 Add test: `removeSkills` covers both `PRODUCT_SKILLS` and `RETIRED_SKILLS` dirs.
-- [ ] 2.1.4 Verify new tests are RED: `pnpm --filter @kanon-pm/setup test -- --run`.
+- [x] 2.1.1 In `packages/setup/src/__tests__/skills.test.ts`, rewrite test suite to reflect ADR-4: replace old `PRODUCT_SKILLS` list with `["kanon-agent", "kanon-init", "kanon-onboard"]`; add failing test for recursive copy of `sections/issue-creation.md` (`installSkills` must produce `dest/kanon-agent/sections/issue-creation.md`).
+- [x] 2.1.2 Add failing tests: `RETIRED_SKILLS` removal on fresh install (5 dirs absent after install), retired skills removal on upgrade (pre-populate 5 dirs, call `installSkills`, assert all 5 absent and `kanon-agent` present), cleanup idempotent (second call does not throw).
+- [x] 2.1.3 Add test: `removeSkills` covers both `PRODUCT_SKILLS` and `RETIRED_SKILLS` dirs.
+- [x] 2.1.4 Verify new tests are RED: `pnpm --filter @kanon-pm/setup test -- --run`. NOTE: TDD ordering violated by dead agent — tests written post-hoc as pins against already-green implementation (see deviations).
 
 ### Phase 2.2: Green — Refactor skills.ts with ADR-4 mechanics
 
-- [ ] 2.2.1 In `packages/setup/src/skills.ts`, replace `PRODUCT_SKILLS` array with `["kanon-agent", "kanon-init", "kanon-onboard"]`.
-- [ ] 2.2.2 Export `RETIRED_SKILLS = ["kanon-mcp", "kanon-create-issue", "kanon-roadmap", "kanon-cycle", "kanon-orchestrator-hooks"]`.
-- [ ] 2.2.3 In `installSkills()`, add retired-dir removal loop BEFORE install loop: `for (const name of RETIRED_SKILLS) fs.rmSync(path.join(skillDest, name), { recursive: true, force: true })`.
-- [ ] 2.2.4 Replace flat-file copy loop with `fs.cpSync(srcDir, destDir, { recursive: true })` (removes file-only `readdirSync` loop that drops `sections/`).
-- [ ] 2.2.5 Update `removeSkills()` to iterate `[...PRODUCT_SKILLS, ...RETIRED_SKILLS]`.
-- [ ] 2.2.6 Verify setup unit tests GREEN: `pnpm --filter @kanon-pm/setup test -- --run`.
+- [x] 2.2.1 In `packages/setup/src/skills.ts`, replace `PRODUCT_SKILLS` array with `["kanon-agent", "kanon-init", "kanon-onboard"]`.
+- [x] 2.2.2 Export `RETIRED_SKILLS = ["kanon-mcp", "kanon-create-issue", "kanon-roadmap", "kanon-cycle", "kanon-orchestrator-hooks"]`.
+- [x] 2.2.3 In `installSkills()`, add retired-dir removal loop BEFORE install loop: `for (const name of RETIRED_SKILLS) fs.rmSync(path.join(skillDest, name), { recursive: true, force: true })`.
+- [x] 2.2.4 Replace flat-file copy loop with `fs.cpSync(srcDir, destDir, { recursive: true })` (removes file-only `readdirSync` loop that drops `sections/`).
+- [x] 2.2.5 Update `removeSkills()` to iterate `[...PRODUCT_SKILLS, ...RETIRED_SKILLS]`.
+- [x] 2.2.6 Verify setup unit tests GREEN: `pnpm --filter @kanon-pm/setup test -- --run`.
 
 ### Phase 2.3: Create kanon-agent skill content
 
-- [ ] 2.3.1 Create `packages/setup/assets/skills/kanon-agent/SKILL.md`: frontmatter (name, description, verb-anchored trigger list), Core Philosophy (3 lines), Issue Lifecycle (6 numbered steps), Title Format (TITLE_PATTERN + 2 good + 2 bad examples + group-check rule), On-Demand Sections table (4 rows: trigger → file). Hard ceiling: ≤ 2,048 bytes.
-- [ ] 2.3.2 Create `packages/setup/assets/skills/kanon-agent/sections/issue-creation.md`: NL→field mapping, cheap existence checks with `limit:3` + `format:compact` heading, detailed create flow. No paragraph >100 chars duplicated verbatim from core.
-- [ ] 2.3.3 Create `packages/setup/assets/skills/kanon-agent/sections/roadmap.md`: horizons table, deferred-work capture patterns, promote-to-issue flow.
-- [ ] 2.3.4 Create `packages/setup/assets/skills/kanon-agent/sections/cycle.md`: cycle lifecycle, scope change patterns, close dispositions.
-- [ ] 2.3.5 Create `packages/setup/assets/skills/kanon-agent/sections/sdd-hooks.md`: SDD orchestrator hooks, deferred_items processing, ROADMAP injection.
+- [x] 2.3.1 Create `packages/setup/assets/skills/kanon-agent/SKILL.md`: frontmatter (name, description, verb-anchored trigger list), Core Philosophy (3 lines), Issue Lifecycle (6 numbered steps), Title Format (TITLE_PATTERN + 2 good + 2 bad examples + group-check rule), On-Demand Sections table (4 rows: trigger → file). Hard ceiling: ≤ 2,048 bytes. ACTUAL: 1,539 bytes.
+- [x] 2.3.2 Create `packages/setup/assets/skills/kanon-agent/sections/issue-creation.md`: NL→field mapping, cheap existence checks with `limit:3` + `format:compact` heading, detailed create flow. No paragraph >100 chars duplicated verbatim from core.
+- [x] 2.3.3 Create `packages/setup/assets/skills/kanon-agent/sections/roadmap.md`: horizons table, deferred-work capture patterns, promote-to-issue flow.
+- [x] 2.3.4 Create `packages/setup/assets/skills/kanon-agent/sections/cycle.md`: cycle lifecycle, scope change patterns, close dispositions.
+- [x] 2.3.5 Create `packages/setup/assets/skills/kanon-agent/sections/sdd-hooks.md`: SDD orchestrator hooks, deferred_items processing, ROADMAP injection.
 
 ### Phase 2.4: Red — Rewrite skills.test.ts in @kanon/mcp (env-gated)
 
-- [ ] 2.4.1 In `packages/mcp/src/skills.test.ts`, replace Win E1/E2/G1/G2/H1/H2 tests (which reference dead skill names `kanon-mcp`, `kanon-create-issue`, `kanon-roadmap`) with new tests targeting `kanon-agent`:
+- [x] 2.4.1 In `packages/mcp/src/skills.test.ts`, replace Win E1/E2/G1/G2/H1/H2 tests (which reference dead skill names `kanon-mcp`, `kanon-create-issue`, `kanon-roadmap`) with new tests targeting `kanon-agent`:
   - E1': `kanon-agent` core SKILL.md byte size ≤ 2,048.
   - E2': no >100-char paragraph appears verbatim in both core and any section file.
   - G1'/G2': `sections/issue-creation.md` contains `## Cheap existence checks` with `limit:3` and `format:compact`.
   - H1': kanon-agent frontmatter trigger contains verb anchors (list issues, create issue, etc.).
   - H2': trigger does NOT match generic PM prose.
   - Aggregate anti-regrowth: `SKILL_BASELINE_BYTES` recaptured as kanon-agent total (core + 4 sections); new test asserts aggregate ≤ captured value.
-- [ ] 2.4.2 Update `packages/mcp/src/tools/__tests__/baseline.fixture.ts`: replace `SKILL_BASELINE_BYTES = 23924` with new aggregate value measured from the newly created kanon-agent files. `DESCRIPTION_BASELINE_BYTES` stays at 4009.
-- [ ] 2.4.3 Verify new env-gated tests pass with `KANON_SKILL_DIR=packages/setup/assets/skills pnpm --filter @kanon/mcp test -- --run`.
+- [x] 2.4.2 Update `packages/mcp/src/tools/__tests__/baseline.fixture.ts`: replace `SKILL_BASELINE_BYTES = 23924` with `6186` (measured at PR2 landing). `DESCRIPTION_BASELINE_BYTES` stays at 4009.
+- [x] 2.4.3 Verify new env-gated tests pass with `KANON_SKILL_DIR=$(pwd)/packages/setup/assets/skills pnpm --filter @kanon/mcp test -- --run`. RESULT: 308 passed (7 env-gated).
 
 ### Phase 2.5: Delete retired skill directories
 
-- [ ] 2.5.1 Delete `packages/setup/assets/skills/kanon-mcp/` (entire directory).
-- [ ] 2.5.2 Delete `packages/setup/assets/skills/kanon-create-issue/` (entire directory).
-- [ ] 2.5.3 Delete `packages/setup/assets/skills/kanon-roadmap/` (entire directory).
-- [ ] 2.5.4 Delete `packages/setup/assets/skills/kanon-cycle/` (entire directory).
-- [ ] 2.5.5 Delete `packages/setup/assets/skills/kanon-orchestrator-hooks/` (entire directory).
-- [ ] 2.5.6 Delete `packages/mcp/skills/` (entire directory — all 7 subdirs).
+- [x] 2.5.1 Delete `packages/setup/assets/skills/kanon-mcp/` (entire directory).
+- [x] 2.5.2 Delete `packages/setup/assets/skills/kanon-create-issue/` (entire directory).
+- [x] 2.5.3 Delete `packages/setup/assets/skills/kanon-roadmap/` (entire directory).
+- [x] 2.5.4 Delete `packages/setup/assets/skills/kanon-cycle/` (entire directory).
+- [x] 2.5.5 Delete `packages/setup/assets/skills/kanon-orchestrator-hooks/` (entire directory).
+- [x] 2.5.6 Delete `packages/mcp/skills/` (entire directory — all 7 subdirs).
 
 ### Phase 2.6: Update scripts and verify-assets
 
-- [ ] 2.6.1 In `scripts/setup-mcp.sh`, change line `SKILLS_SRC="$ROOT_DIR/packages/mcp/skills"` to `SKILLS_SRC="$ROOT_DIR/packages/setup/assets/skills"`.
-- [ ] 2.6.2 In `scripts/setup-mcp.sh`, change the install loop's copy command from `cp "$skill_dir"SKILL.md "$dest_dir/SKILL.md"` to `cp -R "$skill_dir" "$s_dest/"` (recursive copy preserving `sections/`).
-- [ ] 2.6.3 In `scripts/setup-mcp.sh`, add a retired-skill removal loop BEFORE the install loop: iterate `kanon-mcp kanon-create-issue kanon-roadmap kanon-cycle kanon-orchestrator-hooks` and `rm -rf "$s_dest/$retired"`.
-- [ ] 2.6.4 In `packages/setup/scripts/verify-assets.sh`, replace `assert_file "assets/skills/kanon-mcp/SKILL.md"` with `assert_file "assets/skills/kanon-agent/SKILL.md"`.
-- [ ] 2.6.5 In `packages/setup/scripts/verify-assets.sh`, add `assert_file` assertions for all four section files: `kanon-agent/sections/issue-creation.md`, `kanon-agent/sections/roadmap.md`, `kanon-agent/sections/cycle.md`, `kanon-agent/sections/sdd-hooks.md`.
-- [ ] 2.6.6 Run `packages/setup/scripts/verify-assets.sh` and confirm exit 0.
+- [x] 2.6.1 In `scripts/setup-mcp.sh`, change `SKILLS_SRC` to `"$ROOT_DIR/packages/setup/assets/skills"`.
+- [x] 2.6.2 In `scripts/setup-mcp.sh`, install loop uses `cp -R "$skill_dir" "$s_dest/"` (recursive copy preserving `sections/`).
+- [x] 2.6.3 In `scripts/setup-mcp.sh`, retired-skill removal loop added BEFORE install loop.
+- [x] 2.6.4 In `packages/setup/scripts/verify-assets.sh`, replaced `kanon-mcp/SKILL.md` assert with `kanon-agent/SKILL.md`.
+- [x] 2.6.5 In `packages/setup/scripts/verify-assets.sh`, added 4 section file asserts.
+- [x] 2.6.6 Run `packages/setup/scripts/verify-assets.sh` — exit 0 confirmed.
 
 ### Phase 2.7: Update registry compact rules
 
-- [ ] 2.7.1 In `.atl/skill-registry.md`, update Project-Level Skills table: remove the 5 retired skill rows (kanon-mcp, kanon-create-issue, kanon-roadmap, kanon-cycle, kanon-orchestrator-hooks); add a single `kanon-agent` row with trigger description.
-- [ ] 2.7.2 In `.atl/skill-registry.md`, add a `### kanon-agent` compact-rules block (~8 lines) covering: one-issue-per-unit-of-work, `[Area] Verb` title format, `kanon_list_groups` pre-create step, `kanon_get_issue` pre-update step, lifecycle order (backlog→todo→in_progress→review→done), roadmap-not-backlog for deferred items, response format defaults (`format: compact` for lists, `format: ack` for writes).
+- [x] 2.7.1 In `.atl/skill-registry.md`, removed 5 retired skill rows; added single `kanon-agent` row.
+- [x] 2.7.2 In `.atl/skill-registry.md`, added `### kanon-agent` compact-rules block (8 lines).
 
 ### Phase 2.8: PR2 Commits (work-unit)
 
-- [ ] 2.8.1 Commit 1 (setup): `refactor(setup): add RETIRED_SKILLS cleanup + recursive installSkills copy` — `packages/setup/src/skills.ts`, `packages/setup/src/__tests__/skills.test.ts`.
-- [ ] 2.8.2 Commit 2 (skill content): `feat(setup): add kanon-agent tiered skill with core + 4 sections` — `packages/setup/assets/skills/kanon-agent/**`.
-- [ ] 2.8.3 Commit 3 (deletion): `chore(setup): delete retired skills and mcp/skills duplicate` — all deleted dirs.
-- [ ] 2.8.4 Commit 4 (scripts): `chore(scripts): repoint SKILLS_SRC to setup assets, add -R copy + retired cleanup` — `scripts/setup-mcp.sh`, `packages/setup/scripts/verify-assets.sh`.
-- [ ] 2.8.5 Commit 5 (mcp tests): `test(mcp): rewrite skills.test.ts for kanon-agent; recapture SKILL_BASELINE_BYTES` — `packages/mcp/src/skills.test.ts`, `packages/mcp/src/tools/__tests__/baseline.fixture.ts`.
-- [ ] 2.8.6 Commit 6 (registry): `docs(registry): add kanon-agent compact-rules block; retire old skill rows` — `.atl/skill-registry.md`.
+- [x] 2.8.1 Commit 1 (setup): `refactor(setup): add RETIRED_SKILLS cleanup + recursive installSkills copy` — `9ddcf0b`
+- [x] 2.8.2 Commit 2 (skill content): `feat(setup): add kanon-agent tiered skill with core + 4 sections` — `d4d1c28`
+- [x] 2.8.3 Commit 3 (deletion): `chore(setup): delete retired skills and mcp/skills duplicate` — `dd5f283`
+- [x] 2.8.4 Commit 4 (scripts): `chore(scripts): repoint SKILLS_SRC to setup assets, add -R copy + retired cleanup` — `4984c45`
+- [x] 2.8.5 Commit 5 (mcp tests): `test(mcp): rewrite skills.test.ts for kanon-agent; recapture SKILL_BASELINE_BYTES` — `c5a2341`
+- [x] 2.8.6 Commit 6 (registry): `docs(registry): add kanon-agent compact-rules block; retire old skill rows` — `c59c71b`
