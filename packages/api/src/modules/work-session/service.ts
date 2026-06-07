@@ -1,10 +1,14 @@
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import { createActivityLog } from "../activity/service.js";
+import { normalizeVia } from "../../shared/via.js";
 import { AppError } from "../../shared/types.js";
 
 /** Sessions with lastHeartbeat older than this are considered expired. */
 const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/** Minimum session duration to be recorded as a WorkLog (seconds). */
+const MIN_WORKLOG_DURATION_S = 60;
 
 /**
  * Start a work session on an issue.
@@ -156,8 +160,19 @@ export async function heartbeat(issueKey: string, userId: string) {
 
 /**
  * Stop a work session on an issue.
+ *
+ * S2 / KAN-26: for sessions ≥ 60s, persists a WorkLog atomically in a
+ * $transaction before deleting the session.  Sub-minute sessions are
+ * discarded (no WorkLog written).
+ *
+ * @param via - Normalized X-Kanon-Client header value (from request.via).
  */
-export async function stopWork(issueKey: string, userId: string, memberId: string) {
+export async function stopWork(
+  issueKey: string,
+  userId: string,
+  memberId: string,
+  via: string | null = null,
+) {
   const issue = await prisma.issue.findUnique({
     where: { key: issueKey },
     include: { project: { select: { workspaceId: true } } },
@@ -173,10 +188,37 @@ export async function stopWork(issueKey: string, userId: string, memberId: strin
   });
 
   if (!existing) {
-    return { ok: true, deleted: false };
+    return { ok: true, deleted: false, workLog: null };
   }
 
-  await prisma.workSession.delete({ where: { id: existing.id } });
+  const endedAt = new Date();
+  const durationS = Math.floor(
+    (endedAt.getTime() - existing.startedAt.getTime()) / 1000,
+  );
+
+  let workLog: { id: string; durationS: number } | null = null;
+
+  if (durationS >= MIN_WORKLOG_DURATION_S) {
+    // Atomic: create WorkLog + delete session in one transaction
+    const [createdWorkLog] = await prisma.$transaction([
+      prisma.workLog.create({
+        data: {
+          startedAt: existing.startedAt,
+          endedAt,
+          durationS,
+          reason: "stopped",
+          via,
+          issueId: issue.id,
+          memberId,
+        },
+      }),
+      prisma.workSession.delete({ where: { id: existing.id } }),
+    ]);
+    workLog = { id: createdWorkLog.id, durationS };
+  } else {
+    // Sub-minute session: discard, no WorkLog
+    await prisma.workSession.delete({ where: { id: existing.id } });
+  }
 
   // Emit work_session.ended event
   try {
@@ -189,13 +231,15 @@ export async function stopWork(issueKey: string, userId: string, memberId: strin
         issueId: issue.id,
         memberId,
         userId,
+        workLogId: workLog?.id ?? null,
+        durationS,
       },
     });
   } catch {
     // Never let event emission break the mutation
   }
 
-  return { ok: true, deleted: true };
+  return { ok: true, deleted: true, workLog };
 }
 
 /**
@@ -273,11 +317,17 @@ function mapSession(s: {
 
 /**
  * Clean up expired work sessions.
- * Deletes all sessions where lastHeartbeat < now() - TTL,
- * and emits work_session.ended for each.
+ *
+ * S2 / KAN-26: replaces bulk deleteMany with a per-session loop.
+ * Each session is processed in its own try/catch so one failure does not
+ * abort the others (D4). Sessions ≥ 60s get a WorkLog written atomically
+ * in a $transaction; sub-minute sessions are plain-deleted.
+ *
+ * Duration formula: lastHeartbeat − startedAt (D4: deliberate deviation
+ * from proposal's "now − startedAt" which over-counts dead time).
  */
 export async function cleanupExpired(
-  logger?: { info: (obj: unknown, msg: string) => void },
+  logger?: { info: (obj: unknown, msg: string) => void; error?: (obj: unknown, msg: string) => void },
 ) {
   const cutoff = new Date(Date.now() - SESSION_TTL_MS);
 
@@ -295,37 +345,70 @@ export async function cleanupExpired(
 
   if (expired.length === 0) return 0;
 
-  // Delete all expired sessions
-  await prisma.workSession.deleteMany({
-    where: { id: { in: expired.map((s) => s.id) } },
-  });
+  let successCount = 0;
 
-  // Emit events for each expired session
   for (const s of expired) {
+    const endedAt = s.lastHeartbeat; // D4: use lastHeartbeat, not now
+    const durationS = Math.floor(
+      (endedAt.getTime() - s.startedAt.getTime()) / 1000,
+    );
+    const via = normalizeVia(s.source);
+
     try {
-      eventBus.emit({
-        type: "work_session.ended",
-        workspaceId: s.issue.project.workspaceId,
-        actorId: s.memberId,
-        payload: {
-          issueKey: s.issue.key,
-          issueId: s.issueId,
-          memberId: s.memberId,
-          userId: s.userId,
-          reason: "expired",
-        },
-      });
-    } catch {
-      // Never let event emission break cleanup
+      if (durationS >= MIN_WORKLOG_DURATION_S) {
+        await prisma.$transaction([
+          prisma.workLog.create({
+            data: {
+              startedAt: s.startedAt,
+              endedAt,
+              durationS,
+              reason: "expired",
+              via,
+              issueId: s.issueId,
+              memberId: s.memberId,
+            },
+          }),
+          prisma.workSession.delete({ where: { id: s.id } }),
+        ]);
+      } else {
+        await prisma.workSession.delete({ where: { id: s.id } });
+      }
+
+      // Emit work_session.ended (existing behaviour, unchanged)
+      try {
+        eventBus.emit({
+          type: "work_session.ended",
+          workspaceId: s.issue.project.workspaceId,
+          actorId: s.memberId,
+          payload: {
+            issueKey: s.issue.key,
+            issueId: s.issueId,
+            memberId: s.memberId,
+            userId: s.userId,
+            reason: "expired",
+          },
+        });
+      } catch {
+        // Never let event emission break cleanup
+      }
+
+      successCount++;
+    } catch (err) {
+      // P2025 race (concurrent stopWork already deleted) or real failure —
+      // log and continue to next session
+      logger?.error?.(
+        { err, sessionId: s.id, issueKey: s.issue.key },
+        "Failed to cleanup expired work session",
+      );
     }
   }
 
   if (logger) {
     logger.info(
-      { count: expired.length },
+      { count: successCount },
       "Cleaned up expired work sessions",
     );
   }
 
-  return expired.length;
+  return successCount;
 }
