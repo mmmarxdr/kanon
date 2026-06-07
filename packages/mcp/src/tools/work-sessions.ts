@@ -56,11 +56,17 @@ export function registerWorkSessionTools(server: McpServer, client: KanonClient)
         stopAutoHeartbeat(issue_key);
 
         const result = await client.stopWork(issue_key);
-        return dataResult({
+        // S2 / KAN-26: include logged + durationSeconds when WorkLog captured
+        const ack: Record<string, unknown> = {
           ok: true,
           deleted: result.deleted,
           issueKey: issue_key,
-        });
+          logged: result.workLog !== null,
+        };
+        if (result.workLog !== null) {
+          ack["durationSeconds"] = result.workLog.durationS;
+        }
+        return dataResult(ack);
       } catch (err) {
         return errorResult(err);
       }
