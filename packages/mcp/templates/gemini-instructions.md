@@ -8,10 +8,8 @@ Available workflows:
 - `/kanon-create-issue` — Create an issue from natural language description
 
 Available skills (auto-loaded when relevant):
-- kanon-mcp — Issue management, board updates, state transitions
+- kanon-agent — Issue management, board updates, roadmap capture, cycles, and SDD phase hooks (core + on-demand sections)
 - kanon-onboard — Team invites and `kanon-setup <kanon://link>` per machine
-- kanon-roadmap — Capture deferred work as roadmap items
-- kanon-orchestrator-hooks — SDD phase launches, deferred_items processing, roadmap injection
 
 When creating issues:
 - Title format: `[Area] Verb phrase`
