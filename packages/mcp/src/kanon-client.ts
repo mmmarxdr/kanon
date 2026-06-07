@@ -728,9 +728,19 @@ export class KanonClient {
   /**
    * Stop a work session on an issue.
    * Route: DELETE /api/issues/:key/work-sessions
+   *
+   * S2 / KAN-26: response now includes workLog when a WorkLog was persisted.
    */
-  async stopWork(issueKey: string): Promise<{ ok: boolean; deleted: boolean }> {
-    return this.request<{ ok: boolean; deleted: boolean }>(
+  async stopWork(issueKey: string): Promise<{
+    ok: boolean;
+    deleted: boolean;
+    workLog: { id: string; durationS: number } | null;
+  }> {
+    return this.request<{
+      ok: boolean;
+      deleted: boolean;
+      workLog: { id: string; durationS: number } | null;
+    }>(
       "DELETE",
       `/api/issues/${issueKey}/work-sessions`,
     );

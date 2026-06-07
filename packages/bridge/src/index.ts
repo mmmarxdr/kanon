@@ -71,3 +71,7 @@ export type {
   MentionDashboardItem,
   DashboardData,
 } from "./dashboard.js";
+
+// ─── WorkSession / WorkLog schemas (S2 / KAN-26) ─────────────────────────────
+export { workLogItemSchema, workLogListResponseSchema } from "./work-session.js";
+export type { WorkLogItem, WorkLogListResponse } from "./work-session.js";

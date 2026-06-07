@@ -53,8 +53,15 @@ const fakeStartResult = {
 };
 
 const fakeStopResult = {
+  ok: true,
   deleted: true,
-  issueKey: "KAN-1",
+  workLog: { id: "wl-1", durationS: 90 },
+};
+
+const fakeStopResultNoLog = {
+  ok: true,
+  deleted: true,
+  workLog: null,
 };
 
 // ─── C16: kanon_start_work — format tier ─────────────────────────────────────
@@ -114,5 +121,29 @@ describe("kanon_stop_work — format tier (C17)", () => {
     expect(parsed).toHaveProperty("ok", true);
     expect(parsed).toHaveProperty("deleted", true);
     expect(parsed).toHaveProperty("issueKey", "KAN-1");
+  });
+
+  it("includes logged: true and durationSeconds when WorkLog captured (≥ 60s session)", async () => {
+    // fakeStopResult.workLog is non-null (90s session)
+    const result = await stopTool.handler({ issue_key: "KAN-1" });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed).toHaveProperty("logged", true);
+    expect(parsed).toHaveProperty("durationSeconds", 90);
+  });
+
+  it("includes logged: false and no durationSeconds when no WorkLog captured (< 60s session)", async () => {
+    // Override mock to return no workLog
+    mockClient.stopWork = vi.fn().mockResolvedValue(fakeStopResultNoLog);
+    const tools = captureTools(registerWorkSessionTools, mockClient as unknown as KanonClient);
+    const tool = tools.get("kanon_stop_work")!;
+
+    const result = await tool.handler({ issue_key: "KAN-1" });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed).toHaveProperty("logged", false);
+    expect(parsed).not.toHaveProperty("durationSeconds");
   });
 });

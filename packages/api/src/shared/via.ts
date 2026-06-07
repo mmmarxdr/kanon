@@ -6,6 +6,11 @@
 
 /**
  * Closed vocabulary of accepted X-Kanon-Client values.
+ *
+ * NOTE: "mcp" is deliberately NOT in this list.
+ * "mcp" is a transport name (Model Context Protocol), not a client identity.
+ * Clients running over MCP identify themselves via KANON_CLIENT_IDENTITY
+ * (e.g. 'claude-code', 'cursor').  normalizeVia('mcp') therefore returns null.
  */
 export const VIA = ["claude-code", "cursor", "antigravity", "web", "cli"] as const;
 
