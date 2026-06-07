@@ -5,6 +5,9 @@ import {
   UpdateProjectInput,
   ListIssuesInput,
   ListRoadmapInput,
+  CreateIssueInput,
+  UpdateIssueInput,
+  TITLE_COACHING,
 } from "./types.js";
 
 // ─── ListWorkspacesInput ─────────────────────────────────────────────────────
@@ -235,5 +238,70 @@ describe("FormatParam — compact support", () => {
   it("ListRoadmapInput accepts format=compact", () => {
     const result = ListRoadmapInput.safeParse({ projectKey: "KAN", format: "compact" });
     expect(result.success).toBe(true);
+  });
+});
+
+// ─── IssueTitle refine ────────────────────────────────────────────────────────
+
+describe("IssueTitle refine", () => {
+  it("valid title accepted: [Auth] Fix OAuth redirect", () => {
+    const result = CreateIssueInput.safeParse({
+      title: "[Auth] Fix OAuth redirect",
+      projectKey: "KAN",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("bare title rejected with coaching message containing [Area] and a good example", () => {
+    const result = CreateIssueInput.safeParse({
+      title: "fix thing",
+      projectKey: "KAN",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const msg = result.error.issues[0]?.message ?? "";
+      expect(msg).toContain("[Area]");
+      expect(msg).toMatch(/\[Auth\].*Fix OAuth redirect|Fix OAuth redirect/);
+    }
+  });
+
+  it("SDD path title rejected: sdd/ai-pm-assistant/apply", () => {
+    const result = CreateIssueInput.safeParse({
+      title: "sdd/ai-pm-assistant/apply",
+      projectKey: "KAN",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("short valid title accepted: [API] Fix crash", () => {
+    const result = CreateIssueInput.safeParse({
+      title: "[API] Fix crash",
+      projectKey: "KAN",
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+// ─── UpdateIssueInput.title refine ───────────────────────────────────────────
+
+describe("UpdateIssueInput.title refine", () => {
+  it("valid titled update accepted", () => {
+    const result = UpdateIssueInput.safeParse({
+      issueKey: "KAN-42",
+      title: "[Auth] Fix OAuth redirect",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("bare title update rejected with same coaching message", () => {
+    const result = UpdateIssueInput.safeParse({
+      issueKey: "KAN-42",
+      title: "fix thing",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const msg = result.error.issues[0]?.message ?? "";
+      expect(msg).toBe(TITLE_COACHING);
+    }
   });
 });

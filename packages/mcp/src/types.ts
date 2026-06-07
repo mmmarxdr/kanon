@@ -18,6 +18,17 @@ export const ISSUE_STATES = [
 export const HORIZONS = ["now", "next", "later", "someday"] as const;
 export const ROADMAP_STATUSES = ["idea", "planned", "in_progress", "done"] as const;
 
+// ─── IssueTitle — shared schema with coaching refine ─────────────────────────
+
+export const TITLE_PATTERN = /^\[.+\] .{3,}/;
+export const TITLE_COACHING =
+  "Title must follow '[Area] Verb phrase' — e.g. '[Auth] Fix OAuth redirect'. " +
+  "Vague titles ('fix thing') or internal paths cost the team time.";
+export const IssueTitle = z
+  .string()
+  .min(1, "Title must not be empty")
+  .refine((v) => TITLE_PATTERN.test(v), { message: TITLE_COACHING });
+
 // ─── Shared Optional Params ─────────────────────────────────────────────────
 
 /**
@@ -97,14 +108,14 @@ export const ListGroupsInput = z.object({
 /** kanon_create_issue */
 export const CreateIssueInput = z.object({
   projectKey: z.string().optional().describe("Project key to create the issue in. Resolved from .kanon if omitted."),
-  title: z.string().min(1, "Title must not be empty").describe("Issue title"),
+  title: IssueTitle,
   description: z.string().optional().describe("Issue description (markdown)"),
   type: z.enum(ISSUE_TYPES).optional().describe("Issue type"),
   priority: z.enum(ISSUE_PRIORITIES).optional().describe("Issue priority"),
   labels: z.array(z.string()).optional().describe("Labels to attach"),
   groupKey: z.string().optional().describe("Group key to assign"),
   assigneeId: z.string().optional().describe("Assignee member ID"),
-  cycleId: z.string().uuid().optional().describe("Cycle ID to attach the issue to (emits scope event natively)"),
+  cycleId: z.string().uuid().optional().describe("Cycle ID to attach on create"),
   parentId: z.string().optional().describe("Parent issue ID"),
   dueDate: z.string().optional().describe("Due date (ISO 8601)"),
   template: z
@@ -117,7 +128,7 @@ export const CreateIssueInput = z.object({
 /** kanon_update_issue */
 export const UpdateIssueInput = z.object({
   issueKey: z.string().describe("Issue key (e.g. 'KAN-42')"),
-  title: z.string().min(1).optional().describe("New title"),
+  title: IssueTitle.optional(),
   description: z.string().nullable().optional().describe("New description"),
   priority: z.enum(ISSUE_PRIORITIES).optional().describe("New priority"),
   labels: z.array(z.string()).optional().describe("New labels"),

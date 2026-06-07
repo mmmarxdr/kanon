@@ -29,43 +29,43 @@ Chain strategy: stacked-to-main
 
 ### Phase 1.1: Red — Title Refine Tests (types.test.ts)
 
-- [ ] 1.1.1 In `packages/mcp/src/types.test.ts`, add `describe("IssueTitle refine")` block with four failing tests: valid title accepted (`[Auth] Fix OAuth redirect`), bare title rejected with coaching message containing `[Area]` and a good example, SDD path rejected (`sdd/ai-pm-assistant/apply`), and short valid title accepted (`[API] Fix crash`).
-- [ ] 1.1.2 In the same file, add `describe("UpdateIssueInput.title refine")` with two tests: valid titled update accepted, bare title update rejected with same coaching message.
-- [ ] 1.1.3 Verify tests are RED: `pnpm --filter @kanon/mcp test -- --run` (expected failures on new IssueTitle import).
+- [x] 1.1.1 In `packages/mcp/src/types.test.ts`, add `describe("IssueTitle refine")` block with four failing tests: valid title accepted (`[Auth] Fix OAuth redirect`), bare title rejected with coaching message containing `[Area]` and a good example, SDD path rejected (`sdd/ai-pm-assistant/apply`), and short valid title accepted (`[API] Fix crash`).
+- [x] 1.1.2 In the same file, add `describe("UpdateIssueInput.title refine")` with two tests: valid titled update accepted, bare title update rejected with same coaching message.
+- [x] 1.1.3 Verify tests are RED: `pnpm --filter @kanon/mcp test -- --run` (expected failures on new IssueTitle import).
 
 ### Phase 1.2: Green — IssueTitle shared schema in types.ts
 
-- [ ] 1.2.1 In `packages/mcp/src/types.ts`, export `TITLE_PATTERN = /^\[.+\] .{3,}/` and `TITLE_COACHING` string (coaching message naming `[Area] Verb phrase` format, concrete example `[Auth] Fix OAuth redirect`).
-- [ ] 1.2.2 Export `IssueTitle = z.string().min(1, "Title must not be empty").refine(v => TITLE_PATTERN.test(v), { message: TITLE_COACHING })`.
-- [ ] 1.2.3 Replace `CreateIssueInput.title` field (`z.string().min(1, ...)`) with `IssueTitle`.
-- [ ] 1.2.4 Replace `UpdateIssueInput.title` field (`z.string().min(1).optional()`) with `IssueTitle.optional()`.
-- [ ] 1.2.5 Trim `cycleId` `.describe()` in `CreateIssueInput` from `"Cycle ID to attach the issue to (emits scope event natively)"` to `"Cycle ID to attach on create"` (~30 B trim per ADR-2 note).
-- [ ] 1.2.6 Verify types.test.ts title refine tests are GREEN: `pnpm --filter @kanon/mcp test -- --run`.
+- [x] 1.2.1 In `packages/mcp/src/types.ts`, export `TITLE_PATTERN = /^\[.+\] .{3,}/` and `TITLE_COACHING` string (coaching message naming `[Area] Verb phrase` format, concrete example `[Auth] Fix OAuth redirect`).
+- [x] 1.2.2 Export `IssueTitle = z.string().min(1, "Title must not be empty").refine(v => TITLE_PATTERN.test(v), { message: TITLE_COACHING })`.
+- [x] 1.2.3 Replace `CreateIssueInput.title` field (`z.string().min(1, ...)`) with `IssueTitle`.
+- [x] 1.2.4 Replace `UpdateIssueInput.title` field (`z.string().min(1).optional()`) with `IssueTitle.optional()`.
+- [x] 1.2.5 Trim `cycleId` `.describe()` in `CreateIssueInput` from `"Cycle ID to attach the issue to (emits scope event natively)"` to `"Cycle ID to attach on create"` (~30 B trim per ADR-2 note).
+- [x] 1.2.6 Verify types.test.ts title refine tests are GREEN: `pnpm --filter @kanon/mcp test -- --run`.
 
 ### Phase 1.3: Red — Instructions Ceiling + Persona Tests (instructions.test.ts)
 
-- [ ] 1.3.1 In `packages/mcp/src/instructions.test.ts`, add `describe("PM Persona — byte ceiling and firing pins")` with tests: `Buffer.byteLength(SERVER_INSTRUCTIONS, "utf8") <= 1500`, SERVER_INSTRUCTIONS matches `/PM Persona/i`, contains `[Area]`, contains `kanon_list_groups`, contains `format: ack`, still contains DEFERRED TOOLS heading, and all DEFERRED_TOOLS appear verbatim.
-- [ ] 1.3.2 Verify new ceiling/persona tests are RED (persona content not yet added): `pnpm --filter @kanon/mcp test -- --run`.
+- [x] 1.3.1 In `packages/mcp/src/instructions.test.ts`, add `describe("PM Persona — byte ceiling and firing pins")` with tests: `Buffer.byteLength(SERVER_INSTRUCTIONS, "utf8") <= 1500`, SERVER_INSTRUCTIONS matches `/PM Persona/i`, contains `[Area]`, contains `kanon_list_groups`, contains `format: ack`, still contains DEFERRED TOOLS heading, and all DEFERRED_TOOLS appear verbatim.
+- [x] 1.3.2 Verify new ceiling/persona tests are RED (persona content not yet added): `pnpm --filter @kanon/mcp test -- --run`.
 
 ### Phase 1.4: Green — PM Persona block in instructions.ts
 
-- [ ] 1.4.1 In `packages/mcp/src/instructions.ts`, insert the PM Persona block at the TOP of `SERVER_INSTRUCTIONS` (before DEFERRED TOOLS section), per ADR-1 wording (~480 bytes): heading, assistant identity, TITLE FORMAT with good/bad examples, pre-create `kanon_list_groups` rule, pre-update `kanon_get_issue` rule, lists format and writes format defaults, deferred-work routing rule.
-- [ ] 1.4.2 Verify total byte count stays ≤ 1,500: `Buffer.byteLength` check; trim intro sentence if needed (never the persona per ADR-1).
-- [ ] 1.4.3 Verify instructions.test.ts ALL pass (Win B + new persona tests): `pnpm --filter @kanon/mcp test -- --run`.
+- [x] 1.4.1 In `packages/mcp/src/instructions.ts`, insert the PM Persona block at the TOP of `SERVER_INSTRUCTIONS` (before DEFERRED TOOLS section), per ADR-1 wording (~480 bytes): heading, assistant identity, TITLE FORMAT with good/bad examples, pre-create `kanon_list_groups` rule, pre-update `kanon_get_issue` rule, lists format and writes format defaults, deferred-work routing rule.
+- [x] 1.4.2 Verify total byte count stays ≤ 1,500: `Buffer.byteLength` check; trim intro sentence if needed (never the persona per ADR-1).
+- [x] 1.4.3 Verify instructions.test.ts ALL pass (Win B + new persona tests): `pnpm --filter @kanon/mcp test -- --run`.
 
 ### Phase 1.5: Red — Win C Title Coaching Test (descriptions.test.ts)
 
-- [ ] 1.5.1 In `packages/mcp/src/tools/descriptions.test.ts`, add test `C10: kanon_create_issue — [Area] title pattern firing pin` asserting description matches `/\[Area\].*[Vv]erb|\[Area\]/`.
-- [ ] 1.5.2 Verify C10 is RED with current `issues.ts` description.
+- [x] 1.5.1 In `packages/mcp/src/tools/descriptions.test.ts`, add test `C10: kanon_create_issue — [Area] title pattern firing pin` asserting description matches `/\[Area\].*[Vv]erb|\[Area\]/`.
+- [x] 1.5.2 Verify C10 is RED with current `issues.ts` description.
 
 ### Phase 1.6: Green — Enrich kanon_create_issue topline description
 
-- [ ] 1.6.1 In `packages/mcp/src/tools/issues.ts`, update the `kanon_create_issue` topline description to include the `[Area] Verb` title pattern coaching and the `kanon_list_groups` pre-step (~60 B addition; must remain within Win C ceiling `DESCRIPTION_BASELINE_BYTES - 300`).
-- [ ] 1.6.2 Verify all Win C tests GREEN including new C10: `pnpm --filter @kanon/mcp test -- --run`.
+- [x] 1.6.1 In `packages/mcp/src/tools/issues.ts`, update the `kanon_create_issue` topline description to include the `[Area] Verb` title pattern coaching and the `kanon_list_groups` pre-step (~60 B addition; must remain within Win C ceiling `DESCRIPTION_BASELINE_BYTES - 300`).
+- [x] 1.6.2 Verify all Win C tests GREEN including new C10: `pnpm --filter @kanon/mcp test -- --run`.
 
 ### Phase 1.7: PR1 Commit
 
-- [ ] 1.7.1 Stage and commit: `feat(mcp): add IssueTitle refine with coaching error and PM persona block` — includes all PR1 file changes (`types.ts`, `types.test.ts`, `instructions.ts`, `instructions.test.ts`, `tools/issues.ts`, `tools/descriptions.test.ts`).
+- [x] 1.7.1 Stage and commit: `feat(mcp): add IssueTitle refine with coaching error and PM persona block` — includes all PR1 file changes (`types.ts`, `types.test.ts`, `instructions.ts`, `instructions.test.ts`, `tools/issues.ts`, `tools/descriptions.test.ts`).
 
 ---
 
