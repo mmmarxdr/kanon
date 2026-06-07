@@ -32,11 +32,19 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
 # ── Colors & helpers ──────────────────────────────────────────────────────────
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
-info()  { echo -e "${CYAN}[info]${NC}  $*"; }
-ok()    { echo -e "${GREEN}  ✓${NC} $*"; }
-warn()  { echo -e "${YELLOW}  ⚠${NC} $*"; }
-fail()  { echo -e "${RED}  ✗${NC} $*"; exit 1; }
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+info() { echo -e "${CYAN}[info]${NC}  $*"; }
+ok() { echo -e "${GREEN}  ✓${NC} $*"; }
+warn() { echo -e "${YELLOW}  ⚠${NC} $*"; }
+fail() {
+  echo -e "${RED}  ✗${NC} $*"
+  exit 1
+}
 
 # ── Tool Registry (parallel arrays — Bash 3+ compatible) ─────────────────────
 # Index order must match across all four arrays.
@@ -87,13 +95,27 @@ FLAG_WSL=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --all)    FLAG_ALL=true; shift ;;
-    --remove) FLAG_REMOVE=true; shift ;;
-    --wsl)    FLAG_WSL=true; shift ;;
+    --all)
+      FLAG_ALL=true
+      shift
+      ;;
+    --remove)
+      FLAG_REMOVE=true
+      shift
+      ;;
+    --wsl)
+      FLAG_WSL=true
+      shift
+      ;;
     --tool)
       [[ -z "${2:-}" ]] && fail "--tool requires a tool name. Run with --help for usage."
-      FLAG_TOOL="$2"; shift 2 ;;
-    --help|-h) FLAG_HELP=true; shift ;;
+      FLAG_TOOL="$2"
+      shift 2
+      ;;
+    --help | -h)
+      FLAG_HELP=true
+      shift
+      ;;
     *) fail "Unknown flag: $1. Run with --help for usage." ;;
   esac
 done
@@ -188,8 +210,8 @@ resolve_config_path() {
   if [[ "$WSL_MODE" == true ]] && is_windows_native "$name"; then
     case "$name" in
       antigravity) echo "$WIN_HOME/.gemini/antigravity/mcp_config.json" ;;
-      cursor)      echo "$WIN_HOME/.cursor/mcp.json" ;;
-      *)           echo "$default_path" ;;
+      cursor) echo "$WIN_HOME/.cursor/mcp.json" ;;
+      *) echo "$default_path" ;;
     esac
   else
     echo "$default_path"
@@ -208,14 +230,14 @@ wsl_detect() {
   local name="$1"
   case "$name" in
     antigravity) test -d "$WIN_HOME/.gemini" ;;
-    cursor)      test -d "$WIN_HOME/.cursor" ;;
-    *)           return 1 ;;
+    cursor) test -d "$WIN_HOME/.cursor" ;;
+    *) return 1 ;;
   esac
 }
 
 detect_tools() {
   DETECTED_INDICES=()
-  for (( i=0; i<TOOL_COUNT; i++ )); do
+  for ((i = 0; i < TOOL_COUNT; i++)); do
     local name="${TOOL_NAMES[$i]}"
     if [[ "$WSL_MODE" == true ]] && is_windows_native "$name"; then
       if wsl_detect "$name" >/dev/null 2>&1; then
@@ -232,7 +254,7 @@ detect_tools
 # Helper: find index by tool name
 tool_index_by_name() {
   local name="$1"
-  for (( i=0; i<TOOL_COUNT; i++ )); do
+  for ((i = 0; i < TOOL_COUNT; i++)); do
     if [[ "${TOOL_NAMES[$i]}" == "$name" ]]; then
       echo "$i"
       return 0
@@ -277,9 +299,9 @@ else
   echo ""
   echo -e "${BOLD}Detected AI coding tools:${NC}"
   echo ""
-  for (( j=0; j<${#DETECTED_INDICES[@]}; j++ )); do
+  for ((j = 0; j < ${#DETECTED_INDICES[@]}; j++)); do
     idx="${DETECTED_INDICES[$j]}"
-    echo -e "  ${CYAN}$((j+1)))${NC} ${TOOL_NAMES[$idx]}"
+    echo -e "  ${CYAN}$((j + 1)))${NC} ${TOOL_NAMES[$idx]}"
   done
   echo ""
 
@@ -290,16 +312,19 @@ else
   fi
   read -rp "> " SELECTION
 
-  [[ -z "$SELECTION" ]] && { info "No selection made. Exiting."; exit 0; }
+  [[ -z "$SELECTION" ]] && {
+    info "No selection made. Exiting."
+    exit 0
+  }
 
   if [[ "$SELECTION" == "all" ]]; then
     SELECTED_INDICES=("${DETECTED_INDICES[@]}")
   else
-    IFS=',' read -ra PICKS <<< "$SELECTION"
+    IFS=',' read -ra PICKS <<<"$SELECTION"
     for pick in "${PICKS[@]}"; do
       pick=$(echo "$pick" | tr -d ' ')
-      if [[ "$pick" =~ ^[0-9]+$ ]] && (( pick >= 1 && pick <= ${#DETECTED_INDICES[@]} )); then
-        SELECTED_INDICES+=("${DETECTED_INDICES[$((pick-1))]}")
+      if [[ "$pick" =~ ^[0-9]+$ ]] && ((pick >= 1 && pick <= ${#DETECTED_INDICES[@]})); then
+        SELECTED_INDICES+=("${DETECTED_INDICES[$((pick - 1))]}")
       else
         warn "Ignoring invalid selection: '$pick'"
       fi
@@ -317,13 +342,13 @@ API_KEY=""
 
 if [[ "$FLAG_REMOVE" != true ]]; then
   # Check API is running
-  curl -sf --max-time 3 "${API_URL}/health" >/dev/null 2>&1 \
-    || fail "API is not running at ${API_URL}. Start it first with: pnpm dev:start"
+  curl -sf --max-time 3 "${API_URL}/health" >/dev/null 2>&1 ||
+    fail "API is not running at ${API_URL}. Start it first with: pnpm dev:start"
 
   # Build MCP package
   info "Building @kanon/mcp..."
-  pnpm --filter @kanon/mcp build > "$ROOT_DIR/.setup-mcp-build.log" 2>&1 \
-    || fail "MCP build failed — see .setup-mcp-build.log"
+  pnpm --filter @kanon/mcp build >"$ROOT_DIR/.setup-mcp-build.log" 2>&1 ||
+    fail "MCP build failed — see .setup-mcp-build.log"
   ok "MCP package built"
 
   # Login
@@ -459,29 +484,35 @@ for idx in "${SELECTED_INDICES[@]}"; do
 done
 
 # ── Install / Remove Kanon skills and workflows ─────────────────────────────
-# Portable skills live in packages/mcp/skills/ and workflows in packages/mcp/workflows/.
+# Canonical skills live in packages/setup/assets/skills/ (single source of truth).
+# Workflows live in packages/mcp/workflows/.
 # Each tool has its own global directory structure for skills and workflows.
 
-SKILLS_SRC="$ROOT_DIR/packages/mcp/skills"
+SKILLS_SRC="$ROOT_DIR/packages/setup/assets/skills"
 WORKFLOWS_SRC="$ROOT_DIR/packages/mcp/workflows"
+
+# Retired skills to remove from user machines on every install run (upgrade-safe)
+RETIRED_SKILLS=(kanon-mcp kanon-create-issue kanon-roadmap kanon-cycle kanon-orchestrator-hooks)
 
 # skill_dest <tool-name> → prints the global skills directory (empty = not supported)
 skill_dest() {
   case "$1" in
-    claude-code)    echo "$HOME/.claude/skills" ;;
+    claude-code) echo "$HOME/.claude/skills" ;;
     antigravity)
       if [[ "$WSL_MODE" == true && -n "$WIN_HOME" ]]; then
         echo "$WIN_HOME/.gemini/antigravity/skills"
       else
         echo "$HOME/.gemini/antigravity/skills"
-      fi ;;
+      fi
+      ;;
     cursor)
       if [[ "$WSL_MODE" == true && -n "$WIN_HOME" ]]; then
         echo "$WIN_HOME/.cursor/skills"
       else
         echo "$HOME/.cursor/skills"
-      fi ;;
-    *)              echo "" ;;
+      fi
+      ;;
+    *) echo "" ;;
   esac
 }
 
@@ -493,9 +524,10 @@ workflow_dest() {
         echo "$WIN_HOME/.gemini/antigravity/global_workflows"
       else
         echo "$HOME/.gemini/antigravity/global_workflows"
-      fi ;;
-    cursor)         echo "" ;; # Cursor has no global workflows — only project-level .cursor/rules/
-    *)              echo "" ;;
+      fi
+      ;;
+    cursor) echo "" ;; # Cursor has no global workflows — only project-level .cursor/rules/
+    *) echo "" ;;
   esac
 }
 
@@ -509,13 +541,16 @@ install_skills_and_workflows() {
 
   # Install skills
   if [[ -n "$s_dest" && -d "$SKILLS_SRC" ]]; then
+    # Remove retired skills before installing — idempotent upgrade-safe cleanup
+    for retired in "${RETIRED_SKILLS[@]}"; do
+      rm -rf "${s_dest:?}/$retired"
+    done
+    # Install current product skills recursively (preserves sections/ subdirs)
     for skill_dir in "$SKILLS_SRC"/kanon-*/; do
       [[ -d "$skill_dir" ]] || continue
       local skill_name
       skill_name=$(basename "$skill_dir")
-      local dest_dir="$s_dest/$skill_name"
-      mkdir -p "$dest_dir"
-      cp "$skill_dir"SKILL.md "$dest_dir/SKILL.md" 2>/dev/null && installed=true
+      cp -R "$skill_dir" "$s_dest/" 2>/dev/null && installed=true
     done
   fi
 
@@ -595,8 +630,8 @@ append_or_replace_section() {
   else
     # Append snippet
     mkdir -p "$(dirname "$target")"
-    [[ -f "$target" ]] && echo "" >> "$target"
-    cat "$snippet" >> "$target"
+    [[ -f "$target" ]] && echo "" >>"$target"
+    cat "$snippet" >>"$target"
   fi
 }
 
