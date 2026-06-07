@@ -15,6 +15,7 @@ import { registerCycleTools } from "./tools/cycles.js";
 import { shutdownAllHeartbeats } from "./heartbeat.js";
 import { startSseClient, stopSseClient } from "./sse-client.js";
 import { SERVER_INSTRUCTIONS, DEFERRED_TOOLS } from "./instructions.js";
+import { MCP_VERSION } from "./version.js";
 import { findKanonConfig } from "./kanon-binding.js";
 import type { KanonBinding } from "./kanon-binding.js";
 import type { InvalidBinding } from "./binding-resolver.js";
@@ -62,7 +63,7 @@ const kanonBinding: KanonBinding | InvalidBinding | null = (() => {
 const server = new McpServer(
   {
     name: "kanon-mcp",
-    version: "0.4.0",
+    version: MCP_VERSION,
   },
   {
     instructions: SERVER_INSTRUCTIONS,
@@ -85,7 +86,15 @@ registerCycleTools(server, client, kanonBinding);
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`Kanon MCP v0.4.0 — 30 tools registered, ${DEFERRED_TOOLS.length} declared deferred via instructions`);
+  // _registeredTools is private SDK state — banner-only observability, degrade to "?" if it moves.
+  const toolCount =
+    Object.keys(
+      (server as unknown as { _registeredTools?: Record<string, unknown> })
+        ._registeredTools ?? {},
+    ).length || "?";
+  console.error(
+    `Kanon MCP ${MCP_VERSION} — ${toolCount} tools registered, ${DEFERRED_TOOLS.length} declared deferred via instructions`,
+  );
 
   // Start background SSE client if workspace ID is configured
   const workspaceId = process.env["KANON_WORKSPACE_ID"];
