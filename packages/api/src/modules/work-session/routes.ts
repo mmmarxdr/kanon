@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
-import { IssueKeyParam, StartWorkSessionBody, MeWorkLogsQuery } from "./schema.js";
+import { IssueKeyParam, StartWorkSessionBody, MeWorkLogsQuery, WorkLogListResponse } from "./schema.js";
 import { requireIssueMember } from "../../middleware/require-role.js";
 import * as workSessionService from "./service.js";
 import { prisma } from "../../config/prisma.js";
@@ -33,6 +33,7 @@ export default async function workSessionRoutes(
         request.member!.id,
         request.user.userId,
         request.body.source,
+        request.via,
       );
       return reply.status(201).send(result);
     },
@@ -124,6 +125,7 @@ export default async function workSessionRoutes(
       preHandler: [requireIssueMember("key")],
       schema: {
         params: IssueKeyParam,
+        response: { 200: WorkLogListResponse },
       },
     },
     async (request, _reply) => {
@@ -180,6 +182,7 @@ export default async function workSessionRoutes(
     {
       schema: {
         querystring: MeWorkLogsQuery,
+        response: { 200: WorkLogListResponse },
       },
     },
     async (request, _reply) => {

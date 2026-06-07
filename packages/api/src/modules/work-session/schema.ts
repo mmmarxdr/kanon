@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  workLogItemSchema,
+  workLogListResponseSchema,
+} from "@kanon/bridge";
 
 /**
  * Issue key param for work session routes.
@@ -29,34 +33,14 @@ export const ActiveWorkerResponse = z.object({
 export type ActiveWorkerResponse = z.infer<typeof ActiveWorkerResponse>;
 
 // ── S2 / KAN-26 — WorkLog list schemas ────────────────────────────────────
+// Bridge is the single source of truth; re-export for use within this module.
 
-/**
- * A single WorkLog item in list responses.
- * Design: { id, startedAt, endedAt, durationS, reason, via, issueId, member:{id,username,isAgent} }
- */
-export const WorkLogItem = z.object({
-  id: z.string().uuid(),
-  startedAt: z.string().datetime(),
-  endedAt: z.string().datetime(),
-  durationS: z.number().int().nonnegative(),
-  reason: z.enum(["stopped", "expired"]),
-  via: z.string().nullable(),
-  issueId: z.string().uuid(),
-  member: z.object({
-    id: z.string().uuid(),
-    username: z.string(),
-    isAgent: z.boolean(),
-  }),
-});
+/** @see workLogItemSchema in @kanon/bridge */
+export const WorkLogItem = workLogItemSchema;
 export type WorkLogItem = z.infer<typeof WorkLogItem>;
 
-/**
- * Response for GET /api/issues/:key/worklogs
- */
-export const WorkLogListResponse = z.object({
-  worklogs: z.array(WorkLogItem),
-  totalDurationS: z.number().int().nonnegative(),
-});
+/** @see workLogListResponseSchema in @kanon/bridge */
+export const WorkLogListResponse = workLogListResponseSchema;
 export type WorkLogListResponse = z.infer<typeof WorkLogListResponse>;
 
 /**
