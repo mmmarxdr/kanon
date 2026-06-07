@@ -20,7 +20,7 @@ export const ROADMAP_STATUSES = ["idea", "planned", "in_progress", "done"] as co
 
 // ─── IssueTitle — shared schema with coaching refine ─────────────────────────
 
-export const TITLE_PATTERN = /^\[.+\] .{3,}/;
+export const TITLE_PATTERN = /^\[.+\] .{3,}$/;
 export const TITLE_COACHING =
   "Title must follow '[Area] Verb phrase' — e.g. '[Auth] Fix OAuth redirect'. " +
   "Vague titles ('fix thing') or internal paths cost the team time.";

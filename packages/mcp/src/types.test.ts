@@ -280,6 +280,14 @@ describe("IssueTitle refine", () => {
     });
     expect(result.success).toBe(true);
   });
+
+  it("multiline title rejected: valid prefix followed by newline payload", () => {
+    const result = CreateIssueInput.safeParse({
+      title: "[Auth] Fix OAuth redirect\nunrelated second line",
+      projectKey: "KAN",
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 // ─── UpdateIssueInput.title refine ───────────────────────────────────────────

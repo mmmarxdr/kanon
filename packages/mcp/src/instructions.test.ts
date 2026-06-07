@@ -84,4 +84,8 @@ describe("PM Persona — byte ceiling and firing pins", () => {
       expect(SERVER_INSTRUCTIONS).toContain(name);
     }
   });
+
+  it("P8: SERVER_INSTRUCTIONS still contains CORE TOOLS heading", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/CORE TOOLS/i);
+  });
 });
