@@ -1,6 +1,9 @@
 -- CreateEnum
 CREATE TYPE "NotificationKind" AS ENUM ('mention', 'assignment', 'subscribed_activity', 'cycle_closed');
 
+-- CreateEnum
+CREATE TYPE "WorkLogReason" AS ENUM ('stopped', 'expired');
+
 -- AlterTable
 ALTER TABLE "activity_logs" ADD COLUMN     "via" TEXT;
 
@@ -16,7 +19,7 @@ CREATE TABLE "work_logs" (
     "started_at" TIMESTAMP(3) NOT NULL,
     "ended_at" TIMESTAMP(3) NOT NULL,
     "duration_s" INTEGER NOT NULL,
-    "reason" TEXT NOT NULL DEFAULT 'stopped',
+    "reason" "WorkLogReason" NOT NULL DEFAULT 'stopped',
     "via" TEXT,
     "issue_id" UUID NOT NULL,
     "member_id" UUID NOT NULL,

@@ -12,6 +12,7 @@ export async function createDocument(
   issueKey: string,
   body: CreateDocumentBody,
   memberId: string,
+  via?: string | null,
 ) {
   const issue = await prisma.issue.findUnique({
     where: { key: issueKey },
@@ -54,6 +55,7 @@ export async function createDocument(
     memberId,
     action: "document_added",
     details: { documentId: document.id, kind: document.kind },
+    via,
   });
 
   // Emit domain event (fire-and-forget) — reuse issue.updated with field: "documents"

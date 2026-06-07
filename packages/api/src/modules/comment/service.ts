@@ -11,6 +11,7 @@ export async function createComment(
   issueKey: string,
   body: CreateCommentBody,
   memberId: string,
+  via?: string | null,
 ) {
   // Note: Issue does NOT have workspaceId directly — it lives in issue.project.workspaceId
   const issue = await prisma.issue.findUnique({
@@ -34,6 +35,7 @@ export async function createComment(
       source: body.source,
       issueId: issue.id,
       authorId: memberId,
+      via: via ?? null,
     },
     include: {
       author: {
@@ -52,6 +54,7 @@ export async function createComment(
     memberId,
     action: "commented",
     details: { commentId: comment.id, source: comment.source },
+    via,
   });
 
   // Parse @mentions — best-effort (must not break comment creation)

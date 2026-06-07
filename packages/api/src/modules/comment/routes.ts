@@ -32,6 +32,7 @@ export default async function commentRoutes(
         request.params.key,
         request.body,
         request.member!.id,
+        request.via,
       );
       return reply.status(201).send(comment);
     },

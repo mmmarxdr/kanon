@@ -22,5 +22,4 @@ async function viaPlugin(fastify: FastifyInstance): Promise<void> {
 
 export default fp(viaPlugin, {
   name: "via",
-  dependencies: ["auth"],
 });

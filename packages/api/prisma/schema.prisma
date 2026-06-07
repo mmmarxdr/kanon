@@ -105,6 +105,11 @@ enum NotificationKind {
   cycle_closed
 }
 
+enum WorkLogReason {
+  stopped
+  expired
+}
+
 enum RefreshSource {
   ONBOARDING
   LOGIN
@@ -710,11 +715,11 @@ model InstanceAdminInvite {
 // ─── Capture & Notify Models (S1 / KAN-30) ──────────────────────────────────
 
 model WorkLog {
-  id        String   @id @default(uuid()) @db.Uuid
-  startedAt DateTime @map("started_at")
-  endedAt   DateTime @map("ended_at")
-  durationS Int      @map("duration_s")
-  reason    String   @default("stopped") // "stopped" | "expired"
+  id        String        @id @default(uuid()) @db.Uuid
+  startedAt DateTime      @map("started_at")
+  endedAt   DateTime      @map("ended_at")
+  durationS Int           @map("duration_s")
+  reason    WorkLogReason @default(stopped)
   via       String?
 
   issueId  String @map("issue_id") @db.Uuid
