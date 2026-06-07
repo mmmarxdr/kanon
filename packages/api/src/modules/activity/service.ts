@@ -9,6 +9,8 @@ export async function createActivityLog(params: {
   memberId: string;
   action: ActivityAction;
   details?: Prisma.InputJsonValue;
+  /** Normalized X-Kanon-Client value (S1 / KAN-30). */
+  via?: string | null;
 }) {
   return prisma.activityLog.create({
     data: {
@@ -16,6 +18,7 @@ export async function createActivityLog(params: {
       memberId: params.memberId,
       action: params.action,
       details: params.details ?? undefined,
+      via: params.via ?? null,
     },
   });
 }

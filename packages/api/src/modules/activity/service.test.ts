@@ -48,6 +48,7 @@ describe("Activity Service — unit tests (mocked DB)", () => {
           memberId: "member-1",
           action: "created",
           details: { title: "Test issue" },
+          via: null,
         },
       });
       expect(result).toEqual(mockEntry);
@@ -77,6 +78,38 @@ describe("Activity Service — unit tests (mocked DB)", () => {
           memberId: "member-1",
           action: "state_changed",
           details: undefined,
+          via: null,
+        },
+      });
+    });
+
+    it("creates an activity log entry with via provenance (S1 / KAN-30)", async () => {
+      const mockEntry = {
+        id: "log-3",
+        issueId: "issue-1",
+        memberId: "member-1",
+        action: "created" as const,
+        details: null,
+        via: "claude-code",
+        createdAt: new Date(),
+      };
+
+      mockCreate.mockResolvedValue(mockEntry as any);
+
+      await createActivityLog({
+        issueId: "issue-1",
+        memberId: "member-1",
+        action: "created",
+        via: "claude-code",
+      });
+
+      expect(mockCreate).toHaveBeenCalledWith({
+        data: {
+          issueId: "issue-1",
+          memberId: "member-1",
+          action: "created",
+          details: undefined,
+          via: "claude-code",
         },
       });
     });
