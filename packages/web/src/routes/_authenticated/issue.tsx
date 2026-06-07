@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoute, useNavigate } from "@tanstack/react-router";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { authenticatedRoute } from "../_authenticated";
+import { Markdown } from "@/components/ui/markdown";
 import {
   useIssueDetailQuery,
   useCommentsQuery,
@@ -410,7 +409,6 @@ function IssuePage() {
               >
                 {issue.description ? (
                   <div
-                    className="markdown-body"
                     style={{
                       color: "var(--ink-2)",
                       fontSize: 13,
@@ -420,18 +418,7 @@ function IssuePage() {
                       minWidth: 0,
                     }}
                   >
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        table: ({ node: _node, ...props }) => (
-                          <div style={{ overflowX: "auto", maxWidth: "100%" }}>
-                            <table {...props} />
-                          </div>
-                        ),
-                      }}
-                    >
-                      {issue.description}
-                    </ReactMarkdown>
+                    <Markdown>{issue.description}</Markdown>
                   </div>
                 ) : (
                   <span

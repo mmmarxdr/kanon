@@ -1,7 +1,6 @@
 import { useEffect, useRef } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import type { Comment } from "@/types/issue";
+import { Markdown } from "@/components/ui/markdown";
 
 interface CommentsHighlightViewProps {
   comments: Comment[];
@@ -122,7 +121,7 @@ function CommentHighlightItem({
           lineHeight: 1.5,
         }}
       >
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{comment.body}</ReactMarkdown>
+        <Markdown>{comment.body}</Markdown>
       </div>
     </div>
   );
