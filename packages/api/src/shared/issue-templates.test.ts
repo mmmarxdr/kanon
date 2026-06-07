@@ -41,3 +41,37 @@ describe("resolveTemplate", () => {
     expect(Object.keys(ISSUE_TEMPLATES)).toContain("spike");
   });
 });
+
+// ─── PR-2: task template descriptionTemplate ─────────────────────────────────
+
+describe("PR-2 — task template descriptionTemplate", () => {
+  it("task template descriptionTemplate contains ## Context", () => {
+    const tmpl = resolveTemplate("task");
+    expect(tmpl!.descriptionTemplate).toContain("## Context");
+  });
+
+  it("task template descriptionTemplate contains ## Acceptance Criteria", () => {
+    const tmpl = resolveTemplate("task");
+    expect(tmpl!.descriptionTemplate).toContain("## Acceptance Criteria");
+  });
+
+  it("task template descriptionTemplate contains ## Notes", () => {
+    const tmpl = resolveTemplate("task");
+    expect(tmpl!.descriptionTemplate).toContain("## Notes");
+  });
+
+  it("bug-report template descriptionTemplate is unchanged (still has ## Steps to Reproduce)", () => {
+    const tmpl = resolveTemplate("bug-report");
+    expect(tmpl!.descriptionTemplate).toContain("## Steps to Reproduce");
+    expect(tmpl!.descriptionTemplate).toContain("## Expected Behavior");
+    expect(tmpl!.descriptionTemplate).toContain("## Actual Behavior");
+    expect(tmpl!.descriptionTemplate).toContain("## Environment");
+  });
+
+  it("feature-request template descriptionTemplate is unchanged (still has ## User Story)", () => {
+    const tmpl = resolveTemplate("feature-request");
+    expect(tmpl!.descriptionTemplate).toContain("## User Story");
+    expect(tmpl!.descriptionTemplate).toContain("## Acceptance Criteria");
+    expect(tmpl!.descriptionTemplate).toContain("## Design Notes");
+  });
+});

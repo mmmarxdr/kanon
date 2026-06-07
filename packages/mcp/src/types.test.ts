@@ -290,6 +290,42 @@ describe("IssueTitle refine", () => {
   });
 });
 
+// ─── PR-2: description .describe() coaching ──────────────────────────────────
+
+describe("PR-2 — description field coaching annotations", () => {
+  it("CreateIssueInput.description describe contains recommended structure hint", () => {
+    const schema = CreateIssueInput.shape.description;
+    const description = schema._def.description as string;
+    expect(description).toContain("## Context");
+    expect(description).toContain("## Acceptance Criteria");
+    expect(description).toContain("## Notes");
+  });
+
+  it("UpdateIssueInput.description describe contains preserve structure hint", () => {
+    const schema = UpdateIssueInput.shape.description;
+    const description = schema._def.description as string;
+    expect(description).toContain("## Context");
+    expect(description).toContain("## Acceptance Criteria");
+    expect(description).toContain("## Notes");
+  });
+
+  it("UpdateIssueInput with partial description (no ## heading) still passes validation", () => {
+    const result = UpdateIssueInput.safeParse({
+      issueKey: "KAN-42",
+      description: "Just a plain text update with no headings",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("CreateIssueInput with no description still passes validation (optional field)", () => {
+    const result = CreateIssueInput.safeParse({
+      title: "[Auth] Fix OAuth redirect",
+      projectKey: "KAN",
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
 // ─── UpdateIssueInput.title refine ───────────────────────────────────────────
 
 describe("UpdateIssueInput.title refine", () => {

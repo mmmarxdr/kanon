@@ -109,7 +109,7 @@ export const ListGroupsInput = z.object({
 export const CreateIssueInput = z.object({
   projectKey: z.string().optional().describe("Project key to create the issue in. Resolved from .kanon if omitted."),
   title: IssueTitle,
-  description: z.string().optional().describe("Issue description (markdown)"),
+  description: z.string().optional().describe("Issue description (markdown). Recommended: ## Context / ## Acceptance Criteria / ## Notes"),
   type: z.enum(ISSUE_TYPES).optional().describe("Issue type"),
   priority: z.enum(ISSUE_PRIORITIES).optional().describe("Issue priority"),
   labels: z.array(z.string()).optional().describe("Labels to attach"),
@@ -129,7 +129,7 @@ export const CreateIssueInput = z.object({
 export const UpdateIssueInput = z.object({
   issueKey: z.string().describe("Issue key (e.g. 'KAN-42')"),
   title: IssueTitle.optional(),
-  description: z.string().nullable().optional().describe("New description"),
+  description: z.string().nullable().optional().describe("New description (markdown). Preserve ## Context / ## Acceptance Criteria / ## Notes when replacing"),
   priority: z.enum(ISSUE_PRIORITIES).optional().describe("New priority"),
   labels: z.array(z.string()).optional().describe("New labels"),
   assigneeId: z.string().nullable().optional().describe("New assignee ID"),
