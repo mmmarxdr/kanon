@@ -105,34 +105,6 @@ export async function listDocuments(issueKey: string) {
 }
 
 /**
- * Get a single design record by ID.
- */
-export async function getDocument(documentId: string) {
-  const document = await prisma.issueDocument.findUnique({
-    where: { id: documentId },
-    include: {
-      author: {
-        select: {
-          id: true,
-          username: true,
-          user: { select: { email: true } },
-        },
-      },
-    },
-  });
-
-  if (!document) {
-    throw new AppError(
-      404,
-      "DOCUMENT_NOT_FOUND",
-      `Document "${documentId}" not found`,
-    );
-  }
-
-  return document;
-}
-
-/**
  * Update an existing design record.
  *
  * - Verifies the document exists (404 if not).
