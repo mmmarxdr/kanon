@@ -1,0 +1,57 @@
+import { z } from "zod";
+
+export const DOCUMENT_KINDS = ["adr", "pdr", "rfc", "note"] as const;
+
+/**
+ * Create document request body.
+ */
+export const CreateDocumentBody = z.object({
+  kind: z.enum(DOCUMENT_KINDS).default("note"),
+  title: z
+    .string()
+    .min(1, "Document title is required")
+    .max(200, "Document title must be at most 200 characters"),
+  body: z
+    .string()
+    .min(1, "Document body is required")
+    .max(50000, "Document body must be at most 50000 characters"),
+});
+export type CreateDocumentBody = z.infer<typeof CreateDocumentBody>;
+
+/**
+ * Issue key param for document routes.
+ */
+export const IssueKeyParam = z.object({
+  key: z.string(),
+});
+
+/**
+ * Document ID param for PATCH /api/documents/:id.
+ */
+export const DocumentIdParam = z.object({
+  id: z.string().uuid(),
+});
+
+/**
+ * Update document request body — title, body, and kind can all be patched.
+ * At least one field must be provided — empty PATCH {} is rejected with 400.
+ */
+export const UpdateDocumentBody = z
+  .object({
+    title: z
+      .string()
+      .min(1, "Document title is required")
+      .max(200, "Document title must be at most 200 characters")
+      .optional(),
+    body: z
+      .string()
+      .min(1, "Document body is required")
+      .max(50000, "Document body must be at most 50000 characters")
+      .optional(),
+    kind: z.enum(DOCUMENT_KINDS).optional(),
+  })
+  .refine(
+    (data) => data.title !== undefined || data.body !== undefined || data.kind !== undefined,
+    { message: "At least one of title, body, or kind must be provided" },
+  );
+export type UpdateDocumentBody = z.infer<typeof UpdateDocumentBody>;

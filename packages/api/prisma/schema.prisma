@@ -57,6 +57,14 @@ enum ActivityAction {
   cycle_changed
   edited
   engram_synced
+  document_added
+}
+
+enum DocumentKind {
+  adr
+  pdr
+  rfc
+  note
 }
 
 enum CommentSource {
@@ -247,6 +255,7 @@ model Issue {
   comments     Comment[]
   workSessions WorkSession[]
   mentions     Mention[]
+  documents    IssueDocument[]
 
   // Issue→Issue dependencies (semantically distinct from RoadmapDependency)
   blocks    IssueDependency[] @relation("IssueBlocks")
@@ -356,6 +365,7 @@ model Member {
   assignedIssues   Issue[]           @relation("AssignedIssues")
   activityLogs     ActivityLog[]
   comments         Comment[]
+  documents        IssueDocument[]
   workSessions     WorkSession[]
   cycleScopeEvents CycleScopeEvent[] @relation("CycleScopeAuthor")
   adminAuditLogs   AdminAuditLog[]
@@ -400,6 +410,24 @@ model Comment {
 
   @@index([issueId, createdAt])
   @@map("comments")
+}
+
+model IssueDocument {
+  id        String       @id @default(uuid()) @db.Uuid
+  kind      DocumentKind @default(note)
+  title     String       @db.VarChar(200)
+  body      String
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  issueId String @map("issue_id") @db.Uuid
+  issue   Issue  @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  authorId String @map("author_id") @db.Uuid
+  author   Member @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([issueId, createdAt])
+  @@map("issue_documents")
 }
 
 model Mention {

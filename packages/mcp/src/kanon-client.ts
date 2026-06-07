@@ -168,6 +168,23 @@ export interface KanonComment {
 }
 
 /**
+ * Design record shape returned by the Kanon API.
+ * author is included when the route fetches it (GET /api/documents/:id, list).
+ * Email is intentionally omitted — not surfaced through MCP.
+ */
+export interface KanonDocument {
+  id: string;
+  kind: "adr" | "pdr" | "rfc" | "note";
+  title: string;
+  body: string;
+  issueId: string;
+  authorId: string;
+  createdAt: string;
+  updatedAt: string;
+  author?: { id: string; username: string };
+}
+
+/**
  * Payload for creating an issue in Kanon.
  */
 export interface CreateIssueInput {
@@ -531,6 +548,45 @@ export class KanonClient {
       "POST",
       `/api/issues/${issueKey}/comments`,
       { body, source },
+    );
+  }
+
+  // ─── Documents ──────────────────────────────────────────────────────────────
+
+  /**
+   * Create a design record on an issue.
+   * Route: POST /api/issues/:key/documents
+   */
+  async createDocument(
+    issueKey: string,
+    body: { kind: string; title: string; body: string },
+  ): Promise<KanonDocument> {
+    return this.request<KanonDocument>(
+      "POST",
+      `/api/issues/${issueKey}/documents`,
+      body,
+    );
+  }
+
+  /**
+   * List design records for an issue.
+   * Route: GET /api/issues/:key/documents
+   */
+  async listDocuments(issueKey: string): Promise<KanonDocument[]> {
+    return this.request<KanonDocument[]>(
+      "GET",
+      `/api/issues/${issueKey}/documents`,
+    );
+  }
+
+  /**
+   * Get a design record by ID.
+   * Route: GET /api/documents/:id
+   */
+  async getDocument(documentId: string): Promise<KanonDocument> {
+    return this.request<KanonDocument>(
+      "GET",
+      `/api/documents/${documentId}`,
     );
   }
 

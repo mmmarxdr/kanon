@@ -1,10 +1,11 @@
 /**
  * instructions.test.ts — Win B + PM Persona ceiling
  *
- * Win B: SERVER_INSTRUCTIONS contains DEFERRED TOOLS heading, all 5 deferred
+ * Win B: SERVER_INSTRUCTIONS contains DEFERRED TOOLS heading, all 8 deferred
  *        tool names, and is wired into McpServer constructor.
  *
- * PM Persona (new): byte ceiling ≤ 1500, persona block firing pins.
+ * PM Persona (new): byte ceiling ≤ 1600 (re-anchored for 33-tool surface @ 8 deferred),
+ *                   persona block firing pins.
  */
 
 import { describe, it, expect } from "vitest";
@@ -21,8 +22,8 @@ describe("Win B — SERVER_INSTRUCTIONS deferred tools block", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/DEFERRED TOOLS/i);
   });
 
-  it("B2: DEFERRED_TOOLS array has exactly 5 entries", () => {
-    expect(DEFERRED_TOOLS).toHaveLength(5);
+  it("B2: DEFERRED_TOOLS array has exactly 8 entries", () => {
+    expect(DEFERRED_TOOLS).toHaveLength(8);
   });
 
   it("B3: each deferred tool name appears verbatim in SERVER_INSTRUCTIONS", () => {
@@ -53,9 +54,11 @@ describe("Win B — SERVER_INSTRUCTIONS deferred tools block", () => {
 // ─── PM Persona — byte ceiling and firing pins ───────────────────────────────
 
 describe("PM Persona — byte ceiling and firing pins", () => {
-  it("P1: SERVER_INSTRUCTIONS byte length ≤ 1500", () => {
+  it("P1: SERVER_INSTRUCTIONS byte length ≤ 1600", () => {
+    // ceiling re-anchored for 33-tool surface with 8 deferred (was 1,500 @ 5 deferred);
+    // adding 3 document tool names to DEFERRED_TOOLS adds ~68 B, pushing past 1,500.
     expect(Buffer.byteLength(SERVER_INSTRUCTIONS, "utf8")).toBeLessThanOrEqual(
-      1500,
+      1600,
     );
   });
 
@@ -99,5 +102,33 @@ describe("PR-2 firing pins — description coaching", () => {
 
   it("P2b: SERVER_INSTRUCTIONS contains ## Context coaching", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/## Context/);
+  });
+});
+
+// ─── PR-4a Firing Pin — L2 ADR cardinality guidance ──────────────────────────
+
+describe("PR-4a firing pins — design records guidance", () => {
+  it("P4a: SERVER_INSTRUCTIONS contains Design records guidance line", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/Design records/i);
+  });
+});
+
+// ─── PR-4a review — document tools in DEFERRED_TOOLS ─────────────────────────
+
+describe("PR-4a review — document tools discoverability", () => {
+  it("B2-doc: DEFERRED_TOOLS includes kanon_create_document", () => {
+    expect(DEFERRED_TOOLS).toContain("kanon_create_document");
+  });
+
+  it("B2-list: DEFERRED_TOOLS includes kanon_list_documents", () => {
+    expect(DEFERRED_TOOLS).toContain("kanon_list_documents");
+  });
+
+  it("B2-get: DEFERRED_TOOLS includes kanon_get_document", () => {
+    expect(DEFERRED_TOOLS).toContain("kanon_get_document");
+  });
+
+  it("B2-pin: kanon_create_document appears verbatim in SERVER_INSTRUCTIONS", () => {
+    expect(SERVER_INSTRUCTIONS).toContain("kanon_create_document");
   });
 });
