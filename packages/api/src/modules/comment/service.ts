@@ -19,6 +19,7 @@ export async function createComment(
     where: { key: issueKey },
     select: {
       id: true,
+      key: true,
       project: { select: { workspaceId: true } },
     },
   });
