@@ -11,6 +11,7 @@ import { prisma } from "./config/prisma.js";
 import errorHandler from "./plugins/error-handler.js";
 import authPlugin from "./plugins/auth.js";
 import csrfPlugin from "./plugins/csrf.js";
+import viaPlugin from "./plugins/via.js";
 import authRoutes from "./modules/auth/routes.js";
 import activityRoutes from "./modules/activity/routes.js";
 import workspaceRoutes from "./modules/workspace/routes.js";
@@ -81,6 +82,7 @@ export async function buildApp() {
   });
   await app.register(errorHandler);
   await app.register(authPlugin);
+  await app.register(viaPlugin);
   await app.register(csrfPlugin);
 
   // ─── Domain EventBus ──────────────────────────────────────────────────

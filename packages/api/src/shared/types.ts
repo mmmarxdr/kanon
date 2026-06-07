@@ -91,6 +91,10 @@ declare module "fastify" {
      *  services use the SAME project the gate authorized, preventing gate↔handler
      *  divergence on key-collision across workspaces. */
     projectId?: string;
+    /** Normalized X-Kanon-Client header value (S1 / KAN-30).
+     *  Set by viaPlugin on every request. Known values: claude-code | cursor |
+     *  antigravity | web | cli. Unknown or absent → null. */
+    via: string | null;
   }
   interface FastifyInstance {
     bridgeSyncService?: BridgeSyncService;
