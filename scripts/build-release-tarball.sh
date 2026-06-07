@@ -35,8 +35,11 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
-info()  { echo "[build-tarball] $*"; }
-abort() { echo "[build-tarball] error: $*" >&2; exit 1; }
+info() { echo "[build-tarball] $*"; }
+abort() {
+  echo "[build-tarball] error: $*" >&2
+  exit 1
+}
 
 # ─── Version ──────────────────────────────────────────────────────────────────
 
@@ -143,6 +146,13 @@ if [ ! -d "$SETUP_ASSETS" ]; then
 fi
 cp -r "$SETUP_ASSETS" "$STAGE/setup/assets"
 
+# ─── Copy: mcp/package.json → mcp/package.json ──────────────────────────────
+# version.ts single-sources the server version from ../package.json at runtime
+# (KAN-19); the bundle at mcp/dist/index.js resolves it to mcp/package.json.
+
+info "copying mcp/package.json..."
+cp "$REPO_ROOT/packages/mcp/package.json" "$STAGE/mcp/package.json"
+
 # ─── Copy: mcp/bin/kanon-mcp.js → mcp/bin/kanon-mcp.js ──────────────────────
 
 info "copying mcp/bin/kanon-mcp.js..."
@@ -166,9 +176,9 @@ SHA256_FILE="$OUTPUT_DIR/${ASSET_NAME}.sha256"
 (
   cd "$OUTPUT_DIR"
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$ASSET_NAME" > "$ASSET_NAME.sha256"
+    sha256sum "$ASSET_NAME" >"$ASSET_NAME.sha256"
   elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$ASSET_NAME" > "$ASSET_NAME.sha256"
+    shasum -a 256 "$ASSET_NAME" >"$ASSET_NAME.sha256"
   else
     abort "no sha256 tool found (sha256sum or shasum required)"
   fi
@@ -177,6 +187,42 @@ SHA256_FILE="$OUTPUT_DIR/${ASSET_NAME}.sha256"
 HASH_VALUE="$(awk '{print $1}' "$SHA256_FILE")"
 info "sha256: $HASH_VALUE"
 info "created: $SHA256_FILE"
+
+# ─── Boot smoke (KAN-20) ──────────────────────────────────────────────────────
+# Extract the ACTUAL tarball and boot the bundled server. The bundle layout
+# differs from the dev layout (no node_modules, different relative paths) —
+# this gate catches "works in dist/, dead in the tarball" before it ships.
+
+info "boot smoke: extracting tarball to temp dir..."
+SMOKE_DIR="$(mktemp -d)"
+trap 'rm -rf "$SMOKE_DIR"' EXIT
+tar -xzf "$OUTPUT_DIR/$ASSET_NAME" -C "$SMOKE_DIR" --strip-components=1
+
+info "boot smoke: starting bundled MCP server..."
+SMOKE_LOG="$SMOKE_DIR/boot.log"
+KANON_API_URL="http://127.0.0.1:1" KANON_API_KEY="kn_smoke_dummy" \
+  timeout 10 node "$SMOKE_DIR/mcp/dist/index.js" </dev/null >/dev/null 2>"$SMOKE_LOG" &
+SMOKE_PID=$!
+# Banner appears on stderr right after connect; poll briefly.
+BOOT_OK=false
+for _ in $(seq 1 20); do
+  if grep -q "Kanon MCP ${VERSION} — " "$SMOKE_LOG" 2>/dev/null; then
+    BOOT_OK=true
+    break
+  fi
+  if ! kill -0 "$SMOKE_PID" 2>/dev/null; then
+    break # process died — banner will never come
+  fi
+  sleep 0.25
+done
+kill "$SMOKE_PID" 2>/dev/null || true
+wait "$SMOKE_PID" 2>/dev/null || true
+if [ "$BOOT_OK" != true ]; then
+  echo "[build-tarball] boot smoke FAILED — bundled server never announced itself. stderr:" >&2
+  cat "$SMOKE_LOG" >&2
+  abort "bundled server failed to boot from tarball layout"
+fi
+info "boot smoke: OK — bundled server announced 'Kanon MCP ${VERSION}'"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 
