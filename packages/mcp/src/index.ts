@@ -38,9 +38,14 @@ if (!KANON_API_KEY) {
 
 // ─── Initialize ─────────────────────────────────────────────────────────────
 
+// S1 / KAN-30: read KANON_CLIENT_IDENTITY to identify this agent in API provenance.
+// When set, every API request carries X-Kanon-Client with the value.
+const KANON_CLIENT_IDENTITY = process.env["KANON_CLIENT_IDENTITY"];
+
 const client = new KanonClient({
   baseUrl: KANON_API_URL,
   apiKey: KANON_API_KEY,
+  ...(KANON_CLIENT_IDENTITY ? { clientIdentity: KANON_CLIENT_IDENTITY } : {}),
 });
 
 // ─── .kanon Binding (cwd-snapshot-at-spawn) ─────────────────────────────────

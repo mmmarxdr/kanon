@@ -228,6 +228,10 @@ export interface KanonClientOptions {
   baseUrl: string;
   apiKey?: string;
   timeoutMs?: number;
+  /** X-Kanon-Client identity to send with every request (S1 / KAN-30).
+   *  When set, the header is included in every HTTP call.
+   *  When absent, the header is omitted entirely (not sent as empty string). */
+  clientIdentity?: string;
 }
 
 /**
@@ -240,6 +244,7 @@ export class KanonClient {
   private accessToken: string | undefined;
   private readonly refreshToken: string | undefined;
   private readonly timeoutMs: number;
+  private readonly clientIdentity: string | undefined;
   private inflightExchange: Promise<string> | null = null;
 
   constructor(options: KanonClientOptions) {
@@ -247,6 +252,7 @@ export class KanonClient {
     this.accessToken = options.apiKey;
     this.refreshToken = process.env["KANON_REFRESH_TOKEN"];
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.clientIdentity = options.clientIdentity;
   }
 
   // ─── Projects ───────────────────────────────────────────────────────────
@@ -789,6 +795,11 @@ export class KanonClient {
     }
     if (body !== undefined) {
       headers["Content-Type"] = "application/json";
+    }
+    // S1 / KAN-30: inject X-Kanon-Client when clientIdentity is configured.
+    // Omitted entirely when absent — never sent as empty string.
+    if (this.clientIdentity) {
+      headers["X-Kanon-Client"] = this.clientIdentity;
     }
 
     let response: Response;
