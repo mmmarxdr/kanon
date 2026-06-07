@@ -31,14 +31,18 @@ assert_file() {
 }
 
 # Required directories
-assert_dir_nonempty "assets/skills/"    "$ASSETS_DIR/skills"
-assert_dir_nonempty "assets/agents/"    "$ASSETS_DIR/agents"
+assert_dir_nonempty "assets/skills/" "$ASSETS_DIR/skills"
+assert_dir_nonempty "assets/agents/" "$ASSETS_DIR/agents"
 assert_dir_nonempty "assets/templates/" "$ASSETS_DIR/templates"
 assert_dir_nonempty "assets/workflows/" "$ASSETS_DIR/workflows"
 
 # Required key files
-assert_file "assets/skills/kanon-mcp/SKILL.md" "$ASSETS_DIR/skills/kanon-mcp/SKILL.md"
-assert_file "assets/agents/kanon.md"            "$ASSETS_DIR/agents/kanon.md"
+assert_file "assets/skills/kanon-agent/SKILL.md" "$ASSETS_DIR/skills/kanon-agent/SKILL.md"
+assert_file "assets/skills/kanon-agent/sections/issue-creation.md" "$ASSETS_DIR/skills/kanon-agent/sections/issue-creation.md"
+assert_file "assets/skills/kanon-agent/sections/roadmap.md" "$ASSETS_DIR/skills/kanon-agent/sections/roadmap.md"
+assert_file "assets/skills/kanon-agent/sections/cycle.md" "$ASSETS_DIR/skills/kanon-agent/sections/cycle.md"
+assert_file "assets/skills/kanon-agent/sections/sdd-hooks.md" "$ASSETS_DIR/skills/kanon-agent/sections/sdd-hooks.md"
+assert_file "assets/agents/kanon.md" "$ASSETS_DIR/agents/kanon.md"
 
 if [ ${#MISSING[@]} -eq 0 ]; then
   echo "✓ All assets verified."
