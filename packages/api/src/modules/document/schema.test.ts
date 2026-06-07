@@ -120,5 +120,25 @@ describe("Document Zod Schemas", () => {
       });
       expect(result.success).toBe(true);
     });
+
+    it("rejects empty body {} — at least one field required", () => {
+      const result = UpdateDocumentBody.safeParse({});
+      expect(result.success).toBe(false);
+    });
+
+    it("accepts body with title only", () => {
+      const result = UpdateDocumentBody.safeParse({ title: "Some title" });
+      expect(result.success).toBe(true);
+    });
+
+    it("accepts body with body only", () => {
+      const result = UpdateDocumentBody.safeParse({ body: "Some content" });
+      expect(result.success).toBe(true);
+    });
+
+    it("accepts body with kind only", () => {
+      const result = UpdateDocumentBody.safeParse({ kind: "adr" });
+      expect(result.success).toBe(true);
+    });
   });
 });

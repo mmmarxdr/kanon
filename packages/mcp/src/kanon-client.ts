@@ -169,6 +169,8 @@ export interface KanonComment {
 
 /**
  * Design record shape returned by the Kanon API.
+ * author is included when the route fetches it (GET /api/documents/:id, list).
+ * Email is intentionally omitted — not surfaced through MCP.
  */
 export interface KanonDocument {
   id: string;
@@ -179,6 +181,7 @@ export interface KanonDocument {
   authorId: string;
   createdAt: string;
   updatedAt: string;
+  author?: { id: string; username: string };
 }
 
 /**

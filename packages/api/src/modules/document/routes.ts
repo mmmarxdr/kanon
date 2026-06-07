@@ -63,6 +63,8 @@ export default async function documentRoutes(
    *
    * Get a single design record by ID.
    * Requires the requester to be a member of the workspace.
+   * Single query: fetches document with author + issue.project.workspaceId,
+   * performs 404 + membership check, then strips the issue join from the response.
    */
   app.get(
     "/documents/:id",
@@ -74,11 +76,20 @@ export default async function documentRoutes(
     async (request, _reply) => {
       const { id: documentId } = request.params;
 
-      // Verify requester is a member of the workspace
       const document = await prisma.issueDocument.findUnique({
         where: { id: documentId },
-        select: {
-          issue: { select: { project: { select: { workspaceId: true } } } },
+        include: {
+          author: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+          issue: {
+            select: {
+              project: { select: { workspaceId: true } },
+            },
+          },
         },
       });
 
@@ -86,7 +97,7 @@ export default async function documentRoutes(
         throw new AppError(404, "DOCUMENT_NOT_FOUND", `Document "${documentId}" not found`);
       }
 
-      const workspaceId = document.issue.project.workspaceId;
+      const { workspaceId } = document.issue.project;
       const member = await prisma.member.findUnique({
         where: {
           userId_workspaceId: {
@@ -101,7 +112,9 @@ export default async function documentRoutes(
         throw new AppError(403, "FORBIDDEN", "You are not a member of this workspace");
       }
 
-      return documentService.getDocument(documentId);
+      // Strip the issue join — return only the document fields + author
+      const { issue: _issue, ...documentWithoutIssue } = document;
+      return documentWithoutIssue;
     },
   );
 

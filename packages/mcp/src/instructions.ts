@@ -9,10 +9,12 @@
 // The server still registers all 33 tools normally — hosts that ignore
 // `instructions` simply surface every tool. No SDK feature detection needed.
 // See design ADR-1 and ADR-2 for rationale.
+// 5 admin/rare tools + 3 document tools (rare-path, design-coherent) = 8 deferred.
 
 /**
- * The 5 admin/rare tools that should be deferred behind ToolSearch.
+ * The 8 admin/rare tools that should be deferred behind ToolSearch.
  * Canonical list — consumed by index.ts and instructions.test.ts.
+ * Document tools are deferred: most issues need none; propose before creating.
  */
 export const DEFERRED_TOOLS = [
   "kanon_create_project",
@@ -20,6 +22,9 @@ export const DEFERRED_TOOLS = [
   "kanon_delete_cycle",
   "kanon_delete_roadmap_item",
   "kanon_who_is_working",
+  "kanon_create_document",
+  "kanon_list_documents",
+  "kanon_get_document",
 ] as const;
 
 /**

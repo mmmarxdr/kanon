@@ -15,6 +15,10 @@
  *   not zod .describe() calls in types.ts. Consistent with existing E2 test
  *   infrastructure. Measured BEFORE any Phase 2 description trims.
  *   Measured via manual byte count of all 30 topline strings (2026-05-22).
+ *   Surface is now 33 tools (PR-4a added kanon_create_document,
+ *   kanon_list_documents, kanon_get_document); DESCRIPTION_BASELINE_BYTES
+ *   remains the 30-tool baseline constant — ~32 B topline margin remains
+ *   (3,677 B actual vs 3,709 B ceiling; baseline constant unchanged).
  *
  * These constants are READ-ONLY — do NOT modify after initial capture.
  * Downstream tests assert reductions relative to these values.
