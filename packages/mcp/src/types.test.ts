@@ -10,6 +10,7 @@ import {
   TITLE_COACHING,
   SyncObservationInput,
   COMMENT_SOURCES,
+  CreateDocumentInput,
 } from "./types.js";
 
 // ─── ListWorkspacesInput ─────────────────────────────────────────────────────
@@ -309,6 +310,16 @@ describe("PR-2 — description field coaching annotations", () => {
     expect(description).toContain("## Context");
     expect(description).toContain("## Acceptance Criteria");
     expect(description).toContain("## Notes");
+  });
+
+  it("CreateDocumentInput.body describe carries L1 anti-trigger guidance (decision #668)", () => {
+    const schema = CreateDocumentInput.shape.body;
+    const description = schema._def.description as string;
+    expect(description).toMatch(/real alternatives/i);
+    expect(description).toMatch(/lasting consequences/i);
+    expect(description).toMatch(/NOT routine fixes|not for routine fixes/i);
+    expect(description).toMatch(/work logs/i);
+    expect(description).toMatch(/zero documents/i);
   });
 
   it("UpdateIssueInput with partial description (no ## heading) still passes validation", () => {

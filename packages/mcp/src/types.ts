@@ -383,7 +383,9 @@ export const CreateDocumentInput = z.object({
   body: z.string().min(1).max(50000)
     .describe(
       "Full document body in markdown (max 50 000 chars). " +
-      "Recommended structure: ## Context / ## Decision / ## Alternatives Considered / ## Consequences",
+      "Recommended structure: ## Context / ## Decision / ## Alternatives Considered / ## Consequences. " +
+      "Record decisions that had real alternatives and lasting consequences — " +
+      "NOT routine fixes or work logs. Most issues need zero documents.",
     ),
 });
 
