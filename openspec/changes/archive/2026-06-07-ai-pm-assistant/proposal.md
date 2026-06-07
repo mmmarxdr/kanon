@@ -80,8 +80,8 @@ Stage 1: ~120-150 changed lines (1 PR, within 400 budget). Stage 2: ~400 new lin
 
 ## Success Criteria
 
-- [ ] `kanon_create_issue` rejects `fix thing` with the coaching message; accepts `[Auth] Fix OAuth redirect`
-- [ ] `SERVER_INSTRUCTIONS` ≤ 1,500 bytes, contains PM persona (test-enforced)
-- [ ] One physical skill copy; setup run on a machine with old skills leaves only kanon-agent + kanon-onboard + kanon-init
-- [ ] kanon-agent core ≤ ~2KB and self-sufficient without `sections/`
-- [ ] `@kanon/mcp` and `@kanon/setup` suites green; `verify-assets.sh` passes
+- [x] `kanon_create_issue` rejects `fix thing` with the coaching message; accepts `[Auth] Fix OAuth redirect`
+- [x] `SERVER_INSTRUCTIONS` ≤ 1,500 bytes, contains PM persona (test-enforced)
+- [x] One physical skill copy; setup run on a machine with old skills leaves only kanon-agent + kanon-onboard + kanon-init
+- [x] kanon-agent core ≤ ~2KB and self-sufficient without `sections/`
+- [x] `@kanon/mcp` and `@kanon/setup` suites green; `verify-assets.sh` passes

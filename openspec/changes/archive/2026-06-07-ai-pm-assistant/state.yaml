@@ -9,10 +9,11 @@ phases:
   tasks: done # tasks.md + engram sdd/ai-pm-assistant/tasks (35 tasks: 17 PR1, 18 PR2)
   apply: done # PR1 merged (fb90a03, PRs #50/#51); PR2 on feat/kanon-agent-skill (18/18 tasks)
   verify: done # PR1 + PR2 pass-with-warnings (engram #649); all findings fixed (aa3cb0b, 93dc699)
-  archive: pending
+  archive: done
 notes:
   - "User decisions locked pre-proposal: engram #636 (sdd/ai-pm-assistant/state)"
   - "Strict TDD mode active: vitest per package"
   - "Chained PRs recommended (Stage 1 MCP floor, Stage 2 skill consolidation)"
   - "Session 2026-06-07: mode=interactive, delivery_strategy=auto-chain, kanon issue KAN-15"
+  - "Archived 2026-06-07; PRs #50 (MCP floor) #51 (flaky S4.1, side-fix KAN-16) #52 (consolidation) merged to main"
 updated: 2026-06-07
