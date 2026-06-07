@@ -784,3 +784,54 @@ describe("KanonClient logging hygiene (W2)", () => {
     expect(errString).not.toContain(SENTINEL_REFRESH_TOKEN);
   });
 });
+
+// ─── S1: X-Kanon-Client header injection (KAN-30) ───────────────────────────
+
+describe("KanonClient — X-Kanon-Client header injection (S1)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("sends X-Kanon-Client header when clientIdentity is set", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([]),
+      text: () => Promise.resolve("[]"),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const clientWithIdentity = new KanonClient({
+      baseUrl: BASE_URL,
+      apiKey: API_KEY,
+      clientIdentity: "claude-code",
+    });
+
+    await clientWithIdentity.listWorkspaces();
+
+    const [, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = opts.headers as Record<string, string>;
+    expect(headers["X-Kanon-Client"]).toBe("claude-code");
+  });
+
+  it("omits X-Kanon-Client header when clientIdentity is not set", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([]),
+      text: () => Promise.resolve("[]"),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const clientWithoutIdentity = new KanonClient({
+      baseUrl: BASE_URL,
+      apiKey: API_KEY,
+    });
+
+    await clientWithoutIdentity.listWorkspaces();
+
+    const [, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = opts.headers as Record<string, string>;
+    expect(headers["X-Kanon-Client"]).toBeUndefined();
+  });
+});

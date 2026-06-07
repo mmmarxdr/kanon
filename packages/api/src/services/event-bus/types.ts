@@ -20,7 +20,11 @@ export type DomainEventType =
   | "invite.created"
   | "invite.revoked"
   | "invite.accepted"
-  | "cycle.deleted"; // KAN-23: hard-delete cycle event; payload: { cycleId: string; projectId: string }
+  | "cycle.deleted" // KAN-23: hard-delete cycle event; payload: { cycleId: string; projectId: string }
+  // S1 / KAN-30: new event types for capture-and-notify
+  | "comment.created"
+  | "mention.created"
+  | "cycle.closed";
 
 /**
  * A typed domain event emitted after a successful mutation.
@@ -41,6 +45,9 @@ export interface DomainEvent<T = Record<string, unknown>> {
   payload: T;
   /** ISO-8601 timestamp when the event was created */
   timestamp: string;
+  /** Normalized X-Kanon-Client value that originated the mutation (S1 / KAN-30).
+   *  Known values: claude-code | cursor | antigravity | web | cli. Null if unknown. */
+  via?: string | null;
 }
 
 /**

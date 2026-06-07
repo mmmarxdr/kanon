@@ -62,6 +62,7 @@ export async function createIssue(
   projectId: string,
   body: CreateIssueBody,
   memberId: string,
+  via?: string | null,
 ) {
   const project = await prisma.project.findUnique({
     where: { id: projectId },
@@ -140,6 +141,7 @@ export async function createIssue(
     memberId,
     action: "created",
     details: { title: issue.title, type: issue.type, priority: issue.priority },
+    via,
   });
 
   // Record CycleScopeEvent if the new issue was placed in a cycle. Best-effort —
@@ -165,6 +167,7 @@ export async function createIssue(
       workspaceId: project.workspaceId,
       actorId: memberId,
       payload: { issueKey: issue.key, issueId: issue.id, projectKey: project.key, title: issue.title },
+      via,
     });
   } catch {
     // Never let event emission break the mutation
@@ -384,6 +387,7 @@ export async function updateIssue(
   key: string,
   body: UpdateIssueBody,
   memberId: string,
+  via?: string | null,
 ) {
   const issue = await prisma.issue.findUnique({
     where: { key },
@@ -422,6 +426,7 @@ export async function updateIssue(
         to: body.assigneeId,
         source: "api",
       },
+      via,
     });
   }
   // Track cycleId change so we can emit scope events AFTER update.
@@ -508,6 +513,7 @@ export async function updateIssue(
     memberId,
     action: "edited",
     details: { fields: Object.keys(body) },
+    via,
   });
 
   // Emit domain events (fire-and-forget)
@@ -517,6 +523,7 @@ export async function updateIssue(
       workspaceId: issue.project.workspaceId,
       actorId: memberId,
       payload: { issueKey: key, issueId: issue.id, fields: Object.keys(body) },
+      via,
     });
 
     // Emit a specific assignment event if assignee changed
@@ -526,6 +533,7 @@ export async function updateIssue(
         workspaceId: issue.project.workspaceId,
         actorId: memberId,
         payload: { issueKey: key, issueId: issue.id, from: issue.assigneeId, to: body.assigneeId },
+        via,
       });
     }
   } catch {
@@ -558,6 +566,7 @@ export async function transitionIssue(
   key: string,
   toState: string,
   memberId: string,
+  via?: string | null,
 ) {
   const issue = await prisma.issue.findUnique({
     where: { key },
@@ -587,6 +596,7 @@ export async function transitionIssue(
       to: toState,
       regression: result.isRegression,
     },
+    via,
   });
 
   // Auto-advance parent if all children have moved past parent's column
@@ -602,6 +612,7 @@ export async function transitionIssue(
       workspaceId: issue.project.workspaceId,
       actorId: memberId,
       payload: { issueKey: key, issueId: issue.id, from: issue.state, to: toState },
+      via,
     });
   } catch {
     // Never let event emission break the mutation

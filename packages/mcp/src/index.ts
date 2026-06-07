@@ -20,6 +20,7 @@ import { MCP_VERSION } from "./version.js";
 import { findKanonConfig } from "./kanon-binding.js";
 import type { KanonBinding } from "./kanon-binding.js";
 import type { InvalidBinding } from "./binding-resolver.js";
+import { resolveClientIdentity } from "./client-identity.js";
 
 // ─── Env Validation (fail-fast) ────────────────────────────────────────────
 
@@ -38,9 +39,15 @@ if (!KANON_API_KEY) {
 
 // ─── Initialize ─────────────────────────────────────────────────────────────
 
+// S1 / KAN-30: read KANON_CLIENT_IDENTITY to identify this agent in API provenance.
+// Normalize + validate at startup against the closed vocabulary; invalid values
+// log a warning and are treated as absent (no silently-null provenance).
+const KANON_CLIENT_IDENTITY = resolveClientIdentity(process.env["KANON_CLIENT_IDENTITY"]);
+
 const client = new KanonClient({
   baseUrl: KANON_API_URL,
   apiKey: KANON_API_KEY,
+  ...(KANON_CLIENT_IDENTITY ? { clientIdentity: KANON_CLIENT_IDENTITY } : {}),
 });
 
 // ─── .kanon Binding (cwd-snapshot-at-spawn) ─────────────────────────────────

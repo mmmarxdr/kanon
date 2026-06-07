@@ -45,6 +45,7 @@ export default async function issueRoutes(
         request.projectId!,
         request.body,
         request.member!.id,
+        request.via,
       );
       return reply.status(201).send(issue);
     },
@@ -100,6 +101,7 @@ export default async function issueRoutes(
         request.params.key,
         request.body,
         request.member!.id,
+        request.via,
       );
     },
   );
@@ -121,6 +123,7 @@ export default async function issueRoutes(
         request.params.key,
         request.body.to_state,
         request.member!.id,
+        request.via,
       );
     },
   );
