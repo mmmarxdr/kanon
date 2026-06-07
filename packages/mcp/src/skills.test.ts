@@ -132,3 +132,35 @@ describe.skipIf(!SKILL_DIR)("kanon skills byte budget and quality (Win E/G/H)", 
     expect(matchedKeywords).toHaveLength(0);
   });
 });
+
+// ─── PR-4b Firing Pins — ADR authoring guidance in kanon-agent ────────────────
+
+describe.skipIf(!SKILL_DIR)("PR-4b firing pins — Design Records ADR criteria (L3)", () => {
+  function readCore(): string {
+    return readFileSync(join(SKILL_DIR!, "kanon-agent", "SKILL.md"), "utf8");
+  }
+
+  it("L3a: SKILL.md contains 'Design Records' section heading", () => {
+    expect(readCore()).toMatch(/##\s+Design Records/i);
+  });
+
+  it("L3b: SKILL.md contains propose-before-creating guidance", () => {
+    expect(readCore()).toMatch(/[Pp]ropose before creating/);
+  });
+
+  it("L3c: SKILL.md contains ADR template marker '## Alternatives Considered'", () => {
+    expect(readCore()).toContain("Alternatives Considered");
+  });
+
+  it("L3d: SKILL.md contains anti-trigger guidance (routine fixes or work logs excluded)", () => {
+    const content = readCore();
+    // Must contain a negative guidance line
+    expect(content).toMatch(/[Ss]kip|[Dd]o NOT|[Dd]on't|[Rr]outine/);
+  });
+
+  it("L3e: SKILL.md contains ADR template with Context and Decision markers", () => {
+    const content = readCore();
+    expect(content).toContain("## Context");
+    expect(content).toContain("## Decision");
+  });
+});

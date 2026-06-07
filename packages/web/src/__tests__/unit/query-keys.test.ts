@@ -8,6 +8,42 @@ import {
   dashboardKeys,
 } from "@/lib/query-keys";
 
+// PR-4b: issueKeys.documents nesting assertion
+// CRITICAL: documents key MUST nest under issueKeys.all (not .detail) so
+// SSE issue.updated → invalidateQueries({queryKey: issueKeys.all}) picks it up.
+describe("issueKeys.documents — PR-4b nesting contract", () => {
+  it("documents(key) is a function", () => {
+    expect(typeof issueKeys.documents).toBe("function");
+  });
+
+  it("documents(key) starts with issueKeys.all prefix (nested under .all, not .detail)", () => {
+    const key = issueKeys.documents("KAN-42");
+    // First element must match issueKeys.all[0]
+    expect(key[0]).toBe(issueKeys.all[0]);
+  });
+
+  it("documents(key) does NOT start with issueKeys.details() prefix", () => {
+    const key = issueKeys.documents("KAN-42");
+    const detailsPrefix = issueKeys.details();
+    // documents key must not be equal to the detail prefix + key (different segment)
+    expect(key).not.toEqual([...detailsPrefix, "KAN-42"]);
+  });
+
+  it("documents(key) includes 'documents' as a segment", () => {
+    const key = issueKeys.documents("KAN-42");
+    expect(key).toContain("documents");
+  });
+
+  it("documents('KAN-1') and documents('KAN-2') are distinct", () => {
+    expect(issueKeys.documents("KAN-1")).not.toEqual(issueKeys.documents("KAN-2"));
+  });
+
+  it("documents(key) shape is [...issueKeys.all, 'documents', issueKey]", () => {
+    const key = issueKeys.documents("KAN-42");
+    expect(key).toEqual([...issueKeys.all, "documents", "KAN-42"]);
+  });
+});
+
 describe("query key factories", () => {
   describe("issueKeys", () => {
     it("has a stable 'all' base key", () => {

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchApi } from "@/lib/api-client";
 import { issueKeys, commentKeys, activityKeys } from "@/lib/query-keys";
-import type { IssueDetail, Comment, ActivityLog } from "@/types/issue";
+import type { IssueDetail, Comment, ActivityLog, IssueDocument } from "@/types/issue";
 
 /** Shape returned by GET /api/issues/:key/context */
 export interface SessionContext {
@@ -81,5 +81,22 @@ export function useIssueContextQuery(issueKey: string | undefined) {
       ),
     enabled: !!issueKey,
     staleTime: 1000 * 60 * 5, // 5 minutes
+  });
+}
+
+/**
+ * Fetches design record documents for an issue.
+ * Query key nested under issueKeys.all so SSE issue.updated events
+ * (which invalidate issueKeys.all) trigger a live refresh of this tab.
+ */
+export function useIssueDocuments(issueKey: string | undefined) {
+  return useQuery({
+    queryKey: issueKeys.documents(issueKey ?? ""),
+    queryFn: () =>
+      fetchApi<IssueDocument[]>(
+        `/api/issues/${encodeURIComponent(issueKey!)}/documents`,
+      ),
+    enabled: !!issueKey,
+    staleTime: 1000 * 30, // 30 seconds — documents may be added by agents via MCP
   });
 }

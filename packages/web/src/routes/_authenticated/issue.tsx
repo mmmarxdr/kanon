@@ -6,6 +6,7 @@ import {
   useIssueDetailQuery,
   useCommentsQuery,
   useActivityQuery,
+  useIssueDocuments,
 } from "@/features/issue-detail/use-issue-detail-queries";
 import {
   useUpdateIssueMutation,
@@ -24,6 +25,7 @@ import { AgentThread } from "@/features/issue-detail/agent-thread";
 import { CommentsHighlightView } from "@/features/issue-detail/comments-highlight-view";
 import { ActivityList } from "@/features/issue-detail/activity-list";
 import { CommentList } from "@/features/issue-detail/comment-list";
+import { DocumentList } from "@/features/issue-detail/document-list";
 import type { IssueState } from "@/stores/board-store";
 import { Icon } from "@/components/ui/icons";
 import { Kbd } from "@/components/ui/primitives";
@@ -51,7 +53,7 @@ export const issueRoute = createRoute({
 const HUMAN_SOURCES = new Set(["human"]);
 const AGENT_SOURCES = new Set(["mcp", "engram_sync", "system", "adr"]);
 
-type Tab = "activity" | "children" | "deps" | "comments";
+type Tab = "activity" | "children" | "deps" | "comments" | "documents";
 
 /**
  * RightPaneContent — implements the 4-case behavior matrix (design §4.3, REQ-MENTION-010).
@@ -119,6 +121,8 @@ function IssuePage() {
     useCommentsQuery(issueKey);
   const { data: activities, isLoading: activitiesLoading } =
     useActivityQuery(issueKey);
+  const { data: documents, isLoading: documentsLoading } =
+    useIssueDocuments(issueKey);
 
   const projectKey = issue?.project.key ?? issueKey.split("-")[0] ?? "";
   const updateMutation = useUpdateIssueMutation(issueKey, projectKey);
@@ -250,6 +254,7 @@ function IssuePage() {
         (issue.blocks?.length ?? 0) + (issue.blockedBy?.length ?? 0),
     },
     { id: "comments", label: "Comments", count: humanComments.length },
+    { id: "documents", label: "Design Records", count: documents?.length ?? 0 },
   ];
 
   return (
@@ -524,6 +529,12 @@ function IssuePage() {
               isLoading={commentsLoading}
               onAddComment={handleAddComment}
               isSubmitting={addCommentMutation.isPending}
+            />
+          )}
+          {tab === "documents" && (
+            <DocumentList
+              documents={documents ?? []}
+              isLoading={documentsLoading}
             />
           )}
         </div>
