@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
@@ -36,7 +36,7 @@ RUN mkdir -p /prisma-client && \
     cp -r $(find /app/node_modules/.pnpm -path '*/@prisma/client' -type d | head -1) /prisma-client/@prisma-client
 
 # Stage 2: Runtime
-FROM node:20-alpine AS runtime
+FROM node:24-alpine AS runtime
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
