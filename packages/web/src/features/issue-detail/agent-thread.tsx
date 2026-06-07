@@ -1,8 +1,7 @@
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import type { Comment } from "@/types/issue";
 import { Icon } from "@/components/ui/icons";
 import { Kbd } from "@/components/ui/primitives";
+import { Markdown } from "@/components/ui/markdown";
 
 interface AgentThreadProps {
   comments: Comment[];
@@ -201,9 +200,7 @@ function AgentMessage({ comment }: { comment: Comment }) {
           lineHeight: 1.5,
         }}
       >
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-          {comment.body}
-        </ReactMarkdown>
+        <Markdown>{comment.body}</Markdown>
       </div>
     </div>
   );

@@ -1,7 +1,6 @@
 import { useState, useCallback } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import type { Comment } from "@/types/issue";
+import { Markdown } from "@/components/ui/markdown";
 
 interface CommentListProps {
   comments: Comment[];
@@ -109,10 +108,8 @@ function CommentItem({ comment }: { comment: Comment }) {
       </div>
 
       {/* Markdown body */}
-      <div className="text-sm text-foreground/80 leading-relaxed [&_p]:mb-2 [&_p:last-child]:mb-0 [&_pre]:bg-secondary [&_pre]:rounded [&_pre]:p-2 [&_pre]:text-xs [&_code]:bg-secondary [&_code]:rounded [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_a]:text-primary [&_a]:underline [&_table]:text-xs [&_th]:border [&_th]:border-border [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-          {comment.body}
-        </ReactMarkdown>
+      <div className="text-sm text-foreground/80 leading-relaxed">
+        <Markdown>{comment.body}</Markdown>
       </div>
     </li>
   );
