@@ -54,6 +54,7 @@ export function registerCommentTools(
       observationType,
       observationId,
       topicKey,
+      source,
       format,
     }) => {
       try {
@@ -64,7 +65,7 @@ export function registerCommentTools(
           observationId,
           topicKey,
         });
-        const comment = await client.createComment(issueKey, body, "engram_sync");
+        const comment = await client.createComment(issueKey, body, source ?? "engram_sync");
         const fmt = format ?? "ack";
         if (fmt === "ack") return dataResult(formatAck(comment, "comment"));
         return dataResult(formatEntity(comment, "comment-write", fmt as Format));

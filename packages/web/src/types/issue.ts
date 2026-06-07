@@ -76,7 +76,7 @@ export interface IssueDetail extends Issue {
   cycle?: { id: string; name: string } | null;
 }
 
-export type CommentSource = "human" | "mcp" | "engram_sync" | "system";
+export type CommentSource = "human" | "mcp" | "engram_sync" | "system" | "adr";
 
 /**
  * Comment on an issue, returned by GET /api/issues/:key/comments.

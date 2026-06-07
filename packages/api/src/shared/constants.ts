@@ -55,7 +55,7 @@ export const ACTIVITY_ACTIONS = [
   "edited",
   "engram_synced",
 ] as const;
-export const COMMENT_SOURCES = ["human", "mcp", "engram_sync", "system"] as const;
+export const COMMENT_SOURCES = ["human", "mcp", "engram_sync", "system", "adr"] as const;
 export const HORIZONS = ["now", "next", "later", "someday"] as const;
 export const ROADMAP_STATUSES = ["idea", "planned", "in_progress", "done"] as const;
 export const DEPENDENCY_TYPES = ["blocks"] as const;

@@ -29,6 +29,17 @@ describe("Comment Zod Schemas", () => {
       }
     });
 
+    it("accepts source: adr", () => {
+      const result = CreateCommentBody.safeParse({
+        body: "ADR: use Postgres for storage",
+        source: "adr",
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.source).toBe("adr");
+      }
+    });
+
     it("rejects empty body", () => {
       const result = CreateCommentBody.safeParse({ body: "" });
       expect(result.success).toBe(false);

@@ -98,8 +98,12 @@ function CommentItem({ comment }: { comment: Comment }) {
           {comment.author.username}
         </span>
         {comment.source !== "human" && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">
-            {comment.source === "engram_sync" ? "SYNC" : "AI"}
+          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+            comment.source === "adr"
+              ? "bg-amber-100 text-amber-700"
+              : "bg-purple-100 text-purple-700"
+          }`}>
+            {comment.source === "engram_sync" ? "SYNC" : comment.source === "adr" ? "ADR" : "AI"}
           </span>
         )}
         <span className="ml-auto text-xs text-muted-foreground">

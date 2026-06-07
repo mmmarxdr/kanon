@@ -8,7 +8,7 @@ interface AgentThreadProps {
   isLoading: boolean;
 }
 
-const AGENT_SOURCES = new Set(["mcp", "engram_sync", "system"]);
+const AGENT_SOURCES = new Set(["mcp", "engram_sync", "system", "adr"]);
 
 export function AgentThread({ comments, isLoading }: AgentThreadProps) {
   const agentComments = comments.filter((c) => AGENT_SOURCES.has(c.source));
@@ -142,14 +142,19 @@ export function AgentThread({ comments, isLoading }: AgentThreadProps) {
 
 function AgentMessage({ comment }: { comment: Comment }) {
   const isSync = comment.source === "engram_sync";
+  const isAdr = comment.source === "adr";
   return (
     <div
       style={{
-        background: isSync
+        background: isAdr
+          ? "color-mix(in oklch, var(--warning, #f59e0b) 10%, transparent)"
+          : isSync
           ? "color-mix(in oklch, var(--ok) 12%, transparent)"
           : "var(--ai-2)",
         border: `1px solid ${
-          isSync
+          isAdr
+            ? "color-mix(in oklch, var(--warning, #f59e0b) 30%, transparent)"
+            : isSync
             ? "color-mix(in oklch, var(--ok) 32%, transparent)"
             : "color-mix(in oklch, var(--ai) 22%, transparent)"
         }`,
@@ -169,10 +174,14 @@ function AgentMessage({ comment }: { comment: Comment }) {
           style={{
             fontSize: 11,
             fontWeight: 500,
-            color: isSync ? "var(--ok)" : "var(--ai)",
+            color: isAdr
+              ? "var(--warning, #b45309)"
+              : isSync
+              ? "var(--ok)"
+              : "var(--ai)",
           }}
         >
-          {isSync ? "Engram · sync" : comment.author.username || "Agent"}
+          {isAdr ? "ADR" : isSync ? "Engram · sync" : comment.author.username || "Agent"}
         </span>
         <span
           className="mono"
