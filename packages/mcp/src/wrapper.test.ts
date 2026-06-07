@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import type { SpawnOptions } from "child_process";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -58,6 +58,15 @@ function makeCredStore(creds: { refreshToken: string } | null): CredentialStore 
 // ─── Test Suite ────────────────────────────────────────────────────────────
 
 describe("runWrapper", () => {
+  // Hoist the dynamic import into beforeAll so the 5000ms per-test timeout
+  // is not consumed by the vite/TypeScript transform pipeline.  Under load the
+  // full-suite transform phase can take >1 s; S4.1 was the first test to run
+  // and therefore the first to pay that cost, making it intermittently timeout.
+  let runWrapper: (deps?: import("./wrapper.js").WrapperDeps) => Promise<void>;
+  beforeAll(async () => {
+    ({ runWrapper } = await import("./wrapper.js"));
+  });
+
   let stderrOutput: string[];
   let exitCode: number | undefined;
 
@@ -70,8 +79,6 @@ describe("runWrapper", () => {
    * S4.1 — Happy path: valid refresh → exchange → spawn with accessToken
    */
   it("S4.1: exchanges refresh token and spawns MCP server with KANON_API_KEY", async () => {
-    const { runWrapper } = await import("./wrapper.js");
-
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -116,8 +123,6 @@ describe("runWrapper", () => {
    * S4.2 — Exchange returns 4xx → wrapper exits 1, MCP NOT spawned
    */
   it("S4.2: exchange 401 → stderr message + exit 1, MCP not spawned", async () => {
-    const { runWrapper } = await import("./wrapper.js");
-
     const mockFetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 401,
@@ -149,8 +154,6 @@ describe("runWrapper", () => {
    * Static API keys were removed in PR1 (KAN-35). Must redirect to onboarding.
    */
   it("S4.3a: KANON_API_KEY is a static key → stderr onboarding message + exit 1, MCP not spawned", async () => {
-    const { runWrapper } = await import("./wrapper.js");
-
     const mockFetch = vi.fn();
     const mockStore = makeCredStore({ refreshToken: "should-not-be-read" });
     const spawnFn = vi.fn();
@@ -183,8 +186,6 @@ describe("runWrapper", () => {
    * Dev/CI environments injecting a real access token should still work.
    */
   it("S4.3b: KANON_API_KEY is a JWT preset → skips exchange, spawns with existing JWT", async () => {
-    const { runWrapper } = await import("./wrapper.js");
-
     const mockFetch = vi.fn();
     const mockStore = makeCredStore({ refreshToken: "should-not-be-read" });
     const mockChild = makeMockChild(0);
@@ -221,8 +222,6 @@ describe("runWrapper", () => {
    * S4.4 — Network failure during exchange → exit 1
    */
   it("S4.4: network failure during exchange → stderr + exit 1, MCP not spawned", async () => {
-    const { runWrapper } = await import("./wrapper.js");
-
     const mockFetch = vi.fn().mockRejectedValue(
       Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" })
     );
@@ -251,8 +250,6 @@ describe("runWrapper", () => {
    * S4.5 — No credentials in store → stderr "No credentials found" + exit 1
    */
   it("S4.5: no credentials in store → stderr + exit 1", async () => {
-    const { runWrapper } = await import("./wrapper.js");
-
     const mockFetch = vi.fn();
     const spawnFn = vi.fn();
 
@@ -279,8 +276,6 @@ describe("runWrapper", () => {
    * R3a — Child env contains both KANON_API_KEY and KANON_REFRESH_TOKEN
    */
   it("R3a: spawns child with both KANON_API_KEY and KANON_REFRESH_TOKEN set", async () => {
-    const { runWrapper } = await import("./wrapper.js");
-
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -314,8 +309,6 @@ describe("runWrapper", () => {
    * KANON_REFRESH_TOKEN is absent from child env (no exchange performed).
    */
   it("R3b-passthrough: JWT passthrough spawns without touching credential store or injecting KANON_REFRESH_TOKEN", async () => {
-    const { runWrapper } = await import("./wrapper.js");
-
     const mockFetch = vi.fn();
     const mockChild = makeMockChild(0);
     const spawnFn = makeSpawn(mockChild);
@@ -347,8 +340,6 @@ describe("runWrapper", () => {
    * but KANON_REFRESH_TOKEN is NOT injected (conditional spread omits it).
    */
   it("R3b-credstore: credential-store path with refreshToken undefined omits KANON_REFRESH_TOKEN from child env", async () => {
-    const { runWrapper } = await import("./wrapper.js");
-
     // Provide a credential store that returns creds with refreshToken undefined
     const credsWithoutRefresh = {
       server: "https://server.example.com",
