@@ -9,6 +9,8 @@ import { resolveAuth } from "./auth.js";
 import { detectTools, getToolByName } from "./registry.js";
 import {
   buildMcpEntry,
+  buildWrapperMcpEntry,
+  extractExistingWorkspaceId,
   mergeConfig,
   removeConfig,
   resolveMcpServerPath,
@@ -19,6 +21,8 @@ import { installTemplate, removeTemplate } from "./templates.js";
 import { installWorkflows, removeWorkflows } from "./workflows.js";
 import { installAgents, removeAgents } from "./agents.js";
 import type { ToolDefinition, PlatformContext, AuthResult } from "./types.js";
+import { getCredentialStore } from "./credential-store/factory.js";
+import { resolveWrapperReuse } from "./wrapper-reuse.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -223,23 +227,47 @@ async function run(options: {
   let apiUrl = "";
   let apiKey = "";
   let auth: AuthResult | undefined;
+  let wrapperReuse = false;
 
   if (!removeMode) {
-    auth = await resolveAuth(
-      {
-        apiUrl: options.apiUrl,
-        apiKey: options.apiKey,
-        yes: options.yes,
-      },
-      ctx,
-    );
-    apiUrl = auth.apiUrl;
-    apiKey = auth.apiKey;
+    // ── 4a. Wrapper-reuse fast path ──────────────────────────────────
+    // Before invoking the auth cascade, check whether this machine already has
+    // valid wrapper-mode credentials (written by a previous kanon-setup run or
+    // by install.sh).  In wrapper mode there is no static API key — the
+    // credential store IS the durable auth artifact.  When found, skip auth
+    // resolution entirely and write wrapper entries directly.
+    const store = getCredentialStore();
+    const reuse = await resolveWrapperReuse(store, {
+      apiKey: options.apiKey,
+      apiUrl: options.apiUrl,
+    });
+
+    if (reuse) {
+      wrapperReuse = true;
+      apiUrl = reuse.apiUrl;
+      const chosenEmail = reuse.creds.email;
+      console.log(
+        chalk.cyan("[info]") +
+          `  Reusing existing credentials for ${chalk.bold(apiUrl)} (${chosenEmail})`,
+      );
+    } else {
+      // Normal auth cascade
+      auth = await resolveAuth(
+        {
+          apiUrl: options.apiUrl,
+          apiKey: options.apiKey,
+          yes: options.yes,
+        },
+        ctx,
+      );
+      apiUrl = auth.apiUrl;
+      apiKey = auth.apiKey;
+    }
   }
 
   // ── MCP Server Path ────────────────────────────────────────────────
-  const mcpResolution = resolveMcpServerPath();
   const nodeBin = resolveNodeBin();
+  const mcpResolution = resolveMcpServerPath();
 
   // ── Apply Configuration ────────────────────────────────────────────
   console.log("");
@@ -329,14 +357,22 @@ async function run(options: {
       successCount++;
     } else {
       // ── Install Mode ─────────────────────────────────────────────
-      const entry = buildMcpEntry(
-        mcpResolution,
-        apiUrl,
-        apiKey,
-        ctx,
-        platformPaths.mcpMode,
-        nodeBin,
-      );
+      const entry = wrapperReuse
+        ? buildWrapperMcpEntry(
+            apiUrl,
+            platformPaths.mcpMode,
+            nodeBin,
+            undefined,
+            extractExistingWorkspaceId(configPath, tool.rootKey),
+          )
+        : buildMcpEntry(
+            mcpResolution,
+            apiUrl,
+            apiKey,
+            ctx,
+            platformPaths.mcpMode,
+            nodeBin,
+          );
 
       // 1. MCP config
       mergeConfig(configPath, tool.rootKey, entry);

@@ -134,4 +134,34 @@ describe("FileCredentialStore", () => {
     ).resolves.toBeUndefined();
     expect(await store.readCredentials("https://server.example.com")).toEqual(VALID_CREDS);
   });
+
+  // ── listServers ──────────────────────────────────────────────────────────────
+
+  it("listServers returns empty array when credentials file does not exist", async () => {
+    const result = await store.listServers();
+    expect(result).toEqual([]);
+  });
+
+  it("listServers returns all server keys from the credentials file", async () => {
+    const credsA: Creds = { ...VALID_CREDS, server: "https://a.example.com" };
+    const credsB: Creds = { ...VALID_CREDS, server: "https://b.example.com" };
+
+    await store.writeCredentials("https://a.example.com", credsA);
+    await store.writeCredentials("https://b.example.com", credsB);
+
+    const result = await store.listServers();
+    expect(result.sort()).toEqual([
+      "https://a.example.com",
+      "https://b.example.com",
+    ]);
+  });
+
+  it("listServers returns empty array for malformed credentials file", async () => {
+    const credFile = path.join(tmpDir, ".kanon", "credentials");
+    fs.mkdirSync(path.join(tmpDir, ".kanon"), { recursive: true });
+    fs.writeFileSync(credFile, "{ not valid json }", "utf8");
+
+    const result = await store.listServers();
+    expect(result).toEqual([]);
+  });
 });

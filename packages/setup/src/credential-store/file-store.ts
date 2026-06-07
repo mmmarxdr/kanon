@@ -81,6 +81,11 @@ export class FileCredentialStore implements CredentialStore {
     await this.writeAll(data);
   }
 
+  async listServers(): Promise<string[]> {
+    const data = await this.readAll();
+    return Object.keys(data);
+  }
+
   async clearCredentials(server: string): Promise<void> {
     const data = await this.readAll();
     if (!(server in data)) return;
