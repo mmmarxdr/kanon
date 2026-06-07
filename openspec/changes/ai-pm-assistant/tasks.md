@@ -71,6 +71,8 @@ Chain strategy: stacked-to-main
 
 ## PR2 — kanon-agent Consolidation (`@kanon/setup`, `@kanon/mcp` tests, scripts)
 
+> **TDD deviation note (phases 2.1–2.3, 2.5):** tests written post-hoc — first apply agent died mid-batch and shipped implementation before tests; phase 2.4 was test-first.
+
 ### Phase 2.1: Red — Rewrite skills.test.ts in @kanon/setup (new behaviors)
 
 - [x] 2.1.1 In `packages/setup/src/__tests__/skills.test.ts`, rewrite test suite to reflect ADR-4: replace old `PRODUCT_SKILLS` list with `["kanon-agent", "kanon-init", "kanon-onboard"]`; add failing test for recursive copy of `sections/issue-creation.md` (`installSkills` must produce `dest/kanon-agent/sections/issue-creation.md`).

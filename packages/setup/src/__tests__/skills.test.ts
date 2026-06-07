@@ -22,6 +22,9 @@ describe("skills", () => {
     fs.mkdirSync(path.join(agentDir, "sections"), { recursive: true });
     fs.writeFileSync(path.join(agentDir, "SKILL.md"), "# kanon-agent\nCore skill");
     fs.writeFileSync(path.join(agentDir, "sections", "issue-creation.md"), "# Issue Creation\nContent");
+    fs.writeFileSync(path.join(agentDir, "sections", "roadmap.md"), "# Roadmap\nContent");
+    fs.writeFileSync(path.join(agentDir, "sections", "cycle.md"), "# Cycle\nContent");
+    fs.writeFileSync(path.join(agentDir, "sections", "sdd-hooks.md"), "# SDD Hooks\nContent");
 
     // kanon-init and kanon-onboard: flat (no subdirectories)
     for (const skillName of ["kanon-init", "kanon-onboard"]) {
@@ -64,9 +67,13 @@ describe("skills", () => {
     it("should recursively copy sections/ subdirectory for kanon-agent", () => {
       installSkills(skillDest, assetsDir);
 
-      const sectionFile = path.join(skillDest, "kanon-agent", "sections", "issue-creation.md");
+      const sectionsBase = path.join(skillDest, "kanon-agent", "sections");
+      const sectionFile = path.join(sectionsBase, "issue-creation.md");
       expect(fs.existsSync(sectionFile)).toBe(true);
       expect(fs.readFileSync(sectionFile, "utf8")).toContain("Issue Creation");
+      expect(fs.existsSync(path.join(sectionsBase, "roadmap.md"))).toBe(true);
+      expect(fs.existsSync(path.join(sectionsBase, "cycle.md"))).toBe(true);
+      expect(fs.existsSync(path.join(sectionsBase, "sdd-hooks.md"))).toBe(true);
     });
 
     it("should install all 3 product skills", () => {
