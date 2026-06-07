@@ -78,6 +78,23 @@ export interface IssueDetail extends Issue {
 
 export type CommentSource = "human" | "mcp" | "engram_sync" | "system" | "adr";
 
+export type DocumentKind = "adr" | "pdr" | "rfc" | "note";
+
+/**
+ * Design record attached to an issue.
+ * Returned by GET /api/issues/:key/documents.
+ */
+export interface IssueDocument {
+  id: string;
+  kind: DocumentKind;
+  title: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+  issueId: string;
+  author?: { id: string; username: string };
+}
+
 /**
  * Comment on an issue, returned by GET /api/issues/:key/comments.
  */

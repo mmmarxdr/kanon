@@ -27,11 +27,19 @@ Pattern: `[Area] Imperative verb phrase`
 
 Always call kanon_list_groups before creating an issue — assign a real groupKey.
 
+## Design Records
+
+Use kanon_create_document (kind: adr|pdr|rfc|note). Propose before creating — human approves.
+PROPOSE when: real alternatives existed AND lasting consequences (architecture, API contracts, conventions).
+Skip: routine fixes, refactors, work logs, cosmetic changes, obvious-only-choice situations.
+Template: ## Context / ## Decision / ## Alternatives Considered / ## Consequences
+Good: "Chose Redis for sessions — native TTL, evaluated Memcached" → propose ✓  Bad: "Fixed typo" → skip ✗
+
 ## On-Demand Sections
 
-| Trigger | Load section |
-|---------|-------------|
-| NL→field mapping, existence checks, create flow | sections/issue-creation.md |
-| Roadmap horizons, deferred capture, promote-to-issue | sections/roadmap.md |
-| Cycle lifecycle, scope changes, close dispositions | sections/cycle.md |
-| SDD orchestrator hooks, deferred_items, ROADMAP injection | sections/sdd-hooks.md |
+| Trigger | Section |
+|---------|---------|
+| Issue create flow, field mapping, existence checks | issue-creation.md |
+| Roadmap, deferred capture, promote-to-issue | roadmap.md |
+| Cycle lifecycle, scope, close dispositions | cycle.md |
+| SDD hooks, deferred_items, ROADMAP injection | sdd-hooks.md |

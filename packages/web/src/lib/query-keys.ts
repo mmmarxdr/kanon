@@ -21,6 +21,13 @@ export const issueKeys = {
   groupIssues: (projectKey: string, groupKey: string) =>
     [...issueKeys.all, "group-issues", projectKey, groupKey] as const,
   context: (key: string) => [...issueKeys.all, "context", key] as const,
+  /**
+   * Nested under `.all` (not `.detail`) so SSE `issue.updated` events that
+   * invalidate `issueKeys.all` automatically refresh the documents tab.
+   * Shape: ["issues", "documents", issueKey]
+   */
+  documents: (issueKey: string) =>
+    [...issueKeys.all, "documents", issueKey] as const,
 };
 
 export const projectKeys = {
