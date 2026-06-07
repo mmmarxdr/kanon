@@ -6,9 +6,9 @@ import { canonicalizeApiUrl } from "../canonical-url.js";
 
 /**
  * FileCredentialStore — Linux/WSL2 credential adapter.
- * Copied from @kanon-pm/setup — both packages are independently shipped
- * npm packages that share the same credential file format but must be
- * self-contained at runtime.
+ * Copied from packages/setup — both packages are independently shipped
+ * and share the same credential file format but must be self-contained
+ * at runtime.
  */
 export class FileCredentialStore implements CredentialStore {
   private readonly homeDir: string;

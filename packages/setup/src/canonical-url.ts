@@ -9,7 +9,7 @@
  *   - Path, query, and fragment stripped (origin only)
  *   - Trailing slashes stripped
  *
- * Consumes: both @kanon/mcp credential-store and @kanon-pm/setup onboard
+ * Consumes: both @kanon/mcp credential-store and packages/setup onboard
  * write the same key so credential lookups never drift.
  *
  * NOTE: This file is the canonical source. Packages that need it at runtime

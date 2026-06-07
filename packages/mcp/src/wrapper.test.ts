@@ -146,7 +146,8 @@ describe("runWrapper", () => {
     expect(spawnFn).not.toHaveBeenCalled();
     expect(exitCode).toBe(1);
     expect(stderrOutput.join("")).toMatch(/Refresh expired or revoked/i);
-    expect(stderrOutput.join("")).toMatch(/npx @kanon-pm\/setup login/i);
+    expect(stderrOutput.join("")).toMatch(/kanon-setup login/i);
+    expect(stderrOutput.join("")).not.toMatch(/@kanon-pm\/setup/i);
   });
 
   /**
@@ -178,7 +179,8 @@ describe("runWrapper", () => {
     // Must fail with a clear message pointing to onboarding
     expect(exitCode).toBe(1);
     expect(stderrOutput.join("")).toMatch(/static API key/i);
-    expect(stderrOutput.join("")).toMatch(/npx @kanon-pm\/setup/i);
+    expect(stderrOutput.join("")).toMatch(/kanon-setup <kanon:\/\/link>/i);
+    expect(stderrOutput.join("")).not.toMatch(/@kanon-pm\/setup/i);
   });
 
   /**
@@ -243,7 +245,8 @@ describe("runWrapper", () => {
     expect(spawnFn).not.toHaveBeenCalled();
     expect(exitCode).toBe(1);
     expect(stderrOutput.join("")).toMatch(/server\.example\.com/);
-    expect(stderrOutput.join("")).toMatch(/npx @kanon-pm\/setup login/i);
+    expect(stderrOutput.join("")).toMatch(/kanon-setup login/i);
+    expect(stderrOutput.join("")).not.toMatch(/@kanon-pm\/setup/i);
   });
 
   /**
@@ -269,7 +272,8 @@ describe("runWrapper", () => {
     expect(spawnFn).not.toHaveBeenCalled();
     expect(exitCode).toBe(1);
     expect(stderrOutput.join("")).toMatch(/No credentials found/i);
-    expect(stderrOutput.join("")).toMatch(/npx @kanon-pm\/setup/i);
+    expect(stderrOutput.join("")).toMatch(/kanon-setup <kanon:\/\/link>/i);
+    expect(stderrOutput.join("")).not.toMatch(/@kanon-pm\/setup/i);
   });
 
   /**

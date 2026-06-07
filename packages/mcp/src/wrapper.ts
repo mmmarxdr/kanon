@@ -72,7 +72,7 @@ export async function runWrapper(deps?: Partial<WrapperDeps>): Promise<void> {
     if (!env["KANON_API_KEY"].startsWith("eyJ")) {
       stderr.write(
         "Error: KANON_API_KEY is a static API key, which is no longer supported.\n" +
-        "Run: npx @kanon-pm/setup <kanon://link> to onboard via the wrapper.\n"
+        "Run: kanon-setup <kanon://link> to onboard via the wrapper.\n"
       );
       exit(1);
       return;
@@ -92,7 +92,7 @@ export async function runWrapper(deps?: Partial<WrapperDeps>): Promise<void> {
   // ── Require --server when not in legacy bypass mode ──────────────────────
   if (!server) {
     stderr.write(
-      "Error: --server <url> is required. Run: npx @kanon-pm/setup <kanon://link>\n"
+      "Error: --server <url> is required. Run: kanon-setup <kanon://link>\n"
     );
     exit(1);
     return;
@@ -109,7 +109,7 @@ export async function runWrapper(deps?: Partial<WrapperDeps>): Promise<void> {
 
   if (!creds) {
     stderr.write(
-      `No credentials found. Run: npx @kanon-pm/setup <kanon://link>\n`
+      `No credentials found. Run: kanon-setup <kanon://link>\n`
     );
     exit(1);
     return;
@@ -127,7 +127,7 @@ export async function runWrapper(deps?: Partial<WrapperDeps>): Promise<void> {
     if (!res.ok) {
       // S4.2 — non-2xx (expired / revoked)
       stderr.write(
-        `Refresh expired or revoked. Run: npx @kanon-pm/setup login\n`
+        `Refresh expired or revoked. Run: kanon-setup login\n`
       );
       exit(1);
       return;
@@ -139,7 +139,7 @@ export async function runWrapper(deps?: Partial<WrapperDeps>): Promise<void> {
     // S4.4 — network failure
     const host = new URL(server).hostname;
     stderr.write(
-      `Could not reach ${host}. Run: npx @kanon-pm/setup login\n`
+      `Could not reach ${host}. Run: kanon-setup login\n`
     );
     exit(1);
     return;
