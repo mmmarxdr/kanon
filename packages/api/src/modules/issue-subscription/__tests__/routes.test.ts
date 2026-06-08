@@ -521,4 +521,83 @@ describe("IssueSubscription routes — S4 / KAN-28", () => {
       expect(notifB).toHaveLength(0);
     });
   });
+
+  // ── 4.1h — Auth boundary: 401 (no Authorization) ──────────────────────────
+
+  describe("4.1h — Auth boundary: PUT and DELETE return 401 when no Authorization header", () => {
+    it("PUT /api/issues/:key/subscription without Authorization → 401", async () => {
+      const ws = await seedTestWorkspace();
+      const member = await seedTestMember(ws.id, { username: "member-h1" });
+      const project = await seedTestProject(ws.id);
+      await prisma.projectMember.create({
+        data: { userId: member.userId, projectId: project.id, role: "member" },
+      });
+      const issue = await seedIssue(project.id, "h1");
+
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/issues/${issue.key}/subscription`,
+        // No Authorization header
+      });
+      expect(res.statusCode).toBe(401);
+    });
+
+    it("DELETE /api/issues/:key/subscription without Authorization → 401", async () => {
+      const ws = await seedTestWorkspace();
+      const member = await seedTestMember(ws.id, { username: "member-h2" });
+      const project = await seedTestProject(ws.id);
+      await prisma.projectMember.create({
+        data: { userId: member.userId, projectId: project.id, role: "member" },
+      });
+      const issue = await seedIssue(project.id, "h2");
+
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/issues/${issue.key}/subscription`,
+        // No Authorization header
+      });
+      expect(res.statusCode).toBe(401);
+    });
+  });
+
+  // ── 4.1i — Auth boundary: 403 (workspace member, NOT a project member) ─────
+
+  describe("4.1i — Auth boundary: PUT and DELETE return 403 for workspace member not in project", () => {
+    it("PUT /api/issues/:key/subscription by workspace member who is NOT a project member → 403", async () => {
+      const ws = await seedTestWorkspace();
+      const projectMember = await seedTestMember(ws.id, { username: "proj-member-i1" });
+      const outsider = await seedTestMember(ws.id, { username: "outsider-i1" });
+      const project = await seedTestProject(ws.id);
+      // Only projectMember is in the project; outsider is a workspace member but NOT a project member
+      await prisma.projectMember.create({
+        data: { userId: projectMember.userId, projectId: project.id, role: "member" },
+      });
+      const issue = await seedIssue(project.id, "i1");
+
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/issues/${issue.key}/subscription`,
+        headers: { authorization: `Bearer ${outsider.token}` },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it("DELETE /api/issues/:key/subscription by workspace member who is NOT a project member → 403", async () => {
+      const ws = await seedTestWorkspace();
+      const projectMember = await seedTestMember(ws.id, { username: "proj-member-i2" });
+      const outsider = await seedTestMember(ws.id, { username: "outsider-i2" });
+      const project = await seedTestProject(ws.id);
+      await prisma.projectMember.create({
+        data: { userId: projectMember.userId, projectId: project.id, role: "member" },
+      });
+      const issue = await seedIssue(project.id, "i2");
+
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/issues/${issue.key}/subscription`,
+        headers: { authorization: `Bearer ${outsider.token}` },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+  });
 });
