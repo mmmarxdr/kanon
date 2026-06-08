@@ -130,8 +130,10 @@ function sumPoints(
  * transition in issue/service.ts).
  */
 function isDoneTransition(details: unknown): boolean {
-  const det = details as { to?: string } | null;
-  return det?.to === "done";
+  if (details === null || typeof details !== "object" || Array.isArray(details)) {
+    return false;
+  }
+  return (details as { to?: unknown }).to === "done";
 }
 
 /**

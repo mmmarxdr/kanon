@@ -488,10 +488,9 @@ describe("B1 — computeBurnup regression (KAN-39): done issue logged early buck
       expect(burnup[d]).toBe(3);
     }
 
-    // Specifically, the LAST day must NOT be where the points first appear.
-    // This is the exact symptom of the KAN-39 bug.
-    expect(burnup[burnup.length - 1]).toBe(3); // still 3, not "first 3"
-    // And crucially: series rises on day 1, not only at the end
-    expect(burnup[1]).toBeGreaterThan(burnup[0]);
+    // Discriminating assertion: points must FIRST appear at day 1, not at the
+    // cycle end. Under the KAN-39 bug every done issue landed at the last index,
+    // so indexOf(3) would have been burnup.length - 1, not 1.
+    expect(burnup.indexOf(3)).toBe(1);
   });
 });
