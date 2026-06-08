@@ -410,6 +410,33 @@ describe("A8.4 — resolveActiveCycleForWorkspace: 2 cycles in same project → 
 });
 
 // ---------------------------------------------------------------------------
+// B2 — Legacy-done backward-compat: activityLog rows with { newValue: "done" }
+//       (written before the { from, to } convention) must still be counted by
+//       the burnup / done-detection path via isDoneTransition → readStateChange.
+// ---------------------------------------------------------------------------
+
+describe("B2 — legacy done shape { newValue: 'done' } is counted by burnup/lead-time", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("counts a done issue whose log uses legacy { newValue: 'done' } shape (no from/to keys)", async () => {
+    const now = new Date();
+    const createdAt = new Date(now.getTime() - 4 * 86_400_000);
+    const doneAt = new Date(now.getTime() - 2 * 86_400_000); // 2 days lead
+
+    // Issue seeded with the legacy log shape { newValue: "done" } — no `from`/`to` keys
+    mockIssueFindMany.mockResolvedValue([{ id: "iss-legacy", createdAt }] as any);
+    mockActivityLogFindMany.mockResolvedValue([
+      { issueId: "iss-legacy", createdAt: doneAt, details: { newValue: "done" } },
+    ] as any);
+
+    const result = await computeAvgLeadDays("cycle-legacy");
+
+    // Legacy row must be detected as done → 2-day lead time, not null
+    expect(result).toBeCloseTo(2.0, 4);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // B1 Regression — computeBurnup: done issue with details.to=="done" on early
 //                  day must bucket completion on THAT day, not the cycle end.
 //                  KAN-39 root cause: reader was checking det?.newValue==="done"

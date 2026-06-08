@@ -2,6 +2,7 @@ import type { CycleScopeEvent, IssueState, Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 import { eventBus } from "../../services/event-bus/index.js";
+import { isDoneTransition } from "../../shared/activity-log.js";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -123,18 +124,6 @@ function sumPoints(
     .reduce((acc, i) => acc + (i.estimate ?? 1), 0);
 }
 
-/**
- * Returns true when an activity-log details object represents a transition
- * into the "done" state. Production always writes { from, to } for
- * state_changed events (see transitionIssue / transitionGroup / batch
- * transition in issue/service.ts).
- */
-function isDoneTransition(details: unknown): boolean {
-  if (details === null || typeof details !== "object" || Array.isArray(details)) {
-    return false;
-  }
-  return (details as { to?: unknown }).to === "done";
-}
 
 /**
  * Build a per-day burnup series: how many points were completed by the end of
