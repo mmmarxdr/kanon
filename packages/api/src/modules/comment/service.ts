@@ -67,11 +67,14 @@ export async function createComment(
   // the mentionedMemberIds in the comment.created payload (Fix 1 / KAN-28).
   // This lets the subscribed_activity handler skip members who already received
   // a kind=mention notification, preventing the cross-event dedup gap.
-  // mentionedMemberIds is populated from @mention parse results (parse-time intent).
-  // Accepted wave 1 tradeoff: if a mention.created handler later fails, the mentioned
-  // member is still excluded from subscribed_activity (their ID is in this set regardless
-  // of whether the mention notification was ultimately written). Accepted for wave 1.
-  let mentionedMemberIds: string[] = [];
+  //
+  // mentionedMemberIds is built from members whose mention.created was actually
+  // emitted successfully. If eventBus.emit throws for a member (per-member
+  // try/catch), that member is NOT added to the set — so they will still receive
+  // subscribed_activity and are not silently dropped (no double-notification gap).
+  // This is stricter than using created.map() up-front (which would exclude members
+  // even if their mention.created emit failed). Wave 1 scope: per-event, not per-issue-lifetime.
+  const mentionedMemberIds: string[] = [];
   try {
     const { created } = await parseAndUpsertMentions({
       workspaceId: issue.project.workspaceId,
@@ -80,7 +83,6 @@ export async function createComment(
       body: body.body,
       authorMemberId: memberId,
     });
-    mentionedMemberIds = created.map((e) => e.mentionedMemberId);
     for (const entry of created) {
       try {
         eventBus.emit({
@@ -98,12 +100,17 @@ export async function createComment(
           },
           via: via ?? null,
         });
+        // Only add to mentionedMemberIds after a successful emit — if emit throws,
+        // the member is NOT excluded from subscribed_activity (no silent double-notify gap).
+        mentionedMemberIds.push(entry.mentionedMemberId);
       } catch {
-        // Event emission is fire-and-forget; never break the mutation
+        // Event emission is fire-and-forget; never break the mutation.
+        // Member NOT added to mentionedMemberIds — they will still receive subscribed_activity.
       }
     }
   } catch {
-    // Mention parsing failure is non-fatal — log silently and continue
+    // Mention parsing failure is non-fatal — log silently and continue.
+    // mentionedMemberIds stays at whatever was successfully emitted so far.
   }
 
   // Emit comment.created AFTER mentions so mentionedMemberIds are known.
