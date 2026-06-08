@@ -43,12 +43,18 @@ import { eventBus } from "./services/event-bus/index.js";
 import { cleanupExpired } from "./modules/work-session/service.js";
 import { registerNotificationService } from "./services/notification/index.js";
 import { createEmailProvider } from "./services/email/index.js";
+import type { EmailProvider } from "./services/email/types.js";
+
+export interface BuildAppOptions {
+  /** Optional override for the email provider (useful for testing with a spy). */
+  emailProvider?: EmailProvider;
+}
 
 /**
  * Build and configure the Fastify application.
  * Registers all plugins and module routes.
  */
-export async function buildApp() {
+export async function buildApp(opts: BuildAppOptions = {}) {
   const app = Fastify({
     logger: {
       level: process.env["NODE_ENV"] === "production" ? "info" : "debug",
@@ -94,9 +100,10 @@ export async function buildApp() {
   // ─── NotificationService ──────────────────────────────────────────────
   // Subscribe to the EventBus at startup; unsubscribe on close (D3).
   // S5: emailProvider injected here — ConsoleProvider in dev/test, ResendProvider in prod.
+  // opts.emailProvider overrides the default (used in integration tests for spying).
   const unsubscribeNotifications = registerNotificationService(eventBus, {
     logger: app.log,
-    emailProvider: createEmailProvider(),
+    emailProvider: opts.emailProvider ?? createEmailProvider(),
   });
   app.addHook("onClose", async () => {
     unsubscribeNotifications();
