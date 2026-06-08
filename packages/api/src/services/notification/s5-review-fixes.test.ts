@@ -350,5 +350,76 @@ describe("Issue 3 — handleCycleClosed dispatch verification", () => {
     await expect(
       handleCycleClosed(makeCycleClosedEvent(), { emailProvider: provider, logger: logger as any }),
     ).resolves.toBeUndefined();
+
+    // Fix 7: flush async work and assert error was logged (not silently swallowed)
+    await flush();
+    expect(logger.error).toHaveBeenCalled();
+  });
+
+  // ── Fix 1: handleCycleClosed email body is fire-and-forget IIFE ──────────────
+
+  it("fix-1: DB rejection in member resolution does NOT reject the handler", async () => {
+    vi.mocked(prisma.projectMember.findMany).mockRejectedValue(new Error("DB down"));
+    const provider = makeEmailProvider();
+    const logger = { error: vi.fn(), info: vi.fn() };
+
+    // Handler must resolve even when member resolution DB call rejects
+    await expect(
+      handleCycleClosed(makeCycleClosedEvent(), { emailProvider: provider, logger: logger as any }),
+    ).resolves.toBeUndefined();
+
+    await flush();
+    expect(logger.error).toHaveBeenCalled();
+  });
+
+  // ── Fix 2: email sends batched in chunks of 10 ───────────────────────────────
+
+  it("fix-2: all recipients are emailed even with N>10 members", async () => {
+    const N = 15;
+    const bigProjectMembers = Array.from({ length: N }, (_, i) => ({ userId: `user-${i}` }));
+    const bigMembers = Array.from({ length: N }, (_, i) => ({
+      id: `member-${i}`,
+      user: { email: `member${i}@test.com` },
+    }));
+
+    vi.mocked(prisma.projectMember.findMany).mockResolvedValue(bigProjectMembers as any);
+    vi.mocked(prisma.member.findMany).mockResolvedValue(bigMembers as any);
+    vi.mocked(prisma.notificationPreference.findMany).mockResolvedValue([]);
+
+    const provider = makeEmailProvider();
+
+    await handleCycleClosed(makeCycleClosedEvent(), { emailProvider: provider });
+    await flush();
+
+    expect(provider.send).toHaveBeenCalledTimes(N);
+  });
+
+  it("fix-2: a send rejection in one chunk does not stop subsequent recipients", async () => {
+    const N = 12;
+    const bigProjectMembers = Array.from({ length: N }, (_, i) => ({ userId: `user-${i}` }));
+    const bigMembers = Array.from({ length: N }, (_, i) => ({
+      id: `member-${i}`,
+      user: { email: `member${i}@test.com` },
+    }));
+
+    vi.mocked(prisma.projectMember.findMany).mockResolvedValue(bigProjectMembers as any);
+    vi.mocked(prisma.member.findMany).mockResolvedValue(bigMembers as any);
+    vi.mocked(prisma.notificationPreference.findMany).mockResolvedValue([]);
+
+    const provider = makeEmailProvider();
+    const logger = { error: vi.fn(), info: vi.fn() };
+
+    // Make 3rd send (index 2) fail
+    provider.send.mockImplementation((msg: any) => {
+      if (msg.to === "member2@test.com") return Promise.reject(new Error("429 rate limit"));
+      return Promise.resolve();
+    });
+
+    await handleCycleClosed(makeCycleClosedEvent(), { emailProvider: provider, logger: logger as any });
+    await flush();
+
+    // All N sends attempted; failure logged; others proceeded
+    expect(provider.send).toHaveBeenCalledTimes(N);
+    expect(logger.error).toHaveBeenCalled();
   });
 });

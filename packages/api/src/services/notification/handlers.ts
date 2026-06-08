@@ -288,58 +288,77 @@ export async function handleCycleClosed(
     scopeRemoved: number;
   };
 
-  // Resolve all project members
-  const projectMembers = await prisma.projectMember.findMany({
-    where: { projectId: payload.projectId },
-    select: { userId: true },
+  // S5: email dispatch — detached from handler, never awaited (D3 / fix-1).
+  // DB failures here must NOT reject the handler promise.
+  void (async () => {
+    // Resolve all project members
+    const projectMembers = await prisma.projectMember.findMany({
+      where: { projectId: payload.projectId },
+      select: { userId: true },
+    });
+
+    if (projectMembers.length === 0) return;
+
+    const userIds = projectMembers.map((pm) => pm.userId);
+
+    // Resolve workspace members from userIds
+    const members = await prisma.member.findMany({
+      where: {
+        userId: { in: userIds },
+        workspaceId: payload.workspaceId,
+      },
+      select: { id: true, user: { select: { email: true } } },
+    });
+
+    if (members.length === 0) return;
+
+    const memberIds = members.map((m) => m.id);
+
+    // Batch-load preferences
+    const prefs = await prisma.notificationPreference.findMany({
+      where: { memberId: { in: memberIds } },
+      select: { memberId: true, emailMention: true, emailAssignment: true, emailCycleClosed: true },
+    });
+
+    const msg = buildCycleClosedEmail({
+      cycleName: payload.cycleName,
+      projectName: payload.projectName,
+      projectKey: payload.projectKey,
+      velocity: payload.velocity,
+      completed: payload.completed,
+      planned: payload.planned,
+      scopeAdded: payload.scopeAdded,
+      scopeRemoved: payload.scopeRemoved,
+      appUrl: APP_URL,
+    });
+
+    // Filter opted-in recipients, then send in sequential chunks of 10 (fix-2).
+    // Promise.allSettled ensures one rejection does not abort the rest of a chunk.
+    const recipients = members.filter(
+      (m) => m.user?.email && isEmailEnabled(prefs, m.id, "emailCycleClosed"),
+    );
+
+    const CHUNK_SIZE = 10;
+    for (let i = 0; i < recipients.length; i += CHUNK_SIZE) {
+      const chunk = recipients.slice(i, i + CHUNK_SIZE);
+      const results = await Promise.allSettled(
+        chunk.map((member) =>
+          provider.send({ to: member.user!.email!, ...msg }),
+        ),
+      );
+      for (let j = 0; j < results.length; j++) {
+        const result = results[j];
+        if (result && result.status === "rejected") {
+          logger?.error(
+            { err: result.reason, memberId: chunk[j]?.id },
+            "cycle-closed email send failed",
+          );
+        }
+      }
+    }
+  })().catch((err: unknown) => {
+    logger?.error({ err }, "cycle-closed email dispatch failed");
   });
-
-  if (projectMembers.length === 0) return;
-
-  const userIds = projectMembers.map((pm) => pm.userId);
-
-  // Resolve workspace members from userIds
-  const members = await prisma.member.findMany({
-    where: {
-      userId: { in: userIds },
-      workspaceId: payload.workspaceId,
-    },
-    select: { id: true, user: { select: { email: true } } },
-  });
-
-  if (members.length === 0) return;
-
-  const memberIds = members.map((m) => m.id);
-
-  // Batch-load preferences
-  const prefs = await prisma.notificationPreference.findMany({
-    where: { memberId: { in: memberIds } },
-    select: { memberId: true, emailMention: true, emailAssignment: true, emailCycleClosed: true },
-  });
-
-  const msg = buildCycleClosedEmail({
-    cycleName: payload.cycleName,
-    projectName: payload.projectName,
-    projectKey: payload.projectKey,
-    velocity: payload.velocity,
-    completed: payload.completed,
-    planned: payload.planned,
-    scopeAdded: payload.scopeAdded,
-    scopeRemoved: payload.scopeRemoved,
-    appUrl: APP_URL,
-  });
-
-  for (const member of members) {
-    if (!member.user?.email) continue;
-    if (!isEmailEnabled(prefs, member.id, "emailCycleClosed")) continue;
-
-    const email = member.user.email;
-    void provider
-      .send({ to: email, ...msg })
-      .catch((err: unknown) => {
-        logger?.error({ err, memberId: member.id }, "cycle-closed email send failed");
-      });
-  }
 }
 
 // ─── Route (event type → handler) ────────────────────────────────────────────
