@@ -14,6 +14,7 @@
  */
 
 import { prisma } from "../../config/prisma.js";
+import { env } from "../../config/env.js";
 import type { DomainEvent } from "../event-bus/types.js";
 import type { EmailProvider } from "../email/types.js";
 import type { NotificationServiceDeps } from "./types.js";
@@ -21,9 +22,11 @@ import { buildMentionEmail } from "../email/templates/mention.js";
 import { buildAssignmentEmail } from "../email/templates/assignment.js";
 import { buildCycleClosedEmail } from "../email/templates/cycle-closed.js";
 
-// ─── Default appUrl (email links) ────────────────────────────────────────────
+// ─── App URL (email links) ────────────────────────────────────────────────────
+// Use the validated env module (defaults to http://localhost:5173) — consistent
+// with the rest of the codebase.
 
-const APP_URL = process.env["APP_URL"] ?? "https://app.kanon.dev";
+const APP_URL = env.APP_URL;
 
 // ─── Preference gating helpers ────────────────────────────────────────────────
 
@@ -53,12 +56,12 @@ function isEmailEnabled(
 /**
  * Handles `mention.created` event.
  *
- * Payload shape: { mentionId, issueId, issueKey, commentId, mentionedMemberId,
- *                   mentionedByMemberId, context }
+ * Payload shape: { mentionId, issueId, issueKey, issueTitle, commentId,
+ *                   mentionedMemberId, mentionedByMemberId, context }
  *
  * Recipient: mentionedMemberId — ALWAYS exclude if === actorId.
  * Creates kind=mention Notification row.
- * S5: dispatches mention email via provider (fire-and-forget).
+ * S5: dispatches mention email via provider — detached, never awaited (D3).
  */
 export async function handleMentionCreated(
   event: DomainEvent,
@@ -68,6 +71,7 @@ export async function handleMentionCreated(
     mentionId: string;
     issueId: string;
     issueKey: string;
+    issueTitle?: string;
     commentId: string | null;
     mentionedMemberId: string;
     mentionedByMemberId: string;
@@ -97,44 +101,50 @@ export async function handleMentionCreated(
     },
   });
 
-  // S5: email dispatch — fire-and-forget, never awaited (D3)
+  // S5: email dispatch — detached from handler, never awaited (D3).
+  // A DB failure here must NOT reject the handler or lose the notification row.
   if (deps.emailProvider) {
     const provider: EmailProvider = deps.emailProvider;
     const { logger } = deps;
 
-    // Batch-load preferences and member email
-    const [prefs, memberWithUser] = await Promise.all([
-      prisma.notificationPreference.findMany({
-        where: { memberId: { in: [recipientId] } },
-        select: { memberId: true, emailMention: true, emailAssignment: true, emailCycleClosed: true },
-      }),
-      prisma.member.findUnique({
-        where: { id: recipientId },
-        select: { id: true, user: { select: { email: true } } },
-      }),
-    ]);
+    void (async () => {
+      // Batch-load preferences and member email
+      const [prefs, memberWithUser] = await Promise.all([
+        prisma.notificationPreference.findMany({
+          where: { memberId: { in: [recipientId] } },
+          select: { memberId: true, emailMention: true, emailAssignment: true, emailCycleClosed: true },
+        }),
+        prisma.member.findUnique({
+          where: { id: recipientId },
+          select: { id: true, user: { select: { email: true } } },
+        }),
+      ]);
 
-    if (memberWithUser?.user?.email && isEmailEnabled(prefs, recipientId, "emailMention")) {
-      const actorMember = await prisma.member.findUnique({
-        where: { id: event.actorId ?? "" },
-        select: { user: { select: { displayName: true, email: true } } },
-      });
-
-      const msg = buildMentionEmail({
-        mentionedByName: actorMember?.user?.displayName ?? "Someone",
-        issueKey: payload.issueKey,
-        issueTitle: payload.issueKey,
-        context: payload.context,
-        issueUrl: `${APP_URL}/issue/${payload.issueKey}`,
-        appUrl: APP_URL,
-      });
-
-      void provider
-        .send({ to: memberWithUser.user.email, ...msg })
-        .catch((err: unknown) => {
-          logger?.error({ err, recipientId }, "mention email send failed");
+      if (memberWithUser?.user?.email && isEmailEnabled(prefs, recipientId, "emailMention")) {
+        const actorMember = await prisma.member.findUnique({
+          where: { id: event.actorId ?? "" },
+          select: { user: { select: { displayName: true, email: true } } },
         });
-    }
+
+        const msg = buildMentionEmail({
+          mentionedByName: actorMember?.user?.displayName ?? "Someone",
+          issueKey: payload.issueKey,
+          // Use payload.issueTitle when available — falls back to key for safety (R1)
+          issueTitle: payload.issueTitle ?? payload.issueKey,
+          context: payload.context,
+          issueUrl: `${APP_URL}/issue/${payload.issueKey}`,
+          appUrl: APP_URL,
+        });
+
+        await provider
+          .send({ to: memberWithUser.user.email, ...msg })
+          .catch((err: unknown) => {
+            logger?.error({ err, recipientId }, "mention email send failed");
+          });
+      }
+    })().catch((err: unknown) => {
+      logger?.error({ err, recipientId }, "mention email dispatch failed");
+    });
   }
 }
 
@@ -185,42 +195,47 @@ export async function handleIssueAssigned(
     },
   });
 
-  // S5: email dispatch — fire-and-forget, never awaited (D3)
+  // S5: email dispatch — detached from handler, never awaited (D3).
+  // A DB failure here must NOT reject the handler or lose the notification row.
   if (deps.emailProvider) {
     const provider: EmailProvider = deps.emailProvider;
     const { logger } = deps;
 
-    const [prefs, memberWithUser] = await Promise.all([
-      prisma.notificationPreference.findMany({
-        where: { memberId: { in: [recipientId] } },
-        select: { memberId: true, emailMention: true, emailAssignment: true, emailCycleClosed: true },
-      }),
-      prisma.member.findUnique({
-        where: { id: recipientId },
-        select: { id: true, user: { select: { email: true } } },
-      }),
-    ]);
+    void (async () => {
+      const [prefs, memberWithUser] = await Promise.all([
+        prisma.notificationPreference.findMany({
+          where: { memberId: { in: [recipientId] } },
+          select: { memberId: true, emailMention: true, emailAssignment: true, emailCycleClosed: true },
+        }),
+        prisma.member.findUnique({
+          where: { id: recipientId },
+          select: { id: true, user: { select: { email: true } } },
+        }),
+      ]);
 
-    if (memberWithUser?.user?.email && isEmailEnabled(prefs, recipientId, "emailAssignment")) {
-      const actorMember = await prisma.member.findUnique({
-        where: { id: event.actorId ?? "" },
-        select: { user: { select: { displayName: true } } },
-      });
-
-      const msg = buildAssignmentEmail({
-        assignedByName: actorMember?.user?.displayName ?? "Someone",
-        issueKey: payload.issueKey,
-        issueTitle: payload.issueTitle ?? payload.issueKey,
-        issueUrl: `${APP_URL}/issue/${payload.issueKey}`,
-        appUrl: APP_URL,
-      });
-
-      void provider
-        .send({ to: memberWithUser.user.email, ...msg })
-        .catch((err: unknown) => {
-          logger?.error({ err, recipientId }, "assignment email send failed");
+      if (memberWithUser?.user?.email && isEmailEnabled(prefs, recipientId, "emailAssignment")) {
+        const actorMember = await prisma.member.findUnique({
+          where: { id: event.actorId ?? "" },
+          select: { user: { select: { displayName: true } } },
         });
-    }
+
+        const msg = buildAssignmentEmail({
+          assignedByName: actorMember?.user?.displayName ?? "Someone",
+          issueKey: payload.issueKey,
+          issueTitle: payload.issueTitle ?? payload.issueKey,
+          issueUrl: `${APP_URL}/issue/${payload.issueKey}`,
+          appUrl: APP_URL,
+        });
+
+        await provider
+          .send({ to: memberWithUser.user.email, ...msg })
+          .catch((err: unknown) => {
+            logger?.error({ err, recipientId }, "assignment email send failed");
+          });
+      }
+    })().catch((err: unknown) => {
+      logger?.error({ err, recipientId }, "assignment email dispatch failed");
+    });
   }
 }
 

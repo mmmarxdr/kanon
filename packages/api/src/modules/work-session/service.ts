@@ -107,6 +107,7 @@ export async function startWork(
         payload: {
           issueKey,
           issueId: issue.id,
+          issueTitle: issue.title,
           from: null,
           to: memberId,
           autoAssigned: true,
