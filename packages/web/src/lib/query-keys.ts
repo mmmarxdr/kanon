@@ -118,3 +118,10 @@ export const dashboardKeys = {
   detail: (workspaceId: string | null) =>
     [...dashboardKeys.details(), workspaceId] as const,
 };
+
+export const notificationKeys = {
+  all: ["notifications"] as const,
+  lists: () => [...notificationKeys.all, "list"] as const,
+  list: (workspaceId: string) =>
+    [...notificationKeys.lists(), workspaceId] as const,
+};
