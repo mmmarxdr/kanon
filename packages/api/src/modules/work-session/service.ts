@@ -3,6 +3,7 @@ import { eventBus } from "../../services/event-bus/index.js";
 import { createActivityLog } from "../activity/service.js";
 import { normalizeVia } from "../../shared/via.js";
 import { AppError } from "../../shared/types.js";
+import { autoSubscribe } from "../issue-subscription/service.js";
 
 /** Sessions with lastHeartbeat older than this are considered expired. */
 const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -97,6 +98,9 @@ export async function startWork(
       action: "assigned",
       details: { from: null, to: memberId, source: "auto" },
     });
+
+    // Auto-subscribe auto-assigned member (best-effort, D9)
+    void autoSubscribe(issue.id, memberId, "assignee");
 
     // Emit issue.assigned event
     try {

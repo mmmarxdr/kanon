@@ -315,6 +315,7 @@ export function requireIssueRole(issueKeyParam: string, ...roles: MemberRole[]):
     const issue = await prisma.issue.findFirst({
       where: { key: issueKey },
       select: {
+        id: true,
         project: {
           select: { id: true, workspaceId: true },
         },
@@ -324,6 +325,10 @@ export function requireIssueRole(issueKeyParam: string, ...roles: MemberRole[]):
     if (!issue) {
       throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${issueKey}" not found`);
     }
+
+    // Mirror the requireProjectRole pattern: store gate-resolved ID so downstream
+    // route handlers can use request.issueId directly (no second DB lookup).
+    request.issueId = issue.id;
 
     const minimumRole = roles.length > 0
       ? roles.reduce((least, r) =>

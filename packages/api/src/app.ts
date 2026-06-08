@@ -33,6 +33,7 @@ import roadmapRoutes from "./modules/roadmap/routes.js";
 import cycleRoutes from "./modules/cycle/routes.js";
 import workSessionRoutes from "./modules/work-session/routes.js";
 import notificationRoutes, { notificationActionRoutes } from "./modules/notification/routes.js";
+import issueSubscriptionRoutes from "./modules/issue-subscription/routes.js";
 import { workspaceInviteRoutes, publicInviteRoutes } from "./modules/invite/routes.js";
 import projectMemberRoutes from "./modules/project/project-member-routes.js";
 import instanceRoutes from "./modules/instance/routes.js";
@@ -140,6 +141,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(workSessionRoutes, { prefix: "/api" });
   await app.register(notificationRoutes, { prefix: "/api/workspaces" });
   await app.register(notificationActionRoutes, { prefix: "/api" });
+  await app.register(issueSubscriptionRoutes, { prefix: "/api" });
   await app.register(workspaceInviteRoutes, { prefix: "/api/workspaces/:wid/invites" });
   await app.register(publicInviteRoutes, { prefix: "/api/invites" });
   await app.register(projectMemberRoutes, { prefix: "/api/projects/:key/members" });

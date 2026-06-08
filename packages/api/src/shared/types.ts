@@ -91,6 +91,10 @@ declare module "fastify" {
      *  services use the SAME project the gate authorized, preventing gate↔handler
      *  divergence on key-collision across workspaces. */
     projectId?: string;
+    /** Gate-resolved issue UUID (S4 / KAN-28).
+     *  Set by requireIssueRole/requireIssueMember so downstream route handlers
+     *  can use the already-resolved issueId without a second DB lookup. */
+    issueId?: string;
     /** Normalized X-Kanon-Client header value (S1 / KAN-30).
      *  Set by viaPlugin on every request. Known values: claude-code | cursor |
      *  antigravity | web | cli. Unknown or absent → null. */

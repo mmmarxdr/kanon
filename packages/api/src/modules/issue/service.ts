@@ -26,6 +26,7 @@ import {
   dayIndex,
 } from "../cycle/service.js";
 import { parseAndUpsertMentions } from "../mentions/service.js";
+import { autoSubscribe } from "../issue-subscription/service.js";
 
 /**
  * Generate the next issue key for a project using MAX+1 in a transaction.
@@ -159,6 +160,9 @@ export async function createIssue(
       // Scope event is best-effort; never block issue creation
     }
   }
+
+  // Auto-subscribe creator (best-effort, D9)
+  void autoSubscribe(issue.id, memberId, "creator");
 
   // Emit domain event (fire-and-forget)
   try {
@@ -450,6 +454,9 @@ export async function updateIssue(
       },
       via,
     });
+    // Note: auto-subscribe for the new assignee is called AFTER prisma.issue.update
+    // (see below) so that a failed update does not leave a phantom subscription row.
+    // Consistent with startWork auto-assign ordering (Fix 5 / KAN-28).
   }
   // Track cycleId change so we can emit scope events AFTER update.
   const prevCycleId: string | null = issue.cycleId;
@@ -499,6 +506,13 @@ export async function updateIssue(
     where: { key },
     data,
   });
+
+  // Auto-subscribe new assignee AFTER successful update (Fix 5 / KAN-28).
+  // Placement here ensures a failed update leaves no phantom subscription row,
+  // consistent with startWork auto-assign ordering (D9, best-effort).
+  if (body.assigneeId !== undefined && body.assigneeId !== null) {
+    void autoSubscribe(issue.id, body.assigneeId, "assignee");
+  }
 
   // Record CycleScopeEvent rows for cycle membership changes. Best-effort —
   // failures must not break the update contract.
@@ -926,7 +940,9 @@ export async function batchTransitionByKeys(
     await syncRoadmapItemStatus(prisma, rep.id);
   }
 
-  // Emit issue.transitioned per-issue (fire-and-forget).
+  // Emit per-issue issue.transitioned events for SSE consumers (fire-and-forget).
+  // These carry _skipSubscribedActivity=true because the single issue.batch_transitioned
+  // event below handles the fan-out in ONE grouped DB query instead of one per issue (Fix 3 / KAN-28).
   try {
     for (const issue of issuesToTransition) {
       eventBus.emit({
@@ -938,11 +954,42 @@ export async function batchTransitionByKeys(
           issueId: issue.id,
           from: issue.state,
           to: targetState,
+          // Tells the notification routeEvent to skip subscribed_activity for this event
+          // — the batch event below handles fan-out grouped across all issues.
+          _skipSubscribedActivity: true,
         },
       });
     }
-  } catch {
-    // Never let event emission break the mutation
+  } catch (err) {
+    // Never let per-issue event emission break the mutation; swallowed failures are logged.
+    console.error(
+      { issueIds: issuesToTransition.map((i) => i.id), err },
+      "batchTransitionByKeys: per-issue event emission failed",
+    );
+  }
+
+  // Single batched event → notification handler does ONE findMany+createMany
+  // across all affected issues, eliminating the N+1 from per-issue fan-out.
+  // Kept outside the per-issue try/catch so a per-issue emit failure and the
+  // batch-fan-out emit failure are independently observable.
+  try {
+    eventBus.emit({
+      type: "issue.batch_transitioned",
+      workspaceId: project.workspaceId,
+      actorId: memberId,
+      payload: {
+        // Each entry carries both id (for DB lookup) and key (for notification payload),
+        // so the handler never needs a second query to resolve issueKey per row (Fix / KAN-28).
+        issues: issuesToTransition.map((i) => ({ id: i.id, key: i.key })),
+        to: targetState,
+      },
+    });
+  } catch (err) {
+    // Never let batch event emission break the mutation; log so failures are observable.
+    console.error(
+      { issueIds: issuesToTransition.map((i) => i.id), err },
+      "batchTransitionByKeys: batch event emission failed",
+    );
   }
 
   return {

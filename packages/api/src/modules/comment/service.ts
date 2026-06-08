@@ -3,6 +3,7 @@ import { AppError } from "../../shared/types.js";
 import { createActivityLog } from "../activity/service.js";
 import { parseAndUpsertMentions } from "../mentions/service.js";
 import { eventBus } from "../../services/event-bus/index.js";
+import { autoSubscribe } from "../issue-subscription/service.js";
 import type { CreateCommentBody } from "./schema.js";
 
 /**
@@ -60,8 +61,21 @@ export async function createComment(
     via,
   });
 
-  // Parse @mentions — best-effort (must not break comment creation)
-  // Emit mention.created per genuinely new mention (D1 delta).
+  // Auto-subscribe commenter (best-effort, D9)
+  void autoSubscribe(issue.id, memberId, "commenter");
+
+  // Parse @mentions BEFORE emitting comment.created so that we can include
+  // the mentionedMemberIds in the comment.created payload (Fix 1 / KAN-28).
+  // This lets the subscribed_activity handler skip members who already received
+  // a kind=mention notification, preventing the cross-event dedup gap.
+  //
+  // mentionedMemberIds is built from members whose mention.created was actually
+  // emitted successfully. If eventBus.emit throws for a member (per-member
+  // try/catch), that member is NOT added to the set — so they will still receive
+  // subscribed_activity and are not silently dropped (no double-notification gap).
+  // This is stricter than using created.map() up-front (which would exclude members
+  // even if their mention.created emit failed). Wave 1 scope: per-event, not per-issue-lifetime.
+  const mentionedMemberIds: string[] = [];
   try {
     const { created } = await parseAndUpsertMentions({
       workspaceId: issue.project.workspaceId,
@@ -88,12 +102,37 @@ export async function createComment(
           },
           via: via ?? null,
         });
+        // Only add to mentionedMemberIds after a successful emit — if emit throws,
+        // the member is NOT excluded from subscribed_activity (no silent double-notify gap).
+        mentionedMemberIds.push(entry.mentionedMemberId);
       } catch {
-        // Event emission is fire-and-forget; never break the mutation
+        // Event emission is fire-and-forget; never break the mutation.
+        // Member NOT added to mentionedMemberIds — they will still receive subscribed_activity.
       }
     }
   } catch {
-    // Mention parsing failure is non-fatal — log silently and continue
+    // Mention parsing failure is non-fatal — log silently and continue.
+    // mentionedMemberIds stays at whatever was successfully emitted so far.
+  }
+
+  // Emit comment.created AFTER mentions so mentionedMemberIds are known.
+  // The subscribed_activity handler reads this set and excludes those members
+  // (they already receive kind=mention for the same event — D6 dedup rule).
+  try {
+    eventBus.emit({
+      type: "comment.created",
+      workspaceId: issue.project.workspaceId,
+      actorId: memberId,
+      payload: {
+        commentId: comment.id,
+        issueId: issue.id,
+        issueKey: issue.key,
+        mentionedMemberIds,
+      },
+      via: via ?? null,
+    });
+  } catch {
+    // Fire-and-forget; never break the mutation
   }
 
   return comment;
