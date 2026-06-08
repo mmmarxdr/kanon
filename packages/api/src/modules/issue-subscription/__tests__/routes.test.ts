@@ -102,10 +102,10 @@ describe("IssueSubscription routes — S4 / KAN-28", () => {
     });
   });
 
-  // ── 4.1b — DELETE /api/issues/:key/subscription removes row ───────────────
+  // ── 4.1b — DELETE /api/issues/:key/subscription sets optedOut=true (persisted) ──
 
-  describe("4.1b — DELETE /api/issues/:key/subscription removes subscription", () => {
-    it("DELETE after PUT → subscription row deleted, subsequent GET returns subscribed=false", async () => {
+  describe("4.1b — DELETE /api/issues/:key/subscription persists optedOut=true", () => {
+    it("DELETE after PUT → row kept with optedOut=true, subsequent GET returns subscribed=false", async () => {
       const ws = await seedTestWorkspace();
       const member = await seedTestMember(ws.id, { username: "member-sub-b" });
       const project = await seedTestProject(ws.id);
@@ -130,11 +130,148 @@ describe("IssueSubscription routes — S4 / KAN-28", () => {
       expect(res.statusCode).toBe(200);
       expect(res.json()).toMatchObject({ subscribed: false });
 
-      // Row gone
+      // Row persisted with optedOut=true (no longer deleted)
       const subs = await prisma.issueSubscription.findMany({
         where: { issueId: issue.id, memberId: member.id },
       });
-      expect(subs).toHaveLength(0);
+      expect(subs).toHaveLength(1);
+      expect(subs[0]!.optedOut).toBe(true);
+    });
+
+    it("DELETE without prior PUT (never subscribed) → creates opted-out row, returns subscribed=false", async () => {
+      const ws = await seedTestWorkspace();
+      const member = await seedTestMember(ws.id, { username: "member-sub-b2" });
+      const project = await seedTestProject(ws.id);
+      await prisma.projectMember.create({
+        data: { userId: member.userId, projectId: project.id, role: "member" },
+      });
+      const issue = await seedIssue(project.id, "b2");
+
+      // Unsubscribe without prior subscribe
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/issues/${issue.key}/subscription`,
+        headers: { authorization: `Bearer ${member.token}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ subscribed: false });
+
+      // Row created with optedOut=true
+      const subs = await prisma.issueSubscription.findMany({
+        where: { issueId: issue.id, memberId: member.id },
+      });
+      expect(subs).toHaveLength(1);
+      expect(subs[0]!.optedOut).toBe(true);
+    });
+  });
+
+  // ── 4.1b2 — autoSubscribe does NOT override optedOut=true row ─────────────
+
+  describe("4.1b2 — autoSubscribe does NOT override an existing optedOut=true row", () => {
+    it("opted-out member: assign as assignee then trigger event → stays suppressed, no subscribed_activity", async () => {
+      const ws = await seedTestWorkspace();
+      const actorA = await seedTestMember(ws.id, { username: "actor-b2" });
+      const memberB = await seedTestMember(ws.id, { username: "member-b2" });
+      const project = await seedTestProject(ws.id);
+      await prisma.projectMember.create({
+        data: { userId: actorA.userId, projectId: project.id, role: "member" },
+      });
+      await prisma.projectMember.create({
+        data: { userId: memberB.userId, projectId: project.id, role: "member" },
+      });
+      const issue = await seedIssue(project.id, "b2-auto");
+
+      // B explicitly unsubscribes (opted-out row)
+      await app.inject({
+        method: "DELETE",
+        url: `/api/issues/${issue.key}/subscription`,
+        headers: { authorization: `Bearer ${memberB.token}` },
+      });
+
+      // A assigns issue to B (triggers autoSubscribe "assignee")
+      await app.inject({
+        method: "PATCH",
+        url: `/api/issues/${issue.key}`,
+        headers: { authorization: `Bearer ${actorA.token}` },
+        payload: { assigneeId: memberB.id },
+      });
+
+      // Wait for autoSubscribe + event processing
+      await waitForEventProcessing(150);
+
+      // B's subscription row must still be optedOut=true (autoSubscribe must not override)
+      const sub = await prisma.issueSubscription.findUnique({
+        where: { issueId_memberId: { issueId: issue.id, memberId: memberB.id } },
+      });
+      expect(sub).not.toBeNull();
+      expect(sub!.optedOut).toBe(true);
+
+      // B must NOT receive subscribed_activity (suppressed by optedOut)
+      const notifB = await prisma.notification.findMany({
+        where: { recipientId: memberB.id, kind: "subscribed_activity" },
+      });
+      expect(notifB).toHaveLength(0);
+    });
+  });
+
+  // ── 4.1b3 — explicit re-subscribe clears optedOut ─────────────────────────
+
+  describe("4.1b3 — explicit PUT /subscription after DELETE clears optedOut, resumes fan-out", () => {
+    it("unsubscribe then re-subscribe → optedOut=false, event fan-out resumes", async () => {
+      const ws = await seedTestWorkspace();
+      const actorA = await seedTestMember(ws.id, { username: "actor-b3" });
+      const memberB = await seedTestMember(ws.id, { username: "member-b3" });
+      const project = await seedTestProject(ws.id);
+      await prisma.projectMember.create({
+        data: { userId: actorA.userId, projectId: project.id, role: "member" },
+      });
+      await prisma.projectMember.create({
+        data: { userId: memberB.userId, projectId: project.id, role: "member" },
+      });
+      const issue = await seedIssue(project.id, "b3");
+
+      // Subscribe B
+      await app.inject({
+        method: "PUT",
+        url: `/api/issues/${issue.key}/subscription`,
+        headers: { authorization: `Bearer ${memberB.token}` },
+      });
+      // Unsubscribe B (optedOut=true)
+      await app.inject({
+        method: "DELETE",
+        url: `/api/issues/${issue.key}/subscription`,
+        headers: { authorization: `Bearer ${memberB.token}` },
+      });
+
+      // Re-subscribe B explicitly (should clear optedOut)
+      const resubRes = await app.inject({
+        method: "PUT",
+        url: `/api/issues/${issue.key}/subscription`,
+        headers: { authorization: `Bearer ${memberB.token}` },
+      });
+      expect(resubRes.statusCode).toBe(200);
+      expect(resubRes.json()).toMatchObject({ subscribed: true });
+
+      // Row should have optedOut=false
+      const sub = await prisma.issueSubscription.findUnique({
+        where: { issueId_memberId: { issueId: issue.id, memberId: memberB.id } },
+      });
+      expect(sub).not.toBeNull();
+      expect(sub!.optedOut).toBe(false);
+
+      // A transitions issue → B should get subscribed_activity
+      await app.inject({
+        method: "POST",
+        url: `/api/issues/${issue.key}/transition`,
+        headers: { authorization: `Bearer ${actorA.token}` },
+        payload: { to_state: "in_progress" },
+      });
+      await waitForEventProcessing(150);
+
+      const notifB = await prisma.notification.findMany({
+        where: { recipientId: memberB.id, kind: "subscribed_activity" },
+      });
+      expect(notifB).toHaveLength(1);
     });
   });
 
@@ -337,9 +474,9 @@ describe("IssueSubscription routes — S4 / KAN-28", () => {
     });
   });
 
-  // ── 4.1g — unsubscribe stops fan-out ──────────────────────────────────────
+  // ── 4.1g — unsubscribe stops fan-out (optedOut row suppresses notifications) ──
 
-  describe("4.1g — unsubscribe stops fan-out", () => {
+  describe("4.1g — unsubscribe stops fan-out (optedOut=true suppresses subscribed_activity)", () => {
     it("after DELETE /subscription, subsequent event does NOT produce Notification for that member", async () => {
       const ws = await seedTestWorkspace();
       const actorA = await seedTestMember(ws.id, { username: "actor-g" });
@@ -360,7 +497,7 @@ describe("IssueSubscription routes — S4 / KAN-28", () => {
         headers: { authorization: `Bearer ${memberB.token}` },
       });
 
-      // Unsubscribe B
+      // Unsubscribe B (persists optedOut=true row)
       await app.inject({
         method: "DELETE",
         url: `/api/issues/${issue.key}/subscription`,
@@ -377,7 +514,7 @@ describe("IssueSubscription routes — S4 / KAN-28", () => {
 
       await waitForEventProcessing(100);
 
-      // B should have NO subscribed_activity notification (unsubscribed)
+      // B should have NO subscribed_activity notification (optedOut row suppresses fan-out)
       const notifB = await prisma.notification.findMany({
         where: { recipientId: memberB.id, kind: "subscribed_activity" },
       });

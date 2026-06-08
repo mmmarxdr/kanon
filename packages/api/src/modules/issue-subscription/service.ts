@@ -6,7 +6,11 @@
  * handlers to compute subscribed_activity recipients.
  *
  * Design decisions applied:
- *  D9 — unsubscribe = DELETE row; auto-subscribe uses upsert (idempotent)
+ *  D9 — unsubscribe = upsert with optedOut=true (row persisted, not deleted),
+ *        so a never-subscribed member who explicitly unsubscribes stays suppressed.
+ *        Explicit PUT (subscribe) always sets optedOut=false.
+ *  D9a — autoSubscribe uses upsert with update:{} so it NEVER overrides an
+ *        existing optedOut=true row (the update is a no-op on existing rows).
  *  D3 — auto-subscribe errors are swallowed (never block the mutation)
  */
 
@@ -26,30 +30,36 @@ export async function subscribe(
 ): Promise<{ subscribed: true }> {
   await prisma.issueSubscription.upsert({
     where: { issueId_memberId: { issueId, memberId } },
-    create: { issueId, memberId, origin: "manual" },
-    // Do not downgrade origin on re-subscribe
-    update: {},
+    create: { issueId, memberId, origin: "manual", optedOut: false },
+    // Explicit re-subscribe always clears optedOut (even if previously opted out).
+    // Origin is not downgraded (creator > commenter hierarchy).
+    update: { optedOut: false },
   });
   return { subscribed: true };
 }
 
 /**
  * Unsubscribe the member from the issue.
- * Idempotent: if no subscription exists, the call is a no-op.
+ * Idempotent: uses upsert to persist optedOut=true so a never-subscribed
+ * member who explicitly unsubscribes remains suppressed even if later
+ * autoSubscribe triggers fire (D9 / D9a).
  * Returns the canonical status.
  */
 export async function unsubscribe(
   issueId: string,
   memberId: string,
 ): Promise<{ subscribed: false }> {
-  await prisma.issueSubscription.deleteMany({
-    where: { issueId, memberId },
+  await prisma.issueSubscription.upsert({
+    where: { issueId_memberId: { issueId, memberId } },
+    create: { issueId, memberId, origin: "manual", optedOut: true },
+    update: { optedOut: true },
   });
   return { subscribed: false };
 }
 
 /**
  * Return whether the member is currently subscribed to the issue.
+ * Subscribed = row exists AND optedOut === false.
  */
 export async function getStatus(
   issueId: string,
@@ -57,9 +67,9 @@ export async function getStatus(
 ): Promise<{ subscribed: boolean }> {
   const existing = await prisma.issueSubscription.findUnique({
     where: { issueId_memberId: { issueId, memberId } },
-    select: { id: true },
+    select: { optedOut: true },
   });
-  return { subscribed: existing !== null };
+  return { subscribed: existing !== null && !existing.optedOut };
 }
 
 // ─── Auto-subscribe helper ────────────────────────────────────────────────────
@@ -123,12 +133,13 @@ export function buildSubscribedActivityRecipients(
 // ─── Issue subscription lookup (used by notification handlers) ────────────────
 
 /**
- * Return all subscriber memberIds for a given issue.
+ * Return all active subscriber memberIds for a given issue.
+ * Filters optedOut=false — opted-out rows are excluded from fan-out.
  * Used by the subscribed_activity fan-out handler.
  */
 export async function getSubscriberIds(issueId: string): Promise<string[]> {
   const subs = await prisma.issueSubscription.findMany({
-    where: { issueId },
+    where: { issueId, optedOut: false },
     select: { memberId: true },
   });
   return subs.map((s) => s.memberId);

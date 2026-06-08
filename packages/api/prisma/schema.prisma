@@ -763,8 +763,9 @@ model Notification {
 }
 
 model IssueSubscription {
-  id       String @id @default(uuid()) @db.Uuid
-  origin   String @default("manual") // manual|creator|assignee|commenter
+  id       String  @id @default(uuid()) @db.Uuid
+  origin   String  @default("manual") // manual|creator|assignee|commenter
+  optedOut Boolean @default(false) @map("opted_out") // true = explicit unsubscribe persisted
 
   issueId  String @map("issue_id") @db.Uuid
   issue    Issue  @relation(fields: [issueId], references: [id], onDelete: Cascade)
