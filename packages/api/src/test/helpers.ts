@@ -6,15 +6,17 @@ import type { FastifyInstance } from "fastify";
 import jwt from "jsonwebtoken";
 import { randomUUID } from "node:crypto";
 import { buildApp } from "../app.js";
+import type { BuildAppOptions } from "../app.js";
 import { prisma } from "../config/prisma.js";
 import { INSTANCE_SETTINGS_ID } from "../shared/constants.js";
 
 /**
  * Build a fresh Fastify app instance for testing.
  * Caller is responsible for calling `app.close()` in afterAll/afterEach.
+ * Pass opts.emailProvider to inject a spy provider (e.g. for 5.3c-style tests).
  */
-export async function createTestApp(): Promise<FastifyInstance> {
-  const app = await buildApp();
+export async function createTestApp(opts: BuildAppOptions = {}): Promise<FastifyInstance> {
+  const app = await buildApp(opts);
   await app.ready();
   return app;
 }

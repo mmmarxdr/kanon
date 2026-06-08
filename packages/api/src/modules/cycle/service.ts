@@ -483,23 +483,57 @@ export async function createCycle(
  * `closedAt` column. We surface the row's `updatedAt` (which Prisma stamps
  * on `update`) under the ack-friendly name. If a dedicated column is added
  * later, swap the source here.
+ *
+ * S5: accepts `actorMemberId` and emits `cycle.closed` event after update
+ * so the NotificationService can dispatch cycle-closed emails.
  */
 export async function closeCycle(
   id: string,
-  opts?: { verbose?: boolean },
+  opts?: { verbose?: boolean; actorMemberId?: string },
 ) {
   const cycle = await prisma.cycle.findUnique({
     where: { id },
     include: {
       issues: { select: { estimate: true, state: true } },
+      project: { select: { id: true, key: true, name: true, workspaceId: true } },
     },
   });
   if (!cycle) throw new AppError(404, "CYCLE_NOT_FOUND", "Cycle not found");
   const velocity = sumPoints(cycle.issues, (i) => i.state === "done");
+
+  // Compute scope stats for email report
+  const completed = cycle.issues.filter((i) => i.state === "done").length;
+  const planned = cycle.issues.length;
+
   const updated = await prisma.cycle.update({
     where: { id },
     data: { state: "done", velocity },
   });
+
+  // Emit cycle.closed event — fire-and-forget, handler isolation via NotificationService (D3)
+  try {
+    eventBus.emit({
+      type: "cycle.closed",
+      workspaceId: cycle.project.workspaceId,
+      actorId: opts?.actorMemberId ?? "",
+      payload: {
+        cycleId: cycle.id,
+        cycleName: cycle.name,
+        projectId: cycle.project.id,
+        projectKey: cycle.project.key,
+        projectName: cycle.project.name,
+        workspaceId: cycle.project.workspaceId,
+        velocity: velocity ?? 0,
+        completed,
+        planned,
+        scopeAdded: 0,   // scope events not yet aggregated at close time
+        scopeRemoved: 0,
+      },
+    });
+  } catch {
+    // Never let event emission break the mutation
+  }
+
   if (opts?.verbose) {
     return updated;
   }

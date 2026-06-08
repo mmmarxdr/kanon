@@ -61,7 +61,14 @@ export interface RenderEmailLayoutOptions {
   linkFallback?: string;
   /** Optional additional section HTML appended above the footer disclaimer */
   extraSectionHtml?: string;
-  /** Optional disclaimer text in the bg2 footer strip */
+  /**
+   * Optional disclaimer text in the bg2 footer strip.
+   * @raw — injected as-is into the HTML template without escaping.
+   * Caller is responsible for ensuring this does NOT contain user-controlled
+   * input. Contrast with `eyebrow` / `heading`, which are always run through
+   * `escapeHtml` inside `renderEmailLayout`. Do NOT pass user-controlled
+   * strings here without pre-escaping.
+   */
   disclaimerText?: string;
 }
 
@@ -89,18 +96,30 @@ function headerTagLabel(tone: EyebrowTone): string {
  * Render the shared email card layout.
  * Returns a full HTML document string with all styles inlined.
  * No <style> block, no Google Fonts link, no flex/grid/SVG.
+ *
+ * Intentional: this function does NOT strip or replace `<br>` tags from
+ * caller-supplied `bodyHtml`. The `bodyHtml` field is trusted pre-built HTML;
+ * stripping would corrupt line-breaks intentionally inserted by templates.
+ * User-controlled data must be escaped via `escapeHtml` BEFORE being placed
+ * in `bodyHtml` — it is never passed raw through this renderer.
  */
 export function renderEmailLayout(opts: RenderEmailLayoutOptions): string {
   const {
-    eyebrow,
+    eyebrow: eyebrowRaw,
     eyebrowTone,
-    heading,
+    heading: headingRaw,
     bodyHtml,
     cta,
     linkFallback,
     extraSectionHtml = "",
     disclaimerText = "If you didn't expect this, you can safely ignore this email. We never share your address.",
   } = opts;
+
+  // Always escape heading and eyebrow — they may contain user-controlled data.
+  // Templates that previously pre-escaped these values will produce double-encoding;
+  // those callers must pass the raw (unescaped) string and let this function escape.
+  const eyebrow = escapeHtml(eyebrowRaw);
+  const heading = escapeHtml(headingRaw);
 
   const eyeColor = eyebrowColor(eyebrowTone);
   const tagLabel = headerTagLabel(eyebrowTone);

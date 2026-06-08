@@ -1,4 +1,7 @@
 import { renderEmailLayout } from "../layout.js";
+import type { EmailContent } from "../types.js";
+
+export type { EmailContent };
 
 const E_ai = "#7755FF";
 const E_ink2 = "#3A3D40";
@@ -12,12 +15,6 @@ const E_ink = "#0E1011";
 
 export interface BuildVerifyEmailOptions {
   verifyUrl: string;
-}
-
-export interface EmailContent {
-  subject: string;
-  html: string;
-  text: string;
 }
 
 /**
@@ -68,7 +65,7 @@ export function buildVerifyEmail(opts: BuildVerifyEmailOptions): EmailContent {
   const html = renderEmailLayout({
     eyebrow: "Step 1 of 2 — verify",
     eyebrowTone: "default",
-    heading: "Confirm your email,<br/>then we&#8217;ll spin up your workspace.",
+    heading: "Confirm your email, then we’ll spin up your workspace.",
     bodyHtml,
     cta: { label: "Verify email →", href: verifyUrl },
     linkFallback: verifyUrl,

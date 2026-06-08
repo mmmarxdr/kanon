@@ -1,4 +1,7 @@
 import { renderEmailLayout, escapeHtml } from "../layout.js";
+import type { EmailContent } from "../types.js";
+
+export type { EmailContent };
 
 const E_ink = "#0E1011";
 const E_ink2 = "#3A3D40";
@@ -15,12 +18,6 @@ export interface BuildInviteEmailOptions {
   inviterName: string;
   inviteUrl: string;
   expiresAt: Date;
-}
-
-export interface EmailContent {
-  subject: string;
-  html: string;
-  text: string;
 }
 
 /**
@@ -63,9 +60,9 @@ export function buildInviteEmail(opts: BuildInviteEmailOptions): EmailContent {
     </p>`;
 
   const html = renderEmailLayout({
-    eyebrow: `Invitation · ${safeWorkspaceName}`,
+    eyebrow: `Invitation · ${workspaceName}`,
     eyebrowTone: "default",
-    heading: `${safeInviterName} invited you to<br/>Kanon · ${safeWorkspaceName}.`,
+    heading: `${inviterName} invited you to Kanon · ${workspaceName}.`,
     bodyHtml,
     cta: { label: "Accept invitation →", href: inviteUrl },
     disclaimerText:

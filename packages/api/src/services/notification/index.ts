@@ -1,5 +1,5 @@
 /**
- * NotificationService — S3 / KAN-27
+ * NotificationService — S3 / KAN-27, updated S5 / KAN-29
  *
  * Subscribes to the in-process EventBus at startup and routes domain events
  * to notification handlers.
@@ -21,7 +21,7 @@ import type { NotificationServiceDeps } from "./types.js";
  * Register the NotificationService on the EventBus.
  *
  * @param bus - The application EventBus instance.
- * @param deps - Optional dependencies (logger).
+ * @param deps - Optional dependencies (logger, emailProvider).
  * @returns unsubscribe function — call in app onClose hook.
  */
 export function registerNotificationService(

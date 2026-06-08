@@ -21,6 +21,7 @@ export async function createComment(
     select: {
       id: true,
       key: true,
+      title: true,
       project: { select: { workspaceId: true } },
     },
   });
@@ -93,6 +94,7 @@ export async function createComment(
             mentionId: entry.mentionId,
             issueId: issue.id,
             issueKey: issue.key,
+            issueTitle: issue.title,
             commentId: comment.id,
             mentionedMemberId: entry.mentionedMemberId,
             mentionedByMemberId: memberId,
@@ -159,6 +161,7 @@ export async function updateComment(
         select: {
           id: true,
           key: true,
+          title: true,
           project: { select: { workspaceId: true } },
         },
       },
@@ -229,6 +232,7 @@ export async function updateComment(
             mentionId: entry.mentionId,
             issueId: existing.issue.id,
             issueKey: existing.issue.key,
+            issueTitle: existing.issue.title,
             commentId,
             mentionedMemberId: entry.mentionedMemberId,
             mentionedByMemberId: memberId,

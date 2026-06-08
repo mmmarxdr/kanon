@@ -198,6 +198,7 @@ export async function createIssue(
               mentionId: entry.mentionId,
               issueId: issue.id,
               issueKey: issue.key,
+              issueTitle: issue.title,
               commentId: null,
               mentionedMemberId: entry.mentionedMemberId,
               mentionedByMemberId: memberId,
@@ -567,7 +568,7 @@ export async function updateIssue(
         type: "issue.assigned",
         workspaceId: issue.project.workspaceId,
         actorId: memberId,
-        payload: { issueKey: key, issueId: issue.id, from: issue.assigneeId, to: body.assigneeId },
+        payload: { issueKey: key, issueId: issue.id, issueTitle: issue.title, from: issue.assigneeId, to: body.assigneeId },
         via,
       });
     }
@@ -597,6 +598,8 @@ export async function updateIssue(
               mentionId: entry.mentionId,
               issueId: issue.id,
               issueKey: key,
+              // updated.title reflects any title change in this update call
+              issueTitle: (body.title !== undefined ? body.title : issue.title) ?? key,
               commentId: null,
               mentionedMemberId: entry.mentionedMemberId,
               mentionedByMemberId: memberId,

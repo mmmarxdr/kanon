@@ -118,10 +118,7 @@ describe("3.1a — mention.created handler creates Notification row, excludes ac
   it("mention.created → notification.create called with kind=mention and recipientId=mentionedMemberId", async () => {
     const event = makeMentionCreatedEvent();
     bus._emit(event);
-    // Allow microtasks to flush
-    await new Promise((r) => setTimeout(r, 0));
-
-    expect(prisma.notification.create).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(prisma.notification.create).toHaveBeenCalledOnce());
     const call = vi.mocked(prisma.notification.create).mock.calls[0]![0] as any;
     expect(call.data.kind).toBe("mention");
     expect(call.data.recipientId).toBe("recipient-member-id");
@@ -145,8 +142,12 @@ describe("3.1a — mention.created handler creates Notification row, excludes ac
       },
     });
     bus._emit(event);
-    await new Promise((r) => setTimeout(r, 0));
-
+    // No positive proxy available for a NOT-called assertion; use a short settle
+    // via vi.waitFor with a condition that will never be true — instead just tick
+    // microtasks by waiting for Promise.resolve() chain to drain.
+    // The handler returns synchronously (actor-excluded path), so we only need to
+    // drain the microtask queue rather than wait for async DB work.
+    await Promise.resolve();
     expect(prisma.notification.create).not.toHaveBeenCalled();
   });
 
@@ -161,9 +162,7 @@ describe("3.1a — mention.created handler creates Notification row, excludes ac
       },
     });
     bus._emit(event);
-    await new Promise((r) => setTimeout(r, 0));
-
-    expect(prisma.notification.create).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(prisma.notification.create).toHaveBeenCalledOnce());
     const call = vi.mocked(prisma.notification.create).mock.calls[0]![0] as any;
     expect(call.data.kind).toBe("assignment");
     expect(call.data.recipientId).toBe("assignee-member-id");
@@ -180,8 +179,8 @@ describe("3.1a — mention.created handler creates Notification row, excludes ac
       },
     });
     bus._emit(event);
-    await new Promise((r) => setTimeout(r, 0));
-
+    // Handler returns early synchronously — drain microtasks only
+    await Promise.resolve();
     expect(prisma.notification.create).not.toHaveBeenCalled();
   });
 
@@ -195,8 +194,8 @@ describe("3.1a — mention.created handler creates Notification row, excludes ac
       },
     });
     bus._emit(event);
-    await new Promise((r) => setTimeout(r, 0));
-
+    // Handler returns early synchronously — drain microtasks only
+    await Promise.resolve();
     expect(prisma.notification.create).not.toHaveBeenCalled();
   });
 });
@@ -214,9 +213,8 @@ describe("3.1b — handler error does not propagate to emitter", () => {
     // The sync wrapper must NOT throw even if the async handler rejects
     expect(() => bus._emit(event)).not.toThrow();
 
-    // After async resolves, error should be logged
-    await new Promise((r) => setTimeout(r, 10));
-    expect(mockLogger.error).toHaveBeenCalled();
+    // Wait for async handler to fail and error to be logged
+    await vi.waitFor(() => expect(mockLogger.error).toHaveBeenCalled());
   });
 });
 
@@ -236,11 +234,11 @@ describe("3.1c — mention delta: edit re-parse → no duplicate Notification", 
 
     bus._emit(event1);
     bus._emit(event2);
-    await new Promise((r) => setTimeout(r, 10));
+    // Wait until both notification rows are created
+    await vi.waitFor(() => expect(prisma.notification.create).toHaveBeenCalledTimes(2));
 
     // Each event produces one call — NotificationService doesn't deduplicate
     // (delta handled by parseAndUpsertMentions returning only new mentions)
-    expect(prisma.notification.create).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -304,8 +302,9 @@ describe("3.1d — cycle.closed → no in-app Notification row (D5: email-only t
       timestamp: new Date().toISOString(),
     };
     bus._emit(event);
-    await new Promise((r) => setTimeout(r, 10));
-
+    // cycle.closed handler has no in-app row path — it returns early if no emailProvider.
+    // Drain microtasks only (no async DB work to wait for).
+    await Promise.resolve();
     expect(prisma.notification.create).not.toHaveBeenCalled();
   });
 });
