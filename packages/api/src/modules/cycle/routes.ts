@@ -103,6 +103,7 @@ export default async function cycleRoutes(fastify: FastifyInstance): Promise<voi
     async (request, _reply) =>
       cycleService.closeCycle(request.params.id, {
         verbose: request.query.verbose,
+        actorMemberId: request.member?.id,
       }),
   );
 

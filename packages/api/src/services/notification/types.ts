@@ -36,4 +36,6 @@ export interface NotificationServiceDeps {
     error: (obj: unknown, msg?: string) => void;
     info?: (obj: unknown, msg?: string) => void;
   };
+  /** Optional email provider — when omitted, no emails are dispatched (S5). */
+  emailProvider?: import("../email/types.js").EmailProvider;
 }

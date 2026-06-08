@@ -45,6 +45,20 @@ const MarkReadResponseSchema = z.object({
   read: z.literal(true),
 });
 
+// ─── Notification preference schemas ─────────────────────────────────────────
+
+const NotificationPreferenceBody = z.object({
+  emailMention: z.boolean(),
+  emailAssignment: z.boolean(),
+  emailCycleClosed: z.boolean(),
+});
+
+const NotificationPreferenceResponseSchema = z.object({
+  emailMention: z.boolean(),
+  emailAssignment: z.boolean(),
+  emailCycleClosed: z.boolean(),
+});
+
 export default async function notificationRoutes(
   fastify: FastifyInstance,
 ): Promise<void> {
@@ -174,6 +188,93 @@ export default async function notificationRoutes(
       });
 
       return { updated: updatedCount };
+    },
+  );
+
+  /**
+   * GET /api/workspaces/:id/notification-preferences
+   * Return the authenticated member's notification preferences (row or synthesized defaults).
+   */
+  app.get(
+    "/:id/notification-preferences",
+    {
+      preHandler: [requireMember("id")],
+      schema: {
+        params: WorkspaceIdParam,
+        response: { 200: NotificationPreferenceResponseSchema },
+      },
+    },
+    async (request, _reply) => {
+      const workspaceId = request.params.id;
+
+      const member = await prisma.member.findFirst({
+        where: { workspaceId, userId: request.user.userId },
+        select: { id: true },
+      });
+
+      if (!member) {
+        // Return defaults — no member = treat as no pref row
+        return { emailMention: true, emailAssignment: true, emailCycleClosed: true };
+      }
+
+      const pref = await prisma.notificationPreference.findUnique({
+        where: { memberId: member.id },
+        select: { emailMention: true, emailAssignment: true, emailCycleClosed: true },
+      });
+
+      // No row = synthesized defaults (all true)
+      return {
+        emailMention: pref?.emailMention ?? true,
+        emailAssignment: pref?.emailAssignment ?? true,
+        emailCycleClosed: pref?.emailCycleClosed ?? true,
+      };
+    },
+  );
+
+  /**
+   * PUT /api/workspaces/:id/notification-preferences
+   * Upsert the authenticated member's notification preferences.
+   */
+  app.put(
+    "/:id/notification-preferences",
+    {
+      preHandler: [requireMember("id")],
+      schema: {
+        params: WorkspaceIdParam,
+        body: NotificationPreferenceBody,
+        response: { 200: NotificationPreferenceResponseSchema },
+      },
+    },
+    async (request, _reply) => {
+      const workspaceId = request.params.id;
+      const { emailMention, emailAssignment, emailCycleClosed } = request.body;
+
+      const member = await prisma.member.findFirst({
+        where: { workspaceId, userId: request.user.userId },
+        select: { id: true },
+      });
+
+      if (!member) {
+        return { emailMention, emailAssignment, emailCycleClosed };
+      }
+
+      const upserted = await prisma.notificationPreference.upsert({
+        where: { memberId: member.id },
+        create: {
+          memberId: member.id,
+          emailMention,
+          emailAssignment,
+          emailCycleClosed,
+        },
+        update: {
+          emailMention,
+          emailAssignment,
+          emailCycleClosed,
+        },
+        select: { emailMention: true, emailAssignment: true, emailCycleClosed: true },
+      });
+
+      return upserted;
     },
   );
 }

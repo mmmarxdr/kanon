@@ -42,6 +42,7 @@ import { BridgeSyncService } from "./services/bridge-sync-service.js";
 import { eventBus } from "./services/event-bus/index.js";
 import { cleanupExpired } from "./modules/work-session/service.js";
 import { registerNotificationService } from "./services/notification/index.js";
+import { createEmailProvider } from "./services/email/index.js";
 
 /**
  * Build and configure the Fastify application.
@@ -92,8 +93,10 @@ export async function buildApp() {
 
   // ─── NotificationService ──────────────────────────────────────────────
   // Subscribe to the EventBus at startup; unsubscribe on close (D3).
+  // S5: emailProvider injected here — ConsoleProvider in dev/test, ResendProvider in prod.
   const unsubscribeNotifications = registerNotificationService(eventBus, {
     logger: app.log,
+    emailProvider: createEmailProvider(),
   });
   app.addHook("onClose", async () => {
     unsubscribeNotifications();

@@ -241,12 +241,12 @@ describe("Notification preferences — S5 / KAN-29", () => {
         },
         body: JSON.stringify({
           name: "Sprint 1",
-          startDate: new Date().toISOString().split("T")[0],
-          endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+          startDate: new Date().toISOString(),
+          endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
         }),
       });
 
-      expect(cycleRes.statusCode).toBe(200);
+      expect(cycleRes.statusCode).toBe(201);
       const { id: cycleId } = cycleRes.json();
 
       // Close the cycle
