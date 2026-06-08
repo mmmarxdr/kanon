@@ -1,4 +1,7 @@
 import { renderEmailLayout } from "../layout.js";
+import type { EmailContent } from "../types.js";
+
+export type { EmailContent };
 
 const E_ink2 = "#3A3D40";
 const E_ink3 = "#71757A";
@@ -9,12 +12,6 @@ const E_sans = "Arial,Helvetica,sans-serif";
 
 export interface BuildResetEmailOptions {
   resetUrl: string;
-}
-
-export interface EmailContent {
-  subject: string;
-  html: string;
-  text: string;
 }
 
 /**

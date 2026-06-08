@@ -1,4 +1,7 @@
 import { renderEmailLayout, escapeHtml } from "../layout.js";
+import type { EmailContent } from "../types.js";
+
+export type { EmailContent };
 
 export interface BuildAssignmentEmailOptions {
   assignedByName: string;
@@ -6,12 +9,6 @@ export interface BuildAssignmentEmailOptions {
   issueTitle: string;
   issueUrl: string;
   appUrl: string;
-}
-
-export interface EmailContent {
-  subject: string;
-  html: string;
-  text: string;
 }
 
 /**

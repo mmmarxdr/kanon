@@ -1,4 +1,7 @@
 import { renderEmailLayout } from "../layout.js";
+import type { EmailContent } from "../types.js";
+
+export type { EmailContent };
 
 const E_ai = "#7755FF";
 const E_ink2 = "#3A3D40";
@@ -12,12 +15,6 @@ const E_ink = "#0E1011";
 
 export interface BuildVerifyEmailOptions {
   verifyUrl: string;
-}
-
-export interface EmailContent {
-  subject: string;
-  html: string;
-  text: string;
 }
 
 /**

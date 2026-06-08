@@ -1,4 +1,7 @@
 import { renderEmailLayout, escapeHtml } from "../layout.js";
+import type { EmailContent } from "../types.js";
+
+export type { EmailContent };
 
 export interface BuildCycleClosedEmailOptions {
   cycleName: string;
@@ -10,12 +13,6 @@ export interface BuildCycleClosedEmailOptions {
   scopeAdded: number;
   scopeRemoved: number;
   appUrl: string;
-}
-
-export interface EmailContent {
-  subject: string;
-  html: string;
-  text: string;
 }
 
 /**

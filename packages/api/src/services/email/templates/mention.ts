@@ -1,4 +1,7 @@
 import { renderEmailLayout, escapeHtml } from "../layout.js";
+import type { EmailContent } from "../types.js";
+
+export type { EmailContent };
 
 export interface BuildMentionEmailOptions {
   mentionedByName: string;
@@ -7,12 +10,6 @@ export interface BuildMentionEmailOptions {
   context: string;
   issueUrl: string;
   appUrl: string;
-}
-
-export interface EmailContent {
-  subject: string;
-  html: string;
-  text: string;
 }
 
 /**
