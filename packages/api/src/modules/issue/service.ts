@@ -26,7 +26,7 @@ import {
   dayIndex,
 } from "../cycle/service.js";
 import { parseAndUpsertMentions } from "../mentions/service.js";
-import { autoSubscribe } from "../issue-subscription/service.js";
+import { autoSubscribe, getStatus as getSubscriptionStatus } from "../issue-subscription/service.js";
 
 /**
  * Generate the next issue key for a project using MAX+1 in a transaction.
@@ -365,7 +365,14 @@ export async function listIssueGroups(projectId: string) {
 /**
  * Get a single issue by key.
  */
-export async function getIssue(key: string) {
+/**
+ * Fetch full issue detail by key.
+ *
+ * When `memberId` is provided the response includes `subscribed: boolean`
+ * so the web client can reflect subscription state on the issue-detail page
+ * without a second round-trip (KAN-38).
+ */
+export async function getIssue(key: string, memberId?: string) {
   const issue = await prisma.issue.findUnique({
     where: { key },
     include: {
@@ -401,9 +408,18 @@ export async function getIssue(key: string) {
     throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${key}" not found`);
   }
 
-  const activeWorkers = await getActiveWorkers(issue.id);
+  const [activeWorkers, subscriptionStatus] = await Promise.all([
+    getActiveWorkers(issue.id),
+    memberId
+      ? getSubscriptionStatus(issue.id, memberId).catch(() => null)
+      : Promise.resolve(null),
+  ]);
 
-  return { ...issue, activeWorkers };
+  return {
+    ...issue,
+    activeWorkers,
+    ...(subscriptionStatus !== null ? { subscribed: subscriptionStatus.subscribed } : {}),
+  };
 }
 
 /**
