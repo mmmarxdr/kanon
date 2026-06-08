@@ -67,6 +67,10 @@ export async function createComment(
   // the mentionedMemberIds in the comment.created payload (Fix 1 / KAN-28).
   // This lets the subscribed_activity handler skip members who already received
   // a kind=mention notification, preventing the cross-event dedup gap.
+  // mentionedMemberIds is populated from @mention parse results (parse-time intent).
+  // Accepted wave 1 tradeoff: if a mention.created handler later fails, the mentioned
+  // member is still excluded from subscribed_activity (their ID is in this set regardless
+  // of whether the mention notification was ultimately written). Accepted for wave 1.
   let mentionedMemberIds: string[] = [];
   try {
     const { created } = await parseAndUpsertMentions({
