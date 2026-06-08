@@ -274,10 +274,10 @@ describe("IssueSubscription routes — S4 / KAN-28", () => {
 
       // A transitions the issue
       const res = await app.inject({
-        method: "PATCH",
-        url: `/api/issues/${issue.key}`,
+        method: "POST",
+        url: `/api/issues/${issue.key}/transition`,
         headers: { authorization: `Bearer ${actorA.token}` },
-        payload: { state: "in_progress" },
+        payload: { to_state: "in_progress" },
       });
       expect(res.statusCode).toBe(200);
 
@@ -363,10 +363,10 @@ describe("IssueSubscription routes — S4 / KAN-28", () => {
 
       // A transitions the issue
       await app.inject({
-        method: "PATCH",
-        url: `/api/issues/${issue.key}`,
+        method: "POST",
+        url: `/api/issues/${issue.key}/transition`,
         headers: { authorization: `Bearer ${actorA.token}` },
-        payload: { state: "in_progress" },
+        payload: { to_state: "in_progress" },
       });
 
       await waitForEventProcessing(100);

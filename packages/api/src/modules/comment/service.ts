@@ -3,6 +3,7 @@ import { AppError } from "../../shared/types.js";
 import { createActivityLog } from "../activity/service.js";
 import { parseAndUpsertMentions } from "../mentions/service.js";
 import { eventBus } from "../../services/event-bus/index.js";
+import { autoSubscribe } from "../issue-subscription/service.js";
 import type { CreateCommentBody } from "./schema.js";
 
 /**
@@ -58,6 +59,26 @@ export async function createComment(
     details: { commentId: comment.id, source: comment.source },
     via,
   });
+
+  // Auto-subscribe commenter (best-effort, D9)
+  void autoSubscribe(issue.id, memberId, "commenter");
+
+  // Emit comment.created event for subscribed_activity fan-out (S4)
+  try {
+    eventBus.emit({
+      type: "comment.created",
+      workspaceId: issue.project.workspaceId,
+      actorId: memberId,
+      payload: {
+        commentId: comment.id,
+        issueId: issue.id,
+        issueKey: issue.key,
+      },
+      via: via ?? null,
+    });
+  } catch {
+    // Fire-and-forget; never break the mutation
+  }
 
   // Parse @mentions — best-effort (must not break comment creation)
   // Emit mention.created per genuinely new mention (D1 delta).

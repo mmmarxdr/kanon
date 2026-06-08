@@ -26,6 +26,7 @@ import {
   dayIndex,
 } from "../cycle/service.js";
 import { parseAndUpsertMentions } from "../mentions/service.js";
+import { autoSubscribe } from "../issue-subscription/service.js";
 
 /**
  * Generate the next issue key for a project using MAX+1 in a transaction.
@@ -159,6 +160,9 @@ export async function createIssue(
       // Scope event is best-effort; never block issue creation
     }
   }
+
+  // Auto-subscribe creator (best-effort, D9)
+  void autoSubscribe(issue.id, memberId, "creator");
 
   // Emit domain event (fire-and-forget)
   try {
@@ -449,6 +453,11 @@ export async function updateIssue(
       },
       via,
     });
+
+    // Auto-subscribe new assignee (best-effort, D9)
+    if (body.assigneeId !== null) {
+      void autoSubscribe(issue.id, body.assigneeId, "assignee");
+    }
   }
   // Track cycleId change so we can emit scope events AFTER update.
   const prevCycleId: string | null = issue.cycleId;
