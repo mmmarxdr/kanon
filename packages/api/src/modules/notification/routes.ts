@@ -1,10 +1,12 @@
 /**
- * Notification module routes — S3 / KAN-27
+ * Notification module routes — S3 / KAN-27, updated S5 / KAN-29
  *
  * Endpoints:
- *  GET  /api/workspaces/:wid/notifications            — list own notifications (paginated)
- *  PATCH /api/notifications/:id/read                 — mark single notification read (dual-write)
- *  POST /api/workspaces/:wid/notifications/read-all  — mark all read + dual-write Mentions
+ *  GET  /api/workspaces/:wid/notifications              — list own notifications (paginated)
+ *  PATCH /api/notifications/:id/read                   — mark single notification read (dual-write)
+ *  POST /api/workspaces/:wid/notifications/read-all    — mark all read + dual-write Mentions
+ *  GET  /api/workspaces/:wid/notification-preferences  — row or synthesized defaults
+ *  PUT  /api/workspaces/:wid/notification-preferences  — upsert 3 booleans
  */
 
 import type { FastifyInstance } from "fastify";
@@ -13,6 +15,8 @@ import { z } from "zod";
 import { prisma } from "../../config/prisma.js";
 import { requireMember } from "../../middleware/require-role.js";
 import { AppError } from "../../shared/types.js";
+// Bridge is the single source of truth for the preference schema (fix R4)
+import { notificationPreferenceItemSchema } from "@kanon/bridge";
 
 const WorkspaceIdParam = z.object({ id: z.string().uuid() });
 const NotificationIdParam = z.object({ id: z.string().uuid() });
@@ -45,19 +49,8 @@ const MarkReadResponseSchema = z.object({
   read: z.literal(true),
 });
 
-// ─── Notification preference schemas ─────────────────────────────────────────
-
-const NotificationPreferenceBody = z.object({
-  emailMention: z.boolean(),
-  emailAssignment: z.boolean(),
-  emailCycleClosed: z.boolean(),
-});
-
-const NotificationPreferenceResponseSchema = z.object({
-  emailMention: z.boolean(),
-  emailAssignment: z.boolean(),
-  emailCycleClosed: z.boolean(),
-});
+// notificationPreferenceItemSchema from @kanon/bridge serves as both the PUT
+// body and the GET/PUT response[200] schema — no local duplicate needed (R4).
 
 export default async function notificationRoutes(
   fastify: FastifyInstance,
@@ -87,18 +80,12 @@ export default async function notificationRoutes(
       const workspaceId = request.params.id;
       const limit = request.query.limit;
       const unreadOnly = request.query.unreadOnly === "true";
-
-      // Resolve member in workspace
-      const member = await prisma.member.findFirst({
-        where: { workspaceId, userId: request.user.userId },
-        select: { id: true },
-      });
-
-      if (!member) return { notifications: [] };
+      // requireMember("id") guarantees request.member is set (R5)
+      const memberId = request.member!.id;
 
       const notifications = await prisma.notification.findMany({
         where: {
-          recipientId: member.id,
+          recipientId: memberId,
           workspaceId,
           ...(unreadOnly ? { read: false } : {}),
         },
@@ -145,14 +132,8 @@ export default async function notificationRoutes(
     },
     async (request, _reply) => {
       const workspaceId = request.params.id;
-
-      // Resolve member in workspace
-      const member = await prisma.member.findFirst({
-        where: { workspaceId, userId: request.user.userId },
-        select: { id: true },
-      });
-
-      if (!member) return { updated: 0 };
+      // requireMember("id") guarantees request.member is set (R5)
+      const memberId = request.member!.id;
 
       // Interactive transaction: capture the unread set and update it atomically.
       // This prevents a race where a notification arriving between findMany and
@@ -160,7 +141,7 @@ export default async function notificationRoutes(
       // unread (permanent divergence).
       const updatedCount = await prisma.$transaction(async (tx) => {
         const unreadNotifications = await tx.notification.findMany({
-          where: { recipientId: member.id, workspaceId, read: false },
+          where: { recipientId: memberId, workspaceId, read: false },
           select: { id: true, kind: true, mentionId: true },
         });
 
@@ -201,24 +182,16 @@ export default async function notificationRoutes(
       preHandler: [requireMember("id")],
       schema: {
         params: WorkspaceIdParam,
-        response: { 200: NotificationPreferenceResponseSchema },
+        // Bridge schema is single source of truth (R4)
+        response: { 200: notificationPreferenceItemSchema },
       },
     },
     async (request, _reply) => {
-      const workspaceId = request.params.id;
-
-      const member = await prisma.member.findFirst({
-        where: { workspaceId, userId: request.user.userId },
-        select: { id: true },
-      });
-
-      if (!member) {
-        // Return defaults — no member = treat as no pref row
-        return { emailMention: true, emailAssignment: true, emailCycleClosed: true };
-      }
+      // requireMember("id") guarantees request.member is set (R5)
+      const memberId = request.member!.id;
 
       const pref = await prisma.notificationPreference.findUnique({
-        where: { memberId: member.id },
+        where: { memberId },
         select: { emailMention: true, emailAssignment: true, emailCycleClosed: true },
       });
 
@@ -241,27 +214,20 @@ export default async function notificationRoutes(
       preHandler: [requireMember("id")],
       schema: {
         params: WorkspaceIdParam,
-        body: NotificationPreferenceBody,
-        response: { 200: NotificationPreferenceResponseSchema },
+        // Bridge schema is single source of truth for body + response (R4)
+        body: notificationPreferenceItemSchema,
+        response: { 200: notificationPreferenceItemSchema },
       },
     },
     async (request, _reply) => {
-      const workspaceId = request.params.id;
+      // requireMember("id") guarantees request.member is set (R5)
+      const memberId = request.member!.id;
       const { emailMention, emailAssignment, emailCycleClosed } = request.body;
 
-      const member = await prisma.member.findFirst({
-        where: { workspaceId, userId: request.user.userId },
-        select: { id: true },
-      });
-
-      if (!member) {
-        return { emailMention, emailAssignment, emailCycleClosed };
-      }
-
       const upserted = await prisma.notificationPreference.upsert({
-        where: { memberId: member.id },
+        where: { memberId },
         create: {
-          memberId: member.id,
+          memberId,
           emailMention,
           emailAssignment,
           emailCycleClosed,
