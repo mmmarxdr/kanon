@@ -60,9 +60,9 @@ export function buildInviteEmail(opts: BuildInviteEmailOptions): EmailContent {
     </p>`;
 
   const html = renderEmailLayout({
-    eyebrow: `Invitation · ${safeWorkspaceName}`,
+    eyebrow: `Invitation · ${workspaceName}`,
     eyebrowTone: "default",
-    heading: `${safeInviterName} invited you to<br/>Kanon · ${safeWorkspaceName}.`,
+    heading: `${inviterName} invited you to Kanon · ${workspaceName}.`,
     bodyHtml,
     cta: { label: "Accept invitation →", href: inviteUrl },
     disclaimerText:

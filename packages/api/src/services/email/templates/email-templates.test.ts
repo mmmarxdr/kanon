@@ -125,6 +125,32 @@ describe("renderEmailLayout", () => {
 
     expect(html).not.toContain("paste");
   });
+
+  // ── Fix 4: heading and eyebrow are escaped inside renderEmailLayout ───────────
+
+  it("escapes <script> in heading (fix-4)", () => {
+    const html = renderEmailLayout({
+      eyebrow: "Test",
+      eyebrowTone: "default",
+      heading: '<script>alert(1)</script>',
+      bodyHtml: "<p>B</p>",
+      cta: { label: "Go", href: "https://example.com" },
+    });
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+  });
+
+  it("escapes <script> in eyebrow (fix-4)", () => {
+    const html = renderEmailLayout({
+      eyebrow: '<script>xss</script>',
+      eyebrowTone: "default",
+      heading: "H",
+      bodyHtml: "<p>B</p>",
+      cta: { label: "Go", href: "https://example.com" },
+    });
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+  });
 });
 
 // ─── Verify template ──────────────────────────────────────────────────────────

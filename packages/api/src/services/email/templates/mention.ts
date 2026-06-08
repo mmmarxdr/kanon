@@ -37,9 +37,9 @@ export function buildMentionEmail(opts: BuildMentionEmailOptions): EmailContent 
     </p>`;
 
   const html = renderEmailLayout({
-    eyebrow: `Mention · ${safeIssueKey}`,
+    eyebrow: `Mention · ${issueKey}`,
     eyebrowTone: "default",
-    heading: `${safeMentionedByName} mentioned you.`,
+    heading: `${mentionedByName} mentioned you.`,
     bodyHtml,
     cta: { label: "View issue →", href: issueUrl },
     disclaimerText:

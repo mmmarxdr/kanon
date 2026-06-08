@@ -71,9 +71,9 @@ export function buildCycleClosedEmail(opts: BuildCycleClosedEmailOptions): Email
     </table>`;
 
   const html = renderEmailLayout({
-    eyebrow: `Cycle closed · ${safeProjectKey}`,
+    eyebrow: `Cycle closed · ${projectKey}`,
     eyebrowTone: "ok",
-    heading: `${safeCycleName} is complete.`,
+    heading: `${cycleName} is complete.`,
     bodyHtml,
     cta: { label: "View project →", href: `${appUrl}` },
     disclaimerText:

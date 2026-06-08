@@ -65,7 +65,7 @@ export function buildVerifyEmail(opts: BuildVerifyEmailOptions): EmailContent {
   const html = renderEmailLayout({
     eyebrow: "Step 1 of 2 — verify",
     eyebrowTone: "default",
-    heading: "Confirm your email,<br/>then we&#8217;ll spin up your workspace.",
+    heading: "Confirm your email, then we’ll spin up your workspace.",
     bodyHtml,
     cta: { label: "Verify email →", href: verifyUrl },
     linkFallback: verifyUrl,

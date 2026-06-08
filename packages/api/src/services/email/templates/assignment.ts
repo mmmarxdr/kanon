@@ -32,9 +32,9 @@ export function buildAssignmentEmail(opts: BuildAssignmentEmailOptions): EmailCo
     </p>`;
 
   const html = renderEmailLayout({
-    eyebrow: `Assignment · ${safeIssueKey}`,
+    eyebrow: `Assignment · ${issueKey}`,
     eyebrowTone: "ok",
-    heading: `${safeAssignedByName} assigned you an issue.`,
+    heading: `${assignedByName} assigned you an issue.`,
     bodyHtml,
     cta: { label: "View issue →", href: issueUrl },
     disclaimerText:

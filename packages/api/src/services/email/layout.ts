@@ -61,7 +61,12 @@ export interface RenderEmailLayoutOptions {
   linkFallback?: string;
   /** Optional additional section HTML appended above the footer disclaimer */
   extraSectionHtml?: string;
-  /** Optional disclaimer text in the bg2 footer strip */
+  /**
+   * Optional disclaimer text in the bg2 footer strip.
+   * @trusted — this value is injected as raw HTML; caller is responsible
+   * for ensuring it does not contain user-controlled input. Do NOT pass
+   * user-controlled strings here without escaping.
+   */
   disclaimerText?: string;
 }
 
@@ -92,15 +97,21 @@ function headerTagLabel(tone: EyebrowTone): string {
  */
 export function renderEmailLayout(opts: RenderEmailLayoutOptions): string {
   const {
-    eyebrow,
+    eyebrow: eyebrowRaw,
     eyebrowTone,
-    heading,
+    heading: headingRaw,
     bodyHtml,
     cta,
     linkFallback,
     extraSectionHtml = "",
     disclaimerText = "If you didn't expect this, you can safely ignore this email. We never share your address.",
   } = opts;
+
+  // Always escape heading and eyebrow — they may contain user-controlled data.
+  // Templates that previously pre-escaped these values will produce double-encoding;
+  // those callers must pass the raw (unescaped) string and let this function escape.
+  const eyebrow = escapeHtml(eyebrowRaw);
+  const heading = escapeHtml(headingRaw);
 
   const eyeColor = eyebrowColor(eyebrowTone);
   const tagLabel = headerTagLabel(eyebrowTone);
