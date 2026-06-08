@@ -145,6 +145,7 @@ export async function handleSubscribedActivity(
 
   if (recipients.length === 0) return;
 
+  // In-process dedup is handled by the alreadyNotified set passed in from routeEvent.
   await prisma.notification.createMany({
     data: recipients.map((recipientId) => ({
       kind: "subscribed_activity" as const,
@@ -159,7 +160,6 @@ export async function handleSubscribedActivity(
       via: event.via ?? null,
       read: false,
     })),
-    skipDuplicates: true,
   });
 }
 
@@ -208,9 +208,20 @@ export async function routeEvent(event: DomainEvent): Promise<void> {
     }
 
     case "issue.transitioned":
-    case "comment.created":
       await handleSubscribedActivity(event);
       break;
+
+    case "comment.created": {
+      // Build alreadyNotified from mentionedMemberIds so subscribers who received
+      // kind=mention for this comment are NOT also sent subscribed_activity
+      // (specific kind wins — D6 cross-event dedup rule, Fix 1 / KAN-28).
+      const commentPayload = event.payload as { mentionedMemberIds?: string[] };
+      const alreadyNotifiedByMention = new Set<string>(
+        commentPayload.mentionedMemberIds ?? [],
+      );
+      await handleSubscribedActivity(event, alreadyNotifiedByMention);
+      break;
+    }
 
     case "cycle.closed":
       await handleCycleClosed(event);

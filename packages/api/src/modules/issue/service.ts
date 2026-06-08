@@ -453,11 +453,9 @@ export async function updateIssue(
       },
       via,
     });
-
-    // Auto-subscribe new assignee (best-effort, D9)
-    if (body.assigneeId !== null) {
-      void autoSubscribe(issue.id, body.assigneeId, "assignee");
-    }
+    // Note: auto-subscribe for the new assignee is called AFTER prisma.issue.update
+    // (see below) so that a failed update does not leave a phantom subscription row.
+    // Consistent with startWork auto-assign ordering (Fix 5 / KAN-28).
   }
   // Track cycleId change so we can emit scope events AFTER update.
   const prevCycleId: string | null = issue.cycleId;
@@ -507,6 +505,13 @@ export async function updateIssue(
     where: { key },
     data,
   });
+
+  // Auto-subscribe new assignee AFTER successful update (Fix 5 / KAN-28).
+  // Placement here ensures a failed update leaves no phantom subscription row,
+  // consistent with startWork auto-assign ordering (D9, best-effort).
+  if (body.assigneeId !== undefined && body.assigneeId !== null) {
+    void autoSubscribe(issue.id, body.assigneeId, "assignee");
+  }
 
   // Record CycleScopeEvent rows for cycle membership changes. Best-effort —
   // failures must not break the update contract.

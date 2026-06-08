@@ -87,8 +87,9 @@ export async function autoSubscribe(
       // Do not overwrite an existing origin (creator > commenter hierarchy)
       update: {},
     });
-  } catch {
-    // Best-effort: never interrupt the originating mutation
+  } catch (err) {
+    // Best-effort: never interrupt the originating mutation (Fix 6 / KAN-28)
+    console.error("autoSubscribe failed (non-fatal):", err);
   }
 }
 

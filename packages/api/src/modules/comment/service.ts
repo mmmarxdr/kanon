@@ -63,25 +63,11 @@ export async function createComment(
   // Auto-subscribe commenter (best-effort, D9)
   void autoSubscribe(issue.id, memberId, "commenter");
 
-  // Emit comment.created event for subscribed_activity fan-out (S4)
-  try {
-    eventBus.emit({
-      type: "comment.created",
-      workspaceId: issue.project.workspaceId,
-      actorId: memberId,
-      payload: {
-        commentId: comment.id,
-        issueId: issue.id,
-        issueKey: issue.key,
-      },
-      via: via ?? null,
-    });
-  } catch {
-    // Fire-and-forget; never break the mutation
-  }
-
-  // Parse @mentions — best-effort (must not break comment creation)
-  // Emit mention.created per genuinely new mention (D1 delta).
+  // Parse @mentions BEFORE emitting comment.created so that we can include
+  // the mentionedMemberIds in the comment.created payload (Fix 1 / KAN-28).
+  // This lets the subscribed_activity handler skip members who already received
+  // a kind=mention notification, preventing the cross-event dedup gap.
+  let mentionedMemberIds: string[] = [];
   try {
     const { created } = await parseAndUpsertMentions({
       workspaceId: issue.project.workspaceId,
@@ -90,6 +76,7 @@ export async function createComment(
       body: body.body,
       authorMemberId: memberId,
     });
+    mentionedMemberIds = created.map((e) => e.mentionedMemberId);
     for (const entry of created) {
       try {
         eventBus.emit({
@@ -113,6 +100,26 @@ export async function createComment(
     }
   } catch {
     // Mention parsing failure is non-fatal — log silently and continue
+  }
+
+  // Emit comment.created AFTER mentions so mentionedMemberIds are known.
+  // The subscribed_activity handler reads this set and excludes those members
+  // (they already receive kind=mention for the same event — D6 dedup rule).
+  try {
+    eventBus.emit({
+      type: "comment.created",
+      workspaceId: issue.project.workspaceId,
+      actorId: memberId,
+      payload: {
+        commentId: comment.id,
+        issueId: issue.id,
+        issueKey: issue.key,
+        mentionedMemberIds,
+      },
+      via: via ?? null,
+    });
+  } catch {
+    // Fire-and-forget; never break the mutation
   }
 
   return comment;
