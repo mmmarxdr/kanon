@@ -14,6 +14,7 @@
 
 import { prisma } from "../../config/prisma.js";
 import type { DomainEvent } from "../event-bus/types.js";
+import type { NotificationServiceDeps } from "./types.js";
 import {
   getSubscriberIds,
   buildSubscribedActivityRecipients,
@@ -186,23 +187,37 @@ export async function handleCycleClosed(_event: DomainEvent): Promise<void> {
  * subscribed_activity fan-out skips members who already received a more
  * targeted notification for the same event (D6 dedup rule).
  */
-export async function routeEvent(event: DomainEvent): Promise<void> {
+export async function routeEvent(
+  event: DomainEvent,
+  deps: NotificationServiceDeps = {},
+): Promise<void> {
+  const { logger } = deps;
   switch (event.type) {
     case "mention.created":
       await handleMentionCreated(event);
       break;
 
     case "issue.assigned": {
-      // Specific kind first — capture who was already notified
+      // Per-handler isolation: handleIssueAssigned runs in its own try/catch so
+      // a DB failure there never suppresses the subscribed_activity fan-out.
+      // payload.to is only added to alreadyNotified if the assignment write succeeded.
       const alreadyNotified = new Set<string>();
       const payload = event.payload as { to?: string | null };
-      if (payload.to && payload.to !== event.actorId) {
+      try {
         await handleIssueAssigned(event);
-        alreadyNotified.add(payload.to);
-      } else {
-        await handleIssueAssigned(event);
+        // Add to alreadyNotified only on success — if write failed, subscriber
+        // may still receive subscribed_activity (the specific-kind won't be there).
+        if (payload.to && payload.to !== event.actorId) {
+          alreadyNotified.add(payload.to);
+        }
+      } catch (err) {
+        // Log but do NOT re-throw — subscribed_activity fan-out MUST still run.
+        logger?.error(
+          { err, eventType: event.type, eventId: event.id },
+          "handleIssueAssigned failed; continuing with subscribed_activity fan-out",
+        );
       }
-      // subscribed_activity fan-out — skip the assignee if they got kind=assignment
+      // subscribed_activity fan-out — always runs regardless of assignment handler result
       await handleSubscribedActivity(event, alreadyNotified);
       break;
     }

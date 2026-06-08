@@ -239,6 +239,51 @@ describe("3.1c — mention delta: edit re-parse → no duplicate Notification", 
   });
 });
 
+describe("3.1e — issue.assigned handler isolation: handleIssueAssigned DB failure does not suppress subscribed_activity", () => {
+  it("if handleIssueAssigned throws, handleSubscribedActivity still runs for subscribers", async () => {
+    vi.clearAllMocks();
+    const bus = makeEventBusStub();
+    const mockLogger = { error: vi.fn(), info: vi.fn(), debug: vi.fn() };
+
+    // notification.create rejects (simulates assignment write failure)
+    vi.mocked(prisma.notification.create).mockRejectedValue(new Error("DB down for assignment"));
+    // notification.createMany resolves (subscriber fan-out)
+    vi.mocked(prisma.notification as any).createMany = vi.fn().mockResolvedValue({ count: 1 });
+
+    // issueSubscription.findMany must return a subscriber so fan-out runs
+    (prisma as any).issueSubscription = {
+      findMany: vi.fn().mockResolvedValue([{ memberId: "subscriber-member-id" }]),
+    };
+
+    registerNotificationService(bus as unknown as IEventBus, { logger: mockLogger as any });
+
+    const event: DomainEvent = {
+      id: 10,
+      type: "issue.assigned",
+      workspaceId: "ws-1",
+      actorId: "actor-id",
+      payload: {
+        issueKey: "KAN-99",
+        issueId: "issue-99",
+        from: null,
+        to: "assignee-member-id", // different from actor
+      },
+      timestamp: new Date().toISOString(),
+      via: null,
+    };
+    bus._emit(event);
+    // Allow async handlers to run
+    await new Promise((r) => setTimeout(r, 20));
+
+    // notification.create was attempted (and failed), error logged
+    expect(prisma.notification.create).toHaveBeenCalledOnce();
+    expect(mockLogger.error).toHaveBeenCalled();
+
+    // subscribed_activity fan-out (createMany) MUST still have been called
+    expect((prisma.notification as any).createMany).toHaveBeenCalled();
+  });
+});
+
 describe("3.1d — cycle.closed → no in-app Notification row (D5: email-only this wave)", () => {
   it("cycle.closed event → notification.create NOT called", async () => {
     vi.clearAllMocks();
