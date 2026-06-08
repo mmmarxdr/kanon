@@ -126,6 +126,56 @@ function makeCycleClosedEvent(): DomainEvent {
   };
 }
 
+// ── Fix 6: issueKey URL-encoding ──────────────────────────────────────────────
+
+describe("Fix 6 — issueKey with special chars is URL-encoded in CTA href", () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it("mention: issueKey with special chars is percent-encoded in issueUrl", async () => {
+    vi.mocked(prisma.notification.create).mockResolvedValue({} as any);
+    vi.mocked(prisma.notificationPreference.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.member.findUnique).mockImplementation((args: any) => {
+      if (args?.where?.id === "member-A") {
+        return Promise.resolve({ id: "member-A", user: { email: "a@test.com" } } as any);
+      }
+      return Promise.resolve({ id: "actor-id", user: { displayName: "Alice", email: "alice@test.com" } } as any);
+    });
+
+    const provider = makeEmailProvider();
+    const event = makeMentionEvent({ issueKey: "KAN-42 special&key" });
+
+    await handleMentionCreated(event, { emailProvider: provider });
+    await flush();
+
+    expect(provider.send).toHaveBeenCalledOnce();
+    const msg = provider.send.mock.calls[0]![0] as { html: string };
+    expect(msg.html).not.toContain("/issue/KAN-42 special&key");
+    expect(msg.html).toContain("/issue/KAN-42%20special%26key");
+  });
+
+  it("assignment: issueKey with special chars is percent-encoded in issueUrl", async () => {
+    vi.mocked(prisma.notification.create).mockResolvedValue({} as any);
+    vi.mocked(prisma.notificationPreference.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.member.findUnique).mockImplementation((args: any) => {
+      if (args?.where?.id === "member-B") {
+        return Promise.resolve({ id: "member-B", user: { email: "b@test.com" } } as any);
+      }
+      return Promise.resolve({ id: "actor-id", user: { displayName: "Bob" } } as any);
+    });
+
+    const provider = makeEmailProvider();
+    const event = makeAssignmentEvent({ issueKey: "KAN-42 special&key" });
+
+    await handleIssueAssigned(event, { emailProvider: provider });
+    await flush();
+
+    expect(provider.send).toHaveBeenCalledOnce();
+    const msg = provider.send.mock.calls[0]![0] as { html: string };
+    expect(msg.html).not.toContain("/issue/KAN-42 special&key");
+    expect(msg.html).toContain("/issue/KAN-42%20special%26key");
+  });
+});
+
 // ── Issue 1: issueTitle in mention email ──────────────────────────────────────
 
 describe("Issue 1a — mention email uses issueTitle from payload, not issueKey", () => {

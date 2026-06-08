@@ -132,7 +132,7 @@ export async function handleMentionCreated(
           // Use payload.issueTitle when available — falls back to key for safety (R1)
           issueTitle: payload.issueTitle ?? payload.issueKey,
           context: payload.context,
-          issueUrl: `${APP_URL}/issue/${payload.issueKey}`,
+          issueUrl: `${APP_URL}/issue/${encodeURIComponent(payload.issueKey)}`,
           appUrl: APP_URL,
         });
 
@@ -223,7 +223,7 @@ export async function handleIssueAssigned(
           assignedByName: actorMember?.user?.displayName ?? "Someone",
           issueKey: payload.issueKey,
           issueTitle: payload.issueTitle ?? payload.issueKey,
-          issueUrl: `${APP_URL}/issue/${payload.issueKey}`,
+          issueUrl: `${APP_URL}/issue/${encodeURIComponent(payload.issueKey)}`,
           appUrl: APP_URL,
         });
 
