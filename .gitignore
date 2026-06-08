@@ -42,3 +42,10 @@ coverage/
 id_rsa*
 secrets/
 .db-backups/
+
+# Local tooling state
+.kanon
+.antigravitycli/
+.atl/.skill-registry.cache.json
+.claude/worktrees/
+.claude/scheduled_tasks.lock
