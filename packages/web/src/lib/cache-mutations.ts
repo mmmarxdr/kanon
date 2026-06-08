@@ -7,9 +7,9 @@
  * updated when cycle membership changes" in one auditable place.
  */
 import type { QueryClient } from "@tanstack/react-query";
-import { cycleKeys, issueKeys, notificationKeys } from "./query-keys";
+import { cycleKeys, issueKeys, notificationKeys, notificationPreferenceKeys } from "./query-keys";
 import type { IssueDetail } from "@/types/issue";
-import type { NotificationDashboardItem } from "@kanon/bridge";
+import type { NotificationDashboardItem, NotificationPreferenceItem } from "@kanon/bridge";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -175,6 +175,42 @@ export function setAllNotificationsRead(
     queryClient.setQueryData<NotificationDashboardItem[]>(
       notificationKeys.list(workspaceId),
       previous.map((n) => ({ ...n, read: true })),
+    );
+  }
+
+  return previous;
+}
+
+// ---------------------------------------------------------------------------
+// setNotificationPreferences
+// ---------------------------------------------------------------------------
+
+/**
+ * Optimistically write a full NotificationPreferenceItem object to the cache.
+ *
+ * Used in `onMutate` of the update-preferences mutation so the settings panel
+ * reflects the new toggle state without a round-trip on the happy path.
+ *
+ * The cache entry is a plain object (not an array), so the update is a direct
+ * replacement — no `.map()` or per-item logic needed.
+ *
+ * @param next — The full new preferences object to write.
+ * @returns The previous NotificationPreferenceItem for rollback in `onError`,
+ *          or undefined if no cache entry existed.
+ */
+export function setNotificationPreferences(
+  queryClient: QueryClient,
+  workspaceId: string,
+  next: NotificationPreferenceItem,
+): NotificationPreferenceItem | undefined {
+  const previous = queryClient.getQueryData<NotificationPreferenceItem>(
+    notificationPreferenceKeys.detail(workspaceId),
+  );
+
+  if (previous !== undefined) {
+    queryClient.setQueryData<NotificationPreferenceItem>(
+      notificationPreferenceKeys.detail(workspaceId),
+      next,
     );
   }
 
