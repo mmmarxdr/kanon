@@ -7,6 +7,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { MembersSection } from "@/features/settings/members-section";
 import { InvitesSection } from "@/features/settings/invites-section";
 import { DomainsSection } from "@/features/settings/domains-section";
+import { NotificationPreferencesSection } from "@/features/settings/notification-preferences-section";
 
 export const settingsRoute = createRoute({
   path: "/settings",
@@ -14,12 +15,13 @@ export const settingsRoute = createRoute({
   component: SettingsPage,
 });
 
-type SettingsTab = "members" | "invites" | "domains";
+type SettingsTab = "members" | "invites" | "domains" | "notifications";
 
 const TABS: { key: SettingsTab; label: string }[] = [
   { key: "members", label: "Members" },
   { key: "invites", label: "Invites" },
   { key: "domains", label: "Allowed Domains" },
+  { key: "notifications", label: "Notifications" },
 ];
 
 function SettingsPage() {
@@ -143,6 +145,9 @@ function SettingsPage() {
               currentUserRole={currentUserRole}
               allowedDomains={workspace?.allowedDomains ?? []}
             />
+          )}
+          {activeTab === "notifications" && (
+            <NotificationPreferencesSection workspaceId={workspaceId} />
           )}
         </div>
       </div>
