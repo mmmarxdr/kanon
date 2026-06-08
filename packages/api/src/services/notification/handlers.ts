@@ -108,8 +108,9 @@ export async function handleMentionCreated(
     const { logger } = deps;
 
     void (async () => {
-      // Batch-load preferences and member email
-      const [prefs, memberWithUser] = await Promise.all([
+      // Batch-load preferences, recipient email, and actor display name in parallel
+      // to avoid sequential round-trips (actor lookup moved here from inside the gate).
+      const [prefs, memberWithUser, actorMember] = await Promise.all([
         prisma.notificationPreference.findMany({
           where: { memberId: { in: [recipientId] } },
           select: { memberId: true, emailMention: true, emailAssignment: true, emailCycleClosed: true },
@@ -118,13 +119,14 @@ export async function handleMentionCreated(
           where: { id: recipientId },
           select: { id: true, user: { select: { email: true } } },
         }),
+        // Actor lookup: only displayName needed for the email template
+        prisma.member.findUnique({
+          where: { id: event.actorId ?? "" },
+          select: { user: { select: { displayName: true } } },
+        }),
       ]);
 
       if (memberWithUser?.user?.email && isEmailEnabled(prefs, recipientId, "emailMention")) {
-        const actorMember = await prisma.member.findUnique({
-          where: { id: event.actorId ?? "" },
-          select: { user: { select: { displayName: true, email: true } } },
-        });
 
         const msg = buildMentionEmail({
           mentionedByName: actorMember?.user?.displayName ?? "Someone",
@@ -202,7 +204,9 @@ export async function handleIssueAssigned(
     const { logger } = deps;
 
     void (async () => {
-      const [prefs, memberWithUser] = await Promise.all([
+      // Batch-load preferences, recipient email, and actor display name in parallel
+      // to avoid sequential round-trips (actor lookup moved here from inside the gate).
+      const [prefs, memberWithUser, actorMember] = await Promise.all([
         prisma.notificationPreference.findMany({
           where: { memberId: { in: [recipientId] } },
           select: { memberId: true, emailMention: true, emailAssignment: true, emailCycleClosed: true },
@@ -211,16 +215,16 @@ export async function handleIssueAssigned(
           where: { id: recipientId },
           select: { id: true, user: { select: { email: true } } },
         }),
+        // Actor lookup: only displayName needed for the email template
+        prisma.member.findUnique({
+          where: { id: event.actorId ?? "" },
+          select: { user: { select: { displayName: true } } },
+        }),
       ]);
 
       if (memberWithUser?.user?.email && isEmailEnabled(prefs, recipientId, "emailAssignment")) {
-        const actorMember = await prisma.member.findUnique({
-          where: { id: event.actorId ?? "" },
-          select: { user: { select: { displayName: true } } },
-        });
-
         const msg = buildAssignmentEmail({
-          assignedByName: actorMember?.user?.displayName ?? "Someone",
+          assignedByName: actorMember?.user?.displayName ?? "Someone", // actorMember pre-fetched in parallel above
           issueKey: payload.issueKey,
           issueTitle: payload.issueTitle ?? payload.issueKey,
           issueUrl: `${APP_URL}/issue/${encodeURIComponent(payload.issueKey)}`,

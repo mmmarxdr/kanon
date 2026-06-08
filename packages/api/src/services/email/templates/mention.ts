@@ -22,6 +22,11 @@ export interface BuildMentionEmailOptions {
 export function buildMentionEmail(opts: BuildMentionEmailOptions): EmailContent {
   const { mentionedByName, issueKey, issueTitle, context, issueUrl, appUrl } = opts;
 
+  // safe* variables: HTML-escaped user-controlled strings — safe to interpolate into HTML.
+  // Raw variables (mentionedByName, issueKey, etc.) are used only in:
+  //   - the text fallback (plain text, no HTML context), or
+  //   - renderEmailLayout opts that are themselves escaped inside renderEmailLayout
+  //     (eyebrow, heading are always run through escapeHtml there).
   const safeMentionedByName = escapeHtml(mentionedByName);
   const safeIssueKey = escapeHtml(issueKey);
   const safeIssueTitle = escapeHtml(issueTitle);
@@ -29,14 +34,17 @@ export function buildMentionEmail(opts: BuildMentionEmailOptions): EmailContent 
 
   const bodyHtml = `
     <p style="margin:10px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#3A3D40;letter-spacing:-0.005em;">
+      <!-- safe* interpolations: HTML-escaped above -->
       <strong style="color:#0E1011;">${safeMentionedByName}</strong> mentioned you in
       <strong style="color:#0E1011;">${safeIssueKey}</strong> — ${safeIssueTitle}.
     </p>
     <p style="margin:10px 0 0;font-family:'Courier New',Courier,monospace;font-size:12px;padding:10px 14px;background:#F8F8F6;border:1px solid #D5D5D0;border-radius:4px;color:#3A3D40;word-break:break-word;">
+      <!-- safeContext: user comment snippet — HTML-escaped above -->
       ${safeContext}
     </p>`;
 
   const html = renderEmailLayout({
+    // Raw strings passed here: renderEmailLayout runs escapeHtml on eyebrow + heading internally
     eyebrow: `Mention · ${issueKey}`,
     eyebrowTone: "default",
     heading: `${mentionedByName} mentioned you.`,

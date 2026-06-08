@@ -48,10 +48,12 @@ const envSchema = z.object({
     .default("Kanon <noreply@kanon.dev>"),
   APP_URL: z
     .string()
+    .url("APP_URL must be a valid URL")
     .optional()
     .default("http://localhost:5173"),
   BASE_URL: z
     .string()
+    .url("BASE_URL must be a valid URL")
     .optional()
     .default("http://localhost:3000"),
   ONBOARDING_TOKEN_TTL_HOURS: z

@@ -59,7 +59,7 @@ function makeEmailProvider(): EmailProvider & { send: ReturnType<typeof vi.fn> }
   return { send: vi.fn().mockResolvedValue(undefined) };
 }
 
-const flush = () => new Promise((r) => setTimeout(r, 30));
+// vi.waitFor replaces fixed-delay flush — see per-test usage for positive vs negative strategy
 
 function makeMentionEvent(overrides: Partial<DomainEvent["payload"]> = {}): DomainEvent {
   return {
@@ -145,9 +145,7 @@ describe("Fix 6 — issueKey with special chars is URL-encoded in CTA href", () 
     const event = makeMentionEvent({ issueKey: "KAN-42 special&key" });
 
     await handleMentionCreated(event, { emailProvider: provider });
-    await flush();
-
-    expect(provider.send).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(provider.send).toHaveBeenCalledOnce());
     const msg = provider.send.mock.calls[0]![0] as { html: string };
     expect(msg.html).not.toContain("/issue/KAN-42 special&key");
     expect(msg.html).toContain("/issue/KAN-42%20special%26key");
@@ -167,9 +165,7 @@ describe("Fix 6 — issueKey with special chars is URL-encoded in CTA href", () 
     const event = makeAssignmentEvent({ issueKey: "KAN-42 special&key" });
 
     await handleIssueAssigned(event, { emailProvider: provider });
-    await flush();
-
-    expect(provider.send).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(provider.send).toHaveBeenCalledOnce());
     const msg = provider.send.mock.calls[0]![0] as { html: string };
     expect(msg.html).not.toContain("/issue/KAN-42 special&key");
     expect(msg.html).toContain("/issue/KAN-42%20special%26key");
@@ -198,9 +194,7 @@ describe("Issue 1a — mention email uses issueTitle from payload, not issueKey"
     const event = makeMentionEvent({ issueTitle: "Fix the login bug" });
 
     await handleMentionCreated(event, { emailProvider: provider });
-    await flush();
-
-    expect(provider.send).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(provider.send).toHaveBeenCalledOnce());
     const msg = provider.send.mock.calls[0]![0] as { subject: string; html: string; text: string; to: string };
     // The text must include the real title, not "KAN-42 — KAN-42"
     expect(msg.text).toContain("Fix the login bug");
@@ -230,9 +224,7 @@ describe("Issue 1b — assignment email uses issueTitle from payload, not issueK
     const event = makeAssignmentEvent({ issueTitle: "Fix the login bug" });
 
     await handleIssueAssigned(event, { emailProvider: provider });
-    await flush();
-
-    expect(provider.send).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(provider.send).toHaveBeenCalledOnce());
     const msg = provider.send.mock.calls[0]![0] as { subject: string; html: string; text: string; to: string };
     expect(msg.text).toContain("Fix the login bug");
     expect(msg.text).not.toMatch(/KAN-42.*KAN-42/);
@@ -305,9 +297,7 @@ describe("Issue 3 — handleCycleClosed dispatch verification", () => {
     const provider = makeEmailProvider();
 
     await handleCycleClosed(makeCycleClosedEvent(), { emailProvider: provider });
-    await flush();
-
-    expect(provider.send).toHaveBeenCalledTimes(2); // both members
+    await vi.waitFor(() => expect(provider.send).toHaveBeenCalledTimes(2)); // both members
     const calls = provider.send.mock.calls.map((c: any) => c[0].to);
     expect(calls).toContain("one@test.com");
     expect(calls).toContain("two@test.com");
@@ -325,9 +315,8 @@ describe("Issue 3 — handleCycleClosed dispatch verification", () => {
     const provider = makeEmailProvider();
 
     await handleCycleClosed(makeCycleClosedEvent(), { emailProvider: provider });
-    await flush();
-
-    expect(provider.send).toHaveBeenCalledTimes(1);
+    // Wait for the 1 opted-in send, then assert the opted-out member was not included
+    await vi.waitFor(() => expect(provider.send).toHaveBeenCalledTimes(1));
     expect(provider.send.mock.calls[0]![0].to).toBe("two@test.com");
   });
 
@@ -336,9 +325,7 @@ describe("Issue 3 — handleCycleClosed dispatch verification", () => {
     const provider = makeEmailProvider();
 
     await handleCycleClosed(makeCycleClosedEvent(), { emailProvider: provider });
-    await flush();
-
-    expect(provider.send).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(provider.send).toHaveBeenCalledTimes(2));
   });
 
   it("provider reject → handler does not throw", async () => {
@@ -351,9 +338,8 @@ describe("Issue 3 — handleCycleClosed dispatch verification", () => {
       handleCycleClosed(makeCycleClosedEvent(), { emailProvider: provider, logger: logger as any }),
     ).resolves.toBeUndefined();
 
-    // Fix 7: flush async work and assert error was logged (not silently swallowed)
-    await flush();
-    expect(logger.error).toHaveBeenCalled();
+    // Wait for async work to complete and error to be logged
+    await vi.waitFor(() => expect(logger.error).toHaveBeenCalled());
   });
 
   // ── Fix 1: handleCycleClosed email body is fire-and-forget IIFE ──────────────
@@ -368,8 +354,7 @@ describe("Issue 3 — handleCycleClosed dispatch verification", () => {
       handleCycleClosed(makeCycleClosedEvent(), { emailProvider: provider, logger: logger as any }),
     ).resolves.toBeUndefined();
 
-    await flush();
-    expect(logger.error).toHaveBeenCalled();
+    await vi.waitFor(() => expect(logger.error).toHaveBeenCalled());
   });
 
   // ── Fix 2: email sends batched in chunks of 10 ───────────────────────────────
@@ -389,9 +374,7 @@ describe("Issue 3 — handleCycleClosed dispatch verification", () => {
     const provider = makeEmailProvider();
 
     await handleCycleClosed(makeCycleClosedEvent(), { emailProvider: provider });
-    await flush();
-
-    expect(provider.send).toHaveBeenCalledTimes(N);
+    await vi.waitFor(() => expect(provider.send).toHaveBeenCalledTimes(N));
   });
 
   it("fix-2: a send rejection in one chunk does not stop subsequent recipients", async () => {
@@ -416,10 +399,8 @@ describe("Issue 3 — handleCycleClosed dispatch verification", () => {
     });
 
     await handleCycleClosed(makeCycleClosedEvent(), { emailProvider: provider, logger: logger as any });
-    await flush();
-
     // All N sends attempted; failure logged; others proceeded
-    expect(provider.send).toHaveBeenCalledTimes(N);
+    await vi.waitFor(() => expect(provider.send).toHaveBeenCalledTimes(N));
     expect(logger.error).toHaveBeenCalled();
   });
 });

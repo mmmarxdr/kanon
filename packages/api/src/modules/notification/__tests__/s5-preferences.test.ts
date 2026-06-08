@@ -6,6 +6,11 @@
  * 5.3c — closeCycle → provider spy called for opted-in members, not opted-out
  *
  * TDD: RED first — tests reference endpoints and behaviour not yet implemented.
+ *
+ * Isolation note (item 7): 5.3c is a separate top-level describe with its own
+ * app lifecycle. This prevents the shared `app` from also subscribing to the
+ * singleton EventBus during 5.3c, which would cause double-dispatch and make
+ * sendSpy call-count assertions non-deterministic.
  */
 
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
@@ -21,12 +26,8 @@ import {
 import { prisma } from "../../../config/prisma.js";
 import type { EmailProvider } from "../../../services/email/types.js";
 
-// ── Helper: wait for async event processing ───────────────────────────────
-
-function waitForEventProcessing(ms = 80) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
+// ─────────────────────────────────────────────────────────────────────────────
+// 5.3a + 5.3b — GET/PUT preferences (shared app, no email provider spy)
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Notification preferences — S5 / KAN-29", () => {
@@ -193,95 +194,135 @@ describe("Notification preferences — S5 / KAN-29", () => {
 
       expect(res.statusCode).toBe(400);
     });
+
+    it("rejects body with missing required fields (full-replace: all 3 booleans required) → 400", async () => {
+      // PUT is a full-replace: omitting any of the 3 required booleans must return 400.
+      // The bridge schema uses z.boolean() (no .optional()) so Zod rejects missing fields.
+      const ws = await seedTestWorkspace();
+      const member = await seedTestMember(ws.id, { username: "pref-missing-field-user" });
+
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/workspaces/${ws.id}/notification-preferences`,
+        headers: {
+          authorization: `Bearer ${member.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          emailMention: false,
+          // emailAssignment intentionally omitted — must be rejected
+          emailCycleClosed: true,
+        }),
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
   });
 
-  // ── 5.3c — closeCycle → email sent to opted-in members (provider spy) ───────
+});
 
-  describe("5.3c — closeCycle sends emails to opted-in members only", () => {
-    it("closing a cycle calls provider.send for opted-in members and not for opted-out ones", async () => {
-      // Fix-3: inject a spy EmailProvider into the test app so we can assert
-      // the closeCycle → eventBus → handleCycleClosed → provider.send wiring
-      // end-to-end, not just DB state.
-      const sendSpy = vi.fn().mockResolvedValue(undefined);
-      const spyProvider: EmailProvider = { send: sendSpy };
-      const spyApp = await createTestApp({ emailProvider: spyProvider });
+// ─────────────────────────────────────────────────────────────────────────────
+// 5.3c — closeCycle email dispatch (isolated: own app, no shared EventBus sub)
+//
+// This test is a TOP-LEVEL describe, NOT nested inside the shared preferences
+// describe above. Nesting it would cause both `app` and `spyApp` to subscribe
+// to the singleton EventBus simultaneously — the shared app's ConsoleProvider
+// handler would also fire, making sendSpy call-count assertions non-deterministic.
+// Running isolated here ensures only `spyApp`'s handler is subscribed.
+// ─────────────────────────────────────────────────────────────────────────────
 
-      try {
-        const ws = await seedTestWorkspace();
-        const actor = await seedTestMember(ws.id, { username: "cycle-actor" });
-        const memberOptIn = await seedTestMember(ws.id, { username: "opted-in" });
-        const memberOptOut = await seedTestMember(ws.id, { username: "opted-out" });
+describe("5.3c — closeCycle sends emails to opted-in members only (isolated)", () => {
+  beforeEach(async () => {
+    await cleanDatabase();
+  });
 
-        const project = await seedTestProject(ws.id);
+  afterAll(async () => {
+    await disconnectTestDb();
+  });
 
-        // Grant project membership to all three
-        await prisma.projectMember.create({
-          data: { userId: actor.userId, projectId: project.id, role: "owner" },
-        });
-        await prisma.projectMember.create({
-          data: { userId: memberOptIn.userId, projectId: project.id, role: "member" },
-        });
-        await prisma.projectMember.create({
-          data: { userId: memberOptOut.userId, projectId: project.id, role: "member" },
-        });
+  it("closing a cycle calls provider.send for opted-in members and not for opted-out ones", async () => {
+    // Inject a spy EmailProvider so we can assert the full wiring:
+    // closeCycle → eventBus → handleCycleClosed → provider.send
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    const spyProvider: EmailProvider = { send: sendSpy };
+    // Only ONE app is created — no shared app subscribes to the singleton bus here.
+    const spyApp = await createTestApp({ emailProvider: spyProvider });
 
-        // memberOptOut opts out of cycle-closed emails
-        await prisma.notificationPreference.create({
-          data: {
-            memberId: memberOptOut.id,
-            emailMention: true,
-            emailAssignment: true,
-            emailCycleClosed: false,
-          },
-        });
+    try {
+      const ws = await seedTestWorkspace();
+      const actor = await seedTestMember(ws.id, { username: "cycle-actor" });
+      const memberOptIn = await seedTestMember(ws.id, { username: "opted-in" });
+      const memberOptOut = await seedTestMember(ws.id, { username: "opted-out" });
 
-        // Create a cycle
-        const cycleRes = await spyApp.inject({
-          method: "POST",
-          url: `/api/projects/${project.key}/cycles`,
-          headers: {
-            authorization: `Bearer ${actor.token}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            name: "Sprint 1",
-            startDate: new Date().toISOString(),
-            endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-          }),
-        });
+      const project = await seedTestProject(ws.id);
 
-        expect(cycleRes.statusCode).toBe(201);
-        const { id: cycleId } = cycleRes.json();
+      // Grant project membership to all three
+      await prisma.projectMember.create({
+        data: { userId: actor.userId, projectId: project.id, role: "owner" },
+      });
+      await prisma.projectMember.create({
+        data: { userId: memberOptIn.userId, projectId: project.id, role: "member" },
+      });
+      await prisma.projectMember.create({
+        data: { userId: memberOptOut.userId, projectId: project.id, role: "member" },
+      });
 
-        // Close the cycle
-        const closeRes = await spyApp.inject({
-          method: "POST",
-          url: `/api/cycles/${cycleId}/close`,
-          headers: { authorization: `Bearer ${actor.token}` },
-        });
+      // memberOptOut opts out of cycle-closed emails
+      await prisma.notificationPreference.create({
+        data: {
+          memberId: memberOptOut.id,
+          emailMention: true,
+          emailAssignment: true,
+          emailCycleClosed: false,
+        },
+      });
 
-        expect(closeRes.statusCode).toBe(200);
+      // Create a cycle
+      const cycleRes = await spyApp.inject({
+        method: "POST",
+        url: `/api/projects/${project.key}/cycles`,
+        headers: {
+          authorization: `Bearer ${actor.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Sprint 1",
+          startDate: new Date().toISOString(),
+          endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        }),
+      });
 
-        // Allow async email dispatch to process
-        await waitForEventProcessing();
+      expect(cycleRes.statusCode).toBe(201);
+      const { id: cycleId } = cycleRes.json();
 
-        // No in-app Notification rows for cycle.closed (D5: email-only)
-        const notificationRows = await prisma.notification.findMany({
-          where: { kind: "cycle_closed" },
-        });
-        expect(notificationRows).toHaveLength(0);
+      // Close the cycle
+      const closeRes = await spyApp.inject({
+        method: "POST",
+        url: `/api/cycles/${cycleId}/close`,
+        headers: { authorization: `Bearer ${actor.token}` },
+      });
 
-        // Actor + memberOptIn → 2 opted-in members → provider.send called twice
-        expect(sendSpy).toHaveBeenCalledTimes(2);
-        const sentTos = sendSpy.mock.calls.map((c: any) => c[0].to as string);
-        expect(sentTos).toContain(actor.email);
-        expect(sentTos).toContain(memberOptIn.email);
+      expect(closeRes.statusCode).toBe(200);
 
-        // memberOptOut opted out → provider.send NOT called with their email
-        expect(sentTos).not.toContain(memberOptOut.email);
-      } finally {
-        await spyApp.close();
-      }
-    });
+      // Wait for async email dispatch (2 opted-in members) using vi.waitFor
+      // instead of a fixed sleep — avoids timing flakiness.
+      await vi.waitFor(() => expect(sendSpy).toHaveBeenCalledTimes(2), { timeout: 3000 });
+
+      // No in-app Notification rows for cycle.closed (D5: email-only)
+      const notificationRows = await prisma.notification.findMany({
+        where: { kind: "cycle_closed" },
+      });
+      expect(notificationRows).toHaveLength(0);
+
+      // Actor + memberOptIn → 2 opted-in members → provider.send called twice
+      const sentTos = sendSpy.mock.calls.map((c: any) => c[0].to as string);
+      expect(sentTos).toContain(actor.email);
+      expect(sentTos).toContain(memberOptIn.email);
+
+      // memberOptOut opted out → provider.send NOT called with their email
+      expect(sentTos).not.toContain(memberOptOut.email);
+    } finally {
+      await spyApp.close();
+    }
   });
 });

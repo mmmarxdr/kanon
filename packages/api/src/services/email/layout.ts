@@ -63,9 +63,11 @@ export interface RenderEmailLayoutOptions {
   extraSectionHtml?: string;
   /**
    * Optional disclaimer text in the bg2 footer strip.
-   * @trusted — this value is injected as raw HTML; caller is responsible
-   * for ensuring it does not contain user-controlled input. Do NOT pass
-   * user-controlled strings here without escaping.
+   * @raw — injected as-is into the HTML template without escaping.
+   * Caller is responsible for ensuring this does NOT contain user-controlled
+   * input. Contrast with `eyebrow` / `heading`, which are always run through
+   * `escapeHtml` inside `renderEmailLayout`. Do NOT pass user-controlled
+   * strings here without pre-escaping.
    */
   disclaimerText?: string;
 }
@@ -94,6 +96,12 @@ function headerTagLabel(tone: EyebrowTone): string {
  * Render the shared email card layout.
  * Returns a full HTML document string with all styles inlined.
  * No <style> block, no Google Fonts link, no flex/grid/SVG.
+ *
+ * Intentional: this function does NOT strip or replace `<br>` tags from
+ * caller-supplied `bodyHtml`. The `bodyHtml` field is trusted pre-built HTML;
+ * stripping would corrupt line-breaks intentionally inserted by templates.
+ * User-controlled data must be escaped via `escapeHtml` BEFORE being placed
+ * in `bodyHtml` — it is never passed raw through this renderer.
  */
 export function renderEmailLayout(opts: RenderEmailLayoutOptions): string {
   const {

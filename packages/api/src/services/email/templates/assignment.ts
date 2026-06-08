@@ -21,17 +21,22 @@ export interface BuildAssignmentEmailOptions {
 export function buildAssignmentEmail(opts: BuildAssignmentEmailOptions): EmailContent {
   const { assignedByName, issueKey, issueTitle, issueUrl, appUrl } = opts;
 
+  // safe* variables: HTML-escaped user-controlled strings — safe to interpolate into HTML.
+  // Raw variables are passed only to renderEmailLayout opts (eyebrow, heading) which
+  // apply escapeHtml internally, or to the plain-text fallback (no HTML context).
   const safeAssignedByName = escapeHtml(assignedByName);
   const safeIssueKey = escapeHtml(issueKey);
   const safeIssueTitle = escapeHtml(issueTitle);
 
   const bodyHtml = `
     <p style="margin:10px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#3A3D40;letter-spacing:-0.005em;">
+      <!-- safe* interpolations: HTML-escaped above -->
       <strong style="color:#0E1011;">${safeAssignedByName}</strong> assigned you to
       <strong style="color:#0E1011;">${safeIssueKey}</strong> — ${safeIssueTitle}.
     </p>`;
 
   const html = renderEmailLayout({
+    // Raw strings passed here: renderEmailLayout runs escapeHtml on eyebrow + heading internally
     eyebrow: `Assignment · ${issueKey}`,
     eyebrowTone: "ok",
     heading: `${assignedByName} assigned you an issue.`,

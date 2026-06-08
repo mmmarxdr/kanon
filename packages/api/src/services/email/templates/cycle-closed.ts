@@ -25,6 +25,12 @@ export interface BuildCycleClosedEmailOptions {
 export function buildCycleClosedEmail(opts: BuildCycleClosedEmailOptions): EmailContent {
   const { cycleName, projectName, projectKey, velocity, completed, planned, scopeAdded, scopeRemoved, appUrl } = opts;
 
+  // safe* variables: HTML-escaped user-controlled strings — safe to interpolate into HTML.
+  // Numeric fields (velocity, completed, planned, scopeAdded, scopeRemoved) are
+  // interpolated raw — they are typed as number and cannot contain HTML injection.
+  // Raw string variables (cycleName, projectName, projectKey) are passed only to
+  // renderEmailLayout opts (eyebrow, heading, subject) which escape them internally,
+  // or to the plain-text fallback (no HTML context).
   const safeCycleName = escapeHtml(cycleName);
   const safeProjectName = escapeHtml(projectName);
   const safeProjectKey = escapeHtml(projectKey);

@@ -103,8 +103,11 @@ function makeAssignmentEvent(assigneeMemberId = "member-B"): DomainEvent {
   };
 }
 
-// ── Helper to flush micro-tasks ──────────────────────────────────────────────
-const flush = () => new Promise((r) => setTimeout(r, 20));
+// ── Helper: wait for a condition using vi.waitFor instead of fixed sleeps ──────
+// vi.waitFor polls until the assertion passes (max 1000ms by default).
+// For negative assertions ("NOT called"), first await a positive proxy signal
+// (e.g. prisma.notification.create was called) to confirm async work has
+// finished, then assert the negative — do NOT wrap negatives directly in waitFor.
 
 describe("5.2a — mention email: pref absent → email sent (default ON)", () => {
   let bus: ReturnType<typeof makeEventBusStub>;
@@ -137,9 +140,7 @@ describe("5.2a — mention email: pref absent → email sent (default ON)", () =
 
   it("mention.created with no pref row → provider.send called once", async () => {
     bus._emit(makeMentionEvent());
-    await flush();
-
-    expect(provider.send).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(provider.send).toHaveBeenCalledOnce());
     const msg = provider.send.mock.calls[0]![0];
     expect(msg.to).toBe("a@test.com");
   });
@@ -181,16 +182,15 @@ describe("5.2b — mention email: pref.emailMention=false → no email", () => {
 
   it("mention.created with emailMention=false → provider.send NOT called", async () => {
     bus._emit(makeMentionEvent());
-    await flush();
-
+    // Wait for a positive proxy (notification row) to confirm async work finished,
+    // then assert the negative — wrapping a negative in waitFor would pass too early.
+    await vi.waitFor(() => expect(prisma.notification.create).toHaveBeenCalledOnce());
     expect(provider.send).not.toHaveBeenCalled();
   });
 
   it("in-app Notification row STILL created even when email suppressed", async () => {
     bus._emit(makeMentionEvent());
-    await flush();
-
-    expect(prisma.notification.create).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(prisma.notification.create).toHaveBeenCalledOnce());
   });
 });
 
@@ -229,9 +229,7 @@ describe("5.2c — assignment email: pref row present", () => {
     ] as any);
 
     bus._emit(makeAssignmentEvent("member-B"));
-    await flush();
-
-    expect(provider.send).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(provider.send).toHaveBeenCalledOnce());
     const msg = provider.send.mock.calls[0]![0];
     expect(msg.to).toBe("b@test.com");
   });
@@ -247,8 +245,8 @@ describe("5.2c — assignment email: pref row present", () => {
     ] as any);
 
     bus._emit(makeAssignmentEvent("member-B"));
-    await flush();
-
+    // Wait for in-app notification row as proxy that async work finished
+    await vi.waitFor(() => expect(prisma.notification.create).toHaveBeenCalledOnce());
     expect(provider.send).not.toHaveBeenCalled();
   });
 });
@@ -276,11 +274,10 @@ describe("5.2d — provider rejects → handler does not throw", () => {
     // Must not throw
     expect(() => bus._emit(makeMentionEvent())).not.toThrow();
 
-    await flush();
+    // Wait for error to be logged (proxy for async dispatch completed)
+    await vi.waitFor(() => expect(logger.error).toHaveBeenCalled());
 
     // Notification row still created
     expect(prisma.notification.create).toHaveBeenCalledOnce();
-    // Error logged from email send failure
-    expect(logger.error).toHaveBeenCalled();
   });
 });
