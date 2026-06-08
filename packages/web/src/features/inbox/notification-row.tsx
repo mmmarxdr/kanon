@@ -11,9 +11,10 @@ const KIND_LABELS: Record<NotificationDashboardItem["kind"], string> = {
 export interface NotificationRowProps {
   notification: NotificationDashboardItem;
   onMarkRead: (id: string) => void;
+  isMarkingRead?: boolean;
 }
 
-export function NotificationRow({ notification, onMarkRead }: NotificationRowProps) {
+export function NotificationRow({ notification, onMarkRead, isMarkingRead = false }: NotificationRowProps) {
   const label = KIND_LABELS[notification.kind];
   const isUnread = !notification.read;
 
@@ -77,17 +78,19 @@ export function NotificationRow({ notification, onMarkRead }: NotificationRowPro
           type="button"
           data-testid="mark-read-btn"
           onClick={() => onMarkRead(notification.id)}
-          title="Mark as read"
+          disabled={isMarkingRead}
+          title={isMarkingRead ? "Marking as read…" : "Mark as read"}
           style={{
             padding: "2px 6px",
             fontSize: 10.5,
-            color: "var(--ink-3)",
+            color: isMarkingRead ? "var(--ink-4)" : "var(--ink-3)",
             borderRadius: 3,
-            cursor: "pointer",
+            cursor: isMarkingRead ? "not-allowed" : "pointer",
             flexShrink: 0,
+            opacity: isMarkingRead ? 0.5 : 1,
           }}
           onMouseEnter={(e) =>
-            (e.currentTarget.style.background = "var(--bg-3)")
+            (e.currentTarget.style.background = isMarkingRead ? "transparent" : "var(--bg-3)")
           }
           onMouseLeave={(e) =>
             (e.currentTarget.style.background = "transparent")

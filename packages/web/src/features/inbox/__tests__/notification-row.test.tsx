@@ -17,6 +17,16 @@ import type { ReactNode } from "react";
 import { NotificationRow } from "../notification-row";
 import type { NotificationDashboardItem } from "@kanon/bridge";
 
+// Controlled mock for useNotificationsQuery — overridden per test below
+const mockNotificationsQueryResult: {
+  data: NotificationDashboardItem[] | undefined;
+  isError: boolean;
+} = { data: [], isError: false };
+
+vi.mock("../use-notifications-query", () => ({
+  useNotificationsQuery: () => mockNotificationsQueryResult,
+}));
+
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
 const NOTIF_UNREAD: NotificationDashboardItem = {
@@ -85,6 +95,42 @@ describe("NotificationRow", () => {
     rerender(<NotificationRow notification={NOTIF_READ} onMarkRead={vi.fn()} />);
     expect(row.getAttribute("data-read")).toBe("true");
   });
+
+  it("isMarkingRead=true: button is disabled and does not fire onMarkRead on click", () => {
+    const onMarkRead = vi.fn();
+    render(
+      <NotificationRow
+        notification={NOTIF_UNREAD}
+        onMarkRead={onMarkRead}
+        isMarkingRead={true}
+      />,
+    );
+
+    const btn = screen.getByTestId("mark-read-btn") as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+
+    // Clicking a disabled button must not invoke onMarkRead
+    fireEvent.click(btn);
+    expect(onMarkRead).not.toHaveBeenCalled();
+  });
+
+  it("isMarkingRead=false (default): button is enabled and fires onMarkRead on click", () => {
+    const onMarkRead = vi.fn();
+    render(
+      <NotificationRow
+        notification={NOTIF_UNREAD}
+        onMarkRead={onMarkRead}
+        isMarkingRead={false}
+      />,
+    );
+
+    const btn = screen.getByTestId("mark-read-btn") as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+
+    fireEvent.click(btn);
+    expect(onMarkRead).toHaveBeenCalledOnce();
+    expect(onMarkRead).toHaveBeenCalledWith("notif-1");
+  });
 });
 
 // ─── InboxView Notifications section tests ────────────────────────────────────
@@ -146,6 +192,10 @@ function createWrapper(
     ["notifications", "list", "ws-test-123"],
     notificationsData,
   );
+  // Sync the module-level mock so useNotificationsQuery returns the same data.
+  // (InboxView reads from the mock, not directly from the cache.)
+  mockNotificationsQueryResult.data = notificationsData;
+  mockNotificationsQueryResult.isError = false;
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   );
@@ -155,6 +205,9 @@ function createWrapper(
 describe("InboxView — Notifications section", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reset notifications query mock to default (success + empty list)
+    mockNotificationsQueryResult.data = [];
+    mockNotificationsQueryResult.isError = false;
   });
 
   it("empty state: shows 'No notifications.' when list is empty", async () => {
@@ -203,5 +256,21 @@ describe("InboxView — Notifications section", () => {
     // Second row: read
     expect(rows[1]!.getAttribute("data-read")).toBe("true");
     expect(screen.getByText("1 unread")).toBeTruthy();
+  });
+
+  it("error state: shows 'Failed to load notifications.' instead of empty hint when query errors", async () => {
+    const { wrapper } = createWrapper(DASHBOARD_EMPTY, []);
+
+    // Force useNotificationsQuery to signal an error AFTER createWrapper resets the mock.
+    mockNotificationsQueryResult.data = undefined;
+    mockNotificationsQueryResult.isError = true;
+
+    const { InboxView } = await import("../inbox-view");
+    render(<InboxView />, { wrapper });
+
+    // Must show distinct error message, NOT the normal empty state
+    expect(screen.getByText("Failed to load notifications.")).toBeTruthy();
+    expect(screen.queryByText("No notifications.")).toBeNull();
+    expect(screen.queryByTestId("notification-row")).toBeNull();
   });
 });

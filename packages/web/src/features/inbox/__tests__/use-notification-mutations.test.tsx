@@ -61,6 +61,18 @@ const NOTIF_UNREAD_2: NotificationDashboardItem = {
   createdAt: "2026-06-02T10:00:00.000Z",
 };
 
+const NOTIF_ALREADY_READ: NotificationDashboardItem = {
+  id: "notif-3",
+  kind: "cycle_closed",
+  issueId: "issue-uuid-3",
+  actorId: "actor-uuid-3",
+  mentionId: null,
+  payload: null,
+  read: true,
+  via: null,
+  createdAt: "2026-06-03T10:00:00.000Z",
+};
+
 function createWrapper() {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -271,12 +283,16 @@ describe("useMarkAllNotificationsReadMutation", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
   });
 
-  it("error path: rolls back all notifications to previous state", async () => {
+  it("NON-VACUOUS: error path rolls back each notification to its ORIGINAL read value", async () => {
+    // Seeds a MIXED set: one already-read (notif-3) + two unread (notif-1, notif-2).
+    // A buggy blanket read:false rollback would incorrectly set notif-3 back to false,
+    // making this test fail. The correct rollback restores the original snapshot verbatim.
     const { fetchApi } = await import("@/lib/api-client");
     vi.mocked(fetchApi).mockRejectedValue(new Error("Network error"));
 
     const { queryClient, wrapper } = createWrapper();
-    seedNotifications(queryClient, [NOTIF_UNREAD, NOTIF_UNREAD_2]);
+    const mixed = [NOTIF_UNREAD, NOTIF_UNREAD_2, NOTIF_ALREADY_READ];
+    seedNotifications(queryClient, mixed);
 
     const { useMarkAllNotificationsReadMutation } = await import(
       "../use-notification-mutations"
@@ -293,7 +309,15 @@ describe("useMarkAllNotificationsReadMutation", () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
 
     const rolledBack = getCache(queryClient);
-    expect(rolledBack!.every((n) => !n.read)).toBe(true);
+    expect(rolledBack).toHaveLength(3);
+
+    // Each row must be restored to its ORIGINAL value, not a blanket false.
+    const rb1 = rolledBack!.find((n) => n.id === "notif-1");
+    const rb2 = rolledBack!.find((n) => n.id === "notif-2");
+    const rb3 = rolledBack!.find((n) => n.id === "notif-3");
+    expect(rb1?.read).toBe(false);  // was originally unread → stays false
+    expect(rb2?.read).toBe(false);  // was originally unread → stays false
+    expect(rb3?.read).toBe(true);   // was originally read → restored to true (catches blanket-false bug)
   });
 
   it("success path: invalidates notificationKeys.list on settle", async () => {

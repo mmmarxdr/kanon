@@ -54,7 +54,7 @@ export function InboxView() {
   const proposals = (data?.proposals ?? []) as McpProposal[];
   const agents = (data?.agents ?? []) as ActiveAgentSession[];
 
-  const { data: notifications } = useNotificationsQuery(workspaceId ?? null);
+  const { data: notifications, isError: notificationsError } = useNotificationsQuery(workspaceId ?? null);
   const markRead = useMarkNotificationReadMutation(workspaceId ?? "");
   const markAllRead = useMarkAllNotificationsReadMutation(workspaceId ?? "");
   const notificationList = notifications ?? [];
@@ -217,7 +217,9 @@ export function InboxView() {
             ) : undefined
           }
         >
-          {notificationList.length === 0 ? (
+          {notificationsError ? (
+            <EmptyHint data-testid="notifications-error">Failed to load notifications.</EmptyHint>
+          ) : notificationList.length === 0 ? (
             <EmptyHint>No notifications.</EmptyHint>
           ) : (
             notificationList.map((n) => (
@@ -225,6 +227,7 @@ export function InboxView() {
                 key={n.id}
                 notification={n}
                 onMarkRead={(id) => markRead.mutate(id)}
+                isMarkingRead={markRead.isPending && markRead.variables === n.id}
               />
             ))
           )}
@@ -491,9 +494,10 @@ function InboxRow({
   );
 }
 
-function EmptyHint({ children }: { children: React.ReactNode }) {
+function EmptyHint({ children, "data-testid": testId }: { children: React.ReactNode; "data-testid"?: string }) {
   return (
     <div
+      data-testid={testId}
       style={{
         padding: "10px 12px",
         fontSize: 12,
