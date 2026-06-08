@@ -11,6 +11,12 @@ vi.mock("../work-session/service.js", () => ({
   getActiveWorkersForIssues: vi.fn().mockResolvedValue({}),
 }));
 
+// Mock issue-subscription service (getStatus used by getIssue for subscribed field)
+vi.mock("../issue-subscription/service.js", () => ({
+  getStatus: vi.fn().mockResolvedValue({ subscribed: false }),
+  autoSubscribe: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Mock engram client (imported at module level)
 vi.mock("../../config/engram.js", () => ({
   getEngramClient: vi.fn().mockReturnValue(null),
@@ -65,6 +71,7 @@ vi.mock("../../config/prisma.js", () => ({
 
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
+import { getStatus as getSubscriptionStatus } from "../issue-subscription/service.js";
 import {
   getIssue,
   createIssue,
@@ -158,6 +165,21 @@ describe("getIssue()", () => {
       statusCode: 404,
       code: "ISSUE_NOT_FOUND",
     });
+  });
+
+  it("D3-isolation — getIssue resolves (subscribed falsy) when subscription DB lookup rejects", async () => {
+    // FIX 1: subscription lookup failure must degrade to null, not throw 500.
+    // This test verifies the .catch(() => null) isolation on the decorative field.
+    mockIssueFindUnique.mockResolvedValue(makeIssueRow() as any);
+    vi.mocked(getSubscriptionStatus).mockRejectedValue(new Error("DB timeout"));
+
+    // Must resolve despite the subscription rejection
+    const result = await getIssue("TEST-1", "member-1");
+
+    expect(result).toBeDefined();
+    expect(result.key).toBe("TEST-1");
+    // subscribed must be absent or falsy — never throws
+    expect((result as any).subscribed).toBeFalsy();
   });
 });
 

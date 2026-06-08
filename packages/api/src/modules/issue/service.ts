@@ -410,7 +410,9 @@ export async function getIssue(key: string, memberId?: string) {
 
   const [activeWorkers, subscriptionStatus] = await Promise.all([
     getActiveWorkers(issue.id),
-    memberId ? getSubscriptionStatus(issue.id, memberId) : Promise.resolve(null),
+    memberId
+      ? getSubscriptionStatus(issue.id, memberId).catch(() => null)
+      : Promise.resolve(null),
   ]);
 
   return {

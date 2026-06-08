@@ -71,6 +71,45 @@ type Tab = "activity" | "children" | "deps" | "comments" | "documents";
  *
  * Exported so it can be unit-tested independently from the router-integrated IssuePage.
  */
+export interface SubscribeButtonProps {
+  isSubscribed: boolean;
+  isSubscriptionPending: boolean;
+  onToggle: () => void;
+}
+
+/**
+ * Subscribe/Unsubscribe button — exported for isolated unit testing (KAN-38).
+ * Renders "Subscribe", "Unsubscribe", or the in-flight "…" label.
+ * Disabled and cursor:not-allowed while any subscription mutation is pending.
+ */
+export function SubscribeButton({
+  isSubscribed,
+  isSubscriptionPending,
+  onToggle,
+}: SubscribeButtonProps) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      disabled={isSubscriptionPending}
+      aria-pressed={isSubscribed}
+      style={{
+        height: 26,
+        padding: "0 8px",
+        borderRadius: 4,
+        border: "1px solid var(--line)",
+        background: "var(--panel)",
+        fontSize: 11.5,
+        color: isSubscriptionPending ? "var(--ink-4)" : "var(--ink-2)",
+        cursor: isSubscriptionPending ? "not-allowed" : "pointer",
+        opacity: isSubscriptionPending ? 0.6 : 1,
+      }}
+    >
+      {isSubscriptionPending ? "…" : isSubscribed ? "Unsubscribe" : "Subscribe"}
+    </button>
+  );
+}
+
 export interface RightPaneContentProps {
   comments: import("@/types/issue").Comment[];
   isCommentsLoading: boolean;
@@ -320,29 +359,11 @@ function IssuePage() {
             <Icon.ChevL /> Back
           </button>
           <span style={{ flex: 1 }} />
-          <button
-            type="button"
-            onClick={handleSubscribeToggle}
-            disabled={isSubscriptionPending}
-            aria-pressed={isSubscribed}
-            style={{
-              height: 26,
-              padding: "0 8px",
-              borderRadius: 4,
-              border: "1px solid var(--line)",
-              background: "var(--panel)",
-              fontSize: 11.5,
-              color: isSubscriptionPending ? "var(--ink-4)" : "var(--ink-2)",
-              cursor: isSubscriptionPending ? "not-allowed" : "pointer",
-              opacity: isSubscriptionPending ? 0.6 : 1,
-            }}
-          >
-            {isSubscriptionPending
-              ? "…"
-              : isSubscribed
-                ? "Unsubscribe"
-                : "Subscribe"}
-          </button>
+          <SubscribeButton
+            isSubscribed={isSubscribed}
+            isSubscriptionPending={isSubscriptionPending}
+            onToggle={handleSubscribeToggle}
+          />
           <button type="button" style={{ color: "var(--ink-4)" }}>
             <Icon.More />
           </button>

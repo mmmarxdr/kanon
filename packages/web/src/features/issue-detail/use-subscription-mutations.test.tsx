@@ -100,7 +100,9 @@ describe("useSubscribeMutation", () => {
 
   it("rolls back optimistic update on fetch rejection", async () => {
     const { fetchApi } = await import("@/lib/api-client");
-    vi.mocked(fetchApi).mockRejectedValue(new Error("Network error"));
+    let rejectFetch!: (err: unknown) => void;
+    const deferred = new Promise<never>((_, r) => { rejectFetch = r; });
+    vi.mocked(fetchApi).mockReturnValue(deferred);
 
     const { queryClient, wrapper } = createWrapper();
     queryClient.setQueryData(issueKeys.detail(ISSUE_KEY), makeIssueDetail({ subscribed: false }));
@@ -112,6 +114,14 @@ describe("useSubscribeMutation", () => {
       result.current.mutate();
     });
 
+    // Assert optimistic intermediate: subscribed must flip to true BEFORE rejection
+    await waitFor(() => {
+      const optimistic = queryClient.getQueryData<IssueDetail>(issueKeys.detail(ISSUE_KEY));
+      expect(optimistic?.subscribed).toBe(true);
+    });
+
+    // Now reject — rollback must revert to false
+    rejectFetch(new Error("Network error"));
     await waitFor(() => expect(result.current.isError).toBe(true));
 
     const afterRollback = queryClient.getQueryData<IssueDetail>(issueKeys.detail(ISSUE_KEY));
@@ -194,7 +204,9 @@ describe("useUnsubscribeMutation", () => {
 
   it("rolls back optimistic update on fetch rejection", async () => {
     const { fetchApi } = await import("@/lib/api-client");
-    vi.mocked(fetchApi).mockRejectedValue(new Error("Unsubscribe failed"));
+    let rejectFetch!: (err: unknown) => void;
+    const deferred = new Promise<never>((_, r) => { rejectFetch = r; });
+    vi.mocked(fetchApi).mockReturnValue(deferred);
 
     const { queryClient, wrapper } = createWrapper();
     queryClient.setQueryData(issueKeys.detail(ISSUE_KEY), makeIssueDetail({ subscribed: true }));
@@ -206,6 +218,14 @@ describe("useUnsubscribeMutation", () => {
       result.current.mutate();
     });
 
+    // Assert optimistic intermediate: subscribed must flip to false BEFORE rejection
+    await waitFor(() => {
+      const optimistic = queryClient.getQueryData<IssueDetail>(issueKeys.detail(ISSUE_KEY));
+      expect(optimistic?.subscribed).toBe(false);
+    });
+
+    // Now reject — rollback must revert to true
+    rejectFetch(new Error("Unsubscribe failed"));
     await waitFor(() => expect(result.current.isError).toBe(true));
 
     const afterRollback = queryClient.getQueryData<IssueDetail>(issueKeys.detail(ISSUE_KEY));
