@@ -16,6 +16,22 @@
       "sessions": 12,
       "memories": 88,
       "prompts": 0
+    },
+    {
+<<<<<<< Updated upstream
+      "id": "e5d13b1b",
+      "created_by": "mde",
+      "created_at": "2026-06-08T19:57:36Z",
+      "sessions": 0,
+      "memories": 38,
+=======
+      "id": "b2158882",
+      "created_by": "mde",
+      "created_at": "2026-06-08T20:00:34Z",
+      "sessions": 0,
+      "memories": 40,
+>>>>>>> Stashed changes
+      "prompts": 0
     }
   ]
 }
