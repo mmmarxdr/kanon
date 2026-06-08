@@ -2,6 +2,7 @@ import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 import { createActivityLog } from "../activity/service.js";
 import { parseAndUpsertMentions } from "../mentions/service.js";
+import { eventBus } from "../../services/event-bus/index.js";
 import type { CreateCommentBody } from "./schema.js";
 
 /**
@@ -18,6 +19,7 @@ export async function createComment(
     where: { key: issueKey },
     select: {
       id: true,
+      key: true,
       project: { select: { workspaceId: true } },
     },
   });
@@ -58,14 +60,36 @@ export async function createComment(
   });
 
   // Parse @mentions — best-effort (must not break comment creation)
+  // Emit mention.created per genuinely new mention (D1 delta).
   try {
-    await parseAndUpsertMentions({
+    const { created } = await parseAndUpsertMentions({
       workspaceId: issue.project.workspaceId,
       issueId: issue.id,
       commentId: comment.id,
       body: body.body,
       authorMemberId: memberId,
     });
+    for (const entry of created) {
+      try {
+        eventBus.emit({
+          type: "mention.created",
+          workspaceId: issue.project.workspaceId,
+          actorId: memberId,
+          payload: {
+            mentionId: entry.mentionId,
+            issueId: issue.id,
+            issueKey: issue.key,
+            commentId: comment.id,
+            mentionedMemberId: entry.mentionedMemberId,
+            mentionedByMemberId: memberId,
+            context: entry.context,
+          },
+          via: via ?? null,
+        });
+      } catch {
+        // Event emission is fire-and-forget; never break the mutation
+      }
+    }
   } catch {
     // Mention parsing failure is non-fatal — log silently and continue
   }
@@ -147,15 +171,36 @@ export async function updateComment(
     },
   });
 
-  // 5. Re-parse mentions — best-effort (must not break the update mutation)
+  // 5. Re-parse mentions — best-effort; emit mention.created for NEW mentions only (delta).
   try {
-    await parseAndUpsertMentions({
+    const { created } = await parseAndUpsertMentions({
       workspaceId: existing.issue.project.workspaceId,
       issueId: existing.issue.id,
       commentId,
       body,
       authorMemberId: memberId,
     });
+    for (const entry of created) {
+      try {
+        eventBus.emit({
+          type: "mention.created",
+          workspaceId: existing.issue.project.workspaceId,
+          actorId: memberId,
+          payload: {
+            mentionId: entry.mentionId,
+            issueId: existing.issue.id,
+            issueKey: existing.issue.key,
+            commentId,
+            mentionedMemberId: entry.mentionedMemberId,
+            mentionedByMemberId: memberId,
+            context: entry.context,
+          },
+          via: null, // updateComment has no via param yet (future improvement)
+        });
+      } catch {
+        // Fire-and-forget
+      }
+    }
   } catch {
     // Mention parsing failure is non-fatal — log silently and continue
   }

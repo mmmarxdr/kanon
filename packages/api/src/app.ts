@@ -32,6 +32,7 @@ import workspaceMemberRoutes from "./modules/member/workspace-member-routes.js";
 import roadmapRoutes from "./modules/roadmap/routes.js";
 import cycleRoutes from "./modules/cycle/routes.js";
 import workSessionRoutes from "./modules/work-session/routes.js";
+import notificationRoutes, { notificationActionRoutes } from "./modules/notification/routes.js";
 import { workspaceInviteRoutes, publicInviteRoutes } from "./modules/invite/routes.js";
 import projectMemberRoutes from "./modules/project/project-member-routes.js";
 import instanceRoutes from "./modules/instance/routes.js";
@@ -40,6 +41,7 @@ import { EngramClient } from "@kanon/bridge";
 import { BridgeSyncService } from "./services/bridge-sync-service.js";
 import { eventBus } from "./services/event-bus/index.js";
 import { cleanupExpired } from "./modules/work-session/service.js";
+import { registerNotificationService } from "./services/notification/index.js";
 
 /**
  * Build and configure the Fastify application.
@@ -88,6 +90,15 @@ export async function buildApp() {
   // ─── Domain EventBus ──────────────────────────────────────────────────
   app.decorate("eventBus", eventBus);
 
+  // ─── NotificationService ──────────────────────────────────────────────
+  // Subscribe to the EventBus at startup; unsubscribe on close (D3).
+  const unsubscribeNotifications = registerNotificationService(eventBus, {
+    logger: app.log,
+  });
+  app.addHook("onClose", async () => {
+    unsubscribeNotifications();
+  });
+
   // Health check with DB connectivity (always public, before auth)
   app.get("/health", async (_request, reply) => {
     try {
@@ -117,6 +128,8 @@ export async function buildApp() {
   await app.register(roadmapRoutes, { prefix: "/api" });
   await app.register(cycleRoutes, { prefix: "/api" });
   await app.register(workSessionRoutes, { prefix: "/api" });
+  await app.register(notificationRoutes, { prefix: "/api/workspaces" });
+  await app.register(notificationActionRoutes, { prefix: "/api" });
   await app.register(workspaceInviteRoutes, { prefix: "/api/workspaces/:wid/invites" });
   await app.register(publicInviteRoutes, { prefix: "/api/invites" });
   await app.register(projectMemberRoutes, { prefix: "/api/projects/:key/members" });

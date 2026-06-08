@@ -60,15 +60,17 @@ export type {
   SyncEngineConfig,
 } from "./sync-engine.js";
 
-// ─── Dashboard schemas (inbox-redesign-cycle-c) ──────────────────────────────
+// ─── Dashboard schemas (inbox-redesign-cycle-c + S3/KAN-27) ─────────────────
 export {
   activeCycleKPIsSchema,
   mentionDashboardItemSchema,
+  notificationDashboardItemSchema,
   dashboardResponseSchema,
 } from "./dashboard.js";
 export type {
   ActiveCycleKPIs,
   MentionDashboardItem,
+  NotificationDashboardItem,
   DashboardData,
 } from "./dashboard.js";
 

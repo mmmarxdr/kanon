@@ -173,17 +173,38 @@ export async function createIssue(
     // Never let event emission break the mutation
   }
 
-  // Parse @mentions in description — best-effort (must not block issue creation)
+  // Parse @mentions in description — best-effort; emit mention.created per new mention (D1 delta).
   // workspaceId comes from project (issue has no direct workspaceId field)
   if (issue.description) {
     try {
-      await parseAndUpsertMentions({
+      const { created } = await parseAndUpsertMentions({
         workspaceId: project.workspaceId,
         issueId: issue.id,
         commentId: null,
         body: issue.description,
         authorMemberId: memberId,
       });
+      for (const entry of created) {
+        try {
+          eventBus.emit({
+            type: "mention.created",
+            workspaceId: project.workspaceId,
+            actorId: memberId,
+            payload: {
+              mentionId: entry.mentionId,
+              issueId: issue.id,
+              issueKey: issue.key,
+              commentId: null,
+              mentionedMemberId: entry.mentionedMemberId,
+              mentionedByMemberId: memberId,
+              context: entry.context,
+            },
+            via: via ?? null,
+          });
+        } catch {
+          // Fire-and-forget
+        }
+      }
     } catch {
       // Mention parsing failure is non-fatal — continue
     }
@@ -541,16 +562,38 @@ export async function updateIssue(
   }
 
   // Parse @mentions in description if it was part of this update — best-effort
+  // Emit mention.created per genuinely new mention (D1 delta).
   // workspaceId comes from issue.project (issue has no direct workspaceId field)
   if (body.description !== undefined) {
     try {
-      await parseAndUpsertMentions({
+      const { created } = await parseAndUpsertMentions({
         workspaceId: issue.project.workspaceId,
         issueId: issue.id,
         commentId: null,
         body: body.description ?? "",
         authorMemberId: memberId,
       });
+      for (const entry of created) {
+        try {
+          eventBus.emit({
+            type: "mention.created",
+            workspaceId: issue.project.workspaceId,
+            actorId: memberId,
+            payload: {
+              mentionId: entry.mentionId,
+              issueId: issue.id,
+              issueKey: key,
+              commentId: null,
+              mentionedMemberId: entry.mentionedMemberId,
+              mentionedByMemberId: memberId,
+              context: entry.context,
+            },
+            via: via ?? null,
+          });
+        } catch {
+          // Fire-and-forget
+        }
+      }
     } catch {
       // Mention parsing failure is non-fatal — continue
     }
