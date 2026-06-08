@@ -18,7 +18,7 @@ export function useNotificationPreferencesQuery(workspaceId: string | null) {
     queryKey: notificationPreferenceKeys.detail(workspaceId ?? ""),
     queryFn: () =>
       fetchApi<NotificationPreferenceItem>(
-        `/api/workspaces/${workspaceId}/notification-preferences`,
+        `/api/workspaces/${encodeURIComponent(workspaceId ?? "")}/notification-preferences`,
       ),
     enabled: !!workspaceId,
     staleTime: 30 * 1000,
