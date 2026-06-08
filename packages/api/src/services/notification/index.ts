@@ -31,7 +31,7 @@ export function registerNotificationService(
   const { logger } = deps;
 
   const unsubscribe = bus.subscribe((event) => {
-    void routeEvent(event).catch((err) => {
+    void routeEvent(event, deps).catch((err) => {
       logger?.error(
         { err, type: event.type, eventId: event.id },
         "notification handler failed",

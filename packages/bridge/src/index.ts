@@ -77,3 +77,7 @@ export type {
 // ─── WorkSession / WorkLog schemas (S2 / KAN-26) ─────────────────────────────
 export { workLogItemSchema, workLogListResponseSchema } from "./work-session.js";
 export type { WorkLogItem, WorkLogListResponse } from "./work-session.js";
+
+// ─── IssueSubscription schemas (S4 / KAN-28) ──────────────────────────────────
+export { subscriptionStatusSchema } from "./issue-subscription.js";
+export type { SubscriptionStatus } from "./issue-subscription.js";

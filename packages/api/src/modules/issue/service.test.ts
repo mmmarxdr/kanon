@@ -64,6 +64,7 @@ vi.mock("../../config/prisma.js", () => ({
 }));
 
 import { prisma } from "../../config/prisma.js";
+import { eventBus } from "../../services/event-bus/index.js";
 import {
   getIssue,
   createIssue,
@@ -517,6 +518,80 @@ describe("batchTransitionByKeys()", () => {
     });
 
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("B7.5 — batchTransitionByKeys emits issue.batch_transitioned for grouped subscribed_activity fan-out", async () => {
+    // Fix 3 (KAN-28): N+1 guard — batchTransitionByKeys must emit ONE batch event
+    // so the subscribed_activity fan-out does a single findMany+createMany instead of
+    // one DB round-trip per issue.
+    setupTxBatch();
+    const emitSpy = vi.mocked(eventBus.emit);
+    emitSpy.mockClear();
+
+    vi.mocked(prisma.issue.findMany).mockResolvedValue([
+      { id: "i1", key: "TEST-1", state: "todo", projectId: PROJECT.id, parentId: null, roadmapItemId: null },
+      { id: "i2", key: "TEST-2", state: "todo", projectId: PROJECT.id, parentId: null, roadmapItemId: null },
+    ] as any);
+
+    await batchTransitionByKeys(
+      PROJECT.id,
+      { keys: ["TEST-1", "TEST-2"], to_state: "in_progress" } as any,
+      "member-1",
+    );
+
+    // Should have emitted per-issue events (with _skipSubscribedActivity=true) PLUS one batch event
+    const emittedTypes = emitSpy.mock.calls.map((c: any) => c[0].type);
+    expect(emittedTypes).toContain("issue.batch_transitioned");
+
+    const batchEvent = emitSpy.mock.calls.find((c: any) => c[0].type === "issue.batch_transitioned");
+    expect(batchEvent).toBeDefined();
+    const payload = batchEvent![0].payload as any;
+    // Payload now carries issues:[{id,key}] instead of issueIds (KAN-28 issueKey fix)
+    expect(payload.issues).toBeDefined();
+    const sortedIds = payload.issues.map((i: any) => i.id).sort();
+    expect(sortedIds).toEqual(["i1", "i2"]);
+
+    // Per-issue events must carry _skipSubscribedActivity=true
+    const perIssueEvents = emitSpy.mock.calls.filter((c: any) => c[0].type === "issue.transitioned");
+    for (const call of perIssueEvents) {
+      expect((call[0] as any).payload._skipSubscribedActivity).toBe(true);
+    }
+  });
+
+  it("B7.6 — batch_transitioned payload carries per-issue key so handler writes correct issueKey on each row (regression guard for KAN-28 null-issueKey bug)", async () => {
+    // Regression guard: before the fix, batch event carried only issueIds and the
+    // handler wrote issueKey=null on every batched notification row. Now the payload
+    // must include {id, key} pairs so the handler can set the correct key per row.
+    setupTxBatch();
+    const emitSpy = vi.mocked(eventBus.emit);
+    emitSpy.mockClear();
+
+    vi.mocked(prisma.issue.findMany).mockResolvedValue([
+      { id: "i1", key: "TEST-1", state: "todo", projectId: PROJECT.id, parentId: null, roadmapItemId: null },
+      { id: "i2", key: "TEST-2", state: "todo", projectId: PROJECT.id, parentId: null, roadmapItemId: null },
+    ] as any);
+
+    await batchTransitionByKeys(
+      PROJECT.id,
+      { keys: ["TEST-1", "TEST-2"], to_state: "in_progress" } as any,
+      "member-1",
+    );
+
+    const batchEvent = emitSpy.mock.calls.find((c: any) => c[0].type === "issue.batch_transitioned");
+    expect(batchEvent).toBeDefined();
+    const issues = (batchEvent![0].payload as any).issues as Array<{ id: string; key: string }>;
+
+    // Every entry must carry both id and key (non-null, non-empty)
+    expect(issues).toHaveLength(2);
+    for (const entry of issues) {
+      expect(entry.id).toBeTruthy();
+      expect(entry.key).toBeTruthy();
+    }
+
+    // Verify specific id→key correspondence
+    const byId = new Map(issues.map((i) => [i.id, i.key]));
+    expect(byId.get("i1")).toBe("TEST-1");
+    expect(byId.get("i2")).toBe("TEST-2");
   });
 
   it("B7.4 — same-state transition is a no-op (no tx, count=0)", async () => {

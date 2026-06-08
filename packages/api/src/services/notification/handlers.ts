@@ -13,7 +13,14 @@
  */
 
 import { prisma } from "../../config/prisma.js";
+import type { Prisma } from "@prisma/client";
 import type { DomainEvent } from "../event-bus/types.js";
+import type { NotificationServiceDeps } from "./types.js";
+import {
+  getSubscriberIds,
+  getSubscribersByIssues,
+  buildSubscribedActivityRecipients,
+} from "../../modules/issue-subscription/service.js";
 
 // ─── mention.created ─────────────────────────────────────────────────────────
 
@@ -102,17 +109,61 @@ export async function handleIssueAssigned(event: DomainEvent): Promise<void> {
   });
 }
 
-// ─── subscribed_activity placeholder ─────────────────────────────────────────
+// ─── subscribed_activity fan-out ─────────────────────────────────────────────
 
 /**
- * Handles subscribed_activity fan-out.
- * Lands fully in S4 — returns early here.
+ * Handles subscribed_activity fan-out — S4 / KAN-28.
+ *
+ * Events: issue.transitioned, comment.created, issue.assigned.
+ *
+ * For each event:
+ *  1. Resolve issueId from the event payload.
+ *  2. Fetch all issue subscribers.
+ *  3. Exclude actor + members already notified by a specific kind for this event.
+ *  4. Write Notification rows (kind=subscribed_activity) for the remaining recipients.
+ *
+ * The `alreadyNotified` set is built from any specific-kind notification written
+ * by a sibling handler in the same routeEvent call (e.g. assignee who already got
+ * kind=assignment; mentioned member who got kind=mention).
  */
 export async function handleSubscribedActivity(
-  _event: DomainEvent,
+  event: DomainEvent,
+  alreadyNotified: Set<string> = new Set(),
 ): Promise<void> {
-  // S4 implementation — no-op in S3
-  return;
+  const payload = event.payload as {
+    issueId?: string;
+    issueKey?: string;
+    issueTitle?: string;
+  };
+
+  const issueId = payload.issueId;
+  if (!issueId) return;
+
+  const subscriberIds = await getSubscriberIds(issueId);
+  const recipients = buildSubscribedActivityRecipients(
+    subscriberIds,
+    event.actorId,
+    alreadyNotified,
+  );
+
+  if (recipients.length === 0) return;
+
+  // In-process dedup is handled by the alreadyNotified set passed in from routeEvent.
+  await prisma.notification.createMany({
+    data: recipients.map((recipientId) => ({
+      kind: "subscribed_activity" as const,
+      workspaceId: event.workspaceId,
+      recipientId,
+      actorId: event.actorId,
+      issueId,
+      payload: {
+        issueKey: payload.issueKey ?? null,
+        action: event.type,
+      },
+      via: event.via ?? null,
+      read: false,
+    })),
+  });
 }
 
 // ─── cycle.closed ─────────────────────────────────────────────────────────────
@@ -132,24 +183,136 @@ export async function handleCycleClosed(_event: DomainEvent): Promise<void> {
 /**
  * Route a domain event to the appropriate handler(s).
  * Returns a promise that resolves when all applicable handlers complete.
+ *
+ * For events that can trigger BOTH a specific kind AND subscribed_activity,
+ * we build an `alreadyNotified` set from the specific-kind handler so the
+ * subscribed_activity fan-out skips members who already received a more
+ * targeted notification for the same event (D6 dedup rule).
  */
-export async function routeEvent(event: DomainEvent): Promise<void> {
+export async function routeEvent(
+  event: DomainEvent,
+  deps: NotificationServiceDeps = {},
+): Promise<void> {
+  const { logger } = deps;
   switch (event.type) {
     case "mention.created":
       await handleMentionCreated(event);
       break;
-    case "issue.assigned":
-      await handleIssueAssigned(event);
+
+    case "issue.assigned": {
+      // Per-handler isolation: handleIssueAssigned runs in its own try/catch so
+      // a DB failure there never suppresses the subscribed_activity fan-out.
+      // payload.to is only added to alreadyNotified if the assignment write succeeded.
+      const alreadyNotified = new Set<string>();
+      const payload = event.payload as { to?: string | null };
+      try {
+        await handleIssueAssigned(event);
+        // Add to alreadyNotified only on success — if write failed, subscriber
+        // may still receive subscribed_activity (the specific-kind won't be there).
+        if (payload.to && payload.to !== event.actorId) {
+          alreadyNotified.add(payload.to);
+        }
+      } catch (err) {
+        // Log but do NOT re-throw — subscribed_activity fan-out MUST still run.
+        logger?.error(
+          { err, eventType: event.type, eventId: event.id },
+          "handleIssueAssigned failed; continuing with subscribed_activity fan-out",
+        );
+      }
+      // subscribed_activity fan-out — always runs regardless of assignment handler result
+      await handleSubscribedActivity(event, alreadyNotified);
       break;
-    case "issue.transitioned":
-    case "comment.created":
-      await handleSubscribedActivity(event);
+    }
+
+    case "issue.transitioned": {
+      // Skip subscribed_activity fan-out for per-issue events emitted by batchTransitionByKeys.
+      // Those events carry _skipSubscribedActivity=true because the grouped fan-out is handled
+      // by the single issue.batch_transitioned event (Fix 3 / KAN-28 — N+1 guard).
+      const tPayload = event.payload as { _skipSubscribedActivity?: boolean };
+      if (!tPayload._skipSubscribedActivity) {
+        await handleSubscribedActivity(event);
+      }
       break;
+    }
+
+    case "issue.batch_transitioned": {
+      // Grouped subscribed_activity fan-out for batch transitions (Fix 3 / KAN-28).
+      // ONE findMany across all issueIds + ONE createMany instead of N per-issue round-trips.
+      // Actor exclusion and optedOut filtering are preserved via getSubscribersByIssues.
+      const batchPayload = event.payload as {
+        issues?: Array<{ id: string; key: string }>;
+        to?: string;
+      };
+      const issues = batchPayload.issues ?? [];
+      if (issues.length === 0) break;
+
+      const issueIds = issues.map((i) => i.id);
+      // Build id→key map so each notification row carries the correct per-issue key,
+      // matching the single-transition handler shape (payload.issueKey). Without this
+      // map every batched notification would be written with issueKey=null (KAN-28 bug).
+      const keyById = new Map(issues.map((i) => [i.id, i.key]));
+
+      const subscribersByIssue = await getSubscribersByIssues(issueIds);
+
+      // Build de-duplicated notification rows: one per (recipient, issue) pair,
+      // excluding actor. A subscriber watching multiple issues in the batch receives
+      // one notification per issue (not collapsed) so each activity is traceable.
+      const rows: Array<{
+        kind: "subscribed_activity";
+        workspaceId: string;
+        recipientId: string;
+        actorId: string;
+        issueId: string;
+        payload: Prisma.InputJsonValue;
+        via: string | null;
+        read: boolean;
+      }> = [];
+
+      for (const issueId of issueIds) {
+        const subscribers = subscribersByIssue.get(issueId) ?? new Set();
+        for (const recipientId of subscribers) {
+          if (recipientId === event.actorId) continue; // actor exclusion
+          rows.push({
+            kind: "subscribed_activity",
+            workspaceId: event.workspaceId,
+            recipientId,
+            actorId: event.actorId,
+            issueId,
+            payload: {
+              issueKey: keyById.get(issueId) ?? null,
+              action: "issue.transitioned",
+            },
+            via: event.via ?? null,
+            read: false,
+          });
+        }
+      }
+
+      if (rows.length > 0) {
+        await prisma.notification.createMany({ data: rows });
+      }
+      break;
+    }
+
+    case "comment.created": {
+      // Build alreadyNotified from mentionedMemberIds so subscribers who received
+      // kind=mention for this comment are NOT also sent subscribed_activity
+      // (specific kind wins — D6 cross-event dedup rule, Fix 1 / KAN-28).
+      const commentPayload = event.payload as { mentionedMemberIds?: string[] };
+      const alreadyNotifiedByMention = new Set<string>(
+        commentPayload.mentionedMemberIds ?? [],
+      );
+      await handleSubscribedActivity(event, alreadyNotifiedByMention);
+      break;
+    }
+
     case "cycle.closed":
       await handleCycleClosed(event);
       break;
+
     default:
-      // Unhandled event type — no-op
+      // issue.updated and issue.created are deliberately not fan-out events in wave 1
+      // (product decision 2026-06-08).
       break;
   }
 }
