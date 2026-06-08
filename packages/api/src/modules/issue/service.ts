@@ -957,19 +957,36 @@ export async function batchTransitionByKeys(
         },
       });
     }
-    // Single batched event → notification handler does ONE findMany+createMany
-    // across all affected issues, eliminating the N+1 from per-issue fan-out.
+  } catch (err) {
+    // Never let per-issue event emission break the mutation; swallowed failures are logged.
+    console.error(
+      { issueIds: issuesToTransition.map((i) => i.id), err },
+      "batchTransitionByKeys: per-issue event emission failed",
+    );
+  }
+
+  // Single batched event → notification handler does ONE findMany+createMany
+  // across all affected issues, eliminating the N+1 from per-issue fan-out.
+  // Kept outside the per-issue try/catch so a per-issue emit failure and the
+  // batch-fan-out emit failure are independently observable.
+  try {
     eventBus.emit({
       type: "issue.batch_transitioned",
       workspaceId: project.workspaceId,
       actorId: memberId,
       payload: {
-        issueIds: issuesToTransition.map((i) => i.id),
+        // Each entry carries both id (for DB lookup) and key (for notification payload),
+        // so the handler never needs a second query to resolve issueKey per row (Fix / KAN-28).
+        issues: issuesToTransition.map((i) => ({ id: i.id, key: i.key })),
         to: targetState,
       },
     });
-  } catch {
-    // Never let event emission break the mutation
+  } catch (err) {
+    // Never let batch event emission break the mutation; log so failures are observable.
+    console.error(
+      { issueIds: issuesToTransition.map((i) => i.id), err },
+      "batchTransitionByKeys: batch event emission failed",
+    );
   }
 
   return {

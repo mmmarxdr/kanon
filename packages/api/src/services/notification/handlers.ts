@@ -239,9 +239,18 @@ export async function routeEvent(
       // Grouped subscribed_activity fan-out for batch transitions (Fix 3 / KAN-28).
       // ONE findMany across all issueIds + ONE createMany instead of N per-issue round-trips.
       // Actor exclusion and optedOut filtering are preserved via getSubscribersByIssues.
-      const batchPayload = event.payload as { issueIds?: string[]; to?: string };
-      const issueIds = batchPayload.issueIds ?? [];
-      if (issueIds.length === 0) break;
+      const batchPayload = event.payload as {
+        issues?: Array<{ id: string; key: string }>;
+        to?: string;
+      };
+      const issues = batchPayload.issues ?? [];
+      if (issues.length === 0) break;
+
+      const issueIds = issues.map((i) => i.id);
+      // Build id→key map so each notification row carries the correct per-issue key,
+      // matching the single-transition handler shape (payload.issueKey). Without this
+      // map every batched notification would be written with issueKey=null (KAN-28 bug).
+      const keyById = new Map(issues.map((i) => [i.id, i.key]));
 
       const subscribersByIssue = await getSubscribersByIssues(issueIds);
 
@@ -269,7 +278,10 @@ export async function routeEvent(
             recipientId,
             actorId: event.actorId,
             issueId,
-            payload: { action: "issue.transitioned" },
+            payload: {
+              issueKey: keyById.get(issueId) ?? null,
+              action: "issue.transitioned",
+            },
             via: event.via ?? null,
             read: false,
           });

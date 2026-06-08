@@ -26,9 +26,10 @@ export type DomainEventType =
   | "mention.created"
   | "cycle.closed"
   // S4 / KAN-28: emitted by batchTransitionByKeys for grouped subscribed_activity fan-out.
-  // Carries all issueIds transitioned so the notification handler can do ONE findMany+createMany.
-  // Per-issue issue.transitioned events are still emitted for SSE consumers but carry
-  // _skipSubscribedActivity=true to prevent double fan-out.
+  // Carries `issues: [{id, key}]` so the handler can write per-issue issueKey on each
+  // notification row without an extra DB round-trip. Per-issue issue.transitioned events
+  // are still emitted for SSE consumers but carry _skipSubscribedActivity=true to prevent
+  // double fan-out.
   | "issue.batch_transitioned";
 
 /**
