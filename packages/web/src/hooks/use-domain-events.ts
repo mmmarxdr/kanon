@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { issueKeys, projectKeys, workspaceKeys, cycleKeys } from "@/lib/query-keys";
+import { issueKeys, projectKeys, workspaceKeys, cycleKeys, notificationKeys } from "@/lib/query-keys";
 
 /**
  * Connects to the workspace-scoped SSE endpoint for domain events
@@ -75,6 +75,18 @@ export function useDomainEvents(workspaceId: string | undefined): void {
 
     es.addEventListener("work_session.started", handleWorkSessionEvent);
     es.addEventListener("work_session.ended", handleWorkSessionEvent);
+
+    // ── Notification events ───────────────────────────────────────────
+    // Forward-compatible: the API does not yet emit these events, but
+    // when it does, the cache will be invalidated automatically.
+    const handleNotificationEvent = () => {
+      void queryClient.invalidateQueries({
+        queryKey: notificationKeys.list(workspaceId),
+      });
+    };
+
+    es.addEventListener("notification.created", handleNotificationEvent);
+    es.addEventListener("notification.read", handleNotificationEvent);
 
     // ── Cleanup ───────────────────────────────────────────────────────
     return () => {

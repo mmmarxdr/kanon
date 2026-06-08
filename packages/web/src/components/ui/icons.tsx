@@ -142,6 +142,12 @@ export const Icon = {
       <path d="M14 8H6" />
     </svg>
   ),
+  Bell: (p: IcoProps) => (
+    <svg {...base} {...p}>
+      <path d="M6 13.5a2 2 0 004 0" />
+      <path d="M3.5 10V7a4.5 4.5 0 019 0v3l1.5 2.5h-12L3.5 10z" />
+    </svg>
+  ),
 };
 
 /* ────────── Monogram — geometric "K" rooted in the diamond ────────── */

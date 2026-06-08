@@ -7,6 +7,7 @@ import {
 import { ProposalRow } from "./proposal-row";
 import { CurrentCycleCard } from "./current-cycle-card";
 import { MentionRow } from "./mention-row";
+import { NotificationRow } from "./notification-row";
 import { ProjectPickerPopover } from "./project-picker-popover";
 import { useActiveWorkspaceId } from "@/hooks/use-workspace-query";
 import { useProjectsQuery } from "@/hooks/use-projects-query";
@@ -14,6 +15,11 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useCommandPaletteStore } from "@/stores/command-palette-store";
 import { Icon } from "@/components/ui/icons";
 import { Avatar, Kbd, StatePip, TypeGlyph, avatarInitials } from "@/components/ui/primitives";
+import { useNotificationsQuery } from "./use-notifications-query";
+import {
+  useMarkNotificationReadMutation,
+  useMarkAllNotificationsReadMutation,
+} from "./use-notification-mutations";
 
 import type { Issue } from "@/types/issue";
 import type { McpProposal } from "@/types/proposal";
@@ -47,6 +53,12 @@ export function InboxView() {
   const assigned = (data?.assigned ?? []) as Issue[];
   const proposals = (data?.proposals ?? []) as McpProposal[];
   const agents = (data?.agents ?? []) as ActiveAgentSession[];
+
+  const { data: notifications, isError: notificationsError } = useNotificationsQuery(workspaceId ?? null);
+  const markRead = useMarkNotificationReadMutation(workspaceId ?? "");
+  const markAllRead = useMarkAllNotificationsReadMutation(workspaceId ?? "");
+  const notificationList = notifications ?? [];
+  const unreadCount = notificationList.filter((n) => !n.read).length;
 
   function openIssue(issue: Issue) {
     void navigate({
@@ -178,6 +190,45 @@ export function InboxView() {
           ) : (
             (data?.mentions ?? []).map((m) => (
               <MentionRow key={m.id} mention={m} />
+            ))
+          )}
+        </Section>
+
+        {/* Notifications */}
+        <Section
+          title="Notifications"
+          hint={unreadCount > 0 ? `${unreadCount} unread` : undefined}
+          action={
+            unreadCount > 0 ? (
+              <button
+                type="button"
+                data-testid="mark-all-read-btn"
+                onClick={() => markAllRead.mutate()}
+                style={{
+                  fontSize: 10.5,
+                  color: "var(--ink-4)",
+                  cursor: "pointer",
+                  padding: "1px 4px",
+                  borderRadius: 3,
+                }}
+              >
+                Mark all read
+              </button>
+            ) : undefined
+          }
+        >
+          {notificationsError ? (
+            <EmptyHint data-testid="notifications-error">Failed to load notifications.</EmptyHint>
+          ) : notificationList.length === 0 ? (
+            <EmptyHint>No notifications.</EmptyHint>
+          ) : (
+            notificationList.map((n) => (
+              <NotificationRow
+                key={n.id}
+                notification={n}
+                onMarkRead={(id) => markRead.mutate(id)}
+                isMarkingRead={markRead.isPending && markRead.variables === n.id}
+              />
             ))
           )}
         </Section>
@@ -346,10 +397,12 @@ function Stat({
 function Section({
   title,
   hint,
+  action,
   children,
 }: {
   title: string;
   hint?: string;
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -386,6 +439,7 @@ function Section({
             {hint}
           </span>
         )}
+        {action && <span style={{ marginLeft: "auto" }}>{action}</span>}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
         {children}
@@ -440,9 +494,10 @@ function InboxRow({
   );
 }
 
-function EmptyHint({ children }: { children: React.ReactNode }) {
+function EmptyHint({ children, "data-testid": testId }: { children: React.ReactNode; "data-testid"?: string }) {
   return (
     <div
+      data-testid={testId}
       style={{
         padding: "10px 12px",
         fontSize: 12,

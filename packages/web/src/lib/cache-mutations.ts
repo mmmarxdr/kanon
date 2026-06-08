@@ -7,8 +7,9 @@
  * updated when cycle membership changes" in one auditable place.
  */
 import type { QueryClient } from "@tanstack/react-query";
-import { cycleKeys, issueKeys } from "./query-keys";
+import { cycleKeys, issueKeys, notificationKeys } from "./query-keys";
 import type { IssueDetail } from "@/types/issue";
+import type { NotificationDashboardItem } from "@kanon/bridge";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -109,6 +110,72 @@ export function setIssueDetailSubscribed(
       ...previous,
       subscribed,
     });
+  }
+
+  return previous;
+}
+
+// ---------------------------------------------------------------------------
+// setIssueDetailCycle
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// setNotificationRead
+// ---------------------------------------------------------------------------
+
+/**
+ * Optimistically mark a single notification as read in the list cache.
+ *
+ * Used in `onMutate` of mark-one-read mutations so the inbox reflects
+ * the new read state without a round-trip on the happy path.
+ *
+ * @returns The previous list for rollback in `onError`, or undefined if
+ *          no cache entry existed.
+ */
+export function setNotificationRead(
+  queryClient: QueryClient,
+  workspaceId: string,
+  notifId: string,
+): NotificationDashboardItem[] | undefined {
+  const previous = queryClient.getQueryData<NotificationDashboardItem[]>(
+    notificationKeys.list(workspaceId),
+  );
+
+  if (previous !== undefined) {
+    queryClient.setQueryData<NotificationDashboardItem[]>(
+      notificationKeys.list(workspaceId),
+      previous.map((n) => (n.id === notifId ? { ...n, read: true } : n)),
+    );
+  }
+
+  return previous;
+}
+
+// ---------------------------------------------------------------------------
+// setAllNotificationsRead
+// ---------------------------------------------------------------------------
+
+/**
+ * Optimistically mark all notifications as read in the list cache.
+ *
+ * Used in `onMutate` of mark-all-read mutations.
+ *
+ * @returns The previous list for rollback in `onError`, or undefined if
+ *          no cache entry existed.
+ */
+export function setAllNotificationsRead(
+  queryClient: QueryClient,
+  workspaceId: string,
+): NotificationDashboardItem[] | undefined {
+  const previous = queryClient.getQueryData<NotificationDashboardItem[]>(
+    notificationKeys.list(workspaceId),
+  );
+
+  if (previous !== undefined) {
+    queryClient.setQueryData<NotificationDashboardItem[]>(
+      notificationKeys.list(workspaceId),
+      previous.map((n) => ({ ...n, read: true })),
+    );
   }
 
   return previous;
