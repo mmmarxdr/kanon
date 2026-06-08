@@ -99,7 +99,7 @@ export async function autoSubscribe(
     });
   } catch (err) {
     // Best-effort: never interrupt the originating mutation (Fix 6 / KAN-28)
-    console.error("autoSubscribe failed (non-fatal):", err);
+    console.error({ err, issueId, memberId, origin }, "autoSubscribe failed (non-fatal)");
   }
 }
 
