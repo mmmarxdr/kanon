@@ -7,6 +7,7 @@ import { AppError } from "../../shared/types.js";
 import { ACTIVITY_ACTIONS } from "../../shared/constants.js";
 import { requireIssueMember, requireIssueRole } from "../../middleware/require-role.js";
 import * as activityService from "./service.js";
+import { serializeActivityLog } from "./serializer.js";
 
 /**
  * Activity routes plugin.
@@ -44,27 +45,9 @@ export default async function activityRoutes(
 
       const logs = await activityService.getActivityByIssue(issue.id);
 
-      // Transform DB shape → frontend ActivityLog shape:
-      // - member → actor (id + username)
-      // - details JSON → top-level field, oldValue, newValue
-      return (logs ?? []).map((log) => {
-        const details =
-          log.details && typeof log.details === "object" && !Array.isArray(log.details)
-            ? (log.details as Record<string, unknown>)
-            : {};
-
-        return {
-          id: log.id,
-          action: log.action,
-          field: typeof details["field"] === "string" ? details["field"] : undefined,
-          oldValue: typeof details["oldValue"] === "string" ? details["oldValue"] : undefined,
-          newValue: typeof details["newValue"] === "string" ? details["newValue"] : undefined,
-          actor: log.member
-            ? { id: log.member.id, username: log.member.username }
-            : { id: "unknown", username: "unknown" },
-          createdAt: log.createdAt,
-        };
-      });
+      // Transform DB shape → frontend ActivityLog shape via serializeActivityLog.
+      // KAN-41: reads details.from/to (canonical) with fallback to legacy oldValue/newValue.
+      return (logs ?? []).map(serializeActivityLog);
     },
   );
 
