@@ -13,6 +13,7 @@
  */
 
 import { prisma } from "../../config/prisma.js";
+import type { Prisma } from "@prisma/client";
 import type { DomainEvent } from "../event-bus/types.js";
 import type { NotificationServiceDeps } from "./types.js";
 import {
@@ -253,7 +254,7 @@ export async function routeEvent(
         recipientId: string;
         actorId: string;
         issueId: string;
-        payload: Record<string, unknown>;
+        payload: Prisma.InputJsonValue;
         via: string | null;
         read: boolean;
       }> = [];
