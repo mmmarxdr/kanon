@@ -124,6 +124,17 @@ function sumPoints(
 }
 
 /**
+ * Returns true when an activity-log details object represents a transition
+ * into the "done" state. Production always writes { from, to } for
+ * state_changed events (see transitionIssue / transitionGroup / batch
+ * transition in issue/service.ts).
+ */
+function isDoneTransition(details: unknown): boolean {
+  const det = details as { to?: string } | null;
+  return det?.to === "done";
+}
+
+/**
  * Build a per-day burnup series: how many points were completed by the end of
  * each day, derived from each issue's last `state_changed -> done` activity.
  *
@@ -156,10 +167,9 @@ async function computeBurnup(
     if (issue.state !== "done") continue;
     // Find the last state_changed activity that ended in done; fall back to
     // the cycle end if we cannot tell.
-    const doneEvent = [...issue.activityLogs].reverse().find((a) => {
-      const det = a.details as { newValue?: string } | null;
-      return det?.newValue === "done";
-    });
+    const doneEvent = [...issue.activityLogs].reverse().find((a) =>
+      isDoneTransition(a.details),
+    );
     const ts = doneEvent?.createdAt ?? end;
     const day = Math.max(
       0,
@@ -669,7 +679,7 @@ export async function attachIssues(cycleId: string, input: AttachIssuesInput) {
  * Algorithm (anti N+1, design §3.1):
  *  1. Fetch all issues in the cycle (id + createdAt). If empty → null early return.
  *  2. ONE batch query for all state_changed activity logs for those issueIds.
- *  3. In-memory: filter to logs where details.newValue === "done", take the
+ *  3. In-memory: filter to logs where details.to === "done", take the
  *     most-recent log per issue, compute delta in days, average.
  *
  * Edge cases:
@@ -699,8 +709,7 @@ export async function computeAvgLeadDays(cycleId: string): Promise<number | null
   // 3. Group into a Map<issueId, latestDoneAt> — take the most recent done event per issue
   const lastDoneByIssue = new Map<string, Date>();
   for (const log of logs) {
-    const det = log.details as { newValue?: string } | null;
-    if (det?.newValue !== "done") continue;
+    if (!isDoneTransition(log.details)) continue;
     const prev = lastDoneByIssue.get(log.issueId);
     if (!prev || log.createdAt > prev) {
       lastDoneByIssue.set(log.issueId, log.createdAt);

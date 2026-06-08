@@ -19,6 +19,10 @@ vi.mock("../../../config/prisma.js", () => ({
     },
     cycle: {
       findMany: vi.fn(),
+      findUnique: vi.fn(),
+    },
+    cycleScopeEvent: {
+      findMany: vi.fn(),
     },
   },
 }));
@@ -28,11 +32,13 @@ vi.mock("../../../services/event-bus/index.js", () => ({
 }));
 
 import { prisma } from "../../../config/prisma.js";
-import { computeAvgLeadDays, resolveActiveCycleForWorkspace } from "../service.js";
+import { computeAvgLeadDays, getCycle, resolveActiveCycleForWorkspace } from "../service.js";
 
 const mockIssueFindMany = vi.mocked(prisma.issue.findMany);
 const mockActivityLogFindMany = vi.mocked(prisma.activityLog.findMany);
 const mockCycleFindMany = vi.mocked(prisma.cycle.findMany);
+const mockCycleFindUnique = vi.mocked(prisma.cycle.findUnique);
+const mockCycleScopeEventFindMany = vi.mocked(prisma.cycleScopeEvent.findMany);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -55,7 +61,7 @@ function makeActivityLog(issueId: string, doneDaysAgo: number) {
   return {
     issueId,
     createdAt: daysAgo(doneDaysAgo),
-    details: { newValue: "done" },
+    details: { from: "in_progress", to: "done" },
   };
 }
 
@@ -63,7 +69,7 @@ function makeActivityLogNotDone(issueId: string) {
   return {
     issueId,
     createdAt: new Date(),
-    details: { newValue: "review" }, // NOT done
+    details: { from: "todo", to: "review" }, // NOT done
   };
 }
 
@@ -102,7 +108,7 @@ describe("A7.2 — computeAvgLeadDays: 1 done issue with log → returns days", 
 
     mockIssueFindMany.mockResolvedValue([{ id: "iss-1", createdAt }] as any);
     mockActivityLogFindMany.mockResolvedValue([
-      { issueId: "iss-1", createdAt: doneAt, details: { newValue: "done" } },
+      { issueId: "iss-1", createdAt: doneAt, details: { from: "in_progress", to: "done" } },
     ] as any);
 
     const result = await computeAvgLeadDays("cycle-1");
@@ -114,7 +120,7 @@ describe("A7.2 — computeAvgLeadDays: 1 done issue with log → returns days", 
     const now = new Date();
     mockIssueFindMany.mockResolvedValue([{ id: "iss-abc", createdAt: now }] as any);
     mockActivityLogFindMany.mockResolvedValue([
-      { issueId: "iss-abc", createdAt: now, details: { newValue: "done" } },
+      { issueId: "iss-abc", createdAt: now, details: { from: "in_progress", to: "done" } },
     ] as any);
 
     await computeAvgLeadDays("cycle-x");
@@ -145,8 +151,8 @@ describe("A7.3 — computeAvgLeadDays: 3 issues, 2 with log → average over 2",
     ] as any);
 
     mockActivityLogFindMany.mockResolvedValue([
-      { issueId: "iss-1", createdAt: iss1Done, details: { newValue: "done" } },
-      { issueId: "iss-2", createdAt: iss2Done, details: { newValue: "done" } },
+      { issueId: "iss-1", createdAt: iss1Done, details: { from: "in_progress", to: "done" } },
+      { issueId: "iss-2", createdAt: iss2Done, details: { from: "review", to: "done" } },
       // iss-3 has NO done log (missing entirely)
     ] as any);
 
@@ -162,8 +168,8 @@ describe("A7.3 — computeAvgLeadDays: 3 issues, 2 with log → average over 2",
 
     mockIssueFindMany.mockResolvedValue([{ id: "iss-1", createdAt: created }] as any);
     mockActivityLogFindMany.mockResolvedValue([
-      { issueId: "iss-1", createdAt: new Date(), details: { newValue: "review" } }, // not done
-      { issueId: "iss-1", createdAt: doneAt, details: { newValue: "done" } },
+      { issueId: "iss-1", createdAt: new Date(), details: { from: "todo", to: "review" } }, // not done
+      { issueId: "iss-1", createdAt: doneAt, details: { from: "review", to: "done" } },
     ] as any);
 
     const result = await computeAvgLeadDays("cycle-1");
@@ -184,8 +190,8 @@ describe("A7.4 — computeAvgLeadDays: all done issues missing log → null", ()
 
     // Only non-done logs
     mockActivityLogFindMany.mockResolvedValue([
-      { issueId: "iss-1", createdAt: now, details: { newValue: "review" } },
-      { issueId: "iss-2", createdAt: now, details: { newValue: "in_progress" } },
+      { issueId: "iss-1", createdAt: now, details: { from: "todo", to: "review" } },
+      { issueId: "iss-2", createdAt: now, details: { from: "todo", to: "in_progress" } },
     ] as any);
 
     const result = await computeAvgLeadDays("cycle-1");
@@ -211,7 +217,7 @@ describe("A7.5 (was A7.4 in tasks) — computeAvgLeadDays: done_at = createdAt �
 
     mockIssueFindMany.mockResolvedValue([{ id: "iss-1", createdAt: sameTime }] as any);
     mockActivityLogFindMany.mockResolvedValue([
-      { issueId: "iss-1", createdAt: sameTime, details: { newValue: "done" } },
+      { issueId: "iss-1", createdAt: sameTime, details: { from: "in_progress", to: "done" } },
     ] as any);
 
     const result = await computeAvgLeadDays("cycle-1");
@@ -400,5 +406,92 @@ describe("A8.4 — resolveActiveCycleForWorkspace: 2 cycles in same project → 
     expect(result!.cycle.id).toBe("cycle-2");
     // Only 1 distinct projectId → multipleActiveProjects=false
     expect(result!.multipleActiveProjects).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B1 Regression — computeBurnup: done issue with details.to=="done" on early
+//                  day must bucket completion on THAT day, not the cycle end.
+//                  KAN-39 root cause: reader was checking det?.newValue==="done"
+//                  which never matched the {from,to} shape production writes.
+// ---------------------------------------------------------------------------
+
+describe("B1 — computeBurnup regression (KAN-39): done issue logged early buckets on its day, not cycle end", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("places the done issue's points on day 1 of a 7-day cycle, not day 7", async () => {
+    // Cycle: 2026-06-01 (start) → 2026-06-08 (end) = 7 days
+    const start = new Date("2026-06-01T00:00:00.000Z");
+    const end = new Date("2026-06-08T00:00:00.000Z");
+
+    // Issue done exactly 1 day after start → Math.round(1.0)=1 → day index 1
+    const doneAt = new Date("2026-06-02T00:00:00.000Z");
+
+    // getCycle calls prisma.cycle.findUnique then prisma.cycleScopeEvent.findMany
+    // then prisma.issue.findMany (for burnup) then prisma.activityLog.findMany (for burnup).
+    mockCycleFindUnique.mockResolvedValue({
+      id: "cycle-burnup",
+      name: "Sprint Burnup",
+      startDate: start,
+      endDate: end,
+      state: "active",
+      goal: null,
+      projectId: "proj-1",
+      createdAt: start,
+      updatedAt: start,
+      issues: [
+        {
+          id: "iss-done",
+          key: "KAN-1",
+          title: "Done early",
+          type: "task",
+          priority: "medium",
+          state: "done",
+          estimate: 3,
+          updatedAt: doneAt,
+          assignee: null,
+        },
+      ],
+    } as any);
+
+    mockCycleScopeEventFindMany.mockResolvedValue([] as any);
+
+    // computeBurnup's own issue query (includes activityLogs)
+    mockIssueFindMany.mockResolvedValue([
+      {
+        id: "iss-done",
+        estimate: 3,
+        state: "done",
+        activityLogs: [
+          // Production shape: { from, to } — NOT { newValue }
+          { createdAt: doneAt, details: { from: "in_progress", to: "done" } },
+        ],
+      },
+    ] as any);
+
+    const result = await getCycle("cycle-burnup");
+
+    // The burnup series must have risen BEFORE the last index.
+    // With the bug (newValue check), every done issue falls back to `end`,
+    // so all points land at the last index: [0,0,0,0,0,0,0,3].
+    // With the fix (to check), day-1 gets the 3 points: [0,3,3,3,3,3,3,3].
+    const burnup = result.burnup;
+
+    // burnup[0] = day 0 (start day) — issue not yet done
+    expect(burnup[0]).toBe(0);
+
+    // burnup[1] = day 1 — done event fires here; cumulative must be 3
+    expect(burnup[1]).toBe(3);
+
+    // All subsequent days stay at 3 (cumulative, no regression)
+    for (let d = 2; d < burnup.length; d++) {
+      expect(burnup[d]).toBe(3);
+    }
+
+    // Specifically, the LAST day must NOT be where the points first appear.
+    // This is the exact symptom of the KAN-39 bug.
+    expect(burnup[burnup.length - 1]).toBe(3); // still 3, not "first 3"
+    // And crucially: series rises on day 1, not only at the end
+    expect(burnup[1]).toBeGreaterThan(burnup[0]);
   });
 });
