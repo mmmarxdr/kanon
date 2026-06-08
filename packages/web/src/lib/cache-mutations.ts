@@ -81,6 +81,43 @@ export function invalidateAfterCycleMembership(
 // setIssueDetailCycle
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// setIssueDetailSubscribed
+// ---------------------------------------------------------------------------
+
+/**
+ * Optimistically update the `subscribed` field of an issue in the detail cache.
+ *
+ * Used in `onMutate` of subscribe/unsubscribe mutations to make the issue-detail
+ * page reflect the new subscription state without a round-trip on the happy path.
+ *
+ * @param subscribed — Pass `true` to subscribe, `false` to unsubscribe.
+ * @returns The previous IssueDetail value for rollback in `onError`, or
+ *          undefined if no cache entry existed.
+ */
+export function setIssueDetailSubscribed(
+  queryClient: QueryClient,
+  issueKey: string,
+  subscribed: boolean,
+): IssueDetail | undefined {
+  const previous = queryClient.getQueryData<IssueDetail>(
+    issueKeys.detail(issueKey),
+  );
+
+  if (previous !== undefined) {
+    queryClient.setQueryData<IssueDetail>(issueKeys.detail(issueKey), {
+      ...previous,
+      subscribed,
+    });
+  }
+
+  return previous;
+}
+
+// ---------------------------------------------------------------------------
+// setIssueDetailCycle
+// ---------------------------------------------------------------------------
+
 /**
  * Optimistically update the `cycle` field of an issue in the detail cache.
  *

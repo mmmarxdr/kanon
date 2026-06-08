@@ -80,7 +80,7 @@ export default async function issueRoutes(
       },
     },
     async (request, _reply) => {
-      return issueService.getIssue(request.params.key);
+      return issueService.getIssue(request.params.key, request.member?.id);
     },
   );
 

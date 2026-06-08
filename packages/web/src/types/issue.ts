@@ -74,6 +74,12 @@ export interface IssueDetail extends Issue {
   blockedBy?: IssueDependencyEdge[];
   /** Cycle this issue is attached to. Null when unassigned. */
   cycle?: { id: string; name: string } | null;
+  /**
+   * Whether the currently-authenticated member is subscribed to this issue.
+   * Populated by GET /api/issues/:key (per-member, computed server-side).
+   * Optional for backward compat with cached data from before KAN-38.
+   */
+  subscribed?: boolean;
 }
 
 export type CommentSource = "human" | "mcp" | "engram_sync" | "system" | "adr";

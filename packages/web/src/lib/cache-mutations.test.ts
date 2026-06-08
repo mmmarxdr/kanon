@@ -188,3 +188,68 @@ describe("setIssueDetailCycle", () => {
     expect(after?.labels).toEqual(original.labels);
   });
 });
+
+describe("setIssueDetailSubscribed", () => {
+  let queryClient: QueryClient;
+
+  beforeEach(() => {
+    queryClient = makeQueryClient();
+  });
+
+  it("sets subscribed=true without mutating other fields", async () => {
+    const { setIssueDetailSubscribed } = await import("./cache-mutations");
+    const original = makeIssueDetail({ subscribed: false });
+    queryClient.setQueryData(issueKeys.detail(ISSUE_KEY), original);
+
+    const previous = setIssueDetailSubscribed(queryClient, ISSUE_KEY, true);
+
+    expect(previous).toEqual(original);
+
+    const updated = queryClient.getQueryData<IssueDetail>(
+      issueKeys.detail(ISSUE_KEY),
+    );
+    expect(updated?.subscribed).toBe(true);
+    // All other fields must be intact
+    expect(updated?.id).toBe(original.id);
+    expect(updated?.title).toBe(original.title);
+    expect(updated?.cycle).toBeNull();
+  });
+
+  it("sets subscribed=false without mutating other fields", async () => {
+    const { setIssueDetailSubscribed } = await import("./cache-mutations");
+    const original = makeIssueDetail({ subscribed: true });
+    queryClient.setQueryData(issueKeys.detail(ISSUE_KEY), original);
+
+    setIssueDetailSubscribed(queryClient, ISSUE_KEY, false);
+
+    const updated = queryClient.getQueryData<IssueDetail>(
+      issueKeys.detail(ISSUE_KEY),
+    );
+    expect(updated?.subscribed).toBe(false);
+    expect(updated?.title).toBe(original.title);
+  });
+
+  it("returns undefined if the cache has no entry for the issue key", async () => {
+    const { setIssueDetailSubscribed } = await import("./cache-mutations");
+
+    const result = setIssueDetailSubscribed(queryClient, "MISSING-99", true);
+
+    expect(result).toBeUndefined();
+  });
+
+  it("does not drift on repeated toggle round-trip", async () => {
+    const { setIssueDetailSubscribed } = await import("./cache-mutations");
+    const original = makeIssueDetail({ subscribed: false });
+    queryClient.setQueryData(issueKeys.detail(ISSUE_KEY), original);
+
+    setIssueDetailSubscribed(queryClient, ISSUE_KEY, true);
+    setIssueDetailSubscribed(queryClient, ISSUE_KEY, false);
+
+    const after = queryClient.getQueryData<IssueDetail>(
+      issueKeys.detail(ISSUE_KEY),
+    );
+    expect(after?.subscribed).toBe(false);
+    expect(after?.id).toBe(original.id);
+    expect(after?.labels).toEqual(original.labels);
+  });
+});

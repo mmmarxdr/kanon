@@ -17,6 +17,10 @@ import {
   useAttachIssueMutation,
   useDetachIssueMutation,
 } from "@/features/cycles/use-cycle-mutations";
+import {
+  useSubscribeMutation,
+  useUnsubscribeMutation,
+} from "@/features/issue-detail/use-subscription-mutations";
 import { IssueDetailHeader } from "@/features/issue-detail/issue-detail-header";
 import { MetadataSection } from "@/features/issue-detail/metadata-section";
 import { ChildrenSection } from "@/features/issue-detail/children-section";
@@ -132,6 +136,21 @@ function IssuePage() {
   // forbids conditional hook calls. cycleId is passed at mutate()-call time.
   const attachIssueMutation = useAttachIssueMutation(projectKey);
   const detachIssueMutation = useDetachIssueMutation(projectKey);
+
+  // Subscription mutations
+  const subscribeMutation = useSubscribeMutation(issueKey);
+  const unsubscribeMutation = useUnsubscribeMutation(issueKey);
+  const isSubscribed = issue?.subscribed ?? false;
+  const isSubscriptionPending =
+    subscribeMutation.isPending || unsubscribeMutation.isPending;
+  const handleSubscribeToggle = useCallback(() => {
+    if (isSubscriptionPending) return;
+    if (isSubscribed) {
+      unsubscribeMutation.mutate();
+    } else {
+      subscribeMutation.mutate();
+    }
+  }, [isSubscribed, isSubscriptionPending, subscribeMutation, unsubscribeMutation]);
 
   useEffect(() => {
     if (!isEditingDescription && issue?.description !== undefined) {
@@ -303,6 +322,9 @@ function IssuePage() {
           <span style={{ flex: 1 }} />
           <button
             type="button"
+            onClick={handleSubscribeToggle}
+            disabled={isSubscriptionPending}
+            aria-pressed={isSubscribed}
             style={{
               height: 26,
               padding: "0 8px",
@@ -310,10 +332,16 @@ function IssuePage() {
               border: "1px solid var(--line)",
               background: "var(--panel)",
               fontSize: 11.5,
-              color: "var(--ink-2)",
+              color: isSubscriptionPending ? "var(--ink-4)" : "var(--ink-2)",
+              cursor: isSubscriptionPending ? "not-allowed" : "pointer",
+              opacity: isSubscriptionPending ? 0.6 : 1,
             }}
           >
-            Subscribe
+            {isSubscriptionPending
+              ? "…"
+              : isSubscribed
+                ? "Unsubscribe"
+                : "Subscribe"}
           </button>
           <button type="button" style={{ color: "var(--ink-4)" }}>
             <Icon.More />
