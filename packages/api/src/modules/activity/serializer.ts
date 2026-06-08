@@ -38,12 +38,12 @@ export interface SerializedActivityLog {
  *  - `details.oldValue` / `details.newValue` — legacy fallback
  */
 export function serializeActivityLog(log: RawActivityLog): SerializedActivityLog {
+  const { from, to } = readStateChange(log.details);
+
   const details =
     log.details && typeof log.details === "object" && !Array.isArray(log.details)
       ? (log.details as Record<string, unknown>)
       : {};
-
-  const { from, to } = readStateChange(details);
 
   return {
     id: log.id,

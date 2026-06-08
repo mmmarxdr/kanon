@@ -18,6 +18,11 @@
  *
  * Returns `{}` (no keys) when `details` is null, non-object, or an array so
  * callers can safely destructure with defaults.
+ *
+ * WARNING: `from` and `to` are typed as `unknown`. They can be `null` (e.g.
+ * assignee-change logs where the assignee was unset) or any other non-string
+ * value. Callers MUST type-guard (`typeof x === "string"`) before performing
+ * any string operation on these values.
  */
 export function readStateChange(details: unknown): { from?: unknown; to?: unknown } {
   if (details === null || typeof details !== "object" || Array.isArray(details)) {
