@@ -235,7 +235,7 @@ async function seedCyclesMock(
           issueId: issue.id,
           memberId,
           action: "state_changed",
-          details: { oldValue: "review", newValue: "done" },
+          details: { from: "review", to: "done" },
           createdAt: ts,
         },
       });
