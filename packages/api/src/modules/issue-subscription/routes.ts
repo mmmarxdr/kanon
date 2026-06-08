@@ -5,36 +5,21 @@
  *  PUT    /api/issues/:key/subscription  — subscribe (idempotent)
  *  DELETE /api/issues/:key/subscription  — unsubscribe
  *  GET    /api/issues/:key/subscription  — get own subscription status
+ *
+ * Fix 2 (KAN-28): requireIssueRole now sets request.issueId (mirrors the
+ * requireProjectRole → request.projectId pattern). Route handlers read
+ * request.issueId directly, eliminating the second DB lookup that was
+ * previously performed by the local resolveIssueId helper.
  */
 
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { requireIssueRole, requireIssueMember } from "../../middleware/require-role.js";
-import { prisma } from "../../config/prisma.js";
-import { AppError } from "../../shared/types.js";
+import { subscriptionStatusSchema } from "@kanon/bridge";
 import * as subscriptionService from "./service.js";
 
 const IssueKeyParam = z.object({ key: z.string() });
-
-const SubscriptionStatusSchema = z.object({
-  subscribed: z.boolean(),
-});
-
-/**
- * Resolve issue ID from issue key, asserting existence.
- * Throws 404 if not found.
- */
-async function resolveIssueId(key: string): Promise<string> {
-  const issue = await prisma.issue.findUnique({
-    where: { key },
-    select: { id: true },
-  });
-  if (!issue) {
-    throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${key}" not found`);
-  }
-  return issue.id;
-}
 
 export default async function issueSubscriptionRoutes(
   fastify: FastifyInstance,
@@ -51,12 +36,11 @@ export default async function issueSubscriptionRoutes(
       preHandler: [requireIssueRole("key", "member")],
       schema: {
         params: IssueKeyParam,
-        response: { 200: SubscriptionStatusSchema },
+        response: { 200: subscriptionStatusSchema },
       },
     },
     async (request, _reply) => {
-      const issueId = await resolveIssueId(request.params.key);
-      return subscriptionService.subscribe(issueId, request.member!.id);
+      return subscriptionService.subscribe(request.issueId!, request.member!.id);
     },
   );
 
@@ -70,12 +54,11 @@ export default async function issueSubscriptionRoutes(
       preHandler: [requireIssueRole("key", "member")],
       schema: {
         params: IssueKeyParam,
-        response: { 200: SubscriptionStatusSchema },
+        response: { 200: subscriptionStatusSchema },
       },
     },
     async (request, _reply) => {
-      const issueId = await resolveIssueId(request.params.key);
-      return subscriptionService.unsubscribe(issueId, request.member!.id);
+      return subscriptionService.unsubscribe(request.issueId!, request.member!.id);
     },
   );
 
@@ -89,12 +72,11 @@ export default async function issueSubscriptionRoutes(
       preHandler: [requireIssueMember("key")],
       schema: {
         params: IssueKeyParam,
-        response: { 200: SubscriptionStatusSchema },
+        response: { 200: subscriptionStatusSchema },
       },
     },
     async (request, _reply) => {
-      const issueId = await resolveIssueId(request.params.key);
-      return subscriptionService.getStatus(issueId, request.member!.id);
+      return subscriptionService.getStatus(request.issueId!, request.member!.id);
     },
   );
 }
