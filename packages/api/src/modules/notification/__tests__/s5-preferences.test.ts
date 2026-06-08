@@ -217,6 +217,30 @@ describe("Notification preferences — S5 / KAN-29", () => {
 
       expect(res.statusCode).toBe(400);
     });
+
+    it("rejects body with unknown extra fields → 400 (full-replace must be strict)", async () => {
+      // PUT is a full-replace contract: unknown fields must be rejected, not silently stripped.
+      // The bridge schema must use .strict() so `admin:true` or any unknown key → 400.
+      const ws = await seedTestWorkspace();
+      const member = await seedTestMember(ws.id, { username: "pref-strict-user" });
+
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/workspaces/${ws.id}/notification-preferences`,
+        headers: {
+          authorization: `Bearer ${member.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          emailMention: true,
+          emailAssignment: true,
+          emailCycleClosed: true,
+          admin: true, // unknown extra field — must be rejected
+        }),
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
   });
 
 });

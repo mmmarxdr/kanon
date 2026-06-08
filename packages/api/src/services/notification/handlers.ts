@@ -119,11 +119,14 @@ export async function handleMentionCreated(
           where: { id: recipientId },
           select: { id: true, user: { select: { email: true } } },
         }),
-        // Actor lookup: only displayName needed for the email template
-        prisma.member.findUnique({
-          where: { id: event.actorId ?? "" },
-          select: { user: { select: { displayName: true } } },
-        }),
+        // Actor lookup: skip when actorId is null/undefined (system events) to avoid
+        // a guaranteed-miss query with id:"" — fall back to "Someone" in the template.
+        event.actorId
+          ? prisma.member.findUnique({
+              where: { id: event.actorId },
+              select: { user: { select: { displayName: true } } },
+            })
+          : Promise.resolve(null),
       ]);
 
       if (memberWithUser?.user?.email && isEmailEnabled(prefs, recipientId, "emailMention")) {
@@ -215,11 +218,14 @@ export async function handleIssueAssigned(
           where: { id: recipientId },
           select: { id: true, user: { select: { email: true } } },
         }),
-        // Actor lookup: only displayName needed for the email template
-        prisma.member.findUnique({
-          where: { id: event.actorId ?? "" },
-          select: { user: { select: { displayName: true } } },
-        }),
+        // Actor lookup: skip when actorId is null/undefined (system events) to avoid
+        // a guaranteed-miss query with id:"" — fall back to "Someone" in the template.
+        event.actorId
+          ? prisma.member.findUnique({
+              where: { id: event.actorId },
+              select: { user: { select: { displayName: true } } },
+            })
+          : Promise.resolve(null),
       ]);
 
       if (memberWithUser?.user?.email && isEmailEnabled(prefs, recipientId, "emailAssignment")) {

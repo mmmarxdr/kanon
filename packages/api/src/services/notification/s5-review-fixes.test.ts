@@ -126,6 +126,62 @@ function makeCycleClosedEvent(): DomainEvent {
   };
 }
 
+// ── Fix (S5-R4-2): null actorId — no findUnique with empty-string id ──────────
+
+describe("Fix S5-R4-2 — null actorId does not fire findUnique with empty-string id", () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it("mention: null actorId → member.findUnique NOT called with id:'', email dispatched with 'Someone'", async () => {
+    vi.mocked(prisma.notification.create).mockResolvedValue({} as any);
+    vi.mocked(prisma.notificationPreference.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.member.findUnique).mockImplementation((args: any) => {
+      if (args?.where?.id === "member-A") {
+        return Promise.resolve({ id: "member-A", user: { email: "a@test.com" } } as any);
+      }
+      return Promise.resolve(null);
+    });
+
+    const provider = makeEmailProvider();
+    const event = { ...makeMentionEvent(), actorId: null } as unknown as DomainEvent;
+
+    await handleMentionCreated(event, { emailProvider: provider });
+    await vi.waitFor(() => expect(provider.send).toHaveBeenCalledOnce());
+
+    // Must NOT have been called with an empty-string id
+    expect(prisma.member.findUnique).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "" } }),
+    );
+
+    // Email still dispatched; actor name falls back to "Someone"
+    const msg = provider.send.mock.calls[0]![0] as { text: string; html: string };
+    expect(msg.text).toContain("Someone");
+  });
+
+  it("assignment: null actorId → member.findUnique NOT called with id:'', email dispatched with 'Someone'", async () => {
+    vi.mocked(prisma.notification.create).mockResolvedValue({} as any);
+    vi.mocked(prisma.notificationPreference.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.member.findUnique).mockImplementation((args: any) => {
+      if (args?.where?.id === "member-B") {
+        return Promise.resolve({ id: "member-B", user: { email: "b@test.com" } } as any);
+      }
+      return Promise.resolve(null);
+    });
+
+    const provider = makeEmailProvider();
+    const event = { ...makeAssignmentEvent(), actorId: null } as unknown as DomainEvent;
+
+    await handleIssueAssigned(event, { emailProvider: provider });
+    await vi.waitFor(() => expect(provider.send).toHaveBeenCalledOnce());
+
+    expect(prisma.member.findUnique).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "" } }),
+    );
+
+    const msg = provider.send.mock.calls[0]![0] as { text: string; html: string };
+    expect(msg.text).toContain("Someone");
+  });
+});
+
 // ── Fix 6: issueKey URL-encoding ──────────────────────────────────────────────
 
 describe("Fix 6 — issueKey with special chars is URL-encoded in CTA href", () => {

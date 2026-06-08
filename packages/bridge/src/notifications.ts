@@ -14,6 +14,6 @@ export const notificationPreferenceItemSchema = z.object({
   emailMention: z.boolean(),
   emailAssignment: z.boolean(),
   emailCycleClosed: z.boolean(),
-});
+}).strict();
 
 export type NotificationPreferenceItem = z.infer<typeof notificationPreferenceItemSchema>;
