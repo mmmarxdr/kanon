@@ -267,8 +267,11 @@ describe("S4 review findings — KAN-28", () => {
 
         // The failed update never triggers autoSubscribe (synchronous failure).
         // Poll briefly to confirm no row appears even under async scheduling.
+        // 200ms is enough headroom for any fire-and-forget tasks to have settled;
+        // this is a negative-assertion window, not a success poll.
+        const NEGATIVE_POLL_WINDOW_MS = 200;
         let appeared = false;
-        const deadline = Date.now() + 200;
+        const deadline = Date.now() + NEGATIVE_POLL_WINDOW_MS;
         while (Date.now() < deadline) {
           const count = await prisma.issueSubscription.count({ where: { issueId: issue.id, memberId: fakeId } });
           if (count > 0) { appeared = true; break; }

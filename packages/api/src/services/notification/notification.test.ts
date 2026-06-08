@@ -257,20 +257,17 @@ describe("3.1e — issue.assigned handler isolation: handleIssueAssigned DB fail
 
     registerNotificationService(bus as unknown as IEventBus, { logger: mockLogger as any });
 
-    const event: DomainEvent = {
+    // Use the shared factory; override only what the test needs to control
+    // (id and payload fields — actor exclusion is satisfied by factory defaults).
+    const event = makeIssueAssignedEvent({
       id: 10,
-      type: "issue.assigned",
-      workspaceId: "ws-1",
-      actorId: "actor-id",
       payload: {
         issueKey: "KAN-99",
         issueId: "issue-99",
         from: null,
-        to: "assignee-member-id", // different from actor
+        to: "assignee-member-id", // different from actor (actor-member-id)
       },
-      timestamp: new Date().toISOString(),
-      via: null,
-    };
+    });
     bus._emit(event);
     // Allow async handlers to run
     await new Promise((r) => setTimeout(r, 20));
