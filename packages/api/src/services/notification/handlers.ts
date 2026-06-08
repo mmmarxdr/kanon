@@ -298,7 +298,8 @@ export async function routeEvent(
       break;
 
     default:
-      // Unhandled event type — no-op
+      // issue.updated and issue.created are deliberately not fan-out events in wave 1
+      // (product decision 2026-06-08).
       break;
   }
 }
