@@ -125,3 +125,10 @@ export const notificationKeys = {
   list: (workspaceId: string) =>
     [...notificationKeys.lists(), workspaceId] as const,
 };
+
+export const notificationPreferenceKeys = {
+  all: ["notification-preferences"] as const,
+  details: () => [...notificationPreferenceKeys.all, "detail"] as const,
+  detail: (workspaceId: string) =>
+    [...notificationPreferenceKeys.details(), workspaceId] as const,
+};
