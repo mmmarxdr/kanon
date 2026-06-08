@@ -57,14 +57,14 @@ export function buildCycleClosedEmail(opts: BuildCycleClosedEmailOptions): Email
                 ${completed} / ${planned} (${completionRate}%)
               </td>
             </tr>
-            <tr>
+            ${scopeAdded > 0 || scopeRemoved > 0 ? `<tr>
               <td style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#71757A;">
                 Scope changes
               </td>
               <td align="right" style="font-family:'Courier New',Courier,monospace;font-size:12px;color:#3A3D40;">
                 +${scopeAdded} / −${scopeRemoved}
               </td>
-            </tr>
+            </tr>` : ""}
           </table>
         </td>
       </tr>
@@ -80,12 +80,17 @@ export function buildCycleClosedEmail(opts: BuildCycleClosedEmailOptions): Email
       `You received this cycle report as a project member. <a href="${appUrl}/settings/notifications" style="color:#71757A;">Manage notifications</a>.`,
   });
 
+  const scopeLine =
+    scopeAdded > 0 || scopeRemoved > 0
+      ? [`Scope changes: +${scopeAdded} added / -${scopeRemoved} removed`]
+      : [];
+
   const text = [
     `Cycle closed: ${cycleName} — ${projectName} (${projectKey})`,
     "",
     `Velocity: ${velocity} story points`,
     `Issues completed: ${completed} of ${planned} (${completionRate}%)`,
-    `Scope changes: +${scopeAdded} added / -${scopeRemoved} removed`,
+    ...scopeLine,
     "",
     `View project: ${appUrl}`,
     "",

@@ -220,4 +220,22 @@ describe("buildCycleClosedEmail", () => {
     const { html } = buildCycleClosedEmail({ ...base, projectName: '<b>Evil</b>' });
     expect(html).not.toContain("<b>Evil</b>");
   });
+
+  // ── Fix 8: scope row omitted when both values are 0 ──────────────────────────
+
+  it("omits scope-changes row when scopeAdded=0 and scopeRemoved=0 (fix-8)", () => {
+    const { html, text } = buildCycleClosedEmail({ ...base, scopeAdded: 0, scopeRemoved: 0 });
+    expect(html).not.toContain("Scope changes");
+    expect(text).not.toContain("Scope changes");
+  });
+
+  it("includes scope-changes row when scopeAdded > 0 (fix-8)", () => {
+    const { html } = buildCycleClosedEmail({ ...base, scopeAdded: 3, scopeRemoved: 0 });
+    expect(html).toContain("Scope changes");
+  });
+
+  it("includes scope-changes row when scopeRemoved > 0 (fix-8)", () => {
+    const { html } = buildCycleClosedEmail({ ...base, scopeAdded: 0, scopeRemoved: 2 });
+    expect(html).toContain("Scope changes");
+  });
 });
