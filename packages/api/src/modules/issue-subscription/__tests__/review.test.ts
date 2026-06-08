@@ -39,8 +39,17 @@ async function seedIssue(projectId: string, suffix = "r") {
   });
 }
 
-function waitForEventProcessing(ms = 120) {
-  return new Promise((r) => setTimeout(r, ms));
+// Poll DB until predicate passes or timeout (Fix 8 / KAN-28 — eliminate flaky fixed sleeps)
+async function pollUntil(
+  predicate: () => Promise<boolean>,
+  timeoutMs = 2000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error(`pollUntil: predicate did not become true within ${timeoutMs}ms`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -106,8 +115,11 @@ describe("S4 review findings — KAN-28", () => {
         });
         expect(res.statusCode).toBe(201);
 
-        // Give the async notification handlers enough time to run
-        await waitForEventProcessing(200);
+        // Poll until B receives the mention notification
+        await pollUntil(async () => {
+          const count = await prisma.notification.count({ where: { recipientId: subscriberB.id } });
+          return count >= 1;
+        });
 
         // B should have EXACTLY ONE notification total
         const allNotifs = await prisma.notification.findMany({
@@ -157,7 +169,11 @@ describe("S4 review findings — KAN-28", () => {
         });
         expect(res.statusCode).toBe(201);
 
-        await waitForEventProcessing(200);
+        // Poll until B receives the subscribed_activity notification
+        await pollUntil(async () => {
+          const count = await prisma.notification.count({ where: { recipientId: subscriberB.id, kind: "subscribed_activity" } });
+          return count >= 1;
+        });
 
         const notifB = await prisma.notification.findMany({
           where: { recipientId: subscriberB.id, kind: "subscribed_activity" },
@@ -206,8 +222,14 @@ describe("S4 review findings — KAN-28", () => {
         });
         expect(res.statusCode).toBe(200);
 
-        // Wait for best-effort autoSubscribe (void, async)
-        await waitForEventProcessing(50);
+        // Poll until autoSubscribe row appears (best-effort, void async)
+        await pollUntil(async () => {
+          const row = await prisma.issueSubscription.findUnique({
+            where: { issueId_memberId: { issueId: issue.id, memberId: assignee.id } },
+            select: { id: true },
+          });
+          return row !== null;
+        });
 
         const sub = await prisma.issueSubscription.findUnique({
           where: {
@@ -243,7 +265,16 @@ describe("S4 review findings — KAN-28", () => {
         // the key invariant is NO subscription row for the fakeId
         expect(res.statusCode).toBeGreaterThanOrEqual(400);
 
-        await waitForEventProcessing(50);
+        // The failed update never triggers autoSubscribe (synchronous failure).
+        // Poll briefly to confirm no row appears even under async scheduling.
+        let appeared = false;
+        const deadline = Date.now() + 200;
+        while (Date.now() < deadline) {
+          const count = await prisma.issueSubscription.count({ where: { issueId: issue.id, memberId: fakeId } });
+          if (count > 0) { appeared = true; break; }
+          await new Promise((r) => setTimeout(r, 25));
+        }
+        expect(appeared).toBe(false);
 
         const subs = await prisma.issueSubscription.findMany({
           where: { issueId: issue.id, memberId: fakeId },
@@ -297,7 +328,11 @@ describe("S4 review findings — KAN-28", () => {
         });
         expect(res.statusCode).toBe(201);
 
-        await waitForEventProcessing(200);
+        // Poll until B receives the subscribed_activity notification
+        await pollUntil(async () => {
+          const count = await prisma.notification.count({ where: { recipientId: subscriberB.id, kind: "subscribed_activity" } });
+          return count >= 1;
+        });
 
         const notifB = await prisma.notification.findMany({
           where: { recipientId: subscriberB.id, kind: "subscribed_activity" },

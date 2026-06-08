@@ -40,10 +40,22 @@ async function seedIssue(projectId: string, suffix = "1") {
   });
 }
 
-// ── Helper: wait for async event processing ─────────────────────────────────
+// ── Helper: poll DB until predicate passes or timeout ────────────────────────
+// Replaces fixed sleeps with a deterministic poll that resolves as soon as the
+// DB reflects the expected state (Fix 8 / KAN-28 — eliminate flaky fixed sleeps).
 
-function waitForEventProcessing(ms = 80) {
-  return new Promise((r) => setTimeout(r, ms));
+async function pollUntil(
+  predicate: () => Promise<boolean>,
+  timeoutMs = 2000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  // Let the test assertion fail with a meaningful error rather than silently passing
+  // a wrong result.
+  throw new Error(`pollUntil: predicate did not become true within ${timeoutMs}ms`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -196,8 +208,11 @@ describe("IssueSubscription routes — S4 / KAN-28", () => {
         payload: { assigneeId: memberB.id },
       });
 
-      // Wait for autoSubscribe + event processing
-      await waitForEventProcessing(150);
+      // Poll until the issue is updated (assigneeId set), then verify subscription unchanged
+      await pollUntil(async () => {
+        const updated = await prisma.issue.findUnique({ where: { id: issue.id }, select: { assigneeId: true } });
+        return updated?.assigneeId === memberB.id;
+      });
 
       // B's subscription row must still be optedOut=true (autoSubscribe must not override)
       const sub = await prisma.issueSubscription.findUnique({
@@ -266,7 +281,10 @@ describe("IssueSubscription routes — S4 / KAN-28", () => {
         headers: { authorization: `Bearer ${actorA.token}` },
         payload: { to_state: "in_progress" },
       });
-      await waitForEventProcessing(150);
+      await pollUntil(async () => {
+        const count = await prisma.notification.count({ where: { recipientId: memberB.id, kind: "subscribed_activity" } });
+        return count >= 1;
+      });
 
       const notifB = await prisma.notification.findMany({
         where: { recipientId: memberB.id, kind: "subscribed_activity" },
@@ -341,8 +359,14 @@ describe("IssueSubscription routes — S4 / KAN-28", () => {
       expect(res.statusCode).toBe(201);
       const created = res.json();
 
-      // Wait a tick for best-effort auto-subscribe
-      await waitForEventProcessing(20);
+      // Poll until the auto-subscribe row appears (best-effort, fire-and-forget)
+      await pollUntil(async () => {
+        const row = await prisma.issueSubscription.findUnique({
+          where: { issueId_memberId: { issueId: created.id, memberId: creator.id } },
+          select: { id: true },
+        });
+        return row !== null;
+      });
 
       const sub = await prisma.issueSubscription.findUnique({
         where: { issueId_memberId: { issueId: created.id, memberId: creator.id } },
@@ -378,7 +402,14 @@ describe("IssueSubscription routes — S4 / KAN-28", () => {
       });
       expect(res.statusCode).toBe(201);
 
-      await waitForEventProcessing(20);
+      // Poll until the auto-subscribe row appears
+      await pollUntil(async () => {
+        const row = await prisma.issueSubscription.findUnique({
+          where: { issueId_memberId: { issueId: issue.id, memberId: actor.id } },
+          select: { id: true },
+        });
+        return row !== null;
+      });
 
       const sub = await prisma.issueSubscription.findUnique({
         where: { issueId_memberId: { issueId: issue.id, memberId: actor.id } },
@@ -418,8 +449,11 @@ describe("IssueSubscription routes — S4 / KAN-28", () => {
       });
       expect(res.statusCode).toBe(200);
 
-      // Wait for async NotificationService to process the event
-      await waitForEventProcessing(100);
+      // Poll until the notification appears for B
+      await pollUntil(async () => {
+        const count = await prisma.notification.count({ where: { recipientId: subscriberB.id, kind: "subscribed_activity" } });
+        return count >= 1;
+      });
 
       // B should have a subscribed_activity notification
       const notifB = await prisma.notification.findMany({
@@ -464,7 +498,11 @@ describe("IssueSubscription routes — S4 / KAN-28", () => {
       });
       expect(res.statusCode).toBe(201);
 
-      await waitForEventProcessing(100);
+      // Poll until the notification appears for B
+      await pollUntil(async () => {
+        const count = await prisma.notification.count({ where: { recipientId: subscriberB.id, kind: "subscribed_activity" } });
+        return count >= 1;
+      });
 
       // B should get subscribed_activity notification
       const notifB = await prisma.notification.findMany({
@@ -512,7 +550,13 @@ describe("IssueSubscription routes — S4 / KAN-28", () => {
         payload: { to_state: "in_progress" },
       });
 
-      await waitForEventProcessing(100);
+      // Poll until the issue state is updated (confirms event was processed)
+      await pollUntil(async () => {
+        const row = await prisma.issue.findUnique({ where: { id: issue.id }, select: { state: true } });
+        return row?.state === "in_progress";
+      });
+      // Give the notification handler a moment to process the event
+      await new Promise((r) => setTimeout(r, 50));
 
       // B should have NO subscribed_activity notification (optedOut row suppresses fan-out)
       const notifB = await prisma.notification.findMany({
