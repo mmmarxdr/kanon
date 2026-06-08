@@ -305,6 +305,12 @@ describe("IssueSubscription routes — S4 / KAN-28", () => {
       await prisma.projectMember.create({
         data: { userId: actorA.userId, projectId: project.id, role: "member" },
       });
+      // Fix 7 / KAN-28: subscriberB must be a project member (valid scenario —
+      // fan-out does NOT filter by project membership in wave 1, but the test must
+      // reflect a realistic setup; roadmap item tracks future project-scoped filtering).
+      await prisma.projectMember.create({
+        data: { userId: subscriberB.userId, projectId: project.id, role: "member" },
+      });
       const issue = await seedIssue(project.id, "f2");
 
       // Subscribe B directly

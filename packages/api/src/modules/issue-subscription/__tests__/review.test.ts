@@ -69,9 +69,10 @@ describe("S4 review findings — KAN-28", () => {
         "(kind=mention), NOT a duplicate subscribed_activity",
       async () => {
         const ws = await seedTestWorkspace();
-        const actorA = await seedTestMember(ws.id, { username: "actor-r1" });
+        // Use underscore usernames — the @mention regex is \w+ which does NOT match hyphens
+        const actorA = await seedTestMember(ws.id, { username: "actor_r1" });
         const subscriberB = await seedTestMember(ws.id, {
-          username: "subscriber-r1",
+          username: "subscriber_r1",
         });
         const project = await seedTestProject(ws.id);
 
@@ -93,20 +94,13 @@ describe("S4 review findings — KAN-28", () => {
           data: { issueId: issue.id, memberId: subscriberB.id, origin: "manual" },
         });
 
-        // Need B's username for the @mention — look it up
-        const memberB = await prisma.member.findUnique({
-          where: { id: subscriberB.id },
-          select: { username: true },
-        });
-        const usernameB = memberB!.username;
-
-        // A posts a comment that @mentions B
+        // A posts a comment that @mentions B (using exact username — \w+ compatible)
         const res = await app.inject({
           method: "POST",
           url: `/api/issues/${issue.key}/comments`,
           headers: { authorization: `Bearer ${actorA.token}` },
           payload: {
-            body: `Hey @${usernameB}, please review this`,
+            body: `Hey @subscriber_r1, please review this`,
             source: "human",
           },
         });
@@ -131,9 +125,9 @@ describe("S4 review findings — KAN-28", () => {
         "subscribed_activity notification",
       async () => {
         const ws = await seedTestWorkspace();
-        const actorA = await seedTestMember(ws.id, { username: "actor-r1b" });
+        const actorA = await seedTestMember(ws.id, { username: "actor_r1b" });
         const subscriberB = await seedTestMember(ws.id, {
-          username: "subscriber-r1b",
+          username: "subscriber_r1b",
         });
         const project = await seedTestProject(ws.id);
 
