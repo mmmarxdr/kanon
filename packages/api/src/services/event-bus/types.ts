@@ -24,7 +24,12 @@ export type DomainEventType =
   // S1 / KAN-30: new event types for capture-and-notify
   | "comment.created"
   | "mention.created"
-  | "cycle.closed";
+  | "cycle.closed"
+  // S4 / KAN-28: emitted by batchTransitionByKeys for grouped subscribed_activity fan-out.
+  // Carries all issueIds transitioned so the notification handler can do ONE findMany+createMany.
+  // Per-issue issue.transitioned events are still emitted for SSE consumers but carry
+  // _skipSubscribedActivity=true to prevent double fan-out.
+  | "issue.batch_transitioned";
 
 /**
  * A typed domain event emitted after a successful mutation.

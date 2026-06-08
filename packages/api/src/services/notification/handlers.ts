@@ -17,6 +17,7 @@ import type { DomainEvent } from "../event-bus/types.js";
 import type { NotificationServiceDeps } from "./types.js";
 import {
   getSubscriberIds,
+  getSubscribersByIssues,
   buildSubscribedActivityRecipients,
 } from "../../modules/issue-subscription/service.js";
 
@@ -222,9 +223,63 @@ export async function routeEvent(
       break;
     }
 
-    case "issue.transitioned":
-      await handleSubscribedActivity(event);
+    case "issue.transitioned": {
+      // Skip subscribed_activity fan-out for per-issue events emitted by batchTransitionByKeys.
+      // Those events carry _skipSubscribedActivity=true because the grouped fan-out is handled
+      // by the single issue.batch_transitioned event (Fix 3 / KAN-28 — N+1 guard).
+      const tPayload = event.payload as { _skipSubscribedActivity?: boolean };
+      if (!tPayload._skipSubscribedActivity) {
+        await handleSubscribedActivity(event);
+      }
       break;
+    }
+
+    case "issue.batch_transitioned": {
+      // Grouped subscribed_activity fan-out for batch transitions (Fix 3 / KAN-28).
+      // ONE findMany across all issueIds + ONE createMany instead of N per-issue round-trips.
+      // Actor exclusion and optedOut filtering are preserved via getSubscribersByIssues.
+      const batchPayload = event.payload as { issueIds?: string[]; to?: string };
+      const issueIds = batchPayload.issueIds ?? [];
+      if (issueIds.length === 0) break;
+
+      const subscribersByIssue = await getSubscribersByIssues(issueIds);
+
+      // Build de-duplicated notification rows: one per (recipient, issue) pair,
+      // excluding actor. A subscriber watching multiple issues in the batch receives
+      // one notification per issue (not collapsed) so each activity is traceable.
+      const rows: Array<{
+        kind: "subscribed_activity";
+        workspaceId: string;
+        recipientId: string;
+        actorId: string;
+        issueId: string;
+        payload: Record<string, unknown>;
+        via: string | null;
+        read: boolean;
+      }> = [];
+
+      for (const issueId of issueIds) {
+        const subscribers = subscribersByIssue.get(issueId) ?? new Set();
+        for (const recipientId of subscribers) {
+          if (recipientId === event.actorId) continue; // actor exclusion
+          rows.push({
+            kind: "subscribed_activity",
+            workspaceId: event.workspaceId,
+            recipientId,
+            actorId: event.actorId,
+            issueId,
+            payload: { action: "issue.transitioned" },
+            via: event.via ?? null,
+            read: false,
+          });
+        }
+      }
+
+      if (rows.length > 0) {
+        await prisma.notification.createMany({ data: rows });
+      }
+      break;
+    }
 
     case "comment.created": {
       // Build alreadyNotified from mentionedMemberIds so subscribers who received

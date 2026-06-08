@@ -937,7 +937,9 @@ export async function batchTransitionByKeys(
     await syncRoadmapItemStatus(prisma, rep.id);
   }
 
-  // Emit issue.transitioned per-issue (fire-and-forget).
+  // Emit per-issue issue.transitioned events for SSE consumers (fire-and-forget).
+  // These carry _skipSubscribedActivity=true because the single issue.batch_transitioned
+  // event below handles the fan-out in ONE grouped DB query instead of one per issue (Fix 3 / KAN-28).
   try {
     for (const issue of issuesToTransition) {
       eventBus.emit({
@@ -949,9 +951,23 @@ export async function batchTransitionByKeys(
           issueId: issue.id,
           from: issue.state,
           to: targetState,
+          // Tells the notification routeEvent to skip subscribed_activity for this event
+          // — the batch event below handles fan-out grouped across all issues.
+          _skipSubscribedActivity: true,
         },
       });
     }
+    // Single batched event → notification handler does ONE findMany+createMany
+    // across all affected issues, eliminating the N+1 from per-issue fan-out.
+    eventBus.emit({
+      type: "issue.batch_transitioned",
+      workspaceId: project.workspaceId,
+      actorId: memberId,
+      payload: {
+        issueIds: issuesToTransition.map((i) => i.id),
+        to: targetState,
+      },
+    });
   } catch {
     // Never let event emission break the mutation
   }

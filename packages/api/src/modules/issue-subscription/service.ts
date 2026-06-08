@@ -144,3 +144,28 @@ export async function getSubscriberIds(issueId: string): Promise<string[]> {
   });
   return subs.map((s) => s.memberId);
 }
+
+/**
+ * Return all active subscriptions for a set of issues in ONE query.
+ * Used by the batched issue.batch_transitioned fan-out to avoid N+1 (Fix 3 / KAN-28).
+ * Returns a Map from issueId → Set<memberId> for active (optedOut=false) subscribers.
+ */
+export async function getSubscribersByIssues(
+  issueIds: string[],
+): Promise<Map<string, Set<string>>> {
+  if (issueIds.length === 0) return new Map();
+  const subs = await prisma.issueSubscription.findMany({
+    where: { issueId: { in: issueIds }, optedOut: false },
+    select: { issueId: true, memberId: true },
+  });
+  const result = new Map<string, Set<string>>();
+  for (const sub of subs) {
+    let set = result.get(sub.issueId);
+    if (!set) {
+      set = new Set();
+      result.set(sub.issueId, set);
+    }
+    set.add(sub.memberId);
+  }
+  return result;
+}
