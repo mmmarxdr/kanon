@@ -40,7 +40,7 @@ set -euo pipefail
 # origin, so a compromised origin can serve a matching pair).
 EXPECTED_SHA256=""
 
-KANON_MCP_VERSION="0.5.0"
+KANON_MCP_VERSION="0.6.3"
 KANON_REPO="${KANON_REPO:-mmmarxdr/kanon}"
 DEFAULT_BASE_URL="https://github.com/${KANON_REPO}/releases/download/mcp-v${KANON_MCP_VERSION}"
 BASE_URL="${KANON_INSTALL_BASE_URL:-$DEFAULT_BASE_URL}"
