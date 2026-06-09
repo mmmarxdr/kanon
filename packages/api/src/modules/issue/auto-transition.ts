@@ -77,10 +77,14 @@ export async function checkAndAdvanceParent(
   const targetState = COLUMN_DEFAULT_STATES[minChildColumn];
   if (!targetState) return;
 
+  // KAN-35 completion-timestamp contract: set completedAt when entering done, clear on any other transition.
   // Update parent state
   await prisma.issue.update({
     where: { id: parent.id },
-    data: { state: targetState as any },
+    data: {
+      state: targetState as any,
+      completedAt: targetState === "done" ? new Date() : null,
+    },
   });
 
   // Log automatic transition

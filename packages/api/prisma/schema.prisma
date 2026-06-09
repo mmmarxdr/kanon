@@ -233,9 +233,11 @@ model Issue {
   priority    IssuePriority @default(medium)
   state       IssueState    @default(backlog)
   labels      String[]      @default([])
-  dueDate     DateTime?     @map("due_date")
-  createdAt   DateTime      @default(now()) @map("created_at")
-  updatedAt   DateTime      @updatedAt @map("updated_at")
+  dueDate      DateTime?     @map("due_date")
+  /// Set to the transition timestamp when the issue moves to `done`; cleared to NULL on reopen. KAN-35.
+  completedAt  DateTime?     @map("completed_at")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
 
   // Grouping key for SDD change aggregation (derived from topic_key prefix)
   groupKey    String?       @map("group_key")
@@ -330,6 +332,8 @@ model Cycle {
   endDate   DateTime   @map("end_date")
   /** Velocity in story points. Set when the cycle is closed. */
   velocity  Int?
+  /// Set to the close timestamp when closeCycle runs. NULL for historical cycles closed before KAN-35. KAN-35.
+  closedAt  DateTime?  @map("closed_at")
   createdAt DateTime   @default(now()) @map("created_at")
   updatedAt DateTime   @updatedAt @map("updated_at")
 

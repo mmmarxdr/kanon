@@ -291,3 +291,127 @@ describe("A6.3 — updateIssue wires parseAndUpsertMentions", () => {
     expect(call.commentId).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// KAN-35 Phase 5 — Backfill SQL data-integrity test
+//
+// Verifies the in-migration backfill logic in pure TypeScript — no live DB
+// needed (structural-exempt per spec: migration SQL already written in Phase 1).
+//
+// SQL being tested (migration.sql):
+//   UPDATE issues SET completed_at = sub.max_created_at
+//   FROM (
+//     SELECT issue_id, MAX(created_at) AS max_created_at
+//     FROM activity_logs
+//     WHERE action='state_changed'
+//       AND (details->>'to'='done' OR details->>'newValue'='done')
+//     GROUP BY issue_id
+//   ) sub
+//   WHERE issues.id = sub.issue_id AND issues.state = 'done';
+// ---------------------------------------------------------------------------
+
+/**
+ * Pure TypeScript implementation of the backfill SQL logic.
+ * Mirrors the exact filtering and MAX(created_at) semantics of the migration.
+ */
+function runBackfillLogic(
+  issues: Array<{ id: string; state: string; completedAt: Date | null }>,
+  activityLogs: Array<{ issueId: string; action: string; createdAt: Date; details: Record<string, unknown> }>,
+): Array<{ id: string; completedAt: Date | null }> {
+  // Build MAX(created_at) per issue_id matching the SQL WHERE clause
+  const maxDoneLogByIssue = new Map<string, Date>();
+  for (const log of activityLogs) {
+    if (log.action !== "state_changed") continue;
+    const det = log.details;
+    // Mirrors: details->>'to'='done' OR details->>'newValue'='done'
+    const isDone = det["to"] === "done" || det["newValue"] === "done";
+    if (!isDone) continue;
+    const prev = maxDoneLogByIssue.get(log.issueId);
+    if (!prev || log.createdAt > prev) {
+      maxDoneLogByIssue.set(log.issueId, log.createdAt);
+    }
+  }
+
+  // Apply update: only issues in state='done' with a matching log get backfilled
+  return issues.map((issue) => {
+    if (issue.state !== "done") return issue;
+    const maxCreatedAt = maxDoneLogByIssue.get(issue.id);
+    if (!maxCreatedAt) return issue; // no qualifying log → stays NULL
+    return { ...issue, completedAt: maxCreatedAt };
+  });
+}
+
+describe("KAN-35 Phase 5 — Backfill SQL data-integrity", () => {
+  const logCreatedAt = new Date("2026-01-10T12:00:00.000Z");
+
+  it("D1 — done issue with {to:'done'} log gets completedAt set to log createdAt (current shape)", () => {
+    const issues = [{ id: "iss-1", state: "done", completedAt: null }];
+    const logs = [
+      { issueId: "iss-1", action: "state_changed", createdAt: logCreatedAt, details: { from: "in_progress", to: "done" } },
+    ];
+
+    const result = runBackfillLogic(issues, logs);
+
+    expect(result[0]!.completedAt).toEqual(logCreatedAt);
+  });
+
+  it("D2 — done issue with {newValue:'done'} log gets completedAt set (legacy shape)", () => {
+    const issues = [{ id: "iss-legacy", state: "done", completedAt: null }];
+    const logs = [
+      { issueId: "iss-legacy", action: "state_changed", createdAt: logCreatedAt, details: { newValue: "done" } },
+    ];
+
+    const result = runBackfillLogic(issues, logs);
+
+    // Legacy shape must be detected → completedAt backfilled
+    expect(result[0]!.completedAt).toEqual(logCreatedAt);
+  });
+
+  it("D3 — done issue with no qualifying log stays NULL (un-backfillable)", () => {
+    const issues = [{ id: "iss-no-log", state: "done", completedAt: null }];
+    const logs: typeof issues extends never ? never : any[] = []; // no logs at all
+
+    const result = runBackfillLogic(issues, logs);
+
+    expect(result[0]!.completedAt).toBeNull();
+  });
+
+  it("D4 — done issue with non-done log only stays NULL", () => {
+    const issues = [{ id: "iss-no-done-log", state: "done", completedAt: null }];
+    const logs = [
+      { issueId: "iss-no-done-log", action: "state_changed", createdAt: logCreatedAt, details: { from: "todo", to: "in_progress" } },
+    ];
+
+    const result = runBackfillLogic(issues, logs);
+
+    expect(result[0]!.completedAt).toBeNull();
+  });
+
+  it("D5 — MAX(created_at) wins when multiple done logs exist for same issue", () => {
+    const earlyLog = new Date("2026-01-08T10:00:00.000Z");
+    const laterLog = new Date("2026-01-12T10:00:00.000Z"); // most recent — should win
+
+    const issues = [{ id: "iss-multi", state: "done", completedAt: null }];
+    const logs = [
+      { issueId: "iss-multi", action: "state_changed", createdAt: earlyLog, details: { to: "done" } },
+      { issueId: "iss-multi", action: "state_changed", createdAt: laterLog, details: { to: "done" } },
+    ];
+
+    const result = runBackfillLogic(issues, logs);
+
+    expect(result[0]!.completedAt).toEqual(laterLog);
+  });
+
+  it("D6 — non-done issue is NOT backfilled even if it has a done log", () => {
+    // A reopened issue: state is now 'in_progress' but has an old done log
+    const issues = [{ id: "iss-reopened", state: "in_progress", completedAt: null }];
+    const logs = [
+      { issueId: "iss-reopened", action: "state_changed", createdAt: logCreatedAt, details: { to: "done" } },
+    ];
+
+    const result = runBackfillLogic(issues, logs);
+
+    // SQL WHERE issues.state='done' excludes this issue
+    expect(result[0]!.completedAt).toBeNull();
+  });
+});

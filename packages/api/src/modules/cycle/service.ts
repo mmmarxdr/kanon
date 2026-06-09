@@ -137,17 +137,15 @@ async function computeBurnup(
   end: Date,
 ): Promise<{ burnup: number[]; scopeLine: number[] }> {
   const days = totalDays(start, end);
+  // KAN-35: read completedAt directly — no activityLogs join needed.
+  // When completedAt is NULL (historical issue or not yet done), fall back to cycle.endDate.
   const issues = await prisma.issue.findMany({
     where: { cycleId },
     select: {
       id: true,
       estimate: true,
       state: true,
-      activityLogs: {
-        where: { action: "state_changed" },
-        orderBy: { createdAt: "asc" },
-        select: { createdAt: true, details: true },
-      },
+      completedAt: true,
     },
   });
 
@@ -156,12 +154,9 @@ async function computeBurnup(
 
   for (const issue of issues) {
     if (issue.state !== "done") continue;
-    // Find the last state_changed activity that ended in done; fall back to
-    // the cycle end if we cannot tell.
-    const doneEvent = [...issue.activityLogs].reverse().find((a) =>
-      isDoneTransition(a.details),
-    );
-    const ts = doneEvent?.createdAt ?? end;
+    // KAN-35: use completedAt when available; fall back to cycle endDate for
+    // historical issues that have no timestamp (backfill may have left them NULL).
+    const ts = issue.completedAt ?? end;
     const day = Math.max(
       0,
       Math.min(days, Math.round((ts.getTime() - start.getTime()) / ONE_DAY_MS)),
@@ -480,10 +475,9 @@ export async function createCycle(
  * full updated cycle row (legacy shape) — used when the caller still needs
  * raw cycle data and wants to skip a follow-up `getCycle` round-trip.
  *
- * Note: the Prisma `Cycle` model does not currently have a dedicated
- * `closedAt` column. We surface the row's `updatedAt` (which Prisma stamps
- * on `update`) under the ack-friendly name. If a dedicated column is added
- * later, swap the source here.
+ * KAN-35: `closedAt` is now its own dedicated column set at close time.
+ * It is distinct from `updatedAt` and NULL for historical cycles closed
+ * before this change was deployed.
  *
  * S5: accepts `actorMemberId` and emits `cycle.closed` event after update
  * so the NotificationService can dispatch cycle-closed emails.
@@ -506,9 +500,10 @@ export async function closeCycle(
   const completed = cycle.issues.filter((i) => i.state === "done").length;
   const planned = cycle.issues.length;
 
+  // KAN-35: set closedAt as its own dedicated column, distinct from updatedAt.
   const updated = await prisma.cycle.update({
     where: { id },
-    data: { state: "done", velocity },
+    data: { state: "done", velocity, closedAt: new Date() },
   });
 
   // Emit cycle.closed event — fire-and-forget, handler isolation via NotificationService (D3)
@@ -542,7 +537,8 @@ export async function closeCycle(
     id: updated.id,
     state: updated.state,
     velocity: updated.velocity,
-    closedAt: updated.updatedAt,
+    // KAN-35: source closedAt from its own dedicated column (not updatedAt).
+    closedAt: updated.closedAt,
   };
 }
 
@@ -674,45 +670,29 @@ export async function attachIssues(cycleId: string, input: AttachIssuesInput) {
  *     most-recent log per issue, compute delta in days, average.
  *
  * Edge cases:
- *  - 0 issues → null (no activityLog query issued)
- *  - Issues exist but none have a state_changed→done log → null
- *  - Issue with doneAt === createdAt → 0.0 (not null)
- *  - Mixed (some with, some without log) → average over those that have a log
+ *  - 0 issues → null (no extra query issued)
+ *  - Issues exist but none have a non-null completedAt → null
+ *  - Issue with completedAt === createdAt → 0.0 (not null)
+ *  - Mixed (some with, some without completedAt) → average over those with non-null completedAt
+ *
+ * KAN-35: switched from ActivityLog scan to reading Issue.completedAt directly.
+ * Legacy guarantee (isDoneTransition covers both {to:'done'} and {newValue:'done'})
+ * is now upheld by the in-migration backfill SQL, not by a runtime log scan.
  */
 export async function computeAvgLeadDays(cycleId: string): Promise<number | null> {
-  // 1. Fetch all issues in the cycle
+  // KAN-35: read completedAt directly from Issue — no ActivityLog query needed.
   const issues = await prisma.issue.findMany({
     where: { cycleId },
-    select: { id: true, createdAt: true },
+    select: { id: true, createdAt: true, completedAt: true },
   });
 
   if (issues.length === 0) return null;
 
-  // 2. One batch query: all state_changed logs for these issueIds
-  const logs = await prisma.activityLog.findMany({
-    where: {
-      issueId: { in: issues.map((i) => i.id) },
-      action: "state_changed",
-    },
-    select: { issueId: true, createdAt: true, details: true },
-  });
-
-  // 3. Group into a Map<issueId, latestDoneAt> — take the most recent done event per issue
-  const lastDoneByIssue = new Map<string, Date>();
-  for (const log of logs) {
-    if (!isDoneTransition(log.details)) continue;
-    const prev = lastDoneByIssue.get(log.issueId);
-    if (!prev || log.createdAt > prev) {
-      lastDoneByIssue.set(log.issueId, log.createdAt);
-    }
-  }
-
-  // 4. Compute deltas in days; average only over issues that have a done event
+  // Compute deltas in days; average only over issues with a non-null completedAt.
   const deltas: number[] = [];
   for (const issue of issues) {
-    const doneAt = lastDoneByIssue.get(issue.id);
-    if (!doneAt) continue; // exclude — no done log (REQ-CYCLE-LEAD-TIME-001 MUST NOT)
-    deltas.push((doneAt.getTime() - issue.createdAt.getTime()) / ONE_DAY_MS);
+    if (!issue.completedAt) continue; // exclude — not yet completed (REQ-CYCLE-LEAD-TIME-001 MUST NOT)
+    deltas.push((issue.completedAt.getTime() - issue.createdAt.getTime()) / ONE_DAY_MS);
   }
 
   if (deltas.length === 0) return null;
