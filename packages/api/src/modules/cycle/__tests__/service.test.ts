@@ -97,84 +97,78 @@ describe("A7.1 — computeAvgLeadDays: cycle with 0 done issues → null", () =>
   });
 });
 
-describe("A7.2 — computeAvgLeadDays: 1 done issue with log → returns days", () => {
+describe("A7.2 — computeAvgLeadDays: 1 done issue with completedAt → returns days (KAN-35 reader)", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("returns 5.5 when issue was created 10 days ago and done 4.5 days ago", async () => {
-    // createdAt = 10 days ago, doneAt = 4.5 days ago → delta = 5.5 days
+  it("returns 5.5 when issue was created 10 days ago and completedAt 4.5 days ago", async () => {
+    // createdAt = 10 days ago, completedAt = 4.5 days ago → delta = 5.5 days
     const now = new Date();
     const createdAt = new Date(now.getTime() - 10 * 86_400_000);
-    const doneAt = new Date(now.getTime() - 4.5 * 86_400_000);
+    const completedAt = new Date(now.getTime() - 4.5 * 86_400_000);
 
-    mockIssueFindMany.mockResolvedValue([{ id: "iss-1", createdAt }] as any);
-    mockActivityLogFindMany.mockResolvedValue([
-      { issueId: "iss-1", createdAt: doneAt, details: { from: "in_progress", to: "done" } },
-    ] as any);
+    // KAN-35: issue row now carries completedAt; no activityLog query
+    mockIssueFindMany.mockResolvedValue([{ id: "iss-1", createdAt, completedAt }] as any);
 
     const result = await computeAvgLeadDays("cycle-1");
 
     expect(result).toBeCloseTo(5.5, 4);
+    expect(mockActivityLogFindMany).not.toHaveBeenCalled();
   });
 
-  it("passes issueIds correctly in the batch activityLog query", async () => {
+  it("passes cycleId correctly in the issue query (no activityLog batch query)", async () => {
     const now = new Date();
-    mockIssueFindMany.mockResolvedValue([{ id: "iss-abc", createdAt: now }] as any);
-    mockActivityLogFindMany.mockResolvedValue([
-      { issueId: "iss-abc", createdAt: now, details: { from: "in_progress", to: "done" } },
-    ] as any);
+    const completedAt = now;
+    mockIssueFindMany.mockResolvedValue([{ id: "iss-abc", createdAt: now, completedAt }] as any);
 
     await computeAvgLeadDays("cycle-x");
 
-    expect(mockActivityLogFindMany).toHaveBeenCalledOnce();
-    const callArgs = mockActivityLogFindMany.mock.calls[0]![0] as any;
-    expect(callArgs.where.issueId).toMatchObject({ in: ["iss-abc"] });
-    expect(callArgs.where.action).toBe("state_changed");
+    expect(mockIssueFindMany).toHaveBeenCalledOnce();
+    const callArgs = mockIssueFindMany.mock.calls[0]![0] as any;
+    expect(callArgs.where.cycleId).toBe("cycle-x");
+    // KAN-35: no activityLog fan-out
+    expect(mockActivityLogFindMany).not.toHaveBeenCalled();
   });
 });
 
-describe("A7.3 — computeAvgLeadDays: 3 issues, 2 with log → average over 2", () => {
+describe("A7.3 — computeAvgLeadDays: 3 issues, 2 with completedAt → average over 2 (KAN-35 reader)", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("returns 3.0 when two issues took 2 and 4 days (third has no log)", async () => {
+  it("returns 3.0 when two issues took 2 and 4 days (third has completedAt=null)", async () => {
     const now = new Date();
     const iss1Created = new Date(now.getTime() - 5 * 86_400_000);
     const iss2Created = new Date(now.getTime() - 8 * 86_400_000);
     const iss3Created = new Date(now.getTime() - 3 * 86_400_000);
 
-    const iss1Done = new Date(now.getTime() - 3 * 86_400_000); // 5-3=2 days lead
-    const iss2Done = new Date(now.getTime() - 4 * 86_400_000); // 8-4=4 days lead
+    const iss1CompletedAt = new Date(now.getTime() - 3 * 86_400_000); // 5-3=2 days lead
+    const iss2CompletedAt = new Date(now.getTime() - 4 * 86_400_000); // 8-4=4 days lead
 
+    // KAN-35: completedAt on issue row; iss-3 excluded because completedAt=null
     mockIssueFindMany.mockResolvedValue([
-      { id: "iss-1", createdAt: iss1Created },
-      { id: "iss-2", createdAt: iss2Created },
-      { id: "iss-3", createdAt: iss3Created }, // no done log
-    ] as any);
-
-    mockActivityLogFindMany.mockResolvedValue([
-      { issueId: "iss-1", createdAt: iss1Done, details: { from: "in_progress", to: "done" } },
-      { issueId: "iss-2", createdAt: iss2Done, details: { from: "review", to: "done" } },
-      // iss-3 has NO done log (missing entirely)
+      { id: "iss-1", createdAt: iss1Created, completedAt: iss1CompletedAt },
+      { id: "iss-2", createdAt: iss2Created, completedAt: iss2CompletedAt },
+      { id: "iss-3", createdAt: iss3Created, completedAt: null }, // excluded
     ] as any);
 
     const result = await computeAvgLeadDays("cycle-1");
 
     expect(result).toBeCloseTo(3.0, 4);
+    expect(mockActivityLogFindMany).not.toHaveBeenCalled();
   });
 
-  it("ignores non-done state_changed logs when computing average", async () => {
+  it("returns exact lead days — non-done issues excluded via completedAt=null", async () => {
     const now = new Date();
     const created = new Date(now.getTime() - 10 * 86_400_000);
-    const doneAt = new Date(now.getTime() - 5 * 86_400_000); // 5 days lead
+    const completedAt = new Date(now.getTime() - 5 * 86_400_000); // 5 days lead
 
-    mockIssueFindMany.mockResolvedValue([{ id: "iss-1", createdAt: created }] as any);
-    mockActivityLogFindMany.mockResolvedValue([
-      { issueId: "iss-1", createdAt: new Date(), details: { from: "todo", to: "review" } }, // not done
-      { issueId: "iss-1", createdAt: doneAt, details: { from: "review", to: "done" } },
+    // KAN-35: completedAt captures only done transitions; null = not done
+    mockIssueFindMany.mockResolvedValue([
+      { id: "iss-1", createdAt: created, completedAt }, // contributes
     ] as any);
 
     const result = await computeAvgLeadDays("cycle-1");
 
     expect(result).toBeCloseTo(5.0, 4);
+    expect(mockActivityLogFindMany).not.toHaveBeenCalled();
   });
 });
 
@@ -209,45 +203,43 @@ describe("A7.4 — computeAvgLeadDays: all done issues missing log → null", ()
   });
 });
 
-describe("A7.5 (was A7.4 in tasks) — computeAvgLeadDays: done_at = createdAt → returns 0.0", () => {
+describe("A7.5 (was A7.4 in tasks) — computeAvgLeadDays: completedAt = createdAt → returns 0.0 (KAN-35 reader)", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("returns 0.0 (not null) when issue was created and done at the same instant", async () => {
+  it("returns 0.0 (not null) when issue was created and completed at the same instant", async () => {
     const sameTime = new Date("2026-01-15T10:00:00.000Z");
 
-    mockIssueFindMany.mockResolvedValue([{ id: "iss-1", createdAt: sameTime }] as any);
-    mockActivityLogFindMany.mockResolvedValue([
-      { issueId: "iss-1", createdAt: sameTime, details: { from: "in_progress", to: "done" } },
+    // KAN-35: completedAt = createdAt → delta of 0 is valid, not null
+    mockIssueFindMany.mockResolvedValue([
+      { id: "iss-1", createdAt: sameTime, completedAt: sameTime },
     ] as any);
 
     const result = await computeAvgLeadDays("cycle-1");
 
     // Must be 0 (zero), NOT null — delta of 0 is valid
     expect(result).toBe(0);
+    expect(mockActivityLogFindMany).not.toHaveBeenCalled();
   });
 });
 
-describe("A7.5 — computeAvgLeadDays: anti N+1 — 50 issues → exactly 1 activityLog query", () => {
+describe("A7.5 — computeAvgLeadDays: anti N+1 — 50 issues → exactly 1 issue query, 0 activityLog queries (KAN-35 reader)", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("issues one batch activityLog query regardless of issue count", async () => {
+  it("issues exactly 1 issue query and 0 activityLog queries regardless of issue count", async () => {
     const now = new Date();
     const issues = Array.from({ length: 50 }, (_, i) => ({
       id: `iss-${i}`,
       createdAt: new Date(now.getTime() - 10 * 86_400_000),
+      completedAt: null, // no completedAt — result will be null
     }));
 
     mockIssueFindMany.mockResolvedValue(issues as any);
-    mockActivityLogFindMany.mockResolvedValue([]); // no done events — result will be null
 
     await computeAvgLeadDays("cycle-big");
 
-    // Exactly 1 call regardless of how many issues
-    expect(mockActivityLogFindMany).toHaveBeenCalledOnce();
-
-    // And that one call uses the batch { in: [...] } pattern
-    const callArgs = mockActivityLogFindMany.mock.calls[0]![0] as any;
-    expect(callArgs.where.issueId.in).toHaveLength(50);
+    // Exactly 1 issue query (no activityLog fan-out at all — KAN-35 reader switch)
+    expect(mockIssueFindMany).toHaveBeenCalledOnce();
+    expect(mockActivityLogFindMany).not.toHaveBeenCalled();
   });
 });
 
@@ -410,29 +402,26 @@ describe("A8.4 — resolveActiveCycleForWorkspace: 2 cycles in same project → 
 });
 
 // ---------------------------------------------------------------------------
-// B2 — Legacy-done backward-compat: activityLog rows with { newValue: "done" }
-//       (written before the { from, to } convention) must still be counted by
-//       the burnup / done-detection path via isDoneTransition → readStateChange.
+// B2 — Legacy-done backward-compat: NEUTRALIZED (KAN-35 reader switch)
+//
+// The original B2 test verified that activityLog rows with { newValue: "done" }
+// were counted by the burnup/lead-time reader via isDoneTransition. After the
+// KAN-35 reader switch, computeAvgLeadDays and computeBurnup no longer scan
+// ActivityLog at all — they read Issue.completedAt directly.
+//
+// The legacy-OR guarantee is now upheld by the in-migration backfill SQL which
+// matches BOTH shapes: `details->>'to'='done' OR details->>'newValue'='done'`.
+// That guarantee is verified by the backfill data-integrity test in Phase 5.
 // ---------------------------------------------------------------------------
 
-describe("B2 — legacy done shape { newValue: 'done' } is counted by burnup/lead-time", () => {
+describe("B2 — legacy done shape { newValue: 'done' } — NEUTRALIZED after KAN-35 reader switch", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("counts a done issue whose log uses legacy { newValue: 'done' } shape (no from/to keys)", async () => {
-    const now = new Date();
-    const createdAt = new Date(now.getTime() - 4 * 86_400_000);
-    const doneAt = new Date(now.getTime() - 2 * 86_400_000); // 2 days lead
-
-    // Issue seeded with the legacy log shape { newValue: "done" } — no `from`/`to` keys
-    mockIssueFindMany.mockResolvedValue([{ id: "iss-legacy", createdAt }] as any);
-    mockActivityLogFindMany.mockResolvedValue([
-      { issueId: "iss-legacy", createdAt: doneAt, details: { newValue: "done" } },
-    ] as any);
-
-    const result = await computeAvgLeadDays("cycle-legacy");
-
-    // Legacy row must be detected as done → 2-day lead time, not null
-    expect(result).toBeCloseTo(2.0, 4);
+  it("SKIPPED — legacy-OR guarantee moved to backfill SQL (see Phase 5 data-integrity test)", () => {
+    // This test is intentionally vacuous. The runtime reader no longer scans
+    // ActivityLog, so there is nothing to assert here. The backfill SQL covers
+    // the legacy shape guarantee at migration time.
+    expect(true).toBe(true);
   });
 });
 
@@ -483,16 +472,13 @@ describe("B1 — computeBurnup regression (KAN-39): done issue logged early buck
 
     mockCycleScopeEventFindMany.mockResolvedValue([] as any);
 
-    // computeBurnup's own issue query (includes activityLogs)
+    // KAN-35: computeBurnup's own issue query reads completedAt, no activityLogs join
     mockIssueFindMany.mockResolvedValue([
       {
         id: "iss-done",
         estimate: 3,
         state: "done",
-        activityLogs: [
-          // Production shape: { from, to } — NOT { newValue }
-          { createdAt: doneAt, details: { from: "in_progress", to: "done" } },
-        ],
+        completedAt: doneAt, // KAN-35: completion timestamp on the issue row
       },
     ] as any);
 
@@ -519,5 +505,176 @@ describe("B1 — computeBurnup regression (KAN-39): done issue logged early buck
     // cycle end. Under the KAN-39 bug every done issue landed at the last index,
     // so indexOf(3) would have been burnup.length - 1, not 1.
     expect(burnup.indexOf(3)).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// KAN-35 Reader Switch — computeAvgLeadDays reads Issue.completedAt directly
+// ---------------------------------------------------------------------------
+
+describe("KAN-35 R1 — computeAvgLeadDays reads Issue.completedAt (no activityLog scan)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("R1.1 — returns correct lead days from completedAt field, no activityLog query", async () => {
+    const now = new Date();
+    const createdAt = new Date(now.getTime() - 10 * 86_400_000);
+    const completedAt = new Date(now.getTime() - 4.5 * 86_400_000); // 5.5-day lead
+
+    mockIssueFindMany.mockResolvedValue([
+      { id: "iss-1", createdAt, completedAt },
+    ] as any);
+
+    const result = await computeAvgLeadDays("cycle-1");
+
+    expect(result).toBeCloseTo(5.5, 4);
+    // Must NOT call activityLog after KAN-35 reader switch
+    expect(mockActivityLogFindMany).not.toHaveBeenCalled();
+  });
+
+  it("R1.2 — excludes issues with completedAt=null from lead-time average", async () => {
+    const now = new Date();
+    const createdAt = new Date(now.getTime() - 10 * 86_400_000);
+    const completedAt = new Date(now.getTime() - 5 * 86_400_000); // 5-day lead
+
+    mockIssueFindMany.mockResolvedValue([
+      { id: "iss-1", createdAt, completedAt },        // contributes: 5 days
+      { id: "iss-2", createdAt, completedAt: null },  // excluded (not yet completed)
+    ] as any);
+
+    const result = await computeAvgLeadDays("cycle-1");
+
+    expect(result).toBeCloseTo(5.0, 4);
+    expect(mockActivityLogFindMany).not.toHaveBeenCalled();
+  });
+
+  it("R1.3 — returns null when all issues have completedAt=null", async () => {
+    const now = new Date();
+    mockIssueFindMany.mockResolvedValue([
+      { id: "iss-1", createdAt: now, completedAt: null },
+      { id: "iss-2", createdAt: now, completedAt: null },
+    ] as any);
+
+    const result = await computeAvgLeadDays("cycle-1");
+
+    expect(result).toBeNull();
+    expect(mockActivityLogFindMany).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// KAN-35 R2 — computeBurnup reads Issue.completedAt with cycle.endDate fallback
+// ---------------------------------------------------------------------------
+
+describe("KAN-35 R2 — computeBurnup reads Issue.completedAt (no activityLog join)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("R2.1 — done issue with completedAt set buckets on its completion day, no activityLogs include", async () => {
+    const start = new Date("2026-06-01T00:00:00.000Z");
+    const end = new Date("2026-06-08T00:00:00.000Z");
+    const completedAt = new Date("2026-06-02T00:00:00.000Z"); // day 1 of cycle
+
+    mockCycleFindUnique.mockResolvedValue({
+      id: "cycle-burnup-kan35",
+      name: "Sprint KAN-35",
+      startDate: start,
+      endDate: end,
+      state: "active",
+      goal: null,
+      projectId: "proj-1",
+      createdAt: start,
+      updatedAt: start,
+      issues: [
+        {
+          id: "iss-done",
+          key: "KAN-1",
+          title: "Done early",
+          type: "task",
+          priority: "medium",
+          state: "done",
+          estimate: 3,
+          updatedAt: completedAt,
+          assignee: null,
+        },
+      ],
+    } as any);
+
+    mockCycleScopeEventFindMany.mockResolvedValue([] as any);
+
+    // After KAN-35 reader switch: issue rows have completedAt, NO activityLogs include
+    mockIssueFindMany.mockResolvedValue([
+      {
+        id: "iss-done",
+        estimate: 3,
+        state: "done",
+        completedAt, // KAN-35: read from column
+        // no activityLogs key — should not be accessed
+      },
+    ] as any);
+
+    const result = await getCycle("cycle-burnup-kan35");
+
+    const burnup = result.burnup;
+    // Day 0 (start): no completions yet
+    expect(burnup[0]).toBe(0);
+    // Day 1: completedAt lands here → 3 points cumulative
+    expect(burnup[1]).toBe(3);
+    // Subsequent days remain at 3 (cumulative)
+    for (let d = 2; d < burnup.length; d++) {
+      expect(burnup[d]).toBe(3);
+    }
+    expect(burnup.indexOf(3)).toBe(1);
+  });
+
+  it("R2.2 — done issue with completedAt=null falls back to cycle.endDate", async () => {
+    const start = new Date("2026-06-01T00:00:00.000Z");
+    const end = new Date("2026-06-08T00:00:00.000Z");
+
+    mockCycleFindUnique.mockResolvedValue({
+      id: "cycle-fallback",
+      name: "Sprint Fallback",
+      startDate: start,
+      endDate: end,
+      state: "active",
+      goal: null,
+      projectId: "proj-1",
+      createdAt: start,
+      updatedAt: start,
+      issues: [
+        {
+          id: "iss-done-no-ts",
+          key: "KAN-2",
+          title: "Historical done",
+          type: "task",
+          priority: "medium",
+          state: "done",
+          estimate: 2,
+          updatedAt: start,
+          assignee: null,
+        },
+      ],
+    } as any);
+
+    mockCycleScopeEventFindMany.mockResolvedValue([] as any);
+
+    // completedAt=null → should fall back to end date (day 7)
+    mockIssueFindMany.mockResolvedValue([
+      {
+        id: "iss-done-no-ts",
+        estimate: 2,
+        state: "done",
+        completedAt: null, // no timestamp — historical issue
+      },
+    ] as any);
+
+    const result = await getCycle("cycle-fallback");
+
+    const burnup = result.burnup;
+    // With endDate fallback, issue lands on day 7 (last day)
+    // burnup[7] should be 2 (cumulative from day 7 onward)
+    expect(burnup[7]).toBe(2);
+    // Days 0-6 should all be 0
+    for (let d = 0; d < 7; d++) {
+      expect(burnup[d]).toBe(0);
+    }
   });
 });
