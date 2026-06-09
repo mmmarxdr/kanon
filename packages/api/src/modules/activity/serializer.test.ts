@@ -161,3 +161,54 @@ describe("serializeActivityLog — state_changed (KAN-41)", () => {
     expect(result.newValue).toBe("New");
   });
 });
+
+// ---------------------------------------------------------------------------
+// serializeActivityLog — via passthrough (KAN-32, Scenarios 10 & 11)
+// ---------------------------------------------------------------------------
+
+describe("serializeActivityLog — via passthrough (KAN-32)", () => {
+  it("Scenario 10: passes through via='cli' from raw log", () => {
+    const log = {
+      id: "log-via-1",
+      action: "state_changed",
+      details: { from: "backlog", to: "in_progress" },
+      via: "cli",
+      createdAt: new Date("2026-06-09T10:00:00Z"),
+      member: baseActor,
+    };
+
+    const result = serializeActivityLog(log);
+
+    expect(result.via).toBe("cli");
+  });
+
+  it("Scenario 11: passes through via=null for pre-provenance rows", () => {
+    const log = {
+      id: "log-via-2",
+      action: "created",
+      details: null,
+      via: null,
+      createdAt: new Date("2026-06-09T11:00:00Z"),
+      member: baseActor,
+    };
+
+    const result = serializeActivityLog(log);
+
+    expect(result.via).toBeNull();
+  });
+
+  it("defaults via to null when the field is absent from raw log", () => {
+    const log = {
+      id: "log-via-3",
+      action: "edited",
+      details: { field: "title" },
+      createdAt: new Date("2026-06-09T12:00:00Z"),
+      member: baseActor,
+      // via not present — should default to null
+    };
+
+    const result = serializeActivityLog(log);
+
+    expect(result.via).toBeNull();
+  });
+});
