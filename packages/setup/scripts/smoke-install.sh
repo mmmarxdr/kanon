@@ -345,6 +345,29 @@ fi
 
 echo ""
 
+# ── Test 8: KANON_REPO injection guard (KAN-52 hardening) ────────────────────
+# KANON_REPO is interpolated into the user-facing "use the tagged installer"
+# guidance. A value carrying a $(...) payload must be rejected up front so it can
+# never reach that copy-pasteable suggestion.
+
+echo "Test 8: malformed KANON_REPO → rejected before any work"
+
+OUTPUT_8="$(
+  KANON_REPO='evil/repo$(touch /tmp/kanon-smoke-injection)' \
+    KANON_INSTALL_BASE_URL="file://$FIXTURE_DIR" \
+    KANON_INSTALL_DIR="$INSTALL_DIR/badrepo" \
+    KANON_INSTALL_SKIP_SETUP=1 \
+    bash "$INSTALL_SH" 2>&1
+)"
+EXIT_8=$?
+true
+
+assert_exit_nonzero "malformed KANON_REPO rejected" "$EXIT_8"
+assert_output_contains "invalid-repo abort message" "$OUTPUT_8" "invalid KANON_REPO"
+assert_file_absent "injection payload did not execute" "/tmp/kanon-smoke-injection"
+
+echo ""
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 echo "Results: $PASS passed, $FAIL failed"

@@ -60,6 +60,15 @@ info()  { echo "[kanon] $*"; }
 warn()  { echo "[kanon] warn: $*" >&2; }
 abort() { echo "[kanon] error: $*" >&2; exit 1; }
 
+# KAN-52: validate KANON_REPO (env-supplied) before it is interpolated into URLs
+# and user-facing guidance. A repo string carrying shell metacharacters is harmless
+# inside this script (no eval), but the abort guidance below is copy-pasted by users
+# into their own shell — reject anything that is not a plain owner/repo slug so a
+# crafted KANON_REPO cannot smuggle a `$(...)` payload into that suggestion.
+if ! printf '%s' "$KANON_REPO" | grep -qE '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'; then
+  abort "invalid KANON_REPO '${KANON_REPO}' — expected owner/repo (alphanumerics, '.', '_', '-')."
+fi
+
 # Locate the setup binary under INSTALL_DIR.
 # Echoes the path if found, empty string if not. Never aborts on its own.
 # Used by both the main flow and the idempotency path so they stay in sync.
