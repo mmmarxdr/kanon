@@ -752,4 +752,101 @@ describe("KAN-40 — notification.marked_read emitted at route sites", () => {
     );
     expect(markedReadEmits).toHaveLength(0);
   });
+
+  // ── Change 1 — idempotency guard: already-read notification ──────────────
+
+  it("PATCH /api/notifications/:id/read on already-read notification → 200, NO emit", async () => {
+    const ws = await seedTestWorkspace();
+    const actor = await seedTestMember(ws.id, { username: "actor-kan40-idem" });
+    const recipient = await seedTestMember(ws.id, { username: "recipient-kan40-idem" });
+    const project = await seedTestProject(ws.id);
+    const issue = await prisma.issue.create({
+      data: {
+        key: `KAN40IDEM-1`,
+        sequenceNum: 9010,
+        title: "KAN-40 idempotency test issue",
+        projectId: project.id,
+      },
+      select: { id: true },
+    });
+
+    // Seed an ALREADY-READ notification
+    const notification = await prisma.notification.create({
+      data: {
+        kind: "assignment",
+        workspaceId: ws.id,
+        recipientId: recipient.id,
+        actorId: actor.id,
+        issueId: issue.id,
+        read: true, // already read
+      },
+    });
+
+    emitSpy.mockClear();
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/notifications/${notification.id}/read`,
+      headers: { authorization: `Bearer ${recipient.token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+
+    // Must NOT emit when already read
+    const markedReadEmits = emitSpy.mock.calls.filter(
+      (c) => (c[0] as any).type === "notification.marked_read",
+    );
+    expect(markedReadEmits).toHaveLength(0);
+  });
+
+  // ── Change 3 — D3 isolation: eventBus.emit throws → route still 200 ──────
+
+  it("PATCH /api/notifications/:id/read — eventBus.emit throws → 200 + DB updated (D3 isolation)", async () => {
+    const ws = await seedTestWorkspace();
+    const actor = await seedTestMember(ws.id, { username: "actor-kan40-d3" });
+    const recipient = await seedTestMember(ws.id, { username: "recipient-kan40-d3" });
+    const project = await seedTestProject(ws.id);
+    const issue = await prisma.issue.create({
+      data: {
+        key: `KAN40D3-1`,
+        sequenceNum: 9011,
+        title: "KAN-40 D3 route isolation test",
+        projectId: project.id,
+      },
+      select: { id: true },
+    });
+
+    const notification = await prisma.notification.create({
+      data: {
+        kind: "assignment",
+        workspaceId: ws.id,
+        recipientId: recipient.id,
+        actorId: actor.id,
+        issueId: issue.id,
+        read: false,
+      },
+    });
+
+    // Force eventBus.emit to throw
+    emitSpy.mockImplementation(() => { throw new Error("bus failure"); });
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/notifications/${notification.id}/read`,
+      headers: { authorization: `Bearer ${recipient.token}` },
+    });
+
+    // Route must still return 200
+    expect(res.statusCode).toBe(200);
+
+    // DB write must have succeeded
+    const updated = await prisma.notification.findUniqueOrThrow({
+      where: { id: notification.id },
+    });
+    expect(updated.read).toBe(true);
+
+    // Restore normal behaviour for subsequent tests
+    emitSpy.mockRestore();
+    emitSpy = vi.spyOn(eventBus, "emit");
+  });
 });

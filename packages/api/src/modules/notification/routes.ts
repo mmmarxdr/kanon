@@ -304,6 +304,12 @@ export async function notificationActionRoutes(
         throw new AppError(403, "FORBIDDEN", "You cannot mark another member's notification as read");
       }
 
+      // Idempotency guard: if already read, skip the DB write and the SSE emit entirely.
+      // Returning the current (read) state preserves the success response shape.
+      if (notification.read) {
+        return reply.status(200).send({ id: notificationId, read: true });
+      }
+
       // Dual-write in a transaction when kind=mention
       if (notification.kind === "mention" && notification.mentionId) {
         await prisma.$transaction([
@@ -325,8 +331,9 @@ export async function notificationActionRoutes(
 
       // KAN-40: emit notification.marked_read after successful DB write — fire-and-forget (D3).
       // workspaceId from the FETCHED notification (no workspaceId route param exists).
-      // actorId = notification.recipientId (the recipient marks their own read).
-      // Bare payload: no recipient identity or content (privacy contract).
+      // actorId = notification.recipientId (the recipient marks their own read); this carries
+      // the recipient's memberId in the event envelope — deliberate: no consumer renders actorId
+      // and it is an activity signal only; payload remains bare (privacy contract).
       try {
         eventBus.emit({ type: "notification.marked_read", workspaceId: notification.workspaceId, actorId: notification.recipientId, payload: {} });
       } catch { /* D3 */ }
