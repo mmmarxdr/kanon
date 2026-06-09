@@ -33,6 +33,7 @@ const makeComment = (id: string, source: Comment["source"], body = "hello"): Com
   id,
   body,
   source,
+  via: null,
   createdAt: "2026-05-01T10:00:00.000Z",
   updatedAt: "2026-05-01T10:00:00.000Z",
   author: { id: "u-alice", username: "alice" },

@@ -16,6 +16,7 @@ interface RawActivityLog {
   id: string;
   action: string;
   details: unknown;
+  via?: string | null;
   createdAt: Date;
   member?: { id: string; username: string } | null;
 }
@@ -26,6 +27,7 @@ export interface SerializedActivityLog {
   field: string | undefined;
   oldValue: string | undefined;
   newValue: string | undefined;
+  via: string | null;
   actor: { id: string; username: string };
   createdAt: Date;
 }
@@ -51,6 +53,7 @@ export function serializeActivityLog(log: RawActivityLog): SerializedActivityLog
     field: typeof details["field"] === "string" ? details["field"] : undefined,
     oldValue: typeof from === "string" ? from : undefined,
     newValue: typeof to === "string" ? to : undefined,
+    via: log.via ?? null,
     actor: log.member
       ? { id: log.member.id, username: log.member.username }
       : { id: "unknown", username: "unknown" },

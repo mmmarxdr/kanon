@@ -109,6 +109,8 @@ export interface Comment {
   body: string;
   source: CommentSource;
   author: { id: string; username: string };
+  /** Provenance: tool that created this comment. Null for pre-KAN-30 rows. */
+  via: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -122,6 +124,8 @@ export interface ActivityLog {
   field?: string;
   oldValue?: string;
   newValue?: string;
+  /** Provenance: tool that created this activity. Null for pre-KAN-30 rows. */
+  via: string | null;
   actor: { id: string; username: string };
   createdAt: string;
 }

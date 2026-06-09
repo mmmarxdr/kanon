@@ -5,7 +5,6 @@ import { Markdown } from "@/components/ui/markdown";
 import {
   useIssueDetailQuery,
   useCommentsQuery,
-  useActivityQuery,
   useIssueDocuments,
 } from "@/features/issue-detail/use-issue-detail-queries";
 import {
@@ -27,9 +26,9 @@ import { ChildrenSection } from "@/features/issue-detail/children-section";
 import { DependenciesSection } from "@/features/issue-detail/dependencies-section";
 import { AgentThread } from "@/features/issue-detail/agent-thread";
 import { CommentsHighlightView } from "@/features/issue-detail/comments-highlight-view";
-import { ActivityList } from "@/features/issue-detail/activity-list";
-import { CommentList } from "@/features/issue-detail/comment-list";
 import { DocumentList } from "@/features/issue-detail/document-list";
+import { UnifiedTimeline } from "@/features/issue-detail/unified-timeline";
+import { useUnifiedTimeline } from "@/features/issue-detail/use-unified-timeline";
 import type { IssueState } from "@/stores/board-store";
 import { Icon } from "@/components/ui/icons";
 import { Kbd } from "@/components/ui/primitives";
@@ -54,10 +53,9 @@ export const issueRoute = createRoute({
   }),
 });
 
-const HUMAN_SOURCES = new Set(["human"]);
 const AGENT_SOURCES = new Set(["mcp", "engram_sync", "system", "adr"]);
 
-type Tab = "activity" | "children" | "deps" | "comments" | "documents";
+type Tab = "timeline" | "children" | "deps" | "documents";
 
 /**
  * RightPaneContent — implements the 4-case behavior matrix (design §4.3, REQ-MENTION-010).
@@ -153,19 +151,20 @@ function IssuePage() {
   const { from, highlight, commentId } = issueRoute.useSearch();
   const navigate = useNavigate();
 
-  const [tab, setTab] = useState<Tab>("activity");
+  const [tab, setTab] = useState<Tab>("timeline");
   const [draft, setDraft] = useState("");
   const [isEditingDescription, setIsEditingDescription] = useState(false);
   const [descriptionDraft, setDescriptionDraft] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const { data: issue, isLoading } = useIssueDetailQuery(issueKey);
+  // useCommentsQuery is still needed for RightPaneContent (AgentThread / CommentsHighlightView)
   const { data: comments, isLoading: commentsLoading } =
     useCommentsQuery(issueKey);
-  const { data: activities, isLoading: activitiesLoading } =
-    useActivityQuery(issueKey);
   const { data: documents, isLoading: documentsLoading } =
     useIssueDocuments(issueKey);
+  // Unified timeline merges comments + activity (no new fetch — reuses caches)
+  const unifiedTimeline = useUnifiedTimeline(issueKey);
 
   const projectKey = issue?.project.key ?? issueKey.split("-")[0] ?? "";
   const updateMutation = useUpdateIssueMutation(issueKey, projectKey);
@@ -299,11 +298,8 @@ function IssuePage() {
     );
   }
 
-  const humanComments = (comments ?? []).filter((c) =>
-    HUMAN_SOURCES.has(c.source),
-  );
   const tabs: { id: Tab; label: string; count?: number }[] = [
-    { id: "activity", label: "Activity", count: activities?.length ?? 0 },
+    { id: "timeline", label: "Timeline", count: unifiedTimeline.items.length },
     { id: "children", label: "Sub-issues", count: issue.children?.length ?? 0 },
     {
       id: "deps",
@@ -311,7 +307,6 @@ function IssuePage() {
       count:
         (issue.blocks?.length ?? 0) + (issue.blockedBy?.length ?? 0),
     },
-    { id: "comments", label: "Comments", count: humanComments.length },
     { id: "documents", label: "Design Records", count: documents?.length ?? 0 },
   ];
 
@@ -554,10 +549,11 @@ function IssuePage() {
             padding: "16px 28px 24px",
           }}
         >
-          {tab === "activity" && (
-            <ActivityList
-              activities={activities ?? []}
-              isLoading={activitiesLoading}
+          {tab === "timeline" && (
+            <UnifiedTimeline
+              items={unifiedTimeline.items}
+              isLoading={unifiedTimeline.isLoading}
+              isError={unifiedTimeline.isError}
             />
           )}
           {tab === "children" && (
@@ -570,14 +566,6 @@ function IssuePage() {
             <DependenciesSection
               blocks={issue.blocks ?? []}
               blockedBy={issue.blockedBy ?? []}
-            />
-          )}
-          {tab === "comments" && (
-            <CommentList
-              comments={humanComments}
-              isLoading={commentsLoading}
-              onAddComment={handleAddComment}
-              isSubmitting={addCommentMutation.isPending}
             />
           )}
           {tab === "documents" && (
