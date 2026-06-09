@@ -2,7 +2,7 @@
 
 // ─── Platform Types (cross-platform refactor) ────────────────────────────────
 
-export type Platform = "win32" | "wsl" | "linux";
+export type Platform = "win32" | "wsl" | "linux" | "darwin";
 
 export interface PlatformContext {
   platform: Platform;

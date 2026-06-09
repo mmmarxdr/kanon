@@ -45,13 +45,14 @@ export function resolveWinHome(): string | undefined {
 // ─── Platform Detection ──────────────────────────────────────────────────────
 
 /**
- * Detect the current platform as a tri-state: win32, wsl, or linux.
+ * Detect the current platform: win32, wsl, linux, or darwin.
  * Accepts an optional override for testing.
  */
 export function detectPlatform(override?: Platform): Platform {
   if (override) return override;
 
   if (process.platform === "win32") return "win32";
+  if (process.platform === "darwin") return "darwin";
   if (isWsl()) return "wsl";
   return "linux";
 }
