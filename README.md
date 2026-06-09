@@ -151,8 +151,13 @@ On the machine where your AI tools live (Claude Code, Cursor, Antigravity),
 run the installer:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/main/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.6.3/install.sh)"
 ```
+
+> Use the **tagged** installer (`mcp-v<version>`), not `main`. The tagged script has
+> the release sha256 baked in as its trust root, so a compromised CDN cannot swap in a
+> matching tarball+checksum pair. The copy on `main` ships unpinned and refuses to run
+> over the network (KAN-52).
 
 It downloads the pinned MCP release, verifies its sha256 **before** extracting,
 installs to `~/.kanon/mcp`, then prompts:
