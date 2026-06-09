@@ -310,6 +310,10 @@ describe("getCycle() — Batch B6 (scopeEvents pagination)", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // KAN-36: computeBurnup now calls issue.findMany for removedKeys when scope
+    // events reference keys not in current members. Mock returns [] (all deleted
+    // → fallback estimate 1) so pagination tests don't error.
+    vi.mocked(prisma.issue.findMany).mockResolvedValue([] as any);
   });
 
   it("B6.1 — default caps response at 20 events while exposing totalScopeEvents", async () => {
@@ -343,10 +347,16 @@ describe("getCycle() — Batch B6 (scopeEvents pagination)", () => {
   });
 
   it("B6.4 — burnup risk math uses ALL events, not the capped slice", async () => {
-    // 30 events, all ADDs; risk rule "scope-creep" triggers at scopeNet >= 4.
-    // If risk math saw only the capped 20, it would still trigger — but if we
-    // construct a case where all events are removes (net = -30), risk should
-    // not include scope-creep regardless of cap.
+    // 30 remove events at days 1..30. All current-member keys are empty (issues=[]),
+    // so ALL are removedKeys → second findMany returns [] → fallback est=1 each.
+    //
+    // KAN-36 semantics: scopeAdded/scopeRemoved are point-sums of mid-cycle
+    // events (day >= 2) only. Day-1 event excluded from KPI.
+    // → day=1 event excluded; days 2..30 = 29 remove events × est=1 = 29 pts.
+    // scopeAdded=0, scopeRemoved=29.
+    //
+    // The test still validates its original invariant: risk math uses the FULL
+    // event set (all 30 events visible), not just the response-capped 20.
     const events = Array.from({ length: 30 }, (_, i) => ({
       id: `evt-${i + 1}`,
       cycleId: "cycle-1",
@@ -360,15 +370,18 @@ describe("getCycle() — Batch B6 (scopeEvents pagination)", () => {
     }));
     vi.mocked(prisma.cycle.findUnique).mockResolvedValue(buildCycleRow(30) as any);
     vi.mocked(prisma.cycleScopeEvent.findMany).mockResolvedValue(events as any);
+    // removedKeys lookup: all keys deleted → [] → fallback est=1
+    vi.mocked(prisma.issue.findMany).mockResolvedValue([] as any);
 
     const result = await getCycle("cycle-1");
 
     expect(result.scopeEvents).toHaveLength(20);
     expect((result as any).totalScopeEvents).toBe(30);
-    // scopeAdded/scopeRemoved counts come from the FULL set
+    // KAN-36: point-sums from mid-cycle events (day>=2). Day-1 excluded.
+    // 29 remove events × fallback est=1 = 29 pts removed.
     expect((result as any).scopeAdded).toBe(0);
-    expect((result as any).scopeRemoved).toBe(30);
-    // No scope-creep risk despite capped slice
+    expect((result as any).scopeRemoved).toBe(29);
+    // No scope-creep risk — all events are removes (net drift is negative)
     const risks = (result as any).risks as Array<{ id: string }>;
     expect(risks.find((r) => r.id === "scope-creep")).toBeUndefined();
   });

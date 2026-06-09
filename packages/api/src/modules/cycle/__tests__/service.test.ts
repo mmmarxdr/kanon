@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 /**
  * Unit tests for cycle service — A7.x + A8.x (Batch 3)
@@ -558,6 +558,444 @@ describe("KAN-35 R1 — computeAvgLeadDays reads Issue.completedAt (no activityL
 
     expect(result).toBeNull();
     expect(mockActivityLogFindMany).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// KAN-36 — Stepped scopeLine from CycleScopeEvent (Strict TDD RED batch)
+//
+// Scenarios are ordered: keystone FIRST (discriminates count vs points),
+// then all remaining in spec order. All use getCycle() which threads
+// allScopeEvents into computeBurnup internally.
+//
+// Mock call order per getCycle:
+//   1. prisma.cycle.findUnique      → cycle row + issues
+//   2. prisma.cycleScopeEvent.findMany → allScopeEvents (day-asc)
+//   3. prisma.issue.findMany        → burnup issues (select +key +completedAt)
+//   4. prisma.issue.findMany        → [conditional] removedKeys lookup
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// KAN-36 S3 — KEYSTONE: units invariant (count-based impl fails this)
+// ---------------------------------------------------------------------------
+
+describe("KAN-36 S3 — Keystone: scopeLine reflects points not counts", () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => vi.resetAllMocks());
+
+  it("scopeLine[0]===13 and scopeLine[days]===19 with 2 members (5+8 pts) + add est=6 day=3", async () => {
+    // 10-day cycle, 2 members with estimates 5 and 8 (total = 13 pts)
+    // + add event est=6 day=3 → scopeLine[days] should be 19 (points), not 3 (count)
+    const start = new Date("2026-06-01T00:00:00.000Z");
+    const end = new Date("2026-06-11T00:00:00.000Z"); // 10-day cycle
+
+    mockCycleFindUnique.mockResolvedValue({
+      id: "cycle-s3",
+      name: "Sprint S3",
+      startDate: start,
+      endDate: end,
+      state: "active",
+      goal: null,
+      projectId: "proj-1",
+      createdAt: start,
+      updatedAt: start,
+      issues: [
+        { id: "iss-a", key: "KAN-A", title: "A", type: "task", priority: "medium", state: "todo", estimate: 5, updatedAt: start, assignee: null },
+        { id: "iss-b", key: "KAN-B", title: "B", type: "task", priority: "medium", state: "todo", estimate: 8, updatedAt: start, assignee: null },
+      ],
+    } as any);
+
+    // allScopeEvents: initial attaches at day=1 + add KAN-C est=6 at day=3
+    mockCycleScopeEventFindMany.mockResolvedValue([
+      { id: "se-1", cycleId: "cycle-s3", day: 1, kind: "add", issueKey: "KAN-A", reason: null, authorId: null, createdAt: start, author: null },
+      { id: "se-2", cycleId: "cycle-s3", day: 1, kind: "add", issueKey: "KAN-B", reason: null, authorId: null, createdAt: start, author: null },
+      { id: "se-3", cycleId: "cycle-s3", day: 3, kind: "add", issueKey: "KAN-C", reason: null, authorId: null, createdAt: start, author: null },
+    ] as any);
+
+    // Call 1 (burnup): current members KAN-A=5, KAN-B=8
+    // Call 2 (removedKeys): KAN-C not in current members → lookup returns est=6
+    mockIssueFindMany
+      .mockResolvedValueOnce([
+        { id: "iss-a", key: "KAN-A", estimate: 5, state: "todo", completedAt: null },
+        { id: "iss-b", key: "KAN-B", estimate: 8, state: "todo", completedAt: null },
+      ] as any)
+      .mockResolvedValueOnce([
+        { key: "KAN-C", estimate: 6 },
+      ] as any);
+
+    const result = await getCycle("cycle-s3");
+    const { scopeLine } = result;
+    const days = 10;
+
+    // KEYSTONE: points, not counts
+    expect(scopeLine[0]).toBe(13);       // day-1 net: 5+8=13 (KAN-C is day3)
+    expect(scopeLine[days]).toBe(19);    // 13 + 6 = 19 — NOT 3 (count of events)
+    expect(scopeLine).toHaveLength(days + 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// KAN-36 S7 — Day-index mapping: day=D event lands at index D-1
+// ---------------------------------------------------------------------------
+
+describe("KAN-36 S7 — Day-index mapping: day=1 event lands at scopeLine[0]", () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => vi.resetAllMocks());
+
+  it("day=1 est=5 lands at scopeLine[0]; day=3 est=4 first reflected at scopeLine[2]", async () => {
+    const start = new Date("2026-06-01T00:00:00.000Z");
+    const end = new Date("2026-06-11T00:00:00.000Z"); // 10-day cycle
+
+    mockCycleFindUnique.mockResolvedValue({
+      id: "cycle-s7",
+      name: "Sprint S7",
+      startDate: start,
+      endDate: end,
+      state: "active",
+      goal: null,
+      projectId: "proj-1",
+      createdAt: start,
+      updatedAt: start,
+      issues: [
+        { id: "iss-x", key: "KAN-X", title: "X", type: "task", priority: "medium", state: "todo", estimate: 5, updatedAt: start, assignee: null },
+      ],
+    } as any);
+
+    mockCycleScopeEventFindMany.mockResolvedValue([
+      { id: "se-1", cycleId: "cycle-s7", day: 1, kind: "add", issueKey: "KAN-X", reason: null, authorId: null, createdAt: start, author: null },
+      { id: "se-2", cycleId: "cycle-s7", day: 3, kind: "add", issueKey: "KAN-Y", reason: null, authorId: null, createdAt: start, author: null },
+    ] as any);
+
+    mockIssueFindMany.mockResolvedValueOnce([
+      { id: "iss-x", key: "KAN-X", estimate: 5, state: "todo", completedAt: null },
+    ] as any).mockResolvedValueOnce([
+      { key: "KAN-Y", estimate: 4 },
+    ] as any);
+
+    const result = await getCycle("cycle-s7");
+    const { scopeLine } = result;
+
+    // day=1 event → delta[0] += 5 → scopeLine[0] = 5
+    expect(scopeLine[0]).toBe(5);
+    // days 1 is unaffected by day-3 event: scopeLine[1] = 5
+    expect(scopeLine[1]).toBe(5);
+    // day=3 event → delta[2] += 4 → scopeLine[2] = 9
+    expect(scopeLine[2]).toBe(9);
+    // all subsequent remain 9
+    for (let d = 3; d <= 10; d++) {
+      expect(scopeLine[d]).toBe(9);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// KAN-36 S1 — Add step: scopeLine steps up at the event day
+// ---------------------------------------------------------------------------
+
+describe("KAN-36 S1 — scopeLine steps up at add event day", () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => vi.resetAllMocks());
+
+  it("10-day/10-pt cycle + add est=4 day=5 → scopeLine[0..4]===10, scopeLine[5..10]===14", async () => {
+    const start = new Date("2026-06-01T00:00:00.000Z");
+    const end = new Date("2026-06-11T00:00:00.000Z"); // 10-day cycle
+
+    mockCycleFindUnique.mockResolvedValue({
+      id: "cycle-s1",
+      name: "Sprint S1",
+      startDate: start,
+      endDate: end,
+      state: "active",
+      goal: null,
+      projectId: "proj-1",
+      createdAt: start,
+      updatedAt: start,
+      issues: [
+        { id: "iss-1", key: "KAN-1", title: "1", type: "task", priority: "medium", state: "todo", estimate: 2, updatedAt: start, assignee: null },
+        { id: "iss-2", key: "KAN-2", title: "2", type: "task", priority: "medium", state: "todo", estimate: 3, updatedAt: start, assignee: null },
+        { id: "iss-3", key: "KAN-3", title: "3", type: "task", priority: "medium", state: "todo", estimate: 5, updatedAt: start, assignee: null },
+      ],
+    } as any);
+
+    mockCycleScopeEventFindMany.mockResolvedValue([
+      { id: "se-1", cycleId: "cycle-s1", day: 1, kind: "add", issueKey: "KAN-1", reason: null, authorId: null, createdAt: start, author: null },
+      { id: "se-2", cycleId: "cycle-s1", day: 1, kind: "add", issueKey: "KAN-2", reason: null, authorId: null, createdAt: start, author: null },
+      { id: "se-3", cycleId: "cycle-s1", day: 1, kind: "add", issueKey: "KAN-3", reason: null, authorId: null, createdAt: start, author: null },
+      { id: "se-4", cycleId: "cycle-s1", day: 5, kind: "add", issueKey: "KAN-4", reason: null, authorId: null, createdAt: start, author: null },
+    ] as any);
+
+    mockIssueFindMany.mockResolvedValueOnce([
+      { id: "iss-1", key: "KAN-1", estimate: 2, state: "todo", completedAt: null },
+      { id: "iss-2", key: "KAN-2", estimate: 3, state: "todo", completedAt: null },
+      { id: "iss-3", key: "KAN-3", estimate: 5, state: "todo", completedAt: null },
+    ] as any).mockResolvedValueOnce([
+      { key: "KAN-4", estimate: 4 },
+    ] as any);
+
+    const result = await getCycle("cycle-s1");
+    const { scopeLine } = result;
+
+    // day=5 event → delta[4] += 4 → scopeLine[4] is the FIRST index reflecting
+    // the step (per S7 mapping: day=D → first reflected at scopeLine[D-1]).
+    expect(scopeLine[0]).toBe(10);
+    expect(scopeLine[3]).toBe(10);  // day 4 (index 3): step not yet applied
+    expect(scopeLine[4]).toBe(14);  // day 5 (index 4): step first applied here
+    for (let d = 5; d <= 10; d++) {
+      expect(scopeLine[d]).toBe(14);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// KAN-36 S2 — Remove step: scopeLine steps down at the event day
+// ---------------------------------------------------------------------------
+
+describe("KAN-36 S2 — scopeLine steps down at remove event day", () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => vi.resetAllMocks());
+
+  it("10-pt cycle + remove est=3 day=7 → scopeLine[6]===10, scopeLine[7..10]===7", async () => {
+    const start = new Date("2026-06-01T00:00:00.000Z");
+    const end = new Date("2026-06-11T00:00:00.000Z"); // 10-day cycle
+
+    mockCycleFindUnique.mockResolvedValue({
+      id: "cycle-s2",
+      name: "Sprint S2",
+      startDate: start,
+      endDate: end,
+      state: "active",
+      goal: null,
+      projectId: "proj-1",
+      createdAt: start,
+      updatedAt: start,
+      issues: [
+        { id: "iss-1", key: "KAN-1", title: "1", type: "task", priority: "medium", state: "todo", estimate: 2, updatedAt: start, assignee: null },
+        { id: "iss-3", key: "KAN-3", title: "3", type: "task", priority: "medium", state: "todo", estimate: 5, updatedAt: start, assignee: null },
+      ],
+    } as any);
+
+    // KAN-2 (est=3) was removed at day=7; it's no longer a current member
+    mockCycleScopeEventFindMany.mockResolvedValue([
+      { id: "se-1", cycleId: "cycle-s2", day: 1, kind: "add", issueKey: "KAN-1", reason: null, authorId: null, createdAt: start, author: null },
+      { id: "se-2", cycleId: "cycle-s2", day: 1, kind: "add", issueKey: "KAN-2", reason: null, authorId: null, createdAt: start, author: null },
+      { id: "se-3", cycleId: "cycle-s2", day: 1, kind: "add", issueKey: "KAN-3", reason: null, authorId: null, createdAt: start, author: null },
+      { id: "se-4", cycleId: "cycle-s2", day: 7, kind: "remove", issueKey: "KAN-2", reason: null, authorId: null, createdAt: start, author: null },
+    ] as any);
+
+    // Current members: KAN-1 (2), KAN-3 (5) — KAN-2 removed
+    mockIssueFindMany.mockResolvedValueOnce([
+      { id: "iss-1", key: "KAN-1", estimate: 2, state: "todo", completedAt: null },
+      { id: "iss-3", key: "KAN-3", estimate: 5, state: "todo", completedAt: null },
+    ] as any).mockResolvedValueOnce([
+      { key: "KAN-2", estimate: 3 },
+    ] as any);
+
+    const result = await getCycle("cycle-s2");
+    const { scopeLine } = result;
+
+    // Baseline: KAN-1(2)+KAN-2(3)+KAN-3(5) = 10 at day 1 → delta[0]=+10
+    // remove KAN-2 est=3 at day=7 → delta[6]=-3
+    // scopeLine[0..5]=10, scopeLine[6..10]=7
+    expect(scopeLine[0]).toBe(10);
+    expect(scopeLine[5]).toBe(10); // day 6 (index 5): not yet removed
+    expect(scopeLine[6]).toBe(7);  // day 7 (index 6): first index after removal
+    for (let d = 7; d <= 10; d++) {
+      expect(scopeLine[d]).toBe(7);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// KAN-36 S4 — Removed key estimate resolution via second findMany + fallback
+// ---------------------------------------------------------------------------
+
+describe("KAN-36 S4 — Removed key estimate resolution", () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => vi.resetAllMocks());
+
+  it("KEY-99 removed (cycleId=null) → second findMany returns est=7 → step -7", async () => {
+    const start = new Date("2026-06-01T00:00:00.000Z");
+    const end = new Date("2026-06-11T00:00:00.000Z");
+
+    mockCycleFindUnique.mockResolvedValue({
+      id: "cycle-s4a",
+      name: "Sprint S4a",
+      startDate: start,
+      endDate: end,
+      state: "active",
+      goal: null,
+      projectId: "proj-1",
+      createdAt: start,
+      updatedAt: start,
+      issues: [], // KEY-99 removed, no current members
+    } as any);
+
+    mockCycleScopeEventFindMany.mockResolvedValue([
+      { id: "se-1", cycleId: "cycle-s4a", day: 1, kind: "add", issueKey: "KEY-99", reason: null, authorId: null, createdAt: start, author: null },
+      { id: "se-2", cycleId: "cycle-s4a", day: 4, kind: "remove", issueKey: "KEY-99", reason: null, authorId: null, createdAt: start, author: null },
+    ] as any);
+
+    // No current members → burnup query returns []
+    // removedKeys = [KEY-99] → second findMany returns est=7
+    mockIssueFindMany.mockResolvedValueOnce([] as any)
+      .mockResolvedValueOnce([{ key: "KEY-99", estimate: 7 }] as any);
+
+    const result = await getCycle("cycle-s4a");
+    const { scopeLine } = result;
+
+    // delta[0]=+7, delta[3]=-7 → scopeLine[0..2]=7, scopeLine[3..10]=0
+    expect(scopeLine[0]).toBe(7);
+    expect(scopeLine[2]).toBe(7);
+    expect(scopeLine[3]).toBe(0);
+    for (let d = 4; d <= 10; d++) {
+      expect(scopeLine[d]).toBe(0);
+    }
+  });
+
+  it("KEY-99 deleted from DB → fallback estimate 1 → step -1", async () => {
+    const start = new Date("2026-06-01T00:00:00.000Z");
+    const end = new Date("2026-06-11T00:00:00.000Z");
+
+    mockCycleFindUnique.mockResolvedValue({
+      id: "cycle-s4b",
+      name: "Sprint S4b",
+      startDate: start,
+      endDate: end,
+      state: "active",
+      goal: null,
+      projectId: "proj-1",
+      createdAt: start,
+      updatedAt: start,
+      issues: [],
+    } as any);
+
+    mockCycleScopeEventFindMany.mockResolvedValue([
+      { id: "se-1", cycleId: "cycle-s4b", day: 1, kind: "add", issueKey: "KEY-99", reason: null, authorId: null, createdAt: start, author: null },
+      { id: "se-2", cycleId: "cycle-s4b", day: 4, kind: "remove", issueKey: "KEY-99", reason: null, authorId: null, createdAt: start, author: null },
+    ] as any);
+
+    // KEY-99 deleted from DB → findMany returns []
+    mockIssueFindMany.mockResolvedValueOnce([] as any)
+      .mockResolvedValueOnce([] as any);
+
+    const result = await getCycle("cycle-s4b");
+    const { scopeLine } = result;
+
+    // fallback est=1: delta[0]=+1, delta[3]=-1
+    expect(scopeLine[0]).toBe(1);
+    expect(scopeLine[2]).toBe(1);
+    expect(scopeLine[3]).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// KAN-36 S5 — Zero-events fallback: flat fill(sumPoints)
+// ---------------------------------------------------------------------------
+
+describe("KAN-36 S5 — Zero-events fallback: flat scopeLine", () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => vi.resetAllMocks());
+
+  it("no scope events → scopeLine is constant fill(15), length days+1", async () => {
+    const start = new Date("2026-06-01T00:00:00.000Z");
+    const end = new Date("2026-06-11T00:00:00.000Z"); // 10-day cycle
+
+    mockCycleFindUnique.mockResolvedValue({
+      id: "cycle-s5",
+      name: "Sprint S5",
+      startDate: start,
+      endDate: end,
+      state: "active",
+      goal: null,
+      projectId: "proj-1",
+      createdAt: start,
+      updatedAt: start,
+      issues: [
+        { id: "iss-1", key: "KAN-1", title: "1", type: "task", priority: "medium", state: "todo", estimate: 7, updatedAt: start, assignee: null },
+        { id: "iss-2", key: "KAN-2", title: "2", type: "task", priority: "medium", state: "todo", estimate: 8, updatedAt: start, assignee: null },
+      ],
+    } as any);
+
+    // No scope events
+    mockCycleScopeEventFindMany.mockResolvedValue([] as any);
+
+    mockIssueFindMany.mockResolvedValue([
+      { id: "iss-1", key: "KAN-1", estimate: 7, state: "todo", completedAt: null },
+      { id: "iss-2", key: "KAN-2", estimate: 8, state: "todo", completedAt: null },
+    ] as any);
+
+    const result = await getCycle("cycle-s5");
+    const { scopeLine } = result;
+
+    expect(scopeLine).toHaveLength(11); // days+1 = 10+1
+    for (const v of scopeLine) {
+      expect(v).toBe(15);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// KAN-36 S6 — KPI: scopeAdded/scopeRemoved are point-sums (day>=2 only)
+// ---------------------------------------------------------------------------
+
+describe("KAN-36 S6 — KPI point-sums, day-1 excluded", () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => vi.resetAllMocks());
+
+  it("10-pt baseline + add est=4 day=3 + remove est=2 day=6 → scopeAdded=4, scopeRemoved=2, invariant holds", async () => {
+    const start = new Date("2026-06-01T00:00:00.000Z");
+    const end = new Date("2026-06-11T00:00:00.000Z");
+
+    mockCycleFindUnique.mockResolvedValue({
+      id: "cycle-s6",
+      name: "Sprint S6",
+      startDate: start,
+      endDate: end,
+      state: "active",
+      goal: null,
+      projectId: "proj-1",
+      createdAt: start,
+      updatedAt: start,
+      issues: [
+        // Original 3 members minus KAN-1 (removed), plus KAN-4 (added)
+        { id: "iss-2", key: "KAN-2", title: "2", type: "task", priority: "medium", state: "todo", estimate: 3, updatedAt: start, assignee: null },
+        { id: "iss-3", key: "KAN-3", title: "3", type: "task", priority: "medium", state: "todo", estimate: 5, updatedAt: start, assignee: null },
+        { id: "iss-4", key: "KAN-4", title: "4", type: "task", priority: "medium", state: "todo", estimate: 4, updatedAt: start, assignee: null },
+      ],
+    } as any);
+
+    // Day-1 attaches (baseline), day=3 add KAN-4 est=4, day=6 remove KAN-1 est=2
+    mockCycleScopeEventFindMany.mockResolvedValue([
+      { id: "se-1", cycleId: "cycle-s6", day: 1, kind: "add", issueKey: "KAN-1", reason: null, authorId: null, createdAt: start, author: null },
+      { id: "se-2", cycleId: "cycle-s6", day: 1, kind: "add", issueKey: "KAN-2", reason: null, authorId: null, createdAt: start, author: null },
+      { id: "se-3", cycleId: "cycle-s6", day: 1, kind: "add", issueKey: "KAN-3", reason: null, authorId: null, createdAt: start, author: null },
+      { id: "se-4", cycleId: "cycle-s6", day: 3, kind: "add", issueKey: "KAN-4", reason: null, authorId: null, createdAt: start, author: null },
+      { id: "se-5", cycleId: "cycle-s6", day: 6, kind: "remove", issueKey: "KAN-1", reason: null, authorId: null, createdAt: start, author: null },
+    ] as any);
+
+    // Current members: KAN-2(3), KAN-3(5), KAN-4(4) = 12 pts
+    // KAN-1 removed → need second findMany
+    mockIssueFindMany.mockResolvedValueOnce([
+      { id: "iss-2", key: "KAN-2", estimate: 3, state: "todo", completedAt: null },
+      { id: "iss-3", key: "KAN-3", estimate: 5, state: "todo", completedAt: null },
+      { id: "iss-4", key: "KAN-4", estimate: 4, state: "todo", completedAt: null },
+    ] as any).mockResolvedValueOnce([
+      { key: "KAN-1", estimate: 2 },
+    ] as any);
+
+    const result = await getCycle("cycle-s6");
+    const { scopeAdded, scopeRemoved, scopeLine } = result;
+    const days = 10;
+
+    // KPI point-sums (day>=2 only — day-1 baseline excluded)
+    expect(scopeAdded).toBe(4);    // KAN-4 est=4 at day=3
+    expect(scopeRemoved).toBe(2);  // KAN-1 est=2 at day=6
+
+    // KPI invariant: scopeAdded - scopeRemoved === scopeLine[days] - scopeLine[0]
+    expect(scopeAdded - scopeRemoved).toBe(scopeLine[days] - scopeLine[0]);
+
+    // Also verify units invariant: scopeLine[days] === sumPoints(currentMembers)
+    expect(scopeLine[days]).toBe(12); // KAN-2(3)+KAN-3(5)+KAN-4(4)
   });
 });
 
