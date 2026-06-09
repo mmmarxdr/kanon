@@ -3,11 +3,6 @@ name: kanon-onboard
 description: Team onboarding — invite teammates to a workspace, walk a new dev through `kanon-setup <kanon://link>`, and troubleshoot the resulting MCP wrapper config across Claude Code, Cursor, and Antigravity.
 version: 1.0.0
 tags: [kanon, onboarding, team, invite, mcp, wrapper, setup]
-allowed-tools:
-  - kanon_*
-  - mem_save
-  - mem_search
-  - mem_get_observation
 ---
 
 # Kanon Onboarding — Team Invites & Per-Machine Setup

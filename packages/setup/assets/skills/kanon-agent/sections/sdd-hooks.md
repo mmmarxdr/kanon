@@ -1,3 +1,8 @@
+---
+name: sdd-hooks
+description: SDD orchestrator hooks for Kanon issue tracking across phase transitions and deferred_items.
+---
+
 # SDD Orchestrator Hooks
 
 ## Overview

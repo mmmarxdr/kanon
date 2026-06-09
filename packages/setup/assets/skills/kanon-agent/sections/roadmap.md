@@ -1,3 +1,8 @@
+---
+name: roadmap
+description: Roadmap horizons and deferred-work capture patterns for Kanon project management.
+---
+
 # Roadmap — Horizons and Deferred Capture
 
 ## Horizons Table
