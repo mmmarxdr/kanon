@@ -86,7 +86,7 @@ export function useDomainEvents(workspaceId: string | undefined): void {
     };
 
     es.addEventListener("notification.created", handleNotificationEvent);
-    es.addEventListener("notification.read", handleNotificationEvent);
+    es.addEventListener("notification.marked_read", handleNotificationEvent);
 
     // ── Cleanup ───────────────────────────────────────────────────────
     return () => {

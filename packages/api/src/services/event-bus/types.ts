@@ -30,7 +30,11 @@ export type DomainEventType =
   // notification row without an extra DB round-trip. Per-issue issue.transitioned events
   // are still emitted for SSE consumers but carry _skipSubscribedActivity=true to prevent
   // double fan-out.
-  | "issue.batch_transitioned";
+  | "issue.batch_transitioned"
+  // KAN-40: notification lifecycle events for live inbox SSE propagation.
+  // Payloads are BARE ({}) — no recipient identity or content fields.
+  | "notification.created"
+  | "notification.marked_read";
 
 /**
  * A typed domain event emitted after a successful mutation.
