@@ -1,3 +1,8 @@
+---
+name: cycle
+description: Cycle lifecycle, scope changes, and close dispositions for Kanon project management.
+---
+
 # Cycle — Lifecycle, Scope Changes, Close Dispositions
 
 ## Cycle Lifecycle

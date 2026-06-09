@@ -1,3 +1,8 @@
+---
+name: issue-creation
+description: Detailed issue creation flow — natural-language field mapping, cheap existence checks, and confirmation patterns.
+---
+
 # Issue Creation — Detailed Flow
 
 ## NL → Field Mapping

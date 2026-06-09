@@ -3,11 +3,6 @@ name: kanon-init
 description: Automated project onboarding — scan codebase, create Kanon project, seed initial issues, groups, and roadmap items from TODOs and architecture gaps
 version: 2.0.0
 tags: [kanon, onboarding, project-setup, codebase-scan, batch]
-allowed-tools:
-  - kanon_*
-  - mem_save
-  - mem_search
-  - mem_get_observation
 ---
 
 # Kanon Init — Automated Project Onboarding
