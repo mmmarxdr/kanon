@@ -379,7 +379,7 @@ describe("closeCycle() — Batch B9 (minimal ack default)", () => {
     vi.clearAllMocks();
   });
 
-  it("B9.1 — default returns minimal ack { id, state, velocity, closedAt }", async () => {
+  it("B9.1 — default returns minimal ack { id, state, velocity, closedAt } where closedAt is its own distinct column (KAN-35)", async () => {
     vi.mocked(prisma.cycle.findUnique).mockResolvedValue({
       id: "cycle-1",
       state: "active",
@@ -390,22 +390,27 @@ describe("closeCycle() — Batch B9 (minimal ack default)", () => {
       ],
     } as any);
     const updatedAt = new Date("2026-04-27T19:00:00Z");
+    const closedAt = new Date("2026-04-27T19:00:01Z"); // distinct from updatedAt
     vi.mocked(prisma.cycle.update).mockResolvedValue({
       id: "cycle-1",
       state: "done",
       velocity: 5,
       updatedAt,
+      closedAt,
     } as any);
 
     const result = await closeCycle("cycle-1");
 
-    expect(result).toEqual({
+    // KAN-35: closedAt must be its own distinct field, not derived from updatedAt
+    expect(result).toMatchObject({
       id: "cycle-1",
       state: "done",
       velocity: 5,
-      // closedAt is sourced from the row's updatedAt (no closedAt column on schema)
-      closedAt: updatedAt,
     });
+    expect((result as any).closedAt).not.toBeNull();
+    expect((result as any).closedAt).toBeInstanceOf(Date);
+    // closedAt must be distinct from updatedAt — it is its own column, not a proxy
+    expect((result as any).closedAt).not.toEqual(updatedAt);
     // Ack does NOT include the issues array or scope events
     expect((result as any).issues).toBeUndefined();
     expect((result as any).scopeEvents).toBeUndefined();
