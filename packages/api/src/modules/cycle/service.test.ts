@@ -351,12 +351,15 @@ describe("getCycle() — Batch B6 (scopeEvents pagination)", () => {
     // so ALL are removedKeys → second findMany returns [] → fallback est=1 each.
     //
     // KAN-36 semantics: scopeAdded/scopeRemoved are point-sums of mid-cycle
-    // events (day >= 2) only. Day-1 event excluded from KPI.
-    // → day=1 event excluded; days 2..30 = 29 remove events × est=1 = 29 pts.
+    // events (elapsed >= 1) only. Planning-baseline event (elapsed=0) excluded.
+    // createdAt is set to cycleStart + i*ONE_DAY_MS so elapsed = i.
+    // → i=0 (elapsed=0) excluded; i=1..29 = 29 remove events × est=1 = 29 pts.
     // scopeAdded=0, scopeRemoved=29.
     //
     // The test still validates its original invariant: risk math uses the FULL
     // event set (all 30 events visible), not just the response-capped 20.
+    const cycleStart = new Date("2026-04-20");
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
     const events = Array.from({ length: 30 }, (_, i) => ({
       id: `evt-${i + 1}`,
       cycleId: "cycle-1",
@@ -365,7 +368,7 @@ describe("getCycle() — Batch B6 (scopeEvents pagination)", () => {
       issueKey: `ENG-${i + 1}`,
       reason: null,
       authorId: null,
-      createdAt: new Date("2026-04-20"),
+      createdAt: new Date(cycleStart.getTime() + i * ONE_DAY_MS),
       author: null,
     }));
     vi.mocked(prisma.cycle.findUnique).mockResolvedValue(buildCycleRow(30) as any);
