@@ -30,6 +30,14 @@ vi.mock("../../services/event-bus/index.js", () => ({
   },
 }));
 
+vi.mock("./auto-transition.js", () => ({
+  checkAndAdvanceParent: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../roadmap/roadmap-sync.js", () => ({
+  syncRoadmapItemStatus: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Mock prisma
 vi.mock("../../config/prisma.js", () => ({
   prisma: {
@@ -39,6 +47,7 @@ vi.mock("../../config/prisma.js", () => ({
       findMany: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       count: vi.fn(),
       aggregate: vi.fn(),
       groupBy: vi.fn(),
@@ -78,6 +87,8 @@ import {
   updateIssue,
   listIssues,
   batchTransitionByKeys,
+  transitionIssue,
+  transitionGroup,
 } from "./service.js";
 
 const mockIssueFindUnique = vi.mocked(prisma.issue.findUnique);
@@ -633,5 +644,195 @@ describe("batchTransitionByKeys()", () => {
 
     expect(res).toMatchObject({ count: 0, state: "done" });
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+// ── KAN-35: completedAt stamping contract ─────────────────────────────────────
+// These tests verify the KAN-35 completion-timestamp contract across all three
+// transition paths. RED written before GREEN (Strict TDD).
+
+describe("KAN-35 — transitionIssue: completedAt stamping", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.project.findUnique).mockResolvedValue(PROJECT as any);
+  });
+
+  it("C1.1 — sets completedAt to a non-null timestamp when transitioning to done", async () => {
+    vi.mocked(prisma.issue.findUnique).mockResolvedValue({
+      id: "iss-1",
+      key: "TEST-1",
+      state: "in_progress",
+      project: { workspaceId: "ws-1" },
+    } as any);
+    vi.mocked(prisma.issue.update).mockImplementation(async ({ data }: any) => ({
+      id: "iss-1",
+      key: "TEST-1",
+      state: "done",
+      completedAt: data.completedAt,
+    }));
+
+    const result = await transitionIssue("TEST-1", "done", "member-1");
+
+    expect((result as any).completedAt).not.toBeNull();
+    expect((result as any).completedAt).toBeInstanceOf(Date);
+  });
+
+  it("C1.2 — clears completedAt to null when transitioning from done to non-done (reopen)", async () => {
+    vi.mocked(prisma.issue.findUnique).mockResolvedValue({
+      id: "iss-1",
+      key: "TEST-1",
+      state: "done",
+      project: { workspaceId: "ws-1" },
+    } as any);
+    vi.mocked(prisma.issue.update).mockImplementation(async ({ data }: any) => ({
+      id: "iss-1",
+      key: "TEST-1",
+      state: "in_progress",
+      completedAt: data.completedAt,
+    }));
+
+    const result = await transitionIssue("TEST-1", "in_progress", "member-1");
+
+    expect((result as any).completedAt).toBeNull();
+  });
+
+  it("C1.3 — completedAt stays null on non-done to non-done transition", async () => {
+    vi.mocked(prisma.issue.findUnique).mockResolvedValue({
+      id: "iss-1",
+      key: "TEST-1",
+      state: "todo",
+      project: { workspaceId: "ws-1" },
+    } as any);
+    vi.mocked(prisma.issue.update).mockImplementation(async ({ data }: any) => ({
+      id: "iss-1",
+      key: "TEST-1",
+      state: "in_progress",
+      completedAt: data.completedAt,
+    }));
+
+    const result = await transitionIssue("TEST-1", "in_progress", "member-1");
+
+    expect((result as any).completedAt).toBeNull();
+  });
+});
+
+describe("KAN-35 — transitionGroup: completedAt stamping via updateMany", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.project.findUnique).mockResolvedValue(PROJECT as any);
+  });
+
+  it("C2.1 — updateMany data includes completedAt=Date when transitioning to done", async () => {
+    vi.mocked(prisma.issue.findMany).mockResolvedValue([
+      { id: "i1", key: "TEST-1", state: "in_progress", parentId: null, roadmapItemId: null },
+      { id: "i2", key: "TEST-2", state: "in_progress", parentId: null, roadmapItemId: null },
+    ] as any);
+
+    let capturedUpdateManyData: any;
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      if (typeof cb === "function") {
+        const tx = {
+          issue: {
+            updateMany: vi.fn().mockImplementation(async ({ data }: any) => {
+              capturedUpdateManyData = data;
+              return { count: 2 };
+            }),
+          },
+          activityLog: { createMany: vi.fn().mockResolvedValue({ count: 2 }) },
+        };
+        return cb(tx);
+      }
+    });
+
+    await transitionGroup(PROJECT.id, "group-a", "done", "member-1");
+
+    expect(capturedUpdateManyData.completedAt).toBeInstanceOf(Date);
+    expect(capturedUpdateManyData.completedAt).not.toBeNull();
+  });
+
+  it("C2.2 — updateMany data includes completedAt=null when transitioning to non-done (reopen)", async () => {
+    vi.mocked(prisma.issue.findMany).mockResolvedValue([
+      { id: "i1", key: "TEST-1", state: "done", parentId: null, roadmapItemId: null },
+    ] as any);
+
+    let capturedUpdateManyData: any;
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      if (typeof cb === "function") {
+        const tx = {
+          issue: {
+            updateMany: vi.fn().mockImplementation(async ({ data }: any) => {
+              capturedUpdateManyData = data;
+              return { count: 1 };
+            }),
+          },
+          activityLog: { createMany: vi.fn().mockResolvedValue({ count: 1 }) },
+        };
+        return cb(tx);
+      }
+    });
+
+    await transitionGroup(PROJECT.id, "group-a", "in_progress", "member-1");
+
+    expect(capturedUpdateManyData.completedAt).toBeNull();
+  });
+});
+
+describe("KAN-35 — batchTransitionByKeys: completedAt stamping via updateMany", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.project.findUnique).mockResolvedValue(PROJECT as any);
+  });
+
+  it("C3.1 — updateMany data includes completedAt=Date when transitioning to done", async () => {
+    vi.mocked(prisma.issue.findMany).mockResolvedValue([
+      { id: "i1", key: "TEST-1", state: "in_progress", projectId: PROJECT.id, parentId: null, roadmapItemId: null },
+    ] as any);
+
+    let capturedUpdateManyData: any;
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      if (typeof cb === "function") {
+        const tx = {
+          issue: {
+            updateMany: vi.fn().mockImplementation(async ({ data }: any) => {
+              capturedUpdateManyData = data;
+              return { count: 1 };
+            }),
+          },
+          activityLog: { createMany: vi.fn().mockResolvedValue({ count: 1 }) },
+        };
+        return cb(tx);
+      }
+    });
+
+    await batchTransitionByKeys(PROJECT.id, { keys: ["TEST-1"], to_state: "done" } as any, "member-1");
+
+    expect(capturedUpdateManyData.completedAt).toBeInstanceOf(Date);
+    expect(capturedUpdateManyData.completedAt).not.toBeNull();
+  });
+
+  it("C3.2 — updateMany data includes completedAt=null when transitioning to non-done", async () => {
+    vi.mocked(prisma.issue.findMany).mockResolvedValue([
+      { id: "i1", key: "TEST-1", state: "done", projectId: PROJECT.id, parentId: null, roadmapItemId: null },
+    ] as any);
+
+    let capturedUpdateManyData: any;
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      if (typeof cb === "function") {
+        const tx = {
+          issue: {
+            updateMany: vi.fn().mockImplementation(async ({ data }: any) => {
+              capturedUpdateManyData = data;
+              return { count: 1 };
+            }),
+          },
+          activityLog: { createMany: vi.fn().mockResolvedValue({ count: 1 }) },
+        };
+        return cb(tx);
+      }
+    });
+
+    await batchTransitionByKeys(PROJECT.id, { keys: ["TEST-1"], to_state: "in_progress" } as any, "member-1");
+
+    expect(capturedUpdateManyData.completedAt).toBeNull();
   });
 });

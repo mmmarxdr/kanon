@@ -657,9 +657,13 @@ export async function transitionIssue(
     throw new AppError(400, "INVALID_TRANSITION", result.reason);
   }
 
+  // KAN-35 completion-timestamp contract: set completedAt when entering done, clear on any other transition.
   const updated = await prisma.issue.update({
     where: { key },
-    data: { state: toState as any },
+    data: {
+      state: toState as any,
+      completedAt: toState === "done" ? new Date() : null,
+    },
   });
 
   // Create activity log for state change
@@ -776,12 +780,17 @@ export async function transitionGroup(
 
   // Execute batch update + activity logs in a single transaction
   const result = await prisma.$transaction(async (tx) => {
-    // Batch update all issues in one query
+    // Batch update all issues in one query.
+    // KAN-35 completion-timestamp contract: set completedAt when entering done, clear on any other transition.
+    // Single updateMany is correct here — transitionGroup enforces one targetState for the whole batch.
     const updateResult = await tx.issue.updateMany({
       where: {
         id: { in: issuesToTransition.map((i) => i.id) },
       },
-      data: { state: targetState },
+      data: {
+        state: targetState,
+        completedAt: targetState === "done" ? new Date() : null,
+      },
     });
 
     // Create activity logs for each transitioned issue
@@ -912,9 +921,14 @@ export async function batchTransitionByKeys(
 
   // All-or-nothing transaction: bulk update + activity logs.
   const result = await prisma.$transaction(async (tx) => {
+    // KAN-35 completion-timestamp contract: set completedAt when entering done, clear on any other transition.
+    // Single updateMany is correct here — batchTransitionByKeys enforces one targetState for the whole batch.
     const updateResult = await tx.issue.updateMany({
       where: { id: { in: issuesToTransition.map((i) => i.id) } },
-      data: { state: targetState },
+      data: {
+        state: targetState,
+        completedAt: targetState === "done" ? new Date() : null,
+      },
     });
 
     await tx.activityLog.createMany({
