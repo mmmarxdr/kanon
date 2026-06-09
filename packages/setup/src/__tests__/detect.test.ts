@@ -29,6 +29,19 @@ const { isWsl, detectPlatform, buildPlatformContext, commandExists } = await imp
 const mockedFs = vi.mocked(fs);
 const mockedExecSync = vi.mocked(execSync);
 
+function withProcessPlatform<T>(platform: NodeJS.Platform, fn: () => T): T {
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", { value: platform, configurable: true });
+
+  try {
+    return fn();
+  } finally {
+    if (descriptor) {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+  }
+}
+
 describe("detect", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -65,19 +78,18 @@ describe("detect", () => {
       expect(detectPlatform("win32")).toBe("win32");
       expect(detectPlatform("wsl")).toBe("wsl");
       expect(detectPlatform("linux")).toBe("linux");
+      expect(detectPlatform("darwin")).toBe("darwin");
     });
 
     it("should detect wsl when /proc/version contains microsoft", () => {
-      // Simulate non-win32 process.platform (this test runs on Linux/WSL)
       mockedFs.readFileSync.mockReturnValue(
         "Linux version 5.15.167.4-microsoft-standard-WSL2"
       );
 
-      // Without override, on a non-win32 platform, it should check isWsl()
-      const result = detectPlatform();
-      // On this WSL2 machine, the real /proc/version has "microsoft"
-      // but we mocked readFileSync, so it depends on the mock
-      expect(result).toBe("wsl");
+      withProcessPlatform("linux", () => {
+        const result = detectPlatform();
+        expect(result).toBe("wsl");
+      });
     });
 
     it("should detect linux when /proc/version has no microsoft", () => {
@@ -85,8 +97,28 @@ describe("detect", () => {
         "Linux version 6.1.0-18-amd64 (debian-kernel@lists.debian.org)"
       );
 
-      const result = detectPlatform();
-      expect(result).toBe("linux");
+      withProcessPlatform("linux", () => {
+        const result = detectPlatform();
+        expect(result).toBe("linux");
+      });
+    });
+
+    it("should detect darwin when process.platform is darwin (override)", () => {
+      // On non-darwin hosts we cannot flip process.platform, so use the override
+      // and the "darwin" literal must round-trip cleanly.
+      const result = detectPlatform("darwin");
+      expect(result).toBe("darwin");
+    });
+
+    it("should return 'darwin' for non-win32 non-wsl processes on darwin hosts", () => {
+      mockedFs.readFileSync.mockImplementation(() => {
+        throw new Error("ENOENT");
+      });
+
+      withProcessPlatform("darwin", () => {
+        const result = detectPlatform();
+        expect(result).toBe("darwin");
+      });
     });
   });
 
