@@ -11,7 +11,12 @@
  *  3.2g — GET /api/workspaces/:wid/notifications → lists own unread notifications
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+// KAN-40: spy on the real eventBus singleton's emit method so route-emit tests can
+// assert call count/args without disrupting subscribe() wiring (which registerNotificationService
+// and app.ts rely on for DB-level integration tests in this same file).
+import { vi, describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { eventBus } from "../../../services/event-bus/index.js";
+
 import type { FastifyInstance } from "fastify";
 import {
   createTestApp,
@@ -572,5 +577,179 @@ describe("Notification routes — S3 / KAN-27", () => {
       });
       expect(updatedMention.read).toBe(true);
     });
+  });
+});
+
+// ─── KAN-40: route emit tests (notification.marked_read) ─────────────────────
+// These tests assert the eventBus.emit mock is called with the correct event
+// type and bare payload after PATCH /:id/read and POST read-all.
+
+describe("KAN-40 — notification.marked_read emitted at route sites", () => {
+  let app: FastifyInstance;
+  let emitSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeAll(async () => {
+    app = await createTestApp();
+    emitSpy = vi.spyOn(eventBus, "emit");
+  });
+
+  afterAll(async () => {
+    emitSpy.mockRestore();
+    await app.close();
+  });
+
+  beforeEach(async () => {
+    await cleanDatabase();
+    emitSpy.mockClear();
+  });
+
+  // ── PATCH /api/notifications/:id/read ─────────────────────────────────────
+
+  it("PATCH /api/notifications/:id/read → emits notification.marked_read with bare payload", async () => {
+    const ws = await seedTestWorkspace();
+    const actor = await seedTestMember(ws.id, { username: "actor-kan40-patch" });
+    const recipient = await seedTestMember(ws.id, { username: "recipient-kan40-patch" });
+    const project = await seedTestProject(ws.id);
+    const issue = await prisma.issue.create({
+      data: {
+        key: `KAN40P-1`,
+        sequenceNum: 9001,
+        title: "KAN-40 patch test issue",
+        projectId: project.id,
+      },
+      select: { id: true },
+    });
+
+    const notification = await prisma.notification.create({
+      data: {
+        kind: "assignment",
+        workspaceId: ws.id,
+        recipientId: recipient.id,
+        actorId: actor.id,
+        issueId: issue.id,
+        read: false,
+      },
+    });
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/notifications/${notification.id}/read`,
+      headers: { authorization: `Bearer ${recipient.token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+
+    const markedReadEmits = emitSpy.mock.calls.filter(
+      (c) => (c[0] as any).type === "notification.marked_read",
+    );
+    expect(markedReadEmits).toHaveLength(1);
+    expect((markedReadEmits[0]![0] as any).workspaceId).toBe(ws.id);
+    expect((markedReadEmits[0]![0] as any).payload).toEqual({});
+    // Privacy: no recipient/content in payload
+    expect((markedReadEmits[0]![0] as any).payload).not.toHaveProperty("recipientId");
+  });
+
+  it("PATCH /api/notifications/:id/read — payload has NO recipientId/userId/memberId/content (privacy)", async () => {
+    const ws = await seedTestWorkspace();
+    const recipient = await seedTestMember(ws.id, { username: "priv-kan40-patch" });
+    const actor = await seedTestMember(ws.id, { username: "priv-actor-kan40" });
+    const project = await seedTestProject(ws.id);
+    const issue = await prisma.issue.create({
+      data: {
+        key: `KAN40PRV-1`,
+        sequenceNum: 9002,
+        title: "KAN-40 privacy test",
+        projectId: project.id,
+      },
+      select: { id: true },
+    });
+
+    const notification = await prisma.notification.create({
+      data: {
+        kind: "assignment",
+        workspaceId: ws.id,
+        recipientId: recipient.id,
+        actorId: actor.id,
+        issueId: issue.id,
+        read: false,
+      },
+    });
+
+    await app.inject({
+      method: "PATCH",
+      url: `/api/notifications/${notification.id}/read`,
+      headers: { authorization: `Bearer ${recipient.token}` },
+    });
+
+    const emitCalls = emitSpy.mock.calls.filter(
+      (c) => (c[0] as any).type === "notification.marked_read",
+    );
+    expect(emitCalls.length).toBeGreaterThanOrEqual(1);
+    const payload = (emitCalls[0]![0] as any).payload;
+    expect(payload).not.toHaveProperty("recipientId");
+    expect(payload).not.toHaveProperty("userId");
+    expect(payload).not.toHaveProperty("memberId");
+    expect(payload).not.toHaveProperty("content");
+  });
+
+  // ── POST /api/workspaces/:wid/notifications/read-all ─────────────────────
+
+  it("POST read-all with multiple notifications → emits notification.marked_read exactly ONCE", async () => {
+    const ws = await seedTestWorkspace();
+    const actor = await seedTestMember(ws.id, { username: "actor-kan40-all" });
+    const recipient = await seedTestMember(ws.id, { username: "recipient-kan40-all" });
+    const project = await seedTestProject(ws.id);
+    const issue = await prisma.issue.create({
+      data: {
+        key: `KAN40ALL-1`,
+        sequenceNum: 9003,
+        title: "KAN-40 read-all test",
+        projectId: project.id,
+      },
+      select: { id: true },
+    });
+
+    // Seed 3 unread notifications
+    await prisma.notification.createMany({
+      data: [
+        { kind: "assignment", workspaceId: ws.id, recipientId: recipient.id, actorId: actor.id, issueId: issue.id, read: false },
+        { kind: "assignment", workspaceId: ws.id, recipientId: recipient.id, actorId: actor.id, issueId: issue.id, read: false },
+        { kind: "assignment", workspaceId: ws.id, recipientId: recipient.id, actorId: actor.id, issueId: issue.id, read: false },
+      ],
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/workspaces/${ws.id}/notifications/read-all`,
+      headers: { authorization: `Bearer ${recipient.token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+
+    const markedReadEmits = emitSpy.mock.calls.filter(
+      (c) => (c[0] as any).type === "notification.marked_read",
+    );
+    // Exactly ONE event after the transaction — NOT one per row
+    expect(markedReadEmits).toHaveLength(1);
+    expect((markedReadEmits[0]![0] as any).payload).toEqual({});
+  });
+
+  it("POST read-all with zero unread notifications → notification.marked_read NOT emitted", async () => {
+    const ws = await seedTestWorkspace();
+    const recipient = await seedTestMember(ws.id, { username: "recipient-kan40-zero" });
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/workspaces/${ws.id}/notifications/read-all`,
+      headers: { authorization: `Bearer ${recipient.token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().updated).toBe(0);
+
+    const markedReadEmits = emitSpy.mock.calls.filter(
+      (c) => (c[0] as any).type === "notification.marked_read",
+    );
+    expect(markedReadEmits).toHaveLength(0);
   });
 });
