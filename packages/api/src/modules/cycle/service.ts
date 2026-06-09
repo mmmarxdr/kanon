@@ -31,6 +31,13 @@ function totalDays(start: Date, end: Date): number {
   );
 }
 
+/** 0-based elapsed day of `ts` within a cycle, clamped to [0, days]. Shared by
+ * burnup (completedAt) and scopeLine/KPI/risk (CycleScopeEvent.createdAt) so the
+ * two series stay on the SAME day axis (KAN-36). */
+function elapsedDay(ts: Date, start: Date, days: number): number {
+  return Math.max(0, Math.min(days, Math.round((ts.getTime() - start.getTime()) / ONE_DAY_MS)));
+}
+
 /**
  * Validate that a cycle exists AND belongs to a given project. Throws
  * AppError 400 CROSS_PROJECT_CYCLE if the cycle's project differs.
@@ -162,10 +169,7 @@ async function computeBurnup(
     // KAN-35: use completedAt when available; fall back to cycle endDate for
     // historical issues that have no timestamp (backfill may have left them NULL).
     const ts = issue.completedAt ?? end;
-    const day = Math.max(
-      0,
-      Math.min(days, Math.round((ts.getTime() - start.getTime()) / ONE_DAY_MS)),
-    );
+    const day = elapsedDay(ts, start, days);
     completedByDay[day] = (completedByDay[day] ?? 0) + (issue.estimate ?? 1);
   }
 
@@ -233,10 +237,7 @@ async function computeBurnup(
   // index — aligned with burnup. The stored event.day is no longer used here.
   const delta = new Array<number>(days + 1).fill(0);
   for (const event of allScopeEvents) {
-    const elapsed = Math.max(
-      0,
-      Math.min(days, Math.round((event.createdAt.getTime() - start.getTime()) / ONE_DAY_MS)),
-    );
+    const elapsed = elapsedDay(event.createdAt, start, days);
     delta[elapsed] = (delta[elapsed] ?? 0) + (event.kind === "add" ? resolve(event.issueKey) : -resolve(event.issueKey));
   }
 
@@ -308,10 +309,7 @@ function computeRisks(
   const resolveEst = (key: string): number => estMap.get(key) ?? 1;
   let netPoints = 0;
   for (const e of scopeEvents) {
-    const elapsed = Math.max(
-      0,
-      Math.min(cycle.days, Math.round((e.createdAt.getTime() - cycleStart.getTime()) / ONE_DAY_MS)),
-    );
+    const elapsed = elapsedDay(e.createdAt, cycleStart, cycle.days);
     if (elapsed >= 1) {
       netPoints += e.kind === "add" ? resolveEst(e.issueKey) : -resolveEst(e.issueKey);
     }
@@ -409,19 +407,16 @@ export async function getCycle(
   // (elapsed 0, createdAt ≈ cycleStart) are excluded from drift KPIs.
   // The createdAt-elapsed convention is consistent with computeBurnup and
   // computeRisks; event.day is NOT used for this filter.
-  // Invariant: scopeAdded - scopeRemoved === scopeLine[days] - scopeLine[0].
+  // Invariant: scopeAdded - scopeRemoved === scopeLine[days] - scopeLine[0]
+  // holds on the happy path (one add per member). It can diverge at the data
+  // level under deleted-issue fallback (estimate 1 vs. original) or
+  // add-then-remove within the same cycle — logic is intentionally unchanged.
   const resolveEst = (key: string): number => estMap.get(key) ?? 1;
   const scopeAdded = allScopeEvents
-    .filter((e) => {
-      const elapsed = Math.max(0, Math.min(tDays, Math.round((e.createdAt.getTime() - cycle.startDate.getTime()) / ONE_DAY_MS)));
-      return e.kind === "add" && elapsed >= 1;
-    })
+    .filter((e) => e.kind === "add" && elapsedDay(e.createdAt, cycle.startDate, tDays) >= 1)
     .reduce((sum, e) => sum + resolveEst(e.issueKey), 0);
   const scopeRemoved = allScopeEvents
-    .filter((e) => {
-      const elapsed = Math.max(0, Math.min(tDays, Math.round((e.createdAt.getTime() - cycle.startDate.getTime()) / ONE_DAY_MS)));
-      return e.kind === "remove" && elapsed >= 1;
-    })
+    .filter((e) => e.kind === "remove" && elapsedDay(e.createdAt, cycle.startDate, tDays) >= 1)
     .reduce((sum, e) => sum + resolveEst(e.issueKey), 0);
 
   // Response slice: last N events by insertion order (already day-asc).
