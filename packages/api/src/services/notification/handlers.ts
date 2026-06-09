@@ -17,6 +17,7 @@ import { prisma } from "../../config/prisma.js";
 import type { Prisma } from "@prisma/client";
 import { env } from "../../config/env.js";
 import type { DomainEvent } from "../event-bus/types.js";
+import { eventBus } from "../event-bus/index.js";
 import type { EmailProvider } from "../email/types.js";
 import type { NotificationServiceDeps } from "./types.js";
 import { buildMentionEmail } from "../email/templates/mention.js";
@@ -106,6 +107,12 @@ export async function handleMentionCreated(
       read: false,
     },
   });
+
+  // KAN-40: emit notification.created after successful DB write — fire-and-forget (D3).
+  // Bare payload: no recipientId or content (privacy contract).
+  try {
+    eventBus.emit({ type: "notification.created", workspaceId: event.workspaceId, actorId: event.actorId, payload: {} });
+  } catch { /* D3 — bus error must never fail the DB write */ }
 
   // S5: email dispatch — detached from handler, never awaited (D3).
   // A DB failure here must NOT reject the handler or lose the notification row.
@@ -205,6 +212,11 @@ export async function handleIssueAssigned(
       read: false,
     },
   });
+
+  // KAN-40: emit notification.created after successful DB write — fire-and-forget (D3).
+  try {
+    eventBus.emit({ type: "notification.created", workspaceId: event.workspaceId, actorId: event.actorId, payload: {} });
+  } catch { /* D3 */ }
 
   // S5: email dispatch — detached from handler, never awaited (D3).
   // A DB failure here must NOT reject the handler or lose the notification row.
@@ -310,6 +322,11 @@ export async function handleSubscribedActivity(
       read: false,
     })),
   });
+
+  // KAN-40: ONE notification.created per createMany batch — fire-and-forget (D3).
+  try {
+    eventBus.emit({ type: "notification.created", workspaceId: event.workspaceId, actorId: event.actorId, payload: {} });
+  } catch { /* D3 */ }
 }
 
 // ─── cycle.closed ─────────────────────────────────────────────────────────────
@@ -532,6 +549,10 @@ export async function routeEvent(
 
       if (rows.length > 0) {
         await prisma.notification.createMany({ data: rows });
+        // KAN-40: ONE notification.created for the whole batch — fire-and-forget (D3).
+        try {
+          eventBus.emit({ type: "notification.created", workspaceId: event.workspaceId, actorId: event.actorId, payload: {} });
+        } catch { /* D3 */ }
       }
       break;
     }

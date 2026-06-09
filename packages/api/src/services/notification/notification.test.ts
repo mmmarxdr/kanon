@@ -439,6 +439,227 @@ describe("4.1a — issue.batch_transitioned handler: createMany rows carry corre
   });
 });
 
+// ─── KAN-40: notification.created / notification.marked_read emit tests ──────────
+
+// vi.mock must be at module top-level; this mock is hoisted by Vitest.
+// NOTE: This mock is declared here for documentation — Vitest hoists all vi.mock
+// calls to the top of the file. The actual mock applies to the entire file.
+
+vi.mock("../event-bus/index.js", () => ({
+  eventBus: {
+    emit: vi.fn(),
+    subscribe: vi.fn(),
+    subscribeToWorkspace: vi.fn(),
+    getEventsSince: vi.fn(() => []),
+  },
+}));
+
+// Import the mocked singleton AFTER vi.mock declaration
+import { eventBus } from "../event-bus/index.js";
+
+describe("KAN-40 — notification.created emitted at handler sites", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.notification.create).mockResolvedValue({} as any);
+    vi.mocked(prisma.notification.createMany).mockResolvedValue({ count: 1 });
+    vi.mocked(prisma.issueSubscription.findMany).mockResolvedValue([
+      { issueId: "issue-1", memberId: "sub-1" } as any,
+    ]);
+  });
+
+  // ── Site 1: handleMentionCreated ──────────────────────────────────────────
+
+  it("handleMentionCreated → emits notification.created with bare payload after DB write", async () => {
+    const event = makeMentionCreatedEvent();
+    await routeEvent(event);
+
+    expect(vi.mocked(eventBus.emit)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "notification.created",
+        workspaceId: "ws-1",
+        actorId: "actor-member-id",
+        payload: {},
+      }),
+    );
+  });
+
+  it("handleMentionCreated — payload has NO recipientId/userId/memberId/content (privacy)", async () => {
+    const event = makeMentionCreatedEvent();
+    await routeEvent(event);
+
+    const emitCall = vi.mocked(eventBus.emit).mock.calls.find(
+      (c) => (c[0] as any).type === "notification.created",
+    );
+    expect(emitCall).toBeDefined();
+    const payload = (emitCall![0] as any).payload;
+    expect(payload).not.toHaveProperty("recipientId");
+    expect(payload).not.toHaveProperty("userId");
+    expect(payload).not.toHaveProperty("memberId");
+    expect(payload).not.toHaveProperty("content");
+  });
+
+  it("handleMentionCreated — actor excluded → notification.created NOT emitted", async () => {
+    const event = makeMentionCreatedEvent({
+      actorId: "self-member-id",
+      payload: {
+        mentionId: "mention-x",
+        issueId: "issue-1",
+        issueKey: "KAN-1",
+        commentId: null,
+        mentionedMemberId: "self-member-id",
+        mentionedByMemberId: "self-member-id",
+        context: "@self",
+      },
+    });
+    await routeEvent(event);
+
+    const createdEmits = vi.mocked(eventBus.emit).mock.calls.filter(
+      (c) => (c[0] as any).type === "notification.created",
+    );
+    expect(createdEmits).toHaveLength(0);
+  });
+
+  it("handleMentionCreated — D3: eventBus.emit throws → handler resolves + DB write succeeded", async () => {
+    vi.mocked(eventBus.emit).mockImplementation(() => {
+      throw new Error("SSE bus down");
+    });
+
+    const event = makeMentionCreatedEvent();
+    // Must not throw
+    await expect(routeEvent(event)).resolves.toBeUndefined();
+    // DB write still happened
+    expect(prisma.notification.create).toHaveBeenCalledOnce();
+  });
+
+  // ── Site 2: handleIssueAssigned ───────────────────────────────────────────
+
+  it("handleIssueAssigned → emits notification.created with bare payload after DB write", async () => {
+    const event = makeIssueAssignedEvent();
+    await routeEvent(event);
+
+    const createdEmits = vi.mocked(eventBus.emit).mock.calls.filter(
+      (c) => (c[0] as any).type === "notification.created",
+    );
+    // At least one notification.created emitted (assignment handler)
+    expect(createdEmits.length).toBeGreaterThanOrEqual(1);
+    const assignmentEmit = createdEmits[0]!;
+    expect((assignmentEmit[0] as any).payload).toEqual({});
+    expect((assignmentEmit[0] as any).payload).not.toHaveProperty("recipientId");
+  });
+
+  it("handleIssueAssigned — D3: eventBus.emit throws → handler resolves + DB write succeeded", async () => {
+    vi.mocked(eventBus.emit).mockImplementation(() => {
+      throw new Error("SSE bus down");
+    });
+
+    const event = makeIssueAssignedEvent();
+    await expect(routeEvent(event)).resolves.toBeUndefined();
+    expect(prisma.notification.create).toHaveBeenCalledOnce();
+  });
+
+  // ── Site 3: handleSubscribedActivity ─────────────────────────────────────
+
+  it("handleSubscribedActivity (via issue.transitioned) → emits notification.created ONCE after createMany", async () => {
+    vi.mocked(prisma.issueSubscription.findMany).mockResolvedValue([
+      { issueId: "issue-1", memberId: "sub-1" } as any,
+      { issueId: "issue-1", memberId: "sub-2" } as any,
+    ]);
+
+    const event: DomainEvent = {
+      id: 5,
+      type: "issue.transitioned",
+      workspaceId: "ws-1",
+      actorId: "actor-member-id",
+      payload: { issueId: "issue-1", issueKey: "KAN-1" },
+      timestamp: new Date().toISOString(),
+      via: null,
+    };
+
+    await routeEvent(event);
+
+    const createdEmits = vi.mocked(eventBus.emit).mock.calls.filter(
+      (c) => (c[0] as any).type === "notification.created",
+    );
+    // Exactly ONE notification.created for the batch, NOT one per row
+    expect(createdEmits).toHaveLength(1);
+    expect((createdEmits[0]![0] as any).payload).toEqual({});
+  });
+
+  it("handleSubscribedActivity — no recipients → notification.created NOT emitted", async () => {
+    vi.mocked(prisma.issueSubscription.findMany).mockResolvedValue([]);
+
+    const event: DomainEvent = {
+      id: 6,
+      type: "issue.transitioned",
+      workspaceId: "ws-1",
+      actorId: "actor-member-id",
+      payload: { issueId: "issue-1", issueKey: "KAN-1" },
+      timestamp: new Date().toISOString(),
+      via: null,
+    };
+
+    await routeEvent(event);
+
+    const createdEmits = vi.mocked(eventBus.emit).mock.calls.filter(
+      (c) => (c[0] as any).type === "notification.created",
+    );
+    expect(createdEmits).toHaveLength(0);
+  });
+
+  // ── Site 4: routeEvent batch_transitioned ────────────────────────────────
+
+  it("batch_transitioned with rows → emits notification.created ONCE after createMany", async () => {
+    vi.mocked(prisma.issueSubscription.findMany).mockResolvedValue([
+      { issueId: "issue-1", memberId: "sub-1" } as any,
+    ]);
+
+    const event: DomainEvent = {
+      id: 7,
+      type: "issue.batch_transitioned",
+      workspaceId: "ws-1",
+      actorId: "actor-member-id",
+      payload: {
+        issues: [{ id: "issue-1", key: "KAN-1" }],
+        to: "done",
+      },
+      timestamp: new Date().toISOString(),
+      via: null,
+    };
+
+    await routeEvent(event);
+
+    const createdEmits = vi.mocked(eventBus.emit).mock.calls.filter(
+      (c) => (c[0] as any).type === "notification.created",
+    );
+    expect(createdEmits).toHaveLength(1);
+    expect((createdEmits[0]![0] as any).payload).toEqual({});
+  });
+
+  it("batch_transitioned with no rows → notification.created NOT emitted", async () => {
+    vi.mocked(prisma.issueSubscription.findMany).mockResolvedValue([]);
+
+    const event: DomainEvent = {
+      id: 8,
+      type: "issue.batch_transitioned",
+      workspaceId: "ws-1",
+      actorId: "actor-member-id",
+      payload: {
+        issues: [{ id: "issue-1", key: "KAN-1" }],
+        to: "done",
+      },
+      timestamp: new Date().toISOString(),
+      via: null,
+    };
+
+    await routeEvent(event);
+
+    const createdEmits = vi.mocked(eventBus.emit).mock.calls.filter(
+      (c) => (c[0] as any).type === "notification.created",
+    );
+    expect(createdEmits).toHaveLength(0);
+  });
+});
+
 // ─── FIX 2: comment.created double-notification when mention emit partially fails ─
 
 describe("4.1b — comment.created: members who received mention.created are excluded from subscribed_activity even if emit later throws", () => {
