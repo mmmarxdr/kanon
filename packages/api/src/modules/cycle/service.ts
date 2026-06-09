@@ -31,6 +31,13 @@ function totalDays(start: Date, end: Date): number {
   );
 }
 
+/** 0-based elapsed day of `ts` within a cycle, clamped to [0, days]. Shared by
+ * burnup (completedAt) and scopeLine/KPI/risk (CycleScopeEvent.createdAt) so the
+ * two series stay on the SAME day axis (KAN-36). */
+function elapsedDay(ts: Date, start: Date, days: number): number {
+  return Math.max(0, Math.min(days, Math.round((ts.getTime() - start.getTime()) / ONE_DAY_MS)));
+}
+
 /**
  * Validate that a cycle exists AND belongs to a given project. Throws
  * AppError 400 CROSS_PROJECT_CYCLE if the cycle's project differs.
@@ -129,20 +136,25 @@ function sumPoints(
  * Build a per-day burnup series: how many points were completed by the end of
  * each day, derived from each issue's last `state_changed -> done` activity.
  *
+ * Also builds a stepped scopeLine from CycleScopeEvent rows (KAN-36):
+ * index d holds cumulative scope (story points) at the end of cycle day d.
+ *
  * We collapse into points-per-day so the chart can plot a daily cumulative line.
  */
 async function computeBurnup(
   cycleId: string,
   start: Date,
   end: Date,
-): Promise<{ burnup: number[]; scopeLine: number[] }> {
+  allScopeEvents: CycleScopeEvent[],
+): Promise<{ burnup: number[]; scopeLine: number[]; estMap: Map<string, number> }> {
   const days = totalDays(start, end);
   // KAN-35: read completedAt directly — no activityLogs join needed.
-  // When completedAt is NULL (historical issue or not yet done), fall back to cycle.endDate.
+  // KAN-36: also select key so we can build the estimate map for scope events.
   const issues = await prisma.issue.findMany({
     where: { cycleId },
     select: {
       id: true,
+      key: true,
       estimate: true,
       state: true,
       completedAt: true,
@@ -157,10 +169,7 @@ async function computeBurnup(
     // KAN-35: use completedAt when available; fall back to cycle endDate for
     // historical issues that have no timestamp (backfill may have left them NULL).
     const ts = issue.completedAt ?? end;
-    const day = Math.max(
-      0,
-      Math.min(days, Math.round((ts.getTime() - start.getTime()) / ONE_DAY_MS)),
-    );
+    const day = elapsedDay(ts, start, days);
     completedByDay[day] = (completedByDay[day] ?? 0) + (issue.estimate ?? 1);
   }
 
@@ -172,13 +181,75 @@ async function computeBurnup(
     burnup.push(acc);
   }
 
-  // Total scope (constant for now — we do not yet recompute scope at each day
-  // from CycleScopeEvent because adding/removing issues just changes the cycle
-  // membership directly).
-  const totalScope = sumPoints(issues);
-  const scopeLine = new Array(days + 1).fill(totalScope);
+  // ── KAN-36: Stepped scopeLine from CycleScopeEvent ─────────────────────────
+  //
+  // Fallback: no scope events → flat fill(sumPoints(currentMembers)).
+  // This preserves backward-compatibility for cycles with no event log.
+  if (allScopeEvents.length === 0) {
+    const totalScope = sumPoints(issues);
+    const scopeLine = new Array(days + 1).fill(totalScope);
+    // estMap built from current members (no removedKeys needed for KPI when no events)
+    const fallbackEstMap = new Map<string, number>();
+    for (const issue of issues) {
+      fallbackEstMap.set(issue.key, issue.estimate ?? 1);
+    }
+    return { burnup, scopeLine, estMap: fallbackEstMap };
+  }
 
-  return { burnup, scopeLine };
+  // Build estimate map: current members resolved O(1) from the issues query.
+  const estMap = new Map<string, number>();
+  for (const issue of issues) {
+    estMap.set(issue.key, issue.estimate ?? 1);
+  }
+
+  // Keys that appear in scope events but are no longer current members
+  // (they were removed mid-cycle, so cycleId = null now).
+  const removedKeys = [
+    ...new Set(
+      allScopeEvents
+        .map((e) => e.issueKey)
+        .filter((k) => !estMap.has(k)),
+    ),
+  ];
+
+  // ONE guarded findMany for removed keys — only when there are any.
+  if (removedKeys.length > 0) {
+    const removedIssues = await prisma.issue.findMany({
+      where: { key: { in: removedKeys } },
+      select: { key: true, estimate: true },
+    });
+    for (const ri of removedIssues) {
+      estMap.set(ri.key, ri.estimate ?? 1);
+    }
+    // Keys still missing after lookup (deleted issues) → fallback estimate 1.
+    // estMap.get(key) ?? 1 in resolve() handles this.
+  }
+
+  const resolve = (key: string): number => estMap.get(key) ?? 1;
+
+  // Build per-day delta array using each event's createdAt timestamp, mirroring
+  // burnup's clamp(round((ts - start) / DAY), 0, days). This keeps both series
+  // on the SAME x-axis convention (0-based elapsed days) so scopeLine[i] and
+  // burnup[i] are always plotted at the same day position on the chart.
+  //
+  // Initial attaches (createdAt ≈ start, elapsed 0) land at delta[0] → scopeLine[0]
+  // reflects the planning baseline. Mid-cycle events land at their true elapsed
+  // index — aligned with burnup. The stored event.day is no longer used here.
+  const delta = new Array<number>(days + 1).fill(0);
+  for (const event of allScopeEvents) {
+    const elapsed = elapsedDay(event.createdAt, start, days);
+    delta[elapsed] = (delta[elapsed] ?? 0) + (event.kind === "add" ? resolve(event.issueKey) : -resolve(event.issueKey));
+  }
+
+  // Cumulative prefix sum → scopeLine.
+  const scopeLine: number[] = [];
+  let scopeAcc = 0;
+  for (let d = 0; d <= days; d++) {
+    scopeAcc += delta[d] ?? 0;
+    scopeLine.push(scopeAcc);
+  }
+
+  return { burnup, scopeLine, estMap };
 }
 
 interface RiskRule {
@@ -193,11 +264,17 @@ interface RiskRule {
  * Pure risk computation. Given a snapshot of cycle state, returns a list of
  * surfaced risks. Lightweight heuristics for now — Phase 4 can replace this
  * with an MCP-driven analyzer.
+ *
+ * estMap and cycleStart/cycleDays are threaded in from getCycle so the
+ * scope-creep rule can compute net points using the same createdAt-elapsed
+ * convention as computeBurnup (elapsed >= 1 excludes the planning baseline).
  */
 function computeRisks(
   cycle: { dayIndex: number; days: number; scope: number; completed: number },
   issues: Array<{ key: string; state: IssueState; updatedAt: Date }>,
   scopeEvents: CycleScopeEvent[],
+  estMap: Map<string, number>,
+  cycleStart: Date,
 ): RiskRule[] {
   const out: RiskRule[] = [];
 
@@ -226,16 +303,23 @@ function computeRisks(
     });
   }
 
-  // 3) Heavy mid-cycle scope changes
-  const scopeNet =
-    scopeEvents.filter((e) => e.kind === "add").length -
-    scopeEvents.filter((e) => e.kind === "remove").length;
-  if (scopeNet >= 4) {
+  // 3) Heavy mid-cycle scope changes — computed in POINTS using createdAt-elapsed.
+  // Events with elapsed >= 1 are mid-cycle (consistent with KPI baseline filter
+  // and computeBurnup's day-convention). The stored event.day is NOT used here.
+  const resolveEst = (key: string): number => estMap.get(key) ?? 1;
+  let netPoints = 0;
+  for (const e of scopeEvents) {
+    const elapsed = elapsedDay(e.createdAt, cycleStart, cycle.days);
+    if (elapsed >= 1) {
+      netPoints += e.kind === "add" ? resolveEst(e.issueKey) : -resolveEst(e.issueKey);
+    }
+  }
+  if (netPoints >= 4) {
     out.push({
       id: "scope-creep",
       severity: "medium",
       title: "Scope expanding mid-cycle",
-      detail: `+${scopeNet} net issues added since planning.`,
+      detail: `+${netPoints} net points added since planning (mid-cycle drift).`,
       action: "Re-plan",
     });
   }
@@ -300,20 +384,40 @@ export async function getCycle(
   const scope = sumPoints(cycle.issues);
   const completed = sumPoints(cycle.issues, (i) => i.state === "done");
 
-  const { burnup, scopeLine } = await computeBurnup(
+  const { burnup, scopeLine, estMap } = await computeBurnup(
     cycle.id,
     cycle.startDate,
     cycle.endDate,
+    allScopeEvents,
   );
 
   // Risk computation MUST see all events; aggregate counts MUST match totals.
+  // Thread estMap + cycleStart into computeRisks so the scope-creep rule can
+  // compute net points using the same createdAt-elapsed convention as computeBurnup.
   const risks = computeRisks(
     { dayIndex: dIdx, days: tDays, scope, completed },
     cycle.issues,
     allScopeEvents,
+    estMap,
+    cycle.startDate,
   );
-  const scopeAdded = allScopeEvents.filter((e) => e.kind === "add").length;
-  const scopeRemoved = allScopeEvents.filter((e) => e.kind === "remove").length;
+
+  // KAN-36: scopeAdded/scopeRemoved are point-sums (not counts).
+  // Only mid-cycle events (elapsed >= 1) are included — planning-baseline events
+  // (elapsed 0, createdAt ≈ cycleStart) are excluded from drift KPIs.
+  // The createdAt-elapsed convention is consistent with computeBurnup and
+  // computeRisks; event.day is NOT used for this filter.
+  // Invariant: scopeAdded - scopeRemoved === scopeLine[days] - scopeLine[0]
+  // holds on the happy path (one add per member). It can diverge at the data
+  // level under deleted-issue fallback (estimate 1 vs. original) or
+  // add-then-remove within the same cycle — logic is intentionally unchanged.
+  const resolveEst = (key: string): number => estMap.get(key) ?? 1;
+  const scopeAdded = allScopeEvents
+    .filter((e) => e.kind === "add" && elapsedDay(e.createdAt, cycle.startDate, tDays) >= 1)
+    .reduce((sum, e) => sum + resolveEst(e.issueKey), 0);
+  const scopeRemoved = allScopeEvents
+    .filter((e) => e.kind === "remove" && elapsedDay(e.createdAt, cycle.startDate, tDays) >= 1)
+    .reduce((sum, e) => sum + resolveEst(e.issueKey), 0);
 
   // Response slice: last N events by insertion order (already day-asc).
   const responseScopeEvents = opts?.includeAllScopeEvents
