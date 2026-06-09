@@ -56,3 +56,23 @@ rules:
   archive:
     - Warn before merging destructive deltas (large removals)
     - Persist archive report to engram for cross-session recall
+
+conventions:
+  commits:
+    - Conventional commits scoped by package (feat(api):, fix(web):, chore(mcp):, etc.)
+    - NEVER add Co-Authored-By or AI attribution to commits
+    - NEVER amend commits — always create new ones
+    - Work-unit commits: each commit pairs tests + implementation (use work-unit-commits skill)
+  review:
+    - Run adversarial review (judgment-day skill) before every PR
+    - 400-line review budget — use chained-pr skill when exceeded
+  schema:
+    - Run `pnpm --filter @kanon/api db:generate` (prisma generate) after any Prisma schema change
+    - Include rollback plan in proposals that touch Prisma migrations
+  build_order:
+    - If @kanon/api tests fail with bridge import errors, build bridge first:
+      `pnpm --filter @kanon/bridge build && pnpm --filter @kanon/api test`
+    - This is a test-prerequisite step, NOT a post-change build
+  adrs:
+    - ADRs live as committed markdown under docs/adr/NNNN-*.md
+    - Create an ADR for any decision that affects multiple packages or has long-term impact
