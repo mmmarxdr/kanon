@@ -503,15 +503,167 @@ export function requireDependencyMember(depIdParam: string): preHandlerHookHandl
 }
 
 // ---------------------------------------------------------------------------
-// Proposal-scoped guard (KAN-64)
+// Comment-scoped factories (routes like /api/comments/:id)
+// Comment id is a UUID PK. Resolves project via comment → issue → project.
+// Uses inline KAN-19 scope guard + workspace-member resolution (NOT enforceProjectAccess)
+// to preserve any-workspace-member access (AC) without requiring a ProjectMember row.
+// ---------------------------------------------------------------------------
+
+/**
+ * Like requireProposalRole in shape, but resolves workspace + project from a comment ID
+ * URL param.
+ *
+ * Authorization model (KAN-25):
+ * - KAN-19 FIRST-GUARD: if the token's allowedProjectIds is non-empty and does NOT
+ *   include the comment's projectId → 403. Fires before any membership lookup.
+ * - Workspace membership is the primary access gate (no ProjectMember row required).
+ *   This preserves the existing AC — any workspace member may read/edit comments.
+ *
+ * Resolution chain: comment id → comment.issue.project {id, workspaceId}
+ * → KAN-19 inline guard → resolveAndCheckMember(workspaceId).
+ *
+ * 404 is returned when the comment does not exist.
+ *
+ * Sets `request.member` (workspace Member.id — INVARIANT R-INV1).
+ *
+ * @param commentIdParam - The name of the URL param holding the comment UUID (e.g. 'id')
+ * @param roles - Allowed MemberRole values. If empty, any workspace membership is sufficient.
+ */
+export function requireCommentRole(commentIdParam: string, ...roles: MemberRole[]): preHandlerHookHandler {
+  return async (request, _reply) => {
+    const user = request.user;
+
+    if (!user) {
+      throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+    }
+
+    const commentId = (request.params as Record<string, string>)[commentIdParam];
+    if (!commentId) {
+      throw new AppError(400, "COMMENT_ID_REQUIRED", "Comment ID is required");
+    }
+
+    const comment = await prisma.comment.findUnique({
+      where: { id: commentId },
+      select: { issue: { select: { project: { select: { id: true, workspaceId: true } } } } },
+    });
+
+    if (!comment) {
+      throw new AppError(404, "COMMENT_NOT_FOUND", `Comment "${commentId}" not found`);
+    }
+
+    const { id: projectId, workspaceId } = comment.issue.project;
+
+    // KAN-25 / KAN-19 FIRST-GUARD: fires before workspace member lookup.
+    if (user.allowedProjectIds && user.allowedProjectIds.length > 0 && !user.allowedProjectIds.includes(projectId)) {
+      throw new AppError(403, "FORBIDDEN", "Token scope does not allow access to this project");
+    }
+
+    const minimumRole = roles.length > 0
+      ? roles.reduce((least, r) =>
+          ROLE_HIERARCHY.indexOf(r) < ROLE_HIERARCHY.indexOf(least) ? r : least,
+        )
+      : undefined;
+
+    request.member = await resolveAndCheckMember(user.userId, workspaceId, minimumRole);
+  };
+}
+
+/**
+ * Shorthand: require comment workspace membership with no minimum role.
+ */
+export function requireCommentMember(commentIdParam: string): preHandlerHookHandler {
+  return requireCommentRole(commentIdParam);
+}
+
+// ---------------------------------------------------------------------------
+// Document-scoped factories (routes like /api/documents/:id)
+// Document id is a UUID PK. Resolves project via document → issue → project.
+// Uses inline KAN-19 scope guard + workspace-member resolution (NOT enforceProjectAccess)
+// to preserve any-workspace-member access (AC) without requiring a ProjectMember row.
+// ---------------------------------------------------------------------------
+
+/**
+ * Like requireCommentRole in shape, but resolves workspace + project from a document ID
+ * URL param.
+ *
+ * Authorization model (KAN-25):
+ * - KAN-19 FIRST-GUARD: if the token's allowedProjectIds is non-empty and does NOT
+ *   include the document's projectId → 403. Fires before any membership lookup.
+ * - Workspace membership is the primary access gate (no ProjectMember row required).
+ *   This preserves the existing AC — any workspace member may read/edit documents.
+ *
+ * Resolution chain: document id → issueDocument.issue.project {id, workspaceId}
+ * → KAN-19 inline guard → resolveAndCheckMember(workspaceId).
+ *
+ * 404 is returned when the document does not exist.
+ *
+ * Sets `request.member` (workspace Member.id — INVARIANT R-INV1).
+ *
+ * @param docIdParam - The name of the URL param holding the document UUID (e.g. 'id')
+ * @param roles - Allowed MemberRole values. If empty, any workspace membership is sufficient.
+ */
+export function requireDocumentRole(docIdParam: string, ...roles: MemberRole[]): preHandlerHookHandler {
+  return async (request, _reply) => {
+    const user = request.user;
+
+    if (!user) {
+      throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+    }
+
+    const documentId = (request.params as Record<string, string>)[docIdParam];
+    if (!documentId) {
+      throw new AppError(400, "DOCUMENT_ID_REQUIRED", "Document ID is required");
+    }
+
+    const document = await prisma.issueDocument.findUnique({
+      where: { id: documentId },
+      select: { issue: { select: { project: { select: { id: true, workspaceId: true } } } } },
+    });
+
+    if (!document) {
+      throw new AppError(404, "DOCUMENT_NOT_FOUND", `Document "${documentId}" not found`);
+    }
+
+    const { id: projectId, workspaceId } = document.issue.project;
+
+    // KAN-25 / KAN-19 FIRST-GUARD: fires before workspace member lookup.
+    if (user.allowedProjectIds && user.allowedProjectIds.length > 0 && !user.allowedProjectIds.includes(projectId)) {
+      throw new AppError(403, "FORBIDDEN", "Token scope does not allow access to this project");
+    }
+
+    const minimumRole = roles.length > 0
+      ? roles.reduce((least, r) =>
+          ROLE_HIERARCHY.indexOf(r) < ROLE_HIERARCHY.indexOf(least) ? r : least,
+        )
+      : undefined;
+
+    request.member = await resolveAndCheckMember(user.userId, workspaceId, minimumRole);
+  };
+}
+
+/**
+ * Shorthand: require document workspace membership with no minimum role.
+ */
+export function requireDocumentMember(docIdParam: string): preHandlerHookHandler {
+  return requireDocumentRole(docIdParam);
+}
+
+// ---------------------------------------------------------------------------
+// Proposal-scoped guard (KAN-64 + KAN-25)
 // ---------------------------------------------------------------------------
 
 /**
  * Factory that returns a Fastify preHandler checking the authenticated user's role
  * within the workspace that owns a proposal resolved from a URL parameter.
  *
- * Proposals are workspace-scoped resources. Authorization is determined by the
- * user's workspace membership role — no project-level gating applies here.
+ * Authorization model (KAN-64 + KAN-25):
+ * - Workspace membership is the primary gate (proposals are workspace-scoped resources).
+ * - KAN-19 scope guard: if the proposal carries a non-null projectId AND the token's
+ *   allowedProjectIds is non-empty AND does NOT include that projectId → 403 FORBIDDEN.
+ *   This guard fires BEFORE the workspace membership lookup (KAN-19 first-guard precedent).
+ * - Workspace-level proposals (projectId = null) are NOT subject to the project scope
+ *   guard — there is no project to scope against. A token scoped to any project may
+ *   act on workspace-level proposals as long as workspace membership is satisfied.
  *
  * Sets `request.member` (workspace Member.id — INVARIANT R-INV1).
  *
@@ -533,11 +685,23 @@ export function requireProposalRole(proposalIdParam: string, ...roles: MemberRol
 
     const proposal = await prisma.mcpProposal.findUnique({
       where: { id: proposalId },
-      select: { workspaceId: true },
+      select: { workspaceId: true, projectId: true },
     });
 
     if (!proposal) {
       throw new AppError(404, "PROPOSAL_NOT_FOUND", "Proposal not found");
+    }
+
+    // KAN-25 / KAN-19 FIRST-GUARD: apply project scope check before workspace member lookup.
+    // Only applies when the proposal is project-scoped (projectId != null).
+    // Workspace-level proposals (projectId = null) are workspace-gated only — no project to scope against.
+    if (
+      proposal.projectId != null &&
+      user.allowedProjectIds &&
+      user.allowedProjectIds.length > 0 &&
+      !user.allowedProjectIds.includes(proposal.projectId)
+    ) {
+      throw new AppError(403, "FORBIDDEN", "Token scope does not allow access to this project");
     }
 
     const minimumRole = roles.length > 0
