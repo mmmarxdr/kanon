@@ -285,6 +285,89 @@ assert_output_contains "setup stub invoked on idempotency path" "$OUTPUT_5" "kan
 
 echo ""
 
+# ── Test 6: pinned tamper rejection (KAN-52 AC3) ─────────────────────────────
+# Stamp a temp install.sh with the GOOD hash (fixture A), then serve a DIFFERENT
+# (tampered) tarball whose .sha256 matches the tampered tarball — the same-origin
+# compromise scenario. The pinned trust-root check MUST reject because the served
+# tarball != the hash baked into the script, EVEN THOUGH the served .sha256 matches
+# the served tarball (which is exactly what a fallback-only check would wave through).
+# Fixture B (built above) is a distinct tarball served as ASSET_NAME with its own
+# matching .sha256 in FIXTURE_B_DIR — a consistent malicious pair.
+
+echo "Test 6: pinned tamper rejection — stamped good hash + swapped tarball → reject"
+
+STAMPED_SH="$FIXTURE_DIR/install-stamped.sh"
+# sed (stdout, NOT in-place): emit a copy whose EXPECTED_SHA256 = fixture A's good hash.
+sed "s|^EXPECTED_SHA256=\"[^\"]*\"|EXPECTED_SHA256=\"${CORRECT_HASH}\"|" "$INSTALL_SH" >"$STAMPED_SH"
+
+OUTPUT_6="$(
+  KANON_INSTALL_BASE_URL="file://$FIXTURE_B_DIR" \
+    KANON_INSTALL_DIR="$INSTALL_DIR/tamper" \
+    KANON_INSTALL_SKIP_SETUP=1 \
+    bash "$STAMPED_SH" 2>&1
+)"
+EXIT_6=$?
+true
+
+assert_exit_nonzero "pinned tamper rejected" "$EXIT_6"
+assert_file_absent "no binary written on pinned tamper" "$INSTALL_DIR/tamper"
+assert_output_contains "pinned-mismatch abort message" "$OUTPUT_6" "pinned"
+
+echo ""
+
+# ── Test 7: unpinned network origin refused (KAN-52 AC2) ─────────────────────
+# main ships EXPECTED_SHA256="" (floating). Over a NETWORK origin (non-file://) the
+# installer must ABORT before downloading rather than silently fall back to the
+# same-origin .sha256. We point the base at a non-file:// scheme; the KAN-52 gate
+# fires first and emits the UNPINNED guidance (a plain download failure would not).
+# Guard: when run from a tagged/pinned checkout (release.yml stamps EXPECTED_SHA256),
+# there is no empty pin to exercise — skip rather than false-fail.
+
+echo "Test 7: unpinned + network origin → hard abort (no silent fallback)"
+
+INSTALL_PIN="$(grep -m1 '^EXPECTED_SHA256=' "$INSTALL_SH" | cut -d'"' -f2)"
+if [ -n "$INSTALL_PIN" ]; then
+  pass "install.sh is pinned in this checkout — network-unpinned gate is N/A (skipped)"
+else
+  OUTPUT_7="$(
+    KANON_INSTALL_BASE_URL="https://example.invalid/nope" \
+      KANON_INSTALL_DIR="$INSTALL_DIR/unpinned" \
+      KANON_INSTALL_SKIP_SETUP=1 \
+      bash "$INSTALL_SH" 2>&1
+  )"
+  EXIT_7=$?
+  true
+
+  assert_exit_nonzero "unpinned network refused" "$EXIT_7"
+  assert_file_absent "no binary written when unpinned+network" "$INSTALL_DIR/unpinned"
+  assert_output_contains "directs user to pinned tagged installer" "$OUTPUT_7" "UNPINNED"
+fi
+
+echo ""
+
+# ── Test 8: KANON_REPO injection guard (KAN-52 hardening) ────────────────────
+# KANON_REPO is interpolated into the user-facing "use the tagged installer"
+# guidance. A value carrying a $(...) payload must be rejected up front so it can
+# never reach that copy-pasteable suggestion.
+
+echo "Test 8: malformed KANON_REPO → rejected before any work"
+
+OUTPUT_8="$(
+  KANON_REPO='evil/repo$(touch /tmp/kanon-smoke-injection)' \
+    KANON_INSTALL_BASE_URL="file://$FIXTURE_DIR" \
+    KANON_INSTALL_DIR="$INSTALL_DIR/badrepo" \
+    KANON_INSTALL_SKIP_SETUP=1 \
+    bash "$INSTALL_SH" 2>&1
+)"
+EXIT_8=$?
+true
+
+assert_exit_nonzero "malformed KANON_REPO rejected" "$EXIT_8"
+assert_output_contains "invalid-repo abort message" "$OUTPUT_8" "invalid KANON_REPO"
+assert_file_absent "injection payload did not execute" "/tmp/kanon-smoke-injection"
+
+echo ""
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 echo "Results: $PASS passed, $FAIL failed"

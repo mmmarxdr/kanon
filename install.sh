@@ -3,8 +3,12 @@
 # Fetches the pinned Kanon MCP release, verifies sha256 BEFORE extracting,
 # installs to ~/.kanon/mcp, then invokes `node setup` to configure your tools.
 #
-# Usage (KAN-35 — install form):
-#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/main/install.sh)"
+# Usage (install form) — use the PINNED, TAGGED installer:
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.6.3/install.sh)"
+#
+# The tagged installer ships EXPECTED_SHA256 baked in (the trust root). The copy on
+# `main` carries EXPECTED_SHA256="" and, over a network origin, ABORTS rather than
+# fall back to the same-origin .sha256 (KAN-52 — no false tamper-resistance guarantee).
 #
 # The bash -c "$(curl ...)" invocation evaluates the script as a string, which
 # frees stdin from the curl pipe so the script can `read` the kanon:// link
@@ -55,6 +59,15 @@ VERSION_FILE="${INSTALL_DIR}/version"
 info()  { echo "[kanon] $*"; }
 warn()  { echo "[kanon] warn: $*" >&2; }
 abort() { echo "[kanon] error: $*" >&2; exit 1; }
+
+# KAN-52: validate KANON_REPO (env-supplied) before it is interpolated into URLs
+# and user-facing guidance. A repo string carrying shell metacharacters is harmless
+# inside this script (no eval), but the abort guidance below is copy-pasted by users
+# into their own shell — reject anything that is not a plain owner/repo slug so a
+# crafted KANON_REPO cannot smuggle a `$(...)` payload into that suggestion.
+if ! printf '%s' "$KANON_REPO" | grep -qE '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'; then
+  abort "invalid KANON_REPO '${KANON_REPO}' — expected owner/repo (alphanumerics, '.', '_', '-')."
+fi
 
 # Locate the setup binary under INSTALL_DIR.
 # Echoes the path if found, empty string if not. Never aborts on its own.
@@ -133,6 +146,20 @@ if [ -f "$VERSION_FILE" ]; then
   fi
 fi
 
+# ─── KAN-52: refuse unpinned installs over a network origin ──────────────────
+# The documented supply-chain guarantee (sha256 baked into THIS script) is only
+# real when EXPECTED_SHA256 is filled. `main` ships it empty (floating/latest); the
+# release workflow stamps it on the tagged, detached commit. A network origin with
+# an empty pin can only be checked against a same-origin .sha256 — which a
+# compromised origin serves to match a malicious tarball, so the check is worthless.
+# Refuse rather than offer a false guarantee. file:// is the local dev/test seam
+# (not a network origin) and is exempt; it still runs the corruption-only check.
+if [ -z "$EXPECTED_SHA256" ] && [[ "$BASE_URL" != file://* ]]; then
+  abort "this installer is UNPINNED (EXPECTED_SHA256 is empty) and cannot guarantee tamper-resistance over the network.
+Use the pinned, tagged installer instead:
+  bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/${KANON_REPO}/mcp-v${KANON_MCP_VERSION}/install.sh)\""
+fi
+
 # ─── Download phase ───────────────────────────────────────────────────────────
 
 WORK_DIR="$(mktemp -d)"
@@ -163,14 +190,14 @@ if [ -n "$EXPECTED_SHA256" ]; then
     sha256_check "$ASSET_NAME" "${ASSET_NAME}.sha256.pinned"
   ) || abort "sha256 verification FAILED — installation aborted. The tarball does not match the pinned checksum in this installer (tamper or corruption detected)."
 else
-  # Fallback: verify against the .sha256 downloaded from the release server.
-  # This detects corruption (bit-rot, partial download, CDN glitch) but NOT
-  # tampering — a compromised origin can serve a matching tarball+checksum pair.
-  # Full tamper-resistance requires EXPECTED_SHA256 to be set (filled by PR5).
+  # Reached ONLY via the file:// dev/test seam (a network origin with an empty pin
+  # was already refused by the KAN-52 gate above). file:// is not a network origin,
+  # so same-origin tampering does not apply — this is a pure corruption check against
+  # the local fixture .sha256 (bit-rot, partial copy).
   (
     cd "$WORK_DIR"
     sha256_check "$ASSET_NAME" "${ASSET_NAME}.sha256.normalized"
-  ) || abort "sha256 verification FAILED — installation aborted. The downloaded file appears to be corrupted (checksum verified against release server; tamper-resistance requires the pinned hash shipped in a future release)."
+  ) || abort "sha256 verification FAILED — installation aborted. The local fixture file appears to be corrupted (checksum mismatch)."
 fi
 
 info "sha256 verified."
