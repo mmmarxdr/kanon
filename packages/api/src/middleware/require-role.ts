@@ -503,6 +503,61 @@ export function requireDependencyMember(depIdParam: string): preHandlerHookHandl
 }
 
 // ---------------------------------------------------------------------------
+// Proposal-scoped guard (KAN-64)
+// ---------------------------------------------------------------------------
+
+/**
+ * Factory that returns a Fastify preHandler checking the authenticated user's role
+ * within the workspace that owns a proposal resolved from a URL parameter.
+ *
+ * Proposals are workspace-scoped resources. Authorization is determined by the
+ * user's workspace membership role — no project-level gating applies here.
+ *
+ * Sets `request.member` (workspace Member.id — INVARIANT R-INV1).
+ *
+ * @param proposalIdParam - The name of the URL param holding the proposal UUID (e.g. 'id')
+ * @param roles - Allowed MemberRole values. If empty, any workspace membership is sufficient.
+ */
+export function requireProposalRole(proposalIdParam: string, ...roles: MemberRole[]): preHandlerHookHandler {
+  return async (request, _reply) => {
+    const user = request.user;
+
+    if (!user) {
+      throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+    }
+
+    const proposalId = (request.params as Record<string, string>)[proposalIdParam];
+    if (!proposalId) {
+      throw new AppError(400, "PROPOSAL_ID_REQUIRED", "Proposal ID is required");
+    }
+
+    const proposal = await prisma.mcpProposal.findUnique({
+      where: { id: proposalId },
+      select: { workspaceId: true },
+    });
+
+    if (!proposal) {
+      throw new AppError(404, "PROPOSAL_NOT_FOUND", "Proposal not found");
+    }
+
+    const minimumRole = roles.length > 0
+      ? roles.reduce((least, r) =>
+          ROLE_HIERARCHY.indexOf(r) < ROLE_HIERARCHY.indexOf(least) ? r : least,
+        )
+      : undefined;
+
+    request.member = await resolveAndCheckMember(user.userId, proposal.workspaceId, minimumRole);
+  };
+}
+
+/**
+ * Shorthand: require proposal workspace membership with no minimum role.
+ */
+export function requireProposalMember(proposalIdParam: string): preHandlerHookHandler {
+  return requireProposalRole(proposalIdParam);
+}
+
+// ---------------------------------------------------------------------------
 // Instance-scoped guard (KAN-49)
 // ---------------------------------------------------------------------------
 
