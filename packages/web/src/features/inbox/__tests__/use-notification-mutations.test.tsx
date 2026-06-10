@@ -21,7 +21,7 @@ import { renderHook, waitFor, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { notificationKeys } from "@/lib/query-keys";
-import type { NotificationDashboardItem } from "@kanon/bridge";
+import type { NotificationDashboardItem } from "@kanon/shared";
 
 vi.mock("@/lib/api-client", () => ({
   fetchApi: vi.fn(),

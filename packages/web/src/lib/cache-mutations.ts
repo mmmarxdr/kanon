@@ -9,7 +9,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { cycleKeys, issueKeys, notificationKeys, notificationPreferenceKeys } from "./query-keys";
 import type { IssueDetail } from "@/types/issue";
-import type { NotificationDashboardItem, NotificationPreferenceItem } from "@kanon/bridge";
+import type { NotificationDashboardItem, NotificationPreferenceItem } from "@kanon/shared";
 
 // ---------------------------------------------------------------------------
 // Types

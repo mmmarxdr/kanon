@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchApi } from "@/lib/api-client";
 import { dashboardKeys, proposalKeys } from "@/lib/query-keys";
-import type { DashboardData } from "@kanon/bridge";
+import type { DashboardData } from "@kanon/shared";
 import type { McpProposal } from "@/types/proposal";
 
 // Re-export for convenience — consumers that need fine-grained types can
-// import directly from @kanon/bridge.
-export type { ActiveCycleKPIs, MentionDashboardItem, DashboardData } from "@kanon/bridge";
+// import directly from @kanon/shared.
+export type { ActiveCycleKPIs, MentionDashboardItem, DashboardData } from "@kanon/shared";
 
 export interface ActiveAgentSession {
   memberId: string;

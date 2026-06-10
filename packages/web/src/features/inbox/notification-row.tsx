@@ -1,5 +1,5 @@
 import { Icon } from "@/components/ui/icons";
-import type { NotificationDashboardItem } from "@kanon/bridge";
+import type { NotificationDashboardItem } from "@kanon/shared";
 
 const KIND_LABELS: Record<NotificationDashboardItem["kind"], string> = {
   mention: "Mentioned you",

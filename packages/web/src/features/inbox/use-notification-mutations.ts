@@ -6,7 +6,7 @@ import {
   setAllNotificationsRead,
 } from "@/lib/cache-mutations";
 import { useToastStore } from "@/stores/toast-store";
-import type { NotificationDashboardItem } from "@kanon/bridge";
+import type { NotificationDashboardItem } from "@kanon/shared";
 
 /**
  * Mutation to mark a single notification as read.

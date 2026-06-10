@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
-import type { MentionDashboardItem } from "@kanon/bridge";
+import type { MentionDashboardItem } from "@kanon/shared";
 import { Avatar, avatarInitials } from "@/components/ui/primitives";
 
 interface MentionRowProps {

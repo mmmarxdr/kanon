@@ -3,7 +3,7 @@ import { fetchApi } from "@/lib/api-client";
 import { notificationPreferenceKeys } from "@/lib/query-keys";
 import { setNotificationPreferences } from "@/lib/cache-mutations";
 import { useToastStore } from "@/stores/toast-store";
-import type { NotificationPreferenceItem } from "@kanon/bridge";
+import type { NotificationPreferenceItem } from "@kanon/shared";
 
 /**
  * Mutation to update the current user's notification preferences.

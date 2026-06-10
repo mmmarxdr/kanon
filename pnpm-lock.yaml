@@ -26,6 +26,9 @@ importers:
       '@kanon/bridge':
         specifier: workspace:*
         version: link:../bridge
+      '@kanon/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@prisma/client':
         specifier: ^6.0.0
         version: 6.19.2(prisma@6.19.2(typescript@5.9.3))(typescript@5.9.3)
@@ -197,6 +200,9 @@ importers:
       '@kanon/bridge':
         specifier: workspace:*
         version: link:../bridge
+      '@kanon/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@tanstack/react-query':
         specifier: ^5.62.0
         version: 5.94.5(react@19.2.4)

@@ -15,7 +15,7 @@
  * fill=var(--accent-2).
  */
 
-import type { ActiveCycleKPIs } from "@kanon/bridge";
+import type { ActiveCycleKPIs } from "@kanon/shared";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

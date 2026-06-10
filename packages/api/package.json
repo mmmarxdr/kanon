@@ -23,6 +23,7 @@
     "@fastify/cors": "^11.0.0",
     "@fastify/rate-limit": "^10.3.0",
     "@kanon/bridge": "workspace:*",
+    "@kanon/shared": "workspace:*",
     "@prisma/client": "^6.0.0",
     "bcryptjs": "^3.0.3",
     "fastify": "^5.0.0",

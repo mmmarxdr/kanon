@@ -15,7 +15,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import type { NotificationPreferenceItem } from "@kanon/bridge";
+import type { NotificationPreferenceItem } from "@kanon/shared";
 
 // Mock the hooks the component depends on
 vi.mock("../use-notification-preferences-query", () => ({

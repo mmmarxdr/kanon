@@ -16,7 +16,7 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { requireIssueRole, requireIssueMember } from "../../middleware/require-role.js";
-import { subscriptionStatusSchema } from "@kanon/bridge";
+import { subscriptionStatusSchema } from "@kanon/shared";
 import * as subscriptionService from "./service.js";
 
 const IssueKeyParam = z.object({ key: z.string() });

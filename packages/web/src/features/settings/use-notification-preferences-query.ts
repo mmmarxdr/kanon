@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchApi } from "@/lib/api-client";
 import { notificationPreferenceKeys } from "@/lib/query-keys";
-import type { NotificationPreferenceItem } from "@kanon/bridge";
+import type { NotificationPreferenceItem } from "@kanon/shared";
 
 /**
  * Fetches the current user's notification preferences for the workspace.
