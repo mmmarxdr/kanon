@@ -74,6 +74,7 @@ export default async function workspaceEventsRoutes(
         (event: DomainEvent) => {
           writeSSEEvent(raw, event);
         },
+        "sse:workspace-events",
       );
 
       // ─── Heartbeat (30s) ──────────────────────────────────────────────
