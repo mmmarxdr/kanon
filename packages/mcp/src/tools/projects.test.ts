@@ -197,24 +197,23 @@ describe("kanon_update_project handler", () => {
   });
 
   it("calls client.updateProject with correct key and body, returns ack by default", async () => {
-    const updateFn = vi.fn().mockResolvedValue({ id: "p1", key: "KAN", name: "Kanon", engramNamespace: "kanon" });
+    const updateFn = vi.fn().mockResolvedValue({ id: "p1", key: "KAN", name: "Kanon Updated" });
     const client = createMockClient({ updateProject: updateFn });
     registerProjectTools(server as any, client);
 
     const handler = server.getHandler("kanon_update_project");
     const result = parseResult(await handler({
       projectKey: "KAN",
-      engramNamespace: "kanon",
+      name: "Kanon Updated",
     })) as any;
 
     // ack default: { ok, id, key, name }
     expect(result).toHaveProperty("ok", true);
     expect(result).toHaveProperty("id", "p1");
     expect(result).toHaveProperty("key", "KAN");
-    expect(result).toHaveProperty("name", "Kanon");
+    expect(result).toHaveProperty("name", "Kanon Updated");
     expect(result).not.toHaveProperty("success");
-    expect(result).not.toHaveProperty("engramNamespace");
-    expect(updateFn).toHaveBeenCalledWith("KAN", { engramNamespace: "kanon" });
+    expect(updateFn).toHaveBeenCalledWith("KAN", { name: "Kanon Updated" });
   });
 
   it("returns errorResult on 404", async () => {

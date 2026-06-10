@@ -25,7 +25,6 @@ import issueRoutes from "./modules/issue/routes.js";
 import issueDependencyRoutes from "./modules/issue-dependency/routes.js";
 import commentRoutes from "./modules/comment/routes.js";
 import documentRoutes from "./modules/document/routes.js";
-import eventsRoutes from "./modules/events/routes.js";
 import workspaceEventsRoutes from "./modules/events/workspace-events.js";
 import memberRoutes from "./modules/member/routes.js";
 import workspaceMemberRoutes from "./modules/member/workspace-member-routes.js";
@@ -38,8 +37,6 @@ import { workspaceInviteRoutes, publicInviteRoutes } from "./modules/invite/rout
 import projectMemberRoutes from "./modules/project/project-member-routes.js";
 import instanceRoutes from "./modules/instance/routes.js";
 import { bootstrapSetupToken } from "./modules/instance/service.js";
-import { EngramClient } from "@kanon/bridge";
-import { BridgeSyncService } from "./services/bridge-sync-service.js";
 import { eventBus } from "./services/event-bus/index.js";
 import { cleanupExpired } from "./modules/work-session/service.js";
 import { registerNotificationService } from "./services/notification/index.js";
@@ -136,7 +133,6 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(commentRoutes, { prefix: "/api" });
   await app.register(documentRoutes, { prefix: "/api" });
   await app.register(activityRoutes, { prefix: "/api" });
-  await app.register(eventsRoutes, { prefix: "/api/events" });
   await app.register(workspaceEventsRoutes, { prefix: "/api/events/workspace" });
   await app.register(memberRoutes, { prefix: "/api/members" });
   await app.register(workspaceMemberRoutes, { prefix: "/api/workspaces/:wid/members" });
@@ -183,36 +179,6 @@ export async function buildApp(opts: BuildAppOptions = {}) {
       app.log.info("Work session cleanup interval stopped");
     }
   });
-
-  // ─── Bridge Sync Service (Phase C) ───────────────────────────────────
-  if (env.ENGRAM_SYNC_ENABLED) {
-    const engramClient = new EngramClient({
-      baseUrl: env.ENGRAM_URL,
-      apiKey: env.ENGRAM_API_KEY,
-    });
-
-    const bridgeSyncService = new BridgeSyncService(engramClient, {
-      pollIntervalMs: env.ENGRAM_POLL_INTERVAL_MS,
-    });
-
-    // Decorate so routes/plugins can access the service
-    app.decorate("bridgeSyncService", bridgeSyncService);
-
-    // Start polling after server is ready
-    app.addHook("onReady", async () => {
-      bridgeSyncService.start();
-      app.log.info(
-        { pollIntervalMs: env.ENGRAM_POLL_INTERVAL_MS },
-        "BridgeSyncService started",
-      );
-    });
-
-    // Stop on server close
-    app.addHook("onClose", async () => {
-      bridgeSyncService.stop();
-      app.log.info("BridgeSyncService stopped");
-    });
-  }
 
   return app;
 }

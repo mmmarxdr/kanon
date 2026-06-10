@@ -62,16 +62,6 @@ vi.mock("@/stores/command-palette-store", () => ({
 
 // ─── hook mocks ───────────────────────────────────────────────────────────────
 
-vi.mock("@/hooks/use-sync-events", () => ({
-  useSyncEvents: () => ({
-    status: "idle",
-    lastSyncAt: null,
-    syncHistory: [],
-    isManualSyncing: false,
-    triggerSync: vi.fn(),
-  }),
-}));
-
 vi.mock("@/hooks/use-projects-query", () => ({
   useProjectsQuery: () => ({
     data: mockProjects.value,
@@ -84,10 +74,6 @@ vi.mock("@/hooks/use-workspace-query", () => ({
 }));
 
 // ─── component mocks ──────────────────────────────────────────────────────────
-
-vi.mock("@/components/sync-indicator", () => ({
-  SyncIndicator: () => <span data-testid="sync-indicator" />,
-}));
 
 vi.mock("@/components/ui/icons", () => ({
   Icon: {

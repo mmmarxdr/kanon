@@ -70,7 +70,7 @@ refining how humans and agents share a project.
 git clone https://github.com/mmmarxdr/kanon.git
 cd kanon
 pnpm bootstrap   # install deps, generate prisma, migrate, build mcp + setup
-pnpm dev:start   # boot Postgres, API, web and Engram
+pnpm dev:start   # boot Postgres, API, web and MCP
 ```
 
 Open [http://localhost:5173](http://localhost:5173) and sign in with
@@ -194,7 +194,6 @@ Monorepo with pnpm workspaces.
 | `@kanon/web`       | `packages/web`    | Web frontend (React + Vite)   |
 | `@kanon/mcp`       | `packages/mcp`    | MCP server for AI agents      |
 | `@kanon/cli`       | `packages/cli`    | CLI tool                      |
-| `@kanon/bridge`    | `packages/bridge` | Shared types and contracts    |
 | `@kanon/e2e`       | `packages/e2e`    | Playwright end-to-end tests   |
 | `@kanon-pm/setup`  | `packages/setup`  | AI tool setup wizard          |
 

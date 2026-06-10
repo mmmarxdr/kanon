@@ -1,12 +1,11 @@
 // ─── MCP Server Instructions — Deferred Tool Declarations ───────────────────
 //
 // Claude Code (and compatible MCP hosts) read the `instructions` field from the
-// MCP `initialize` response. This block follows the engram MCP convention:
-// tools that are rarely needed in hot-path flows are declared here so the host
-// can hide them behind a ToolSearch step rather than surfacing them eagerly in
-// every turn's context.
+// MCP `initialize` response. Tools that are rarely needed in hot-path flows are
+// declared here so the host can hide them behind a ToolSearch step rather than
+// surfacing them eagerly in every turn's context.
 //
-// The server still registers all 33 tools normally — hosts that ignore
+// The server still registers all 31 tools normally — hosts that ignore
 // `instructions` simply surface every tool. No SDK feature detection needed.
 // See design ADR-1 and ADR-2 for rationale.
 // 5 admin/rare tools + 3 document tools (rare-path, design-coherent) = 8 deferred.
@@ -29,8 +28,8 @@ export const DEFERRED_TOOLS = [
 
 /**
  * Instructions block passed to `new McpServer({ instructions })`.
- * Follows the engram MCP pattern: a DEFERRED TOOLS section lists tools the
- * host should hide from eager context; a CORE TOOLS section names always-on tools.
+ * DEFERRED TOOLS section lists tools the host should hide from eager context;
+ * CORE TOOLS section names always-on tools.
  */
 export const SERVER_INSTRUCTIONS = `
 ## PM Persona
@@ -59,10 +58,10 @@ Retrieve via ToolSearch only when explicitly requested:
 Standard issue and project management flows use these tools:
 kanon_list_issues, kanon_get_issue, kanon_create_issue, kanon_update_issue,
 kanon_transition_issue, kanon_batch_transition, kanon_list_groups,
-kanon_start_work, kanon_stop_work, kanon_get_issue_context,
+kanon_start_work, kanon_stop_work,
 kanon_list_workspaces, kanon_list_projects, kanon_get_project,
 kanon_list_roadmap, kanon_create_roadmap_item, kanon_update_roadmap_item,
 kanon_promote_roadmap_item, kanon_add_dependency, kanon_remove_dependency,
-kanon_sync_observation, kanon_list_cycles, kanon_get_cycle,
+kanon_list_cycles, kanon_get_cycle,
 kanon_create_cycle, kanon_attach_issues_to_cycle, kanon_close_cycle
 `.trim();

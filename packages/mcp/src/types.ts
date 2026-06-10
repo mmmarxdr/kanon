@@ -185,7 +185,6 @@ export const UpdateProjectInput = z.object({
   projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   name: z.string().min(1).max(100).optional().describe("New name"),
   description: z.string().max(500).nullable().optional().describe("New description"),
-  engramNamespace: z.string().max(100).nullable().optional().describe("Engram namespace"),
   ...WriteFormatField,
 });
 
@@ -269,35 +268,6 @@ export const RemoveDependencyInput = z.object({
   projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   sourceItemId: z.string().describe("Roadmap item ID that owns the dependency"),
   dependencyId: z.string().describe("Dependency ID to remove (UUID)"),
-});
-
-// ─── Context Tool Input Schemas ─────────────────────────────────────────────
-
-/** kanon_get_issue_context */
-export const GetIssueContextInput = z.object({
-  issueKey: z.string().describe("Issue key (e.g. 'KAN-42')"),
-  limit: z.number().int().min(1).max(10).default(5).optional()
-    .describe("Max sessions to return (default 5)"),
-});
-
-// ─── Comment Tool Input Schemas ─────────────────────────────────────────────
-
-export const COMMENT_SOURCES = ["human", "mcp", "engram_sync", "system", "adr"] as const;
-
-/** kanon_sync_observation */
-export const SyncObservationInput = z.object({
-  issueKey: z.string().describe("Issue key (e.g. 'KAN-42')"),
-  title: z.string().min(1).describe("Observation title"),
-  content: z.string().min(1).describe("Observation body content"),
-  observationType: z.string().optional()
-    .describe("Observation type (e.g. 'decision', 'bugfix', 'architecture', 'discovery')"),
-  observationId: z.number().int().optional()
-    .describe("Engram observation ID — included in comment footer for traceability"),
-  topicKey: z.string().optional()
-    .describe("Engram topic key (e.g. 'sdd/my-change/design')"),
-  source: z.enum(COMMENT_SOURCES).optional()
-    .describe("Comment source (default 'engram_sync'). Use source:'adr' for design records."),
-  ...WriteFormatField,
 });
 
 // ─── Cycle Tool Input Schemas ───────────────────────────────────────────────

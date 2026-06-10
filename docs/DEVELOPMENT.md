@@ -5,8 +5,7 @@ Everything you need to build, test, and ship changes to Kanon.
 ## Common commands
 
 ```bash
-pnpm dev:start                # start everything (API + web + Engram + MCP)
-pnpm dev:start -- --no-engram # skip Engram memory service
+pnpm dev:start                # start everything (API + web + MCP)
 pnpm dev:start -- --no-mcp    # skip MCP package build
 pnpm test:all                 # run all tests (API + web + E2E)
 pnpm e2e                      # E2E tests only
@@ -22,7 +21,6 @@ packages/
   web/      Web frontend — React 19, Vite, TanStack Router + Query
   mcp/      MCP server — @modelcontextprotocol/sdk
   cli/      Command-line tool
-  bridge/   Shared types and contracts
   e2e/      End-to-end tests (Playwright)
   setup/    AI tool setup wizard
 ```

@@ -47,11 +47,11 @@ function collectDescriptions() {
 }
 
 describe("tool descriptions — trim ≥ 30% (Batch E)", () => {
-  it("E1: parses 33 tools (30 pre-PR4a + 3 document tools added in PR-4a); BASELINE_BYTES is 5730", () => {
+  it("E1: parses 31 tools (30 pre-PR4a + 3 document tools added in PR-4a, minus 2 engram tools removed in KAN-68); BASELINE_BYTES is 5730", () => {
     const tools = collectDescriptions();
-    // Verify the parser finds exactly 33 tools (30 pre-PR4a + kanon_create_document, kanon_list_documents,
-    // kanon_get_document added in PR-4a).
-    expect(tools).toHaveLength(33);
+    // Verify the parser finds exactly 31 tools (was 33 before KAN-68 removed
+    // kanon_get_issue_context and kanon_sync_observation).
+    expect(tools).toHaveLength(31);
     // BASELINE_BYTES is the historical pre-trim value — used only as the
     // threshold denominator in E2. We don't assert the current total equals it
     // (E3 trimmed descriptions are in the same files the parser reads).
@@ -133,13 +133,6 @@ describe("Win C — description byte budget and firing pins", () => {
     const t = tools.find((t) => t.toolName === "kanon_delete_cycle");
     expect(t).toBeDefined();
     expect(t!.description).toMatch(/active.*refused|409/i);
-  });
-
-  it("C7: kanon_sync_observation — directly relevant firing pin", () => {
-    const tools = collectDescriptions();
-    const t = tools.find((t) => t.toolName === "kanon_sync_observation");
-    expect(t).toBeDefined();
-    expect(t!.description).toMatch(/directly relevant/i);
   });
 
   it("C8: kanon_close_cycle — disposition firing pin", () => {

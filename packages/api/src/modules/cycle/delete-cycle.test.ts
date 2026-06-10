@@ -20,10 +20,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  *   B.14 REQ-CONCURRENCY-001 — P2025 caught outside tx → AppError(404, "CYCLE_NOT_FOUND")
  */
 
-vi.mock("../../config/engram.js", () => ({
-  getEngramClient: vi.fn().mockReturnValue(null),
-}));
-
 vi.mock("../../services/event-bus/index.js", () => ({
   eventBus: {
     emit: vi.fn(),

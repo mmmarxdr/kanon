@@ -29,16 +29,7 @@ pnpm dev:start
 4. Runs database migrations.
 5. Builds the `@kanon/mcp` and `@kanon-pm/setup` packages.
 
-`pnpm dev:start` boots PostgreSQL (via Docker), the API, the web frontend,
-and the Engram memory service.
-
-## Running without Engram
-
-If you do not need the semantic memory bridge:
-
-```bash
-pnpm dev:start -- --no-engram
-```
+`pnpm dev:start` boots PostgreSQL (via Docker), the API, and the web frontend.
 
 ## Running without the MCP package build
 

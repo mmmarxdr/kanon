@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
-import { getEngramClient } from "../../config/engram.js";
+
 import { AppError } from "../../shared/types.js";
 import { validateTransition } from "./state-machine.js";
 import { createActivityLog } from "../activity/service.js";
@@ -1033,98 +1033,3 @@ export async function batchTransitionByKeys(
   };
 }
 
-// ─── Issue Context (Engram Session Summaries) ──────────────────────────────
-
-interface SessionContext {
-  id: number;
-  date: string;
-  goal: string;
-  discoveries: string[];
-  accomplished: string[];
-  nextSteps: string[];
-  relevantFiles: string[];
-}
-
-/**
- * Extract bullet items from a markdown section heading.
- */
-function extractSection(content: string, heading: string): string[] {
-  const pattern = new RegExp(
-    `##\\s+${heading}[^\\n]*\\n([\\s\\S]*?)(?=\\n##\\s|$)`,
-    "i",
-  );
-  const match = content.match(pattern);
-  if (!match) return [];
-
-  return match[1]!
-    .split("\n")
-    .map((line) => line.replace(/^[\s]*[-*]\s*/, "").trim())
-    .filter((line) => line.length > 0);
-}
-
-/**
- * Extract the goal text from a session summary.
- */
-function extractGoal(content: string): string {
-  const pattern = /##\s+Goal[^\n]*\n([\s\S]*?)(?=\n##\s|$)/i;
-  const match = content.match(pattern);
-  if (!match) return content.slice(0, 120).trim();
-
-  return match[1]!
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0)
-    .join(" ")
-    .slice(0, 300);
-}
-
-/**
- * Parse session summary observations into structured context.
- */
-function parseSessionSummaries(
-  results: Array<{ id: number; content: string; created_at: string }>,
-): SessionContext[] {
-  return results.map((obs) => ({
-    id: obs.id,
-    date: obs.created_at,
-    goal: extractGoal(obs.content),
-    discoveries: extractSection(obs.content, "Discoveries"),
-    accomplished: extractSection(obs.content, "Accomplished"),
-    nextSteps: extractSection(obs.content, "Next Steps"),
-    relevantFiles: extractSection(obs.content, "Relevant Files"),
-  }));
-}
-
-/**
- * Get AI session context for an issue by searching Engram for session
- * summaries that mention the issue key.
- *
- * Returns empty results on any failure (Engram offline, timeout, etc.).
- */
-export async function getIssueContext(
-  issueKey: string,
-  logger?: { warn: (obj: unknown, msg: string) => void },
-): Promise<{ sessions: SessionContext[]; sessionCount: number }> {
-  const client = getEngramClient();
-  if (!client) {
-    return { sessions: [], sessionCount: 0 };
-  }
-
-  try {
-    const results = await client.search(issueKey, {
-      project: "kanon",
-      type: "session_summary",
-      limit: 5,
-    });
-    const sessions = parseSessionSummaries(results ?? []);
-    return { sessions, sessionCount: sessions.length };
-  } catch (err) {
-    if (logger) {
-      logger.warn(
-        { err, issueKey },
-        "Failed to fetch issue context from Engram",
-      );
-    }
-    return { sessions: [], sessionCount: 0 };
-  }
-}

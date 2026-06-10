@@ -3,22 +3,6 @@ import { fetchApi } from "@/lib/api-client";
 import { issueKeys, commentKeys, activityKeys } from "@/lib/query-keys";
 import type { IssueDetail, Comment, ActivityLog, IssueDocument } from "@/types/issue";
 
-/** Shape returned by GET /api/issues/:key/context */
-export interface SessionContext {
-  id: number;
-  date: string;
-  goal: string;
-  discoveries: string[];
-  accomplished: string[];
-  nextSteps: string[];
-  relevantFiles: string[];
-}
-
-interface IssueContextResponse {
-  sessions: SessionContext[];
-  sessionCount: number;
-}
-
 /**
  * Fetches full issue details by key.
  * Enabled only when issueKey is truthy (panel is open).
@@ -64,23 +48,6 @@ export function useActivityQuery(issueKey: string | undefined) {
       ),
     enabled: !!issueKey,
     staleTime: 1000 * 30, // 30 seconds
-  });
-}
-
-/**
- * Fetches AI session context for an issue from Engram.
- * Enabled only when issueKey is truthy. Uses longer staleTime since
- * session history changes infrequently.
- */
-export function useIssueContextQuery(issueKey: string | undefined) {
-  return useQuery({
-    queryKey: issueKeys.context(issueKey ?? ""),
-    queryFn: () =>
-      fetchApi<IssueContextResponse>(
-        `/api/issues/${encodeURIComponent(issueKey!)}/context`,
-      ),
-    enabled: !!issueKey,
-    staleTime: 1000 * 60 * 5, // 5 minutes
   });
 }
 

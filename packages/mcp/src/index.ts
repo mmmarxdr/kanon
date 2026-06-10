@@ -8,8 +8,6 @@ import { registerProjectTools } from "./tools/projects.js";
 import { registerGroupTools } from "./tools/groups.js";
 import { registerIssueTools } from "./tools/issues.js";
 import { registerRoadmapTools } from "./tools/roadmap.js";
-import { registerCommentTools } from "./tools/comments.js";
-import { registerContextTools } from "./tools/context.js";
 import { registerWorkSessionTools } from "./tools/work-sessions.js";
 import { registerCycleTools } from "./tools/cycles.js";
 import { registerDocumentTools } from "./tools/documents.js";
@@ -83,9 +81,7 @@ const server = new McpServer(
 registerProjectTools(server, client, kanonBinding);
 registerGroupTools(server, client, kanonBinding);
 registerIssueTools(server, client, kanonBinding);
-registerCommentTools(server, client);
 registerRoadmapTools(server, client, kanonBinding);
-registerContextTools(server);
 registerWorkSessionTools(server, client);
 registerCycleTools(server, client, kanonBinding);
 registerDocumentTools(server, client);

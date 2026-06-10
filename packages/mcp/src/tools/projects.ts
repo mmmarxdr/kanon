@@ -89,7 +89,7 @@ export function registerProjectTools(server: McpServer, client: KanonClient, bin
 
   server.tool(
     "kanon_update_project",
-    "Update project (projectKey,name,description,engramNamespace). Returns ack {ok,id,key,name}; format:'full' for entity.",
+    "Update project (projectKey,name,description). Returns ack {ok,id,key,name}; format:'full' for entity.",
     UpdateProjectInput.shape,
     async (args) => {
       try {
@@ -99,7 +99,6 @@ export function registerProjectTools(server: McpServer, client: KanonClient, bin
         const body: Record<string, unknown> = {};
         if (rest["name"] !== undefined) body["name"] = rest["name"];
         if (rest["description"] !== undefined) body["description"] = rest["description"];
-        if (rest["engramNamespace"] !== undefined) body["engramNamespace"] = rest["engramNamespace"];
         const project = await client.updateProject(resolved.projectKey, body);
         const fmt = format ?? "ack";
         if (fmt === "ack") return dataResult(formatAck(project, "project"));

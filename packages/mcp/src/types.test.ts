@@ -8,8 +8,6 @@ import {
   CreateIssueInput,
   UpdateIssueInput,
   TITLE_COACHING,
-  SyncObservationInput,
-  COMMENT_SOURCES,
   CreateDocumentInput,
 } from "./types.js";
 
@@ -158,7 +156,6 @@ describe("UpdateProjectInput", () => {
       projectKey: "KAN",
       name: "New Name",
       description: "New desc",
-      engramNamespace: "kanon-ns",
     });
     expect(result.success).toBe(true);
   });
@@ -167,14 +164,6 @@ describe("UpdateProjectInput", () => {
     const result = UpdateProjectInput.safeParse({
       projectKey: "KAN",
       description: null,
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("accepts null engramNamespace (for clearing)", () => {
-    const result = UpdateProjectInput.safeParse({
-      projectKey: "KAN",
-      engramNamespace: null,
     });
     expect(result.success).toBe(true);
   });
@@ -191,14 +180,6 @@ describe("UpdateProjectInput", () => {
     const result = UpdateProjectInput.safeParse({
       projectKey: "KAN",
       description: "x".repeat(501),
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects engramNamespace over 100 chars", () => {
-    const result = UpdateProjectInput.safeParse({
-      projectKey: "KAN",
-      engramNamespace: "x".repeat(101),
     });
     expect(result.success).toBe(false);
   });
@@ -360,42 +341,5 @@ describe("UpdateIssueInput.title refine", () => {
       const msg = result.error.issues[0]?.message ?? "";
       expect(msg).toBe(TITLE_COACHING);
     }
-  });
-});
-
-// ─── SyncObservationInput ────────────────────────────────────────────────────
-
-describe("SyncObservationInput", () => {
-  const base = {
-    issueKey: "KAN-42",
-    title: "Switched to Postgres",
-    content: "We chose Postgres for reliability.",
-  };
-
-  it("accepts valid input without source (defaults to engram_sync)", () => {
-    const result = SyncObservationInput.safeParse(base);
-    expect(result.success).toBe(true);
-  });
-
-  it("accepts source: adr", () => {
-    const result = SyncObservationInput.safeParse({ ...base, source: "adr" });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.source).toBe("adr");
-    }
-  });
-
-  it("accepts source: engram_sync", () => {
-    const result = SyncObservationInput.safeParse({ ...base, source: "engram_sync" });
-    expect(result.success).toBe(true);
-  });
-
-  it("rejects unknown source value", () => {
-    const result = SyncObservationInput.safeParse({ ...base, source: "unknown_source" });
-    expect(result.success).toBe(false);
-  });
-
-  it("COMMENT_SOURCES array includes adr", () => {
-    expect(COMMENT_SOURCES).toContain("adr");
   });
 });
