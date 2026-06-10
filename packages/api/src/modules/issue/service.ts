@@ -29,25 +29,29 @@ import { parseAndUpsertMentions } from "../mentions/service.js";
 import { autoSubscribe, getStatus as getSubscriptionStatus } from "../issue-subscription/service.js";
 
 /**
- * Generate the next issue key for a project using MAX+1 in a transaction.
+ * Generate the next issue key for a project using an atomic counter increment.
+ *
+ * A single UPDATE … lastSequenceNum + 1 acquires a row-level lock on the project
+ * row and returns the post-increment value, serializing concurrent creates without
+ * a transaction wrapper or retry loop (KAN-53).
+ *
+ * Gap semantics: a downstream insert failure leaves a gap in the sequence. This is
+ * intentional and acceptable — the same behaviour as Jira/Linear sequences.
  */
 async function nextIssueKey(
   projectId: string,
   projectKey: string,
 ): Promise<{ key: string; sequenceNum: number }> {
-  // Use a transaction with serializable isolation to prevent race conditions
-  return prisma.$transaction(async (tx) => {
-    const maxResult = await tx.issue.aggregate({
-      where: { projectId },
-      _max: { sequenceNum: true },
-    });
-
-    const nextNum = (maxResult._max.sequenceNum ?? 0) + 1;
-    return {
-      key: `${projectKey}-${nextNum}`,
-      sequenceNum: nextNum,
-    };
+  const updated = await prisma.project.update({
+    where: { id: projectId },
+    data: { lastSequenceNum: { increment: 1 } },
+    select: { lastSequenceNum: true },
   });
+  const nextNum = updated.lastSequenceNum;
+  return {
+    key: `${projectKey}-${nextNum}`,
+    sequenceNum: nextNum,
+  };
 }
 
 /**

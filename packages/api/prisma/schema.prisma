@@ -206,6 +206,8 @@ model Project {
   description String?
   archived         Boolean  @default(false)
   engramNamespace  String?  @map("engram_namespace")
+  /// Last assigned sequence number. Incremented atomically on each issue create (KAN-53).
+  lastSequenceNum  Int      @default(0) @map("last_sequence_num")
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
@@ -280,6 +282,7 @@ model Issue {
   blockedBy IssueDependency[] @relation("IssueBlockedBy")
 
   @@unique([projectId, key])
+  @@unique([projectId, sequenceNum])
   @@index([projectId, state])
   @@index([projectId, groupKey])
   @@index([cycleId])

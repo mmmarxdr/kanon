@@ -55,6 +55,8 @@ vi.mock("../../config/prisma.js", () => ({
     project: {
       findFirst: vi.fn(),
       findUnique: vi.fn(),
+      // KAN-53: nextIssueKey uses atomic increment via project.update
+      update: vi.fn(),
     },
     issueDependency: {
       findMany: vi.fn(),
@@ -217,18 +219,8 @@ const CYCLE_OTHER = {
 };
 
 function setupNextIssueKey(nextNum = 1) {
-  vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
-    if (typeof cb === "function") {
-      return cb({
-        issue: {
-          aggregate: vi
-            .fn()
-            .mockResolvedValue({ _max: { sequenceNum: nextNum - 1 } }),
-        },
-      });
-    }
-    return undefined;
-  });
+  // KAN-53: nextIssueKey uses atomic project.update increment (not $transaction + aggregate)
+  vi.mocked(prisma.project.update).mockResolvedValue({ lastSequenceNum: nextNum } as any);
 }
 
 describe("createIssue() — cycleId integration", () => {
@@ -282,8 +274,8 @@ describe("createIssue() — cycleId integration", () => {
 
     expect(prisma.issue.create).not.toHaveBeenCalled();
     expect(prisma.cycleScopeEvent.create).not.toHaveBeenCalled();
-    // sequenceNum should not be burned — $transaction (nextIssueKey) should not run either
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    // sequenceNum should not be burned — cycle guard fires before nextIssueKey (KAN-53)
+    expect(prisma.project.update).not.toHaveBeenCalled();
   });
 
   it("TEST 3: createIssue without cycleId does NOT create a scope event", async () => {
