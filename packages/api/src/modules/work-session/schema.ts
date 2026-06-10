@@ -2,7 +2,7 @@ import { z } from "zod";
 import {
   workLogItemSchema,
   workLogListResponseSchema,
-} from "@kanon/bridge";
+} from "@kanon/shared";
 
 /**
  * Issue key param for work session routes.
@@ -33,13 +33,13 @@ export const ActiveWorkerResponse = z.object({
 export type ActiveWorkerResponse = z.infer<typeof ActiveWorkerResponse>;
 
 // ── S2 / KAN-26 — WorkLog list schemas ────────────────────────────────────
-// Bridge is the single source of truth; re-export for use within this module.
+// @kanon/shared is the single source of truth; re-export for use within this module.
 
-/** @see workLogItemSchema in @kanon/bridge */
+/** @see workLogItemSchema in @kanon/shared */
 export const WorkLogItem = workLogItemSchema;
 export type WorkLogItem = z.infer<typeof WorkLogItem>;
 
-/** @see workLogListResponseSchema in @kanon/bridge */
+/** @see workLogListResponseSchema in @kanon/shared */
 export const WorkLogListResponse = workLogListResponseSchema;
 export type WorkLogListResponse = z.infer<typeof WorkLogListResponse>;
 

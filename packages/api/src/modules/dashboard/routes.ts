@@ -3,7 +3,7 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { prisma } from "../../config/prisma.js";
 import { requireMember } from "../../middleware/require-role.js";
-import type { ActiveCycleKPIs } from "@kanon/bridge";
+import type { ActiveCycleKPIs } from "@kanon/shared";
 import {
   getCycle,
   computeAvgLeadDays,

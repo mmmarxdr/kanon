@@ -1,6 +1,6 @@
 import { useNotificationPreferencesQuery } from "./use-notification-preferences-query";
 import { useUpdateNotificationPreferencesMutation } from "./use-update-notification-preferences-mutation";
-import type { NotificationPreferenceItem } from "@kanon/bridge";
+import type { NotificationPreferenceItem } from "@kanon/shared";
 
 type PrefKey = keyof NotificationPreferenceItem;
 

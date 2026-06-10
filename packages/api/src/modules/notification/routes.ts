@@ -16,7 +16,7 @@ import { prisma } from "../../config/prisma.js";
 import { requireMember } from "../../middleware/require-role.js";
 import { AppError } from "../../shared/types.js";
 // Bridge is the single source of truth for the preference schema (fix R4)
-import { notificationPreferenceItemSchema } from "@kanon/bridge";
+import { notificationPreferenceItemSchema } from "@kanon/shared";
 // KAN-40: emit notification lifecycle events for live inbox SSE propagation.
 import { eventBus } from "../../services/event-bus/index.js";
 
@@ -51,7 +51,7 @@ const MarkReadResponseSchema = z.object({
   read: z.literal(true),
 });
 
-// notificationPreferenceItemSchema from @kanon/bridge serves as both the PUT
+// notificationPreferenceItemSchema from @kanon/shared serves as both the PUT
 // body and the GET/PUT response[200] schema — no local duplicate needed (R4).
 
 export default async function notificationRoutes(

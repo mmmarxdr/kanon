@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchApi } from "@/lib/api-client";
 import { notificationKeys } from "@/lib/query-keys";
-import type { NotificationDashboardItem } from "@kanon/bridge";
+import type { NotificationDashboardItem } from "@kanon/shared";
 
 interface NotificationsResponse {
   notifications: NotificationDashboardItem[];

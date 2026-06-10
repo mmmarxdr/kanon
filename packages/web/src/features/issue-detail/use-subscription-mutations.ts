@@ -3,7 +3,7 @@ import { fetchApi } from "@/lib/api-client";
 import { issueKeys } from "@/lib/query-keys";
 import { setIssueDetailSubscribed } from "@/lib/cache-mutations";
 import { useToastStore } from "@/stores/toast-store";
-import type { SubscriptionStatus } from "@kanon/bridge";
+import type { SubscriptionStatus } from "@kanon/shared";
 import type { IssueDetail } from "@/types/issue";
 
 /**

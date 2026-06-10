@@ -9,7 +9,7 @@
  * Refs: REQ-INBOX-CYCLE-007, design §2.4
  */
 import { describe, it, expect } from "vitest";
-import type { ActiveCycleKPIs, MentionDashboardItem } from "@kanon/bridge";
+import type { ActiveCycleKPIs, MentionDashboardItem } from "@kanon/shared";
 
 // Runtime shape check — verifies the DashboardData type exported from
 // use-dashboard-query aligns with the bridge schema.
@@ -73,7 +73,7 @@ describe("DashboardData type extension (B1.1)", () => {
 
   it("DashboardData includes multipleActiveProjects: boolean", async () => {
     // We verify the type via the bridge schema itself
-    const { dashboardResponseSchema } = await import("@kanon/bridge");
+    const { dashboardResponseSchema } = await import("@kanon/shared");
     const parsed = dashboardResponseSchema.parse({
       counts: { openIssues: 0, inProgress: 0, awaitingReview: 0, activeAgents: 0 },
       assigned: [],

@@ -15,7 +15,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { NotificationRow } from "../notification-row";
-import type { NotificationDashboardItem } from "@kanon/bridge";
+import type { NotificationDashboardItem } from "@kanon/shared";
 
 // Controlled mock for useNotificationsQuery — overridden per test below
 const mockNotificationsQueryResult: {
