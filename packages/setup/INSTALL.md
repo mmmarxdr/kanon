@@ -5,20 +5,19 @@ One command installs the Kanon MCP server, verifies its integrity, and configure
 ## Quick install
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.4.0/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.6.3/install.sh)"
 ```
 
-**Pin to a specific release** (recommended — tamper-resistant):
+**Always use the pinned, tagged installer** — the only form that works:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.4.0/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.6.3/install.sh)"
 ```
 
-Fetch `main` (always latest, no tamper-resistance guarantee):
-
-```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/main/install.sh)"
-```
+> The `main` branch ships with `EXPECTED_SHA256=""` and intentionally **aborts**
+> over the network (KAN-52). Only the tagged installer has the sha256 baked in as
+> its trust root, so a compromised CDN cannot substitute a matching tarball+checksum
+> pair.
 
 When prompted, paste your `kanon://` onboarding link. Press Enter to skip and run the interactive setup wizard instead.
 
@@ -26,14 +25,14 @@ When prompted, paste your `kanon://` onboarding link. Press Enter to skip and ru
 
 | Step | Action |
 |------|--------|
-| 1. Download | Fetches `kanon-mcp-0.4.0.tar.gz` from the pinned GitHub Release |
+| 1. Download | Fetches `kanon-mcp-0.6.3.tar.gz` from the pinned GitHub Release |
 | 2. Verify | Checks sha256 **before** extracting — aborts on mismatch, nothing written |
 | 3. Install | Extracts to `~/.kanon/mcp`; writes a version marker for idempotency |
 | 4. Configure | Invokes `node setup` to write MCP config for your detected tools |
 
 ## Pinned version + tamper-resistance
 
-The installer always fetches an exact version (`0.4.0`) — never `latest`.
+The installer always fetches an exact version (`0.6.3`) — never `latest`.
 
 **How tamper-resistance works (hash-in-tag):**
 
@@ -46,20 +45,25 @@ At release time, the CI workflow:
 When you fetch the script via the tag URL:
 
 ```
-https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.4.0/install.sh
+https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.6.3/install.sh
 ```
 
 The hash is embedded in the script itself — not downloaded from a separate file. A compromised CDN or release server **cannot** substitute a matching tarball+checksum pair, because the expected hash is not fetched from the network.
 
-**`main` intentionally carries `EXPECTED_SHA256=""`** (empty). Fetching via `main` gives you the latest release but provides *corruption detection only* — if the CDN serves a damaged file the sha256 check (against the downloaded `.sha256` companion file) will catch it. It does NOT protect against an attacker who controls the release server and can serve a matching tarball + checksum pair simultaneously.
+**`main` intentionally carries `EXPECTED_SHA256=""`** (empty). Over a network
+origin this means the sha256 check would rely on a same-origin `.sha256` file —
+which a compromised origin can serve alongside a malicious tarball, making the
+check worthless. To prevent false security guarantees, the installer **aborts**
+when run from `main` over the network (KAN-52).
 
-> **Summary:** pin to a tag (`mcp-v0.4.0`) for tamper-resistance; use `main` only if you always want the latest version and accept that trade-off.
+> **Summary:** always use the tagged installer (`mcp-v0.6.3`). `main` will not
+> run over the network by design.
 
 **Version scheme:** The release tag and tarball version track the MCP server version (`@kanon/mcp`). The setup package version is internal and not reflected in the artifact name.
 
 | Artifact | Naming |
 |----------|--------|
-| Tag | `mcp-v<version>` (e.g. `mcp-v0.4.0`) |
+| Tag | `mcp-v<version>` (e.g. `mcp-v0.6.3`) |
 | Tarball | `kanon-mcp-<version>.tar.gz` |
 | Checksum | `kanon-mcp-<version>.tar.gz.sha256` |
 
@@ -78,8 +82,8 @@ The `bash -c "$(curl -fsSL ...)"` form evaluates the script as a string, freeing
 You can also pass the link non-interactively:
 
 ```bash
-# Via environment variable (highest priority)
-KANON_ONBOARD_LINK="kanon://your-link" bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.4.0/install.sh)"
+# Via environment variable (highest priority — read by the setup binary)
+KANON_ONBOARD_LINK="kanon://your-link" bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.6.3/install.sh)"
 
 # Via piped stdin
 echo "kanon://your-link" | bash install.sh
@@ -91,9 +95,9 @@ Passing a `kanon://` link as a positional argument (`node setup kanon://...`) is
 
 If you cannot use curl:
 
-1. Download `kanon-mcp-0.4.0.tar.gz` and `kanon-mcp-0.4.0.tar.gz.sha256` from the [GitHub Release](https://github.com/mmmarxdr/kanon/releases/tag/mcp-v0.4.0).
-2. Verify: `sha256sum -c kanon-mcp-0.4.0.tar.gz.sha256` (Linux) or `shasum -a 256 -c kanon-mcp-0.4.0.tar.gz.sha256` (macOS).
-3. Extract: `mkdir -p ~/.kanon/mcp && tar -xzf kanon-mcp-0.4.0.tar.gz -C ~/.kanon/mcp --strip-components=1`
+1. Download `kanon-mcp-0.6.3.tar.gz` and `kanon-mcp-0.6.3.tar.gz.sha256` from the [GitHub Release](https://github.com/mmmarxdr/kanon/releases/tag/mcp-v0.6.3).
+2. Verify: `sha256sum -c kanon-mcp-0.6.3.tar.gz.sha256` (Linux) or `shasum -a 256 -c kanon-mcp-0.6.3.tar.gz.sha256` (macOS).
+3. Extract: `mkdir -p ~/.kanon/mcp && tar -xzf kanon-mcp-0.6.3.tar.gz -C ~/.kanon/mcp --strip-components=1`
 4. Configure: `node ~/.kanon/mcp/setup/dist/index.js`
 
 ## Advanced / CI overrides
@@ -104,7 +108,7 @@ If you cannot use curl:
 | `KANON_INSTALL_DIR` | Override install directory (default: `~/.kanon/mcp`) |
 | `KANON_INSTALL_SKIP_SETUP` | Set to `1` to skip the `node setup` invocation |
 | `KANON_REPO` | Override GitHub `owner/repo` (default: `mmmarxdr/kanon`) |
-| `KANON_ONBOARD_LINK` | Pass onboarding link without interactive prompt |
+| `KANON_ONBOARD_LINK` | Pass onboarding link without interactive prompt (read by the setup binary, not install.sh) |
 
 ## Next step
 

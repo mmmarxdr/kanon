@@ -40,7 +40,7 @@ this box's API over HTTPS.
 ## Deploy
 
 ```bash
-git clone <repo-url> /opt/kanon
+git clone https://github.com/mmmarxdr/kanon.git /opt/kanon
 cd /opt/kanon/deploy/dev
 cp env.template .env
 ```

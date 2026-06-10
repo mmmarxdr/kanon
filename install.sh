@@ -36,12 +36,10 @@ set -euo pipefail
 # ─── Constants ────────────────────────────────────────────────────────────────
 
 # Hardcoded trust-root checksum for the pinned release.
-# EMPTY = fall back to the downloaded .sha256 (detects corruption; full
-# tamper-resistance requires this value shipped in the script itself).
-# PR5 fills this with the real sha256 of the published kanon-mcp-0.4.0.tar.gz;
-# until then we rely on the downloaded .sha256 for corruption detection only —
-# NOT tamper-resistance (both the tarball and its checksum come from the same
-# origin, so a compromised origin can serve a matching pair).
+# Empty on main by design — release.yml stamps the real sha256 into this field
+# on the tagged, detached commit (mcp-v<version>), never touching main.
+# The KAN-52 gate below refuses unpinned network installs when this is empty;
+# only the file:// local dev/test seam is exempt (not a network origin).
 EXPECTED_SHA256=""
 
 KANON_MCP_VERSION="0.6.3"
