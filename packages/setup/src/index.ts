@@ -6,7 +6,7 @@ import chalk from "chalk";
 import { checkbox } from "@inquirer/prompts";
 import { buildPlatformContext } from "./detect.js";
 import { resolveAuth } from "./auth.js";
-import { detectTools, getToolByName } from "./registry.js";
+import { detectTools, getToolByName, toolRegistry } from "./registry.js";
 import {
   buildMcpEntry,
   buildWrapperMcpEntry,
@@ -49,7 +49,7 @@ program
   .option("--api-key <key>", "Kanon API key")
   .option(
     "--tool <name>",
-    "Target a specific tool (claude-code, cursor, antigravity)",
+    "Target a specific tool (claude-code, cursor, antigravity, opencode)",
   )
   .option("--all", "Configure all detected tools")
   .option("--remove", "Remove Kanon configuration from tools")
@@ -295,7 +295,14 @@ async function run(options: {
 
     const configPath = platformPaths.config(ctx);
     const skillDir = platformPaths.skills(ctx);
-    const templatePath = platformPaths.template(ctx);
+    // `template` is OPTIONAL on PlatformPaths — OpenCode is a product
+    // surface only and does NOT write a personal harness file. When
+    // absent, the install/remove template branch is skipped entirely.
+    const templatePath = platformPaths.template?.(ctx);
+    // `commands` is OPTIONAL — present on OpenCode (slashes install lands
+    // in PR 3). The branch is wired here so PR 3 only needs to add the
+    // `installCommands` call, not the guard.
+    const _commandDir = platformPaths.commands?.(ctx);
 
     if (removeMode) {
       // ── Remove Mode ──────────────────────────────────────────────
@@ -321,13 +328,15 @@ async function run(options: {
         );
       }
 
-      // Remove template
-      const removedTemplate = removeTemplate(templatePath, tool.templateMode);
-      if (removedTemplate) {
-        console.log(
-          chalk.green("  ✓") +
-            ` Removed template from ${chalk.bold(tool.displayName)}`,
-        );
+      // Remove template (only when the tool declares one — OpenCode doesn't)
+      if (templatePath) {
+        const removedTemplate = removeTemplate(templatePath, tool.templateMode);
+        if (removedTemplate) {
+          console.log(
+            chalk.green("  ✓") +
+              ` Removed template from ${chalk.bold(tool.displayName)}`,
+          );
+        }
       }
 
       // Remove workflows
@@ -354,6 +363,11 @@ async function run(options: {
         }
       }
 
+      // OpenCode commands removal — body lands in PR 3 (paired with
+      // `installCommands`). Resolving the path here is a no-op write.
+      // (`_commandDir` is the conventional "intentionally-unused" marker so
+      // the unused-vars lint stays clean until the PR 3 install body lands.)
+
       successCount++;
     } else {
       // ── Install Mode ─────────────────────────────────────────────
@@ -375,6 +389,12 @@ async function run(options: {
           );
 
       // 1. MCP config
+      // OpenCode is a product surface — do NOT write personal harness files
+      // (AGENTS.md, opencode.jsonc, .atl/, kanon.md, …). The `mcp` rootKey
+      // entry is the only thing written; `mergeConfig` reshapes it to the
+      // OpenCode array form via `formatMcpEntry("mcp", entry)` — output is
+      // `{ type: "local", command: string[]; environment?; enabled? }` per
+      // OpenCode's `McpLocalConfig` schema.
       mergeConfig(configPath, tool.rootKey, entry);
       console.log(
         chalk.green("  ✓") +
@@ -390,17 +410,21 @@ async function run(options: {
         );
       }
 
-      // 3. Template
-      installTemplate(
-        templatePath,
-        tool.templateSource,
-        assetsDir,
-        tool.templateMode,
-      );
-      console.log(
-        chalk.green("  ✓") +
-          ` Installed template for ${chalk.bold(tool.displayName)} (${templatePath})`,
-      );
+      // 3. Template (only when the tool declares one — OpenCode is a
+      //    product surface only and MUST NOT have a personal harness file
+      //    written by setup).
+      if (templatePath) {
+        installTemplate(
+          templatePath,
+          tool.templateSource,
+          assetsDir,
+          tool.templateMode,
+        );
+        console.log(
+          chalk.green("  ✓") +
+            ` Installed template for ${chalk.bold(tool.displayName)} (${templatePath})`,
+        );
+      }
 
       // 4. Workflows
       if (platformPaths.workflows) {
@@ -425,6 +449,15 @@ async function run(options: {
           );
         }
       }
+
+      // 6. Commands — OpenCode exposes a `commands` dir on PlatformPaths.
+      //    The actual `installCommands` body lands in PR 3; for now we
+      //    resolve the path so the index.ts path contract is wired end to
+      //    end and the leakage guard (PR 2.6) is in force. (Resolving
+      //    `_commandDir` does NOT write anything.)
+      //    (`_commandDir` is the conventional "intentionally-unused" marker
+      //    so the unused-vars lint stays clean until the PR 3 install body
+      //    lands.)
 
       successCount++;
     }
@@ -487,8 +520,9 @@ export async function selectTools(
   if (flags.tool) {
     const tool = getToolByName(flags.tool);
     if (!tool) {
+      const supported = toolRegistry.map((t) => t.name).join(", ");
       throw new Error(
-        `Unknown tool: '${flags.tool}'. Supported: claude-code, cursor, antigravity`,
+        `Unknown tool: '${flags.tool}'. Supported: ${supported}`,
       );
     }
     if (!tool.platforms[ctx.platform]) {

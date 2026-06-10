@@ -71,6 +71,53 @@ describe("selectTools", () => {
         selectTools(detected, { tool: "claude-code" }, false, winCtx),
       ).rejects.toThrow("is not supported on win32");
     });
+
+    // ── PR2 — Task 2.6 RED: --tool opencode works on linux/darwin/wsl ──────
+    it("should accept --tool opencode on linux and resolve to the opencode entry", async () => {
+      // The real registry now contains the opencode entry (PR2.5).
+      const linuxCtx: PlatformContext = { platform: "linux", homedir: "/home/test" };
+      const result = await selectTools([], { tool: "opencode" }, false, linuxCtx);
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe("opencode");
+      expect(result[0].rootKey).toBe("mcp");
+    });
+
+    it("should accept --tool opencode on darwin", async () => {
+      const darwinCtx: PlatformContext = { platform: "darwin", homedir: "/Users/test" };
+      const result = await selectTools([], { tool: "opencode" }, false, darwinCtx);
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe("opencode");
+    });
+
+    it("should accept --tool opencode on wsl", async () => {
+      const wslCtx: PlatformContext = {
+        platform: "wsl",
+        homedir: "/home/test",
+        winHome: "/mnt/c/Users/test",
+      };
+      const result = await selectTools([], { tool: "opencode" }, false, wslCtx);
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe("opencode");
+    });
+
+    it("should reject --tool opencode on win32 (no host branch)", async () => {
+      const winCtx: PlatformContext = {
+        platform: "win32",
+        homedir: "C:\\Users\\test",
+        appDataDir: "C:\\Users\\test\\AppData\\Roaming",
+      };
+      await expect(
+        selectTools([], { tool: "opencode" }, false, winCtx),
+      ).rejects.toThrow("is not supported on win32");
+    });
+
+    it("unknown-tool error message lists opencode in supported tools", async () => {
+      // The error string MUST mention all supported tools so users can
+      // discover opencode. After PR2, it should include 'opencode'.
+      await expect(
+        selectTools(detected, { tool: "nope" }, false, ctx),
+      ).rejects.toThrow(/opencode/);
+    });
   });
 
   describe("--all flag", () => {

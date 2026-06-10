@@ -12,15 +12,76 @@ import { toolRegistry } from "./registry.js";
 import { canonicalizeApiUrl } from "./canonical-url.js";
 
 /**
+ * Union of all MCP entry shapes the setup package can write.
+ *
+ * - Claude / Cursor / Antigravity use `mcpServers` → object form
+ *   (`{ command, args, env? }`).
+ * - OpenCode uses `mcp` → array form
+ *   (`{ type: "local", command: string[]; environment? }`), which preserves
+ *   wrapper paths that contain spaces without shell escaping. The `type`
+ *   discriminator and the `environment` key (NOT `env`) are required by
+ *   OpenCode's `McpLocalConfig` schema.
+ *
+ * ADR: docs/adr/0005-mcp-entry-shape-per-rootkey.md (planned in PR 3).
+ */
+export type ToolMcpEntry =
+  | McpServerEntry
+  | {
+      type: "local";
+      command: string[];
+      environment?: Record<string, string>;
+      enabled?: true;
+    };
+
+/**
+ * Format a Kanon MCP server entry into the shape expected by the given
+ * root key:
+ *
+ *   - `"mcp"`        → OpenCode array form
+ *     `{ type: "local", command: string[]; environment?; enabled? }`
+ *   - `"mcpServers"` → object form `{ command; args[]; env? }`
+ *
+ * The formatter is the single source of truth for the per-rootKey schema.
+ * `mergeConfig` calls it so callers can stay agnostic about which tools use
+ * which shape. `removeConfig` does NOT call this formatter — it operates
+ * on the raw on-disk entry by key lookup and never needs to know the
+ * per-tool schema, since it only deletes the `kanon-mcp` key.
+ */
+export function formatMcpEntry(rootKey: string, entry: McpServerEntry): ToolMcpEntry {
+  if (rootKey === "mcp") {
+    // OpenCode-native shape: argv array, `environment` (NOT `env`),
+    // `type: "local"` discriminator required by McpLocalConfig.
+    const out: {
+      type: "local";
+      command: string[];
+      environment?: Record<string, string>;
+      enabled?: true;
+    } = {
+      type: "local",
+      command: [entry.command, ...entry.args],
+    };
+    if (entry.env) out.environment = entry.env;
+    return out;
+  }
+  // Default: object form (Claude / Cursor / Antigravity).
+  return entry;
+}
+
+/**
  * Merge a Kanon MCP server entry into a tool's JSON config file.
  * Creates the file and parent directories if they don't exist.
  * Idempotent — overwrites the "kanon-mcp" key without touching other servers.
+ *
+ * The entry is reshaped by `formatMcpEntry(rootKey, entry)` so callers
+ * can always pass the object form regardless of the target tool.
  */
 export function mergeConfig(
   configPath: string,
   rootKey: string,
   entry: McpServerEntry,
 ): void {
+  const formatted = formatMcpEntry(rootKey, entry);
+
   let config: Record<string, unknown> = {};
 
   try {
@@ -32,7 +93,7 @@ export function mergeConfig(
 
   const servers = (config[rootKey] as Record<string, unknown>) || {};
   delete servers["kanon"];  // cleanup legacy entry from old setup-mcp.sh
-  servers["kanon-mcp"] = entry;
+  servers["kanon-mcp"] = formatted;
   config[rootKey] = servers;
 
   const dir = path.dirname(configPath);
@@ -46,6 +107,12 @@ export function mergeConfig(
 /**
  * Remove the "kanon-mcp" entry from a tool's JSON config.
  * Returns true if the entry was found and removed, false otherwise.
+ *
+ * NOTE: this function does NOT call `formatMcpEntry` — it operates on the
+ * raw on-disk entry by key lookup and only deletes the `kanon-mcp` key,
+ * regardless of whether the file uses object form (`mcpServers`) or
+ * OpenCode's array form (`mcp`). It never needs to know the per-tool
+ * schema.
  */
 export function removeConfig(configPath: string, rootKey: string): boolean {
   if (!fs.existsSync(configPath)) {
@@ -277,6 +344,85 @@ export function resolveNodeBin(): string {
 }
 
 /**
+ * Shape of a parsed kanon-mcp entry as it lives on disk across all tools.
+ * Object form (Claude / Cursor / Antigravity) and array form (OpenCode)
+ * both reduce to this once normalized.
+ *
+ * - `env`        — written by Claude / Cursor / Antigravity (legacy/internal)
+ * - `environment` — written by OpenCode on disk (per `McpLocalConfig`)
+ *
+ * Both are accepted on read so the auth extractor can pull credentials
+ * from any tool's persisted file.
+ */
+export interface RawMcpEntry {
+  command?: string | string[];
+  args?: string[];
+  env?: Record<string, string>;
+  environment?: Record<string, string>;
+}
+
+/**
+ * Pure helper: extract KANON_API_URL / KANON_API_KEY from a single raw entry,
+ * handling BOTH object form (`{ command, args, env }`) and array form
+ * (`{ command: string[] }`) used by OpenCode's `mcp` rootKey.
+ *
+ * The array form preserves wrapper paths with spaces (no shell escaping) —
+ * scanning is uniform: collect argv from `command` + `args`, then look for
+ * `KANON_API_URL=...`, `KANON_API_KEY=...`, or `--server <url>`.
+ *
+ * Exported for unit testing in isolation.
+ */
+export function extractAuthFromEntry(entry: RawMcpEntry): {
+  apiUrl?: string;
+  apiKey?: string;
+} {
+  const argv: string[] = [];
+  if (Array.isArray(entry.command)) {
+    argv.push(...entry.command);
+  } else if (typeof entry.command === "string") {
+    argv.push(entry.command);
+    if (entry.args) argv.push(...entry.args);
+  } else if (entry.args) {
+    argv.push(...entry.args);
+  }
+
+  let apiUrl: string | undefined;
+  let apiKey: string | undefined;
+
+  // Read credentials from whichever env key the tool writes. Legacy/internal
+  // tools (Claude / Cursor / Antigravity) use `env`; OpenCode persists
+  // credentials under `environment` per its `McpLocalConfig` schema. Read
+  // `environment` first, fall back to `env` when absent.
+  const envMap = entry.environment ?? entry.env;
+  if (envMap) {
+    apiUrl = envMap["KANON_API_URL"];
+    apiKey = envMap["KANON_API_KEY"];
+  }
+
+  for (const arg of argv) {
+    if (!apiUrl && arg.startsWith("KANON_API_URL=")) {
+      apiUrl = arg.slice("KANON_API_URL=".length);
+    }
+    if (!apiKey && arg.startsWith("KANON_API_KEY=")) {
+      apiKey = arg.slice("KANON_API_KEY=".length);
+    }
+  }
+
+  // Wrapper mode: argv contains "--server" <apiUrl> (no KANON_API_KEY in env).
+  if (!apiUrl) {
+    const serverIdx = argv.indexOf("--server");
+    if (serverIdx !== -1 && argv[serverIdx + 1]) {
+      apiUrl = argv[serverIdx + 1];
+    }
+  }
+
+  const out: { apiUrl?: string; apiKey?: string } = {};
+  if (apiUrl) out.apiUrl = apiUrl;
+  if (apiKey) out.apiKey = apiKey;
+  return out;
+}
+
+/**
  * Extract auth credentials from existing kanon-mcp entries across all tool configs.
  *
  * Scans each tool in the registry that supports the current platform, reads its
@@ -313,40 +459,14 @@ export function extractExistingAuth(
       | undefined;
     if (!servers) continue;
 
-    const entry = servers["kanon-mcp"] as
-      | { command?: string; args?: string[]; env?: Record<string, string> }
-      | undefined;
+    const entry = servers["kanon-mcp"] as RawMcpEntry | undefined;
     if (!entry) continue;
 
-    // Try direct mode: env object
-    if (entry.env) {
-      if (!apiUrl && entry.env["KANON_API_URL"]) {
-        apiUrl = entry.env["KANON_API_URL"];
-      }
-      if (!apiKey && entry.env["KANON_API_KEY"]) {
-        apiKey = entry.env["KANON_API_KEY"];
-      }
-    }
-
-    // Try WSL bridge mode: parse args array for KEY=VALUE patterns
-    if (entry.args) {
-      for (const arg of entry.args) {
-        if (!apiUrl && arg.startsWith("KANON_API_URL=")) {
-          apiUrl = arg.slice("KANON_API_URL=".length);
-        }
-        if (!apiKey && arg.startsWith("KANON_API_KEY=")) {
-          apiKey = arg.slice("KANON_API_KEY=".length);
-        }
-      }
-
-      // Try wrapper mode: args contain "--server" <apiUrl> (no KANON_API_KEY)
-      if (!apiUrl) {
-        const serverIdx = entry.args.indexOf("--server");
-        if (serverIdx !== -1 && entry.args[serverIdx + 1]) {
-          apiUrl = entry.args[serverIdx + 1];
-        }
-      }
-    }
+    // Delegate parsing to the pure helper — handles both object-form and
+    // array-form entries uniformly.
+    const found = extractAuthFromEntry(entry);
+    if (!apiUrl && found.apiUrl) apiUrl = found.apiUrl;
+    if (!apiKey && found.apiKey) apiKey = found.apiKey;
 
     // Stop early if we have both values
     if (apiUrl && apiKey) break;
@@ -381,8 +501,12 @@ export function extractExistingWorkspaceId(configPath: string, rootKey: string):
   if (!servers) return undefined;
 
   const entry = servers["kanon-mcp"] as
-    | { env?: Record<string, string> }
+    | { env?: Record<string, string>; environment?: Record<string, string> }
     | undefined;
 
-  return entry?.env?.["KANON_WORKSPACE_ID"];
+  // Read whichever env key the tool wrote. `environment` is the OpenCode
+  // on-disk name; `env` is the legacy/internal name. Read `environment`
+  // first, fall back to `env`.
+  return entry?.environment?.["KANON_WORKSPACE_ID"]
+    ?? entry?.env?.["KANON_WORKSPACE_ID"];
 }

@@ -19,7 +19,19 @@ export interface PlatformPaths {
   skills: (ctx: PlatformContext) => string;
   workflows?: (ctx: PlatformContext) => string;
   agents?: (ctx: PlatformContext) => string;
-  template: (ctx: PlatformContext) => string;
+  /**
+   * Optional: when present, setup writes a `template` file (e.g. Claude's
+   * `CLAUDE.md`, Cursor's `kanon.mdc`, Gemini's `GEMINI.md`). When absent,
+   * setup MUST NOT write a personal harness file for this tool — used by
+   * OpenCode, which is a product surface only.
+   */
+  template?: (ctx: PlatformContext) => string;
+  /**
+   * Optional: when present, setup installs slash-command files
+   * (`assets/commands/<name>.md`) into this directory. Used by OpenCode
+   * (writes to `~/.config/opencode/commands/`).
+   */
+  commands?: (ctx: PlatformContext) => string;
   mcpMode: McpMode;
 }
 
