@@ -3,7 +3,7 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
-import { requireMember } from "../../middleware/require-role.js";
+import { requireMember, requireProposalRole } from "../../middleware/require-role.js";
 
 const WorkspaceIdParam = z.object({ id: z.string().uuid() });
 const ProposalIdParam = z.object({ id: z.string().uuid() });
@@ -96,7 +96,7 @@ export async function proposalActionRoutes(
 
   app.post(
     "/proposals/:id/apply",
-    { schema: { params: ProposalIdParam } },
+    { preHandler: [requireProposalRole("id", "member")], schema: { params: ProposalIdParam } },
     async (request, _reply) => {
       const p = await prisma.mcpProposal.findUnique({
         where: { id: request.params.id },
@@ -117,7 +117,7 @@ export async function proposalActionRoutes(
 
   app.post(
     "/proposals/:id/dismiss",
-    { schema: { params: ProposalIdParam } },
+    { preHandler: [requireProposalRole("id", "member")], schema: { params: ProposalIdParam } },
     async (request, _reply) => {
       const p = await prisma.mcpProposal.findUnique({
         where: { id: request.params.id },
