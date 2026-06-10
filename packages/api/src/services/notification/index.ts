@@ -37,7 +37,7 @@ export function registerNotificationService(
         "notification handler failed",
       );
     });
-  });
+  }, "notification-service");
 
   return unsubscribe;
 }

@@ -98,6 +98,10 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   // ─── Domain EventBus ──────────────────────────────────────────────────
   app.decorate("eventBus", eventBus);
 
+  // Wire the Fastify logger into the event bus so subscriber errors are
+  // routed through pino rather than console (which is only the pre-boot default).
+  eventBus.setLogger(app.log);
+
   // ─── NotificationService ──────────────────────────────────────────────
   // Subscribe to the EventBus at startup; unsubscribe on close (D3).
   // S5: emailProvider injected here — ConsoleProvider in dev/test, ResendProvider in prod.

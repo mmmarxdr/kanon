@@ -183,4 +183,127 @@ describe("InProcessEventBus", () => {
     // emit should not throw even if the subscriber does
     expect(() => bus.emit(makeInput())).not.toThrow();
   });
+
+  // ── per-subscriber isolation (KAN-56) ────────────────────────────────
+
+  it("later subscriber still receives event when earlier subscriber throws synchronously", () => {
+    const received: DomainEvent[] = [];
+
+    bus.subscribe(() => {
+      throw new Error("first subscriber blows up");
+    });
+    bus.subscribe((e) => received.push(e));
+
+    bus.emit(makeInput());
+
+    expect(received).toHaveLength(1);
+    expect(received[0]!.type).toBe("issue.created");
+  });
+
+  it("logs subscriber name and event type when a sync handler throws", () => {
+    const mockLogger = { error: vi.fn() };
+    bus.setLogger(mockLogger);
+
+    bus.subscribe(
+      () => {
+        throw new Error("boom");
+      },
+      "test-subscriber",
+    );
+
+    bus.emit(makeInput());
+
+    expect(mockLogger.error).toHaveBeenCalledOnce();
+    const [obj, msg] = mockLogger.error.mock.calls[0]!;
+    expect(obj).toMatchObject({
+      subscriber: "test-subscriber",
+      eventType: "issue.created",
+    });
+    expect(msg).toBe("event-bus subscriber error");
+  });
+
+  it("catches async handler rejection and logs it without throwing", async () => {
+    const mockLogger = { error: vi.fn() };
+    bus.setLogger(mockLogger);
+
+    const received: DomainEvent[] = [];
+
+    bus.subscribe(async () => {
+      throw new Error("async boom");
+    }, "async-thrower");
+
+    bus.subscribe((e) => received.push(e), "collector");
+
+    bus.emit(makeInput());
+
+    // Allow microtask queue to drain so the rejection handler fires
+    await Promise.resolve();
+
+    expect(mockLogger.error).toHaveBeenCalledOnce();
+    const [obj] = mockLogger.error.mock.calls[0]!;
+    expect(obj).toMatchObject({ subscriber: "async-thrower" });
+    expect(received).toHaveLength(1);
+  });
+
+  it("workspace-filtered: thrower in workspace A does not block another ws-A subscriber", () => {
+    const received: DomainEvent[] = [];
+
+    bus.subscribeToWorkspace(
+      "ws-1",
+      () => {
+        throw new Error("ws thrower");
+      },
+      "ws-thrower",
+    );
+    bus.subscribeToWorkspace("ws-1", (e) => received.push(e), "ws-collector");
+    bus.subscribeToWorkspace("ws-2", (e) => received.push(e), "ws-b-collector");
+
+    bus.emit(makeInput({ workspaceId: "ws-1" }));
+
+    // ws-1 collector receives the event; ws-2 collector does not
+    expect(received).toHaveLength(1);
+    expect(received[0]!.workspaceId).toBe("ws-1");
+  });
+
+  it("error counter increments once per failing subscriber per emit", () => {
+    bus.subscribe(() => {
+      throw new Error("fail");
+    }, "counter-test");
+
+    expect(bus.getSubscriberErrorCount()).toBe(0);
+
+    bus.emit(makeInput());
+    expect(bus.getSubscriberErrorCount()).toBe(1);
+
+    bus.emit(makeInput());
+    expect(bus.getSubscriberErrorCount()).toBe(2);
+  });
+
+  it("unsubscribed wrapper no longer receives events after unsubscribe", () => {
+    const received: DomainEvent[] = [];
+    const unsub = bus.subscribe((e) => received.push(e), "named-sub");
+
+    bus.emit(makeInput());
+    expect(received).toHaveLength(1);
+
+    unsub();
+    bus.emit(makeInput());
+    expect(received).toHaveLength(1); // no new events after unsub
+  });
+
+  it("subscribeToWorkspace unsubscribe with name still works", () => {
+    const received: DomainEvent[] = [];
+    const unsub = bus.subscribeToWorkspace(
+      "ws-1",
+      (e) => received.push(e),
+      "named-ws-sub",
+    );
+
+    bus.emit(makeInput({ workspaceId: "ws-1" }));
+    expect(received).toHaveLength(1);
+
+    unsub();
+    bus.emit(makeInput({ workspaceId: "ws-1" }));
+    expect(received).toHaveLength(1); // no new events after unsub
+  });
 });

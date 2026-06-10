@@ -17,16 +17,24 @@ export interface IEventBus {
   /**
    * Subscribe to ALL domain events.
    * Returns an unsubscribe function.
+   *
+   * @param handler - Callback invoked for every domain event.
+   * @param name    - Optional subscriber name used in error logs (default: handler.name or "anonymous").
    */
-  subscribe(handler: (event: DomainEvent) => void): () => void;
+  subscribe(handler: (event: DomainEvent) => void, name?: string): () => void;
 
   /**
    * Subscribe only to events for a specific workspace.
    * Returns an unsubscribe function.
+   *
+   * @param workspaceId - Only events for this workspace are delivered.
+   * @param handler     - Callback invoked for matching domain events.
+   * @param name        - Optional subscriber name used in error logs (default: handler.name or "anonymous").
    */
   subscribeToWorkspace(
     workspaceId: string,
     handler: (event: DomainEvent) => void,
+    name?: string,
   ): () => void;
 
   /**
