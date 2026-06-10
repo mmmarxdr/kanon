@@ -15,6 +15,8 @@ vi.mock("../../../config/prisma.js", () => ({
     project: {
       findFirst: vi.fn(),
       findUnique: vi.fn(),
+      // KAN-53: nextIssueKey now uses atomic increment via project.update
+      update: vi.fn(),
     },
     issue: {
       findUnique: vi.fn(),
@@ -26,7 +28,6 @@ vi.mock("../../../config/prisma.js", () => ({
     activityLog: {
       create: vi.fn(),
     },
-    // $transaction used by nextIssueKey — mock to call the callback immediately
     $transaction: vi.fn(),
   },
 }));
@@ -71,6 +72,7 @@ import { createIssue, updateIssue } from "../service.js";
 const mockPrismaTransaction = vi.mocked(prisma.$transaction);
 const mockProjectFindFirst = vi.mocked(prisma.project.findFirst);
 const mockProjectFindUnique = vi.mocked(prisma.project.findUnique);
+const mockProjectUpdate = vi.mocked(prisma.project.update);
 const mockIssueFindUnique = vi.mocked(prisma.issue.findUnique);
 const mockIssueCreate = vi.mocked(prisma.issue.create);
 const mockIssueUpdate = vi.mocked(prisma.issue.update);
@@ -139,16 +141,8 @@ describe("A6.2 — createIssue wires parseAndUpsertMentions", () => {
     vi.clearAllMocks();
     mockParseAndUpsertMentions.mockResolvedValue(undefined);
 
-    // $transaction: execute the callback immediately with a fake tx client
-    mockPrismaTransaction.mockImplementation(async (fn: any) => {
-      // nextIssueKey calls tx.issue.aggregate — return a mock result
-      const fakeTx = {
-        issue: {
-          aggregate: vi.fn().mockResolvedValue({ _max: { sequenceNum: 0 } }),
-        },
-      };
-      return fn(fakeTx);
-    });
+    // KAN-53: nextIssueKey uses atomic project.update increment (not $transaction + aggregate)
+    mockProjectUpdate.mockResolvedValue({ lastSequenceNum: 1 } as any);
 
     mockProjectFindFirst.mockResolvedValue(makeProject() as any);
     mockProjectFindUnique.mockResolvedValue(makeProject() as any);
