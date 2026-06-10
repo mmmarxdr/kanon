@@ -6,7 +6,7 @@ import {
   IssueKeyParam,
   UpdateDocumentBody,
 } from "./schema.js";
-import { requireIssueMember, requireIssueRole } from "../../middleware/require-role.js";
+import { requireIssueMember, requireIssueRole, requireDocumentMember } from "../../middleware/require-role.js";
 import * as documentService from "./service.js";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
@@ -63,13 +63,15 @@ export default async function documentRoutes(
    * GET /api/documents/:id
    *
    * Get a single design record by ID.
-   * Requires the requester to be a member of the workspace.
-   * Single query: fetches document with author + issue.project.workspaceId,
-   * performs 404 + membership check, then strips the issue join from the response.
+   * requireDocumentMember resolves project from document and applies the KAN-19
+   * scope guard (enforceProjectAccess) before setting request.member.
+   * The handler re-fetches the document with author to produce the response;
+   * the issue join is stripped so the response shape stays identical to before.
    */
   app.get(
     "/documents/:id",
     {
+      preHandler: [requireDocumentMember("id")],
       schema: {
         params: DocumentIdParam,
       },
@@ -86,11 +88,6 @@ export default async function documentRoutes(
               username: true,
             },
           },
-          issue: {
-            select: {
-              project: { select: { workspaceId: true } },
-            },
-          },
         },
       });
 
@@ -98,39 +95,22 @@ export default async function documentRoutes(
         throw new AppError(404, "DOCUMENT_NOT_FOUND", `Document "${documentId}" not found`);
       }
 
-      const { workspaceId } = document.issue.project;
-      const member = await prisma.member.findUnique({
-        where: {
-          userId_workspaceId: {
-            userId: request.user.userId,
-            workspaceId,
-          },
-        },
-        select: { id: true },
-      });
-
-      if (!member) {
-        throw new AppError(403, "FORBIDDEN", "You are not a member of this workspace");
-      }
-
-      // Strip the issue join — return only the document fields + author
-      const { issue: _issue, ...documentWithoutIssue } = document;
-      return documentWithoutIssue;
+      return document;
     },
   );
 
   /**
    * PATCH /api/documents/:id
    *
-   * Update a design record. Only the document's author may edit it.
-   * Auth: any authenticated user; service enforces authorship.
-   *
-   * To resolve member.id from user.id, we fetch the document first to get the
-   * workspaceId, then look up the Member row.
+   * Update a design record. Only the document's author may edit it;
+   * service enforces authorship. requireDocumentMember resolves project
+   * from document and applies the KAN-19 scope guard (enforceProjectAccess)
+   * before setting request.member.
    */
   app.patch(
     "/documents/:id",
     {
+      preHandler: [requireDocumentMember("id")],
       schema: {
         params: DocumentIdParam,
         body: UpdateDocumentBody,
@@ -138,39 +118,10 @@ export default async function documentRoutes(
     },
     async (request, reply) => {
       const { id: documentId } = request.params;
-
-      // Resolve the Member context: find document → issue → workspace → member
-      const document = await prisma.issueDocument.findUnique({
-        where: { id: documentId },
-        select: {
-          issue: { select: { project: { select: { workspaceId: true } } } },
-        },
-      });
-
-      if (!document) {
-        throw new AppError(404, "DOCUMENT_NOT_FOUND", `Document "${documentId}" not found`);
-      }
-
-      const workspaceId = document.issue.project.workspaceId;
-
-      const member = await prisma.member.findUnique({
-        where: {
-          userId_workspaceId: {
-            userId: request.user.userId,
-            workspaceId,
-          },
-        },
-        select: { id: true },
-      });
-
-      if (!member) {
-        throw new AppError(403, "FORBIDDEN", "You are not a member of this workspace");
-      }
-
       const updated = await documentService.updateDocument(
         documentId,
         request.body,
-        member.id,
+        request.member!.id,
       );
       return reply.status(200).send(updated);
     },

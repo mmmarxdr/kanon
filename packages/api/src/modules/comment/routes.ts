@@ -1,10 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { CreateCommentBody, CommentIdParam, IssueKeyParam, UpdateCommentBody } from "./schema.js";
-import { requireIssueMember, requireIssueRole } from "../../middleware/require-role.js";
+import { requireIssueMember, requireIssueRole, requireCommentMember } from "../../middleware/require-role.js";
 import * as commentService from "./service.js";
-import { prisma } from "../../config/prisma.js";
-import { AppError } from "../../shared/types.js";
 
 /**
  * Comment routes plugin.
@@ -58,15 +56,14 @@ export default async function commentRoutes(
    * PATCH /api/comments/:id
    *
    * Update the body of an existing comment.
-   * Only the comment's author may edit it.
-   * Auth: any authenticated user; service enforces authorship.
-   *
-   * To resolve member.id from user.id, we fetch the comment first to get the
-   * workspaceId, then look up the Member row.
+   * Only the comment's author may edit it; service enforces authorship.
+   * requireCommentMember resolves project from comment and applies the KAN-19
+   * scope guard (enforceProjectAccess) before setting request.member.
    */
   app.patch(
     "/comments/:id",
     {
+      preHandler: [requireCommentMember("id")],
       schema: {
         params: CommentIdParam,
         body: UpdateCommentBody,
@@ -75,34 +72,7 @@ export default async function commentRoutes(
     async (request, reply) => {
       const { id: commentId } = request.params;
       const { body } = request.body;
-
-      // Resolve the Member context: find comment → workspace → member
-      const comment = await prisma.comment.findUnique({
-        where: { id: commentId },
-        select: { issue: { select: { project: { select: { workspaceId: true } } } } },
-      });
-
-      if (!comment) {
-        throw new AppError(404, "COMMENT_NOT_FOUND", `Comment "${commentId}" not found`);
-      }
-
-      const workspaceId = comment.issue.project.workspaceId;
-
-      const member = await prisma.member.findUnique({
-        where: {
-          userId_workspaceId: {
-            userId: request.user.userId,
-            workspaceId,
-          },
-        },
-        select: { id: true },
-      });
-
-      if (!member) {
-        throw new AppError(403, "FORBIDDEN", "You are not a member of this workspace");
-      }
-
-      const updated = await commentService.updateComment(commentId, body, member.id);
+      const updated = await commentService.updateComment(commentId, body, request.member!.id);
       return reply.status(200).send(updated);
     },
   );
