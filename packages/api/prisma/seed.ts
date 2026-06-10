@@ -242,6 +242,14 @@ async function seedCyclesMock(
     }
   }
 
+  // KAN-53: issues above are inserted with explicit keys, bypassing the
+  // lastSequenceNum counter. Sync it to the highest seeded sequenceNum so the
+  // first API-created issue doesn't mint a colliding key (P2002).
+  await prisma.project.update({
+    where: { id: projectId },
+    data: { lastSequenceNum: baseSeq + mockIssues.length - 1 },
+  });
+
   // Scope events (mid-cycle scope drift).
   const scopeEventsData = [
     { day: 1, kind: "add" as const,    issueKey: `${projectKey}-${baseSeq}`,        reason: "Initial planning" },
