@@ -32,7 +32,7 @@ docker compose -f docker-compose.production.yml logs kanon-api | grep SETUP-TOKE
 # 5. Invite + connect AI tools
 # In the web UI: create a workspace, then Settings -> Members ->
 # Generate Onboarding Link. Each developer runs the installer and pastes it:
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/main/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.6.3/install.sh)"
 ```
 
 > `BASE_URL` in `.env.production` must be your public API URL — it is embedded
@@ -91,8 +91,12 @@ from **Settings → Members → Generate Onboarding Link**
 and pastes their link:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/main/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.6.3/install.sh)"
 ```
+
+> Use the **tagged** installer (`mcp-v<version>`), not `main`. The tagged script has
+> the release sha256 baked in as its trust root; the copy on `main` ships unpinned
+> and refuses to run over the network (KAN-52).
 
 The installer fetches the sha256-pinned MCP release, then auto-detects Claude
 Code, Cursor, and Antigravity and points their MCP config at your instance. See
