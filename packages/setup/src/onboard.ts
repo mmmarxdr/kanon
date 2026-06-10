@@ -54,6 +54,12 @@ async function defaultWriteMcpEntries(apiUrl: string, workspaceId: string): Prom
 
     const configPath = platformPaths.config(ctx);
     const entry = buildWrapperMcpEntry(apiUrl, platformPaths.mcpMode, nodeBin, undefined, workspaceId);
+    // OpenCode is a product surface — do NOT write personal harness files
+    // (AGENTS.md, opencode.jsonc, .atl/, kanon.md, …). The `mcp` rootKey
+    // entry is the only thing written; `mergeConfig` reshapes it to the
+    // OpenCode array form via `formatMcpEntry("mcp", entry)` — output is
+    // `{ type: "local", command: string[]; environment?; enabled? }` per
+    // OpenCode's `McpLocalConfig` schema.
     mergeConfig(configPath, tool.rootKey, entry);
 
     written.push({

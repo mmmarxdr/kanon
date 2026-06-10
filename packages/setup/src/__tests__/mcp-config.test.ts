@@ -7,8 +7,10 @@ import {
   removeConfig,
   buildMcpEntry,
   extractExistingAuth,
+  extractAuthFromEntry,
+  formatMcpEntry,
 } from "../mcp-config.js";
-import type { PlatformContext } from "../types.js";
+import type { McpServerEntry, PlatformContext } from "../types.js";
 
 describe("mcp-config", () => {
   let tmpDir: string;
@@ -71,6 +73,40 @@ describe("mcp-config", () => {
       expect(fs.existsSync(configPath)).toBe(true);
       const result = JSON.parse(fs.readFileSync(configPath, "utf8"));
       expect(result.mcpServers["kanon-mcp"]).toEqual(entry);
+    });
+
+    // ── PR2 — Task 2.1 RED: opencode "mcp" rootKey writes array-form command ──
+    it("should write opencode 'mcp' rootKey entries in array-form (type: 'local', command: string[], environment)", () => {
+      const configPath = path.join(tmpDir, "opencode.json");
+      const entry: McpServerEntry = {
+        command: "node",
+        args: ["/path/with spaces/wrapper.js", "kanon-mcp"],
+        env: { KANON_API_URL: "http://localhost:4001" },
+      };
+
+      mergeConfig(configPath, "mcp", entry);
+
+      const result = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      // OpenCode array form: type discriminator + argv array + environment.
+      expect(result.mcp["kanon-mcp"]).toEqual({
+        type: "local",
+        command: ["node", "/path/with spaces/wrapper.js", "kanon-mcp"],
+        environment: { KANON_API_URL: "http://localhost:4001" },
+      });
+    });
+
+    it("should preserve mcpServers object-form when caller passes it (no rewriting)", () => {
+      // Sanity: mergeConfig on mcpServers keeps the object form, not array.
+      const configPath = path.join(tmpDir, "claude.json");
+      const entry: McpServerEntry = { command: "node", args: ["/srv.js"] };
+
+      mergeConfig(configPath, "mcpServers", entry);
+
+      const result = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      expect(result.mcpServers["kanon-mcp"]).toEqual({
+        command: "node",
+        args: ["/srv.js"],
+      });
     });
   });
 
@@ -351,6 +387,202 @@ describe("mcp-config", () => {
 
       expect(result.apiUrl).toBe("https://server.example.com");
       expect(result.apiKey).toBeUndefined();
+    });
+
+    // ── PR2 — Task 2.3: array-form command (OpenCode 'mcp' rootKey) ─────────
+    // These are direct unit tests of the pure `extractAuthFromEntry` helper,
+    // so they don't depend on the opencode tool being in the registry yet
+    // (that lands in task 2.5). The integration paths above already cover
+    // the cross-tool scan via `extractExistingAuth`.
+    it("extracts apiUrl from array-form command (opencode 'mcp' rootKey, wrapper mode)", () => {
+      const result = extractAuthFromEntry({
+        command: ["/opt/node", "/srv/wrapper.js", "--server", "https://server.example.com"],
+      });
+
+      expect(result.apiUrl).toBe("https://server.example.com");
+      expect(result.apiKey).toBeUndefined();
+    });
+
+    it("extracts KANON_API_URL and KANON_API_KEY from env on array-form command", () => {
+      const result = extractAuthFromEntry({
+        command: ["/opt/node", "/srv/wrapper.js"],
+        env: {
+          KANON_API_URL: "https://server.example.com",
+          KANON_API_KEY: "sk-array-1",
+        },
+      });
+
+      expect(result.apiUrl).toBe("https://server.example.com");
+      expect(result.apiKey).toBe("sk-array-1");
+    });
+
+    it("extracts KANON_API_URL and KANON_API_KEY from `environment` (OpenCode on-disk name) on array-form command", () => {
+      // OpenCode persists credentials under `environment` per its
+      // `McpLocalConfig` schema. The legacy/internal `env` key MUST also
+      // be accepted, with `environment` taking precedence when both are
+      // present (so a stale legacy key cannot mask a fresh write).
+      const result = extractAuthFromEntry({
+        command: ["/opt/node", "/srv/wrapper.js"],
+        environment: {
+          KANON_API_URL: "https://server.example.com",
+          KANON_API_KEY: "sk-env-key",
+        },
+      });
+
+      expect(result.apiUrl).toBe("https://server.example.com");
+      expect(result.apiKey).toBe("sk-env-key");
+    });
+
+    it("prefers `environment` over `env` when both are present (fresh-write wins)", () => {
+      const result = extractAuthFromEntry({
+        command: ["/opt/node", "/srv.js"],
+        env: {
+          KANON_API_URL: "https://legacy.example.com",
+          KANON_API_KEY: "sk-legacy",
+        },
+        environment: {
+          KANON_API_URL: "https://fresh.example.com",
+          KANON_API_KEY: "sk-fresh",
+        },
+      });
+
+      expect(result.apiUrl).toBe("https://fresh.example.com");
+      expect(result.apiKey).toBe("sk-fresh");
+    });
+
+    it("extracts KANON_API_URL=... from a single argv element of an array-form command", () => {
+      // WSL-bridge-style: KEY=VALUE appears as a single argv element.
+      const result = extractAuthFromEntry({
+        command: [
+          "wsl",
+          "env",
+          "KANON_API_URL=http://localhost:4001",
+          "KANON_API_KEY=sk-argv",
+          "/opt/node",
+          "/srv.js",
+        ],
+      });
+
+      expect(result.apiUrl).toBe("http://localhost:4001");
+      expect(result.apiKey).toBe("sk-argv");
+    });
+
+    it("preserves spaces in argv elements (no shell-escape required)", () => {
+      // Wrapper path with spaces — array boundaries are the contract.
+      const result = extractAuthFromEntry({
+        command: [
+          "/opt/with space/node",
+          "/Users/me/Kanon Server/wrapper.js",
+          "--server",
+          "https://server.example.com",
+        ],
+      });
+
+      expect(result.apiUrl).toBe("https://server.example.com");
+    });
+
+    it("returns empty object for empty entry", () => {
+      const result = extractAuthFromEntry({});
+
+      expect(result.apiUrl).toBeUndefined();
+      expect(result.apiKey).toBeUndefined();
+    });
+
+    it("handles object-form (legacy) alongside array-form", () => {
+      const result = extractAuthFromEntry({
+        command: "/usr/bin/node",
+        args: ["/srv.js", "--server", "https://legacy.example.com"],
+      });
+
+      expect(result.apiUrl).toBe("https://legacy.example.com");
+    });
+  });
+
+  // ── PR2 — Task 2.1 RED: formatMcpEntry root-key formatter ─────────────────
+  describe("formatMcpEntry", () => {
+    it("returns OpenCode array-form { type: 'local'; command: string[]; environment? } when rootKey === 'mcp'", () => {
+      const entry: McpServerEntry = {
+        command: "node",
+        args: ["/path/with spaces/wrapper.js", "kanon-mcp"],
+        env: { KANON_API_URL: "http://localhost:4001" },
+      };
+
+      const result = formatMcpEntry("mcp", entry);
+
+      expect(result).toEqual({
+        type: "local",
+        command: ["node", "/path/with spaces/wrapper.js", "kanon-mcp"],
+        environment: { KANON_API_URL: "http://localhost:4001" },
+      });
+      // And not the object form
+      expect((result as McpServerEntry).args).toBeUndefined();
+      // And the legacy `env` key MUST NOT be emitted on the OpenCode form
+      expect((result as { env?: unknown }).env).toBeUndefined();
+    });
+
+    it("preserves object-form { command, args, env? } when rootKey === 'mcpServers'", () => {
+      const entry: McpServerEntry = {
+        command: "node",
+        args: ["/srv.js"],
+        env: { KANON_API_KEY: "sk-abc" },
+      };
+
+      const result = formatMcpEntry("mcpServers", entry);
+
+      expect(result).toEqual({
+        command: "node",
+        args: ["/srv.js"],
+        env: { KANON_API_KEY: "sk-abc" },
+      });
+    });
+
+    it("preserves spaces in argv elements (no shell-escape required — array boundaries are the contract)", () => {
+      const entry: McpServerEntry = {
+        command: "/opt/with space/bin/node",
+        args: ["/Users/me/Applications/Kanon Server/wrapper.js"],
+      };
+
+      const result = formatMcpEntry("mcp", entry);
+
+      // Each argv element stays a discrete string in the array — no splitting, no quoting.
+      expect(result).toEqual({
+        type: "local",
+        command: [
+          "/opt/with space/bin/node",
+          "/Users/me/Applications/Kanon Server/wrapper.js",
+        ],
+      });
+    });
+
+    it("preserves env (renamed to environment) on OpenCode array-form output", () => {
+      const entry: McpServerEntry = {
+        command: "npx",
+        args: ["@kanon/mcp@>=0.3.0"],
+        env: { KANON_API_URL: "http://api", KANON_WORKSPACE_ID: "ws-1" },
+      };
+
+      const result = formatMcpEntry("mcp", entry);
+
+      expect(result).toEqual({
+        type: "local",
+        command: ["npx", "@kanon/mcp@>=0.3.0"],
+        environment: { KANON_API_URL: "http://api", KANON_WORKSPACE_ID: "ws-1" },
+      });
+    });
+
+    it("omits environment when env is not present on array-form output", () => {
+      const entry: McpServerEntry = {
+        command: "node",
+        args: ["/srv.js"],
+      };
+
+      const result = formatMcpEntry("mcp", entry);
+
+      expect(result).toEqual({
+        type: "local",
+        command: ["node", "/srv.js"],
+      });
+      expect((result as { environment?: unknown }).environment).toBeUndefined();
     });
   });
 });
