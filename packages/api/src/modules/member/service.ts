@@ -33,13 +33,17 @@ function toProfileResponse(member: {
 }
 
 /**
- * Get a member's profile by userId (looks up the first membership).
- * In a multi-workspace world this would need a workspaceId param,
- * but for now returns the first membership found.
+ * Get a member's profile by userId. The user-level fields (email, displayName,
+ * avatarUrl) are workspace-independent; the returned role/workspaceId are those
+ * of the user's OLDEST membership. KAN-83: pinned with a deterministic orderBy
+ * (createdAt, then id) so the row is stable across calls in a multi-workspace
+ * account instead of whatever findFirst happened to return. A workspaceId param
+ * would be the real fix if callers need a specific workspace's role.
  */
 export async function getProfile(userId: string) {
   const member = await prisma.member.findFirst({
     where: { userId },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     select: {
       id: true,
       username: true,

@@ -192,8 +192,16 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     try {
       const raw = await bootstrapSetupToken(env.SETUP_TOKEN_TTL_DAYS);
       if (raw) {
+        // KAN-83: never put the raw setup token in the structured logger — pino
+        // output is what log aggregators ingest, index and retain, and this
+        // token grants a one-time super-admin claim. Log only a non-sensitive
+        // confirmation through pino; write the token itself straight to stdout
+        // for the operator reading boot output.
         app.log.info(
-          `[SETUP-TOKEN do-not-store] Instance setup token (valid ${env.SETUP_TOKEN_TTL_DAYS} days) — claim at /setup: ${raw}`,
+          `[SETUP] Minted instance setup token (valid ${env.SETUP_TOKEN_TTL_DAYS} days). Claim token printed to stdout below.`,
+        );
+        process.stdout.write(
+          `\n[SETUP-TOKEN do-not-store] Instance setup token — claim at /setup:\n  ${raw}\n\n`,
         );
       }
     } catch (err) {
