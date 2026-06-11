@@ -42,6 +42,21 @@ async function errorHandlerPlugin(fastify: FastifyInstance): Promise<void> {
       });
     }
 
+    // Rate-limit rejections (KAN-77): @fastify/rate-limit throws a plain Error
+    // with statusCode 429, which would otherwise fall through to the 500 branch
+    // and reach the client as INTERNAL_ERROR. Surface a clean 429 instead. Its
+    // message is a fixed, non-sensitive string ("Rate limit exceeded, retry in
+    // …"), and any Retry-After / X-RateLimit-* headers the plugin already set on
+    // the reply are preserved. Scoped to 429 only so other framework 4xx errors
+    // keep their existing (message-masked-in-prod) 500 handling.
+    if ((error as FastifyError).statusCode === 429) {
+      return reply.status(429).send({
+        error: "RATE_LIMIT_EXCEEDED",
+        code: "RATE_LIMIT_EXCEEDED",
+        message: error.message,
+      });
+    }
+
     // Unexpected errors → 500
     request.log.error(error, "Unhandled error");
 
