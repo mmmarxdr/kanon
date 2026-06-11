@@ -5,23 +5,23 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 
-# Workspace manifests first (better layer caching). web depends on @kanon/bridge.
+# Workspace manifests first (better layer caching). web depends on @kanon/shared.
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
 COPY tsconfig.base.json ./
 COPY packages/web/package.json packages/web/
 COPY packages/web/tsconfig.json packages/web/
-COPY packages/bridge/package.json packages/bridge/
-COPY packages/bridge/tsconfig.json packages/bridge/
+COPY packages/shared/package.json packages/shared/
+COPY packages/shared/tsconfig.json packages/shared/
 
-# Full workspace install so the @kanon/bridge link resolves.
+# Full workspace install so the @kanon/shared link resolves.
 RUN pnpm install --frozen-lockfile || pnpm install
 
 # Source
-COPY packages/bridge/ packages/bridge/
+COPY packages/shared/ packages/shared/
 COPY packages/web/ packages/web/
 
-# Build bridge first (web imports @kanon/bridge), then the web app.
-RUN pnpm --filter @kanon/bridge build
+# Build shared first (web imports @kanon/shared), then the web app.
+RUN pnpm --filter @kanon/shared build
 RUN pnpm --filter @kanon/web build
 
 # Stage 2: Serve with nginx

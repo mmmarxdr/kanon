@@ -16,8 +16,7 @@
     "noImplicitOverride": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"],
-      "@kanon/bridge": ["../bridge/src/index.ts"]
+      "@/*": ["./src/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "vite-env.d.ts"],

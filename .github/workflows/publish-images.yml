@@ -16,7 +16,7 @@ on:
     paths:
       - "packages/api/**"
       - "packages/web/**"
-      - "packages/bridge/**"
+      - "packages/shared/**"
       - "pnpm-lock.yaml"
       - "package.json"
       - ".github/workflows/publish-images.yml"

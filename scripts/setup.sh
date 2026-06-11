@@ -56,12 +56,12 @@ bash "$ROOT_DIR/scripts/upgrade.sh"
 
 echo ""
 
-# ── 3. Build shared @kanon/bridge package ─────────────────────────────────────
-# Shared Zod schemas/types used by api/cli/mcp; api integration tests import it
+# ── 3. Build shared @kanon/shared package ─────────────────────────────────────
+# Shared Zod schemas/types used by api/web/cli; api integration tests import it
 # via buildApp, so its dist/ must exist before tests run.
-info "Building @kanon/bridge..."
-pnpm --filter @kanon/bridge build
-ok "@kanon/bridge built"
+info "Building @kanon/shared..."
+pnpm --filter @kanon/shared build
+ok "@kanon/shared built"
 
 echo ""
 

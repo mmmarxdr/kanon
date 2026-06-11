@@ -133,7 +133,7 @@ PACKAGE_FILES=(
   "${ROOT_DIR}/packages/web/package.json"
   "${ROOT_DIR}/packages/mcp/package.json"
   "${ROOT_DIR}/packages/cli/package.json"
-  "${ROOT_DIR}/packages/bridge/package.json"
+  "${ROOT_DIR}/packages/shared/package.json"
   "${ROOT_DIR}/packages/e2e/package.json"
   "${ROOT_DIR}/packages/setup/package.json"
 )

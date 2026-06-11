@@ -10,7 +10,7 @@ Kanon is an opinionated, AI-native project management platform. Monorepo with pn
 | web | packages/web | Web frontend |
 | mcp | packages/mcp | MCP server for AI agent integration |
 | cli | packages/cli | CLI tool |
-| bridge | packages/bridge | Bridge service |
+| shared | packages/shared | Shared Zod schemas & types |
 | e2e | packages/e2e | End-to-end tests |
 
 ## Tech Stack

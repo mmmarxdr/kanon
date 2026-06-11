@@ -17,7 +17,7 @@ testing:
     web: pnpm --filter @kanon/web test
     mcp: pnpm --filter @kanon/mcp test
     cli: pnpm --filter @kanon/cli test
-    bridge: pnpm --filter @kanon/bridge test
+    shared: pnpm --filter @kanon/shared test
     setup: pnpm --filter @kanon-pm/setup test
     e2e: pnpm e2e
   coverage: pnpm --filter @kanon/api test:coverage
@@ -70,8 +70,8 @@ conventions:
     - Run `pnpm --filter @kanon/api db:generate` (prisma generate) after any Prisma schema change
     - Include rollback plan in proposals that touch Prisma migrations
   build_order:
-    - If @kanon/api tests fail with bridge import errors, build bridge first:
-      `pnpm --filter @kanon/bridge build && pnpm --filter @kanon/api test`
+    - If @kanon/api tests fail with shared import errors, build shared first:
+      `pnpm --filter @kanon/shared build && pnpm --filter @kanon/api test`
     - This is a test-prerequisite step, NOT a post-change build
   adrs:
     - ADRs live as committed markdown under docs/adr/NNNN-*.md

@@ -1,8 +1,8 @@
 // ─── Kanon Domain Types ────────────────────────────────────────────────────────
-// Relocated from @kanon/bridge/src/types.ts (KAN-68 PR A).
-// CreateIssuePayload was NOT relocated: its specArtifacts field references
-// SpecArtifactRef (engramId: number) which is an Engram-coupled type — it
-// stays in @kanon/bridge and dies with PR B.
+// Relocated here from the former @kanon/bridge package (KAN-68 PR A).
+// CreateIssuePayload was NOT relocated: its specArtifacts field referenced
+// SpecArtifactRef (engramId: number), an Engram-coupled type removed with the
+// bridge package in KAN-68 PR B.
 
 // ─── SDD Domain Types ──────────────────────────────────────────────────────
 
