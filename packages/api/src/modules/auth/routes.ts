@@ -178,6 +178,15 @@ export default async function authRoutes(
   app.post(
     "/refresh",
     {
+      // KAN-77: token-rotation path — generous limit so active sessions are
+      // never throttled, while still bounding abuse (the refresh token is a
+      // high-entropy secret, not brute-forceable).
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: "1 minute",
+        },
+      },
       schema: {
         body: RefreshBody.optional().nullable(),
         response: { 200: RefreshResponse },
@@ -324,6 +333,13 @@ export default async function authRoutes(
   app.post(
     "/reset-password",
     {
+      // KAN-77: single-use token redemption — tight limit against token grinding.
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: "1 minute",
+        },
+      },
       schema: {
         body: ResetPasswordBody,
         response: { 200: ResetPasswordResponse },
@@ -348,6 +364,13 @@ export default async function authRoutes(
   app.post(
     "/onboard",
     {
+      // KAN-77: single-use onboarding-token redemption — tight limit.
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: "1 minute",
+        },
+      },
       schema: {
         body: OnboardBody,
         response: { 200: z.union([OnboardResponse, InstanceOnboardResponse]) },
@@ -366,6 +389,15 @@ export default async function authRoutes(
   app.post(
     "/exchange",
     {
+      // KAN-77: MCP/CLI access-token rotation path (hit ~hourly per client on
+      // 401). Generous limit so working agents/devs are never throttled; the
+      // opaque refresh token is high-entropy and not brute-forceable.
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: "1 minute",
+        },
+      },
       schema: {
         body: ExchangeBody,
         response: { 200: ExchangeResponse },
@@ -385,6 +417,14 @@ export default async function authRoutes(
   app.post(
     "/refresh-issue",
     {
+      // KAN-77: requires a valid access token (manualAuth) — low brute-force
+      // risk; generous limit aligned with the other rotation endpoints.
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: "1 minute",
+        },
+      },
       schema: {
         response: { 200: RefreshIssueResponse },
       },
@@ -403,6 +443,13 @@ export default async function authRoutes(
   app.post(
     "/verify-email",
     {
+      // KAN-77: single-use verification-token redemption — tight limit.
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: "1 minute",
+        },
+      },
       schema: {
         body: VerifyEmailBody,
         response: { 200: VerifyEmailResponse },

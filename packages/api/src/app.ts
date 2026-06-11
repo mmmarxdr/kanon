@@ -46,6 +46,12 @@ import type { EmailProvider } from "./services/email/types.js";
 export interface BuildAppOptions {
   /** Optional override for the email provider (useful for testing with a spy). */
   emailProvider?: EmailProvider;
+  /**
+   * Force-enable rate limiting even under NODE_ENV=test (KAN-77). Rate limiting
+   * is normally off in test to avoid cross-test interference; integration tests
+   * that assert the limiter's behavior opt in via this flag.
+   */
+  enableRateLimit?: boolean;
 }
 
 /**
@@ -54,6 +60,13 @@ export interface BuildAppOptions {
  */
 export async function buildApp(opts: BuildAppOptions = {}) {
   const app = Fastify({
+    // KAN-77: trust the internal reverse-proxy hops (caddy/nginx, on the private
+    // docker network) so `request.ip` resolves to the real client IP from
+    // X-Forwarded-For instead of a proxy container IP. Without this, every
+    // request shares one IP and the auth rate limits below would throttle all
+    // users as a single bucket. Default (env.TRUST_PROXY=uniquelocal) is correct
+    // for both the caddy→nginx→api and nginx→api topologies.
+    trustProxy: env.TRUST_PROXY,
     logger: {
       level: process.env["NODE_ENV"] === "production" ? "info" : "debug",
       transport:
@@ -75,8 +88,9 @@ export async function buildApp(opts: BuildAppOptions = {}) {
 
   // Rate limiting — registered globally with a generous default,
   // auth routes apply stricter per-route limits via routeConfig.
-  // Disabled in test mode to avoid false failures in integration tests.
-  if (env.NODE_ENV !== "test") {
+  // Disabled in test mode to avoid false failures in integration tests,
+  // unless a test explicitly opts in via opts.enableRateLimit (KAN-77).
+  if (env.NODE_ENV !== "test" || opts.enableRateLimit) {
     await app.register(rateLimit, {
       max: 1000,
       timeWindow: "1 minute",
