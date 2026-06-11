@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import type { ServerResponse } from "http";
 import { requireMember } from "../../middleware/require-role.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import type { DomainEvent } from "../../services/event-bus/index.js";
@@ -15,6 +16,75 @@ import type { DomainEvent } from "../../services/event-bus/index.js";
  * - 30-second heartbeat to keep connection alive
  * - Automatic cleanup on client disconnect
  */
+
+// ─── Exported testable seams ──────────────────────────────────────────────────
+
+/** Heartbeat interval in milliseconds. */
+export const HEARTBEAT_INTERVAL_MS = 30_000;
+
+/**
+ * Parse the `Last-Event-ID` header value into a numeric event ID.
+ *
+ * Returns null when:
+ *  - the header is absent (undefined)
+ *  - the value is empty or non-numeric
+ *
+ * Handles array headers (takes the first element).
+ * Uses Number.isNaN for strict numeric validation.
+ */
+export function parseLastEventId(
+  header: string | string[] | undefined,
+): number | null {
+  if (header === undefined) return null;
+  const raw = Array.isArray(header) ? header[0] : header;
+  if (!raw) return null;
+  const parsed = parseInt(raw, 10);
+  if (Number.isNaN(parsed)) return null;
+  return parsed;
+}
+
+/**
+ * Filter a list of domain events to only those belonging to a specific workspace.
+ */
+export function selectWorkspaceEvents(
+  events: DomainEvent[],
+  workspaceId: string,
+): DomainEvent[] {
+  return events.filter((e) => e.workspaceId === workspaceId);
+}
+
+/**
+ * Write a single SSE event frame to the response stream.
+ *
+ * Format:
+ *   id: {event.id}
+ *   event: {event.type}
+ *   data: {JSON.stringify(event)}
+ *   \n
+ */
+export function writeSSEEvent(raw: ServerResponse, event: DomainEvent): void {
+  raw.write(
+    `id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+  );
+}
+
+/**
+ * Write a heartbeat SSE comment to keep the connection alive.
+ */
+export function writeHeartbeat(raw: ServerResponse): void {
+  raw.write(":heartbeat\n\n");
+}
+
+/**
+ * Start a periodic heartbeat on the given response stream.
+ * Returns the interval handle so the caller can clearInterval on disconnect.
+ */
+export function startHeartbeat(raw: ServerResponse): NodeJS.Timeout {
+  return setInterval(() => writeHeartbeat(raw), HEARTBEAT_INTERVAL_MS);
+}
+
+// ─── Route handler ─────────────────────────────────────────────────────────────
+
 export default async function workspaceEventsRoutes(
   fastify: FastifyInstance,
 ): Promise<void> {
@@ -55,16 +125,14 @@ export default async function workspaceEventsRoutes(
       );
 
       // ─── Last-Event-ID reconnection replay ────────────────────────────
-      const lastEventIdHeader = request.headers["last-event-id"];
-      if (lastEventIdHeader) {
-        const lastEventId = parseInt(lastEventIdHeader as string, 10);
-        if (!isNaN(lastEventId)) {
-          const missedEvents = eventBus.getEventsSince(lastEventId);
-          for (const event of missedEvents) {
-            if (event.workspaceId === wid) {
-              writeSSEEvent(raw, event);
-            }
-          }
+      const lastEventId = parseLastEventId(request.headers["last-event-id"]);
+      if (lastEventId !== null) {
+        const missedEvents = selectWorkspaceEvents(
+          eventBus.getEventsSince(lastEventId),
+          wid,
+        );
+        for (const event of missedEvents) {
+          writeSSEEvent(raw, event);
         }
       }
 
@@ -78,13 +146,11 @@ export default async function workspaceEventsRoutes(
       );
 
       // ─── Heartbeat (30s) ──────────────────────────────────────────────
-      const heartbeatInterval = setInterval(() => {
-        raw.write(":heartbeat\n\n");
-      }, 30_000);
+      const hb = startHeartbeat(raw);
 
       // ─── Cleanup on client disconnect ─────────────────────────────────
       request.raw.on("close", () => {
-        clearInterval(heartbeatInterval);
+        clearInterval(hb);
         unsubscribe();
 
         request.log.info(
@@ -96,20 +162,4 @@ export default async function workspaceEventsRoutes(
       // Do not call reply.send() — response is managed via raw streaming
     },
   );
-}
-
-/**
- * Write a single SSE event frame to the response stream.
- *
- * Format:
- *   id: {event.id}
- *   event: {event.type}
- *   data: {JSON.stringify(event)}
- *   \n
- */
-function writeSSEEvent(
-  raw: import("http").ServerResponse,
-  event: DomainEvent,
-): void {
-  raw.write(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
 }
