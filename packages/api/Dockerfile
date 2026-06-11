@@ -10,18 +10,18 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
 COPY tsconfig.base.json ./
 COPY packages/api/package.json packages/api/
 COPY packages/api/tsconfig.json packages/api/
-COPY packages/bridge/package.json packages/bridge/
-COPY packages/bridge/tsconfig.json packages/bridge/
+COPY packages/shared/package.json packages/shared/
+COPY packages/shared/tsconfig.json packages/shared/
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile || pnpm install
 
 # Copy source
-COPY packages/bridge/ packages/bridge/
+COPY packages/shared/ packages/shared/
 COPY packages/api/ packages/api/
 
-# Build bridge first (API depends on it)
-RUN pnpm --filter @kanon/bridge build
+# Build shared first (API depends on it)
+RUN pnpm --filter @kanon/shared build
 
 # Generate Prisma client
 RUN pnpm --filter @kanon/api db:generate
@@ -44,11 +44,11 @@ WORKDIR /app
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
 COPY packages/api/package.json packages/api/
-COPY packages/bridge/package.json packages/bridge/
+COPY packages/shared/package.json packages/shared/
 
 RUN pnpm install --frozen-lockfile --prod || pnpm install --prod
 
-COPY --from=builder /app/packages/bridge/dist packages/bridge/dist
+COPY --from=builder /app/packages/shared/dist packages/shared/dist
 COPY --from=builder /app/packages/api/dist packages/api/dist
 COPY --from=builder /app/packages/api/prisma packages/api/prisma
 
