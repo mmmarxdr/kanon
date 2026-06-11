@@ -219,7 +219,10 @@ export async function createInvite(
       type: "invite.created",
       workspaceId,
       actorId: createdById,
-      payload: { inviteId: invite.id, role: invite.role, token: invite.token },
+      // KAN-76: never include the raw token — the SSE event-bus payload is
+      // streamed to every workspace member (incl. viewers). Token in the stream
+      // would let any member bypass the admin-only invite requirement.
+      payload: { inviteId: invite.id, role: invite.role },
     });
   } catch {
     // Never let event emission break the mutation
@@ -277,7 +280,8 @@ export async function revokeInvite(inviteId: string, workspaceId: string, actorI
       type: "invite.revoked",
       workspaceId,
       actorId,
-      payload: { inviteId: updated.id, token: updated.token },
+      // KAN-76: token must never reach the SSE stream (see invite.created above).
+      payload: { inviteId: updated.id, role: updated.role },
     });
   } catch {
     // Never let event emission break the mutation
