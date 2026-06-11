@@ -52,7 +52,6 @@ export interface KanonProject {
   key: string;
   name: string;
   description?: string | null;
-  engramNamespace?: string | null;
   workspaceId: string;
 }
 
@@ -69,7 +68,6 @@ export interface KanonIssue {
   description?: string | null;
   parentId?: string | null;
   specArtifacts?: unknown;
-  engramContext?: unknown;
   labels?: string[];
   cycle?: { id: string; name: string; state: "upcoming" | "active" | "done" } | null;
 }
@@ -302,7 +300,7 @@ export class KanonClient {
   }
 
   /**
-   * Update a project by key (e.g., set engramNamespace).
+   * Update a project by key.
    * Route: PATCH /api/projects/:key
    */
   async updateProject(

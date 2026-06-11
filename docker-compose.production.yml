@@ -33,8 +33,6 @@ services:
       NODE_ENV: production
       CORS_ORIGIN: ${CORS_ORIGIN:?Set CORS_ORIGIN in .env.production}
       COOKIE_SECRET: ${COOKIE_SECRET:-}
-      ENGRAM_URL: ${ENGRAM_URL:-http://engram:7437}
-      ENGRAM_SYNC_ENABLED: ${ENGRAM_SYNC_ENABLED:-false}
     networks:
       - kanon-internal
     healthcheck:
@@ -62,40 +60,9 @@ services:
       timeout: 5s
       retries: 3
 
-  engram:
-    build:
-      context: .
-      dockerfile_inline: |
-        FROM golang:1.23-alpine AS builder
-        RUN apk add --no-cache git gcc musl-dev
-        RUN git clone --depth 1 https://github.com/Gentleman-Programming/engram.git /src
-        WORKDIR /src
-        RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /engram ./cmd/engram
-        FROM alpine:3.21
-        COPY --from=builder /engram /usr/local/bin/engram
-        RUN mkdir -p /data
-        ENV ENGRAM_DB_PATH=/data/engram.db
-        EXPOSE 7437
-        ENTRYPOINT ["engram"]
-        CMD ["serve"]
-    restart: unless-stopped
-    profiles:
-      - engram
-    volumes:
-      - engram_data:/data
-    networks:
-      - kanon-internal
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:7437/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-
 networks:
   kanon-internal:
     driver: bridge
 
 volumes:
   pgdata:
-  engram_data:

@@ -67,7 +67,7 @@ jobs:
           PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION: "true"
 
       - name: Build shared workspace packages
-        run: pnpm --filter @kanon/bridge build && pnpm --filter @kanon/shared build
+        run: pnpm --filter @kanon/shared build
 
       - name: TypeScript check (API)
         run: pnpm --filter @kanon/api exec tsc --noEmit

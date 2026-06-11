@@ -61,10 +61,6 @@ vi.mock("../../../shared/issue-templates.js", () => ({
   resolveTemplate: vi.fn().mockReturnValue(null),
 }));
 
-vi.mock("../../../config/engram.js", () => ({
-  getEngramClient: vi.fn().mockReturnValue(null),
-}));
-
 import { prisma } from "../../../config/prisma.js";
 import { parseAndUpsertMentions } from "../../mentions/service.js";
 import { createIssue, updateIssue } from "../service.js";

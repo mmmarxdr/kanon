@@ -3,8 +3,6 @@ import { useState } from "react";
 import { useSidebarStore } from "@/stores/sidebar-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useCommandPaletteStore } from "@/stores/command-palette-store";
-import { useSyncEvents } from "@/hooks/use-sync-events";
-import { SyncIndicator } from "@/components/sync-indicator";
 import { useProjectsQuery } from "@/hooks/use-projects-query";
 import { useActiveWorkspaceId } from "@/hooks/use-workspace-query";
 import { Icon, Monogram } from "@/components/ui/icons";
@@ -97,14 +95,6 @@ export function AppSidebar() {
 
   const workspaceId = useActiveWorkspaceId();
   const { data: projects, isLoading: projectsLoading } = useProjectsQuery(workspaceId);
-  const {
-    status: syncStatus,
-    lastSyncAt,
-    syncHistory,
-    isManualSyncing,
-    triggerSync,
-  } = useSyncEvents();
-
   const projectKey =
     location.pathname.match(/^\/(board|roadmap|dependencies|cycles|project-settings)\/([^/]+)/)?.[2] ?? "";
   const navItems = buildNavItems(projectKey);
@@ -532,23 +522,8 @@ export function AppSidebar() {
           position: "relative",
         }}
       >
-        <div style={{ position: "relative", flexShrink: 0 }}>
+        <div style={{ flexShrink: 0 }}>
           <Avatar initials={initials} name={displayName} size={22} />
-          <div
-            style={{
-              position: "absolute",
-              top: -2,
-              right: -2,
-            }}
-          >
-            <SyncIndicator
-              status={syncStatus}
-              lastSyncAt={lastSyncAt}
-              syncHistory={syncHistory}
-              isManualSyncing={isManualSyncing}
-              onTriggerSync={triggerSync}
-            />
-          </div>
         </div>
         {!collapsed && (
           <div

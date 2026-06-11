@@ -146,23 +146,6 @@ export default async function issueRoutes(
   );
 
   /**
-   * GET /api/issues/:key/context
-   * Returns past AI session context from Engram for the given issue.
-   */
-  app.get(
-    "/issues/:key/context",
-    {
-      preHandler: [requireIssueMember("key")],
-      schema: {
-        params: IssueKeyParam,
-      },
-    },
-    async (request, _reply) => {
-      return issueService.getIssueContext(request.params.key, request.log);
-    },
-  );
-
-  /**
    * PATCH /api/projects/:key/issues/groups/:groupKey/transition
    * Batch-transitions all issues in a group to a new state.
    */

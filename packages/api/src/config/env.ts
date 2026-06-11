@@ -16,26 +16,6 @@ const envSchema = z.object({
   NODE_ENV: z
     .enum(["development", "production", "test"])
     .default("development"),
-  ENGRAM_URL: z
-    .string()
-    .url()
-    .optional()
-    .default("http://localhost:7437"),
-  ENGRAM_API_KEY: z
-    .string()
-    .optional(),
-  ENGRAM_SYNC_ENABLED: z
-    .string()
-    .optional()
-    .default("false")
-    .transform((val) => val === "true" || val === "1")
-    .pipe(z.boolean()),
-  ENGRAM_POLL_INTERVAL_MS: z
-    .string()
-    .optional()
-    .default("15000")
-    .transform((val) => parseInt(val, 10))
-    .pipe(z.number().int().min(5000, "ENGRAM_POLL_INTERVAL_MS must be at least 5000")),
   COOKIE_SECRET: z
     .string()
     .optional(),
@@ -104,7 +84,7 @@ const envSchema = z.object({
  * Production-only refinement: JWT secrets must be at least 32 characters
  * and must not be the default dev values.
  */
-const envSchemaWithProductionChecks = envSchema.superRefine((data, ctx) => {
+export const envSchemaWithProductionChecks = envSchema.superRefine((data, ctx) => {
   if (data.NODE_ENV !== "production") return;
 
   const devDefaults = [
@@ -139,6 +119,20 @@ const envSchemaWithProductionChecks = envSchema.superRefine((data, ctx) => {
       code: z.ZodIssueCode.custom,
       path: ["JWT_REFRESH_SECRET"],
       message: "JWT_REFRESH_SECRET must not use the default dev value in production",
+    });
+  }
+
+  if (!data.COOKIE_SECRET) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["COOKIE_SECRET"],
+      message: "COOKIE_SECRET is required in production",
+    });
+  } else if (data.COOKIE_SECRET.length < 32) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["COOKIE_SECRET"],
+      message: "COOKIE_SECRET must be at least 32 characters in production",
     });
   }
 });

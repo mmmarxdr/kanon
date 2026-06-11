@@ -17,11 +17,6 @@ vi.mock("../issue-subscription/service.js", () => ({
   autoSubscribe: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Mock engram client (imported at module level)
-vi.mock("../../config/engram.js", () => ({
-  getEngramClient: vi.fn().mockReturnValue(null),
-}));
-
 // Mock event bus
 vi.mock("../../services/event-bus/index.js", () => ({
   eventBus: {

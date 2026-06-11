@@ -2,26 +2,23 @@
 
 import type { Command } from "commander";
 import chalk from "chalk";
-import { EngramClient, SddParser } from "@kanon/bridge";
 import { loadConfig } from "../config.js";
 import { KanonClient, KanonApiError, type KanonIssue } from "../kanon-client.js";
 
 /**
  * Register the `kanon status` command.
  *
- * Shows combined project health: Kanon issue counts and Engram SDD status.
+ * Shows project health: Kanon issue counts.
  *
  * Options:
  *   --project <KEY>      Kanon project key (required)
- *   --engram-url <url>   Override ENGRAM_URL
  *   --kanon-url <url>    Override KANON_API_URL
  */
 export function statusCommand(program: Command): void {
   program
     .command("status")
-    .description("Show combined project status from Kanon and Engram")
+    .description("Show project status from Kanon")
     .requiredOption("--project <KEY>", "Kanon project key")
-    .option("--engram-url <url>", "Engram API URL")
     .option("--kanon-url <url>", "Kanon API URL")
     .action(async (opts: StatusOptions) => {
       try {
@@ -39,13 +36,11 @@ export function statusCommand(program: Command): void {
 
 interface StatusOptions {
   project: string;
-  engramUrl?: string;
   kanonUrl?: string;
 }
 
 async function runStatus(opts: StatusOptions): Promise<void> {
   const config = loadConfig({
-    engramUrl: opts.engramUrl,
     kanonApiUrl: opts.kanonUrl,
   });
 
@@ -81,11 +76,6 @@ async function runStatus(opts: StatusOptions): Promise<void> {
     chalk.bold(`Project: ${project.name}`) +
       chalk.dim(` (${project.key})`),
   );
-  if (project.engramNamespace) {
-    console.log(
-      chalk.dim(`Engram namespace: ${project.engramNamespace}`),
-    );
-  }
   console.log("");
 
   // ─── Kanon Issues Table ───────────────────────────────────────────────
@@ -131,103 +121,6 @@ async function runStatus(opts: StatusOptions): Promise<void> {
     console.log("");
     console.log(`  ${chalk.bold("Total:")} ${issues.length} issue(s)`);
   }
-
-  // ─── Engram SDD data ─────────────────────────────────────────────────
-
-  console.log("");
-  console.log(chalk.bold.underline("Engram SDD Artifacts"));
-  console.log("");
-
-  const namespace = project.engramNamespace;
-  if (!namespace) {
-    console.log(
-      chalk.dim(
-        "  No Engram namespace linked. Use `kanon register` to link one.",
-      ),
-    );
-    return;
-  }
-
-  const engram = new EngramClient({ baseUrl: config.engramUrl });
-  const connectivity = await engram.checkConnectivity();
-
-  if (!connectivity.ok) {
-    console.log(
-      chalk.yellow(
-        `  Engram unavailable at ${config.engramUrl} -- showing Kanon data only`,
-      ),
-    );
-    return;
-  }
-
-  let observations;
-  try {
-    observations = await engram.search("sdd/", {
-      project: namespace,
-      limit: 100,
-    });
-  } catch {
-    console.log(chalk.yellow("  Could not fetch SDD artifacts from Engram."));
-    return;
-  }
-
-  if (observations.length === 0) {
-    console.log(chalk.dim("  No SDD artifacts found."));
-    return;
-  }
-
-  const changes = SddParser.groupByChange(observations);
-
-  // SDD Changes table
-  const colName = 28;
-  const colPhase = 18;
-  const colTasks = 14;
-  const colStatus = 12;
-
-  const header =
-    padRight("Change", colName) +
-    padRight("Latest Phase", colPhase) +
-    padRight("Tasks", colTasks) +
-    padRight("Status", colStatus);
-
-  console.log(chalk.dim(`  ${header}`));
-  console.log(chalk.dim(`  ${"─".repeat(colName + colPhase + colTasks + colStatus)}`));
-
-  let inProgress = 0;
-  let archived = 0;
-
-  for (const change of changes) {
-    const isArchived = change.latestPhase === "archive-report";
-    if (isArchived) archived++;
-    else inProgress++;
-
-    const doneTasks = change.tasks.filter((t) => t.done).length;
-    const totalTasks = change.tasks.length;
-    const taskStr =
-      totalTasks > 0 ? `${doneTasks}/${totalTasks}` : chalk.dim("n/a");
-    const pct =
-      totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
-    const statusStr = isArchived
-      ? chalk.green("archived")
-      : chalk.cyan("in-progress");
-
-    const pctStr =
-      totalTasks > 0
-        ? ` (${pct}%)`
-        : "";
-
-    console.log(
-      `  ${padRight(truncate(change.name, colName - 2), colName)}${padRight(change.latestPhase, colPhase)}${padRight(taskStr + pctStr, colTasks)}${statusStr}`,
-    );
-  }
-
-  console.log("");
-  console.log(
-    `  ${chalk.bold("Summary:")} ${changes.length} change(s) — ${inProgress} in-progress, ${archived} archived`,
-  );
-  console.log(
-    chalk.dim(`  ${observations.length} total Engram observation(s)`),
-  );
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -246,11 +139,6 @@ function padRight(str: string, len: number): string {
   const stripped = str.replace(/\u001b\[[0-9;]*m/g, "");
   if (stripped.length >= len) return str;
   return str + " ".repeat(len - stripped.length);
-}
-
-function truncate(str: string, maxLen: number): string {
-  if (str.length <= maxLen) return str;
-  return str.slice(0, maxLen - 1) + "\u2026";
 }
 
 function renderBar(count: number, total: number): string {

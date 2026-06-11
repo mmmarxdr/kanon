@@ -10,10 +10,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  * stub exposing only the methods the production code touches.
  */
 
-vi.mock("../../config/engram.js", () => ({
-  getEngramClient: vi.fn().mockReturnValue(null),
-}));
-
 vi.mock("../../services/event-bus/index.js", () => ({
   eventBus: {
     emit: vi.fn(),

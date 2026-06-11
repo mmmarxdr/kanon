@@ -7,8 +7,6 @@ cd "$ROOT_DIR"
 # ── Port configuration (override via env or .env) ────────────────────────────
 API_PORT="${KANON_API_PORT:-3000}"
 WEB_PORT="${KANON_WEB_PORT:-5173}"
-ENGRAM_PORT="${ENGRAM_PORT:-7437}"
-ENGRAM_URL="${ENGRAM_URL:-http://localhost:${ENGRAM_PORT}}"
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -23,15 +21,13 @@ warn()  { echo -e "${YELLOW}[warn]${NC}  $*"; }
 fail()  { echo -e "${RED}[fail]${NC}  $*"; exit 1; }
 
 # ── Flag parsing ──────────────────────────────────────────────────────────────
-WITH_ENGRAM=true
 WITH_MCP=true
 SHOW_HELP=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --no-engram)   WITH_ENGRAM=false; shift ;;
     --no-mcp)      WITH_MCP=false; shift ;;
     --help|-h)     SHOW_HELP=true; shift ;;
-    --)            shift ;;  # standard argument separator (e.g. pnpm dev:start -- --no-engram)
+    --)            shift ;;  # standard argument separator (e.g. pnpm dev:start -- --no-mcp)
     *)             warn "Unknown flag: $1"; shift ;;
   esac
 done
@@ -39,12 +35,11 @@ done
 if [[ "$SHOW_HELP" == "true" ]]; then
   echo "Usage: dev-start.sh [OPTIONS]"
   echo ""
-  echo "Start the Kanon development environment (PostgreSQL, API, Web, Engram, MCP)."
+  echo "Start the Kanon development environment (PostgreSQL, API, Web, MCP)."
   echo ""
   echo "By default, all services are started. Use --no-* flags to opt out."
   echo ""
   echo "Options:"
-  echo "  --no-engram    Skip Engram memory service"
   echo "  --no-mcp       Skip MCP package build"
   echo "  --help, -h     Show this help message"
   echo ""
@@ -53,9 +48,8 @@ if [[ "$SHOW_HELP" == "true" ]]; then
   echo "  A .env file is auto-created on first run from .env.example"
   echo ""
   echo "Examples:"
-  echo "  ./scripts/dev-start.sh              # Start everything (API + Web + Engram + MCP)"
-  echo "  ./scripts/dev-start.sh --no-engram  # Skip Engram"
-  echo "  ./scripts/dev-start.sh --no-mcp     # Skip MCP build"
+  echo "  ./scripts/dev-start.sh           # Start everything (API + Web + MCP)"
+  echo "  ./scripts/dev-start.sh --no-mcp  # Skip MCP build"
   exit 0
 fi
 
@@ -153,53 +147,7 @@ until docker compose -f "$ROOT_DIR/docker-compose.yml" ps postgres --format json
 done
 ok "PostgreSQL is healthy"
 
-# ── 3b. Start Engram (default on, skip with --no-engram) ─────────────────────
-ENGRAM_STARTED_BY_US=false
-ENGRAM_SOURCE=""
-if [[ "$WITH_ENGRAM" == "true" ]]; then
-  # Check if engram is already running (e.g., installed locally on the host)
-  if curl -sf --max-time 2 "${ENGRAM_URL}/health" >/dev/null 2>&1; then
-    ok "Using existing Engram instance (already running at ${ENGRAM_URL})"
-    ENGRAM_SOURCE="existing"
-  else
-    info "Starting Engram via docker compose (profile: engram)..."
-    if docker compose -f "$ROOT_DIR/docker-compose.yml" --profile engram up -d engram; then
-      info "Waiting for Engram to be healthy..."
-      ENGRAM_RETRIES=60
-      until curl -sf --max-time 2 "${ENGRAM_URL}/health" >/dev/null 2>&1; do
-        ENGRAM_RETRIES=$((ENGRAM_RETRIES - 1))
-        if [[ "$ENGRAM_RETRIES" -le 0 ]]; then
-          warn "Engram did not become healthy — continuing without it"
-          WITH_ENGRAM=false
-          break
-        fi
-        sleep 1
-      done
-      if [[ "$WITH_ENGRAM" == "true" ]]; then
-        ok "Engram is healthy (Docker)"
-        ENGRAM_STARTED_BY_US=true
-        ENGRAM_SOURCE="docker"
-      fi
-    else
-      warn "Docker failed to start Engram (port conflict?) — continuing without it"
-      WITH_ENGRAM=false
-    fi
-  fi
-fi
-
-# Persist ENGRAM_STARTED_BY_US so dev-stop.sh knows whether to stop it
-echo "$ENGRAM_STARTED_BY_US" > "$ROOT_DIR/.engram-started-by-us"
-
-# Ensure ENGRAM_SYNC_ENABLED is set in .env when engram is available
-if [[ "$WITH_ENGRAM" == "true" ]]; then
-  if grep -q '^ENGRAM_SYNC_ENABLED=' "$ENV_FILE" 2>/dev/null; then
-    sed -i 's/^ENGRAM_SYNC_ENABLED=.*/ENGRAM_SYNC_ENABLED=true/' "$ENV_FILE"
-  else
-    echo 'ENGRAM_SYNC_ENABLED=true' >> "$ENV_FILE"
-  fi
-fi
-
-# ── 3c. Build MCP package (default on, skip with --no-mcp) ───────────────────
+# ── 3b. Build MCP package (default on, skip with --no-mcp) ───────────────────
 MCP_STATUS="skipped"
 if [[ "$WITH_MCP" == "true" ]]; then
   info "Building MCP package..."
@@ -289,19 +237,6 @@ WEB_URL_ACTUAL=$(read_service_url "web" "http://localhost:${WEB_PORT}")
 
 echo -e "  API:           ${CYAN}${API_URL_ACTUAL}${NC}"
 echo -e "  Web:           ${CYAN}${WEB_URL_ACTUAL}${NC}"
-if [[ "$WITH_ENGRAM" == "true" ]]; then
-  if [[ "$ENGRAM_SOURCE" == "existing" ]]; then
-    echo -e "  Engram:        ${CYAN}${ENGRAM_URL}${NC} ${GREEN}(existing instance)${NC}"
-  else
-    echo -e "  Engram:        ${CYAN}${ENGRAM_URL}${NC} ${GREEN}(Docker)${NC}"
-  fi
-else
-  ENGRAM_STATUS="not started"
-  if curl -sf --max-time 1 "${ENGRAM_URL}/health" >/dev/null 2>&1; then
-    ENGRAM_STATUS="detected (external)"
-  fi
-  echo -e "  Engram:        ${YELLOW}${ENGRAM_STATUS}${NC}"
-fi
 if [[ "$MCP_STATUS" == "built" ]]; then
   echo -e "  MCP:           ${GREEN}${MCP_STATUS}${NC}"
 elif [[ "$MCP_STATUS" == "skipped" ]]; then

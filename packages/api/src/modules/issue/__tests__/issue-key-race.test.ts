@@ -60,10 +60,6 @@ vi.mock("../../../shared/issue-templates.js", () => ({
   resolveTemplate: vi.fn().mockReturnValue(null),
 }));
 
-vi.mock("../../../config/engram.js", () => ({
-  getEngramClient: vi.fn().mockReturnValue(null),
-}));
-
 vi.mock("../auto-transition.js", () => ({
   checkAndAdvanceParent: vi.fn().mockResolvedValue(undefined),
 }));

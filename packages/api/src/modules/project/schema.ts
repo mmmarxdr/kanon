@@ -23,7 +23,6 @@ export type CreateProjectBody = z.infer<typeof CreateProjectBody>;
 export const UpdateProjectBody = z.object({
   name: z.string().min(1).max(100).optional(),
   description: z.string().max(500).nullable().optional(),
-  engramNamespace: z.string().max(100).nullable().optional(),
 });
 export type UpdateProjectBody = z.infer<typeof UpdateProjectBody>;
 

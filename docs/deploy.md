@@ -4,7 +4,7 @@ Deploy Kanon on any VPS with Docker and Docker Compose.
 
 ## Prerequisites
 
-- VPS with 1GB+ RAM (2GB recommended with Engram)
+- VPS with 1GB+ RAM
 - Docker Engine 24+ and Docker Compose v2
 - A domain pointing to your server (for HTTPS)
 
@@ -37,11 +37,6 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.6.
 
 > `BASE_URL` in `.env.production` must be your public API URL — it is embedded
 > in every `kanon://` onboarding link.
-
-With Engram (AI memory service):
-```bash
-docker compose -f docker-compose.production.yml --env-file .env.production --profile engram up -d --build
-```
 
 ## Reverse Proxy (HTTPS)
 

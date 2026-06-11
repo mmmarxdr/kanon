@@ -7,7 +7,7 @@ trigger: list issues, create issue, update issue, close issue, board management,
 ## Core Philosophy
 
 One issue = one unit of work. Every card must be readable by a teammate who never touched the code.
-Human-readable titles, not internal paths. Kanon is the narrative layer; engram is the memory layer.
+Human-readable titles, not internal paths.
 
 ## Issue Lifecycle
 
