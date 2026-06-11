@@ -24,6 +24,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const SETUP_ROOT = path.resolve(__dirname, "..", "..");
 const SKILLS_ROOT = path.join(SETUP_ROOT, "assets", "skills");
+const COMMANDS_ROOT = path.join(SETUP_ROOT, "assets", "commands");
 
 const PRODUCT_SKILLS = ["kanon-agent", "kanon-init", "kanon-onboard"] as const;
 const REQUIRED_FRONTMATTER_FILES = [
@@ -34,6 +35,12 @@ const REQUIRED_FRONTMATTER_FILES = [
   "kanon-agent/sections/sdd-hooks.md",
   "kanon-init/SKILL.md",
   "kanon-onboard/SKILL.md",
+] as const;
+
+const REQUIRED_COMMAND_FILES = [
+  "commands/kanon-agent.md",
+  "commands/kanon-init.md",
+  "commands/kanon-onboard.md",
 ] as const;
 
 // OpenCode-compatible frontmatter base keys. From the spec delta, the allowed
@@ -52,8 +59,26 @@ const OPENCODE_ALLOWED_KEYS = new Set([
 ]);
 
 interface CollectedFile {
-  relPath: string;          // e.g. "kanon-agent/SKILL.md"
+  relPath: string;          // e.g. "kanon-agent/SKILL.md" or "commands/kanon-agent.md"
   absPath: string;
+}
+
+function collectCommandFiles(): CollectedFile[] {
+  if (!fs.existsSync(COMMANDS_ROOT)) {
+    throw new Error(`Expected commands directory missing: ${COMMANDS_ROOT}`);
+  }
+
+  const files: CollectedFile[] = [];
+  for (const entry of fs.readdirSync(COMMANDS_ROOT).sort()) {
+    if (!entry.endsWith(".md")) continue;
+    const abs = path.join(COMMANDS_ROOT, entry);
+    if (!fs.statSync(abs).isFile()) continue;
+    files.push({
+      relPath: `commands/${entry}`,
+      absPath: abs,
+    });
+  }
+  return files;
 }
 
 function collectSkillFiles(): CollectedFile[] {
@@ -97,6 +122,46 @@ describe("frontmatter-compat (OpenCode)", () => {
   });
 
   for (const file of files) {
+    describe(file.relPath, () => {
+      const raw = fs.readFileSync(file.absPath, "utf8");
+      const parsed = parseSkillFrontmatter(raw);
+
+      it("frontmatter parses as YAML (object form)", () => {
+        expect(parsed).toBeTypeOf("object");
+        expect(parsed).not.toBeNull();
+        expect(Array.isArray(parsed)).toBe(false);
+      });
+
+      it("frontmatter contains `name` and `description` keys", () => {
+        expect(parsed["name"]).toBeTypeOf("string");
+        expect((parsed["name"] as string).length).toBeGreaterThan(0);
+        expect(parsed["description"]).toBeTypeOf("string");
+        expect((parsed["description"] as string).length).toBeGreaterThan(0);
+      });
+
+      it("frontmatter MUST NOT contain the Claude-Code `allowed-tools` key", () => {
+        expect(Object.keys(parsed)).not.toContain("allowed-tools");
+        expect(parsed["allowed-tools"]).toBeUndefined();
+      });
+
+      it("all frontmatter keys are a subset of OpenCode-compatible base keys", () => {
+        const keys = Object.keys(parsed);
+        const disallowed = keys.filter((k) => !OPENCODE_ALLOWED_KEYS.has(k));
+        expect(disallowed).toEqual([]);
+      });
+    });
+  }
+});
+
+describe("frontmatter-compat (OpenCode) — commands", () => {
+  const commandFiles = collectCommandFiles();
+
+  it("discovers required shipped command markdown files", () => {
+    const relPaths = commandFiles.map((f) => f.relPath).sort();
+    expect(relPaths).toEqual(expect.arrayContaining([...REQUIRED_COMMAND_FILES]));
+  });
+
+  for (const file of commandFiles) {
     describe(file.relPath, () => {
       const raw = fs.readFileSync(file.absPath, "utf8");
       const parsed = parseSkillFrontmatter(raw);

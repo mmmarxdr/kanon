@@ -20,6 +20,7 @@ import { installSkills, removeSkills } from "./skills.js";
 import { installTemplate, removeTemplate } from "./templates.js";
 import { installWorkflows, removeWorkflows } from "./workflows.js";
 import { installAgents, removeAgents } from "./agents.js";
+import { installCommands, removeCommands } from "./commands.js";
 import type { ToolDefinition, PlatformContext, AuthResult } from "./types.js";
 import { getCredentialStore } from "./credential-store/factory.js";
 import { resolveWrapperReuse } from "./wrapper-reuse.js";
@@ -299,10 +300,9 @@ async function run(options: {
     // surface only and does NOT write a personal harness file. When
     // absent, the install/remove template branch is skipped entirely.
     const templatePath = platformPaths.template?.(ctx);
-    // `commands` is OPTIONAL — present on OpenCode (slashes install lands
-    // in PR 3). The branch is wired here so PR 3 only needs to add the
-    // `installCommands` call, not the guard.
-    const _commandDir = platformPaths.commands?.(ctx);
+    // `commands` is OPTIONAL — present on OpenCode. When present, setup
+    // installs slash-command files from assets/commands/ into this directory.
+    const commandDir = platformPaths.commands?.(ctx);
 
     if (removeMode) {
       // ── Remove Mode ──────────────────────────────────────────────
@@ -363,10 +363,16 @@ async function run(options: {
         }
       }
 
-      // OpenCode commands removal — body lands in PR 3 (paired with
-      // `installCommands`). Resolving the path here is a no-op write.
-      // (`_commandDir` is the conventional "intentionally-unused" marker so
-      // the unused-vars lint stays clean until the PR 3 install body lands.)
+      // Remove commands (OpenCode only — other tools have no commands dir)
+      if (commandDir) {
+        const removedCommands = removeCommands(commandDir);
+        if (removedCommands.length > 0) {
+          console.log(
+            chalk.green("  ✓") +
+              ` Removed ${removedCommands.length} commands from ${chalk.bold(tool.displayName)}`,
+          );
+        }
+      }
 
       successCount++;
     } else {
@@ -450,14 +456,16 @@ async function run(options: {
         }
       }
 
-      // 6. Commands — OpenCode exposes a `commands` dir on PlatformPaths.
-      //    The actual `installCommands` body lands in PR 3; for now we
-      //    resolve the path so the index.ts path contract is wired end to
-      //    end and the leakage guard (PR 2.6) is in force. (Resolving
-      //    `_commandDir` does NOT write anything.)
-      //    (`_commandDir` is the conventional "intentionally-unused" marker
-      //    so the unused-vars lint stays clean until the PR 3 install body
-      //    lands.)
+      // 6. Commands (OpenCode only — other tools have no commands dir)
+      if (commandDir) {
+        const installedCommands = installCommands(commandDir, assetsDir);
+        if (installedCommands.length > 0) {
+          console.log(
+            chalk.green("  ✓") +
+              ` Installed ${installedCommands.length} commands to ${chalk.cyan(commandDir)}`,
+          );
+        }
+      }
 
       successCount++;
     }
