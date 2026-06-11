@@ -43,6 +43,11 @@ id_rsa*
 secrets/
 .db-backups/
 
+# Mutation testing (StrykerJS) artifacts — KAN-87
+.stryker-tmp/
+**/reports/mutation/
+**/reports/stryker-incremental.json
+
 # Local tooling state
 .kanon
 .antigravitycli/
