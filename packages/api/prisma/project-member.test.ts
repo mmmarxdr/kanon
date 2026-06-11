@@ -2,7 +2,7 @@
  * ProjectMember model tests (TDD: RED → GREEN → REFACTOR)
  *
  * Self-contained — does NOT import helpers.ts (which pulls in buildApp →
- * @kanon/bridge, unbuilt in this environment). Uses prisma directly.
+ * @kanon/shared, unbuilt in this environment). Uses prisma directly.
  *
  * Phase 1 (1.1): Schema introspection — model presence (RED before schema updated).
  * Phase 2 (2.2): Backfill correctness — member|viewer get rows, owner|admin do not.
