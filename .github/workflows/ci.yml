@@ -81,8 +81,8 @@ jobs:
       - name: TypeScript check (MCP)
         run: pnpm --filter @kanon/mcp exec tsc --noEmit
 
-      - name: Run API tests (Vitest)
-        run: pnpm --filter @kanon/api test
+      - name: Run API tests (Vitest) + coverage gate
+        run: pnpm --filter @kanon/api test:coverage
 
       - name: Run Web tests (Vitest)
         run: pnpm --filter @kanon/web test

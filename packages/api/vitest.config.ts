@@ -21,7 +21,17 @@ export default defineConfig({
         "src/**/*.test.ts",
         "src/test/**",
         "src/index.ts",
+        "src/**/types.ts",
+        "src/**/interface.ts",
       ],
+      // Ratchet: set just below the measured baseline (lines 88 / branch 84 /
+      // funcs 90) so coverage can only go up. Raise these as gaps close.
+      thresholds: {
+        statements: 85,
+        branches: 80,
+        functions: 88,
+        lines: 85,
+      },
     },
   },
 });
