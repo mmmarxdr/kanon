@@ -15,6 +15,7 @@ vi.mock("../../config/prisma.js", () => ({
     workspaceInvite: {
       create: vi.fn(),
       update: vi.fn(),
+      findFirst: vi.fn(),
     },
     workspace: {
       findUniqueOrThrow: vi.fn(),
@@ -41,12 +42,25 @@ vi.mock("../../services/event-bus/index.js", () => ({
 }));
 
 import { prisma } from "../../config/prisma.js";
-import { createInvite, createOnboardingInvite, acceptInvite } from "./service.js";
+import { eventBus } from "../../services/event-bus/index.js";
+import {
+  createInvite,
+  createOnboardingInvite,
+  acceptInvite,
+  revokeInvite,
+  maskEmail,
+} from "./service.js";
+
+const mockEmit = eventBus.emit as unknown as ReturnType<typeof vi.fn>;
 
 const mockPrisma = prisma as unknown as {
   user: { findUnique: ReturnType<typeof vi.fn> };
   member: { findUnique: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
-  workspaceInvite: { create: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
+  workspaceInvite: {
+    create: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
+    findFirst: ReturnType<typeof vi.fn>;
+  };
   workspace: { findUniqueOrThrow: ReturnType<typeof vi.fn> };
   project: { findMany: ReturnType<typeof vi.fn> };
   $transaction: ReturnType<typeof vi.fn>;
@@ -679,5 +693,106 @@ describe("acceptInvite() — project assignment application (Phase 5)", () => {
     await expect(
       acceptInvite("member-token", USER_ID, USER_EMAIL),
     ).rejects.toThrow("DB constraint failure");
+  });
+});
+
+// ── KAN-76: invite token must never reach the SSE event-bus payload ───────────
+
+describe("invite events — token leak guard (KAN-76)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // createInvite emits invite.created without the raw token, with masked email
+  it("createInvite: invite.created payload omits token and masks email", async () => {
+    mockPrisma.project.findMany.mockResolvedValue([]);
+    mockPrisma.workspaceInvite.create.mockResolvedValue({
+      ...mockInviteCreatedBy,
+      email: "jane.doe@example.com",
+    });
+
+    await createInvite(
+      WORKSPACE_ID,
+      CREATED_BY_ID,
+      { role: "member", maxUses: 0, expiresInHours: 48 },
+      "member",
+    );
+
+    expect(mockEmit).toHaveBeenCalledOnce();
+    const event = mockEmit.mock.calls[0][0];
+    expect(event.type).toBe("invite.created");
+    expect(event.payload).not.toHaveProperty("token");
+    expect(event.payload).toMatchObject({
+      inviteId: INVITE_ID,
+      role: "member",
+      email: "j***@example.com",
+    });
+  });
+
+  // link invites (no email) → email is null, never the token
+  it("createInvite: link invite (no email) → payload email is null", async () => {
+    mockPrisma.project.findMany.mockResolvedValue([]);
+    mockPrisma.workspaceInvite.create.mockResolvedValue(mockInviteCreatedBy); // email: null
+
+    await createInvite(
+      WORKSPACE_ID,
+      CREATED_BY_ID,
+      { role: "member", maxUses: 0, expiresInHours: 48 },
+      "member",
+    );
+
+    const event = mockEmit.mock.calls[0][0];
+    expect(event.payload).not.toHaveProperty("token");
+    expect(event.payload.email).toBeNull();
+  });
+
+  // revokeInvite emits invite.revoked without the raw token, with masked email
+  it("revokeInvite: invite.revoked payload omits token and masks email", async () => {
+    mockPrisma.workspaceInvite.findFirst.mockResolvedValue({
+      id: INVITE_ID,
+      role: "member",
+      revokedAt: null,
+    });
+    mockPrisma.workspaceInvite.update.mockResolvedValue({
+      ...mockInviteCreatedBy,
+      email: "jane.doe@example.com",
+      token: "super-secret-token",
+      revokedAt: new Date(),
+    });
+
+    await revokeInvite(INVITE_ID, WORKSPACE_ID, CREATED_BY_ID);
+
+    expect(mockEmit).toHaveBeenCalledOnce();
+    const event = mockEmit.mock.calls[0][0];
+    expect(event.type).toBe("invite.revoked");
+    expect(event.payload).not.toHaveProperty("token");
+    expect(event.payload).toMatchObject({
+      inviteId: INVITE_ID,
+      role: "member",
+      email: "j***@example.com",
+    });
+  });
+});
+
+// ── maskEmail() — PII masking helper (KAN-76) ─────────────────────────────────
+
+describe("maskEmail()", () => {
+  it("masks the local-part, keeps first char and full domain", () => {
+    expect(maskEmail("jane.doe@example.com")).toBe("j***@example.com");
+  });
+
+  it("does not leak local-part length (single-char local-part)", () => {
+    expect(maskEmail("a@example.com")).toBe("a***@example.com");
+  });
+
+  it("returns null for null/undefined/empty (link invites)", () => {
+    expect(maskEmail(null)).toBeNull();
+    expect(maskEmail(undefined)).toBeNull();
+    expect(maskEmail("")).toBeNull();
+  });
+
+  it("returns a fully-masked sentinel for malformed input (no/leading @)", () => {
+    expect(maskEmail("not-an-email")).toBe("***");
+    expect(maskEmail("@example.com")).toBe("***");
   });
 });
