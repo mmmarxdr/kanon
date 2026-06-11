@@ -260,7 +260,7 @@ When two concurrent requests attempt to delete the same cycle, only one MUST suc
     "detachedIssueKeys": ["KAN-4", "KAN-5"]
   }
   ```
-- **Note**: `cycleName` is REQUIRED so the MCP `kanon_delete_cycle` ack tier can render `Deleted cycle "<name>" (<n> issues detached)` without an extra round-trip. Field order matches `kanonCycleDeleteResultSchema` in `packages/bridge/src/types.ts` (the authoritative shape).
+- **Note**: `cycleName` is REQUIRED so the MCP `kanon_delete_cycle` ack tier can render `Deleted cycle "<name>" (<n> issues detached)` without an extra round-trip. Field order matches `DeleteCycleResult` in `packages/api/src/modules/cycle/delete-cycle.ts` (the authoritative shape).
 
 ---
 

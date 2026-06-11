@@ -5,8 +5,9 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 
 /**
  * Result shape returned by DELETE /api/cycles/:id.
- * Mirrors packages/bridge/src/types.ts#KanonCycleDeleteResult — kept local
- * because @kanon/bridge is not in this package's dependency graph.
+ * Mirrors `DeleteCycleResult` in
+ * packages/api/src/modules/cycle/delete-cycle.ts (the authoritative shape) —
+ * kept local because the API package is not in this package's dependency graph.
  */
 export interface KanonCycleDeleteResult {
   auditLogId: string;
