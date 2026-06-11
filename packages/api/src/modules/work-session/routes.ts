@@ -5,6 +5,7 @@ import { requireIssueMember } from "../../middleware/require-role.js";
 import * as workSessionService from "./service.js";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
+import { scopedProjectIds } from "../../shared/token-scope.js";
 
 /**
  * Work session routes plugin.
@@ -118,6 +119,12 @@ export default async function workSessionRoutes(
    * GET /api/issues/:key/worklogs — list WorkLogs for an issue (S2 / KAN-26)
    * Returns all WorkLog rows for the issue, newest first (by startedAt DESC).
    * Accessible to any workspace member.
+   *
+   * KAN-86: no explicit allowedProjectIds filter is needed here. The
+   * `requireIssueMember` guard resolves the issue's project and runs the KAN-19
+   * FIRST-GUARD in `enforceProjectAccess`, which returns 403 when a project-scoped
+   * token does not include this issue's project. A single issue belongs to exactly
+   * one project, so token scope is fully enforced before the handler runs.
    */
   app.get(
     "/issues/:key/worklogs",
@@ -214,6 +221,13 @@ export default async function workSessionRoutes(
       const logWhere: Record<string, unknown> = {
         memberId: { in: memberIds },
       };
+      // KAN-86: apply token project-scope (KAN-79 pattern). A project-scoped token
+      // must not read worklogs for issues in projects outside its scope, even for
+      // the caller's own activity. Unscoped tokens (null) impose no restriction.
+      const allowed = scopedProjectIds(request.user.allowedProjectIds);
+      if (allowed) {
+        logWhere["issue"] = { projectId: { in: allowed } };
+      }
       if (from || to) {
         const startedAtFilter: Record<string, Date> = {};
         if (from) startedAtFilter["gte"] = new Date(from);
