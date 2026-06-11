@@ -19,7 +19,29 @@ export const ProfileResponse = z.object({
  */
 export const UpdateProfileBody = z.object({
   displayName: z.string().max(100).nullable().optional(),
-  avatarUrl: z.string().url("avatarUrl must be a valid URL").nullable().optional(),
+  // KAN-81: restrict to https:// + cap length. `z.string().url()` alone accepts
+  // `javascript:`/`data:`/`http:` URLs (the URL constructor validates them),
+  // which the web client could render in an <img>/link — phishing / XSS vector,
+  // and SSRF if any server process ever fetches it. https-only + a 2048-char
+  // cap closes that; a domain allowlist can be layered on later if needed.
+  avatarUrl: z
+    .string()
+    .url("avatarUrl must be a valid URL")
+    .max(2048, "avatarUrl must be at most 2048 characters")
+    .refine(
+      (u) => {
+        // Zod runs this refine even when .url() already failed, so it must not
+        // throw on a malformed string.
+        try {
+          return new URL(u).protocol === "https:";
+        } catch {
+          return false;
+        }
+      },
+      { message: "avatarUrl must use https://" },
+    )
+    .nullable()
+    .optional(),
 });
 export type UpdateProfileBody = z.infer<typeof UpdateProfileBody>;
 
