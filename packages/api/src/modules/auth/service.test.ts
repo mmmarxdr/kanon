@@ -563,6 +563,7 @@ describe("exchange()", () => {
     userId: USER_ID,
     workspaceId: WORKSPACE_ID,
     tokenHash,
+    createdAt: new Date(), // recent → absolute ceiling not binding (KAN-75)
     expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
     revokedAt: null,
     lastUsedAt: null,
@@ -652,6 +653,42 @@ describe("exchange()", () => {
     const newExpiresAt = updateCall[0].data.expiresAt.getTime();
     expect(newExpiresAt).toBeGreaterThanOrEqual(before + THIRTY_DAYS_MS - 5000);
     expect(newExpiresAt).toBeLessThanOrEqual(after + THIRTY_DAYS_MS + 5000);
+  });
+
+  // KAN-75: absolute ceiling — token created >90d ago is rejected even if its
+  // sliding expiresAt is still in the future, and is NOT re-extended.
+  it("KAN-75: token past the 90d absolute ceiling throws TOKEN_EXPIRED; not renewed", async () => {
+    const NINETY_ONE_DAYS_MS = 91 * 24 * 60 * 60 * 1000;
+    mockPrisma.refreshToken.findUnique.mockResolvedValue({
+      ...mockRow,
+      createdAt: new Date(Date.now() - NINETY_ONE_DAYS_MS),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // sliding expiry still valid
+    });
+
+    await expect(exchange(rawToken)).rejects.toMatchObject({
+      statusCode: 401,
+      code: "TOKEN_EXPIRED",
+    });
+    expect(mockPrisma.refreshToken.update).not.toHaveBeenCalled();
+  });
+
+  // KAN-75: within the ceiling, the sliding window is capped AT the ceiling
+  // (createdAt + 90d), not now + 30d.
+  it("KAN-75: sliding renewal is capped at the absolute ceiling", async () => {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const createdAt = new Date(Date.now() - 80 * DAY_MS); // 10d of ceiling left
+    mockPrisma.refreshToken.findUnique.mockResolvedValue({ ...mockRow, createdAt });
+
+    await exchange(rawToken);
+
+    const updateCall = mockPrisma.refreshToken.update.mock.calls[0] as [
+      { data: { expiresAt: Date } },
+    ];
+    const newExpiresAt = updateCall[0].data.expiresAt.getTime();
+    const ceiling = createdAt.getTime() + 90 * DAY_MS;
+    // Capped at the ceiling (~10d out), well below the full 30d slide.
+    expect(newExpiresAt).toBe(ceiling);
+    expect(newExpiresAt).toBeLessThan(Date.now() + 30 * DAY_MS);
   });
 
   // R4b: 29d idle (expiresAt = now+1d) — still succeeds and re-extends to ~now+30d

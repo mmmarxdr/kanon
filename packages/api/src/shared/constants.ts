@@ -29,6 +29,17 @@ export const TOKEN_EXPIRY = {
 } as const;
 
 /**
+ * Opaque refresh-token lifetimes for the /exchange sliding window (KAN-75).
+ * Each exchange re-extends expiry by SLIDING_MS, but never past ABSOLUTE_MAX_MS
+ * measured from token creation — so an indefinitely-renewed token still forces
+ * re-authentication eventually (and a removed member cannot renew forever).
+ */
+export const REFRESH_TOKEN_LIFETIME = {
+  SLIDING_MS: 30 * 24 * 60 * 60 * 1000, // 30d sliding window (keep in sync with KEYCHAIN_REFRESH)
+  ABSOLUTE_MAX_MS: 90 * 24 * 60 * 60 * 1000, // 90d hard ceiling from createdAt
+} as const;
+
+/**
  * Bcrypt cost factor for password hashing.
  */
 export const BCRYPT_COST = 12;

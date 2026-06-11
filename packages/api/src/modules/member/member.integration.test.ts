@@ -545,6 +545,91 @@ describe("Workspace Member Management", () => {
     });
   });
 
+  // ── KAN-75: Removal revokes the user's refresh tokens (workspace-scoped) ───
+
+  describe("DELETE /api/workspaces/:wid/members/:mid — refresh-token revocation (KAN-75)", () => {
+    async function seedRefreshToken(userId: string, workspaceId: string, hash: string) {
+      return prisma.refreshToken.create({
+        data: {
+          tokenHash: hash,
+          source: "LOGIN",
+          userId,
+          workspaceId,
+          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        },
+      });
+    }
+
+    it("revokes the removed member's active refresh tokens in the workspace", async () => {
+      const ws = await seedTestWorkspace();
+      const owner = await seedTestMemberWithRole(ws.id, "owner");
+      const target = await seedTestMemberWithRole(ws.id, "member");
+
+      const t1 = await seedRefreshToken(target.userId, ws.id, `kan75-a-${target.userId}`);
+      const t2 = await seedRefreshToken(target.userId, ws.id, `kan75-b-${target.userId}`);
+
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/workspaces/${ws.id}/members/${target.id}`,
+        headers: { authorization: `Bearer ${owner.token}` },
+      });
+      expect(res.statusCode).toBe(204);
+
+      const rows = await prisma.refreshToken.findMany({
+        where: { id: { in: [t1.id, t2.id] } },
+      });
+      expect(rows).toHaveLength(2);
+      for (const row of rows) {
+        expect(row.revokedAt).not.toBeNull();
+      }
+    });
+
+    it("does NOT revoke the same user's refresh tokens in other workspaces", async () => {
+      const ws = await seedTestWorkspace();
+      const owner = await seedTestMemberWithRole(ws.id, "owner");
+      const target = await seedTestMemberWithRole(ws.id, "member");
+
+      // Same user also has a session in another workspace.
+      const otherWs = await seedTestWorkspace();
+      const otherToken = await seedRefreshToken(
+        target.userId,
+        otherWs.id,
+        `kan75-other-${target.userId}`,
+      );
+
+      await app.inject({
+        method: "DELETE",
+        url: `/api/workspaces/${ws.id}/members/${target.id}`,
+        headers: { authorization: `Bearer ${owner.token}` },
+      });
+
+      const row = await prisma.refreshToken.findUnique({ where: { id: otherToken.id } });
+      expect(row?.revokedAt).toBeNull();
+    });
+
+    it("does NOT revoke a bystander's refresh tokens in the same workspace", async () => {
+      const ws = await seedTestWorkspace();
+      const owner = await seedTestMemberWithRole(ws.id, "owner");
+      const target = await seedTestMemberWithRole(ws.id, "member");
+      const bystander = await seedTestMemberWithRole(ws.id, "member");
+
+      const bystanderToken = await seedRefreshToken(
+        bystander.userId,
+        ws.id,
+        `kan75-bystander-${bystander.userId}`,
+      );
+
+      await app.inject({
+        method: "DELETE",
+        url: `/api/workspaces/${ws.id}/members/${target.id}`,
+        headers: { authorization: `Bearer ${owner.token}` },
+      });
+
+      const row = await prisma.refreshToken.findUnique({ where: { id: bystanderToken.id } });
+      expect(row?.revokedAt).toBeNull();
+    });
+  });
+
   // ── Task 5.5: Auto-owner on workspace creation ────────────────────
 
   describe("Auto-owner on workspace creation", () => {
