@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ─── Prebuild: Copy templates, workflows, and agents into assets/ ─────────────
 # Runs before `tsc` so assets are available at compile time.
-# NOTE: assets/skills/ is the CANONICAL SOURCE — tracked in git, not copied.
-# skills/ is NOT cleaned or overwritten by this script.
+# NOTE: assets/skills/ and assets/commands/ are CANONICAL SOURCES — tracked in
+# git, not copied. Neither is cleaned or overwritten by this script.
 
 set -euo pipefail
 
@@ -16,6 +16,8 @@ find "$ASSETS_DIR" -mindepth 1 \
   ! -name '.gitkeep' \
   ! -path "$ASSETS_DIR/skills" \
   ! -path "$ASSETS_DIR/skills/*" \
+  ! -path "$ASSETS_DIR/commands" \
+  ! -path "$ASSETS_DIR/commands/*" \
   -exec rm -rf {} + 2>/dev/null || true
 
 # Copy templates
