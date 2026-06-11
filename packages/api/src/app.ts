@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
+import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import {
   serializerCompiler,
@@ -84,6 +85,31 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(cors, {
     origin: env.CORS_ORIGIN ?? ["http://localhost:5173"],
     credentials: true,
+  });
+
+  // Security headers (KAN-78). This API serves only JSON + SSE — the SPA is
+  // served (and CSP'd) separately by nginx — so the Content-Security-Policy here
+  // is locked all the way down. `useDefaults: false` is REQUIRED: with helmet's
+  // default (true) the four directives below would be merged with helmet's
+  // permissive defaults (script-src 'self', style-src … 'unsafe-inline', …).
+  // With it false, only these four are emitted and every unspecified fetch
+  // directive falls back to `default-src 'none'` per the CSP spec — the API
+  // never returns renderable content, so nothing is allowed to load.
+  // crossOriginResourcePolicy is "cross-origin" so the browser SPA can read API
+  // responses across origins (dev: :5173 → :3000); CORS still governs access.
+  // HSTS is left on (helmet default) as defense-in-depth — Caddy terminates TLS
+  // but does not set Strict-Transport-Security itself.
+  await app.register(helmet, {
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        defaultSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+        baseUri: ["'none'"],
+        formAction: ["'none'"],
+      },
+    },
+    crossOriginResourcePolicy: { policy: "cross-origin" },
   });
 
   // Rate limiting — registered globally with a generous default,
