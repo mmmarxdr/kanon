@@ -9,7 +9,10 @@ import { COOKIE_NAMES } from "../shared/constants.js";
 /**
  * Public routes that do not require authentication.
  */
-const PUBLIC_PREFIXES = ["/api/auth/", "/api/events/sync", "/health", "/api/instance/setup/"];
+// KAN-83: dropped the dead "/api/events/sync" prefix — no such route exists, so
+// it only created a hazard (any route later mounted there would be silently
+// public). SSE lives at /api/events/workspace/* and is auth-gated.
+const PUBLIC_PREFIXES = ["/api/auth/", "/health", "/api/instance/setup/"];
 
 /**
  * Check if a route path is public (no auth required).
