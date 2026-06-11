@@ -40,15 +40,17 @@ function withTimeout<T>(
   ms: number,
   label = "operation",
 ): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`Timeout: ${label} did not complete in ${ms}ms`)),
-        ms,
-      ),
-    ),
-  ]);
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`Timeout: ${label} did not complete in ${ms}ms`)),
+      ms,
+    );
+  });
+  // Clear the timer once the real promise settles so it never keeps the
+  // event loop alive (otherwise every won race leaves a dangling timer that
+  // can delay process exit and flip the suite to a CI timeout).
+  return Promise.race([promise.finally(() => clearTimeout(timer)), timeout]);
 }
 
 /**
@@ -79,7 +81,7 @@ async function readUntil(
   while (Date.now() < deadline) {
     const chunk = await withTimeout(
       reader.read(),
-      deadline - Date.now(),
+      Math.max(0, deadline - Date.now()),
       "SSE readUntil chunk",
     );
     if (chunk.done) break;
@@ -161,7 +163,9 @@ describe("Workspace SSE streaming — real HTTP", () => {
       expect(text).toContain("event: issue.created");
       expect(text).toContain("id: ");
 
-      reader.cancel();
+      // cancel() may reject with an AbortError once the signal fires; swallow it
+      // so it never becomes an unhandled rejection (matches the other tests).
+      await reader.cancel().catch(() => {});
     } finally {
       controller.abort();
     }
