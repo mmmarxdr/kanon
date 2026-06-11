@@ -8,6 +8,7 @@ import {
 } from "./schema.js";
 import * as memberService from "./service.js";
 import { requireMember, requireRole } from "../../middleware/require-role.js";
+import { scopedProjectIds } from "../../shared/token-scope.js";
 
 /**
  * Workspace-scoped member management routes plugin.
@@ -31,7 +32,11 @@ export default async function workspaceMemberRoutes(
       },
     },
     async (request, _reply) => {
-      return memberService.listMembers(request.params.wid);
+      // KAN-79: scoped tokens only see members of their allowed projects.
+      return memberService.listMembers(
+        request.params.wid,
+        scopedProjectIds(request.user.allowedProjectIds),
+      );
     },
   );
 

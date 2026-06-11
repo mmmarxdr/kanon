@@ -79,10 +79,21 @@ export async function createProject(
 
 /**
  * List projects in a workspace.
+ *
+ * KAN-79: when `allowedProjectIds` is provided (a scoped token), the result is
+ * restricted to those projects so a scoped credential cannot enumerate
+ * out-of-scope projects. Pass `null`/omit for unscoped tokens (full list).
  */
-export async function listProjects(workspaceId: string) {
+export async function listProjects(
+  workspaceId: string,
+  allowedProjectIds?: string[] | null,
+) {
   return prisma.project.findMany({
-    where: { workspaceId, archived: false },
+    where: {
+      workspaceId,
+      archived: false,
+      ...(allowedProjectIds ? { id: { in: allowedProjectIds } } : {}),
+    },
     orderBy: { createdAt: "asc" },
   });
 }

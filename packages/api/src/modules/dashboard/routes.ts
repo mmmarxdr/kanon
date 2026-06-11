@@ -3,6 +3,7 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { prisma } from "../../config/prisma.js";
 import { requireMember } from "../../middleware/require-role.js";
+import { scopedProjectIds } from "../../shared/token-scope.js";
 import type { ActiveCycleKPIs } from "@kanon/shared";
 import {
   getCycle,
@@ -45,9 +46,18 @@ export default async function dashboardRoutes(
         select: { id: true },
       });
 
+      // KAN-79: a scoped token restricts the dashboard to its allowed projects.
+      // projectIds drives every project-keyed aggregate below, so scoping it
+      // here scopes the counts, assigned issues and agent sessions in one place.
+      const allowed = scopedProjectIds(request.user.allowedProjectIds);
+
       // Project ids in this workspace (for scope filters)
       const projects = await prisma.project.findMany({
-        where: { workspaceId, archived: false },
+        where: {
+          workspaceId,
+          archived: false,
+          ...(allowed ? { id: { in: allowed } } : {}),
+        },
         select: { id: true },
       });
       const projectIds = projects.map((p) => p.id);
@@ -113,7 +123,14 @@ export default async function dashboardRoutes(
             })
           : [],
         prisma.mcpProposal.findMany({
-          where: { workspaceId, status: "pending" },
+          // KAN-79: scoped tokens see proposals for their allowed projects PLUS
+          // workspace-level (null-project) proposals — consistent with
+          // requireProposalRole, which lets scoped tokens act on null-project ones.
+          where: {
+            workspaceId,
+            status: "pending",
+            ...(allowed ? { OR: [{ projectId: { in: allowed } }, { projectId: null }] } : {}),
+          },
           orderBy: { proposedAt: "desc" },
           take: 6,
         }),
@@ -130,7 +147,8 @@ export default async function dashboardRoutes(
           take: 8,
         }),
         // NEW — REQ-API-DASHBOARD-002: resolve active cycle for the workspace
-        resolveActiveCycleForWorkspace(workspaceId),
+        // KAN-79: scoped to the token's allowed projects.
+        resolveActiveCycleForWorkspace(workspaceId, allowed),
         // NEW — REQ-API-DASHBOARD-003/004: mentions for current member only
         // scoped by workspaceId (multi-tenant isolation, REQ-MENTION-006)
         member
