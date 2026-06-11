@@ -5,7 +5,7 @@ import { z } from "zod";
 import { prisma } from "../../config/prisma.js";
 import { env } from "../../config/env.js";
 import { AppError } from "../../shared/types.js";
-import { TOKEN_EXPIRY } from "../../shared/constants.js";
+import { TOKEN_EXPIRY, REFRESH_TOKEN_LIFETIME } from "../../shared/constants.js";
 import type { TokenPayload } from "../../shared/types.js";
 import {
   generateOpaqueToken,
@@ -780,7 +780,8 @@ export async function onboard(token: string) {
  * Error map:
  *   - 401 INVALID_REFRESH_TOKEN — token not in DB
  *   - 401 TOKEN_REVOKED         — revokedAt set
- *   - 401 TOKEN_EXPIRED         — expiresAt in the past
+ *   - 401 TOKEN_EXPIRED         — expiresAt in the past, OR past the absolute
+ *                                 max-lifetime ceiling (createdAt + 90d, KAN-75)
  */
 export async function exchange(refreshToken: string) {
   // 1. SHA-256 the raw token to look up the DB row
@@ -792,6 +793,7 @@ export async function exchange(refreshToken: string) {
       id: true,
       userId: true,
       workspaceId: true,
+      createdAt: true,  // KAN-75: needed for the absolute max-lifetime ceiling
       expiresAt: true,
       revokedAt: true,
       lastUsedAt: true,
@@ -811,11 +813,20 @@ export async function exchange(refreshToken: string) {
     throw new AppError(401, "TOKEN_EXPIRED", "Refresh token has expired");
   }
 
-  // 2. Update lastUsedAt + slide expiresAt (best-effort — do not abort on failure)
-  const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+  // KAN-75: absolute max-lifetime ceiling. The sliding window below can renew a
+  // token forever; cap total life relative to creation so an indefinitely
+  // renewed token (or one held by a since-removed member) eventually dies.
+  const absoluteExpiry = row.createdAt.getTime() + REFRESH_TOKEN_LIFETIME.ABSOLUTE_MAX_MS;
+  if (Date.now() >= absoluteExpiry) {
+    throw new AppError(401, "TOKEN_EXPIRED", "Refresh token has reached its maximum lifetime");
+  }
+
+  // 2. Update lastUsedAt + slide expiresAt, but never past the absolute ceiling
+  //    (best-effort — do not abort on failure).
+  const nextExpiry = new Date(Math.min(Date.now() + REFRESH_TOKEN_LIFETIME.SLIDING_MS, absoluteExpiry));
   await prisma.refreshToken.update({
     where: { id: row.id },
-    data: { lastUsedAt: new Date(), expiresAt: new Date(Date.now() + REFRESH_TTL_MS) },
+    data: { lastUsedAt: new Date(), expiresAt: nextExpiry },
   }).catch(() => {
     // Best-effort: never let this block the response
   });

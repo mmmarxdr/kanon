@@ -318,6 +318,14 @@ export async function removeMember(
         project: { workspaceId },
       },
     }),
+    // KAN-75: revoke the removed member's refresh tokens for THIS workspace so a
+    // fired user cannot keep renewing API access via /exchange. Scoped to the
+    // workspace — removal from one workspace must not kill the user's sessions
+    // in others.
+    prisma.refreshToken.updateMany({
+      where: { userId: member.userId, workspaceId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    }),
     prisma.member.delete({
       where: { id: memberId },
     }),

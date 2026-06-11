@@ -20,6 +20,9 @@ vi.mock("../../config/prisma.js", () => ({
     projectMember: {
       deleteMany: vi.fn(),
     },
+    refreshToken: {
+      updateMany: vi.fn(),
+    },
     user: {
       findUnique: vi.fn(),
     },
@@ -39,6 +42,7 @@ const mockMemberDelete = vi.mocked(prisma.member.delete);
 const mockMemberCount = vi.mocked(prisma.member.count);
 const mockUserFindUnique = vi.mocked(prisma.user.findUnique);
 const mockTransaction = vi.mocked(prisma.$transaction);
+const mockRefreshTokenUpdateMany = vi.mocked(prisma.refreshToken.updateMany);
 
 describe("Member Service", () => {
   beforeEach(() => {
@@ -224,6 +228,11 @@ describe("Member Service", () => {
         removeMember("ws-1", "m1", "u-acting", "admin"),
       ).resolves.toBeUndefined();
       expect(mockTransaction).toHaveBeenCalledTimes(1);
+      // KAN-75: the removal builds a workspace-scoped refresh-token revocation op
+      expect(mockRefreshTokenUpdateMany).toHaveBeenCalledWith({
+        where: { userId: "u-target", workspaceId: "ws-1", revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
     });
 
     it("throws 422 when removing the last owner", async () => {

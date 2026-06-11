@@ -16,7 +16,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:unit": "vitest run src/modules/**/state-machine.test.ts src/modules/**/schema.test.ts",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "test:db:setup": "DATABASE_URL=\"postgresql://kanon:kanon@localhost:5432/kanon_test?schema=public\" prisma migrate deploy"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.0",
@@ -35,6 +36,7 @@
   "devDependencies": {
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^20.0.0",
+    "@vitest/coverage-v8": "^2.1.9",
     "pino-pretty": "^11.0.0",
     "prisma": "^6.0.0",
     "tsx": "^4.19.0",
