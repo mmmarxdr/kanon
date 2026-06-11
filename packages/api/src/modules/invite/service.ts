@@ -40,6 +40,22 @@ export async function deriveUsername(
 }
 
 /**
+ * Mask an email for inclusion in domain-event payloads (KAN-76).
+ *
+ * Keeps the first character of the local-part and the full domain, masking the
+ * rest with a fixed `***` so the length of the local-part is not leaked:
+ *   `jane.doe@example.com` → `j***@example.com`
+ *
+ * Returns null for link invites that carry no email.
+ */
+export function maskEmail(email: string | null | undefined): string | null {
+  if (!email) return null;
+  const atIndex = email.lastIndexOf("@");
+  if (atIndex <= 0) return "***";
+  return `${email[0]}***${email.slice(atIndex)}`;
+}
+
+/**
  * Validate project assignments for a given workspace:
  * - All projectIds must belong to the workspace (else 422 INVALID_PROJECT)
  * - If any assignment role is 'owner' and inviterRole !== 'owner' → 403 ROLE_CAP_EXCEEDED
@@ -221,8 +237,9 @@ export async function createInvite(
       actorId: createdById,
       // KAN-76: never include the raw token — the SSE event-bus payload is
       // streamed to every workspace member (incl. viewers). Token in the stream
-      // would let any member bypass the admin-only invite requirement.
-      payload: { inviteId: invite.id, role: invite.role },
+      // would let any member bypass the admin-only invite requirement. Email is
+      // masked so the stream carries enough context without leaking PII.
+      payload: { inviteId: invite.id, role: invite.role, email: maskEmail(invite.email) },
     });
   } catch {
     // Never let event emission break the mutation
@@ -281,7 +298,7 @@ export async function revokeInvite(inviteId: string, workspaceId: string, actorI
       workspaceId,
       actorId,
       // KAN-76: token must never reach the SSE stream (see invite.created above).
-      payload: { inviteId: updated.id, role: updated.role },
+      payload: { inviteId: updated.id, role: updated.role, email: maskEmail(updated.email) },
     });
   } catch {
     // Never let event emission break the mutation
