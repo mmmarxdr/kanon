@@ -25,17 +25,13 @@ export const HEARTBEAT_INTERVAL_MS = 30_000;
 /**
  * Parse the `Last-Event-ID` header value into a numeric event ID.
  *
- * Returns null when:
- *  - the header is absent (undefined)
- *  - the value is empty or non-numeric
- *
- * Handles array headers (takes the first element).
- * Uses Number.isNaN for strict numeric validation.
+ * Returns null when the header is absent, empty, or non-numeric. Handles
+ * array headers (takes the first element). Uses Number.isNaN for strict
+ * numeric validation.
  */
 export function parseLastEventId(
   header: string | string[] | undefined,
 ): number | null {
-  if (header === undefined) return null;
   const raw = Array.isArray(header) ? header[0] : header;
   if (!raw) return null;
   const parsed = parseInt(raw, 10);
