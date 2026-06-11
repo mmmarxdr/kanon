@@ -67,6 +67,7 @@ Restart your AI tool and the `kanon_*` tools are live against your board.
 | Claude Code | WSL2, Linux           | Supported |
 | Cursor      | Windows, WSL2, Linux  | Supported |
 | Antigravity | Windows, WSL2, Linux  | Supported |
+| OpenCode    | macOS, Linux, WSL2    | Beta      |
 
 ## Non-interactive use
 
