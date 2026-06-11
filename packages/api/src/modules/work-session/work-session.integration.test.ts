@@ -549,10 +549,10 @@ describe("Work Session Routes", () => {
           headers: { authorization: `Bearer ${memberB.token}` },
         });
 
-        // memberA's own logs
+        // memberA's own logs (KAN-82: workspaceId now required)
         const res = await app.inject({
           method: "GET",
-          url: "/api/me/worklogs",
+          url: `/api/me/worklogs?workspaceId=${ws.id}`,
           headers: { authorization: `Bearer ${memberA.token}` },
         });
 
