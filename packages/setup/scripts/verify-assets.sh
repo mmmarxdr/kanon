@@ -35,6 +35,7 @@ assert_dir_nonempty "assets/skills/" "$ASSETS_DIR/skills"
 assert_dir_nonempty "assets/agents/" "$ASSETS_DIR/agents"
 assert_dir_nonempty "assets/templates/" "$ASSETS_DIR/templates"
 assert_dir_nonempty "assets/workflows/" "$ASSETS_DIR/workflows"
+assert_dir_nonempty "assets/commands/" "$ASSETS_DIR/commands"
 
 # Required key files
 assert_file "assets/skills/kanon-agent/SKILL.md" "$ASSETS_DIR/skills/kanon-agent/SKILL.md"
@@ -43,6 +44,9 @@ assert_file "assets/skills/kanon-agent/sections/roadmap.md" "$ASSETS_DIR/skills/
 assert_file "assets/skills/kanon-agent/sections/cycle.md" "$ASSETS_DIR/skills/kanon-agent/sections/cycle.md"
 assert_file "assets/skills/kanon-agent/sections/sdd-hooks.md" "$ASSETS_DIR/skills/kanon-agent/sections/sdd-hooks.md"
 assert_file "assets/agents/kanon.md" "$ASSETS_DIR/agents/kanon.md"
+assert_file "assets/commands/kanon-agent.md" "$ASSETS_DIR/commands/kanon-agent.md"
+assert_file "assets/commands/kanon-init.md" "$ASSETS_DIR/commands/kanon-init.md"
+assert_file "assets/commands/kanon-onboard.md" "$ASSETS_DIR/commands/kanon-onboard.md"
 
 if [ ${#MISSING[@]} -eq 0 ]; then
   echo "✓ All assets verified."
