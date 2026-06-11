@@ -47,7 +47,11 @@ export type WorkLogListResponse = z.infer<typeof WorkLogListResponse>;
  * Query params for GET /api/me/worklogs
  */
 export const MeWorkLogsQuery = z.object({
-  workspaceId: z.string().uuid().optional(),
+  // KAN-82: required — without it the endpoint aggregated the caller's worklogs
+  // across ALL their workspaces, leaking other-workspace activity (issue keys,
+  // durations, sources) into a single-workspace client context. Results are
+  // still scoped to the caller's own membership in this workspace.
+  workspaceId: z.string().uuid(),
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
   limit: z.coerce.number().int().positive().max(200).default(50),

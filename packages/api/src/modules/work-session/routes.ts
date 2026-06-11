@@ -192,19 +192,16 @@ export default async function workSessionRoutes(
       }
 
       const { workspaceId, from, to, limit } = request.query as {
-        workspaceId?: string;
+        workspaceId: string;
         from?: string;
         to?: string;
         limit: number;
       };
 
-      // Resolve member records for this userId (may span multiple workspaces)
-      const memberWhere: Record<string, unknown> = { userId };
-      if (workspaceId) {
-        memberWhere["workspaceId"] = workspaceId;
-      }
+      // KAN-82: scope to the caller's own membership IN THIS workspace, so the
+      // result never spans other workspaces the user belongs to.
       const members = await prisma.member.findMany({
-        where: memberWhere,
+        where: { userId, workspaceId },
         select: { id: true },
       });
       const memberIds = members.map((m) => m.id);
