@@ -820,7 +820,10 @@ export async function computeAvgLeadDays(cycleId: string): Promise<number | null
  *    cycles > 1.
  *  - Winner = first result (most recent startDate, smallest id on tie).
  */
-export async function resolveActiveCycleForWorkspace(workspaceId: string): Promise<{
+export async function resolveActiveCycleForWorkspace(
+  workspaceId: string,
+  allowedProjectIds?: string[] | null,
+): Promise<{
   cycle: {
     id: string;
     name: string;
@@ -834,7 +837,13 @@ export async function resolveActiveCycleForWorkspace(workspaceId: string): Promi
   const activeCycles = await prisma.cycle.findMany({
     where: {
       state: "active",
-      project: { workspaceId, archived: false },
+      // KAN-79: a scoped token must not surface cycles of out-of-scope projects
+      // (nor count them toward multipleActiveProjects).
+      project: {
+        workspaceId,
+        archived: false,
+        ...(allowedProjectIds ? { id: { in: allowedProjectIds } } : {}),
+      },
     },
     orderBy: [{ startDate: "desc" }, { id: "asc" }],
     select: {

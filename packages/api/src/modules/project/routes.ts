@@ -8,6 +8,7 @@ import {
 } from "./schema.js";
 import * as projectService from "./service.js";
 import { requireMember, requireProjectMember, requireProjectRole, requireRole } from "../../middleware/require-role.js";
+import { scopedProjectIds } from "../../shared/token-scope.js";
 
 /**
  * Project routes plugin.
@@ -53,7 +54,11 @@ export default async function projectRoutes(
       },
     },
     async (request, _reply) => {
-      return projectService.listProjects(request.params.wid);
+      // KAN-79: scoped tokens only see their allowed projects.
+      return projectService.listProjects(
+        request.params.wid,
+        scopedProjectIds(request.user.allowedProjectIds),
+      );
     },
   );
 

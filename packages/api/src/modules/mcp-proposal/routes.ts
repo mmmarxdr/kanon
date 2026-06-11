@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 import { requireMember, requireProposalRole } from "../../middleware/require-role.js";
+import { scopedProjectIds } from "../../shared/token-scope.js";
 
 const WorkspaceIdParam = z.object({ id: z.string().uuid() });
 const ProposalIdParam = z.object({ id: z.string().uuid() });
@@ -49,11 +50,16 @@ export async function workspaceProposalRoutes(
     async (request, _reply) => {
       const { id } = request.params;
       const { status, projectId } = request.query;
+      // KAN-67 / KAN-79: a scoped token only sees proposals for its allowed
+      // projects plus workspace-level (null-project) ones — consistent with
+      // requireProposalRole. Unscoped tokens are unaffected.
+      const allowed = scopedProjectIds(request.user.allowedProjectIds);
       return prisma.mcpProposal.findMany({
         where: {
           workspaceId: id,
           ...(status ? { status } : {}),
           ...(projectId ? { projectId } : {}),
+          ...(allowed ? { OR: [{ projectId: { in: allowed } }, { projectId: null }] } : {}),
         },
         orderBy: { proposedAt: "desc" },
         take: 50,

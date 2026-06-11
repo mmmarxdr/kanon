@@ -106,10 +106,23 @@ export async function updateProfile(userId: string, data: UpdateProfileBody) {
 
 /**
  * List all members of a workspace with user info.
+ *
+ * KAN-79: when `allowedProjectIds` is provided (a scoped token), the roster is
+ * restricted to members who belong to at least one of those projects (via
+ * ProjectMember), so a project-scoped credential cannot enumerate the full
+ * workspace roster. Pass `null`/omit for unscoped tokens (all members).
  */
-export async function listMembers(workspaceId: string) {
+export async function listMembers(
+  workspaceId: string,
+  allowedProjectIds?: string[] | null,
+) {
   return prisma.member.findMany({
-    where: { workspaceId },
+    where: {
+      workspaceId,
+      ...(allowedProjectIds
+        ? { user: { projectMembers: { some: { projectId: { in: allowedProjectIds } } } } }
+        : {}),
+    },
     select: {
       id: true,
       username: true,
