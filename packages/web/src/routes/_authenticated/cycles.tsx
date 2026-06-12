@@ -1,6 +1,5 @@
-import { createRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { createRoute, redirect, lazyRouteComponent, useNavigate } from "@tanstack/react-router";
 import { authenticatedRoute } from "../_authenticated";
-import { CyclesView } from "@/features/cycles/cycles-view";
 import { useProjectsQuery } from "@/hooks/use-projects-query";
 import { useActiveWorkspaceId } from "@/hooks/use-workspace-query";
 import { Icon } from "@/components/ui/icons";
@@ -8,7 +7,7 @@ import { Icon } from "@/components/ui/icons";
 export const cyclesRoute = createRoute({
   path: "/cycles/$projectKey",
   getParentRoute: () => authenticatedRoute,
-  component: CyclesView,
+  component: lazyRouteComponent(() => import("./cycles-view-page")),
   beforeLoad: ({ params }) => {
     if (!params.projectKey || params.projectKey.trim() === "") {
       throw redirect({ to: "/" });
