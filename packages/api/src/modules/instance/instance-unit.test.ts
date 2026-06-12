@@ -122,36 +122,50 @@ describe("requireSuperAdmin", () => {
 import { ClaimBody } from "./schema.js";
 
 describe("ClaimBody schema", () => {
-  it("accepts valid input (>=12 chars, has digit)", () => {
+  // Valid password: 12+ chars with upper, lower, digit, and symbol (KAN-49)
+  const validPassword = "AdminPass1!x";
+
+  it("accepts valid input (>=12 chars, upper+lower+digit+symbol)", () => {
     expect(() =>
-      ClaimBody.parse({ token: "a".repeat(20), email: "admin@kanon.io", password: "password123!" })
+      ClaimBody.parse({ token: "a".repeat(20), email: "admin@kanon.io", password: validPassword })
     ).not.toThrow();
   });
 
-  it("accepts valid input (>=12 chars, has symbol)", () => {
+  it("rejects password < 12 chars (10-char with all complexity)", () => {
+    // 10 chars — fails min(12)
     expect(() =>
-      ClaimBody.parse({ token: "a".repeat(20), email: "admin@kanon.io", password: "passwordword!" })
-    ).not.toThrow();
-  });
-
-  it("rejects password < 12 chars (10-char with digit)", () => {
-    // 10 chars — fails min(12) before regex is checked
-    expect(() =>
-      ClaimBody.parse({ token: "a".repeat(20), email: "admin@kanon.io", password: "password12" })
+      ClaimBody.parse({ token: "a".repeat(20), email: "admin@kanon.io", password: "AdminPas1!" })
     ).toThrow();
   });
 
-  it("rejects password 11 chars even with digit (< 12 min)", () => {
-    // password123 is exactly 11 chars — fails min(12)
+  it("rejects password 11 chars even with full complexity (< 12 min)", () => {
+    // 11 chars — fails min(12)
     expect(() =>
-      ClaimBody.parse({ token: "a".repeat(20), email: "admin@kanon.io", password: "password123" })
+      ClaimBody.parse({ token: "a".repeat(20), email: "admin@kanon.io", password: "AdminPass1!" })
     ).toThrow();
   });
 
-  it("rejects password >=12 chars but no digit or symbol", () => {
-    // 12 chars, all alpha — fails regex
+  it("rejects password >=12 chars but no uppercase", () => {
     expect(() =>
-      ClaimBody.parse({ token: "a".repeat(20), email: "admin@kanon.io", password: "passwordword" })
+      ClaimBody.parse({ token: "a".repeat(20), email: "admin@kanon.io", password: "adminpass1!x" })
+    ).toThrow();
+  });
+
+  it("rejects password >=12 chars but no lowercase", () => {
+    expect(() =>
+      ClaimBody.parse({ token: "a".repeat(20), email: "admin@kanon.io", password: "ADMINPASS1!X" })
+    ).toThrow();
+  });
+
+  it("rejects password >=12 chars but no digit", () => {
+    expect(() =>
+      ClaimBody.parse({ token: "a".repeat(20), email: "admin@kanon.io", password: "AdminPass!!x" })
+    ).toThrow();
+  });
+
+  it("rejects password >=12 chars but no symbol", () => {
+    expect(() =>
+      ClaimBody.parse({ token: "a".repeat(20), email: "admin@kanon.io", password: "AdminPass12x" })
     ).toThrow();
   });
 
@@ -163,13 +177,13 @@ describe("ClaimBody schema", () => {
 
   it("rejects bad email", () => {
     expect(() =>
-      ClaimBody.parse({ token: "a".repeat(20), email: "not-an-email", password: "password123!" })
+      ClaimBody.parse({ token: "a".repeat(20), email: "not-an-email", password: validPassword })
     ).toThrow();
   });
 
   it("rejects short token (< 20 chars)", () => {
     expect(() =>
-      ClaimBody.parse({ token: "short", email: "admin@kanon.io", password: "password123!" })
+      ClaimBody.parse({ token: "short", email: "admin@kanon.io", password: validPassword })
     ).toThrow();
   });
 });
