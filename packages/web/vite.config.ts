@@ -3,6 +3,7 @@ import path from "node:path";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { sentryVitePlugin } from "@sentry/vite-plugin";
 
 const DEV_INFO_DIR = path.resolve(process.cwd(), ".dev-info");
 const DEV_INFO_FILE = path.join(DEV_INFO_DIR, "web.json");
@@ -41,7 +42,31 @@ function writeDevInfo(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), writeDevInfo()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    writeDevInfo(),
+    // Upload source maps to Sentry on build so stack traces are readable.
+    // Active only when an auth token is present (CI), so local builds without
+    // the secret are unaffected. Must come after the other plugins.
+    ...(process.env.SENTRY_AUTH_TOKEN
+      ? [
+          sentryVitePlugin({
+            org: process.env.SENTRY_ORG ?? "marc-dechand",
+            project: process.env.SENTRY_PROJECT ?? "kanon",
+            authToken: process.env.SENTRY_AUTH_TOKEN,
+            // Delete the .map files from the client output after upload so the
+            // source is never served publicly (multi-tenant app).
+            sourcemaps: { filesToDeleteAfterUpload: ["./dist/**/*.map"] },
+          }),
+        ]
+      : []),
+  ],
+  build: {
+    // "hidden" generates source maps for Sentry to symbolicate but does NOT
+    // add a public //# sourceMappingURL reference to the bundle.
+    sourcemap: "hidden",
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
