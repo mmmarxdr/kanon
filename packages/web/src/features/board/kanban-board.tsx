@@ -30,7 +30,8 @@ interface KanbanBoardProps {
 }
 
 export function KanbanBoard({ issues, projectKey, onSelectIssue, onAddIssue }: KanbanBoardProps) {
-  const { hiddenColumns, filters } = useBoardStore();
+  const hiddenColumns = useBoardStore((s) => s.hiddenColumns);
+  const filters = useBoardStore((s) => s.filters);
   const transitionMutation = useTransitionMutation(projectKey);
   const [activeIssue, setActiveIssue] = useState<Issue | null>(null);
 
