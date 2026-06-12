@@ -78,10 +78,13 @@ export function useTransitionMutation(projectKey: string) {
       void queryClient.invalidateQueries({
         queryKey: issueKeys.list(projectKey),
       });
-      // F2: defensive duplicate of the SSE path (F1) for same-tab freshness
-      // when SSE is degraded. TanStack coalesces invalidations within a tick
-      // so this does not cause a double network roundtrip when F1 also fires.
-      void queryClient.invalidateQueries({ queryKey: cycleKeys.all });
+      // KAN-88 S1: gate cycle invalidation on active observer — avoids
+      // unconditional cache busts when no Cycles view is mounted.
+      // This defensive duplicate of the SSE path (F1) still fires for
+      // same-tab freshness when SSE is degraded, but only if cycles are visible.
+      if (queryClient.getQueryCache().findAll({ queryKey: cycleKeys.all, type: "active" }).length > 0) {
+        void queryClient.invalidateQueries({ queryKey: cycleKeys.all });
+      }
     },
   });
 }

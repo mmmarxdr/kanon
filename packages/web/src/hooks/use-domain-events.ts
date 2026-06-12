@@ -11,11 +11,28 @@ import { issueKeys, projectKeys, workspaceKeys, cycleKeys, notificationKeys } fr
  * - Cookie-based auth (withCredentials)
  *
  * Event type mapping:
- * - issue.* -> invalidate issue queries
+ * - issue.* -> invalidate scoped issue queries (KAN-88 S1: list+groups by projectKey)
  * - project.* -> invalidate project queries
  * - member.* -> invalidate workspace/member queries
- * - work_session.* -> invalidate issue queries (for activeWorkers)
+ * - work_session.* -> invalidate issue list queries (for activeWorkers)
+ *
+ * KAN-88 Slice 1 — P0 invalidation-storm fix:
+ * - issue.* events now invalidate issueKeys.list(projectKey) + issueKeys.groups(projectKey)
+ *   when projectKey is present in the SSE payload.  Falls back to issueKeys.lists() (still
+ *   excludes detail/documents/context/backlog) when projectKey is absent.
+ * - cycleKeys.all is gated on active observers: only invalidated when a cycle query is
+ *   currently mounted, preventing unnecessary refetch storms on pages without a Cycles view.
  */
+
+/**
+ * Returns true when at least one query under cycleKeys.all is actively observed
+ * (i.e. a mounted component is subscribed to it).  Using this as a guard avoids
+ * invalidating the cycle cache on every issue mutation when no Cycles view is open.
+ */
+function hasMountedCycleObserver(queryClient: ReturnType<typeof useQueryClient>): boolean {
+  return queryClient.getQueryCache().findAll({ queryKey: cycleKeys.all, type: "active" }).length > 0;
+}
+
 export function useDomainEvents(workspaceId: string | undefined): void {
   const queryClient = useQueryClient();
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -28,14 +45,40 @@ export function useDomainEvents(workspaceId: string | undefined): void {
     eventSourceRef.current = es;
 
     // ── Issue events ──────────────────────────────────────────────────
-    const handleIssueEvent = () => {
-      void queryClient.invalidateQueries({ queryKey: issueKeys.all });
-      // F1: SSE is the canonical real-time refresh path for cycles. Any
-      // issue.* event may affect cycle math (state transitions, estimate
-      // updates, cycle attach/detach). cycleKeys.all is broad because SSE
-      // payloads do not carry cycleId today; TanStack only refetches
-      // observer-mounted queries so fan-out is bounded by mounted Cycles views.
-      void queryClient.invalidateQueries({ queryKey: cycleKeys.all });
+    //
+    // KAN-88 S1: Parse the SSE frame (which is the full DomainEvent JSON)
+    // to extract payload.projectKey and scope invalidation accordingly.
+    // The SSE data field is JSON.stringify(event) where event is DomainEvent,
+    // so payload is nested: event.payload.projectKey.
+    //
+    // Invalidation breadth:
+    //   - With projectKey:    list(projectKey) + groups(projectKey)
+    //   - Without projectKey: lists() (still excludes detail/documents/context/backlog)
+    //   - cycleKeys.all:      only when a cycle query is actively observed
+    const handleIssueEvent = (ev: MessageEvent) => {
+      // Extract projectKey from the SSE payload if available
+      let projectKey: string | undefined;
+      try {
+        const frame = JSON.parse(ev.data as string) as { payload?: { projectKey?: string } };
+        projectKey = frame.payload?.projectKey;
+      } catch {
+        // Non-JSON or missing data — fall through to broad fallback
+      }
+
+      if (projectKey) {
+        // Scoped: only invalidate this project's list + groups queries
+        void queryClient.invalidateQueries({ queryKey: issueKeys.list(projectKey) });
+        void queryClient.invalidateQueries({ queryKey: issueKeys.groups(projectKey) });
+      } else {
+        // Degraded fallback: invalidate all lists (still excludes detail/documents/context/backlog)
+        void queryClient.invalidateQueries({ queryKey: issueKeys.lists() });
+      }
+
+      // Gate cycle invalidation on active observer — prevents unnecessary refetch
+      // storms when no Cycles view is mounted.
+      if (hasMountedCycleObserver(queryClient)) {
+        void queryClient.invalidateQueries({ queryKey: cycleKeys.all });
+      }
     };
 
     es.addEventListener("issue.created", handleIssueEvent);
@@ -44,6 +87,8 @@ export function useDomainEvents(workspaceId: string | undefined): void {
     es.addEventListener("issue.assigned", handleIssueEvent);
 
     // ── Cycle events ──────────────────────────────────────────────────
+    // cycle.deleted is a structural change — always invalidate regardless of
+    // observer state so the cache does not serve a stale deleted cycle entry.
     const handleCycleEvent = () => {
       void queryClient.invalidateQueries({ queryKey: cycleKeys.all });
     };
@@ -68,9 +113,12 @@ export function useDomainEvents(workspaceId: string | undefined): void {
     es.addEventListener("member.removed", handleMemberEvent);
     es.addEventListener("member.role_changed", handleMemberEvent);
 
-    // ── Work session events (invalidate issues for activeWorkers) ─────
+    // ── Work session events (invalidate issue lists for activeWorkers) ─
+    // KAN-88 S1: work_session events only invalidate issueKeys.lists() (not
+    // issueKeys.all) — these events update activeWorkers display only, so
+    // detail/documents/context/backlog queries do not need invalidation.
     const handleWorkSessionEvent = () => {
-      void queryClient.invalidateQueries({ queryKey: issueKeys.all });
+      void queryClient.invalidateQueries({ queryKey: issueKeys.lists() });
     };
 
     es.addEventListener("work_session.started", handleWorkSessionEvent);

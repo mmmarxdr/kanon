@@ -1,6 +1,8 @@
 /**
  * Tests for useDomainEvents — SSE handler invalidation graph.
  *
+ * KAN-88 Slice 1: scope the SSE invalidation storm.
+ *
  * Strategy (Design D1 / Option B real-harness):
  *   - Install a FakeEventSource on globalThis.EventSource in beforeEach.
  *   - Use real QueryClient + vi.spyOn(queryClient, "invalidateQueries").
@@ -9,7 +11,7 @@
  *
  * FakeEventSource only implements what useDomainEvents actually calls:
  *   addEventListener / removeEventListener / close.
- * onerror / onmessage / onopen setters are intentionally omitted (Risk R2 in design).
+ * onerror / onmessage / onopen setters are intentionally omitted.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -73,10 +75,11 @@ function createWrapper() {
 }
 
 const WORKSPACE_ID = "ws-test";
+const PROJECT_KEY = "PROJ";
 
 // ─── Suite ───────────────────────────────────────────────────────────────────
 
-describe("useDomainEvents", () => {
+describe("useDomainEvents — KAN-88 Slice 1: scoped invalidation", () => {
   beforeEach(() => {
     FakeEventSource.lastInstance = null;
     vi.stubGlobal("EventSource", FakeEventSource);
@@ -87,9 +90,9 @@ describe("useDomainEvents", () => {
     vi.restoreAllMocks();
   });
 
-  // ── issue.transitioned ────────────────────────────────────────────────────
+  // ── KAN-88-S1-A: issue.transitioned scoped invalidation ───────────────────
 
-  it("issue.transitioned → invalidates issueKeys.all AND cycleKeys.all", async () => {
+  it("KAN-88-S1-A: issue.transitioned with projectKey → invalidates issueKeys.list(projectKey) and issueKeys.groups(projectKey), NOT issueKeys.all", async () => {
     const { queryClient, wrapper } = createWrapper();
     const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
 
@@ -97,20 +100,188 @@ describe("useDomainEvents", () => {
     renderHook(() => useDomainEvents(WORKSPACE_ID), { wrapper });
 
     act(() => {
-      FakeEventSource.lastInstance!.dispatch("issue.transitioned", {});
+      FakeEventSource.lastInstance!.dispatch("issue.transitioned", {
+        payload: { issueKey: "PROJ-1", issueId: "id-1", projectKey: PROJECT_KEY, from: "todo", to: "in_progress" },
+      });
+    });
+
+    // Must invalidate the scoped list key
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: issueKeys.list(PROJECT_KEY) }),
+    );
+    // Must invalidate the scoped groups key
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: issueKeys.groups(PROJECT_KEY) }),
+    );
+    // Must NOT nuke the entire issue cache
+    expect(invalidateSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: issueKeys.all }),
+    );
+    // Must NOT invalidate detail/documents/context keys
+    expect(invalidateSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: issueKeys.details() }),
+    );
+    expect(invalidateSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: issueKeys.backlogs() }),
+    );
+  });
+
+  it("KAN-88-S1-A: issue.transitioned without projectKey (degraded payload) → falls back to issueKeys.lists(), NOT issueKeys.all", async () => {
+    const { queryClient, wrapper } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { useDomainEvents } = await import("../use-domain-events");
+    renderHook(() => useDomainEvents(WORKSPACE_ID), { wrapper });
+
+    act(() => {
+      // Old payload shape — no projectKey
+      FakeEventSource.lastInstance!.dispatch("issue.transitioned", {
+        payload: { issueKey: "PROJ-1", issueId: "id-1", from: "todo", to: "in_progress" },
+      });
+    });
+
+    // Falls back to lists prefix (still excludes detail/documents/context)
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: issueKeys.lists() }),
+    );
+    // Must NOT nuke the entire issue cache
+    expect(invalidateSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: issueKeys.all }),
+    );
+  });
+
+  // ── KAN-88-S1-A: issue.updated scoped invalidation ────────────────────────
+
+  it("KAN-88-S1-A: issue.updated with projectKey → invalidates list+groups, NOT issueKeys.all", async () => {
+    const { queryClient, wrapper } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { useDomainEvents } = await import("../use-domain-events");
+    renderHook(() => useDomainEvents(WORKSPACE_ID), { wrapper });
+
+    act(() => {
+      FakeEventSource.lastInstance!.dispatch("issue.updated", {
+        payload: { issueKey: "PROJ-2", issueId: "id-2", projectKey: PROJECT_KEY, fields: ["title"] },
+      });
     });
 
     expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: issueKeys.list(PROJECT_KEY) }),
+    );
+    expect(invalidateSpy).not.toHaveBeenCalledWith(
       expect.objectContaining({ queryKey: issueKeys.all }),
     );
+  });
+
+  // ── KAN-88-S1-A: issue.created scoped invalidation ────────────────────────
+
+  it("KAN-88-S1-A: issue.created with projectKey → invalidates list+groups, NOT issueKeys.all", async () => {
+    const { queryClient, wrapper } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { useDomainEvents } = await import("../use-domain-events");
+    renderHook(() => useDomainEvents(WORKSPACE_ID), { wrapper });
+
+    act(() => {
+      FakeEventSource.lastInstance!.dispatch("issue.created", {
+        payload: { issueKey: "PROJ-3", issueId: "id-3", projectKey: PROJECT_KEY, title: "New issue" },
+      });
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: issueKeys.list(PROJECT_KEY) }),
+    );
+    expect(invalidateSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: issueKeys.all }),
+    );
+  });
+
+  // ── KAN-88-S1-A: issue.assigned scoped invalidation ──────────────────────
+
+  it("KAN-88-S1-A: issue.assigned with projectKey → invalidates list+groups, NOT issueKeys.all", async () => {
+    const { queryClient, wrapper } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { useDomainEvents } = await import("../use-domain-events");
+    renderHook(() => useDomainEvents(WORKSPACE_ID), { wrapper });
+
+    act(() => {
+      FakeEventSource.lastInstance!.dispatch("issue.assigned", {
+        payload: { issueKey: "PROJ-4", issueId: "id-4", projectKey: PROJECT_KEY, from: null, to: "member-1" },
+      });
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: issueKeys.list(PROJECT_KEY) }),
+    );
+    expect(invalidateSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: issueKeys.all }),
+    );
+  });
+
+  // ── KAN-88-S1-B: cycleKeys.all gated on active observers ─────────────────
+
+  it("KAN-88-S1-B: issue.transitioned does NOT invalidate cycleKeys.all when no active cycle query exists", async () => {
+    const { queryClient, wrapper } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    // No cycle queries mounted — getQueryCache().findAll({ type: 'active' }) returns []
+
+    const { useDomainEvents } = await import("../use-domain-events");
+    renderHook(() => useDomainEvents(WORKSPACE_ID), { wrapper });
+
+    act(() => {
+      FakeEventSource.lastInstance!.dispatch("issue.transitioned", {
+        payload: { issueKey: "PROJ-1", issueId: "id-1", projectKey: PROJECT_KEY, from: "todo", to: "in_progress" },
+      });
+    });
+
+    // cycleKeys.all must NOT be invalidated — no active cycle observer
+    expect(invalidateSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: cycleKeys.all }),
+    );
+  });
+
+  it("KAN-88-S1-B: issue.transitioned DOES invalidate cycleKeys.all when an active cycle query exists", async () => {
+    const { queryClient, wrapper } = createWrapper();
+
+    // Mount a real useQuery for cycleKeys.all inside the wrapper so TanStack
+    // registers it as an active observer. renderHook accepts multiple hooks via
+    // a single wrapper component — we render BOTH useDomainEvents and a cycle
+    // query by using a combined render.
+    const { useQuery } = await import("@tanstack/react-query");
+    // Pre-populate the cache so useQuery returns immediately without fetching
+    queryClient.setQueryData(cycleKeys.all, []);
+
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { useDomainEvents } = await import("../use-domain-events");
+
+    // Render both hooks together — useCycleObserver keeps the query active
+    renderHook(
+      () => {
+        useDomainEvents(WORKSPACE_ID);
+        // Mounting useQuery with staleTime=Infinity prevents any background fetch
+        useQuery({ queryKey: cycleKeys.all, queryFn: () => Promise.resolve([]), staleTime: Infinity });
+      },
+      { wrapper },
+    );
+
+    act(() => {
+      FakeEventSource.lastInstance!.dispatch("issue.transitioned", {
+        payload: { issueKey: "PROJ-1", issueId: "id-1", projectKey: PROJECT_KEY, from: "todo", to: "in_progress" },
+      });
+    });
+
+    // cycleKeys.all MUST be invalidated — active cycle observer present
     expect(invalidateSpy).toHaveBeenCalledWith(
       expect.objectContaining({ queryKey: cycleKeys.all }),
     );
   });
 
-  // ── issue.updated ─────────────────────────────────────────────────────────
+  // ── KAN-88-S1-B: work_session events — issue-scoped, no cycle blast ───────
 
-  it("issue.updated → invalidates issueKeys.all AND cycleKeys.all", async () => {
+  it("KAN-88-S1-B: work_session.started → invalidates issueKeys.lists() (not issueKeys.all), no cycle invalidation without active observer", async () => {
     const { queryClient, wrapper } = createWrapper();
     const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
 
@@ -118,20 +289,24 @@ describe("useDomainEvents", () => {
     renderHook(() => useDomainEvents(WORKSPACE_ID), { wrapper });
 
     act(() => {
-      FakeEventSource.lastInstance!.dispatch("issue.updated", {});
+      FakeEventSource.lastInstance!.dispatch("work_session.started", {
+        payload: { issueKey: "PROJ-1", issueId: "id-1", memberId: "m-1" },
+      });
     });
 
-    expect(invalidateSpy).toHaveBeenCalledWith(
+    // Must NOT nuke the entire issue cache
+    expect(invalidateSpy).not.toHaveBeenCalledWith(
       expect.objectContaining({ queryKey: issueKeys.all }),
     );
-    expect(invalidateSpy).toHaveBeenCalledWith(
+    // Must NOT unconditionally invalidate cycles
+    expect(invalidateSpy).not.toHaveBeenCalledWith(
       expect.objectContaining({ queryKey: cycleKeys.all }),
     );
   });
 
-  // ── issue.created ─────────────────────────────────────────────────────────
+  // ── Regression: cycle.deleted still invalidates cycleKeys.all ────────────
 
-  it("issue.created → invalidates issueKeys.all AND cycleKeys.all", async () => {
+  it("cycle.deleted → still invalidates cycleKeys.all (unconditional — it's a structural change)", async () => {
     const { queryClient, wrapper } = createWrapper();
     const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
 
@@ -139,33 +314,12 @@ describe("useDomainEvents", () => {
     renderHook(() => useDomainEvents(WORKSPACE_ID), { wrapper });
 
     act(() => {
-      FakeEventSource.lastInstance!.dispatch("issue.created", {});
+      FakeEventSource.lastInstance!.dispatch("cycle.deleted", {
+        cycleId: "cycle-123",
+        projectId: "project-1",
+      });
     });
 
-    expect(invalidateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: issueKeys.all }),
-    );
-    expect(invalidateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: cycleKeys.all }),
-    );
-  });
-
-  // ── issue.assigned ────────────────────────────────────────────────────────
-
-  it("issue.assigned → invalidates issueKeys.all AND cycleKeys.all", async () => {
-    const { queryClient, wrapper } = createWrapper();
-    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
-
-    const { useDomainEvents } = await import("../use-domain-events");
-    renderHook(() => useDomainEvents(WORKSPACE_ID), { wrapper });
-
-    act(() => {
-      FakeEventSource.lastInstance!.dispatch("issue.assigned", {});
-    });
-
-    expect(invalidateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: issueKeys.all }),
-    );
     expect(invalidateSpy).toHaveBeenCalledWith(
       expect.objectContaining({ queryKey: cycleKeys.all }),
     );
@@ -210,26 +364,7 @@ describe("useDomainEvents", () => {
     );
   });
 
-  // ── cycle.deleted (REQ-WEB-CACHE-001) ────────────────────────────────────
-
-  it("cycle.deleted → invalidates cycleKeys.all", async () => {
-    const { queryClient, wrapper } = createWrapper();
-    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
-
-    const { useDomainEvents } = await import("../use-domain-events");
-    renderHook(() => useDomainEvents(WORKSPACE_ID), { wrapper });
-
-    act(() => {
-      FakeEventSource.lastInstance!.dispatch("cycle.deleted", {
-        cycleId: "cycle-123",
-        projectId: "project-1",
-      });
-    });
-
-    expect(invalidateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: cycleKeys.all }),
-    );
-  });
+  // ── No-duplicate listener on re-render ────────────────────────────────────
 
   it("cycle.deleted handler registered exactly once per mount (no duplicate listener on re-render)", async () => {
     const { queryClient, wrapper } = createWrapper();

@@ -78,11 +78,13 @@ export function useGroupTransitionMutation(projectKey: string) {
       void queryClient.invalidateQueries({
         queryKey: issueKeys.groups(projectKey),
       });
-      // F3: defensive duplicate of the SSE path (F1) for same-tab freshness
-      // when SSE is degraded. onSettled fires once per group mutation (not once
-      // per issue), so a single invalidation covers all issues transitioned.
-      // TanStack coalesces with F1 — no double network roundtrip.
-      void queryClient.invalidateQueries({ queryKey: cycleKeys.all });
+      // KAN-88 S1: gate cycle invalidation on active observer — avoids
+      // unconditional cache busts when no Cycles view is mounted.
+      // This defensive duplicate of the SSE path (F1) still fires for
+      // same-tab freshness when SSE is degraded, but only if cycles are visible.
+      if (queryClient.getQueryCache().findAll({ queryKey: cycleKeys.all, type: "active" }).length > 0) {
+        void queryClient.invalidateQueries({ queryKey: cycleKeys.all });
+      }
     },
   });
 }
