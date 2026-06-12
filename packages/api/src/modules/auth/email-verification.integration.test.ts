@@ -397,7 +397,7 @@ describe("Email Verification (KAN-30)", () => {
       const loginRes = await app.inject({
         method: "POST",
         url: "/api/auth/login",
-        payload: { email, password: "password123" },
+        payload: { email, password: "SecretPass1!xy" },
       });
       const { accessToken } = loginRes.json();
 
@@ -443,7 +443,7 @@ describe("Email Verification (KAN-30)", () => {
       const loginRes = await app.inject({
         method: "POST",
         url: "/api/auth/login",
-        payload: { email, password: "password123" },
+        payload: { email, password: "SecretPass1!xy" },
       });
       const { accessToken } = loginRes.json();
 
@@ -485,7 +485,7 @@ describe("Email Verification (KAN-30)", () => {
       const loginRes = await app.inject({
         method: "POST",
         url: "/api/auth/login",
-        payload: { email, password: "password123" },
+        payload: { email, password: "SecretPass1!xy" },
       });
       const { accessToken } = loginRes.json();
 
@@ -506,7 +506,7 @@ describe("Email Verification (KAN-30)", () => {
       const loginRes = await app.inject({
         method: "POST",
         url: "/api/auth/login",
-        payload: { email, password: "password123" },
+        payload: { email, password: "SecretPass1!xy" },
       });
       const { accessToken } = loginRes.json();
 
