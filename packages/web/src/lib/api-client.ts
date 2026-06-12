@@ -1,3 +1,4 @@
+import { type ZodType, type ZodTypeDef, ZodError } from "zod";
 import { useAuthStore } from "@/stores/auth-store";
 
 /**
@@ -126,4 +127,63 @@ export class ApiError extends Error {
     super(message);
     this.name = "ApiError";
   }
+}
+
+/**
+ * Thrown when a successful API response fails Zod schema validation.
+ *
+ * This is a DISTINCT class from ApiError — it represents a structural
+ * mismatch between the runtime response and the expected schema, not an
+ * HTTP error. Callers can differentiate:
+ *
+ *   catch (err) {
+ *     if (err instanceof ApiValidationError) { … boundary mismatch … }
+ *     if (err instanceof ApiError)           { … HTTP error … }
+ *   }
+ *
+ * The original ZodError is available as `.cause` for full issue inspection.
+ */
+export class ApiValidationError extends Error {
+  constructor(
+    message: string,
+    public override readonly cause: ZodError,
+  ) {
+    super(message);
+    this.name = "ApiValidationError";
+  }
+}
+
+/**
+ * Fetch wrapper that validates the successful response against a Zod schema
+ * before returning it. This is the "parse, don't validate" boundary.
+ *
+ * - On HTTP error: throws ApiError (same as fetchApi)
+ * - On schema mismatch: throws ApiValidationError with path + ZodError as cause
+ * - On success: returns data typed as T (inferred from schema)
+ *
+ * Use this instead of `fetchApi<T>` for all read paths where T has a shared
+ * Zod schema. The generic T is automatically inferred from the schema — no
+ * manual generic annotation needed.
+ */
+export async function fetchApiValidated<
+  Output,
+  Def extends ZodTypeDef,
+  Input,
+>(
+  path: string,
+  schema: ZodType<Output, Def, Input>,
+  init?: RequestInit,
+): Promise<Output> {
+  const raw = await fetchApi<unknown>(path, init);
+
+  const result = schema.safeParse(raw);
+
+  if (!result.success) {
+    throw new ApiValidationError(
+      `API response validation failed for ${path}: ${result.error.message}`,
+      result.error,
+    );
+  }
+
+  return result.data;
 }
