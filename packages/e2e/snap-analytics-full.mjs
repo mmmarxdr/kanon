@@ -4,7 +4,7 @@ const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 const page = await ctx.newPage();
 await page.goto("http://localhost:5173/login", { waitUntil: "domcontentloaded" });
 await page.fill('input[type="email"]', "dev@kanon.io");
-await page.fill('input[type="password"]', "Password1!");
+await page.fill('input[type="password"]', "Password123!");
 await page.click('button[type="submit"]');
 await page.waitForTimeout(1500);
 await page.goto("http://localhost:5173/roadmap/KAN", { waitUntil: "domcontentloaded" });

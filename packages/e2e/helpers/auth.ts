@@ -24,7 +24,7 @@ interface LoginOptions {
 export async function login(page: Page, opts?: LoginOptions): Promise<void> {
   const email = opts?.email ?? process.env["SEED_USER_EMAIL"] ?? "dev@kanon.io";
   const password =
-    opts?.password ?? process.env["SEED_USER_PASSWORD"] ?? "Password1!";
+    opts?.password ?? process.env["SEED_USER_PASSWORD"] ?? "Password123!";
 
   // Navigate to login page
   await page.goto("/login");

@@ -36,13 +36,13 @@ test.describe("Register flow @smoke", () => {
       await displayNameField.fill("E2E Test User");
     }
     await page.fill("#email", uniqueEmail);
-    await page.fill("#password", "Password1!");
+    await page.fill("#password", "Password123!");
 
     // Assert requirements indicator becomes visible after typing into the password field
     await expect(page.locator('[data-testid="password-requirements"]')).toBeVisible();
 
     // Fill confirm password field (required by submit gating)
-    await page.fill("#confirmPassword", "Password1!");
+    await page.fill("#confirmPassword", "Password123!");
 
     // ToS checkbox is required — submit button stays disabled until checked
     await page.locator('[data-testid="tos-checkbox"]').check();
@@ -68,9 +68,9 @@ test.describe("Register flow @smoke", () => {
     }
     // dev@kanon.io is created by global-setup seed — guaranteed to exist
     await page.fill("#email", "dev@kanon.io");
-    await page.fill("#password", "Password1!");
+    await page.fill("#password", "Password123!");
     // Fill confirm password field (required by submit gating)
-    await page.fill("#confirmPassword", "Password1!");
+    await page.fill("#confirmPassword", "Password123!");
     // ToS checkbox is required — submit button stays disabled until checked
     await page.locator('[data-testid="tos-checkbox"]').check();
     await page.click('button[type="submit"]');

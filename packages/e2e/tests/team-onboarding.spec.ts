@@ -4,7 +4,7 @@
  * Prerequisites:
  *   - Dev stack must be running: `pnpm dev:start`
  *   - Fresh E2E database: global-setup.ts runs `prisma migrate reset --force && prisma db seed`
- *   - Seed admin user: dev@kanon.io / Password1!  (written to .env.test by global-setup.ts)
+ *   - Seed admin user: dev@kanon.io / Password123!  (written to .env.test by global-setup.ts)
  *   - Environment: DATABASE_URL points to `kanon_e2e` Postgres DB
  *   - API_PORT (default 3001) and WEB_PORT (default 5174) must be free
  *

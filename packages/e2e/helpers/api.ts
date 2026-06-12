@@ -80,7 +80,7 @@ export async function getAuthToken(opts?: {
 
   const email = opts?.email ?? process.env["SEED_USER_EMAIL"] ?? "dev@kanon.io";
   const password =
-    opts?.password ?? process.env["SEED_USER_PASSWORD"] ?? "Password1!";
+    opts?.password ?? process.env["SEED_USER_PASSWORD"] ?? "Password123!";
 
   const result = await apiPost<{ accessToken: string; refreshToken: string }>(
     "/api/auth/login",
