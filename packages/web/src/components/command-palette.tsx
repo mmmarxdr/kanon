@@ -40,12 +40,18 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
   const firstActiveProjectKey = projectsData?.find((p) => !(p as { archived?: boolean }).archived)?.key;
 
   const cachedIssues = useMemo(() => {
-    const allQueries = queryClient.getQueriesData<Issue[]>({
-      queryKey: issueKeys.all,
+    // Scope to issueKeys.lists() — the ["issues","list"] prefix — so we only
+    // pick up flat Issue[] caches (useIssuesQuery, useBacklogQuery, etc.).
+    // issueKeys.all ("issues") is a prefix of ALL issue query keys, including
+    // detail (single Issue), groups (GroupSummary[]), documents, context, etc.
+    // Spreading a non-array value throws "data is not iterable" (KAN-90).
+    // Array.isArray guard is belt-and-suspenders for any future cache shapes.
+    const listQueries = queryClient.getQueriesData<Issue[]>({
+      queryKey: issueKeys.lists(),
     });
     const issues: Issue[] = [];
-    for (const [, data] of allQueries) {
-      if (data) issues.push(...data);
+    for (const [, data] of listQueries) {
+      if (Array.isArray(data)) issues.push(...data);
     }
     return issues;
   }, [queryClient]);
