@@ -1,0 +1,53 @@
+- generic [ref=e4]:
+  - generic [ref=e5]:
+    - img
+    - generic [ref=e6]:
+      - img [ref=e7]
+      - generic [ref=e10]: kanon
+      - generic [ref=e11]: v3.4
+    - generic [ref=e12]:
+      - generic [ref=e13]: Welcome back
+      - heading "Make work concrete." [level=1] [ref=e14]
+      - paragraph [ref=e15]: The instrument-grade tracker for teams that ship faster than they plan.
+    - generic [ref=e17]:
+      - generic [ref=e18]: “The agent thread on each issue is the killer feature. We stopped writing standup notes.”
+      - generic [ref=e19]: Maya Chen · Eng Lead
+  - generic [ref=e20]:
+    - generic [ref=e22]:
+      - text: New to Kanon?
+      - button "Create workspace →" [ref=e23] [cursor=pointer]
+    - generic [ref=e26]:
+      - generic [ref=e27]:
+        - heading "Sign in to your workspace" [level=2] [ref=e28]
+        - paragraph [ref=e29]: Use your work email or single sign-on.
+      - generic [ref=e30]:
+        - generic "Coming soon" [ref=e31]:
+          - button "Continue with Google" [disabled] [ref=e32]:
+            - img [ref=e33]
+            - text: Continue with Google
+        - generic "Coming soon" [ref=e38]:
+          - button "Continue with SAML SSO" [disabled] [ref=e39]:
+            - img [ref=e40]
+            - text: Continue with SAML SSO
+      - generic [ref=e45]: or with email
+      - generic [ref=e47]:
+        - generic [ref=e48]:
+          - generic [ref=e49]: Work email
+          - textbox "Work email" [active] [ref=e51]:
+            - /placeholder: you@company.com
+        - generic [ref=e52]:
+          - generic [ref=e53]:
+            - generic [ref=e54]: Password
+            - button "Forgot?" [ref=e55] [cursor=pointer]
+          - textbox "Password" [ref=e57]:
+            - /placeholder: ••••••••
+      - generic [ref=e58]:
+        - button "Sign in →" [ref=e59] [cursor=pointer]
+        - generic "Coming soon" [ref=e60]:
+          - button "Email me a magic link instead" [disabled] [ref=e61]
+    - generic [ref=e62]:
+      - generic [ref=e63]: © 2026 Kanon Labs
+      - generic [ref=e64]:
+        - button "Privacy" [ref=e65] [cursor=pointer]
+        - button "Terms" [ref=e66] [cursor=pointer]
+        - button "Status" [ref=e67] [cursor=pointer]

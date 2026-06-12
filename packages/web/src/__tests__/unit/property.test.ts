@@ -34,9 +34,9 @@ const issueArb: fc.Arbitrary<Issue> = fc.record({
   priority: fc.constantFrom("critical", "high", "medium", "low" as const),
   state: fc.constantFrom(
     "todo",
-    "in-progress",
+    "in_progress",
     "done",
-    "cancelled",
+    "review",
     "backlog",
   ),
   labels: fc.array(fc.string({ minLength: 1, maxLength: 20 }), {
@@ -52,8 +52,8 @@ const issueArb: fc.Arbitrary<Issue> = fc.record({
     nil: null,
   }),
   projectId: fc.uuid(),
-  createdAt: fc.date().map((d) => d.toISOString()),
-  updatedAt: fc.date().map((d) => d.toISOString()),
+  createdAt: fc.integer({ min: Date.UTC(2020, 0, 1), max: Date.UTC(2030, 11, 31) }).map((ms) => new Date(ms).toISOString()),
+  updatedAt: fc.integer({ min: Date.UTC(2020, 0, 1), max: Date.UTC(2030, 11, 31) }).map((ms) => new Date(ms).toISOString()),
 });
 
 /**
@@ -145,7 +145,7 @@ describe("aggregateIssuesFromQueries — property tests", () => {
 
   it("empty entries array returns empty array", () => {
     fc.assert(
-      fc.property(fc.constant([]), (entries: [unknown, unknown][]) => {
+      fc.property(fc.constant([] as [unknown, unknown][]), (entries) => {
         return aggregateIssuesFromQueries(entries).length === 0;
       }),
     );

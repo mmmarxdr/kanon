@@ -1,0 +1,95 @@
+- generic [ref=e70]:
+  - complementary [ref=e71]:
+    - generic [ref=e73]:
+      - img [ref=e74]
+      - generic [ref=e77]:
+        - generic [ref=e78]: Kanon
+        - generic [ref=e79]: workspace
+    - button "Search or ask… ⌘K" [ref=e80] [cursor=pointer]:
+      - img [ref=e81]
+      - generic [ref=e84]: Search or ask…
+      - generic [ref=e85]: ⌘K
+    - navigation [ref=e86]:
+      - link "Inbox G I" [ref=e87] [cursor=pointer]:
+        - /url: /inbox
+        - generic [ref=e88]:
+          - img [ref=e89]
+          - generic [ref=e93]: Inbox
+          - generic [ref=e94]: G I
+      - generic [ref=e95]:
+        - img [ref=e96]
+        - generic [ref=e98]: Roadmap
+        - generic [ref=e99]: G R
+      - generic [ref=e100]:
+        - img [ref=e101]
+        - generic [ref=e106]: Dependencies
+        - generic [ref=e107]: G D
+      - generic [ref=e108]:
+        - img [ref=e109]
+        - generic [ref=e113]: Board
+        - generic [ref=e114]: G B
+      - link "Cycles G C" [ref=e115] [cursor=pointer]:
+        - /url: /cycles
+        - generic [ref=e116]:
+          - img [ref=e117]
+          - generic [ref=e122]: Cycles
+          - generic [ref=e123]: G C
+      - link "Settings G S" [ref=e124] [cursor=pointer]:
+        - /url: /settings
+        - generic [ref=e125]:
+          - img [ref=e126]
+          - generic [ref=e129]: Settings
+          - generic [ref=e130]: G S
+    - generic [ref=e132]:
+      - generic [ref=e133]: Projects
+      - button "New project" [ref=e134] [cursor=pointer]:
+        - img [ref=e135]
+    - generic [ref=e138]: Loading…
+    - generic [ref=e140]:
+      - link "Admin" [ref=e141] [cursor=pointer]:
+        - /url: /admin/instance
+        - generic [ref=e142]:
+          - img [ref=e143]
+          - generic [ref=e146]: Admin
+      - link "New workspace" [ref=e147] [cursor=pointer]:
+        - /url: /workspaces
+        - generic [ref=e148]:
+          - img [ref=e149]
+          - generic [ref=e151]: New workspace
+      - link "Invite admin" [ref=e152] [cursor=pointer]:
+        - /url: /admin/instance
+        - generic [ref=e153]:
+          - img [ref=e154]
+          - generic [ref=e157]: Invite admin
+    - generic [ref=e158]:
+      - generic [ref=e159]:
+        - generic "admin@kanon.io" [ref=e160]: A
+        - button "Sync disconnected" [ref=e163] [cursor=pointer]
+      - generic [ref=e165]:
+        - generic [ref=e166]: admin@kanon.io
+        - generic [ref=e167]: admin@kanon.io
+      - link [ref=e168] [cursor=pointer]:
+        - /url: /profile
+        - button "Profile" [ref=e169]:
+          - img [ref=e170]
+      - button "Logout" [ref=e173] [cursor=pointer]:
+        - img [ref=e174]
+      - button "Collapse sidebar" [ref=e177] [cursor=pointer]:
+        - img [ref=e178]
+  - main [ref=e180]:
+    - generic [ref=e181]:
+      - generic [ref=e184]: Workspaces
+      - button "Switch to light mode" [ref=e185] [cursor=pointer]:
+        - img [ref=e186]
+      - button "Ask Kanon ⌘J" [ref=e189] [cursor=pointer]:
+        - img [ref=e190]
+        - text: Ask Kanon
+        - generic [ref=e192]: ⌘J
+      - button "Search ⌘K" [ref=e193] [cursor=pointer]:
+        - img [ref=e194]
+        - generic [ref=e197]: Search
+        - generic [ref=e198]: ⌘K
+      - button "New issue" [ref=e199] [cursor=pointer]:
+        - img [ref=e200]
+        - text: New issue
+    - paragraph [ref=e206]: Loading workspace…

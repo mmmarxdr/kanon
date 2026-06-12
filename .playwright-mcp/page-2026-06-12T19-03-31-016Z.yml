@@ -1,0 +1,569 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e4]:
+    - complementary [ref=e5]:
+      - generic [ref=e7]:
+        - img [ref=e8]
+        - generic [ref=e11]:
+          - generic [ref=e12]: Kanon
+          - generic [ref=e13]: workspace
+      - button "Search or ask… ⌘K" [ref=e14] [cursor=pointer]:
+        - img [ref=e15]
+        - generic [ref=e18]: Search or ask…
+        - generic [ref=e19]: ⌘K
+      - navigation [ref=e20]:
+        - link "Inbox G I" [ref=e21] [cursor=pointer]:
+          - /url: /inbox
+          - generic [ref=e22]:
+            - img [ref=e23]
+            - generic [ref=e27]: Inbox
+            - generic [ref=e28]: G I
+        - generic [ref=e29]:
+          - img [ref=e30]
+          - generic [ref=e32]: Roadmap
+          - generic [ref=e33]: G R
+        - generic [ref=e34]:
+          - img [ref=e35]
+          - generic [ref=e40]: Dependencies
+          - generic [ref=e41]: G D
+        - generic [ref=e42]:
+          - img [ref=e43]
+          - generic [ref=e47]: Board
+          - generic [ref=e48]: G B
+        - link "Cycles G C" [ref=e49] [cursor=pointer]:
+          - /url: /cycles
+          - generic [ref=e50]:
+            - img [ref=e51]
+            - generic [ref=e56]: Cycles
+            - generic [ref=e57]: G C
+        - link "Settings G S" [ref=e58] [cursor=pointer]:
+          - /url: /settings
+          - generic [ref=e59]:
+            - img [ref=e60]
+            - generic [ref=e63]: Settings
+            - generic [ref=e64]: G S
+      - generic [ref=e66]:
+        - generic [ref=e67]: Projects
+        - button "New project" [ref=e68] [cursor=pointer]:
+          - img [ref=e69]
+      - generic [ref=e71]:
+        - link "K Kanon KAN" [ref=e72] [cursor=pointer]:
+          - /url: /board/KAN
+          - generic [ref=e73]:
+            - generic [ref=e74]: K
+            - generic [ref=e75]: Kanon
+            - generic [ref=e76]: KAN
+        - link "D Daimon DAIM" [ref=e77] [cursor=pointer]:
+          - /url: /board/DAIM
+          - generic [ref=e78]:
+            - generic [ref=e79]: D
+            - generic [ref=e80]: Daimon
+            - generic [ref=e81]: DAIM
+      - generic [ref=e83]:
+        - link "Admin" [ref=e84] [cursor=pointer]:
+          - /url: /admin/instance
+          - generic [ref=e85]:
+            - img [ref=e86]
+            - generic [ref=e89]: Admin
+        - link "New workspace" [ref=e90] [cursor=pointer]:
+          - /url: /workspaces
+          - generic [ref=e91]:
+            - img [ref=e92]
+            - generic [ref=e94]: New workspace
+        - link "Invite admin" [ref=e95] [cursor=pointer]:
+          - /url: /admin/instance
+          - generic [ref=e96]:
+            - img [ref=e97]
+            - generic [ref=e100]: Invite admin
+      - generic [ref=e101]:
+        - generic "admin@kanon.io" [ref=e103]: A
+        - generic [ref=e104]:
+          - generic [ref=e105]: admin@kanon.io
+          - generic [ref=e106]: admin@kanon.io
+        - link [ref=e107] [cursor=pointer]:
+          - /url: /profile
+          - button "Profile" [ref=e108]:
+            - img [ref=e109]
+        - button "Logout" [ref=e112] [cursor=pointer]:
+          - img [ref=e113]
+        - button "Collapse sidebar" [ref=e116] [cursor=pointer]:
+          - img [ref=e117]
+    - main [ref=e119]:
+      - generic [ref=e120]:
+        - generic [ref=e123]: Issue
+        - button "Switch to dark mode" [ref=e124] [cursor=pointer]:
+          - img [ref=e125]
+        - button "Ask Kanon ⌘J" [ref=e127] [cursor=pointer]:
+          - img [ref=e128]
+          - text: Ask Kanon
+          - generic [ref=e130]: ⌘J
+        - button "Search ⌘K" [ref=e131] [cursor=pointer]:
+          - img [ref=e132]
+          - generic [ref=e135]: Search
+          - generic [ref=e136]: ⌘K
+        - button "New issue" [ref=e137] [cursor=pointer]:
+          - img [ref=e138]
+          - text: New issue
+      - generic [ref=e287]:
+        - button "Back to KAN-98" [ref=e289] [cursor=pointer]:
+          - img [ref=e290]
+          - text: Back to KAN-98
+        - generic [ref=e292]:
+          - generic [ref=e293]:
+            - generic [ref=e294]: RFC
+            - generic [ref=e295]: admin
+            - generic [ref=e296]: 1h ago
+          - 'heading "RFC: Kanon PPM Engine — Conceptual Architecture" [level=1] [ref=e297]'
+          - generic [ref=e299]:
+            - heading "Kanon PPM Engine — Conceptual Architecture" [level=1] [ref=e300]
+            - list [ref=e301]:
+              - listitem [ref=e302]: "Status: Living document"
+              - listitem [ref=e303]: "Date: 2026-06-12"
+              - listitem [ref=e304]: "Decisions it draws from: ADR-0001 (hours gate), ADR-0002 (money model), ADR-0003 (materialization), ADR-0004 (scheduling), ADR-0005 (work-capture & scheduling data model), PRD-0001 (product scope), PDR-0002 (provenance), PDR-0003 (write policy)"
+              - listitem [ref=e305]:
+                - text: "Source of truth:"
+                - code [ref=e306]: docs/architecture/ppm-engine.md
+                - text: — this is the mirror
+            - heading "1. Purpose & reading guide" [level=2] [ref=e307]
+            - paragraph [ref=e308]:
+              - text: "This document is the single conceptual view of the PPM engine: every entity, which layer owns it, how data flows from a dev's work session to a C-level portfolio row. It does"
+              - strong [ref=e309]: not
+              - text: prescribe file layout, endpoints, or migrations — each implementation slice (KAN-99..105, PPM P1/P2 roadmap items) carries its own SDD design against this map.
+            - paragraph [ref=e310]:
+              - text: "One sentence summary:"
+              - strong [ref=e311]: machine-captured work flows upward through human gates into immutable facts, and derived engines project those facts into live schedules and portfolio health — never the other way down.
+            - heading "2. The four layers" [level=2] [ref=e312]
+            - code [ref=e314]: ┌─────────────────────────────────────────────────────────────┐ L3 │ PRESENTATION Gantt (3 planes) · PM dashboard · Portfolio │ zero-compute reads │ MCP read tools · SSE live updates │ ├─────────────────────────────────────────────────────────────┤ L2 │ DERIVED IssueForecast · ProjectReadModel │ rebuildable, engine-written ├─────────────────────────────────────────────────────────────┤ L1 │ CANONICAL TimeEntry · IssueSchedule (plan+baseline) │ human-gated, │ EstimateRevision · MemberRate · Budget │ immutable after approval │ Milestone │ ├─────────────────────────────────────────────────────────────┤ L0 │ CAPTURE WorkSession → WorkLog · Interruption │ machine truth, │ ActivityLog · CycleScopeEvent │ append-only, never edited └─────────────────────────────────────────────────────────────┘ ▲ writes flow up through gates · events flow right →
+            - table [ref=e316]:
+              - rowgroup [ref=e317]:
+                - row "Layer Invariant Who writes" [ref=e318]:
+                  - columnheader "Layer" [ref=e319]
+                  - columnheader "Invariant" [ref=e320]
+                  - columnheader "Who writes" [ref=e321]
+              - rowgroup [ref=e322]:
+                - row "L0 Capture Append-only. No UPDATE path exists anywhere. Bad data is not promoted, never fixed in place. Sessions/agents (with via provenance)" [ref=e323]:
+                  - cell "L0 Capture" [ref=e324]:
+                    - strong [ref=e325]: L0 Capture
+                  - cell "Append-only. No UPDATE path exists anywhere. Bad data is not promoted, never fixed in place." [ref=e326]:
+                    - text: Append-only. No UPDATE path exists anywhere. Bad data is
+                    - emphasis [ref=e327]: not promoted
+                    - text: ", never fixed in place."
+                  - cell "Sessions/agents (with via provenance)" [ref=e328]:
+                    - text: Sessions/agents (with
+                    - code [ref=e329]: via
+                    - text: provenance)
+                - row "L1 Canonical Human-gated. Financial facts (approved TimeEntry) immutable — corrections are new rows (adjustsId). Plan dates move only by human action or applied proposal. Devs, PMs, applied McpProposals" [ref=e330]:
+                  - cell "L1 Canonical" [ref=e331]:
+                    - strong [ref=e332]: L1 Canonical
+                  - cell "Human-gated. Financial facts (approved TimeEntry) immutable — corrections are new rows (adjustsId). Plan dates move only by human action or applied proposal." [ref=e333]:
+                    - text: Human-gated. Financial facts (
+                    - code [ref=e334]: approved
+                    - text: TimeEntry) immutable — corrections are new rows (
+                    - code [ref=e335]: adjustsId
+                    - text: ). Plan dates move only by human action or applied proposal.
+                  - cell "Devs, PMs, applied McpProposals" [ref=e336]
+                - row "L2 Derived Fully recomputable from L0+L1. Droppable, rebuildable (rebuild* jobs). Only the engines write here. forecast-listener, rollup-listener" [ref=e337]:
+                  - cell "L2 Derived" [ref=e338]:
+                    - strong [ref=e339]: L2 Derived
+                  - cell "Fully recomputable from L0+L1. Droppable, rebuildable (rebuild* jobs). Only the engines write here." [ref=e340]:
+                    - text: Fully recomputable from L0+L1. Droppable, rebuildable (
+                    - code [ref=e341]: rebuild*
+                    - text: jobs). Only the engines write here.
+                  - cell "forecast-listener, rollup-listener" [ref=e342]
+                - row "L3 Presentation Zero compute on read — serves L2 rows verbatim. Nobody (read-only)" [ref=e343]:
+                  - cell "L3 Presentation" [ref=e344]:
+                    - strong [ref=e345]: L3 Presentation
+                  - cell "Zero compute on read — serves L2 rows verbatim." [ref=e346]
+                  - cell "Nobody (read-only)" [ref=e347]
+            - paragraph [ref=e348]:
+              - text: The
+              - strong [ref=e349]: trust boundary
+              - text: "is L0→L1: promotion + approval is where machine capture becomes a billable/plannable fact (ADR-0001). The"
+              - strong [ref=e350]: freshness boundary
+              - text: "is L1→L2: eventual consistency, staleness visible via"
+              - code [ref=e351]: computedAt
+              - text: /
+              - code [ref=e352]: lastCalc
+              - text: (ADR-0003).
+            - heading "3. Entity map" [level=2] [ref=e353]
+            - paragraph [ref=e356]:
+              - text: "Field-level detail lives in the ADRs:"
+              - code [ref=e357]: IssueSchedule
+              - text: /
+              - code [ref=e358]: EstimateRevision
+              - text: /
+              - code [ref=e359]: TimeEntry
+              - text: /
+              - code [ref=e360]: IssueForecast
+              - text: /
+              - code [ref=e361]: Interruption
+              - text: in ADR-0005,
+              - code [ref=e362]: MemberRate
+              - text: /
+              - code [ref=e363]: Budget
+              - text: in ADR-0002,
+              - code [ref=e364]: Milestone
+              - text: in ADR-0004,
+              - code [ref=e365]: ProjectReadModel
+              - text: in ADR-0003.
+            - paragraph [ref=e366]: "Key relationship semantics:"
+            - list [ref=e367]:
+              - listitem [ref=e368]:
+                - strong [ref=e369]:
+                  - code [ref=e370]: TimeEntry.sourceWorkLogId
+                - text: "— provenance from capture to fact. Nullable: manual entries allowed, but the product pushes promotion (PRD-0001: ≥80% promoted target)."
+              - listitem [ref=e371]:
+                - strong [ref=e372]:
+                  - code [ref=e373]: TimeEntry.adjustsId
+                - text: — accounting-style amendment chain. Negative hours legal only here.
+              - listitem [ref=e374]:
+                - strong [ref=e375]:
+                  - code [ref=e376]: IssueDependency.type
+                - text: —
+                - code [ref=e377]: blocks
+                - text: = workflow gate (existing semantics, untouched);
+                - code [ref=e378]: FS/SS/FF/SF
+                - text: +
+                - code [ref=e379]: lagDays
+                - text: = schedule constraints consumed only by the forecast engine.
+              - listitem [ref=e380]:
+                - strong [ref=e381]:
+                  - code [ref=e382]: Interruption
+                - text: "— the displacement edge:"
+                - emphasis [ref=e383]: this incident stole time from that issue
+                - text: . Feeds both forecast (slip) and PPM narrative (unplanned work).
+              - listitem [ref=e384]:
+                - strong [ref=e385]: Three schedule planes on one issue
+                - text: ": baseline ("
+                - code [ref=e386]: IssueSchedule.baseline*
+                - text: ", snapshotted at cycle activation), plan ("
+                - code [ref=e387]: IssueSchedule.startDate/dueDate
+                - text: ), forecast (
+                - code [ref=e388]: IssueForecast.*
+                - text: ", derived)."
+            - heading "4. Event spine" [level=2] [ref=e389]
+            - paragraph [ref=e390]:
+              - text: One in-process bus (existing
+              - code [ref=e391]: services/event-bus/
+              - text: ), two derived-layer listeners, SSE re-emit to clients. The same spine later receives webhook ingest (stage 3, PDR-0003).
+            - table [ref=e393]:
+              - rowgroup [ref=e394]:
+                - row "Domain event forecast-listener recomputes rollup-listener recomputes" [ref=e395]:
+                  - columnheader "Domain event" [ref=e396]
+                  - columnheader "forecast-listener recomputes" [ref=e397]
+                  - columnheader "rollup-listener recomputes" [ref=e398]
+              - rowgroup [ref=e399]:
+                - row "worklog.created issue forecast (progress extrapolation) —" [ref=e400]:
+                  - cell "worklog.created" [ref=e401]:
+                    - code [ref=e402]: worklog.created
+                  - cell "issue forecast (progress extrapolation)" [ref=e403]
+                  - cell "—" [ref=e404]
+                - row "time-entry.approved / .rejected issue forecast actualCost, billedRevenue, CPI, costHealth" [ref=e405]:
+                  - cell "time-entry.approved / .rejected" [ref=e406]:
+                    - code [ref=e407]: time-entry.approved
+                    - text: /
+                    - code [ref=e408]: .rejected
+                  - cell "issue forecast" [ref=e409]
+                  - cell "actualCost, billedRevenue, CPI, costHealth" [ref=e410]
+                - row "estimate.revised issue forecast plannedValue, SPI inputs" [ref=e411]:
+                  - cell "estimate.revised" [ref=e412]:
+                    - code [ref=e413]: estimate.revised
+                  - cell "issue forecast" [ref=e414]
+                  - cell "plannedValue, SPI inputs" [ref=e415]
+                - row "issue.state_changed issue forecast earnedValue, SPI, scheduleHealth" [ref=e416]:
+                  - cell "issue.state_changed" [ref=e417]:
+                    - code [ref=e418]: issue.state_changed
+                  - cell "issue forecast" [ref=e419]
+                  - cell "earnedValue, SPI, scheduleHealth" [ref=e420]
+                - row "schedule.updated (plan edit) issue + successors scheduleHealth" [ref=e421]:
+                  - cell "schedule.updated (plan edit)" [ref=e422]:
+                    - code [ref=e423]: schedule.updated
+                    - text: (plan edit)
+                  - cell "issue + successors" [ref=e424]
+                  - cell "scheduleHealth" [ref=e425]
+                - row "dependency.changed affected subgraph —" [ref=e426]:
+                  - cell "dependency.changed" [ref=e427]:
+                    - code [ref=e428]: dependency.changed
+                  - cell "affected subgraph" [ref=e429]
+                  - cell "—" [ref=e430]
+                - row "interruption.opened / .closed interrupted issue + successors unplanned-work bucket" [ref=e431]:
+                  - cell "interruption.opened / .closed" [ref=e432]:
+                    - code [ref=e433]: interruption.opened
+                    - text: /
+                    - code [ref=e434]: .closed
+                  - cell "interrupted issue + successors" [ref=e435]
+                  - cell "unplanned-work bucket" [ref=e436]
+                - row "cycle.activated — (baseline snapshot is a write, L1) scopeLine" [ref=e437]:
+                  - cell "cycle.activated" [ref=e438]:
+                    - code [ref=e439]: cycle.activated
+                  - cell "— (baseline snapshot is a write, L1)" [ref=e440]
+                  - cell "scopeLine" [ref=e441]
+                - row "cycle.scope_changed — scopeCreep, scopeHealth" [ref=e442]:
+                  - cell "cycle.scope_changed" [ref=e443]:
+                    - code [ref=e444]: cycle.scope_changed
+                  - cell "—" [ref=e445]
+                  - cell "scopeCreep, scopeHealth" [ref=e446]
+                - row "budget.upserted — costHealth" [ref=e447]:
+                  - cell "budget.upserted" [ref=e448]:
+                    - code [ref=e449]: budget.upserted
+                  - cell "—" [ref=e450]
+                  - cell "costHealth" [ref=e451]
+                - row "member-rate.updated — nothing retroactive (snapshots, ADR-0002)" [ref=e452]:
+                  - cell "member-rate.updated" [ref=e453]:
+                    - code [ref=e454]: member-rate.updated
+                  - cell "—" [ref=e455]
+                  - cell "nothing retroactive (snapshots, ADR-0002)" [ref=e456]
+                - row "ppm.forecast.updated (re-emit) — scheduleHealth, SPI (reads IssueForecast)" [ref=e457]:
+                  - cell "ppm.forecast.updated (re-emit)" [ref=e458]:
+                    - code [ref=e459]: ppm.forecast.updated
+                    - text: (re-emit)
+                  - cell "—" [ref=e460]
+                  - cell "scheduleHealth, SPI (reads IssueForecast)" [ref=e461]
+            - paragraph [ref=e462]:
+              - text: Both listeners are debounced per project, fire-and-forget after the write commits, and have rebuild jobs (
+              - code [ref=e463]: rebuildProjectForecast
+              - text: ","
+              - code [ref=e464]: rebuildProjectReadModel
+              - text: ) as the dropped-event backstop. Durable delivery (broker/queue, retry, DLQ) is the "Event-delivery substrate" roadmap item — out of scope here; the listener contract doesn't change when it lands.
+            - heading "5. Key flows" [level=2] [ref=e465]
+            - heading "5.1 Capture → fact (the trust pipeline)" [level=3] [ref=e466]
+            - heading "5.2 Estimation (analysis state)" [level=3] [ref=e469]
+            - paragraph [ref=e470]:
+              - code [ref=e471]: backlog → analysis
+              - text: ": dev (or agent via McpProposal, PRD-0004) sets"
+              - code [ref=e472]: estimateHours
+              - text: →
+              - code [ref=e473]: EstimateRevision
+              - text: appended, current value on
+              - code [ref=e474]: IssueSchedule
+              - text: →
+              - code [ref=e475]: estimate.revised
+              - text: "event. Re-estimation any time: another revision, history intact."
+            - heading "5.3 Incident interrupt" [level=3] [ref=e476]
+            - heading "5.4 Slip → replan (escalation, never mutation)" [level=3] [ref=e479]
+            - document [ref=e482]:
+              - generic [ref=e485]: McpProposal
+              - generic [ref=e488]: IssueForecast
+              - generic [ref=e491]: forecast-listener
+              - generic [ref=e494]: event bus
+              - generic [ref=e498]: McpProposal
+              - generic [ref=e502]: IssueForecast
+              - generic [ref=e506]: forecast-listener
+              - generic [ref=e510]: event bus
+              - generic [ref=e513]: forecast visible on Gantt, no noise
+              - generic [ref=e514]:
+                - generic [ref=e516]: alt
+                - generic [ref=e517]: "[slip over threshold (critical path: any]"
+                - generic [ref=e518]: "[>2d)]"
+                - generic [ref=e519]: "[within threshold]"
+              - generic [ref=e524]: PM
+              - generic [ref=e525]: worklog.created / state_changed / interruption...
+              - generic [ref=e526]: recompute forecast, forward pass over typed deps
+              - generic [ref=e527]: "replan proposal {issue, slipDays, suggested dates}"
+              - generic [ref=e528]: apply → plan dates updated (human act, provenance)
+              - generic [ref=e529]: schedule.updated → forecast converges
+              - generic [ref=e534]: PM
+            - heading "5.5 Cycle activation → baseline" [level=3] [ref=e535]
+            - paragraph [ref=e536]:
+              - code [ref=e537]: Cycle upcoming → active
+              - text: "(existing state machine): every issue in the cycle snapshots plan dates into"
+              - code [ref=e538]: baseline*
+              - text: +
+              - code [ref=e539]: baselineSetAt
+              - text: (ADR-0004). Re-baseline = explicit admin action only.
+            - heading "6. Money math (read-model formulas)" [level=2] [ref=e540]
+            - paragraph [ref=e541]:
+              - text: All financial aggregation reads
+              - strong [ref=e542]: approved TimeEntry only
+              - text: (ADR-0001), with rates from the entry's own snapshots (ADR-0002) — never joined to current
+              - code [ref=e543]: MemberRate
+              - text: .
+            - table [ref=e545]:
+              - rowgroup [ref=e546]:
+                - row "Figure Formula" [ref=e547]:
+                  - columnheader "Figure" [ref=e548]
+                  - columnheader "Formula" [ref=e549]
+              - rowgroup [ref=e550]:
+                - row "actualCost (AC) Σ approved hours × costRateSnapshot" [ref=e551]:
+                  - cell "actualCost (AC)" [ref=e552]:
+                    - code [ref=e553]: actualCost
+                    - text: (AC)
+                  - cell "Σ approved hours × costRateSnapshot" [ref=e554]:
+                    - text: Σ approved hours ×
+                    - code [ref=e555]: costRateSnapshot
+                - row "billedRevenue Σ approved hours × billRateSnapshot" [ref=e556]:
+                  - cell "billedRevenue" [ref=e557]:
+                    - code [ref=e558]: billedRevenue
+                  - cell "Σ approved hours × billRateSnapshot" [ref=e559]:
+                    - text: Σ approved hours ×
+                    - code [ref=e560]: billRateSnapshot
+                - row "revenue tm → billedRevenue · fixed → Σ active Budget rows · internal → 0" [ref=e561]:
+                  - cell "revenue" [ref=e562]:
+                    - code [ref=e563]: revenue
+                  - cell "tm → billedRevenue · fixed → Σ active Budget rows · internal → 0" [ref=e564]:
+                    - code [ref=e565]: tm
+                    - text: → billedRevenue ·
+                    - code [ref=e566]: fixed
+                    - text: → Σ active Budget rows ·
+                    - code [ref=e567]: internal
+                    - text: → 0
+                - row "margin revenue − actualCost" [ref=e568]:
+                  - cell "margin" [ref=e569]:
+                    - code [ref=e570]: margin
+                  - cell "revenue − actualCost" [ref=e571]
+                - row "plannedValue (PV) Σ estimateHours of scheduled work to date × cost rate" [ref=e572]:
+                  - cell "plannedValue (PV)" [ref=e573]:
+                    - code [ref=e574]: plannedValue
+                    - text: (PV)
+                  - cell "Σ estimateHours of scheduled work to date × cost rate" [ref=e575]:
+                    - text: Σ
+                    - code [ref=e576]: estimateHours
+                    - text: of scheduled work to date × cost rate
+                - row "earnedValue (EV) Σ estimateHours × progress of done/in-flight work × cost rate" [ref=e577]:
+                  - cell "earnedValue (EV)" [ref=e578]:
+                    - code [ref=e579]: earnedValue
+                    - text: (EV)
+                  - cell "Σ estimateHours × progress of done/in-flight work × cost rate" [ref=e580]:
+                    - text: Σ
+                    - code [ref=e581]: estimateHours
+                    - text: × progress of done/in-flight work × cost rate
+                - row "SPI EV / PV (schedule) — feeds scheduleHealth with forecast slip" [ref=e582]:
+                  - cell "SPI" [ref=e583]:
+                    - code [ref=e584]: SPI
+                  - cell "EV / PV (schedule) — feeds scheduleHealth with forecast slip" [ref=e585]
+                - row "CPI EV / AC (cost) — cost basis, not bill (ADR-0002)" [ref=e586]:
+                  - cell "CPI" [ref=e587]:
+                    - code [ref=e588]: CPI
+                  - cell "EV / AC (cost) — cost basis, not bill (ADR-0002)" [ref=e589]
+                - row "unplanned work Σ approved hours on type = incident issues" [ref=e590]:
+                  - cell "unplanned work" [ref=e591]
+                  - cell "Σ approved hours on type = incident issues" [ref=e592]:
+                    - text: Σ approved hours on
+                    - code [ref=e593]: type = incident
+                    - text: issues
+            - paragraph [ref=e594]:
+              - text: Budget periods are
+              - strong [ref=e595]: monthly
+              - text: ; quarter = rollup (PRD-0001). Single currency in v1; FX snapshot seam documented in ADR-0002.
+            - heading "7. Conceptual module boundaries" [level=2] [ref=e596]
+            - paragraph [ref=e597]: "Six engine concerns — module/file layout is each slice's SDD design decision:"
+            - table [ref=e599]:
+              - rowgroup [ref=e600]:
+                - row "Module Owns Layer" [ref=e601]:
+                  - columnheader "Module" [ref=e602]
+                  - columnheader "Owns" [ref=e603]
+                  - columnheader "Layer" [ref=e604]
+              - rowgroup [ref=e605]:
+                - row "capture WorkSession lifecycle, WorkLog write, Interruption write, heartbeat/TTL L0" [ref=e606]:
+                  - cell "capture" [ref=e607]:
+                    - strong [ref=e608]: capture
+                  - cell "WorkSession lifecycle, WorkLog write, Interruption write, heartbeat/TTL" [ref=e609]
+                  - cell "L0" [ref=e610]
+                - row "timesheet TimeEntry promote/submit/approve/adjust, PM-role gate L1" [ref=e611]:
+                  - cell "timesheet" [ref=e612]:
+                    - strong [ref=e613]: timesheet
+                  - cell "TimeEntry promote/submit/approve/adjust, PM-role gate" [ref=e614]
+                  - cell "L1" [ref=e615]
+                - row "schedule IssueSchedule plan CRUD, EstimateRevision, baseline snapshot, Milestone, typed deps L1" [ref=e616]:
+                  - cell "schedule" [ref=e617]:
+                    - strong [ref=e618]: schedule
+                  - cell "IssueSchedule plan CRUD, EstimateRevision, baseline snapshot, Milestone, typed deps" [ref=e619]
+                  - cell "L1" [ref=e620]
+                - row "forecast forecast-listener, forward pass, critical path, slip threshold → proposal, rebuild job L2" [ref=e621]:
+                  - cell "forecast" [ref=e622]:
+                    - strong [ref=e623]: forecast
+                  - cell "forecast-listener, forward pass, critical path, slip threshold → proposal, rebuild job" [ref=e624]
+                  - cell "L2" [ref=e625]
+                - row "money MemberRate, Budget CRUD, approval-time snapshot hook L1" [ref=e626]:
+                  - cell "money" [ref=e627]:
+                    - strong [ref=e628]: money
+                  - cell "MemberRate, Budget CRUD, approval-time snapshot hook" [ref=e629]
+                  - cell "L1" [ref=e630]
+                - row "readmodel rollup-listener, ProjectReadModel, portfolio query, rebuild job L2" [ref=e631]:
+                  - cell "readmodel" [ref=e632]:
+                    - strong [ref=e633]: readmodel
+                  - cell "rollup-listener, ProjectReadModel, portfolio query, rebuild job" [ref=e634]
+                  - cell "L2" [ref=e635]
+            - paragraph [ref=e636]:
+              - text: "Cross-cutting:"
+              - strong [ref=e637]: provenance
+              - text: (
+              - code [ref=e638]: via
+              - text: + human owner on every write, PDR-0002),
+              - strong [ref=e639]: proposals
+              - text: (judgment-bearing writes land as McpProposal first, PDR-0003),
+              - strong [ref=e640]: event bus
+              - text: (the spine).
+            - heading "8. Invariants (the audit contract)" [level=2] [ref=e641]
+            - table [ref=e643]:
+              - rowgroup [ref=e644]:
+                - row "# Invariant Enforced at" [ref=e645]:
+                  - columnheader "#" [ref=e646]
+                  - columnheader "Invariant" [ref=e647]
+                  - columnheader "Enforced at" [ref=e648]
+              - rowgroup [ref=e649]:
+                - row "1 WorkLog rows are never updated or deleted no UPDATE path in capture module" [ref=e650]:
+                  - cell "1" [ref=e651]
+                  - cell "WorkLog rows are never updated or deleted" [ref=e652]
+                  - cell "no UPDATE path in capture module" [ref=e653]
+                - row "2 Approved TimeEntry is immutable; only adjustment entries amend it timesheet service guard" [ref=e654]:
+                  - cell "2" [ref=e655]
+                  - cell "Approved TimeEntry is immutable; only adjustment entries amend it" [ref=e656]
+                  - cell "timesheet service guard" [ref=e657]
+                - row "3 Negative hours require adjustsId DB check + service" [ref=e658]:
+                  - cell "3" [ref=e659]
+                  - cell "Negative hours require adjustsId" [ref=e660]:
+                    - text: Negative hours require
+                    - code [ref=e661]: adjustsId
+                  - cell "DB check + service" [ref=e662]
+                - row "4 Rollups never read MemberRate, only entry snapshots readmodel queries" [ref=e663]:
+                  - cell "4" [ref=e664]
+                  - cell "Rollups never read MemberRate, only entry snapshots" [ref=e665]:
+                    - text: Rollups never read
+                    - code [ref=e666]: MemberRate
+                    - text: ", only entry snapshots"
+                  - cell "readmodel queries" [ref=e667]
+                - row "5 Plan dates change only via human action or applied proposal schedule service (no system writer)" [ref=e668]:
+                  - cell "5" [ref=e669]
+                  - cell "Plan dates change only via human action or applied proposal" [ref=e670]
+                  - cell "schedule service (no system writer)" [ref=e671]
+                - row "6 L2 tables have exactly one writer (their engine) and are rebuildable module ownership" [ref=e672]:
+                  - cell "6" [ref=e673]
+                  - cell "L2 tables have exactly one writer (their engine) and are rebuildable" [ref=e674]
+                  - cell "module ownership" [ref=e675]
+                - row "7 Every L0/L1 write carries via + resolves to a human owner provenance middleware" [ref=e676]:
+                  - cell "7" [ref=e677]
+                  - cell "Every L0/L1 write carries via + resolves to a human owner" [ref=e678]:
+                    - text: Every L0/L1 write carries
+                    - code [ref=e679]: via
+                    - text: + resolves to a human owner
+                  - cell "provenance middleware" [ref=e680]
+                - row "8 Baseline is written only by cycle activation or explicit re-baseline schedule service" [ref=e681]:
+                  - cell "8" [ref=e682]
+                  - cell "Baseline is written only by cycle activation or explicit re-baseline" [ref=e683]
+                  - cell "schedule service" [ref=e684]
+                - row "9 estimateHours changes always append an EstimateRevision schedule service" [ref=e685]:
+                  - cell "9" [ref=e686]
+                  - cell "estimateHours changes always append an EstimateRevision" [ref=e687]:
+                    - code [ref=e688]: estimateHours
+                    - text: changes always append an EstimateRevision
+                  - cell "schedule service" [ref=e689]
+            - heading "9. Future seams (prepared, not built)" [level=2] [ref=e690]
+            - list [ref=e691]:
+              - listitem [ref=e692]:
+                - strong [ref=e693]: Multi-currency
+                - text: ": FX snapshot at approval + base-currency normalization in read-model (ADR-0002)."
+              - listitem [ref=e694]:
+                - strong [ref=e695]: Forecasting v2
+                - text: ": probabilistic ETA / Monte Carlo as a second derived consumer of the same L0/L1 data — new engine, no schema break (PRD-0001 v2 intent)."
+              - listitem [ref=e696]:
+                - strong [ref=e697]: Webhook ingest (stage 3)
+                - text: ": external events (PR merged, CI failed) enter the same event spine; deterministic ones map to domain events, judgment-bearing ones become proposals (PDR-0003)."
+              - listitem [ref=e698]:
+                - strong [ref=e699]: Capacity planning
+                - text: ":"
+                - code [ref=e700]: MemberRate.hoursPerWeek
+                - text: + load semaphore are the seam (PRD-0001 non-goal v1).
+              - listitem [ref=e701]:
+                - strong [ref=e702]: Forecast formula evolution
+                - text: ": naive extrapolation v1 → calendar-aware/velocity-weighted later; bump + rebuild, no read-path change (ADR-0003 pattern)."
+  - img [ref=e704]
