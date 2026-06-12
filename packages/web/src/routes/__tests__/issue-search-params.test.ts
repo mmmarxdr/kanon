@@ -1,12 +1,15 @@
 /**
- * C3.1 — Issue route validateSearch: ?highlight=mention&commentId=cmt-42
- *         → search.highlight === "mention" y search.commentId === "cmt-42"
- * C3.2 — Issue route validateSearch: ?from=inbox sin highlight
- *         → search.highlight === undefined y search.commentId === undefined
- * C3.3 — Issue route validateSearch: highlight con valor distinto de "mention"
- *         → search.highlight === undefined
+ * KAN-108 / KAN-33 — Issue route validateSearch after agent-surface deletions.
  *
- * Refs: REQ-MENTION-009, design §4.3 validateSearch
+ * C3.1 — (REMOVED) highlight/commentId no longer exist on IssueRouteSearch.
+ * C3.2 — ?from=inbox → only `from` is present; no highlight/commentId fields.
+ * C3.3 — (REMOVED) highlight validation no longer applies.
+ * C3.4 — no params at all → backward compat (no throw); from is undefined.
+ * C3.5 — highlight/commentId NOT present on IssueRouteSearch type (compile-time guard).
+ * C3.6 — validateSearch ignores unknown highlight/commentId input (unknown params dropped).
+ * C3.7 — validateSearch({ tab: "bogus" }) returns tab: "timeline" (invalid tab coerced).
+ *
+ * Refs: KAN-33 frontend deletions, KAN-108 PR1
  */
 import { describe, it, expect } from "vitest";
 import type { IssueRouteSearch } from "../_authenticated/issue";
@@ -16,40 +19,14 @@ import type { IssueRouteSearch } from "../_authenticated/issue";
 // shapes; the route uses the function form, so we narrow with a cast.
 type ValidateSearchFn = (search: Record<string, unknown>) => IssueRouteSearch;
 
-describe("Issue route validateSearch (C3)", () => {
-  it("C3.1 — ?highlight=mention&commentId=cmt-42 → correctly typed search params", async () => {
-    const { issueRoute } = await import("../_authenticated/issue");
-    const validateSearch = issueRoute.options.validateSearch as ValidateSearchFn;
-
-    const result = validateSearch({
-      from: "inbox",
-      highlight: "mention",
-      commentId: "cmt-42",
-    });
-
-    expect(result.from).toBe("inbox");
-    expect(result.highlight).toBe("mention");
-    expect(result.commentId).toBe("cmt-42");
-  });
-
-  it("C3.2 — ?from=inbox without highlight → highlight and commentId are undefined", async () => {
+describe("Issue route validateSearch (C3 — KAN-108)", () => {
+  it("C3.2 — ?from=inbox → only from field present", async () => {
     const { issueRoute } = await import("../_authenticated/issue");
     const validateSearch = issueRoute.options.validateSearch as ValidateSearchFn;
 
     const result = validateSearch({ from: "inbox" });
 
     expect(result.from).toBe("inbox");
-    expect(result.highlight).toBeUndefined();
-    expect(result.commentId).toBeUndefined();
-  });
-
-  it("C3.3 — highlight with value other than 'mention' → highlight is undefined", async () => {
-    const { issueRoute } = await import("../_authenticated/issue");
-    const validateSearch = issueRoute.options.validateSearch as ValidateSearchFn;
-
-    const result = validateSearch({ highlight: "something-else" });
-
-    expect(result.highlight).toBeUndefined();
   });
 
   it("C3.4 — no params at all → backward compat (no throw)", async () => {
@@ -59,7 +36,33 @@ describe("Issue route validateSearch (C3)", () => {
     expect(() => validateSearch({})).not.toThrow();
     const result = validateSearch({});
     expect(result.from).toBeUndefined();
-    expect(result.highlight).toBeUndefined();
-    expect(result.commentId).toBeUndefined();
+  });
+
+  it("C3.5 — highlight and commentId are NOT fields on IssueRouteSearch", () => {
+    // Compile-time: neither 'highlight' nor 'commentId' exist on the type.
+    // If either key is added back to the interface this line will fail tsc.
+    const search: IssueRouteSearch = { from: "inbox" };
+    expect("highlight" in search).toBe(false);
+    expect("commentId" in search).toBe(false);
+  });
+
+  it("C3.6 — validateSearch ignores unknown highlight/commentId input (dropped silently)", async () => {
+    const { issueRoute } = await import("../_authenticated/issue");
+    const validateSearch = issueRoute.options.validateSearch as ValidateSearchFn;
+
+    const result = validateSearch({ highlight: "mention", commentId: "cmt-42" });
+
+    // highlight and commentId must NOT appear on the result object
+    expect((result as Record<string, unknown>).highlight).toBeUndefined();
+    expect((result as Record<string, unknown>).commentId).toBeUndefined();
+  });
+
+  it("C3.7 — validateSearch({ tab: 'bogus' }) coerces to 'timeline'", async () => {
+    const { issueRoute } = await import("../_authenticated/issue");
+    const validateSearch = issueRoute.options.validateSearch as ValidateSearchFn;
+
+    const result = validateSearch({ tab: "bogus" });
+
+    expect(result.tab).toBe("timeline");
   });
 });

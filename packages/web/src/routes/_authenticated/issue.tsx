@@ -1,42 +1,30 @@
 import { createRoute, lazyRouteComponent } from "@tanstack/react-router";
 import { authenticatedRoute } from "../_authenticated";
-import { AgentThread } from "@/features/issue-detail/agent-thread";
-import { CommentsHighlightView } from "@/features/issue-detail/comments-highlight-view";
 
 export interface IssueRouteSearch {
   /** Optional return target so the back button knows where to go. */
   from?: string;
-  /** When "mention", the right pane highlights the target comment. */
-  highlight?: "mention";
-  /** UUID of the comment to scroll to and highlight. Omitted for description mentions. */
-  commentId?: string;
+  /** Active tab. Defaults to "timeline". Invalid values are coerced to "timeline". */
+  tab?: "timeline" | "children" | "deps" | "documents";
 }
 
 export const issueRoute = createRoute({
   path: "/issue/$key",
   getParentRoute: () => authenticatedRoute,
   component: lazyRouteComponent(() => import("./issue-page")),
-  validateSearch: (search: Record<string, unknown>): IssueRouteSearch => ({
-    from: typeof search.from === "string" ? search.from : undefined,
-    highlight: search.highlight === "mention" ? "mention" : undefined,
-    commentId: typeof search.commentId === "string" ? search.commentId : undefined,
-  }),
+  validateSearch: (search: Record<string, unknown>): IssueRouteSearch => {
+    const validTabs = new Set(["timeline", "children", "deps", "documents"]);
+    const rawTab = search.tab;
+    return {
+      from: typeof search.from === "string" ? search.from : undefined,
+      tab:
+        typeof rawTab === "string" && validTabs.has(rawTab)
+          ? (rawTab as IssueRouteSearch["tab"])
+          : "timeline",
+    };
+  },
 });
 
-const AGENT_SOURCES = new Set(["mcp", "engram_sync", "system", "adr"]);
-
-/**
- * RightPaneContent — implements the 4-case behavior matrix (design §4.3, REQ-MENTION-010).
- *
- * | agentComments.length | highlight === "mention" && commentId | renders |
- * |---|---|---|
- * | > 0 | No  | AgentThread |
- * | > 0 | Yes | AgentThread (with highlight injected via prop) |
- * | 0   | No  | AgentThread (empty state) |
- * | 0   | Yes | CommentsHighlightView |
- *
- * Exported so it can be unit-tested independently from the router-integrated IssuePage.
- */
 export interface SubscribeButtonProps {
   isSubscribed: boolean;
   isSubscriptionPending: boolean;
@@ -73,43 +61,5 @@ export function SubscribeButton({
     >
       {isSubscriptionPending ? "…" : isSubscribed ? "Unsubscribe" : "Subscribe"}
     </button>
-  );
-}
-
-export interface RightPaneContentProps {
-  comments: import("@/types/issue").Comment[];
-  isCommentsLoading: boolean;
-  highlight: "mention" | undefined;
-  commentId: string | undefined;
-}
-
-export function RightPaneContent({
-  comments,
-  isCommentsLoading,
-  highlight,
-  commentId,
-}: RightPaneContentProps) {
-  const agentComments = comments.filter((c) => AGENT_SOURCES.has(c.source));
-
-  const showCommentsInsteadOfThread =
-    highlight === "mention" && commentId !== undefined && agentComments.length === 0;
-
-  if (showCommentsInsteadOfThread) {
-    return (
-      <CommentsHighlightView
-        comments={comments}
-        highlightCommentId={commentId}
-        data-testid="comments-list"
-      />
-    );
-  }
-
-  return (
-    <div data-testid="agent-thread">
-      <AgentThread
-        comments={comments}
-        isLoading={isCommentsLoading}
-      />
-    </div>
   );
 }

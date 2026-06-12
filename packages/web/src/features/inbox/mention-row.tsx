@@ -9,8 +9,9 @@ interface MentionRowProps {
 /**
  * MentionRow — renders a single mention entry in the Mentions section of Inbox.
  *
- * Clicking navigates to /issue/$key with highlight=mention and (if present) commentId.
- * When commentId is null (mention is in issue description), omits commentId from search.
+ * Clicking navigates to /issue/$key. The highlight/commentId params have been
+ * removed as part of KAN-33 frontend deletions (KAN-108). Navigation uses
+ * from: "inbox" only; the Timeline tab shows the full activity including mentions.
  *
  * REQ-MENTION-008
  */
@@ -21,10 +22,7 @@ export function MentionRow({ mention }: MentionRowProps) {
     void navigate({
       to: "/issue/$key",
       params: { key: mention.issueKey },
-      search:
-        mention.commentId !== null
-          ? { from: "inbox", highlight: "mention" as const, commentId: mention.commentId }
-          : { from: "inbox", highlight: "mention" as const },
+      search: { from: "inbox" },
     });
   }
 

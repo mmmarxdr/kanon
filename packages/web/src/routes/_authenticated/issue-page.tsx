@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { issueRoute, SubscribeButton, RightPaneContent } from "./issue";
+import { issueRoute, SubscribeButton } from "./issue";
 import { Markdown } from "@/components/ui/markdown";
 import {
   useIssueDetailQuery,
-  useCommentsQuery,
   useIssueDocuments,
 } from "@/features/issue-detail/use-issue-detail-queries";
 import {
@@ -35,7 +34,7 @@ type Tab = "timeline" | "children" | "deps" | "documents";
 
 export default function IssuePage() {
   const { key: issueKey } = issueRoute.useParams();
-  const { from, highlight, commentId } = issueRoute.useSearch();
+  const { from } = issueRoute.useSearch();
   const navigate = useNavigate();
 
   const [tab, setTab] = useState<Tab>("timeline");
@@ -45,9 +44,6 @@ export default function IssuePage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const { data: issue, isLoading } = useIssueDetailQuery(issueKey);
-  // useCommentsQuery is still needed for RightPaneContent (AgentThread / CommentsHighlightView)
-  const { data: comments, isLoading: commentsLoading } =
-    useCommentsQuery(issueKey);
   const { data: documents, isLoading: documentsLoading } =
     useIssueDocuments(issueKey);
   // Unified timeline merges comments + activity (no new fetch — reuses caches)
@@ -602,14 +598,8 @@ export default function IssuePage() {
           />
         </div>
 
-        <div style={{ flex: 1, overflow: "auto", padding: 14 }}>
-          <RightPaneContent
-            comments={comments ?? []}
-            isCommentsLoading={commentsLoading}
-            highlight={highlight}
-            commentId={commentId}
-          />
-        </div>
+        {/* Reserved slot for future Schedule section (ADR-0005/KAN-98) */}
+        <div data-testid="schedule-slot" style={{ flex: 1 }} />
       </div>
     </div>
   );
