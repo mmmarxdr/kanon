@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, waitFor } from "@testing-library/react";
-import { MermaidBlock } from "@/components/ui/mermaid-block";
 
-// Mock the mermaid library — it's ~500 KB and not available in jsdom
+// Mock the mermaid library — it's ~500 KB and not available in jsdom.
+// The factory is re-evaluated after each vi.resetModules() call so every test
+// gets a fresh set of vi.fn() spies and a fresh mermaidInitialized = false guard.
 vi.mock("mermaid", () => ({
   default: {
     initialize: vi.fn(),
@@ -12,14 +13,14 @@ vi.mock("mermaid", () => ({
 
 describe("MermaidBlock", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    // Reset modules so each test gets a fresh mermaid-block module instance
+    // (mermaidInitialized resets to false) and fresh mermaid mock spies.
+    vi.resetModules();
   });
 
-  // This test must run first so it captures the once-only initialize() call.
-  // The module-level guard ensures initialize() is called exactly once per module
-  // instance; subsequent renders in the same suite skip it.
   it("initializes mermaid with securityLevel antiscript to prevent XSS from click directives", async () => {
     const mermaid = await import("mermaid");
+    const { MermaidBlock } = await import("@/components/ui/mermaid-block");
     // Chart containing a click directive — a common XSS vector in user-controlled mermaid source
     const xssChart =
       'graph TD; A-->B; click A href "javascript:alert(1)" "xss"';
@@ -32,6 +33,7 @@ describe("MermaidBlock", () => {
   });
 
   it("renders a container div with the mermaid class", async () => {
+    const { MermaidBlock } = await import("@/components/ui/mermaid-block");
     const { container } = render(
       <MermaidBlock chart="graph TD; A-->B" />,
     );
@@ -43,6 +45,7 @@ describe("MermaidBlock", () => {
 
   it("calls mermaid.render with the provided chart source", async () => {
     const mermaid = await import("mermaid");
+    const { MermaidBlock } = await import("@/components/ui/mermaid-block");
     render(<MermaidBlock chart="sequenceDiagram; A->>B: Hello" />);
     await waitFor(() => {
       expect(mermaid.default.render).toHaveBeenCalledWith(
@@ -54,6 +57,7 @@ describe("MermaidBlock", () => {
 
   it("falls back to a plain <pre> code block on render error", async () => {
     const mermaid = await import("mermaid");
+    const { MermaidBlock } = await import("@/components/ui/mermaid-block");
     vi.mocked(mermaid.default.render).mockRejectedValueOnce(
       new Error("invalid mermaid syntax"),
     );
@@ -69,6 +73,7 @@ describe("MermaidBlock", () => {
 
   it("fallback pre contains the original chart source on error", async () => {
     const mermaid = await import("mermaid");
+    const { MermaidBlock } = await import("@/components/ui/mermaid-block");
     vi.mocked(mermaid.default.render).mockRejectedValueOnce(
       new Error("invalid"),
     );
