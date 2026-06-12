@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { issueKeys } from "@/lib/query-keys";
+import { aggregateIssuesFromQueries } from "@/lib/aggregate-issues";
 import type { Issue } from "@/types/issue";
 import { useCommandPaletteStore } from "@/stores/command-palette-store";
 import { useActiveWorkspaceId } from "@/hooks/use-workspace-query";
@@ -45,15 +46,11 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
     // issueKeys.all ("issues") is a prefix of ALL issue query keys, including
     // detail (single Issue), groups (GroupSummary[]), documents, context, etc.
     // Spreading a non-array value throws "data is not iterable" (KAN-90).
-    // Array.isArray guard is belt-and-suspenders for any future cache shapes.
+    // aggregateIssuesFromQueries handles all edge cases defensively.
     const listQueries = queryClient.getQueriesData<Issue[]>({
       queryKey: issueKeys.lists(),
     });
-    const issues: Issue[] = [];
-    for (const [, data] of listQueries) {
-      if (Array.isArray(data)) issues.push(...data);
-    }
-    return issues;
+    return aggregateIssuesFromQueries(listQueries as [unknown, unknown][]);
   }, [queryClient]);
 
   const items = useMemo(() => {
