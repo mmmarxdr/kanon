@@ -16,7 +16,10 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
-    include: ["src/modules/events/**/*.test.ts"],
+    include: [
+      "src/modules/events/**/*.test.ts",
+      "src/modules/roadmap/**/*.test.ts",
+    ],
     setupFiles: ["src/test/setup.ts"],
     testTimeout: 15000,
     hookTimeout: 30000,

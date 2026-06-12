@@ -22,8 +22,13 @@ export default {
   vitest: {
     configFile: "vitest.mutation.config.ts",
   },
-  // Pilot scope: the SSE/eventing surface KAN-76 hardened (KAN-84 slice 1).
-  mutate: ["src/modules/events/workspace-events.ts"],
+  // KAN-84 slice 1: SSE/eventing surface (KAN-76 hardened).
+  // KAN-84 slice 3: roadmap-sync pure logic (computeStatus + syncRoadmapItemStatus).
+  // Note: service.ts is DB-orchestration only — line coverage is the bar there, not mutation.
+  mutate: [
+    "src/modules/events/workspace-events.ts",
+    "src/modules/roadmap/roadmap-sync.ts",
+  ],
   reporters: ["html", "clear-text", "progress"],
   // Re-evaluate only mutants affected by changes between runs.
   incremental: true,
