@@ -75,7 +75,7 @@ describe("Email Verification (KAN-30)", () => {
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
 
-  async function registerUser(email: string, password = "password123") {
+  async function registerUser(email: string, password = "SecretPass1!xy") {
     const res = await app.inject({
       method: "POST",
       url: "/api/auth/register",
@@ -191,7 +191,7 @@ describe("Email Verification (KAN-30)", () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/auth/register",
-        payload: { email, password: "password123", invite: inviteToken },
+        payload: { email, password: "SecretPass1!xy", invite: inviteToken },
       });
 
       expect(res.statusCode).toBe(201);
@@ -218,7 +218,7 @@ describe("Email Verification (KAN-30)", () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/auth/register",
-        payload: { email, password: "password123", invite: inviteToken },
+        payload: { email, password: "SecretPass1!xy", invite: inviteToken },
       });
 
       expect(res.statusCode).toBe(201);

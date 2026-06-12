@@ -161,7 +161,7 @@ describe("Instance routes", () => {
         payload: {
           token: rawToken,
           email: "admin@kanon.io",
-          password: "password123!",
+          password: "AdminPass1!xy",
         },
       });
 
@@ -199,7 +199,7 @@ describe("Instance routes", () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/instance/setup/claim",
-        payload: { token: rawToken, email: "admin@kanon.io", password: "password123!" },
+        payload: { token: rawToken, email: "admin@kanon.io", password: "AdminPass1!xy" },
       });
 
       expect(res.statusCode).toBe(410);
@@ -218,7 +218,7 @@ describe("Instance routes", () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/instance/setup/claim",
-        payload: { token: rawToken, email: "admin@kanon.io", password: "password123!" },
+        payload: { token: rawToken, email: "admin@kanon.io", password: "AdminPass1!xy" },
       });
 
       expect(res.statusCode).toBe(410);
@@ -229,7 +229,7 @@ describe("Instance routes", () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/instance/setup/claim",
-        payload: { token: "a".repeat(20), email: "admin@kanon.io", password: "password123!" },
+        payload: { token: "a".repeat(20), email: "admin@kanon.io", password: "AdminPass1!xy" },
       });
 
       expect(res.statusCode).toBe(400);
@@ -269,7 +269,7 @@ describe("Instance routes", () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/instance/setup/claim",
-        payload: { token: rawToken, email: "existing@kanon.io", password: "password123!" },
+        payload: { token: rawToken, email: "existing@kanon.io", password: "AdminPass1!xy" },
       });
 
       expect(res.statusCode).toBe(409);
@@ -297,12 +297,12 @@ describe("Instance routes", () => {
         app.inject({
           method: "POST",
           url: "/api/instance/setup/claim",
-          payload: { token: rawToken, email: "racer1@kanon.io", password: "password123!" },
+          payload: { token: rawToken, email: "racer1@kanon.io", password: "AdminPass1!xy" },
         }),
         app.inject({
           method: "POST",
           url: "/api/instance/setup/claim",
-          payload: { token: rawToken, email: "racer2@kanon.io", password: "password123!" },
+          payload: { token: rawToken, email: "racer2@kanon.io", password: "AdminPass1!xy" },
         }),
       ]);
 

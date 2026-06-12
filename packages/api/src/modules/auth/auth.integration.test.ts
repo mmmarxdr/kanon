@@ -44,7 +44,7 @@ describe("Auth Integration", () => {
         url: "/api/auth/register",
         payload: {
           email: "dev@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
           displayName: "Dev User",
         },
       });
@@ -69,7 +69,7 @@ describe("Auth Integration", () => {
         url: "/api/auth/register",
         payload: {
           email: "dev@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
 
@@ -79,7 +79,7 @@ describe("Auth Integration", () => {
         url: "/api/auth/register",
         payload: {
           email: "dev@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
 
@@ -94,7 +94,7 @@ describe("Auth Integration", () => {
         url: "/api/auth/register",
         payload: {
           email: "not-an-email",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
 
@@ -124,7 +124,7 @@ describe("Auth Integration", () => {
         url: "/api/auth/register",
         payload: {
           email: "dev@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
     });
@@ -135,7 +135,7 @@ describe("Auth Integration", () => {
         url: "/api/auth/login",
         payload: {
           email: "dev@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
 
@@ -166,7 +166,7 @@ describe("Auth Integration", () => {
         url: "/api/auth/login",
         payload: {
           email: "nobody@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
 
@@ -184,7 +184,7 @@ describe("Auth Integration", () => {
         url: "/api/auth/register",
         payload: {
           email: "dev@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
 
@@ -193,7 +193,7 @@ describe("Auth Integration", () => {
         url: "/api/auth/login",
         payload: {
           email: "dev@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
 
@@ -232,7 +232,7 @@ describe("Auth Integration", () => {
         url: "/api/auth/register",
         payload: {
           email: "me@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
           displayName: "Me User",
         },
       });
@@ -243,7 +243,7 @@ describe("Auth Integration", () => {
         url: "/api/auth/login",
         payload: {
           email: "me@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
 
@@ -322,7 +322,7 @@ describe("Auth Integration", () => {
         url: "/api/auth/register",
         payload: {
           email: "plain-ws-user@kanon.test",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
 
@@ -331,7 +331,7 @@ describe("Auth Integration", () => {
         url: "/api/auth/login",
         payload: {
           email: "plain-ws-user@kanon.test",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
       const { accessToken } = loginRes.json();
@@ -434,7 +434,7 @@ describe("Auth Integration", () => {
         url: "/api/auth/register",
         payload: {
           email: "dev@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
 
@@ -641,7 +641,7 @@ describe("Auth Integration", () => {
       const reg = await app.inject({
         method: "POST",
         url: "/api/auth/register",
-        payload: { email: "apikey-test@example.com", password: "Secret123!" },
+        payload: { email: "apikey-test@example.com", password: "SecretPass1!xy" },
       });
       expect(reg.statusCode).toBe(201);
 
@@ -753,7 +753,7 @@ describe("POST /api/auth/register — signup policy enforcement", () => {
     const res = await app.inject({
       method: "POST",
       url: "/api/auth/register",
-      payload: { email: "anyone@kanon.test", password: "Secret123!" },
+      payload: { email: "anyone@kanon.test", password: "SecretPass1!xy" },
     });
 
     expect(res.statusCode).toBe(403);
@@ -771,7 +771,7 @@ describe("POST /api/auth/register — signup policy enforcement", () => {
     const res = await app.inject({
       method: "POST",
       url: "/api/auth/register",
-      payload: { email: "noinvite@kanon.test", password: "Secret123!" },
+      payload: { email: "noinvite@kanon.test", password: "SecretPass1!xy" },
     });
 
     expect(res.statusCode).toBe(403);
@@ -799,7 +799,7 @@ describe("POST /api/auth/register — signup policy enforcement", () => {
       url: "/api/auth/register",
       payload: {
         email: "invitee@kanon.test",
-        password: "Secret123!",
+        password: "SecretPass1!xy",
         invite: inviteToken,
       },
     });
@@ -814,7 +814,7 @@ describe("POST /api/auth/register — signup policy enforcement", () => {
     const res = await app.inject({
       method: "POST",
       url: "/api/auth/register",
-      payload: { email: "user@other.com", password: "Secret123!" },
+      payload: { email: "user@other.com", password: "SecretPass1!xy" },
     });
 
     expect(res.statusCode).toBe(403);
@@ -828,7 +828,7 @@ describe("POST /api/auth/register — signup policy enforcement", () => {
     const res = await app.inject({
       method: "POST",
       url: "/api/auth/register",
-      payload: { email: "user@acme.com", password: "Secret123!" },
+      payload: { email: "user@acme.com", password: "SecretPass1!xy" },
     });
 
     expect(res.statusCode).toBe(201);
@@ -840,7 +840,7 @@ describe("POST /api/auth/register — signup policy enforcement", () => {
     const res = await app.inject({
       method: "POST",
       url: "/api/auth/register",
-      payload: { email: "dev@kanon.io", password: "Secret123!", displayName: "Dev User" },
+      payload: { email: "dev@kanon.io", password: "SecretPass1!xy", displayName: "Dev User" },
     });
 
     expect(res.statusCode).toBe(201);
@@ -866,7 +866,7 @@ describe("POST /api/auth/register — signup policy enforcement", () => {
       url: "/api/auth/register",
       payload: {
         email: "bypass@kanon.test",
-        password: "Secret123!",
+        password: "SecretPass1!xy",
         invite: inviteToken,
       },
     });

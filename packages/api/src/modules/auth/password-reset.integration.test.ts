@@ -63,7 +63,7 @@ describe("Password Reset", () => {
   // ── Helper: register a user via the API ─────────────────────────────
   async function registerUser(
     email = `user-${Date.now()}@kanon.test`,
-    password = "password123",
+    password = "SecretPass1!xy",
   ) {
     const res = await app.inject({
       method: "POST",

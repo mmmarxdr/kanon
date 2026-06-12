@@ -218,7 +218,7 @@ describe("RBAC & Profile Integration", () => {
         url: "/api/auth/register",
         payload: {
           email: "chgpwd@kanon.io",
-          password: "OldPass123!",
+          password: "OldPass123!x",
         },
       });
 
@@ -228,7 +228,7 @@ describe("RBAC & Profile Integration", () => {
         url: "/api/auth/login",
         payload: {
           email: "chgpwd@kanon.io",
-          password: "OldPass123!",
+          password: "OldPass123!x",
         },
       });
 
@@ -244,7 +244,7 @@ describe("RBAC & Profile Integration", () => {
           "content-type": "application/json",
         },
         payload: {
-          currentPassword: "OldPass123!",
+          currentPassword: "OldPass123!x",
           newPassword: "NewPass456!",
         },
       });
@@ -270,7 +270,7 @@ describe("RBAC & Profile Integration", () => {
         url: "/api/auth/register",
         payload: {
           email: "wrongpwd@kanon.io",
-          password: "Correct123!",
+          password: "Correct123!x",
         },
       });
 
@@ -279,7 +279,7 @@ describe("RBAC & Profile Integration", () => {
         url: "/api/auth/login",
         payload: {
           email: "wrongpwd@kanon.io",
-          password: "Correct123!",
+          password: "Correct123!x",
         },
       });
 

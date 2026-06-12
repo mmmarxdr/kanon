@@ -148,7 +148,7 @@ describe("CSRF Plugin", () => {
         payload: {
           email: "x@x.com",
           username: "testuser",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
           workspaceId: "00000000-0000-0000-0000-000000000000",
         },
       });
