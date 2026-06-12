@@ -578,7 +578,7 @@ export async function updateIssue(
       type: "issue.updated",
       workspaceId: issue.project.workspaceId,
       actorId: memberId,
-      payload: { issueKey: key, issueId: issue.id, fields: Object.keys(body) },
+      payload: { issueKey: key, issueId: issue.id, projectKey: issue.project.key, fields: Object.keys(body) },
       via,
     });
 
@@ -588,7 +588,7 @@ export async function updateIssue(
         type: "issue.assigned",
         workspaceId: issue.project.workspaceId,
         actorId: memberId,
-        payload: { issueKey: key, issueId: issue.id, issueTitle: issue.title, from: issue.assigneeId, to: body.assigneeId },
+        payload: { issueKey: key, issueId: issue.id, projectKey: issue.project.key, issueTitle: issue.title, from: issue.assigneeId, to: body.assigneeId },
         via,
       });
     }
@@ -695,7 +695,7 @@ export async function transitionIssue(
       type: "issue.transitioned",
       workspaceId: issue.project.workspaceId,
       actorId: memberId,
-      payload: { issueKey: key, issueId: issue.id, from: issue.state, to: toState },
+      payload: { issueKey: key, issueId: issue.id, projectKey: issue.project.key, from: issue.state, to: toState },
       via,
     });
   } catch {
@@ -986,6 +986,7 @@ export async function batchTransitionByKeys(
         payload: {
           issueKey: issue.key,
           issueId: issue.id,
+          projectKey: project.key,
           from: issue.state,
           to: targetState,
           // Tells the notification routeEvent to skip subscribed_activity for this event
