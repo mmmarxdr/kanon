@@ -39,6 +39,7 @@ export type IssuePriority = z.infer<typeof issuePrioritySchema>;
 // ─── ActiveWorker ────────────────────────────────────────────────────────────
 
 export const activeWorkerSchema = z.object({
+  userId: z.string(),
   memberId: z.string(),
   username: z.string(),
   isAgent: z.boolean(),
@@ -50,21 +51,42 @@ export type ActiveWorker = z.infer<typeof activeWorkerSchema>;
 // ─── Issue ───────────────────────────────────────────────────────────────────
 
 /**
+ * Slim child-issue shape returned by GET /api/issues/:key.
+ *
+ * The detail endpoint selects children with only { id, key, title, state, labels }
+ * (see packages/api/src/modules/issue/service.ts getIssue). The full issueSchema
+ * cannot be reused here because the child select omits type/priority/projectId/
+ * createdAt/updatedAt — those fields are required by the base schema.
+ */
+export const childIssueSummarySchema = z.object({
+  id: z.string(),
+  key: z.string(),
+  title: z.string(),
+  state: issueStateSchema,
+  labels: z.array(z.string()),
+});
+export type ChildIssueSummary = z.infer<typeof childIssueSummarySchema>;
+
+/**
  * Base issue shape matching GET /api/projects/:key/issues response items.
  * Children are recursively typed (lazy ref).
+ *
+ * Nullability notes (aligned to the real API contract):
+ *  - assigneeId: nullable — Prisma returns null when no assignee is set
+ *  - assignee:   nullable — the included relation is null when assigneeId is null
  */
 export const issueSchema: z.ZodType<Issue> = z.lazy(() =>
   z.object({
     id: z.string(),
     key: z.string(),
     title: z.string(),
-    description: z.string().optional(),
+    description: z.string().nullable().optional(),
     type: issueTypeSchema,
     priority: issuePrioritySchema,
     state: issueStateSchema,
     labels: z.array(z.string()),
-    assigneeId: z.string().optional(),
-    assignee: z.object({ username: z.string() }).optional(),
+    assigneeId: z.string().nullable().optional(),
+    assignee: z.object({ username: z.string() }).nullable().optional(),
     parentId: z.string().nullable().optional(),
     groupKey: z.string().nullable().optional(),
     projectId: z.string(),
@@ -79,13 +101,13 @@ export type Issue = {
   id: string;
   key: string;
   title: string;
-  description?: string;
+  description?: string | null;
   type: IssueType;
   priority: IssuePriority;
   state: IssueState;
   labels: string[];
-  assigneeId?: string;
-  assignee?: { username: string };
+  assigneeId?: string | null;
+  assignee?: { username: string } | null;
   parentId?: string | null;
   groupKey?: string | null;
   projectId: string;
@@ -129,20 +151,51 @@ export type IssueDependencyEdge = z.infer<typeof issueDependencyEdgeSchema>;
 /**
  * Extended issue shape returned by GET /api/issues/:key.
  * Includes nested assignee with email, project details, and cycle relation.
+ *
+ * Defined as a standalone z.object (not .and() intersection) so that the
+ * `children` field can use the slim childIssueSummarySchema without fighting
+ * the base issueSchema's full-object children validator inside an intersection.
+ *
+ * Nullability notes:
+ *  - assignee: nullable — detail endpoint returns null when unassigned.
+ *    email is nested under user: { email } to match the Prisma include select.
+ *  - children: childIssueSummarySchema[] — the detail select returns only
+ *    { id, key, title, state, labels }, not the full issue shape.
+ *  - cycle: nullable — issue may not belong to a cycle.
  */
-export const issueDetailSchema = issueSchema.and(
-  z.object({
-    assignee: z
-      .object({ id: z.string(), username: z.string(), email: z.string() })
-      .optional(),
-    project: z.object({ id: z.string(), key: z.string(), name: z.string() }),
-    children: z.array(issueSchema).optional(),
-    blocks: z.array(issueDependencyEdgeSchema).optional(),
-    blockedBy: z.array(issueDependencyEdgeSchema).optional(),
-    cycle: z.object({ id: z.string(), name: z.string() }).nullable().optional(),
-    subscribed: z.boolean().optional(),
-  }),
-);
+export const issueDetailSchema = z.object({
+  // ── fields shared with issueSchema ─────────────────────────────────────────
+  id: z.string(),
+  key: z.string(),
+  title: z.string(),
+  description: z.string().nullable().optional(),
+  type: issueTypeSchema,
+  priority: issuePrioritySchema,
+  state: issueStateSchema,
+  labels: z.array(z.string()),
+  assigneeId: z.string().nullable().optional(),
+  parentId: z.string().nullable().optional(),
+  groupKey: z.string().nullable().optional(),
+  projectId: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  activeWorkers: z.array(activeWorkerSchema).optional(),
+  // ── detail-only fields ─────────────────────────────────────────────────────
+  assignee: z
+    .object({
+      id: z.string(),
+      username: z.string(),
+      user: z.object({ email: z.string() }),
+    })
+    .nullable()
+    .optional(),
+  project: z.object({ id: z.string(), key: z.string(), name: z.string() }),
+  children: z.array(childIssueSummarySchema).optional(),
+  blocks: z.array(issueDependencyEdgeSchema).optional(),
+  blockedBy: z.array(issueDependencyEdgeSchema).optional(),
+  cycle: z.object({ id: z.string(), name: z.string() }).nullable().optional(),
+  subscribed: z.boolean().optional(),
+});
 export type IssueDetail = z.infer<typeof issueDetailSchema>;
 
 // ─── Array schemas ────────────────────────────────────────────────────────────

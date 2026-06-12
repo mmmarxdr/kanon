@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { STATE_LABELS, type IssueState } from "@/stores/board-store";
-import type { Issue } from "@/types/issue";
+import type { ChildIssueSummary } from "@/types/issue";
 
 /** Color map for state badges in child rows. */
 const STATE_COLORS: Record<IssueState, string> = {
@@ -12,7 +12,7 @@ const STATE_COLORS: Record<IssueState, string> = {
 };
 
 interface ChildrenSectionProps {
-  children: Issue[];
+  children: ChildIssueSummary[];
   onSelect: (issueKey: string) => void;
 }
 
@@ -52,7 +52,7 @@ function ChildRow({
   issue,
   onSelect,
 }: {
-  issue: Issue;
+  issue: ChildIssueSummary;
   onSelect: (issueKey: string) => void;
 }) {
   const handleClick = useCallback(() => {
