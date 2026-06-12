@@ -1,7 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchApi } from "@/lib/api-client";
+import { fetchApiValidated } from "@/lib/api-client";
 import { issueKeys } from "@/lib/query-keys";
-import type { Issue, GroupSummary } from "@/types/issue";
+import {
+  issueListSchema,
+  groupSummaryListSchema,
+  type Issue,
+  type GroupSummary,
+} from "@kanon/shared";
 import type { BoardColumn, IssueState } from "@/stores/board-store";
 import { BOARD_COLUMNS, COLUMN_STATE_MAP } from "@/stores/board-store";
 
@@ -13,7 +18,10 @@ export function useIssuesQuery(projectKey: string) {
   return useQuery({
     queryKey: issueKeys.list(projectKey),
     queryFn: () =>
-      fetchApi<Issue[]>(`/api/projects/${encodeURIComponent(projectKey)}/issues?parent_only=true`),
+      fetchApiValidated(
+        `/api/projects/${encodeURIComponent(projectKey)}/issues?parent_only=true`,
+        issueListSchema,
+      ),
     staleTime: 1000 * 60, // 1 minute
   });
 }
@@ -26,8 +34,9 @@ export function useGroupsQuery(projectKey: string, enabled = true) {
   return useQuery({
     queryKey: issueKeys.groups(projectKey),
     queryFn: () =>
-      fetchApi<GroupSummary[]>(
+      fetchApiValidated(
         `/api/projects/${encodeURIComponent(projectKey)}/issues/groups`,
+        groupSummaryListSchema,
       ),
     staleTime: 1000 * 60, // 1 minute
     enabled,
@@ -45,8 +54,9 @@ export function useGroupIssuesQuery(
   return useQuery({
     queryKey: issueKeys.groupIssues(projectKey, groupKey),
     queryFn: () =>
-      fetchApi<Issue[]>(
+      fetchApiValidated(
         `/api/projects/${encodeURIComponent(projectKey)}/issues?group_key=${encodeURIComponent(groupKey)}`,
+        issueListSchema,
       ),
     staleTime: 1000 * 60,
     enabled: enabled && !!groupKey,

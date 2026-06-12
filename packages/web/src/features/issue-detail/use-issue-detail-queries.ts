@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchApi } from "@/lib/api-client";
+import { fetchApi, fetchApiValidated } from "@/lib/api-client";
 import { issueKeys, commentKeys, activityKeys } from "@/lib/query-keys";
-import type { IssueDetail, Comment, ActivityLog, IssueDocument } from "@/types/issue";
+import { issueDetailSchema, type IssueDetail } from "@kanon/shared";
+import type { Comment, ActivityLog, IssueDocument } from "@/types/issue";
 
 /**
  * Fetches full issue details by key.
@@ -11,8 +12,9 @@ export function useIssueDetailQuery(issueKey: string | undefined) {
   return useQuery({
     queryKey: issueKeys.detail(issueKey ?? ""),
     queryFn: () =>
-      fetchApi<IssueDetail>(
+      fetchApiValidated(
         `/api/issues/${encodeURIComponent(issueKey!)}`,
+        issueDetailSchema,
       ),
     enabled: !!issueKey,
     staleTime: 1000 * 60, // 1 minute

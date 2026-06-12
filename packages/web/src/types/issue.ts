@@ -6,18 +6,23 @@ export type IssuePriority = "critical" | "high" | "medium" | "low";
 /**
  * Issue shape matching the API response from
  * GET /api/projects/:key/issues
+ *
+ * Nullability notes (aligned to real API contract, KAN-91 fix):
+ *  - description: nullable — Prisma returns null for unset text fields
+ *  - assigneeId:  nullable — null when no assignee is set
+ *  - assignee:    nullable — the included relation object is null when assigneeId is null
  */
 export interface Issue {
   id: string;
   key: string;
   title: string;
-  description?: string;
+  description?: string | null;
   type: IssueType;
   priority: IssuePriority;
   state: IssueState;
   labels: string[];
-  assigneeId?: string;
-  assignee?: { username: string };
+  assigneeId?: string | null;
+  assignee?: { username: string } | null;
   parentId?: string | null;
   groupKey?: string | null;
   projectId: string;
@@ -31,12 +36,27 @@ export interface Issue {
  * Active worker on an issue, returned by the API in issue responses.
  */
 export interface ActiveWorker {
+  userId: string;
   memberId: string;
   username: string;
   isAgent: boolean;
   startedAt: string;
   /** Source of the work session: web | mcp | claude-code | cursor | etc. */
   source: string;
+}
+
+/**
+ * Slim child-issue shape returned inside GET /api/issues/:key.
+ *
+ * The detail endpoint selects children with only { id, key, title, state, labels }
+ * (not the full issue shape). Matches childIssueSummarySchema in @kanon/shared.
+ */
+export interface ChildIssueSummary {
+  id: string;
+  key: string;
+  title: string;
+  state: IssueState;
+  labels: string[];
 }
 
 /**
@@ -65,11 +85,18 @@ export interface IssueDependencyEdge {
  * NOTE: cycleId is available on the base Issue type via Prisma's scalar
  * inclusion. The `cycle` relation object is fetched via include and only
  * present on IssueDetail — do NOT add it to the base Issue interface.
+ *
+ * Nullability notes (KAN-91 fix):
+ *  - assignee: nullable — also null when unassigned on the detail endpoint.
+ *    The email is nested under `user` to match Prisma's include select shape
+ *    ({ id, username, user: { email } }).
+ *  - children: ChildIssueSummary[] — detail endpoint selects a slim shape,
+ *    not the full Issue shape.
  */
-export interface IssueDetail extends Issue {
-  assignee?: { id: string; username: string; email: string };
+export interface IssueDetail extends Omit<Issue, "children" | "assignee"> {
+  assignee?: { id: string; username: string; user: { email: string } } | null;
   project: { id: string; key: string; name: string };
-  children?: Issue[];
+  children?: ChildIssueSummary[];
   blocks?: IssueDependencyEdge[];
   blockedBy?: IssueDependencyEdge[];
   /** Cycle this issue is attached to. Null when unassigned. */

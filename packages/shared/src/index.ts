@@ -36,3 +36,28 @@ export type {
   KanonIssueType,
   KanonIssuePriority,
 } from "./kanon-domain.js";
+
+export {
+  issueStateSchema,
+  issueTypeSchema,
+  issuePrioritySchema,
+  activeWorkerSchema,
+  childIssueSummarySchema,
+  issueSchema,
+  groupSummarySchema,
+  issueDependencyEdgeSchema,
+  issueDetailSchema,
+  issueListSchema,
+  groupSummaryListSchema,
+} from "./issue.js";
+export type {
+  IssueState,
+  IssueType,
+  IssuePriority,
+  ActiveWorker,
+  ChildIssueSummary,
+  Issue,
+  GroupSummary,
+  IssueDependencyEdge,
+  IssueDetail,
+} from "./issue.js";
