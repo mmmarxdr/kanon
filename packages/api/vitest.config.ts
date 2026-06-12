@@ -24,13 +24,17 @@ export default defineConfig({
         "src/**/types.ts",
         "src/**/interface.ts",
       ],
-      // Ratchet: set just below the measured baseline (lines 88 / branch 84 /
-      // funcs 90) so coverage can only go up. Raise these as gaps close.
+      // Ratchet: set ~1pt below the measured CI baseline (KAN-84 slice 4 raised
+      // these after the roadmap + SSE coverage work). Measured global on a clean
+      // CI DB: stmts 92.02 / branch 85.59 / funcs 93.62 / lines 92.02. The small
+      // headroom absorbs run-to-run measurement noise; coverage can only go up.
+      // The real quality net is mutation testing (test:mutation), run locally at
+      // the end of each feature. Raise these as gaps close.
       thresholds: {
-        statements: 85,
-        branches: 80,
-        functions: 88,
-        lines: 85,
+        statements: 91,
+        branches: 85,
+        functions: 93,
+        lines: 91,
       },
     },
   },
