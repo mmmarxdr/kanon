@@ -650,7 +650,7 @@ export async function transitionIssue(
 ) {
   const issue = await prisma.issue.findUnique({
     where: { key },
-    include: { project: { select: { workspaceId: true } } },
+    include: { project: { select: { workspaceId: true, key: true } } },
   });
   if (!issue) {
     throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${key}" not found`);
