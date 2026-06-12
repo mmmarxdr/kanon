@@ -24,8 +24,8 @@ COPY packages/web/ packages/web/
 # used by sentryVitePlugin to upload source maps. Defaults match sentry.ts.
 ARG VITE_SENTRY_DSN
 ARG SENTRY_AUTH_TOKEN
-ARG SENTRY_ORG=marc-dechand
-ARG SENTRY_PROJECT=kanon
+ARG SENTRY_ORG
+ARG SENTRY_PROJECT
 ENV VITE_SENTRY_DSN=$VITE_SENTRY_DSN \
     SENTRY_AUTH_TOKEN=$SENTRY_AUTH_TOKEN \
     SENTRY_ORG=$SENTRY_ORG \

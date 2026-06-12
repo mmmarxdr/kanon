@@ -52,8 +52,8 @@ export default defineConfig({
     ...(process.env.SENTRY_AUTH_TOKEN
       ? [
           sentryVitePlugin({
-            org: process.env.SENTRY_ORG ?? "marc-dechand",
-            project: process.env.SENTRY_PROJECT ?? "kanon",
+            org: process.env.SENTRY_ORG,
+            project: process.env.SENTRY_PROJECT,
             authToken: process.env.SENTRY_AUTH_TOKEN,
             // Delete the .map files from the client output after upload so the
             // source is never served publicly (multi-tenant app).
