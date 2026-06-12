@@ -462,6 +462,7 @@ export default function IssuePage() {
             <DocumentList
               documents={documents ?? []}
               isLoading={documentsLoading}
+              issueKey={issueKey}
             />
           )}
         </div>
