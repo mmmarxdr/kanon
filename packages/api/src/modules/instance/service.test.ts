@@ -132,10 +132,47 @@ describe("claimInstance dual-grant", () => {
     expect(user?.id).toBe(settings?.ownerUserId);
   });
 
-  it("second claim attempt with consumed token throws 410 TOKEN_USED and leaves state unchanged", async () => {
+  it("second claim attempt on an already-claimed instance throws 409 ALREADY_CLAIMED", async () => {
+    // Seed a first token, claim successfully
+    const rawToken1 = await seedLiveToken();
+    await claimInstance({
+      token: rawToken1,
+      email: "first-admin@kanon.test",
+      password: "SecurePassword123!",
+    });
+
+    // Seed a SECOND token (simulates a fresh token somehow issued after claim)
+    const rawToken2 = await seedLiveToken();
+
+    // Second claim attempt — ownerUserId is already set, must reject 409
+    await expect(
+      claimInstance({
+        token: rawToken2,
+        email: "second-admin@kanon.test",
+        password: "SecurePassword123!",
+      }),
+    ).rejects.toMatchObject({ statusCode: 409, code: "ALREADY_CLAIMED" });
+
+    // ownerUserId must be unchanged (original owner still set)
+    const settings = await prisma.instanceSettings.findUnique({
+      where: { id: INSTANCE_SETTINGS_ID },
+      select: { ownerUserId: true },
+    });
+    const firstOwner = await prisma.user.findUnique({
+      where: { email: "first-admin@kanon.test" },
+      select: { id: true },
+    });
+    expect(settings?.ownerUserId).toBe(firstOwner?.id);
+
+    // No second user was created
+    const users = await prisma.user.findMany({ where: { email: "second-admin@kanon.test" } });
+    expect(users).toHaveLength(0);
+  });
+
+  it("second claim attempt with a consumed token on a claimed instance throws 409 ALREADY_CLAIMED (instance guard fires before token check)", async () => {
     const rawToken = await seedLiveToken();
 
-    // First claim — succeeds, consumes the token
+    // First claim — succeeds, consumes the token AND sets ownerUserId
     await claimInstance({
       token: rawToken,
       email: "admin@kanon.test",
@@ -150,14 +187,16 @@ describe("claimInstance dual-grant", () => {
     const ownerIdAfterFirst = settingsAfterFirst?.ownerUserId;
     expect(ownerIdAfterFirst).not.toBeNull();
 
-    // Second claim attempt with the same (now-consumed) token — must throw 410
+    // Second claim attempt with the same (now-consumed) token.
+    // ALREADY_CLAIMED fires inside the transaction before TOKEN_USED because
+    // ownerUserId is already set — that is the primary rejection reason.
     await expect(
       claimInstance({
         token: rawToken,
         email: "admin2@kanon.test",
         password: "SecurePassword123!",
       }),
-    ).rejects.toMatchObject({ statusCode: 410, code: "TOKEN_USED" });
+    ).rejects.toMatchObject({ statusCode: 409, code: "ALREADY_CLAIMED" });
 
     // Fresh DB fetch after the second attempt — ownerUserId must be UNCHANGED
     const settingsAfterSecond = await prisma.instanceSettings.findUnique({

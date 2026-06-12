@@ -104,6 +104,18 @@ export async function claimInstance(body: ClaimBodyType): Promise<{
   const { token, email, password } = body;
   const tokenHash = sha256Hex(token);
 
+  // Fast pre-check (outside transaction): reject immediately if instance is already
+  // claimed. This is the primary guard and fires before acquiring any DB lock.
+  // A belt-and-suspenders re-check runs inside the transaction after the FOR UPDATE
+  // token lock to close the narrow TOCTOU window between this read and the write.
+  const preCheck = await prisma.instanceSettings.findUnique({
+    where: { id: INSTANCE_SETTINGS_ID },
+    select: { ownerUserId: true },
+  });
+  if (preCheck?.ownerUserId) {
+    throw new AppError(409, "ALREADY_CLAIMED", "This instance has already been claimed");
+  }
+
   return prisma.$transaction(async (tx) => {
     // Step 1: FOR UPDATE lock on the setup_tokens row
     const rows = await tx.$queryRaw<
@@ -126,6 +138,18 @@ export async function claimInstance(body: ClaimBodyType): Promise<{
     }
     if (row.expires_at < new Date()) {
       throw new AppError(410, "TOKEN_EXPIRED", "This setup token has expired");
+    }
+
+    // Step 2b: Belt-and-suspenders re-check inside the transaction.
+    // Closes the TOCTOU window between the pre-check above and the write below.
+    // Two concurrent claims both pass the pre-check; only one wins the token lock —
+    // the other is serialized here and sees ownerUserId already set.
+    const settings = await tx.instanceSettings.findUnique({
+      where: { id: INSTANCE_SETTINGS_ID },
+      select: { ownerUserId: true },
+    });
+    if (settings?.ownerUserId) {
+      throw new AppError(409, "ALREADY_CLAIMED", "This instance has already been claimed");
     }
 
     // Step 3: Assert email free (Option C — never mutate existing user)
