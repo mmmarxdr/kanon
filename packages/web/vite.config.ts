@@ -46,7 +46,19 @@ export default defineConfig({
     tailwindcss(),
     writeDevInfo(),
   ],
-  build: {},
+  build: {
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/@dnd-kit/")) return "vendor-dnd-kit";
+          if (id.includes("node_modules/@tanstack/react-query")) return "vendor-react-query";
+          if (id.includes("node_modules/@tanstack/react-router") || id.includes("node_modules/@tanstack/router-core")) return "vendor-react-router";
+          if (id.includes("node_modules/recharts") || id.includes("node_modules/d3-") || id.includes("node_modules/victory-")) return "vendor-charts";
+        },
+      },
+    },
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
