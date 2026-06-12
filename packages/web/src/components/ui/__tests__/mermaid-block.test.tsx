@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, waitFor } from "@testing-library/react";
 import { MermaidBlock } from "@/components/ui/mermaid-block";
 
 // Mock the mermaid library — it's ~500 KB and not available in jsdom
@@ -13,6 +13,22 @@ vi.mock("mermaid", () => ({
 describe("MermaidBlock", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  // This test must run first so it captures the once-only initialize() call.
+  // The module-level guard ensures initialize() is called exactly once per module
+  // instance; subsequent renders in the same suite skip it.
+  it("initializes mermaid with securityLevel antiscript to prevent XSS from click directives", async () => {
+    const mermaid = await import("mermaid");
+    // Chart containing a click directive — a common XSS vector in user-controlled mermaid source
+    const xssChart =
+      'graph TD; A-->B; click A href "javascript:alert(1)" "xss"';
+    render(<MermaidBlock chart={xssChart} />);
+    await waitFor(() => {
+      expect(mermaid.default.initialize).toHaveBeenCalledWith(
+        expect.objectContaining({ securityLevel: "antiscript" }),
+      );
+    });
   });
 
   it("renders a container div with the mermaid class", async () => {
@@ -42,11 +58,12 @@ describe("MermaidBlock", () => {
       new Error("invalid mermaid syntax"),
     );
 
-    render(<MermaidBlock chart="invalid syntax %%%" />);
+    const { container } = render(<MermaidBlock chart="invalid syntax %%%" />);
 
     await waitFor(() => {
-      const pre = screen.getByRole("code", { hidden: true });
-      expect(pre).toBeDefined();
+      // getByRole("code") is not a valid ARIA role — use querySelector instead
+      const code = container.querySelector("pre code");
+      expect(code).not.toBeNull();
     });
   });
 

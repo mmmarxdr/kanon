@@ -282,6 +282,7 @@ input, textarea, select { font: inherit; color: inherit; }
   text-align: center;
 }
 .mermaid-diagram svg {
-  max-width: 100%;
+  /* max-width removed: it was shrinking large diagrams instead of letting
+     the .mermaid-diagram overflow-x:auto container scroll them. */
   height: auto;
 }
