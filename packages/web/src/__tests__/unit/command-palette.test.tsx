@@ -81,6 +81,9 @@ function makeDetailIssue(key: string): IssueDetail {
   return {
     ...makeIssue({ key, id: `i-${key}` }),
     project: { id: "p-1", key: "KAN", name: "Kanon" },
+    // IssueDetail narrows assignee to { id, username, email }; clear the base
+    // Issue's { username } shape so the types are compatible.
+    assignee: undefined,
   };
 }
 
