@@ -12,6 +12,7 @@ import { workspaceSelectRoute } from "./routes/_authenticated/workspace-select";
 import { projectSelectRoute } from "./routes/_authenticated/project-select";
 import { inboxRoute } from "./routes/_authenticated/inbox";
 import { issueRoute } from "./routes/_authenticated/issue";
+import { issueDocRoute } from "./routes/_authenticated/issue-doc";
 import { dependenciesRoute } from "./routes/_authenticated/dependencies";
 import { cyclesRoute, cyclesIndexRoute } from "./routes/_authenticated/cycles";
 import { boardRoute } from "./routes/_authenticated/board";
@@ -37,6 +38,7 @@ const routeTree = rootRoute.addChildren([
     inboxRoute,
     boardRoute,
     issueRoute,
+    issueDocRoute,
     profileRoute,
     roadmapRoute,
     dependenciesRoute,
