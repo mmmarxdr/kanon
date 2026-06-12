@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -13,6 +13,7 @@ import {
 import type { Issue } from "@/types/issue";
 import { IssueCard } from "./issue-card";
 import { Icon } from "@/components/ui/icons";
+import { PanelErrorBoundary } from "@/components/panel-error-boundary";
 
 /** Status dot color per kanban column. */
 const COLUMN_DOT: Record<string, string> = {
@@ -31,7 +32,7 @@ interface BoardColumnProps {
   showRightDivider?: boolean;
 }
 
-export function BoardColumn({
+export const BoardColumn = memo(function BoardColumn({
   column,
   issues,
   onSelectIssue,
@@ -132,69 +133,73 @@ export function BoardColumn({
           minHeight: 64,
         }}
       >
-        {expanded && hasSubGroups ? (
-          states.map((state) => {
-            const stateIssues = issues.filter((i) => i.state === state);
-            return (
-              <div
-                key={state}
-                style={{ display: "flex", flexDirection: "column", gap: 4 }}
-              >
+        <PanelErrorBoundary label={`${COLUMN_LABELS[column]} column`}>
+          {expanded && hasSubGroups ? (
+            states.map((state) => {
+              const stateIssues = issues.filter((i) => i.state === state);
+              return (
                 <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "4px 4px 0",
-                  }}
+                  key={state}
+                  style={{ display: "flex", flexDirection: "column", gap: 4 }}
                 >
-                  <span
-                    className="mono"
+                  <div
                     style={{
-                      fontSize: 9.5,
-                      color: "var(--ink-4)",
-                      letterSpacing: "0.06em",
-                      textTransform: "uppercase",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "4px 4px 0",
                     }}
                   >
-                    {STATE_LABELS[state]}
-                  </span>
-                  <span
-                    className="mono"
-                    style={{ fontSize: 9.5, color: "var(--ink-4)" }}
+                    <span
+                      className="mono"
+                      style={{
+                        fontSize: 9.5,
+                        color: "var(--ink-4)",
+                        letterSpacing: "0.06em",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {STATE_LABELS[state]}
+                    </span>
+                    <span
+                      className="mono"
+                      style={{ fontSize: 9.5, color: "var(--ink-4)" }}
+                    >
+                      {stateIssues.length}
+                    </span>
+                  </div>
+                  <SortableContext
+                    items={stateIssues.map((i) => i.key)}
+                    strategy={verticalListSortingStrategy}
                   >
-                    {stateIssues.length}
-                  </span>
+                    {stateIssues.map((issue) => (
+                      <PanelErrorBoundary key={issue.key} label={`Card ${issue.key}`}>
+                        <IssueCard
+                          issue={issue}
+                          onSelect={onSelectIssue}
+                        />
+                      </PanelErrorBoundary>
+                    ))}
+                  </SortableContext>
                 </div>
-                <SortableContext
-                  items={stateIssues.map((i) => i.key)}
-                  strategy={verticalListSortingStrategy}
-                >
-                  {stateIssues.map((issue) => (
-                    <IssueCard
-                      key={issue.key}
-                      issue={issue}
-                      onSelect={onSelectIssue}
-                    />
-                  ))}
-                </SortableContext>
-              </div>
-            );
-          })
-        ) : (
-          <SortableContext
-            items={issues.map((i) => i.key)}
-            strategy={verticalListSortingStrategy}
-          >
-            {issues.map((issue) => (
-              <IssueCard
-                key={issue.key}
-                issue={issue}
-                onSelect={onSelectIssue}
-              />
-            ))}
-          </SortableContext>
-        )}
+              );
+            })
+          ) : (
+            <SortableContext
+              items={issues.map((i) => i.key)}
+              strategy={verticalListSortingStrategy}
+            >
+              {issues.map((issue) => (
+                <PanelErrorBoundary key={issue.key} label={`Card ${issue.key}`}>
+                  <IssueCard
+                    issue={issue}
+                    onSelect={onSelectIssue}
+                  />
+                </PanelErrorBoundary>
+              ))}
+            </SortableContext>
+          )}
+        </PanelErrorBoundary>
 
         {issues.length === 0 && (
           <div
@@ -214,4 +219,4 @@ export function BoardColumn({
       </div>
     </div>
   );
-}
+});

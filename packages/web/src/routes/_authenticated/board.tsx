@@ -12,11 +12,47 @@ import { KanbanBoard } from "@/features/board/kanban-board";
 import { GroupedBoard } from "@/features/board/grouped-board";
 import { FilterBar } from "@/features/board/filter-bar";
 import { NewIssueModal } from "@/features/board/new-issue-modal";
+import { PanelErrorBoundary } from "@/components/panel-error-boundary";
+
+function BoardErrorFallback() {
+  return (
+    <div
+      style={{
+        height: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <div
+        role="alert"
+        style={{
+          padding: "16px 24px",
+          borderRadius: 6,
+          border: "1px solid var(--bad, #f87171)",
+          background: "var(--bg-2, #1a1a1a)",
+          color: "var(--bad, #f87171)",
+          fontSize: 12,
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+          maxWidth: 320,
+        }}
+      >
+        <span style={{ fontWeight: 600 }}>Board failed to render</span>
+        <span style={{ color: "var(--ink-3, #888)", fontSize: 11 }}>
+          Reload the page to try again.
+        </span>
+      </div>
+    </div>
+  );
+}
 
 export const boardRoute = createRoute({
   path: "/board/$projectKey",
   getParentRoute: () => authenticatedRoute,
   component: BoardPage,
+  errorComponent: BoardErrorFallback,
   validateSearch: (
     search: Record<string, unknown>,
   ): { view?: "grouped" | "flat" } => {
@@ -172,20 +208,24 @@ function BoardPage() {
       {/* Board */}
       <div style={{ flex: 1, overflow: "hidden" }}>
         {viewMode === "grouped" ? (
-          <GroupedBoard
-            groups={groups ?? []}
-            issues={issues ?? []}
-            projectKey={projectKey}
-            onSelectIssue={handleSelectIssue}
-            onAddIssue={handleAddIssue}
-          />
+          <PanelErrorBoundary label="Grouped board">
+            <GroupedBoard
+              groups={groups ?? []}
+              issues={issues ?? []}
+              projectKey={projectKey}
+              onSelectIssue={handleSelectIssue}
+              onAddIssue={handleAddIssue}
+            />
+          </PanelErrorBoundary>
         ) : (
-          <KanbanBoard
-            issues={issues ?? []}
-            projectKey={projectKey}
-            onSelectIssue={handleSelectIssue}
-            onAddIssue={handleAddIssue}
-          />
+          <PanelErrorBoundary label="Kanban board">
+            <KanbanBoard
+              issues={issues ?? []}
+              projectKey={projectKey}
+              onSelectIssue={handleSelectIssue}
+              onAddIssue={handleAddIssue}
+            />
+          </PanelErrorBoundary>
         )}
       </div>
 

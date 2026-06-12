@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -10,6 +10,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { useDroppable } from "@dnd-kit/core";
+import { PanelErrorBoundary } from "@/components/panel-error-boundary";
 import {
   SortableContext,
   verticalListSortingStrategy,
@@ -55,7 +56,7 @@ interface GroupedColumnProps {
   showRightDivider?: boolean;
 }
 
-function GroupedColumn({
+const GroupedColumn = memo(function GroupedColumn({
   column,
   groups,
   ungroupedIssues,
@@ -152,24 +153,27 @@ function GroupedColumn({
           minHeight: 64,
         }}
       >
-        <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
-          {groups.map((group) => (
-            <GroupCard
-              key={group.groupKey}
-              group={group}
-              onClick={onSelectGroup}
-            />
-          ))}
-
-          {showUngrouped &&
-            ungroupedIssues.map((issue) => (
-              <IssueCard
-                key={issue.key}
-                issue={issue}
-                onSelect={onSelectIssue}
+        <PanelErrorBoundary label={`${COLUMN_LABELS[column]} column`}>
+          <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
+            {groups.map((group) => (
+              <GroupCard
+                key={group.groupKey}
+                group={group}
+                onClick={onSelectGroup}
               />
             ))}
-        </SortableContext>
+
+            {showUngrouped &&
+              ungroupedIssues.map((issue) => (
+                <PanelErrorBoundary key={issue.key} label={`Card ${issue.key}`}>
+                  <IssueCard
+                    issue={issue}
+                    onSelect={onSelectIssue}
+                  />
+                </PanelErrorBoundary>
+              ))}
+          </SortableContext>
+        </PanelErrorBoundary>
 
         {isEmpty && (
           <div
@@ -189,7 +193,7 @@ function GroupedColumn({
       </div>
     </div>
   );
-}
+});
 
 // --------------------------------------------------------------------------
 // GroupedBoard — main export
@@ -210,7 +214,8 @@ export function GroupedBoard({
   onSelectIssue,
   onAddIssue,
 }: GroupedBoardProps) {
-  const { hiddenColumns, showUngrouped } = useBoardStore();
+  const hiddenColumns = useBoardStore((s) => s.hiddenColumns);
+  const showUngrouped = useBoardStore((s) => s.showUngrouped);
   const groupTransition = useGroupTransitionMutation(projectKey);
   const transitionMutation = useTransitionMutation(projectKey);
   const [activeGroup, setActiveGroup] = useState<GroupSummary | null>(null);
