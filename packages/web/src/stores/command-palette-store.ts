@@ -1,11 +1,11 @@
 import { create } from "zustand";
 
-export type CommandPaletteMode = "search" | "ai";
+export type CommandPaletteMode = "search";
 
 interface CommandPaletteState {
   /** Whether the palette is open. */
   isOpen: boolean;
-  /** Active mode — search vs ask Kanon (AI). */
+  /** Active mode — search only (AI mode removed, KAN-33). */
   mode: CommandPaletteMode;
   /** Whether the "create new issue" request was triggered from the palette. */
   createIssueRequested: boolean;

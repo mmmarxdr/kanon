@@ -122,28 +122,6 @@ export function AppTopbar() {
         {appearance === "dark" ? <Icon.Sun /> : <Icon.Moon />}
       </button>
 
-      {/* ── Ask Kanon ── */}
-      <button
-        type="button"
-        onClick={() => openPalette("ai")}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          height: 28,
-          padding: "0 10px",
-          background: "var(--ai-2)",
-          color: "var(--ai)",
-          border: "1px solid color-mix(in oklch, var(--ai) 30%, transparent)",
-          borderRadius: 5,
-          fontSize: 12,
-          fontWeight: 500,
-        }}
-      >
-        <Icon.Spark /> Ask Kanon
-        <Kbd>⌘J</Kbd>
-      </button>
-
       {/* ── Search ── */}
       <button
         type="button"

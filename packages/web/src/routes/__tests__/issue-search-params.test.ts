@@ -65,4 +65,13 @@ describe("Issue route validateSearch (C3 — KAN-108)", () => {
 
     expect(result.tab).toBe("timeline");
   });
+
+  it("C3.8 — validateSearch({ tab: 'documents' }) returns tab: 'documents'", async () => {
+    const { issueRoute } = await import("../_authenticated/issue");
+    const validateSearch = issueRoute.options.validateSearch as ValidateSearchFn;
+
+    const result = validateSearch({ tab: "documents" });
+
+    expect(result.tab).toBe("documents");
+  });
 });

@@ -34,10 +34,10 @@ type Tab = "timeline" | "children" | "deps" | "documents";
 
 export default function IssuePage() {
   const { key: issueKey } = issueRoute.useParams();
-  const { from } = issueRoute.useSearch();
+  const { from, tab: tabFromSearch } = issueRoute.useSearch();
   const navigate = useNavigate();
 
-  const [tab, setTab] = useState<Tab>("timeline");
+  const [tab, setTab] = useState<Tab>(tabFromSearch ?? "timeline");
   const [draft, setDraft] = useState("");
   const [isEditingDescription, setIsEditingDescription] = useState(false);
   const [descriptionDraft, setDescriptionDraft] = useState("");
