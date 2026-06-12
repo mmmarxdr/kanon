@@ -159,6 +159,16 @@ describe("DocumentList (KAN-107)", () => {
     expect(screen.getByTestId("kind-badge-note")).toBeTruthy();
   });
 
+  it("DL-7: formatRelativeTime returns 'just now' for future dates (clock skew)", async () => {
+    const { formatRelativeTime } = await import(
+      "@/features/issue-detail/document-list"
+    );
+
+    // A date 10 minutes in the future (simulates clock skew)
+    const future = new Date(Date.now() + 10 * 60_000).toISOString();
+    expect(formatRelativeTime(future)).toBe("just now");
+  });
+
   it("DL-6: pressing Enter on a card triggers navigation", async () => {
     const { DocumentList } = await import(
       "@/features/issue-detail/document-list"

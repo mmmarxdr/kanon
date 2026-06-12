@@ -38,6 +38,10 @@ const routeTree = rootRoute.addChildren([
     inboxRoute,
     boardRoute,
     issueRoute,
+    // issueDocRoute is a flat sibling (not nested under issueRoute) because
+    // issueRoute renders a full issue-page layout component with no <Outlet/>.
+    // Nesting would wrap the doc viewer inside the issue page layout, which is
+    // not desired. Revisit if issueRoute is ever converted to a layout route.
     issueDocRoute,
     profileRoute,
     roadmapRoute,

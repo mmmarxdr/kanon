@@ -19,7 +19,7 @@ export default function IssueDocPage() {
   const { key: issueKey, docId } = issueDocRoute.useParams();
   const navigate = useNavigate();
 
-  const { data: documents, isLoading } = useIssueDocuments(issueKey);
+  const { data: documents, isLoading, isError } = useIssueDocuments(issueKey);
 
   const doc = documents?.find((d) => d.id === docId);
 
@@ -29,6 +29,43 @@ export default function IssueDocPage() {
       params: { key: issueKey },
     });
   };
+
+  if (isError) {
+    return (
+      <div
+        style={{
+          height: "100%",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 12,
+          color: "var(--ink-3)",
+          fontSize: 13,
+          background: "var(--bg)",
+        }}
+      >
+        <span data-testid="error-message">Failed to load document. Please try again.</span>
+        <button
+          type="button"
+          onClick={handleBack}
+          data-testid="error-back-link"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            color: "var(--accent)",
+            fontSize: 12,
+            cursor: "pointer",
+            background: "none",
+            border: "none",
+          }}
+        >
+          <Icon.ChevL /> Back to {issueKey}
+        </button>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (

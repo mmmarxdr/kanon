@@ -67,15 +67,15 @@ export function DocumentList({ documents, isLoading, issueKey }: DocumentListPro
 }
 
 /* ------------------------------------------------------------------ */
-/*  Collapsed card (exported for testing)                              */
+/*  Collapsed card (internal — tests reach it via DocumentList)        */
 /* ------------------------------------------------------------------ */
 
-export interface DocumentCardProps {
+interface DocumentCardProps {
   document: IssueDocument;
   issueKey: string;
 }
 
-export function DocumentCard({ document: doc, issueKey }: DocumentCardProps) {
+function DocumentCard({ document: doc, issueKey }: DocumentCardProps) {
   const navigate = useNavigate();
 
   const handleClick = () => {
@@ -185,6 +185,7 @@ export function formatRelativeTime(iso: string): string {
     const date = new Date(iso);
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
+    if (diffMs < 0) return "just now";
     const diffMin = Math.floor(diffMs / 60_000);
 
     if (diffMin < 1) return "just now";

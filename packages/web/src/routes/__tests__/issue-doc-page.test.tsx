@@ -118,6 +118,12 @@ describe("IssueDocPage (KAN-107)", () => {
 
     // Raw markdown syntax (##) should NOT appear as literal text
     expect(body.textContent).not.toContain("##");
+
+    // Verify markdown was actually rendered: ## heading → <h2> DOM element
+    const headings = body.querySelectorAll("h2");
+    expect(headings.length).toBeGreaterThan(0);
+    const headingTexts = Array.from(headings).map((h) => h.textContent);
+    expect(headingTexts).toContain("Context");
   });
 
   it("IDP-3: back link is present and navigates to /issue/:key", async () => {
@@ -139,6 +145,30 @@ describe("IssueDocPage (KAN-107)", () => {
     const callArg = mockNavigate.mock.calls[0]?.[0] as { to: string; params: Record<string, string> };
     expect(callArg.to).toBe("/issue/$key");
     expect(callArg.params).toEqual({ key: ISSUE_KEY });
+  });
+
+  it("IDP-6: shows error message with back link when query errors", async () => {
+    mockUseIssueDocuments.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+    });
+
+    const IssueDocPage = (await import("../_authenticated/issue-doc-page")).default;
+    render(<IssueDocPage />);
+
+    expect(screen.getByTestId("error-message")).toBeTruthy();
+    expect(screen.getByTestId("error-message").textContent).toMatch(
+      /failed to load document/i,
+    );
+
+    // Back link is present even in error state
+    const backLink = screen.getByTestId("error-back-link");
+    expect(backLink).toBeTruthy();
+    expect(backLink.textContent).toContain(ISSUE_KEY);
+
+    fireEvent.click(backLink);
+    expect(mockNavigate).toHaveBeenCalledOnce();
   });
 
   it("IDP-5: shows not-found message with back link when docId does not match", async () => {
