@@ -52,8 +52,14 @@ const issueArb: fc.Arbitrary<Issue> = fc.record({
     nil: null,
   }),
   projectId: fc.uuid(),
-  createdAt: fc.integer({ min: Date.UTC(2020, 0, 1), max: Date.UTC(2030, 11, 31) }).map((ms) => new Date(ms).toISOString()),
-  updatedAt: fc.integer({ min: Date.UTC(2020, 0, 1), max: Date.UTC(2030, 11, 31) }).map((ms) => new Date(ms).toISOString()),
+  // noInvalidDate: fc.date() emits `new Date(NaN)` even with min/max bounds,
+  // and Invalid Date throws RangeError on toISOString()
+  createdAt: fc
+    .date({ min: new Date("2020-01-01"), max: new Date("2030-12-31"), noInvalidDate: true })
+    .map((d) => d.toISOString()),
+  updatedAt: fc
+    .date({ min: new Date("2020-01-01"), max: new Date("2030-12-31"), noInvalidDate: true })
+    .map((d) => d.toISOString()),
 });
 
 /**

@@ -330,7 +330,9 @@ export default function IssuePage() {
                   minHeight: 56,
                   maxHeight: 240,
                   overflowY: "auto",
-                  overflowX: "clip",
+                  // "clip" was clipping child <pre> horizontal scroll (ASCII/code-block bug).
+                  // "auto" lets wide code blocks scroll independently.
+                  overflowX: "auto",
                   padding: "10px 12px",
                   background: "var(--panel)",
                   border: "1px solid var(--line)",
@@ -338,7 +340,8 @@ export default function IssuePage() {
                   textAlign: "left",
                   cursor: "text",
                   boxSizing: "border-box",
-                  whiteSpace: "normal",
+                  // whiteSpace scoped to non-pre text via CSS cascade; do not set globally
+                  // here as it would suppress horizontal scroll on <pre> descendants.
                   overflowWrap: "anywhere",
                   wordBreak: "break-word",
                 }}
@@ -459,6 +462,7 @@ export default function IssuePage() {
             <DocumentList
               documents={documents ?? []}
               isLoading={documentsLoading}
+              issueKey={issueKey}
             />
           )}
         </div>

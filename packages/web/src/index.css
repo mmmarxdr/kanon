@@ -273,3 +273,16 @@ input, textarea, select { font: inherit; color: inherit; }
 .markdown-body th, .markdown-body td { border: 1px solid var(--line); padding: 4px 8px; }
 .markdown-body th { background: var(--bg-2); }
 .markdown-body hr { border: none; border-top: 1px solid var(--line); }
+
+/* Mermaid diagram container */
+.mermaid-diagram {
+  overflow-x: auto;
+  max-width: 100%;
+  padding: 8px 0;
+  text-align: center;
+}
+.mermaid-diagram svg {
+  /* max-width removed: it was shrinking large diagrams instead of letting
+     the .mermaid-diagram overflow-x:auto container scroll them. */
+  height: auto;
+}
