@@ -34,9 +34,9 @@ const issueArb: fc.Arbitrary<Issue> = fc.record({
   priority: fc.constantFrom("critical", "high", "medium", "low" as const),
   state: fc.constantFrom(
     "todo",
-    "in-progress",
+    "in_progress",
     "done",
-    "cancelled",
+    "review",
     "backlog",
   ),
   labels: fc.array(fc.string({ minLength: 1, maxLength: 20 }), {
@@ -52,8 +52,14 @@ const issueArb: fc.Arbitrary<Issue> = fc.record({
     nil: null,
   }),
   projectId: fc.uuid(),
-  createdAt: fc.date().map((d) => d.toISOString()),
-  updatedAt: fc.date().map((d) => d.toISOString()),
+  // noInvalidDate: fc.date() emits `new Date(NaN)` even with min/max bounds,
+  // and Invalid Date throws RangeError on toISOString()
+  createdAt: fc
+    .date({ min: new Date("2020-01-01"), max: new Date("2030-12-31"), noInvalidDate: true })
+    .map((d) => d.toISOString()),
+  updatedAt: fc
+    .date({ min: new Date("2020-01-01"), max: new Date("2030-12-31"), noInvalidDate: true })
+    .map((d) => d.toISOString()),
 });
 
 /**
@@ -145,7 +151,7 @@ describe("aggregateIssuesFromQueries — property tests", () => {
 
   it("empty entries array returns empty array", () => {
     fc.assert(
-      fc.property(fc.constant([]), (entries: [unknown, unknown][]) => {
+      fc.property(fc.constant([] as [unknown, unknown][]), (entries) => {
         return aggregateIssuesFromQueries(entries).length === 0;
       }),
     );
