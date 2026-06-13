@@ -92,6 +92,7 @@ describe("envSchema (base) — COOKIE_SECRET empty-string guard", () => {
     // undefined → .optional() passes; production superRefine handles the
     // absent-in-production case separately.
     const result = envSchema.safeParse({ ...baseValid });
+    expect(result.success).toBe(true);
     if (!result.success) {
       const cookieIssues = result.error.issues.filter((i) =>
         i.path.includes("COOKIE_SECRET"),
@@ -102,6 +103,7 @@ describe("envSchema (base) — COOKIE_SECRET empty-string guard", () => {
 
   it("accepts a non-empty COOKIE_SECRET at the base schema level", () => {
     const result = envSchema.safeParse({ ...baseValid, COOKIE_SECRET: "any-non-empty-secret" });
+    expect(result.success).toBe(true);
     if (!result.success) {
       const cookieIssues = result.error.issues.filter((i) =>
         i.path.includes("COOKIE_SECRET"),
