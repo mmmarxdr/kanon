@@ -293,9 +293,18 @@ input, textarea, select { font: inherit; color: inherit; }
    Base (≥ 1024px): two columns — main pane (fluid) + properties rail (380px).
    The inline gridTemplateColumns was moved here so that the @media rule below
    can override it. Inline styles cannot be overridden by CSS media queries.
+
+   Similarly, the dock height is set here (not inline) so the @media block can
+   shrink it on narrow/short viewports via min(300px, 40vh).
    --------------------------------------------------------------------------- */
 .issue-layout {
   grid-template-columns: minmax(0, 1fr) 380px;
+}
+
+/* Base dock height — matches the 300px contract from slice 2.
+   Defined here (not inline) so the @media block below can override it. */
+.issue-timeline-dock {
+  height: 300px;
 }
 
 @media (max-width: 1023px) {
@@ -315,7 +324,9 @@ input, textarea, select { font: inherit; color: inherit; }
     border-bottom: 1px solid var(--line);
   }
 
-  /* Dock height adapts to viewport height on narrow screens. */
+  /* Dock height adapts to viewport height on narrow/short screens.
+     min(300px, 40vh): ≤300px always; shrinks on viewports shorter than 750px.
+     This overrides the base .issue-timeline-dock rule above. */
   .issue-timeline-dock {
     height: min(300px, 40vh);
   }

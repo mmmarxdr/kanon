@@ -17,8 +17,10 @@ export interface IssueTimelineDockProps {
  * of the main pane.
  *
  * Layout contract:
- *   Root: flexShrink:0, height:300px, display:flex, flexDirection:column,
+ *   Root: flexShrink:0, display:flex, flexDirection:column,
  *         borderTop:1px solid var(--line)
+ *         height: controlled by .issue-timeline-dock CSS class (300px base;
+ *         min(300px,40vh) at max-width:1023px) so the @media rule can override.
  *   Inner scroll area: flex:1, minHeight:0, overflowY:auto — wraps UnifiedTimeline
  *   IssueComposer: pinned at dock bottom (flexShrink:0)
  *
@@ -36,7 +38,6 @@ export function IssueTimelineDock({
       className="issue-timeline-dock"
       style={{
         flexShrink: 0,
-        height: 300,
         display: "flex",
         flexDirection: "column",
         borderTop: "1px solid var(--line)",
