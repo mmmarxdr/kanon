@@ -51,6 +51,15 @@ describe("passwordSchema", () => {
     }
   });
 
+  it("does not count whitespace as a symbol", () => {
+    // 12 chars with upper/lower/digit, but the only non-alphanumeric is a space
+    const result = passwordSchema.safeParse("Secret Pass1");
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((i) => /symbol|special/i.test(i.message))).toBe(true);
+    }
+  });
+
   it("exposes the length bounds as constants", () => {
     expect(PASSWORD_MIN_LENGTH).toBe(12);
     expect(PASSWORD_MAX_LENGTH).toBe(128);
