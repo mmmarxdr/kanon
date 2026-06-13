@@ -3,7 +3,7 @@ import { useCommandPaletteStore } from "@/stores/command-palette-store";
 
 /**
  * Hook to manage Command Palette open/close state.
- * Listens for Cmd+K (search) and Cmd+J (ask Kanon / AI) globally.
+ * Listens for Cmd+K (search) globally.
  */
 export function useCommandPalette() {
   const isOpen = useCommandPaletteStore((s) => s.isOpen);
@@ -17,9 +17,6 @@ export function useCommandPalette() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         toggle("search");
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
-        e.preventDefault();
-        toggle("ai");
       } else if (e.key === "Escape" && useCommandPaletteStore.getState().isOpen) {
         close();
       }

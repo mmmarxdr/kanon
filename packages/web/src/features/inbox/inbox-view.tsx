@@ -32,7 +32,6 @@ export function InboxView() {
   const apply = useApplyProposalMutation(workspaceId ?? null, "inbox");
   const dismiss = useDismissProposalMutation(workspaceId ?? null, "inbox");
   const user = useAuthStore((s) => s.user);
-  const openPalette = useCommandPaletteStore((s) => s.open);
   const navigate = useNavigate();
 
   const activeProjects = projects ?? [];
@@ -282,16 +281,7 @@ export function InboxView() {
             data-action="new-issue"
             onClick={() => useCommandPaletteStore.getState().requestCreateIssue()}
           />
-          {/* Row 2: Ask Kanon — REQ-INBOX-QUICK-005 */}
-          <QuickRow
-            icon={<Icon.Spark style={{ color: "var(--ai)" }} />}
-            label="Ask Kanon"
-            kbd="⌘J"
-            data-testid="quick-action-row"
-            data-action="ask-kanon"
-            onClick={() => openPalette("ai")}
-          />
-          {/* Row 3: Open dependency graph — REQ-INBOX-QUICK-001, design §4.4 */}
+          {/* Row 2: Open dependency graph — REQ-INBOX-QUICK-001, design §4.4 */}
           <ProjectPickerPopover
             projects={activeProjects}
             onSelect={(projectKey) =>

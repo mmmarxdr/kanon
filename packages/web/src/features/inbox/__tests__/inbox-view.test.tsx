@@ -213,19 +213,20 @@ describe("InboxView (D2) — Quick Actions", () => {
     mockProjects.length = 0;
   });
 
-  it("D2.1 — exactamente 4 filas quick-action-row en orden: new-issue, ask-kanon, dep-graph, plan-cycle", async () => {
+  it("D2.1 — exactamente 3 filas quick-action-row en orden: new-issue, dep-graph, plan-cycle (ask-kanon removed, KAN-33)", async () => {
     mockProjects.push({ key: "ATLAS", name: "Atlas" });
     const { wrapper } = createWrapper(DASHBOARD_NO_CYCLE);
     const { InboxView } = await import("../inbox-view");
     render(<InboxView />, { wrapper });
 
     const rows = screen.getAllByTestId("quick-action-row");
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(3);
     expect(rows[0]?.getAttribute("data-action")).toBe("new-issue");
-    expect(rows[1]?.getAttribute("data-action")).toBe("ask-kanon");
-    expect(rows[2]?.getAttribute("data-action")).toBe("dep-graph");
-    expect(rows[3]?.getAttribute("data-action")).toBe("plan-cycle");
+    expect(rows[1]?.getAttribute("data-action")).toBe("dep-graph");
+    expect(rows[2]?.getAttribute("data-action")).toBe("plan-cycle");
 
+    // "Ask Kanon" row must not exist (KAN-33)
+    expect(screen.queryByText("Ask Kanon")).toBeNull();
     // "Search…" row no debe existir
     expect(screen.queryByText("Search…")).toBeNull();
   });
@@ -237,8 +238,8 @@ describe("InboxView (D2) — Quick Actions", () => {
     render(<InboxView />, { wrapper });
 
     const rows = screen.getAllByTestId("quick-action-row");
-    const depGraph = rows[2] as HTMLButtonElement | undefined;
-    const planCycle = rows[3] as HTMLButtonElement | undefined;
+    const depGraph = rows[1] as HTMLButtonElement | undefined;
+    const planCycle = rows[2] as HTMLButtonElement | undefined;
     expect(depGraph?.disabled).toBe(true);
     expect(planCycle?.disabled).toBe(true);
   });
@@ -250,7 +251,7 @@ describe("InboxView (D2) — Quick Actions", () => {
     render(<InboxView />, { wrapper });
 
     const rows = screen.getAllByTestId("quick-action-row");
-    const depGraph = rows[2]!;
+    const depGraph = rows[1]!;
     fireEvent.click(depGraph);
 
     expect(navigateSpy).toHaveBeenCalledWith({
@@ -266,7 +267,7 @@ describe("InboxView (D2) — Quick Actions", () => {
     render(<InboxView />, { wrapper });
 
     const rows = screen.getAllByTestId("quick-action-row");
-    const planCycle = rows[3]!;
+    const planCycle = rows[2]!;
     fireEvent.click(planCycle);
 
     expect(navigateSpy).toHaveBeenCalledWith({

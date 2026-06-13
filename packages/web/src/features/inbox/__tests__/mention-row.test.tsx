@@ -1,9 +1,9 @@
 /**
  * C1.1 — MentionRow: renders mentionedByUsername, context, issueTitle visible in DOM.
- * C1.2 — Click calls navigate with correct search params (with commentId).
- * C1.3 — Click when commentId=null → navigate WITHOUT commentId in search.
+ * C1.2 — Click calls navigate with { from: "inbox" } only (highlight/commentId removed — KAN-108).
+ * C1.3 — Click when commentId=null → navigate with { from: "inbox" } (same — no commentId field).
  *
- * Refs: REQ-MENTION-008 escenarios 1-3, design §4.2
+ * Refs: REQ-MENTION-008, KAN-33 frontend deletions, KAN-108 PR1
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
@@ -54,7 +54,7 @@ describe("MentionRow (C1)", () => {
     expect(screen.getByText("Fix login")).toBeTruthy();
   });
 
-  it("C1.2 — click calls navigate with correct search params including commentId", async () => {
+  it("C1.2 — click navigates to issue with from:inbox only (highlight/commentId removed — KAN-108)", async () => {
     const { MentionRow } = await import("../mention-row");
     render(<MentionRow mention={mentionWithCommentId} />);
 
@@ -65,11 +65,15 @@ describe("MentionRow (C1)", () => {
     expect(mockNavigate).toHaveBeenCalledWith({
       to: "/issue/$key",
       params: { key: "T-42" },
-      search: { from: "inbox", highlight: "mention", commentId: "cmt-1" },
+      search: { from: "inbox" },
     });
+    // highlight and commentId must NOT be present on the search object
+    const callArgs = mockNavigate.mock.calls[0]?.[0];
+    expect("highlight" in callArgs.search).toBe(false);
+    expect("commentId" in callArgs.search).toBe(false);
   });
 
-  it("C1.3 — click when commentId=null → navigate WITHOUT commentId in search", async () => {
+  it("C1.3 — click when commentId=null → navigate with from:inbox only (no commentId field)", async () => {
     const { MentionRow } = await import("../mention-row");
     render(<MentionRow mention={mentionWithNullCommentId} />);
 
@@ -82,8 +86,8 @@ describe("MentionRow (C1)", () => {
     expect(callArgs.to).toBe("/issue/$key");
     expect(callArgs.params.key).toBe("T-99");
     expect(callArgs.search.from).toBe("inbox");
-    expect(callArgs.search.highlight).toBe("mention");
-    // commentId should NOT be present in search when null
+    // highlight and commentId must NOT be present
+    expect("highlight" in callArgs.search).toBe(false);
     expect("commentId" in callArgs.search).toBe(false);
   });
 });

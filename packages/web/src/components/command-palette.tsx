@@ -5,8 +5,6 @@ import { issueKeys } from "@/lib/query-keys";
 import { aggregateIssuesFromQueries } from "@/lib/aggregate-issues";
 import type { Issue } from "@/types/issue";
 import { useCommandPaletteStore } from "@/stores/command-palette-store";
-import { useActiveWorkspaceId } from "@/hooks/use-workspace-query";
-import { useProjectsQuery } from "@/hooks/use-projects-query";
 import { Icon } from "@/components/ui/icons";
 import { Kbd, StatePip, TypeGlyph } from "@/components/ui/primitives";
 
@@ -32,13 +30,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
   const listRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const mode = useCommandPaletteStore((s) => s.mode);
-  const isAI = mode === "ai";
-
-  // Resolve active workspace and projects for AI mode navigations (design §4.5)
-  const workspaceId = useActiveWorkspaceId();
-  const { data: projectsData } = useProjectsQuery(workspaceId);
-  const firstActiveProjectKey = projectsData?.find((p) => !(p as { archived?: boolean }).archived)?.key;
+  // mode is always "search" — AI mode removed (KAN-33)
 
   const cachedIssues = useMemo(() => {
     // Scope to issueKeys.lists() — the ["issues","list"] prefix — so we only
@@ -57,103 +49,63 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
     const result: CommandItem[] = [];
     const query = search.toLowerCase().trim();
 
-    if (!isAI) {
-      const filteredIssues = query
-        ? cachedIssues.filter(
-            (issue) =>
-              issue.title.toLowerCase().includes(query) ||
-              issue.key.toLowerCase().includes(query),
-          )
-        : cachedIssues.slice(0, 5);
+    const filteredIssues = query
+      ? cachedIssues.filter(
+          (issue) =>
+            issue.title.toLowerCase().includes(query) ||
+            issue.key.toLowerCase().includes(query),
+        )
+      : cachedIssues.slice(0, 5);
 
-      for (const issue of filteredIssues.slice(0, 10)) {
-        result.push({
-          id: `issue-${issue.id}`,
-          type: "issue",
-          label: issue.title,
-          sub: issue.key,
-          issue,
-          onSelect: () => {
-            void navigate({
-              to: "/issue/$key",
-              params: { key: issue.key },
-              search: { from: "palette" },
-            });
-            onClose();
-          },
-        });
-      }
+    for (const issue of filteredIssues.slice(0, 10)) {
+      result.push({
+        id: `issue-${issue.id}`,
+        type: "issue",
+        label: issue.title,
+        sub: issue.key,
+        issue,
+        onSelect: () => {
+          void navigate({
+            to: "/issue/$key",
+            params: { key: issue.key },
+            search: { from: "palette" },
+          });
+          onClose();
+        },
+      });
     }
 
-    const actions: { id: string; label: string; sub?: string; onSelect: () => void }[] =
-      isAI
-        ? [
-            {
-              id: "ai-plan",
-              label: "Plan the next cycle",
-              sub: "based on velocity, capacity, and dependency graph",
-              onSelect: () => {
-                // TODO(KAN-50): swap navigation for MCP roundtrip when wiring lands
-                if (firstActiveProjectKey) {
-                  void navigate({ to: "/cycles/$projectKey", params: { projectKey: firstActiveProjectKey } });
-                } else {
-                  void navigate({ to: "/inbox" }); // fallback honesto si no hay proyecto
-                }
-                onClose();
-              },
-            },
-            {
-              id: "ai-blockers",
-              label: "Find issues blocking the cycle",
-              sub: "scan deps for stuck items",
-              onSelect: () => {
-                // TODO(KAN-50): swap navigation for MCP roundtrip when wiring lands
-                void navigate({ to: "/inbox", search: { blocked: true } });
-                onClose();
-              },
-            },
-            {
-              id: "ai-digest",
-              label: "Draft a digest for #standup",
-              sub: "last 24h activity",
-              onSelect: () => {
-                // TODO(KAN-50): swap navigation for MCP roundtrip when wiring lands
-                void navigate({ to: "/inbox" });
-                onClose();
-              },
-            },
-          ]
-        : [
-            {
-              id: "create-issue",
-              label: "Create new issue",
-              sub: "C",
-              onSelect: () => {
-                onClose();
-                onCreateIssue();
-              },
-            },
-            {
-              id: "go-board",
-              label: "Go to Board",
-              sub: "G B",
-              onSelect: () => {
-                const firstIssue = cachedIssues[0];
-                if (firstIssue) {
-                  const projectKey = firstIssue.key.split("-")[0] ?? "";
-                  void navigate({
-                    to: "/board/$projectKey",
-                    params: { projectKey },
-                  });
-                }
-                onClose();
-              },
-            },
-            { id: "go-inbox",       label: "Go to Inbox",        sub: "G I", onSelect: onClose },
-            { id: "go-roadmap",     label: "Go to Roadmap",      sub: "G R", onSelect: onClose },
-            { id: "go-dependencies", label: "Go to Dependencies", sub: "G D", onSelect: onClose },
-            { id: "go-settings", label: "Go to Settings", sub: "G S", onSelect: onClose },
-          ];
+    const actions: { id: string; label: string; sub?: string; onSelect: () => void }[] = [
+      {
+        id: "create-issue",
+        label: "Create new issue",
+        sub: "C",
+        onSelect: () => {
+          onClose();
+          onCreateIssue();
+        },
+      },
+      {
+        id: "go-board",
+        label: "Go to Board",
+        sub: "G B",
+        onSelect: () => {
+          const firstIssue = cachedIssues[0];
+          if (firstIssue) {
+            const projectKey = firstIssue.key.split("-")[0] ?? "";
+            void navigate({
+              to: "/board/$projectKey",
+              params: { projectKey },
+            });
+          }
+          onClose();
+        },
+      },
+      { id: "go-inbox",        label: "Go to Inbox",        sub: "G I", onSelect: onClose },
+      { id: "go-roadmap",      label: "Go to Roadmap",      sub: "G R", onSelect: onClose },
+      { id: "go-dependencies", label: "Go to Dependencies", sub: "G D", onSelect: onClose },
+      { id: "go-settings",     label: "Go to Settings",     sub: "G S", onSelect: onClose },
+    ];
 
     const filteredActions = query
       ? actions.filter((a) => a.label.toLowerCase().includes(query))
@@ -170,7 +122,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
     }
 
     return result;
-  }, [search, cachedIssues, navigate, onClose, onCreateIssue, isAI, firstActiveProjectKey]);
+  }, [search, cachedIssues, navigate, onClose, onCreateIssue]);
 
   useEffect(() => {
     setSelectedIndex(0);
@@ -237,7 +189,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={isAI ? "Ask Kanon" : "Command palette"}
+        aria-label="Command palette"
         data-testid="command-palette"
         onKeyDown={handleKeyDown}
         style={{
@@ -264,35 +216,13 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
             borderBottom: "1px solid var(--line)",
           }}
         >
-          {isAI ? (
-            <span
-              style={{
-                width: 22,
-                height: 22,
-                borderRadius: 4,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                background: "var(--ai)",
-                color: "var(--btn-ink)",
-                flexShrink: 0,
-              }}
-            >
-              <Icon.Spark />
-            </span>
-          ) : (
-            <Icon.Search style={{ color: "var(--ink-3)", flexShrink: 0 }} />
-          )}
+          <Icon.Search style={{ color: "var(--ink-3)", flexShrink: 0 }} />
           <input
             ref={inputRef}
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder={
-              isAI
-                ? "Ask Kanon to plan, propose, or refactor your roadmap…"
-                : "Search issues, run commands…"
-            }
+            placeholder="Search issues, run commands…"
             autoFocus
             data-testid="command-palette-input"
             style={{
@@ -354,7 +284,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
               )}
 
               {actionItems.length > 0 && (
-                <Section label={isAI ? "Suggestions" : "Actions"}>
+                <Section label="Actions">
                   {actionItems.map((it, i) => {
                     const globalIndex = actionIndexOffset + i;
                     return (
@@ -363,13 +293,9 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
                         selected={selectedIndex === globalIndex}
                         onSelect={it.onSelect}
                         onHover={() => setSelectedIndex(globalIndex)}
-                        left={isAI ? <Icon.Spark style={{ color: "var(--ai)" }} /> : null}
+                        left={null}
                         title={it.label}
-                        sub={isAI ? it.sub : undefined}
-                        right={
-                          !isAI && it.sub ? <Kbd>{it.sub}</Kbd> : null
-                        }
-                        ai={isAI}
+                        right={it.sub ? <Kbd>{it.sub}</Kbd> : null}
                       />
                     );
                   })}
@@ -404,10 +330,10 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
                 width: 6,
                 height: 6,
                 borderRadius: "50%",
-                background: isAI ? "var(--ai)" : "var(--accent)",
+                background: "var(--accent)",
               }}
             />
-            {isAI ? "Claude · MCP" : "kanon · workspace"}
+            kanon · workspace
           </span>
         </div>
       </div>
@@ -444,7 +370,6 @@ function Row({
   title,
   sub,
   right,
-  ai,
 }: {
   selected: boolean;
   onSelect: () => void;
@@ -454,7 +379,6 @@ function Row({
   title: string;
   sub?: string;
   right?: React.ReactNode;
-  ai?: boolean;
 }) {
   return (
     <button
@@ -469,17 +393,13 @@ function Row({
         width: "100%",
         padding: "8px 14px",
         textAlign: "left",
-        background: selected
-          ? ai
-            ? "var(--ai-2)"
-            : "var(--bg-3)"
-          : "transparent",
+        background: selected ? "var(--bg-3)" : "transparent",
       }}
     >
       {left && (
         <span
           style={{
-            color: ai ? "var(--ai)" : "var(--ink-3)",
+            color: "var(--ink-3)",
             display: "inline-flex",
             alignItems: "center",
           }}
