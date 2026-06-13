@@ -286,3 +286,48 @@ input, textarea, select { font: inherit; color: inherit; }
      the .mermaid-diagram overflow-x:auto container scroll them. */
   height: auto;
 }
+
+/* ===========================================================================
+   Issue layout — responsive two-column → single-column collapse (KAN-108 slice 5)
+   ---------------------------------------------------------------------------
+   Base (≥ 1024px): two columns — main pane (fluid) + properties rail (380px).
+   The inline gridTemplateColumns was moved here so that the @media rule below
+   can override it. Inline styles cannot be overridden by CSS media queries.
+
+   Similarly, the dock height is set here (not inline) so the @media block can
+   shrink it on narrow/short viewports via min(300px, 40vh).
+   --------------------------------------------------------------------------- */
+.issue-layout {
+  grid-template-columns: minmax(0, 1fr) 380px;
+}
+
+/* Base dock height — matches the 300px contract from slice 2.
+   Defined here (not inline) so the @media block below can override it. */
+.issue-timeline-dock {
+  height: 300px;
+}
+
+@media (max-width: 1023px) {
+  /* Collapse to a single column; rail stacks ABOVE the main pane via order. */
+  .issue-layout {
+    grid-template-columns: 1fr;
+  }
+
+  /* Rail moves above the main pane. The right pane is the second child in DOM
+     order (after the main pane), but order:-1 pulls it to the visual top.
+     height:auto / overflow:visible so the rail is not viewport-clipped when stacked. */
+  .issue-layout > :last-child {
+    order: -1;
+    height: auto;
+    overflow: visible;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+
+  /* Dock height adapts to viewport height on narrow/short screens.
+     min(300px, 40vh): ≤300px always; shrinks on viewports shorter than 750px.
+     This overrides the base .issue-timeline-dock rule above. */
+  .issue-timeline-dock {
+    height: min(300px, 40vh);
+  }
+}
