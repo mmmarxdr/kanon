@@ -1,9 +1,14 @@
 /**
- * KAN-33 / KAN-108 — IssuePage seeds the active tab from ?tab= search param.
+ * KAN-108 — IssuePage layout: all sections render simultaneously (no tab gating).
  *
- * T1 — rendering with ?tab=documents opens the Documents tab (deep-link)
- * T2 — rendering with no tab param defaults to Timeline tab
- * T3 — rendering with ?tab=children opens the Sub-issues tab
+ * Direction C zone+dock layout: tab strip and ?tab= search param are gone.
+ * Every section is always present in the DOM at the same time:
+ *  - IssueTopZone: description, design records, sub-issues, dependencies
+ *  - IssueTimelineDock: unified timeline + composer
+ *
+ * T1 — timeline dock is always present (no ?tab= needed)
+ * T2 — all top-zone sections render simultaneously
+ * T3 — no tab strip is rendered
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
@@ -21,10 +26,9 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
   };
 });
 
-// issueRoute hooks — we control what useParams/useSearch return per test
-type Tab = "timeline" | "children" | "deps" | "documents";
+// issueRoute hooks — no tab field in slice 2
 const mockUseParams = vi.fn(() => ({ key: "KAN-1" }));
-const mockUseSearch = vi.fn(() => ({ from: undefined as string | undefined, tab: undefined as Tab | undefined }));
+const mockUseSearch = vi.fn(() => ({ from: undefined as string | undefined }));
 
 vi.mock("../_authenticated/issue", () => ({
   issueRoute: {
@@ -44,9 +48,9 @@ vi.mock("@/features/issue-detail/use-issue-detail-queries", () => ({
       type: "task",
       priority: "medium",
       state: "todo",
-      description: "",
+      description: "A description",
       project: { id: "p-1", key: "KAN", name: "Kanon" },
-      children: [],
+      children: [{ id: "c-1", key: "KAN-2", title: "Child", state: "todo", labels: [] }],
       blocks: [],
       blockedBy: [],
       subscribed: false,
@@ -54,7 +58,19 @@ vi.mock("@/features/issue-detail/use-issue-detail-queries", () => ({
     },
     isLoading: false,
   }),
-  useIssueDocuments: () => ({ data: [], isLoading: false }),
+  useIssueDocuments: () => ({
+    data: [
+      {
+        id: "doc-1",
+        kind: "adr" as const,
+        title: "ADR-001",
+        body: "# ADR",
+        createdAt: new Date().toISOString(),
+        author: null,
+      },
+    ],
+    isLoading: false,
+  }),
 }));
 
 vi.mock("@/features/issue-detail/use-unified-timeline", () => ({
@@ -148,35 +164,45 @@ async function renderIssuePage() {
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe("IssuePage — tab seeding from URL search param (KAN-33)", () => {
+describe("IssuePage — zone+dock layout: all sections always present (KAN-108)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("T1 — ?tab=documents seeds the Documents tab as active", async () => {
-    mockUseSearch.mockReturnValue({ from: undefined, tab: "documents" as Tab });
+  it("T1 — timeline dock is always present in the DOM (no ?tab= needed)", async () => {
+    mockUseSearch.mockReturnValue({ from: undefined });
     await renderIssuePage();
 
-    // The Documents tab button should be rendered and active (aria or style marker)
-    // We test the tab panel content: document-list is shown
-    expect(screen.getByTestId("document-list")).toBeInTheDocument();
-    // And timeline is NOT shown
-    expect(screen.queryByTestId("unified-timeline")).not.toBeInTheDocument();
-  });
-
-  it("T2 — no tab param defaults to Timeline tab", async () => {
-    mockUseSearch.mockReturnValue({ from: undefined, tab: undefined });
-    await renderIssuePage();
-
+    // Timeline dock container is always rendered
+    expect(screen.getByTestId("timeline-dock")).toBeInTheDocument();
+    // Unified timeline inside the dock
     expect(screen.getByTestId("unified-timeline")).toBeInTheDocument();
-    expect(screen.queryByTestId("document-list")).not.toBeInTheDocument();
+    // Composer is inside the dock — check for the Send button
+    expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
   });
 
-  it("T3 — ?tab=children seeds the Sub-issues tab as active", async () => {
-    mockUseSearch.mockReturnValue({ from: undefined, tab: "children" as Tab });
+  it("T2 — all top-zone sections render simultaneously (no tab gating)", async () => {
+    mockUseSearch.mockReturnValue({ from: undefined });
     await renderIssuePage();
 
+    // Top zone container present
+    expect(screen.getByTestId("issue-top-zone")).toBeInTheDocument();
+
+    // All sections visible at once — no switching needed
+    expect(screen.getByTestId("description-section")).toBeInTheDocument();
+    expect(screen.getByTestId("document-list")).toBeInTheDocument();
     expect(screen.getByTestId("children-section")).toBeInTheDocument();
-    expect(screen.queryByTestId("unified-timeline")).not.toBeInTheDocument();
+    expect(screen.getByTestId("dependencies-section")).toBeInTheDocument();
+  });
+
+  it("T3 — no tab strip is rendered (tabs are gone)", async () => {
+    mockUseSearch.mockReturnValue({ from: undefined });
+    await renderIssuePage();
+
+    // There should be no tab buttons (Timeline / Sub-issues / Dependencies / Design Records as tabs)
+    expect(screen.queryByRole("button", { name: /^Timeline$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Sub-issues$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Dependencies$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Design Records$/ })).not.toBeInTheDocument();
   });
 });
