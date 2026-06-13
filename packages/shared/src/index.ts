@@ -24,6 +24,12 @@ export type { WorkLogItem, WorkLogListResponse } from "./work-session.js";
 export { subscriptionStatusSchema } from "./issue-subscription.js";
 export type { SubscriptionStatus } from "./issue-subscription.js";
 
+export {
+  passwordSchema,
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_MAX_LENGTH,
+} from "./password.js";
+
 export { notificationPreferenceItemSchema } from "./notifications.js";
 export type { NotificationPreferenceItem } from "./notifications.js";
 

@@ -1,22 +1,16 @@
 import { z } from "zod";
+import { passwordSchema } from "@kanon/shared";
 
 /**
- * Body schema for POST /api/instance/setup/claim (KAN-49).
+ * Body schema for POST /api/instance/setup/claim (KAN-49 / KAN-50).
  *
- * Password policy matches RegisterBody: min 12 chars, max 128, must contain
- * at least one uppercase letter, one lowercase letter, one digit, and one symbol.
+ * Password policy uses the shared `passwordSchema` (@kanon/shared) — the single
+ * source of truth shared with register, reset-password and change-password.
  */
 export const ClaimBody = z.object({
   token: z.string().min(20, "Token must be at least 20 characters"),
   email: z.string().email("Must be a valid email address"),
-  password: z
-    .string()
-    .min(12, "Password must be at least 12 characters")
-    .max(128, "Password must be at most 128 characters")
-    .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
-    .regex(/[a-z]/, "Password must contain at least one lowercase letter")
-    .regex(/[0-9]/, "Password must contain at least one digit")
-    .regex(/[^A-Za-z0-9]/, "Password must contain at least one symbol"),
+  password: passwordSchema,
 });
 export type ClaimBodyType = z.infer<typeof ClaimBody>;
 
