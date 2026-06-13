@@ -82,7 +82,7 @@ describe("RegisterForm — 1-hop invite auto-login (G2 / R-NUI-autologin)", () =
 
   async function fillAndSubmit(
     email = "alice@co.com",
-    password = "atleast8chars",
+    password = "SecretPass1!",
     name = "Alice",
   ) {
     fireEvent.change(screen.getByLabelText(/full name/i), {
@@ -220,7 +220,7 @@ describe("RegisterForm — password confirm field and requirements indicator", (
   it("submit button is disabled when passwords do not match", () => {
     render(<RegisterForm onNavigate={mockNavigate} />);
     fireEvent.change(screen.getByLabelText("Password", { exact: true }), {
-      target: { value: "validpassword" },
+      target: { value: "SecretPass1!" },
     });
     fireEvent.change(screen.getByLabelText("Confirm password"), {
       target: { value: "different" },
@@ -230,7 +230,7 @@ describe("RegisterForm — password confirm field and requirements indicator", (
     expect((btn as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("submit button is disabled when password is fewer than 8 characters", () => {
+  it("submit button is disabled when password does not meet complexity requirements", () => {
     render(<RegisterForm onNavigate={mockNavigate} />);
     fireEvent.change(screen.getByLabelText("Password", { exact: true }), {
       target: { value: "short" },
@@ -246,7 +246,7 @@ describe("RegisterForm — password confirm field and requirements indicator", (
   it("no fetchApi call when passwords do not match and submit is invoked", async () => {
     render(<RegisterForm onNavigate={mockNavigate} />);
     fireEvent.change(screen.getByLabelText("Password", { exact: true }), {
-      target: { value: "validpassword" },
+      target: { value: "SecretPass1!" },
     });
     fireEvent.change(screen.getByLabelText("Confirm password"), {
       target: { value: "different" },
@@ -270,10 +270,10 @@ describe("RegisterForm — password confirm field and requirements indicator", (
       target: { value: "alice@co.com" },
     });
     fireEvent.change(screen.getByLabelText("Password", { exact: true }), {
-      target: { value: "validpassword" },
+      target: { value: "SecretPass1!" },
     });
     fireEvent.change(screen.getByLabelText("Confirm password"), {
-      target: { value: "validpassword" },
+      target: { value: "SecretPass1!" },
     });
     fireEvent.click(screen.getByTestId("tos-checkbox"));
     fireEvent.submit(screen.getByTestId("register-form"));
@@ -292,10 +292,10 @@ describe("RegisterForm — password confirm field and requirements indicator", (
       target: { value: "alice@co.com" },
     });
     fireEvent.change(screen.getByLabelText("Password", { exact: true }), {
-      target: { value: "validpassword" },
+      target: { value: "SecretPass1!" },
     });
     fireEvent.change(screen.getByLabelText("Confirm password"), {
-      target: { value: "validpassword" },
+      target: { value: "SecretPass1!" },
     });
     fireEvent.click(screen.getByTestId("tos-checkbox"));
     fireEvent.submit(screen.getByTestId("register-form"));

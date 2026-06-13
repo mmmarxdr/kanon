@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { passwordSchema, PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH } from "./password.js";
+import { passwordSchema, PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH, PASSWORD_REQUIREMENTS } from "./password.js";
 
 describe("passwordSchema", () => {
   it("accepts a 12+ char password with full complexity", () => {
@@ -63,5 +63,69 @@ describe("passwordSchema", () => {
   it("exposes the length bounds as constants", () => {
     expect(PASSWORD_MIN_LENGTH).toBe(12);
     expect(PASSWORD_MAX_LENGTH).toBe(128);
+  });
+});
+
+describe("PASSWORD_REQUIREMENTS consistency with passwordSchema", () => {
+  const COMPLIANT = "SecretPass1!";
+
+  it("a password meeting every requirement also passes passwordSchema", () => {
+    const allMet = PASSWORD_REQUIREMENTS.every((r) => r.test(COMPLIANT));
+    expect(allMet).toBe(true);
+    expect(passwordSchema.safeParse(COMPLIANT).success).toBe(true);
+  });
+
+  it("min-length: failing the requirement also fails passwordSchema", () => {
+    // 11 chars, otherwise fully complex
+    const pw = "SecretPas1!";
+    const req = PASSWORD_REQUIREMENTS.find((r) => r.id === "min-length")!;
+    expect(req.test(pw)).toBe(false);
+    expect(passwordSchema.safeParse(pw).success).toBe(false);
+  });
+
+  it("uppercase: failing the requirement also fails passwordSchema", () => {
+    // All lowercase equivalent — 12 chars
+    const pw = "secretpass1!";
+    const req = PASSWORD_REQUIREMENTS.find((r) => r.id === "uppercase")!;
+    expect(req.test(pw)).toBe(false);
+    expect(passwordSchema.safeParse(pw).success).toBe(false);
+  });
+
+  it("lowercase: failing the requirement also fails passwordSchema", () => {
+    const pw = "SECRETPASS1!";
+    const req = PASSWORD_REQUIREMENTS.find((r) => r.id === "lowercase")!;
+    expect(req.test(pw)).toBe(false);
+    expect(passwordSchema.safeParse(pw).success).toBe(false);
+  });
+
+  it("digit: failing the requirement also fails passwordSchema", () => {
+    const pw = "SecretPass!!";
+    const req = PASSWORD_REQUIREMENTS.find((r) => r.id === "digit")!;
+    expect(req.test(pw)).toBe(false);
+    expect(passwordSchema.safeParse(pw).success).toBe(false);
+  });
+
+  it("symbol: failing the requirement also fails passwordSchema", () => {
+    const pw = "SecretPass12";
+    const req = PASSWORD_REQUIREMENTS.find((r) => r.id === "symbol")!;
+    expect(req.test(pw)).toBe(false);
+    expect(passwordSchema.safeParse(pw).success).toBe(false);
+  });
+
+  it("symbol: whitespace does not satisfy the symbol requirement (matches schema)", () => {
+    const pw = "Secret Pass1";
+    const req = PASSWORD_REQUIREMENTS.find((r) => r.id === "symbol")!;
+    expect(req.test(pw)).toBe(false);
+    expect(passwordSchema.safeParse(pw).success).toBe(false);
+  });
+
+  it("PASSWORD_REQUIREMENTS covers all 5 policy dimensions", () => {
+    const ids = PASSWORD_REQUIREMENTS.map((r) => r.id);
+    expect(ids).toContain("min-length");
+    expect(ids).toContain("uppercase");
+    expect(ids).toContain("lowercase");
+    expect(ids).toContain("digit");
+    expect(ids).toContain("symbol");
+    expect(ids).toHaveLength(5);
   });
 });

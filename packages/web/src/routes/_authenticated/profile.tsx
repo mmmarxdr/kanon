@@ -4,6 +4,8 @@ import { authenticatedRoute } from "../_authenticated";
 import { useAuthStore } from "@/stores/auth-store";
 import { fetchApi, ApiError } from "@/lib/api-client";
 import type { AuthUser } from "@/stores/auth-store";
+import { PasswordRequirements } from "@/components/password-requirements";
+import { evaluatePassword, isPasswordValid } from "@/lib/password-policy";
 
 export const profileRoute = createRoute({
   path: "/profile",
@@ -33,9 +35,14 @@ function ProfilePage() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [pwTouched, setPwTouched] = useState(false);
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
+
+  // Derived at render — no redundant state
+  const pwRequirements = evaluatePassword(newPassword, confirmPassword);
+  const pwValid = isPasswordValid(pwRequirements);
 
   async function handleProfileSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -78,13 +85,8 @@ function ProfilePage() {
     setPasswordError(null);
     setPasswordSuccess(null);
 
-    if (newPassword !== confirmPassword) {
-      setPasswordError("New passwords do not match.");
-      return;
-    }
-
-    if (newPassword.length < 8) {
-      setPasswordError("New password must be at least 8 characters.");
+    if (!pwValid) {
+      setPasswordError("Please ensure your password meets all requirements.");
       return;
     }
 
@@ -240,10 +242,15 @@ function ProfilePage() {
                 id="newPassword"
                 type="password"
                 value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="Enter new password (min 8 chars)"
+                onChange={(e) => {
+                  setNewPassword(e.target.value);
+                  if (!pwTouched) setPwTouched(true);
+                }}
+                placeholder="At least 12 characters"
                 required
-                minLength={8}
+                minLength={12}
+                maxLength={128}
+                aria-describedby="password-requirements"
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
               />
             </div>
@@ -259,12 +266,19 @@ function ProfilePage() {
                 id="confirmPassword"
                 type="password"
                 value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
+                onChange={(e) => {
+                  setConfirmPassword(e.target.value);
+                  if (!pwTouched) setPwTouched(true);
+                }}
                 placeholder="Confirm new password"
                 required
+                minLength={12}
+                maxLength={128}
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
               />
             </div>
+
+            <PasswordRequirements requirements={pwTouched ? pwRequirements : []} />
 
             {passwordSuccess && (
               <div className="rounded-md border border-green-500/50 bg-green-500/10 px-3 py-2 text-sm text-green-700">
@@ -280,7 +294,7 @@ function ProfilePage() {
 
             <button
               type="submit"
-              disabled={passwordSaving}
+              disabled={passwordSaving || !pwValid}
               className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200 ease-out"
             >
               {passwordSaving ? "Changing..." : "Change Password"}

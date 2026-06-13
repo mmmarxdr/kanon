@@ -59,3 +59,12 @@ secrets/
 .playwright-mcp/
 .pi/
 /*.png
+
+# Local skill installs (web-quality skill set; symlinked into .claude/skills)
+.agents/
+/.claude/skills/accessibility
+/.claude/skills/best-practices
+/.claude/skills/core-web-vitals
+/.claude/skills/performance
+/.claude/skills/seo
+/.claude/skills/web-quality-audit

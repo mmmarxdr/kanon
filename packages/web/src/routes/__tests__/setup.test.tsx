@@ -75,6 +75,9 @@ async function fillAndSubmit(
   fireEvent.change(screen.getByLabelText(/^password$/i), {
     target: { value: password },
   });
+  fireEvent.change(screen.getByLabelText(/confirm password/i), {
+    target: { value: password },
+  });
   fireEvent.submit(screen.getByTestId("setup-form"));
 }
 
@@ -195,7 +198,7 @@ describe("SetupForm — claim form submission", () => {
       expect(screen.getByTestId("setup-password-error")).toBeTruthy(),
     );
     expect(screen.getByTestId("setup-password-error").textContent).toMatch(
-      /12 char|number or symbol/i,
+      /requirements|checklist/i,
     );
     expect(screen.queryByTestId("setup-token-error")).toBeNull();
     expect(screen.queryByTestId("setup-email-error")).toBeNull();
