@@ -33,6 +33,7 @@ export function IssueTimelineDock({
   return (
     <div
       data-testid="timeline-dock"
+      className="issue-timeline-dock"
       style={{
         flexShrink: 0,
         height: 300,

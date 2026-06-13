@@ -30,9 +30,9 @@ export default function IssuePage() {
 
   return (
     <div
+      className="issue-layout"
       style={{
         display: "grid",
-        gridTemplateColumns: "minmax(0, 1fr) 380px",
         height: "100%",
         overflow: "hidden",
         background: "var(--bg)",
