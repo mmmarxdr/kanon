@@ -21,7 +21,7 @@ function isValidProxyTrust(val: string): boolean {
  * Environment variable schema with validation.
  * Fails fast at startup if required vars are missing or invalid.
  */
-const envSchema = z.object({
+export const envSchema = z.object({
   DATABASE_URL: z.string().url("DATABASE_URL must be a valid URL"),
   JWT_SECRET: z.string().min(16, "JWT_SECRET must be at least 16 characters"),
   JWT_REFRESH_SECRET: z.string().min(16, "JWT_REFRESH_SECRET must be at least 16 characters"),
@@ -72,6 +72,7 @@ const envSchema = z.object({
     ),
   COOKIE_SECRET: z
     .string()
+    .min(1, "COOKIE_SECRET must not be empty")
     .optional(),
   RESEND_API_KEY: z
     .string()
