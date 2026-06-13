@@ -19,8 +19,8 @@
 export interface IssueSchedule {
   startDate: string | null;
   dueDate: string | null;
-  /** Progress reported by human/agent, 0–100. Stored as Int in DB; exposed as a
-   *  0..1 fraction here for convenience in UI (e.g. progress bars). */
+  /** Progress reported by human/agent, 0–100 (matches the ADR-0005 DB Int).
+   *  UI consumers divide by 100 where a 0..1 fraction is needed (e.g. progress bars). */
   progress: number | null;
   /** Estimated effort in hours (ADR-0005 D2). Distinct from Issue.estimate story points. */
   estimateHours: number | null;

@@ -17,6 +17,8 @@ export interface IssueScheduleSlotProps {
 }
 
 export function IssueScheduleSlot({ issueKey }: IssueScheduleSlotProps) {
+  // TODO(KAN-98): also consume `isLoading` — with a real query, `data` is null
+  // while loading, so guard the empty state to avoid a "No schedule yet" flash.
   const { data: schedule } = useIssueSchedule(issueKey);
 
   return (
