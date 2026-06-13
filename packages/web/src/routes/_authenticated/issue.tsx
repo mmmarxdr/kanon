@@ -4,8 +4,6 @@ import { authenticatedRoute } from "../_authenticated";
 export interface IssueRouteSearch {
   /** Optional return target so the back button knows where to go. */
   from?: string;
-  /** Active tab. Defaults to "timeline". Invalid values are coerced to "timeline". */
-  tab?: "timeline" | "children" | "deps" | "documents";
 }
 
 export const issueRoute = createRoute({
@@ -13,14 +11,8 @@ export const issueRoute = createRoute({
   getParentRoute: () => authenticatedRoute,
   component: lazyRouteComponent(() => import("./issue-page")),
   validateSearch: (search: Record<string, unknown>): IssueRouteSearch => {
-    const validTabs = new Set(["timeline", "children", "deps", "documents"]);
-    const rawTab = search.tab;
     return {
       from: typeof search.from === "string" ? search.from : undefined,
-      tab:
-        typeof rawTab === "string" && validTabs.has(rawTab)
-          ? (rawTab as IssueRouteSearch["tab"])
-          : "timeline",
     };
   },
 });

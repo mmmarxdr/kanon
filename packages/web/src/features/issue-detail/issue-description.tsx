@@ -42,7 +42,7 @@ export function IssueDescription({ value, onSave }: IssueDescriptionProps) {
   }, [descriptionDraft, onSave]);
 
   return (
-    <div data-testid="description-section" style={{ padding: "16px 28px 0", minWidth: 0 }}>
+    <div data-testid="description-section" style={{ minWidth: 0 }}>
       <div
         style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}
       >

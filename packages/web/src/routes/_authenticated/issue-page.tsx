@@ -1,23 +1,13 @@
-import { useState } from "react";
 import { issueRoute, SubscribeButton } from "./issue";
 import { useIssueDetail } from "@/features/issue-detail/use-issue-detail";
-import { IssueDescription } from "@/features/issue-detail/issue-description";
-import { IssueComposer } from "@/features/issue-detail/issue-composer";
 import { IssueDetailHeader } from "@/features/issue-detail/issue-detail-header";
 import { MetadataSection } from "@/features/issue-detail/metadata-section";
-import { ChildrenSection } from "@/features/issue-detail/children-section";
-import { DependenciesSection } from "@/features/issue-detail/dependencies-section";
-import { DocumentList } from "@/features/issue-detail/document-list";
-import { UnifiedTimeline } from "@/features/issue-detail/unified-timeline";
+import { IssueTopZone } from "@/features/issue-detail/issue-top-zone";
+import { IssueTimelineDock } from "@/features/issue-detail/issue-timeline-dock";
 import { Icon } from "@/components/ui/icons";
-
-type Tab = "timeline" | "children" | "deps" | "documents";
 
 export default function IssuePage() {
   const { key: issueKey } = issueRoute.useParams();
-  const { tab: tabFromSearch } = issueRoute.useSearch();
-
-  const [tab, setTab] = useState<Tab>(tabFromSearch ?? "timeline");
 
   const d = useIssueDetail(issueKey);
 
@@ -38,18 +28,6 @@ export default function IssuePage() {
     );
   }
 
-  const tabs: { id: Tab; label: string; count?: number }[] = [
-    { id: "timeline", label: "Timeline", count: d.timeline.items.length },
-    { id: "children", label: "Sub-issues", count: d.issue.children?.length ?? 0 },
-    {
-      id: "deps",
-      label: "Dependencies",
-      count:
-        (d.issue.blocks?.length ?? 0) + (d.issue.blockedBy?.length ?? 0),
-    },
-    { id: "documents", label: "Design Records", count: d.documents?.length ?? 0 },
-  ];
-
   return (
     <div
       style={{
@@ -60,7 +38,7 @@ export default function IssuePage() {
         background: "var(--bg)",
       }}
     >
-      {/* MAIN PANE */}
+      {/* MAIN PANE — flex column with fixed-height dock pinned at the bottom */}
       <div
         style={{
           display: "flex",
@@ -78,6 +56,7 @@ export default function IssuePage() {
             gap: 10,
             padding: "10px 16px",
             borderBottom: "1px solid var(--line)",
+            flexShrink: 0,
           }}
         >
           <button
@@ -115,104 +94,28 @@ export default function IssuePage() {
           onClose={d.onBack}
         />
 
-        <IssueDescription value={d.issue.description} onSave={d.onDescriptionSave} />
+        {/* Scrollable content zone — Description, Design Records, Sub-issues, Dependencies */}
+        <IssueTopZone
+          issueKey={issueKey}
+          description={d.issue.description}
+          onDescriptionSave={d.onDescriptionSave}
+          documents={d.documents ?? []}
+          documentsLoading={d.documentsLoading}
+          children={d.issue.children ?? []}
+          onSelectChild={d.onSelectChild}
+          blocks={d.issue.blocks ?? []}
+          blockedBy={d.issue.blockedBy ?? []}
+        />
 
-        {/* Tabs */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 16,
-            padding: "16px 28px 0",
-            borderBottom: "1px solid var(--line)",
-            flexShrink: 0,
-          }}
-        >
-          {tabs.map((t) => {
-            const active = tab === t.id;
-            return (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => setTab(t.id)}
-                style={{
-                  position: "relative",
-                  padding: "8px 0",
-                  fontSize: 12.5,
-                  fontWeight: active ? 500 : 400,
-                  color: active ? "var(--ink)" : "var(--ink-3)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-              >
-                {t.label}
-                {t.count != null && (
-                  <span
-                    className="mono"
-                    style={{ fontSize: 10, color: "var(--ink-4)" }}
-                  >
-                    {t.count}
-                  </span>
-                )}
-                {active && (
-                  <span
-                    style={{
-                      position: "absolute",
-                      left: 0,
-                      right: 0,
-                      bottom: -1,
-                      height: 2,
-                      background: "var(--accent)",
-                    }}
-                  />
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Tab content */}
-        <div
-          style={{
-            flex: 1,
-            minHeight: 0,
-            overflow: "auto",
-            padding: "16px 28px 24px",
-          }}
-        >
-          {tab === "timeline" && (
-            <UnifiedTimeline
-              items={d.timeline.items}
-              isLoading={d.timeline.isLoading}
-              isError={d.timeline.isError}
-            />
-          )}
-          {tab === "children" && (
-            <ChildrenSection
-              children={d.issue.children ?? []}
-              onSelect={d.onSelectChild}
-            />
-          )}
-          {tab === "deps" && (
-            <DependenciesSection
-              blocks={d.issue.blocks ?? []}
-              blockedBy={d.issue.blockedBy ?? []}
-            />
-          )}
-          {tab === "documents" && (
-            <DocumentList
-              documents={d.documents ?? []}
-              isLoading={d.documentsLoading}
-              issueKey={issueKey}
-            />
-          )}
-        </div>
-
-        <IssueComposer onSubmit={d.onAddComment} isPending={d.addCommentPending} />
+        {/* Fixed-height timeline dock — timeline + composer always pinned at bottom */}
+        <IssueTimelineDock
+          timeline={d.timeline}
+          onAddComment={d.onAddComment}
+          addCommentPending={d.addCommentPending}
+        />
       </div>
 
-      {/* RIGHT PANE: properties + agent thread */}
+      {/* RIGHT PANE: properties + reserved schedule slot (UNCHANGED) */}
       <div
         style={{
           display: "flex",
