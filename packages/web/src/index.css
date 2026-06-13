@@ -313,10 +313,10 @@ input, textarea, select { font: inherit; color: inherit; }
     grid-template-columns: 1fr;
   }
 
-  /* Rail moves above the main pane. The right pane is the second child in DOM
-     order (after the main pane), but order:-1 pulls it to the visual top.
+  /* Rail moves above the main pane. The .issue-rail class on the right pane div
+     makes this more explicit/robust than the positional :last-child selector.
      height:auto / overflow:visible so the rail is not viewport-clipped when stacked. */
-  .issue-layout > :last-child {
+  .issue-rail {
     order: -1;
     height: auto;
     overflow: visible;

@@ -4,6 +4,7 @@ import { IssueDetailHeader } from "@/features/issue-detail/issue-detail-header";
 import { MetadataSection } from "@/features/issue-detail/metadata-section";
 import { IssueTopZone } from "@/features/issue-detail/issue-top-zone";
 import { IssueTimelineDock } from "@/features/issue-detail/issue-timeline-dock";
+import { IssueScheduleSlot } from "@/features/issue-detail/issue-schedule-slot";
 import { Icon } from "@/components/ui/icons";
 
 export default function IssuePage() {
@@ -115,8 +116,9 @@ export default function IssuePage() {
         />
       </div>
 
-      {/* RIGHT PANE: properties + reserved schedule slot (UNCHANGED) */}
+      {/* RIGHT PANE: properties + schedule slot */}
       <div
+        className="issue-rail"
         style={{
           display: "flex",
           flexDirection: "column",
@@ -153,8 +155,8 @@ export default function IssuePage() {
           />
         </div>
 
-        {/* Reserved slot for future Schedule section (ADR-0005/KAN-98) */}
-        <div data-testid="schedule-slot" style={{ flex: 1 }} />
+        {/* PPM schedule slot — null adapter until KAN-98 / ADR-0005 backend lands */}
+        <IssueScheduleSlot issueKey={issueKey} />
       </div>
     </div>
   );
