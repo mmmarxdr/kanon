@@ -206,7 +206,7 @@ describe("Password Reset", () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/auth/reset-password",
-        payload: { token, newPassword: "newSecurePass123" },
+        payload: { token, newPassword: "NewSecurePass123!" },
       });
 
       expect(res.statusCode).toBe(200);
@@ -220,14 +220,14 @@ describe("Password Reset", () => {
       await app.inject({
         method: "POST",
         url: "/api/auth/reset-password",
-        payload: { token, newPassword: "brandNewPass456" },
+        payload: { token, newPassword: "BrandNewPass456!" },
       });
 
       // Login with new password should succeed
       const loginRes = await app.inject({
         method: "POST",
         url: "/api/auth/login",
-        payload: { email, password: "brandNewPass456" },
+        payload: { email, password: "BrandNewPass456!" },
       });
       expect(loginRes.statusCode).toBe(200);
       expect(loginRes.json()).toHaveProperty("accessToken");
@@ -255,7 +255,7 @@ describe("Password Reset", () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/auth/reset-password",
-        payload: { token, newPassword: "newPassword123" },
+        payload: { token, newPassword: "NewPassword123!" },
       });
 
       expect(res.statusCode).toBe(400);
@@ -275,7 +275,7 @@ describe("Password Reset", () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/auth/reset-password",
-        payload: { token, newPassword: "newPassword123" },
+        payload: { token, newPassword: "NewPassword123!" },
       });
 
       expect(res.statusCode).toBe(400);
@@ -285,7 +285,7 @@ describe("Password Reset", () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/auth/reset-password",
-        payload: { token: "completely-invalid-token", newPassword: "newPassword123" },
+        payload: { token: "completely-invalid-token", newPassword: "NewPassword123!" },
       });
 
       expect(res.statusCode).toBe(400);
@@ -298,7 +298,7 @@ describe("Password Reset", () => {
       await app.inject({
         method: "POST",
         url: "/api/auth/reset-password",
-        payload: { token, newPassword: "newPassword123" },
+        payload: { token, newPassword: "NewPassword123!" },
       });
 
       const tokenHash = createHash("sha256").update(token).digest("hex");
@@ -336,7 +336,7 @@ describe("Password Reset", () => {
       await app.inject({
         method: "POST",
         url: "/api/auth/reset-password",
-        payload: { token, newPassword: "newPassword123" },
+        payload: { token, newPassword: "NewPassword123!" },
       });
 
       // After reset: the used token remains (marked used), the extra one is deleted

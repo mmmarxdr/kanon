@@ -1,22 +1,17 @@
 import { z } from "zod";
+import { passwordSchema } from "@kanon/shared";
 
 /**
  * Registration request body.
  * No workspace or username — users register globally.
  *
- * Password policy (KAN-49): min 12 chars, max 128, must contain at least one
- * uppercase letter, one lowercase letter, one digit, and one symbol.
+ * Password policy (KAN-49 / KAN-50): see `passwordSchema` in @kanon/shared —
+ * the single source of truth shared with setup, reset-password, change-password
+ * and the web client.
  */
 export const RegisterBody = z.object({
   email: z.string().email("Invalid email address"),
-  password: z
-    .string()
-    .min(12, "Password must be at least 12 characters")
-    .max(128, "Password must be at most 128 characters")
-    .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
-    .regex(/[a-z]/, "Password must contain at least one lowercase letter")
-    .regex(/[0-9]/, "Password must contain at least one digit")
-    .regex(/[^A-Za-z0-9]/, "Password must contain at least one symbol"),
+  password: passwordSchema,
   displayName: z
     .string()
     .min(1, "Display name must be at least 1 character")
@@ -122,10 +117,7 @@ export const ResendVerificationResponse = z.object({
  */
 export const ChangePasswordBody = z.object({
   currentPassword: z.string().min(1, "Current password is required"),
-  newPassword: z
-    .string()
-    .min(8, "New password must be at least 8 characters")
-    .max(128, "New password must be at most 128 characters"),
+  newPassword: passwordSchema,
 });
 export type ChangePasswordBody = z.infer<typeof ChangePasswordBody>;
 
@@ -149,10 +141,7 @@ export const ForgotPasswordResponse = z.object({
  */
 export const ResetPasswordBody = z.object({
   token: z.string().min(1, "Reset token is required"),
-  newPassword: z
-    .string()
-    .min(8, "Password must be at least 8 characters")
-    .max(128, "Password must be at most 128 characters"),
+  newPassword: passwordSchema,
 });
 export type ResetPasswordBody = z.infer<typeof ResetPasswordBody>;
 

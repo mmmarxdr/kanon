@@ -245,7 +245,7 @@ describe("RBAC & Profile Integration", () => {
         },
         payload: {
           currentPassword: "OldPass123!x",
-          newPassword: "NewPass456!",
+          newPassword: "NewPassword456!",
         },
       });
 
@@ -258,7 +258,7 @@ describe("RBAC & Profile Integration", () => {
         url: "/api/auth/login",
         payload: {
           email: "chgpwd@kanon.io",
-          password: "NewPass456!",
+          password: "NewPassword456!",
         },
       });
       expect(newLoginRes.statusCode).toBe(200);
@@ -295,7 +295,7 @@ describe("RBAC & Profile Integration", () => {
         },
         payload: {
           currentPassword: "WrongPassword!",
-          newPassword: "NewPass456!",
+          newPassword: "NewPassword456!",
         },
       });
 
@@ -312,7 +312,7 @@ describe("RBAC & Profile Integration", () => {
         },
         payload: {
           currentPassword: "Old123!",
-          newPassword: "New123456!",
+          newPassword: "NewPassword456!",
         },
       });
 

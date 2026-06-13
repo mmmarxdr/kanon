@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { RegisterBody, LoginBody, RefreshBody } from "./schema.js";
+import {
+  RegisterBody,
+  LoginBody,
+  RefreshBody,
+  ResetPasswordBody,
+  ChangePasswordBody,
+} from "./schema.js";
 
 describe("Auth Zod Schemas", () => {
   // ── RegisterBody ─────────────────────────────────────────────────────
@@ -165,6 +171,80 @@ describe("Auth Zod Schemas", () => {
 
     it("rejects missing refresh token", () => {
       const result = RefreshBody.safeParse({});
+      expect(result.success).toBe(false);
+    });
+  });
+
+  // ── ResetPasswordBody (KAN-50) ───────────────────────────────────────
+  // newPassword must satisfy the same shared policy as register.
+
+  describe("ResetPasswordBody", () => {
+    it("accepts a valid token + strong newPassword", () => {
+      const result = ResetPasswordBody.safeParse({
+        token: "reset-token",
+        newPassword: "SecretPass1!",
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects a weak newPassword (too short)", () => {
+      const result = ResetPasswordBody.safeParse({
+        token: "reset-token",
+        newPassword: "SecretPas1!", // 11 chars
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects a newPassword with no symbol", () => {
+      const result = ResetPasswordBody.safeParse({
+        token: "reset-token",
+        newPassword: "SecretPass12",
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects an empty token", () => {
+      const result = ResetPasswordBody.safeParse({
+        token: "",
+        newPassword: "SecretPass1!",
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  // ── ChangePasswordBody (KAN-50) ──────────────────────────────────────
+  // newPassword must satisfy the shared policy; currentPassword only non-empty.
+
+  describe("ChangePasswordBody", () => {
+    it("accepts a current password + strong newPassword", () => {
+      const result = ChangePasswordBody.safeParse({
+        currentPassword: "whatever-current",
+        newPassword: "SecretPass1!",
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects a weak newPassword (too short)", () => {
+      const result = ChangePasswordBody.safeParse({
+        currentPassword: "whatever-current",
+        newPassword: "SecretPas1!", // 11 chars
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects a newPassword with no symbol", () => {
+      const result = ChangePasswordBody.safeParse({
+        currentPassword: "whatever-current",
+        newPassword: "SecretPass12",
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects an empty currentPassword", () => {
+      const result = ChangePasswordBody.safeParse({
+        currentPassword: "",
+        newPassword: "SecretPass1!",
+      });
       expect(result.success).toBe(false);
     });
   });
