@@ -69,6 +69,12 @@ jobs:
       - name: Build shared workspace packages
         run: pnpm --filter @kanon/shared build
 
+      - name: Lint (ESLint — advisory, warnings only)
+        run: pnpm lint
+
+      - name: Format check (Prettier)
+        run: pnpm format:check
+
       - name: TypeScript check (API)
         run: pnpm --filter @kanon/api exec tsc --noEmit
 
@@ -89,6 +95,15 @@ jobs:
 
       - name: Run MCP tests (Vitest)
         run: pnpm --filter @kanon/mcp test
+
+      - name: Run shared tests (Vitest)
+        run: pnpm --filter @kanon/shared test
+
+      - name: Run setup tests (Vitest)
+        run: pnpm --filter @kanon-pm/setup test
+
+      - name: Run CLI tests (Vitest)
+        run: pnpm --filter @kanon/cli test
 
       - name: Install Playwright browsers
         run: pnpm --filter @kanon/e2e exec playwright install chromium --with-deps
