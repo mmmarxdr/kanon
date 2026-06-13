@@ -1,0 +1,34 @@
+# Grandfathering strategy (KAN-62): all existing files are excluded from Prettier
+# enforcement in this PR. Format enforcement on existing code is deferred to KAN-92.
+# Only NEW files added after this PR will be subject to format:check.
+
+# All package source code (legacy - not reformatted in this PR)
+packages/
+
+# Documentation (all existing docs)
+docs/
+*.md
+**/*.md
+
+# Existing config / spec files
+*.yaml
+*.yml
+**/*.yaml
+**/*.yml
+kanon-spec.md
+.atl/
+.engram/
+.claude/
+openspec/
+deploy/
+scripts/
+
+# Build outputs and generated files
+**/dist/
+**/build/
+**/.next/
+**/coverage/
+**/.turbo/
+**/node_modules/
+**/pnpm-lock.yaml
+**/.stryker-tmp/

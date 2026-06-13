@@ -17,7 +17,11 @@
     "build:web": "pnpm --filter @kanon/web build",
     "e2e": "pnpm --filter @kanon/e2e test",
     "e2e:ui": "pnpm --filter @kanon/e2e test:ui",
-    "test:all": "pnpm --filter @kanon/api test && pnpm --filter @kanon/web test && pnpm e2e",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test:all": "pnpm --filter @kanon/api test && pnpm --filter @kanon/web test && pnpm --filter @kanon/mcp test && pnpm --filter @kanon/shared test && pnpm --filter @kanon-pm/setup test && pnpm --filter @kanon/cli test && pnpm e2e",
     "dev:start": "bash scripts/dev-start.sh",
     "dev:stop": "bash scripts/dev-stop.sh",
     "setup:mcp": "pnpm --filter @kanon-pm/setup build && node packages/setup/dist/index.js",
@@ -30,6 +34,13 @@
     "node": ">=20.0.0"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0"
+    "@eslint/js": "^10.0.1",
+    "esbuild": "^0.25.0",
+    "eslint": "^10.5.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.4",
+    "typescript-eslint": "^8.61.0"
   }
 }
