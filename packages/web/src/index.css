@@ -282,7 +282,9 @@ input, textarea, select { font: inherit; color: inherit; }
   text-align: center;
 }
 .mermaid-diagram svg {
-  /* max-width removed: it was shrinking large diagrams instead of letting
-     the .mermaid-diagram overflow-x:auto container scroll them. */
+  /* KAN-108 slice 4: max-width:100% scales the SVG to the inline-expand panel
+     width. The container's overflow-x:auto scrolls diagrams wider than the
+     panel — the SVG does NOT force the top zone wider. */
+  max-width: 100%;
   height: auto;
 }

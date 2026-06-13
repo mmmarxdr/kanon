@@ -1,5 +1,7 @@
-import { useNavigate } from "@tanstack/react-router";
+import { useState } from "react";
+import { useNavigate, Link } from "@tanstack/react-router";
 import type { IssueDocument, DocumentKind } from "@/types/issue";
+import { Markdown } from "@/components/ui/markdown";
 
 interface DocumentListProps {
   documents: IssueDocument[];
@@ -8,12 +10,16 @@ interface DocumentListProps {
 }
 
 /**
- * Design Records tab content for the issue detail panel.
+ * Design Records section for the issue detail panel.
  *
- * Read-only collapsed card list. Documents are created by agents via MCP
- * (kanon_create_document). Each card shows: kind badge, title, author, date.
- * Clicking a card navigates to the full-page document route
- * /issue/:key/doc/:docId.
+ * Collapsed card list with per-card inline expand. Documents are created by
+ * agents via MCP (kanon_create_document). Each card shows: kind badge, title,
+ * author, date. The card header navigates to the full-page document route
+ * /issue/:key/doc/:docId. A separate expand toggle (chevron) reveals the doc
+ * body (Markdown + Mermaid) inline without navigating away.
+ *
+ * KAN-108 slice 4: inline expand preserves the lazy Mermaid load win — the
+ * MermaidBlock only mounts when a card is expanded (unmounted on collapse).
  */
 export function DocumentList({ documents, isLoading, issueKey }: DocumentListProps) {
   if (isLoading) {
@@ -67,7 +73,7 @@ export function DocumentList({ documents, isLoading, issueKey }: DocumentListPro
 }
 
 /* ------------------------------------------------------------------ */
-/*  Collapsed card (internal — tests reach it via DocumentList)        */
+/*  Card with inline expand (internal — tests reach it via DocumentList) */
 /* ------------------------------------------------------------------ */
 
 interface DocumentCardProps {
@@ -77,6 +83,7 @@ interface DocumentCardProps {
 
 function DocumentCard({ document: doc, issueKey }: DocumentCardProps) {
   const navigate = useNavigate();
+  const [expanded, setExpanded] = useState(false);
 
   const handleClick = () => {
     void navigate({
@@ -92,52 +99,142 @@ function DocumentCard({ document: doc, issueKey }: DocumentCardProps) {
     }
   };
 
+  const handleToggle = (e: React.MouseEvent | React.KeyboardEvent) => {
+    e.stopPropagation();
+    if ("key" in e && e.key !== "Enter" && e.key !== " ") return;
+    setExpanded((prev) => !prev);
+  };
+
   return (
     <li
-      role="button"
-      tabIndex={0}
-      onClick={handleClick}
-      onKeyDown={handleKeyDown}
-      data-testid="document-card"
-      aria-label={`${KIND_STYLES[doc.kind].label}: ${doc.title}`}
       style={{
         borderRadius: 6,
         border: "1px solid var(--line)",
         background: "var(--panel)",
-        padding: "10px 14px",
-        cursor: "pointer",
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        transition: "border-color 0.1s",
+        overflow: "hidden",
       }}
     >
-      <KindBadge kind={doc.kind} />
-      <span
+      {/* Card header row — clicking navigates to full page */}
+      <div
+        role="button"
+        tabIndex={0}
+        data-testid="document-card"
+        onClick={handleClick}
+        onKeyDown={handleKeyDown}
+        aria-label={`${KIND_STYLES[doc.kind].label}: ${doc.title}`}
         style={{
-          fontSize: 13,
-          fontWeight: 500,
-          color: "var(--ink)",
-          flex: 1,
-          minWidth: 0,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
+          padding: "10px 14px",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          transition: "border-color 0.1s",
         }}
       >
-        {doc.title}
-      </span>
-      <span
-        style={{
-          fontSize: 11,
-          color: "var(--ink-4)",
-          whiteSpace: "nowrap",
-          flexShrink: 0,
-        }}
-      >
-        {doc.author ? `${doc.author.username} · ` : ""}
-        {formatRelativeTime(doc.createdAt)}
-      </span>
+        {/* Expand/collapse toggle — stops propagation so it doesn't navigate */}
+        <button
+          type="button"
+          data-testid="document-expand-toggle"
+          aria-expanded={expanded}
+          aria-label={expanded ? "Collapse design record" : "Expand design record"}
+          onClick={handleToggle as React.MouseEventHandler}
+          onKeyDown={handleToggle as React.KeyboardEventHandler}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+            width: 20,
+            height: 20,
+            borderRadius: 4,
+            color: "var(--ink-3)",
+            transition: "transform 0.15s",
+            transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
+          }}
+        >
+          {/* Chevron — decorative */}
+          <svg
+            aria-hidden="true"
+            width="12"
+            height="12"
+            viewBox="0 0 12 12"
+            fill="none"
+          >
+            <path
+              d="M4.5 2.5L8 6L4.5 9.5"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+
+        <KindBadge kind={doc.kind} />
+
+        <span
+          style={{
+            fontSize: 13,
+            fontWeight: 500,
+            color: "var(--ink)",
+            flex: 1,
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {doc.title}
+        </span>
+
+        <span
+          style={{
+            fontSize: 11,
+            color: "var(--ink-4)",
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+          }}
+        >
+          {doc.author ? `${doc.author.username} · ` : ""}
+          {formatRelativeTime(doc.createdAt)}
+        </span>
+      </div>
+
+      {/* Inline expand panel — only mounted when expanded (Mermaid lazy-load preserved) */}
+      {expanded && (
+        <div
+          data-testid="document-expand-panel"
+          style={{
+            borderTop: "1px solid var(--line)",
+            padding: "12px 14px 16px",
+            overflowX: "auto",
+            overflowY: "visible",
+            maxWidth: "100%",
+            boxSizing: "border-box",
+            minWidth: 0,
+          }}
+        >
+          <Markdown>{doc.body}</Markdown>
+
+          {/* Secondary "open full page" affordance */}
+          <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+            <Link
+              to="/issue/$key/doc/$docId"
+              params={{ key: issueKey, docId: doc.id }}
+              data-testid="document-full-page-link"
+              style={{
+                fontSize: 11.5,
+                color: "var(--accent)",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+            >
+              Open full page ↗
+            </Link>
+          </div>
+        </div>
+      )}
     </li>
   );
 }
