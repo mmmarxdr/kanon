@@ -54,7 +54,7 @@ export function CollapsibleSection({
         type="button"
         onClick={toggle}
         aria-expanded={!collapsed}
-        aria-controls={panelId}
+        aria-controls={collapsed ? undefined : panelId}
         style={{
           display: "flex",
           alignItems: "center",

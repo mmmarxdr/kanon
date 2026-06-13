@@ -195,14 +195,19 @@ describe("IssuePage — zone+dock layout: all sections always present (KAN-108)"
     expect(screen.getByTestId("dependencies-section")).toBeInTheDocument();
   });
 
-  it("T3 — no tab strip is rendered (tabs are gone)", async () => {
+  it("T3 — sections are disclosures, not a tab strip", async () => {
     mockUseSearch.mockReturnValue({ from: undefined });
     await renderIssuePage();
 
-    // There should be no tab buttons (Timeline / Sub-issues / Dependencies / Design Records as tabs)
+    // Timeline lives always-on in the dock — it is no longer a tab/toggle button.
     expect(screen.queryByRole("button", { name: /^Timeline$/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Sub-issues$/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Dependencies$/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Design Records$/ })).not.toBeInTheDocument();
+    // The remaining sections render as collapsible disclosures (aria-expanded present),
+    // i.e. they are NOT tab-strip buttons.
+    expect(screen.getByRole("button", { name: /Sub-issues/ })).toHaveAttribute(
+      "aria-expanded",
+    );
+    expect(screen.getByRole("button", { name: /Design Records/ })).toHaveAttribute(
+      "aria-expanded",
+    );
   });
 });
