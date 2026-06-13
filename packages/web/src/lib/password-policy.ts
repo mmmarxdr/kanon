@@ -1,32 +1,36 @@
 /**
- * Password policy — single source of truth for client-side validation.
- * Constants mirror RegisterBody in packages/api/src/modules/auth/schema.ts.
+ * Password policy — client-side validation derived from the shared SSOT.
+ * All complexity rules come from @kanon/shared/password so this module and
+ * the API always enforce the same policy (KAN-50).
  */
 
-const MIN = 8; // mirrors RegisterBody (packages/api)
-const MAX = 128; // mirrors RegisterBody (packages/api)
+import { PASSWORD_REQUIREMENTS, PASSWORD_MAX_LENGTH } from "@kanon/shared";
 
 export interface Requirement {
-  id: "min-length" | "max-length" | "match";
+  id: string;
   label: string;
   met: boolean;
 }
 
 /**
  * Evaluate password requirements given the password and confirm values.
- * Always returns all three requirements; display filtering is the component's concern.
+ * Returns the 5 shared complexity requirements (derived from PASSWORD_REQUIREMENTS)
+ * plus the UI-only max-length guard and match item, in that order.
+ * Display filtering is the component's concern.
  */
 export function evaluatePassword(password: string, confirm: string): Requirement[] {
+  const complexityReqs: Requirement[] = PASSWORD_REQUIREMENTS.map((r) => ({
+    id: r.id,
+    label: r.label,
+    met: r.test(password),
+  }));
+
   return [
-    {
-      id: "min-length",
-      label: "At least 8 characters",
-      met: password.length >= MIN,
-    },
+    ...complexityReqs,
     {
       id: "max-length",
       label: "At most 128 characters",
-      met: password.length <= MAX,
+      met: password.length <= PASSWORD_MAX_LENGTH,
     },
     {
       id: "match",

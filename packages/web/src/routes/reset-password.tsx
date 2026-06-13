@@ -10,6 +10,8 @@ import {
   Sub,
   SuccessBox,
 } from "@/components/auth-layout";
+import { PasswordRequirements } from "@/components/password-requirements";
+import { evaluatePassword, isPasswordValid } from "@/lib/password-policy";
 
 interface ResetPasswordSearch {
   token?: string;
@@ -30,9 +32,14 @@ function ResetPasswordPage() {
 
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [pwTouched, setPwTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+
+  // Derived at render — no redundant state
+  const requirements = evaluatePassword(password, confirmPassword);
+  const valid = isPasswordValid(requirements);
 
   const backToSignIn = (
     <div
@@ -105,12 +112,8 @@ function ResetPasswordPage() {
     e.preventDefault();
     setError(null);
 
-    if (password !== confirmPassword) {
-      setError("Passwords do not match");
-      return;
-    }
-    if (password.length < 8) {
-      setError("Password must be at least 8 characters");
+    if (!valid) {
+      setError("Please ensure your password meets all requirements.");
       return;
     }
 
@@ -152,11 +155,12 @@ function ResetPasswordPage() {
     <AuthLayout
       eyebrow="Reset"
       title="Set a new password."
-      subtitle="Choose a strong, unique password — at least 8 characters."
+      subtitle="Choose a strong, unique password — at least 12 characters."
       footer={backToSignIn}
     >
       <form
         onSubmit={handleSubmit}
+        data-testid="reset-password-form"
         style={{ display: "flex", flexDirection: "column", gap: 22 }}
       >
         <div>
@@ -169,26 +173,34 @@ function ResetPasswordPage() {
             fieldLabel="New password"
             type="password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="At least 8 characters"
+            onChange={(e) => {
+              setPassword(e.target.value);
+              if (!pwTouched) setPwTouched(true);
+            }}
+            placeholder="At least 12 characters"
             required
-            minLength={8}
+            minLength={12}
             maxLength={128}
+            aria-describedby="password-requirements"
           />
           <FormInput
             id="confirmPassword"
             fieldLabel="Confirm password"
             type="password"
             value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
+            onChange={(e) => {
+              setConfirmPassword(e.target.value);
+              if (!pwTouched) setPwTouched(true);
+            }}
             placeholder="Repeat your password"
             required
-            minLength={8}
+            minLength={12}
             maxLength={128}
           />
+          <PasswordRequirements requirements={pwTouched ? requirements : []} />
         </div>
         {error && <ErrorBox>{error}</ErrorBox>}
-        <PrimaryBtn disabled={loading}>
+        <PrimaryBtn disabled={loading || !valid}>
           {loading ? "Resetting…" : "Reset password →"}
         </PrimaryBtn>
       </form>

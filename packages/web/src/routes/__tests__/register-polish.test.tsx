@@ -46,12 +46,12 @@ describe("RegisterForm — ToS gate + copy (auth-screens-polish)", () => {
 
   it("RP-2: checking the ToS checkbox enables the submit button (with valid passwords)", () => {
     render(<RegisterForm invite={undefined} onNavigate={mockNavigate} />);
-    // Fill valid matching passwords so only ToS gates the button
+    // Fill fully-compliant matching passwords so only ToS gates the button
     fireEvent.change(screen.getByLabelText("Password", { exact: true }), {
-      target: { value: "validpassword" },
+      target: { value: "SecretPass1!" },
     });
     fireEvent.change(screen.getByLabelText("Confirm password"), {
-      target: { value: "validpassword" },
+      target: { value: "SecretPass1!" },
     });
     const checkbox = screen.getByTestId("tos-checkbox");
     fireEvent.click(checkbox);

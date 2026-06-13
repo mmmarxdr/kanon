@@ -29,6 +29,8 @@ import {
   PrimaryBtn,
   Sub,
 } from "@/components/auth-layout";
+import { PasswordRequirements } from "@/components/password-requirements";
+import { evaluatePassword, isPasswordValid } from "@/lib/password-policy";
 
 // ─── Field-level error state ──────────────────────────────────────────────────
 
@@ -59,9 +61,15 @@ export function SetupForm({ onNavigate }: SetupFormProps) {
   const [token, setToken] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [pwTouched, setPwTouched] = useState(false);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [loading, setLoading] = useState(false);
   const [statusChecked, setStatusChecked] = useState(false);
+
+  // Derived at render — no redundant state
+  const requirements = evaluatePassword(password, confirmPassword);
+  const valid = isPasswordValid(requirements);
 
   // On mount: check if instance is already claimed. If so, redirect to /login.
   // Pattern: in-component useEffect fetch + navigate (mirrors invite.tsx).
@@ -89,6 +97,10 @@ export function SetupForm({ onNavigate }: SetupFormProps) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!valid) {
+      setErrors({ password: "Please ensure your password meets all requirements." });
+      return;
+    }
     setErrors({});
     setLoading(true);
 
@@ -125,7 +137,7 @@ export function SetupForm({ onNavigate }: SetupFormProps) {
           });
         } else if (code === "VALIDATION_ERROR") {
           setErrors({
-            password: "Password must be at least 12 characters and include a number or symbol",
+            password: "Password does not meet the requirements — please check the checklist below.",
           });
         } else {
           setErrors({ form: message });
@@ -249,10 +261,15 @@ export function SetupForm({ onNavigate }: SetupFormProps) {
               fieldLabel="Password"
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Min 12 chars, incl. a number or symbol"
+              onChange={(e) => {
+                setPassword(e.target.value);
+                if (!pwTouched) setPwTouched(true);
+              }}
+              placeholder="At least 12 characters"
               required
               minLength={12}
+              maxLength={128}
+              aria-describedby="password-requirements"
             />
             {errors.password && (
               <div
@@ -263,6 +280,26 @@ export function SetupForm({ onNavigate }: SetupFormProps) {
               </div>
             )}
           </div>
+
+          {/* Confirm password field */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <FormInput
+              id="setup-confirm-password"
+              fieldLabel="Confirm password"
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => {
+                setConfirmPassword(e.target.value);
+                if (!pwTouched) setPwTouched(true);
+              }}
+              placeholder="Repeat your password"
+              required
+              minLength={12}
+              maxLength={128}
+            />
+          </div>
+
+          <PasswordRequirements requirements={pwTouched ? requirements : []} />
         </div>
 
         {errors.form && (
@@ -271,7 +308,7 @@ export function SetupForm({ onNavigate }: SetupFormProps) {
           </div>
         )}
 
-        <PrimaryBtn disabled={loading}>
+        <PrimaryBtn disabled={loading || !valid}>
           {loading ? "Claiming…" : "Claim instance →"}
         </PrimaryBtn>
       </form>
