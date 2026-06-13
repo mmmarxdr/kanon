@@ -5,9 +5,10 @@ describe("Auth Zod Schemas", () => {
   // ── RegisterBody ─────────────────────────────────────────────────────
 
   describe("RegisterBody", () => {
+    // Valid password: 12+ chars with upper, lower, digit, and symbol
     const validData = {
       email: "test@kanon.io",
-      password: "Secret123!",
+      password: "SecretPass1!",
     };
 
     it("accepts valid registration data (email + password only)", () => {
@@ -33,17 +34,64 @@ describe("Auth Zod Schemas", () => {
       expect(result.success).toBe(false);
     });
 
-    it("rejects password shorter than 8 chars", () => {
-      const result = RegisterBody.safeParse({ ...validData, password: "short" });
+    // ── Password complexity (KAN-49) ──────────────────────────────────
+
+    it("rejects password shorter than 12 chars", () => {
+      // 11 chars, has upper/lower/digit/symbol — fails only min length
+      const result = RegisterBody.safeParse({ ...validData, password: "SecretPas1!" });
       expect(result.success).toBe(false);
+      if (!result.success) {
+        const messages = result.error.issues.map((i) => i.message);
+        expect(messages.some((m) => /12/.test(m))).toBe(true);
+      }
     });
 
     it("rejects password longer than 128 chars", () => {
       const result = RegisterBody.safeParse({
         ...validData,
-        password: "x".repeat(129),
+        password: "A1!a" + "x".repeat(125),
       });
       expect(result.success).toBe(false);
+    });
+
+    it("rejects password with no uppercase letter", () => {
+      // 12 chars, lower/digit/symbol, no upper
+      const result = RegisterBody.safeParse({ ...validData, password: "secretpass1!" });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const messages = result.error.issues.map((i) => i.message);
+        expect(messages.some((m) => /upper/i.test(m))).toBe(true);
+      }
+    });
+
+    it("rejects password with no lowercase letter", () => {
+      // 12 chars, upper/digit/symbol, no lower
+      const result = RegisterBody.safeParse({ ...validData, password: "SECRETPASS1!" });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const messages = result.error.issues.map((i) => i.message);
+        expect(messages.some((m) => /lower/i.test(m))).toBe(true);
+      }
+    });
+
+    it("rejects password with no digit", () => {
+      // 12 chars, upper/lower/symbol, no digit
+      const result = RegisterBody.safeParse({ ...validData, password: "SecretPass!!" });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const messages = result.error.issues.map((i) => i.message);
+        expect(messages.some((m) => /digit|number/i.test(m))).toBe(true);
+      }
+    });
+
+    it("rejects password with no symbol", () => {
+      // 12 chars, upper/lower/digit, no symbol
+      const result = RegisterBody.safeParse({ ...validData, password: "SecretPass12" });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const messages = result.error.issues.map((i) => i.message);
+        expect(messages.some((m) => /symbol|special/i.test(m))).toBe(true);
+      }
     });
 
     it("rejects missing fields", () => {

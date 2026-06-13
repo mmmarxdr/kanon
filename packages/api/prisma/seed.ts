@@ -20,7 +20,7 @@ async function main() {
   console.log(`  Workspace: ${workspace.name} (${workspace.id})`);
 
   // ── 2. Create user ──────────────────────────────────────────────────────
-  const passwordHash = await bcrypt.hash("Password1!", BCRYPT_COST);
+  const passwordHash = await bcrypt.hash("Password123!", BCRYPT_COST);
 
   const user = await prisma.user.upsert({
     where: { email: "dev@kanon.io" },
@@ -97,7 +97,7 @@ async function main() {
   console.log("\nSeed complete! Structural data (workspace, user, member, project) is ready.");
   console.log(`\n  Login credentials:`);
   console.log(`    Email:    dev@kanon.io`);
-  console.log(`    Password: Password1!`);
+  console.log(`    Password: Password123!`);
   console.log(`    Workspace slug: kanon-dev`);
 }
 

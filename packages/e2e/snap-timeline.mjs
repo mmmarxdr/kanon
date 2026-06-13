@@ -8,7 +8,7 @@ const page = await ctx.newPage();
 // Login
 await page.goto("http://localhost:5173/login", { waitUntil: "networkidle" });
 await page.fill('input[type="email"]', "dev@kanon.io");
-await page.fill('input[type="password"]', "Password1!");
+await page.fill('input[type="password"]', "Password123!");
 await page.click('button[type="submit"]');
 await page.waitForURL(/.*\/(workspace|inbox|kanon-dev).*/i, { timeout: 15000 });
 

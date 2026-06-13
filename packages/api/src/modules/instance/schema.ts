@@ -2,6 +2,9 @@ import { z } from "zod";
 
 /**
  * Body schema for POST /api/instance/setup/claim (KAN-49).
+ *
+ * Password policy matches RegisterBody: min 12 chars, max 128, must contain
+ * at least one uppercase letter, one lowercase letter, one digit, and one symbol.
  */
 export const ClaimBody = z.object({
   token: z.string().min(20, "Token must be at least 20 characters"),
@@ -10,7 +13,10 @@ export const ClaimBody = z.object({
     .string()
     .min(12, "Password must be at least 12 characters")
     .max(128, "Password must be at most 128 characters")
-    .regex(/[0-9!@#$%^&*]/, "Password must contain a number or symbol"),
+    .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
+    .regex(/[a-z]/, "Password must contain at least one lowercase letter")
+    .regex(/[0-9]/, "Password must contain at least one digit")
+    .regex(/[^A-Za-z0-9]/, "Password must contain at least one symbol"),
 });
 export type ClaimBodyType = z.infer<typeof ClaimBody>;
 

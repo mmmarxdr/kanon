@@ -74,7 +74,7 @@ pnpm dev:start   # boot Postgres, API, web and MCP
 ```
 
 Open [http://localhost:5173](http://localhost:5173) and sign in with
-`dev@kanon.io` / `Password1!` (workspace: `kanon-dev`). This boots a ready-to-use
+`dev@kanon.io` / `Password123!` (workspace: `kanon-dev`). This boots a ready-to-use
 dev workspace.
 
 Wiring your AI tools to a local instance uses the **exact same flow** as a

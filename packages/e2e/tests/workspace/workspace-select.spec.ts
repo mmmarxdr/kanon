@@ -42,7 +42,7 @@ test.describe("Workspace select — empty state (new user) @smoke", () => {
   test.beforeAll(async () => {
     // Create a brand-new user with no workspace via API
     newUserEmail = `e2e-ws-${Date.now()}@example.com`;
-    newUserPassword = "Password1!";
+    newUserPassword = "Password123!";
 
     await apiPost("/api/auth/register", {
       email: newUserEmail,

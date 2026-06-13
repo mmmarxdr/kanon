@@ -42,7 +42,7 @@ describe("Cookie Auth Flow", () => {
         url: "/api/auth/register",
         payload: {
           email: "cookie@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
 
@@ -52,7 +52,7 @@ describe("Cookie Auth Flow", () => {
         url: "/api/auth/login",
         payload: {
           email: "cookie@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
 
@@ -81,7 +81,7 @@ describe("Cookie Auth Flow", () => {
         url: "/api/auth/register",
         payload: {
           email: "me@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
           displayName: "Me User",
         },
       });
@@ -91,7 +91,7 @@ describe("Cookie Auth Flow", () => {
         url: "/api/auth/login",
         payload: {
           email: "me@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
 
@@ -139,7 +139,7 @@ describe("Cookie Auth Flow", () => {
         url: "/api/auth/register",
         payload: {
           email: "refresh@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
 
@@ -148,7 +148,7 @@ describe("Cookie Auth Flow", () => {
         url: "/api/auth/login",
         payload: {
           email: "refresh@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
 
@@ -205,7 +205,7 @@ describe("Cookie Auth Flow", () => {
         url: "/api/auth/register",
         payload: {
           email: "logout@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
 
@@ -214,7 +214,7 @@ describe("Cookie Auth Flow", () => {
         url: "/api/auth/login",
         payload: {
           email: "logout@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
 
@@ -251,7 +251,7 @@ describe("Cookie Auth Flow", () => {
         url: "/api/auth/register",
         payload: {
           email: "bearer@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
 
@@ -260,7 +260,7 @@ describe("Cookie Auth Flow", () => {
         url: "/api/auth/login",
         payload: {
           email: "bearer@kanon.io",
-          password: "Secret123!",
+          password: "SecretPass1!xy",
         },
       });
 
