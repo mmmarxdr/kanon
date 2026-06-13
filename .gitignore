@@ -54,3 +54,8 @@ secrets/
 .atl/.skill-registry.cache.json
 .claude/worktrees/
 .claude/scheduled_tasks.lock
+
+# Browser-automation snapshots & local screenshots (keep out of commits)
+.playwright-mcp/
+.pi/
+/*.png
