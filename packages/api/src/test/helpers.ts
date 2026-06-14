@@ -152,6 +152,11 @@ export async function cleanDatabase(): Promise<void> {
   await prisma.mention.deleteMany();
   await prisma.comment.deleteMany();
   await prisma.adminAuditLog.deleteMany();
+  // PPM timesheet (KAN-100 PR3): delete adjustments before originals (self-FK)
+  await prisma.timeEntry.deleteMany({ where: { adjustsId: { not: null } } });
+  await prisma.timeEntry.deleteMany();
+  // WorkLog depends on Issue (Cascade) — delete before issues for explicit ordering
+  await prisma.workLog.deleteMany();
   await prisma.issue.deleteMany();
   await prisma.roadmapItem.deleteMany();
   await prisma.cycle.deleteMany();
@@ -282,6 +287,37 @@ export async function seedTestProjectMember(
  */
 export async function disconnectTestDb(): Promise<void> {
   await prisma.$disconnect();
+}
+
+/**
+ * Seed a WorkLog row for integration tests.
+ * Returns the WorkLog ID.
+ */
+export async function seedTestWorkLog(
+  memberId: string,
+  issueId: string,
+  overrides?: {
+    durationS?: number;
+    startedAt?: Date;
+    endedAt?: Date;
+    via?: string;
+  },
+): Promise<{ id: string }> {
+  const startedAt = overrides?.startedAt ?? new Date("2026-06-14T09:00:00.000Z");
+  const endedAt = overrides?.endedAt ?? new Date("2026-06-14T11:00:00.000Z");
+  const durationS = overrides?.durationS ?? 7200; // 2 hours
+
+  return prisma.workLog.create({
+    data: {
+      memberId,
+      issueId,
+      startedAt,
+      endedAt,
+      durationS,
+      via: overrides?.via ?? null,
+    },
+    select: { id: true },
+  });
 }
 
 /**
