@@ -102,7 +102,6 @@ function makeIssueRow(overrides?: Record<string, unknown>) {
     priority: "medium",
     state: "backlog",
     labels: [],
-    dueDate: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     groupKey: null,

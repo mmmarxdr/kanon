@@ -57,7 +57,6 @@ const ISSUE_NO_ASSIGNEE = {
   projectId: "proj-uuid-1",
   createdAt: "2026-06-12T00:00:00.000Z",
   updatedAt: "2026-06-12T00:00:00.000Z",
-  dueDate: null,             // extra Prisma field — stripped
   completedAt: null,         // extra Prisma field — stripped
   cycleId: null,             // extra Prisma field — stripped
   roadmapItemId: null,       // extra Prisma field — stripped
@@ -146,6 +145,9 @@ describe("issueSchema — real API shapes", () => {
     expect(result.description).toBeNull();
     // Extra Prisma fields stripped
     expect((result as Record<string, unknown>)["sequenceNum"]).toBeUndefined();
+    // TOMBSTONE: dueDate was hard-removed from Issue in PR2b (KAN-99) and moved to IssueSchedule.
+    // issueSchema never exposed dueDate — this assertion is vacuous today but kept as a contract
+    // marker to document that dueDate must NEVER reappear on the shared issue schema.
     expect((result as Record<string, unknown>)["dueDate"]).toBeUndefined();
   });
 

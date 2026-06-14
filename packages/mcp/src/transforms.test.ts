@@ -31,7 +31,6 @@ function makeIssue(overrides: Record<string, unknown> = {}) {
     priority: "high",
     labels: ["auth"],
     groupKey: "backlog",
-    dueDate: "2026-04-01",
     description: "Full description of the bug",
     parentId: "iss_000",
     projectId: "proj_001",

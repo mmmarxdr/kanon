@@ -119,7 +119,6 @@ export const CreateIssueInput = z.object({
   assigneeId: z.string().optional().describe("Assignee member ID"),
   cycleId: z.string().uuid().optional().describe("Cycle ID to attach on create"),
   parentId: z.string().optional().describe("Parent issue ID"),
-  dueDate: z.string().optional().describe("Due date (ISO 8601)"),
   template: z
     .enum(["bug-report", "feature-request", "task", "spike"])
     .optional()
@@ -136,7 +135,6 @@ export const UpdateIssueInput = z.object({
   labels: z.array(z.string()).optional().describe("New labels"),
   assigneeId: z.string().nullable().optional().describe("New assignee ID"),
   cycleId: z.string().uuid().nullable().optional().describe("Cycle ID to attach (or null to detach)"),
-  dueDate: z.string().nullable().optional().describe("New due date"),
   roadmapItemId: z.string().nullable().optional().describe("Roadmap item ID to link (UUID, null to unlink)"),
   ...WriteFormatField,
 });

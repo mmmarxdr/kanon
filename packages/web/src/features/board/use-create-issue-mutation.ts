@@ -17,7 +17,6 @@ export interface CreateIssueInput {
   labels?: string[];
   assigneeId?: string;
   parentId?: string;
-  dueDate?: string;
 }
 
 /**

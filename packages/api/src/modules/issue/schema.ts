@@ -21,7 +21,6 @@ export const CreateIssueBody = z.object({
   cycleId: z.string().uuid().optional(),
   parentId: z.string().uuid().optional(),
   labels: z.array(z.string()).default([]),
-  dueDate: z.string().datetime().optional(),
   groupKey: z.string().max(200).optional(),
   templateKey: z.string().optional(),
 });
@@ -39,7 +38,6 @@ export const UpdateIssueBody = z.object({
   cycleId: z.string().uuid().nullable().optional(),
   parentId: z.string().uuid().nullable().optional(),
   labels: z.array(z.string()).optional(),
-  dueDate: z.string().datetime().nullable().optional(),
   groupKey: z.string().max(200).nullable().optional(),
   roadmapItemId: z.string().uuid().nullable().optional(),
 });

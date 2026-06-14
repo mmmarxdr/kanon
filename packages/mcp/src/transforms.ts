@@ -28,7 +28,7 @@ export type EntityType =
 // ─── Field Allowlists ───────────────────────────────────────────────────────
 
 export const ISSUE_LIST_FIELDS = [
-  "key", "title", "state", "type", "priority", "labels", "groupKey", "dueDate", "activeWorkers", "cycleId",
+  "key", "title", "state", "type", "priority", "labels", "groupKey", "activeWorkers", "cycleId",
 ] as const;
 
 export const ISSUE_DETAIL_FIELDS = [
