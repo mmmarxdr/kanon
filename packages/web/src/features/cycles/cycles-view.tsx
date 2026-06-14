@@ -1023,6 +1023,7 @@ function groupByState(issues: CycleIssue[]) {
     "in_progress",
     "review",
     "todo",
+    "analysis",
     "backlog",
     "done",
   ];
@@ -1031,6 +1032,7 @@ function groupByState(issues: CycleIssue[]) {
     review: "In review",
     todo: "Todo",
     backlog: "Backlog",
+    analysis: "Analysis",
     done: "Done",
   };
   return order

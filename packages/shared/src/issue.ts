@@ -16,8 +16,10 @@ import { z } from "zod";
 
 // ─── Enums ──────────────────────────────────────────────────────────────────
 
+// KAN-99 PR1: "analysis" added at index 1 (between backlog and todo).
 export const issueStateSchema = z.enum([
   "backlog",
+  "analysis",
   "todo",
   "in_progress",
   "review",

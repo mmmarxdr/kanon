@@ -126,6 +126,7 @@ export function TypeGlyph({ value }: { value: IssueType }) {
 
 export type IssueState =
   | "backlog"
+  | "analysis"
   | "todo"
   | "in_progress"
   | "review"
@@ -135,6 +136,7 @@ export type IssueState =
 
 const STATE_MAP: Record<IssueState, { label: string; dot: string }> = {
   backlog:     { label: "Backlog",     dot: "var(--ink-4)" },
+  analysis:    { label: "Analysis",    dot: "var(--ink-4)" },
   todo:        { label: "Todo",        dot: "var(--ink-3)" },
   in_progress: { label: "In progress", dot: "var(--accent)" },
   review:      { label: "In review",   dot: "var(--ai)" },

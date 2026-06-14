@@ -7,6 +7,7 @@ import {
   requireProjectMember,
   enforceProjectAccess,
   requireInstanceAdmin,
+  ROLE_HIERARCHY,
 } from "./require-role.js";
 import type { FastifyRequest, FastifyReply } from "fastify";
 
@@ -574,6 +575,40 @@ describe("enforceProjectAccess", () => {
     ).rejects.toMatchObject({ statusCode: 403, code: "FORBIDDEN" });
     expect(mockProjectMemberFindUnique).not.toHaveBeenCalled();
   });
+
+  // ── WARNING-5: pm workspace member — ProjectMember row required ──────────
+  // pm is NOT in the bypass set (owner/admin only). It must follow the
+  // member/viewer path: requires an explicit ProjectMember row.
+  it("(pm-no-row) pm workspace member WITHOUT a ProjectMember row is rejected 403", async () => {
+    // Workspace member has role "pm" — not in the owner/admin bypass set
+    mockFindUnique.mockResolvedValue({ id: "wm-pm-1", role: "pm" } as any);
+    // No ProjectMember row for this project
+    mockProjectMemberFindUnique.mockResolvedValue(null);
+
+    await expect(
+      enforceProjectAccess(USER_ID, PROJECT_ID, WORKSPACE_ID),
+    ).rejects.toMatchObject({ statusCode: 403, code: "FORBIDDEN" });
+    // Must have attempted the ProjectMember lookup (no bypass)
+    expect(mockProjectMemberFindUnique).toHaveBeenCalledWith({
+      where: { userId_projectId: { userId: USER_ID, projectId: PROJECT_ID } },
+      select: { id: true, role: true },
+    });
+  });
+
+  it("(pm-with-row) pm workspace member WITH a ProjectMember row of sufficient role is accepted", async () => {
+    // Workspace member has role "pm"
+    mockFindUnique.mockResolvedValue({ id: "wm-pm-2", role: "pm" } as any);
+    // ProjectMember row exists with role "member" (sufficient for member-minimum)
+    mockProjectMemberFindUnique.mockResolvedValue({ id: "pm-row-2", role: "member" } as any);
+
+    const result = await enforceProjectAccess(USER_ID, PROJECT_ID, WORKSPACE_ID, "member");
+
+    // Must have gone through the ProjectMember path (not bypassed)
+    expect(mockProjectMemberFindUnique).toHaveBeenCalledOnce();
+    // result.member.id MUST be the workspace Member.id (R-INV1)
+    expect(result.member.id).toBe("wm-pm-2");
+    expect(result.projectRole).toBe("member");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -692,6 +727,121 @@ describe("requireProjectMember (with enforceProjectAccess gate)", () => {
 
     expect(request.member.id).toBe("wm-v");
     expect(request.projectRole).toBe("viewer");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MemberRole.pm — hierarchy tests (PR1 RED phase, KAN-99)
+// ---------------------------------------------------------------------------
+
+describe("MemberRole.pm hierarchy (PR1)", () => {
+  beforeEach(() => {
+    mockFindUnique.mockReset();
+  });
+
+  // Hierarchy must be: viewer < member < pm < admin < owner
+
+  it("pm passes when minimum role is pm", async () => {
+    mockFindUnique.mockResolvedValue({ id: "m1", role: "pm" } as any);
+    const handler = requireRole("id", "pm");
+    const request = makeRequest({ userId: "u1", email: "u@test.com" }, { id: "ws-1" }) as any;
+    await expect(handler(request, dummyReply, vi.fn())).resolves.toBeUndefined();
+    expect(request.member.role).toBe("pm");
+  });
+
+  it("pm passes when minimum role is member", async () => {
+    mockFindUnique.mockResolvedValue({ id: "m1", role: "pm" } as any);
+    const handler = requireRole("id", "member");
+    const request = makeRequest({ userId: "u1", email: "u@test.com" }, { id: "ws-1" });
+    await expect(handler(request, dummyReply, vi.fn())).resolves.toBeUndefined();
+  });
+
+  it("pm passes when minimum role is viewer", async () => {
+    mockFindUnique.mockResolvedValue({ id: "m1", role: "pm" } as any);
+    const handler = requireRole("id", "viewer");
+    const request = makeRequest({ userId: "u1", email: "u@test.com" }, { id: "ws-1" });
+    await expect(handler(request, dummyReply, vi.fn())).resolves.toBeUndefined();
+  });
+
+  it("pm does NOT meet admin minimum — returns 403", async () => {
+    mockFindUnique.mockResolvedValue({ id: "m1", role: "pm" } as any);
+    const handler = requireRole("id", "admin");
+    const request = makeRequest({ userId: "u1", email: "u@test.com" }, { id: "ws-1" });
+    try {
+      await handler(request, dummyReply, vi.fn());
+      expect.fail("Should have thrown");
+    } catch (err: any) {
+      expect(err.statusCode).toBe(403);
+      expect(err.code).toBe("FORBIDDEN");
+    }
+  });
+
+  it("pm does NOT meet owner minimum — returns 403", async () => {
+    mockFindUnique.mockResolvedValue({ id: "m1", role: "pm" } as any);
+    const handler = requireRole("id", "owner");
+    const request = makeRequest({ userId: "u1", email: "u@test.com" }, { id: "ws-1" });
+    try {
+      await handler(request, dummyReply, vi.fn());
+      expect.fail("Should have thrown");
+    } catch (err: any) {
+      expect(err.statusCode).toBe(403);
+      expect(err.code).toBe("FORBIDDEN");
+    }
+  });
+
+  it("member does NOT meet pm minimum — returns 403", async () => {
+    mockFindUnique.mockResolvedValue({ id: "m1", role: "member" } as any);
+    const handler = requireRole("id", "pm");
+    const request = makeRequest({ userId: "u1", email: "u@test.com" }, { id: "ws-1" });
+    try {
+      await handler(request, dummyReply, vi.fn());
+      expect.fail("Should have thrown");
+    } catch (err: any) {
+      expect(err.statusCode).toBe(403);
+      expect(err.code).toBe("FORBIDDEN");
+    }
+  });
+
+  it("viewer does NOT meet pm minimum — returns 403", async () => {
+    mockFindUnique.mockResolvedValue({ id: "m1", role: "viewer" } as any);
+    const handler = requireRole("id", "pm");
+    const request = makeRequest({ userId: "u1", email: "u@test.com" }, { id: "ws-1" });
+    try {
+      await handler(request, dummyReply, vi.fn());
+      expect.fail("Should have thrown");
+    } catch (err: any) {
+      expect(err.statusCode).toBe(403);
+      expect(err.code).toBe("FORBIDDEN");
+    }
+  });
+
+  it("admin meets pm minimum (admin > pm in hierarchy)", async () => {
+    mockFindUnique.mockResolvedValue({ id: "m1", role: "admin" } as any);
+    const handler = requireRole("id", "pm");
+    const request = makeRequest({ userId: "u1", email: "u@test.com" }, { id: "ws-1" });
+    await expect(handler(request, dummyReply, vi.fn())).resolves.toBeUndefined();
+  });
+
+  it("owner meets pm minimum (owner > pm in hierarchy)", async () => {
+    mockFindUnique.mockResolvedValue({ id: "m1", role: "owner" } as any);
+    const handler = requireRole("id", "pm");
+    const request = makeRequest({ userId: "u1", email: "u@test.com" }, { id: "ws-1" });
+    await expect(handler(request, dummyReply, vi.fn())).resolves.toBeUndefined();
+  });
+
+  it("hierarchy order is viewer < member < pm < admin < owner", () => {
+    // Assert exact positional ordering using the exported ROLE_HIERARCHY array.
+    const idx = (r: string) => (ROLE_HIERARCHY as readonly string[]).indexOf(r);
+    expect(idx("viewer")).toBeLessThan(idx("member"));
+    expect(idx("member")).toBeLessThan(idx("pm"));
+    expect(idx("pm")).toBeLessThan(idx("admin"));
+    expect(idx("admin")).toBeLessThan(idx("owner"));
+    // All five roles must be present (no missing entry)
+    expect(idx("viewer")).toBeGreaterThanOrEqual(0);
+    expect(idx("member")).toBeGreaterThanOrEqual(0);
+    expect(idx("pm")).toBeGreaterThanOrEqual(0);
+    expect(idx("admin")).toBeGreaterThanOrEqual(0);
+    expect(idx("owner")).toBeGreaterThanOrEqual(0);
   });
 });
 

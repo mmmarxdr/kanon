@@ -5,6 +5,7 @@ import type { ChildIssueSummary } from "@/types/issue";
 /** Color map for state badges in child rows. */
 const STATE_COLORS: Record<IssueState, string> = {
   backlog:     "bg-zinc-100 text-zinc-600",
+  analysis:    "bg-zinc-100 text-zinc-600",
   todo:        "bg-sky-100 text-sky-700",
   in_progress: "bg-blue-100 text-blue-700",
   review:      "bg-amber-100 text-amber-700",

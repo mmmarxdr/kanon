@@ -2,9 +2,12 @@ import { create } from "zustand";
 
 /**
  * Issue states matching the API's IssueState enum (kanban pipeline).
+ * KAN-99 PR1: "analysis" added at index 1 (between backlog and todo),
+ * giving a 6th board column rendered automatically by kanban-board.tsx.
  */
 export const ISSUE_STATES = [
   "backlog",
+  "analysis",
   "todo",
   "in_progress",
   "review",
@@ -25,6 +28,7 @@ export const BOARD_COLUMNS: readonly BoardColumn[] = ISSUE_STATES;
 
 export const COLUMN_STATE_MAP: Record<BoardColumn, readonly IssueState[]> = {
   backlog:     ["backlog"],
+  analysis:    ["analysis"],
   todo:        ["todo"],
   in_progress: ["in_progress"],
   review:      ["review"],
@@ -33,6 +37,7 @@ export const COLUMN_STATE_MAP: Record<BoardColumn, readonly IssueState[]> = {
 
 export const COLUMN_DEFAULT_STATE: Record<BoardColumn, IssueState> = {
   backlog:     "backlog",
+  analysis:    "analysis",
   todo:        "todo",
   in_progress: "in_progress",
   review:      "review",
@@ -41,6 +46,7 @@ export const COLUMN_DEFAULT_STATE: Record<BoardColumn, IssueState> = {
 
 export const COLUMN_LABELS: Record<BoardColumn, string> = {
   backlog:     "Backlog",
+  analysis:    "Analysis",
   todo:        "Todo",
   in_progress: "In progress",
   review:      "In review",
@@ -49,6 +55,7 @@ export const COLUMN_LABELS: Record<BoardColumn, string> = {
 
 export const STATE_LABELS: Record<IssueState, string> = {
   backlog:     "Backlog",
+  analysis:    "Analysis",
   todo:        "Todo",
   in_progress: "In progress",
   review:      "In review",

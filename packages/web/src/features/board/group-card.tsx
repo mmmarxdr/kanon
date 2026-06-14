@@ -6,6 +6,7 @@ import { humanizeGroupKey } from "@/lib/humanize-group-key";
 
 const STATE_DOT: Record<IssueState, string> = {
   backlog:     "var(--ink-4)",
+  analysis:    "var(--ink-4)",
   todo:        "var(--ink-3)",
   in_progress: "var(--accent)",
   review:      "var(--ai)",

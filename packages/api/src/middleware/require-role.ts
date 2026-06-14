@@ -7,8 +7,10 @@ import { INSTANCE_SETTINGS_ID } from "../shared/constants.js";
 
 /**
  * Role hierarchy — higher index = more privileged.
+ * Order: viewer < member < pm < admin < owner (KAN-99 PR1).
+ * Exported for use in tests (WARNING-4 fix).
  */
-const ROLE_HIERARCHY: readonly MemberRole[] = ["viewer", "member", "admin", "owner"] as const;
+export const ROLE_HIERARCHY: readonly MemberRole[] = ["viewer", "member", "pm", "admin", "owner"] as const;
 
 /**
  * Check if `actualRole` is at least as privileged as `minimumRole`.

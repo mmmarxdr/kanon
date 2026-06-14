@@ -12,6 +12,7 @@ import {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
+// TODO(PR4): pm assignability UI (role dropdown + display) is deferred to PR4.
 const ROLES_BASE: MemberRole[] = ["viewer", "member", "admin"];
 const ROLES_WITH_OWNER: MemberRole[] = ["viewer", "member", "admin", "owner"];
 

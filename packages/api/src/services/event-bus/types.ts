@@ -34,7 +34,14 @@ export type DomainEventType =
   // KAN-40: notification lifecycle events for live inbox SSE propagation.
   // Payloads are BARE ({}) — no recipient identity or content fields.
   | "notification.created"
-  | "notification.marked_read";
+  | "notification.marked_read"
+  // KAN-99/100 PPM W1: schedule and timesheet lifecycle events.
+  // Emitted post-commit in try/catch (fire-and-forget); emissions wired in PR2/PR3.
+  | "estimate.revised"
+  | "schedule.updated"
+  | "time-entry.approved"
+  | "time-entry.rejected"
+  | "worklog.promoted";
 
 /**
  * A typed domain event emitted after a successful mutation.
