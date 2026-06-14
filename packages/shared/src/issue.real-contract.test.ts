@@ -145,6 +145,9 @@ describe("issueSchema — real API shapes", () => {
     expect(result.description).toBeNull();
     // Extra Prisma fields stripped
     expect((result as Record<string, unknown>)["sequenceNum"]).toBeUndefined();
+    // TOMBSTONE: dueDate was hard-removed from Issue in PR2b (KAN-99) and moved to IssueSchedule.
+    // issueSchema never exposed dueDate — this assertion is vacuous today but kept as a contract
+    // marker to document that dueDate must NEVER reappear on the shared issue schema.
     expect((result as Record<string, unknown>)["dueDate"]).toBeUndefined();
   });
 

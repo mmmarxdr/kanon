@@ -54,23 +54,25 @@ describe("PR2b — dueDate removal (integration)", () => {
       headers: { authorization: `Bearer ${member.token}` },
       payload: {
         title: "Test issue with dueDate",
-        // Old field — should be stripped by schema hard-removal
+        // Old field — stripped silently by Zod's default .strip() behavior.
+        // DELIBERATE: we do NOT use global .strict() on CreateIssueBody because:
+        //   1. Unknown fields are stripped per REST convention (forward-compat for new API consumers).
+        //   2. dueDate was hard-removed from Issue and moved to the /schedule endpoint (PR2b, KAN-99).
+        //   3. Staying with .strip() preserves forward-compat for future additive fields without
+        //      requiring coordinated client + server deploys.
         dueDate: "2026-12-31T00:00:00.000Z",
       },
     });
 
-    // Should succeed (extra unknown fields ignored by Zod .strip() default, or 400 if strict)
-    // Either 200 or 400 is acceptable — what must NOT happen: a 500 from a column-not-found error
-    expect(res.statusCode).not.toBe(500);
+    // DELIBERATE behavior: Zod strips unknown fields → request succeeds with 201.
+    // The old dueDate value is silently discarded; it now belongs to PUT /schedule.
+    // We assert EXACTLY 201 here (not "201 or 400") to lock in the strip-not-reject contract.
+    expect(res.statusCode).toBe(201);
 
-    // 201 = created with full body; 400 = unknown field rejected by strict schema — both acceptable.
-    // What must NOT happen: 500 (column-not-found DB error).
-    if (res.statusCode === 201) {
-      const body = JSON.parse(res.body) as Record<string, unknown>;
-      // dueDate must NOT be present on the response
-      expect(body).not.toHaveProperty("dueDate");
-      expect(body).not.toHaveProperty("due_date");
-    }
+    const body = JSON.parse(res.body) as Record<string, unknown>;
+    // dueDate must NOT be present on the response — it no longer exists on the Issue model.
+    expect(body).not.toHaveProperty("dueDate");
+    expect(body).not.toHaveProperty("due_date");
   });
 
   it("GET /api/projects/:key/issues — issue list response items have no dueDate field", async () => {
