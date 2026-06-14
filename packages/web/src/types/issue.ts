@@ -72,7 +72,8 @@ export interface GroupSummary {
 
 export interface IssueDependencyEdge {
   id: string;
-  type: "blocks";
+  type: "blocks" | "FS" | "SS" | "FF" | "SF";
+  lagDays?: number;
   createdAt: string;
   source?: { id: string; key: string; title: string; state: IssueState };
   target?: { id: string; key: string; title: string; state: IssueState };

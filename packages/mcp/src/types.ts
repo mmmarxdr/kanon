@@ -252,7 +252,7 @@ export const PromoteRoadmapItemInput = z.object({
 
 // ─── Dependency Tool Input Schemas ──────────────────────────────────────────
 
-export const DEPENDENCY_TYPES = ["blocks"] as const;
+export const DEPENDENCY_TYPES = ["blocks", "FS", "SS", "FF", "SF"] as const;
 
 /** kanon_add_dependency */
 export const AddDependencyInput = z.object({
