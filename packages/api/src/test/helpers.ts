@@ -227,7 +227,7 @@ export function buildCookieString(cookies: Record<string, string>): string {
  */
 export async function seedTestMemberWithRole(
   workspaceId: string,
-  role: "owner" | "admin" | "member" | "viewer",
+  role: "owner" | "admin" | "pm" | "member" | "viewer",
   overrides?: { email?: string; username?: string },
 ): Promise<{ id: string; email: string; token: string; userId: string }> {
   const bcrypt = await import("bcryptjs");
@@ -267,7 +267,7 @@ export async function seedTestMemberWithRole(
 export async function seedTestProjectMember(
   userId: string,
   projectId: string,
-  role: "owner" | "admin" | "member" | "viewer",
+  role: "owner" | "admin" | "pm" | "member" | "viewer",
 ): Promise<{ id: string; userId: string; projectId: string; role: string }> {
   const pm = await prisma.projectMember.upsert({
     where: { userId_projectId: { userId, projectId } },

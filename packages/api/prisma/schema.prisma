@@ -283,6 +283,10 @@ model Issue {
   blocks    IssueDependency[] @relation("IssueBlocks")
   blockedBy IssueDependency[] @relation("IssueBlockedBy")
 
+  // PPM schedule (KAN-99 PR2a)
+  schedule          IssueSchedule?
+  estimateRevisions EstimateRevision[]
+
   @@unique([projectId, key])
   @@unique([projectId, sequenceNum])
   @@index([projectId, state])
@@ -295,6 +299,44 @@ model Issue {
 
 enum IssueDependencyType {
   blocks
+}
+
+// ─── PPM Schedule Models (KAN-99 PR2a) ───────────────────────────────────────
+
+/// 1:1 with Issue. Mutable plan plane: startDate, dueDate, progress, estimateHours.
+/// estimateHours is ONLY ever written inside reviseEstimate (Invariant #9).
+/// baseline* columns reserved for cycle-activation snapshot (future slice).
+model IssueSchedule {
+  issueId       String    @id @db.Uuid
+  issue         Issue     @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  startDate     DateTime? @map("start_date")
+  dueDate       DateTime? @map("due_date")
+  progress      Int       @default(0)                             // 0-100
+  estimateHours Decimal?  @map("estimate_hours") @db.Decimal(8, 2)
+  baselineStart DateTime? @map("baseline_start")
+  baselineEnd   DateTime? @map("baseline_end")
+  baselineSetAt DateTime? @map("baseline_set_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@map("issue_schedules")
+}
+
+/// Append-only audit log of estimate changes (Invariant #9).
+/// No updatedAt — createdAt only, matching WorkLog/ActivityLog pattern.
+model EstimateRevision {
+  id       String  @id @default(uuid()) @db.Uuid
+  issueId  String  @map("issue_id") @db.Uuid
+  issue    Issue   @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  hours    Decimal @db.Decimal(8, 2)
+  reason   String?
+  authorId String  @map("author_id") @db.Uuid
+  author   Member  @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  via      String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([issueId, createdAt])
+  @@map("estimate_revisions")
 }
 
 enum McpProposalKind {
@@ -401,6 +443,8 @@ model Member {
   notificationsAsActor        Notification[]     @relation("NotificationActor")
   issueSubscriptions          IssueSubscription[]
   notificationPreference      NotificationPreference?
+  // PPM relations (KAN-99 PR2a)
+  estimateRevisions           EstimateRevision[]
 
   @@unique([userId, workspaceId])
   @@unique([workspaceId, username])

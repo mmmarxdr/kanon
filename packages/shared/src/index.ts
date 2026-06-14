@@ -35,6 +35,12 @@ export type { PasswordRequirement } from "./password.js";
 export { notificationPreferenceItemSchema } from "./notifications.js";
 export type { NotificationPreferenceItem } from "./notifications.js";
 
+export {
+  issueScheduleSchema,
+  estimateRevisionSchema,
+} from "./schedule.js";
+export type { IssueSchedule, EstimateRevision } from "./schedule.js";
+
 export type {
   SddPhase,
   SddArtifact,
