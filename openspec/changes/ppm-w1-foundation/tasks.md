@@ -39,16 +39,16 @@ Chain strategy: feature-branch-chain
 
 Schema/migration first; all consumers depend on Prisma-generated types.
 
-- [ ] 1.1 **[RED]** `packages/api/src/middleware/require-role.test.ts` — add failing tests: `pm` passes `requireEntryRole("id","pm")`, `member` receives 403; hierarchy order `viewer<member<pm<admin<owner`.
-- [ ] 1.2 **[SCHEMA]** `packages/api/prisma/schema.prisma` — add `pm` to `MemberRole` enum (between `admin` and `member`); add `analysis` to `IssueState` enum (index 1, between `backlog` and `todo`). Run `prisma migrate dev --name ppm_w1_pr1_enums` → verify rename→create→USING→drop SQL generated for both enums covering `Member.role` AND `ProjectMember.role` columns; run `prisma generate`.
-- [ ] 1.3 **[GREEN]** `packages/api/src/middleware/require-role.ts` — update `ROLE_HIERARCHY` to `["viewer","member","pm","admin","owner"]`; update `meetsMinimumRole` (no logic change needed — index-based). Tests from 1.1 must pass.
-- [ ] 1.4 `packages/api/src/shared/constants.ts` — insert `"analysis"` at index 1 in `ORDERED_STATES` and `ISSUE_STATES`. Invariant: position-based state machine auto-handles; verify `state-machine.ts` needs no logic change.
-- [ ] 1.5 `packages/shared/src/issue.ts` — add `"analysis"` to `issueStateSchema` z.enum (hardcoded); add `"pm"` to any role enum exported here (check and update).
-- [ ] 1.6 `packages/mcp/src/types.ts` — add `"analysis"` to `ISSUE_STATES`; add `"pm"` to any role const/enum listed.
-- [ ] 1.7 `packages/api/src/services/event-bus/types.ts` — add `"estimate.revised"`, `"time-entry.approved"`, `"time-entry.rejected"`, `"worklog.promoted"` to `DomainEventType` union. (Done in PR1 so PR2a/PR3 can import without circular deps.)
-- [ ] 1.8 `packages/web/src/stores/board-store.ts` — add `"analysis"` to `ISSUE_STATES`, `BOARD_COLUMNS`, `COLUMN_STATE_MAP`, `COLUMN_DEFAULT_STATE`, `COLUMN_LABELS` (label: `"Analysis"`), `STATE_LABELS`; insert between Backlog and Todo (6th column, 1:1 state). `kanban-board.tsx` renders from `BOARD_COLUMNS` — verify auto-appears, no edit needed.
-- [ ] 1.9 **[TEST]** `packages/api/src/modules/issue/__tests__/auto-transition.test.ts` — add cases: transition `backlog→analysis`, `analysis→todo`, `analysis→backlog` (backward); assert direction detection correct. Run `cd packages/api && pnpm test`.
-- [ ] 1.10 **[REFACTOR]** `packages/api/src/modules/issue/schema.ts` — verify `z.enum(ISSUE_STATES)` picks up `analysis` automatically (no manual edit). Run `tsc --noEmit` across affected packages.
+- [x] 1.1 **[RED]** `packages/api/src/middleware/require-role.test.ts` — add failing tests: `pm` passes `requireEntryRole("id","pm")`, `member` receives 403; hierarchy order `viewer<member<pm<admin<owner`.
+- [x] 1.2 **[SCHEMA]** `packages/api/prisma/schema.prisma` — add `pm` to `MemberRole` enum (between `admin` and `member`); add `analysis` to `IssueState` enum (index 1, between `backlog` and `todo`). Run `prisma migrate dev --name ppm_w1_pr1_enums` → verify rename→create→USING→drop SQL generated for both enums covering `Member.role` AND `ProjectMember.role` columns; run `prisma generate`.
+- [x] 1.3 **[GREEN]** `packages/api/src/middleware/require-role.ts` — update `ROLE_HIERARCHY` to `["viewer","member","pm","admin","owner"]`; update `meetsMinimumRole` (no logic change needed — index-based). Tests from 1.1 must pass.
+- [x] 1.4 `packages/api/src/shared/constants.ts` — insert `"analysis"` at index 1 in `ORDERED_STATES` and `ISSUE_STATES`. Invariant: position-based state machine auto-handles; verify `state-machine.ts` needs no logic change.
+- [x] 1.5 `packages/shared/src/issue.ts` — add `"analysis"` to `issueStateSchema` z.enum (hardcoded); add `"pm"` to any role enum exported here (check and update).
+- [x] 1.6 `packages/mcp/src/types.ts` — add `"analysis"` to `ISSUE_STATES`; add `"pm"` to any role const/enum listed.
+- [x] 1.7 `packages/api/src/services/event-bus/types.ts` — add `"estimate.revised"`, `"time-entry.approved"`, `"time-entry.rejected"`, `"worklog.promoted"` to `DomainEventType` union. (Done in PR1 so PR2a/PR3 can import without circular deps.)
+- [x] 1.8 `packages/web/src/stores/board-store.ts` — add `"analysis"` to `ISSUE_STATES`, `BOARD_COLUMNS`, `COLUMN_STATE_MAP`, `COLUMN_DEFAULT_STATE`, `COLUMN_LABELS` (label: `"Analysis"`), `STATE_LABELS`; insert between Backlog and Todo (6th column, 1:1 state). `kanban-board.tsx` renders from `BOARD_COLUMNS` — verify auto-appears, no edit needed.
+- [x] 1.9 **[TEST]** `packages/api/src/modules/issue/__tests__/auto-transition.test.ts` — add cases: transition `backlog→analysis`, `analysis→todo`, `analysis→backlog` (backward); assert direction detection correct. Run `cd packages/api && pnpm test`.
+- [x] 1.10 **[REFACTOR]** `packages/api/src/modules/issue/schema.ts` — verify `z.enum(ISSUE_STATES)` picks up `analysis` automatically (no manual edit). Run `tsc --noEmit` across affected packages.
 
 ---
 
