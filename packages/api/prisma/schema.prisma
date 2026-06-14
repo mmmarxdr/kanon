@@ -310,6 +310,10 @@ model Issue {
 
 enum IssueDependencyType {
   blocks
+  FS
+  SS
+  FF
+  SF
 }
 
 // ─── PPM Schedule Models (KAN-99 PR2a) ───────────────────────────────────────
@@ -367,6 +371,7 @@ enum McpProposalStatus {
 model IssueDependency {
   id        String              @id @default(uuid()) @db.Uuid
   type      IssueDependencyType @default(blocks)
+  lagDays   Int                 @default(0) @map("lag_days")
   createdAt DateTime            @default(now()) @map("created_at")
 
   sourceId String @map("source_id") @db.Uuid
