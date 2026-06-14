@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import { AppError } from "../../shared/types.js";
@@ -41,7 +42,7 @@ export async function reachable(startId: string, endId: string): Promise<boolean
  *   - source === target → 400 SELF_DEPENDENCY
  *   - lagDays < 0 → 422 INVALID_LAG (defense-in-depth; Zod .min(0) is first line)
  *   - target already reaches source → 400 DEPENDENCY_CYCLE
- *   - duplicate (source,target,type) → Prisma P2002 bubbles through
+ *   - duplicate (source,target,type) → Prisma P2002 → 409 DEPENDENCY_EXISTS
  *
  * Emits: dependency.changed { action: "created" } (fire-and-forget, post-commit)
  */
@@ -53,13 +54,13 @@ export async function createDependency(
 ) {
   const source = await prisma.issue.findUnique({
     where: { key: sourceKey },
-    select: { id: true, projectId: true, project: { select: { workspaceId: true } } },
+    select: { id: true, project: { select: { workspaceId: true } } },
   });
   if (!source) throw new AppError(404, "ISSUE_NOT_FOUND", "Issue not found");
 
   const target = await prisma.issue.findUnique({
     where: { key: body.targetKey },
-    select: { id: true, projectId: true },
+    select: { id: true },
   });
   if (!target)
     throw new AppError(
@@ -83,18 +84,26 @@ export async function createDependency(
       "Adding this dependency would create a cycle",
     );
 
-  const dep = await prisma.issueDependency.create({
-    data: {
-      sourceId: source.id,
-      targetId: target.id,
-      type: body.type,
-      lagDays: body.lagDays,
-    },
-    include: {
-      source: { select: { id: true, key: true, title: true, state: true } },
-      target: { select: { id: true, key: true, title: true, state: true } },
-    },
-  });
+  let dep: Awaited<ReturnType<typeof prisma.issueDependency.create>>;
+  try {
+    dep = await prisma.issueDependency.create({
+      data: {
+        sourceId: source.id,
+        targetId: target.id,
+        type: body.type,
+        lagDays: body.lagDays,
+      },
+      include: {
+        source: { select: { id: true, key: true, title: true, state: true } },
+        target: { select: { id: true, key: true, title: true, state: true } },
+      },
+    });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      throw new AppError(409, "DEPENDENCY_EXISTS", "This dependency already exists");
+    }
+    throw err;
+  }
 
   // Fire-and-forget post-commit event
   try {
@@ -164,7 +173,6 @@ export async function deleteDependency(
 ) {
   const dep = await prisma.issueDependency.findUnique({
     where: { id },
-    include: { source: { select: { projectId: true, project: { select: { workspaceId: true } } } } },
   });
   if (!dep)
     throw new AppError(404, "DEPENDENCY_NOT_FOUND", "Dependency not found");

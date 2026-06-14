@@ -266,9 +266,9 @@ describe("issue-dependency routes — security + typed-deps (KAN-22 + KAN-101)",
     expect(dbDep).toMatchObject({ type: "FS", lagDays: 2 });
   });
 
-  // ── T.2: POST with lagDays:-1 → 422 INVALID_LAG ──────────────────────────────
+  // ── T.2: POST with lagDays:-1 → 400 VALIDATION_ERROR (Zod gate) ─────────────
 
-  it("T.2: POST with lagDays:-1 → 422 (Zod rejects at schema level)", async () => {
+  it("T.2: POST with lagDays:-1 → 400 VALIDATION_ERROR (Zod schema gate)", async () => {
     const ws = await seedTestWorkspace();
     const member = await seedTestMemberWithRole(ws.id, "member");
     const project = await seedTestProject(ws.id, "K101T2");
@@ -287,10 +287,47 @@ describe("issue-dependency routes — security + typed-deps (KAN-22 + KAN-101)",
       body: JSON.stringify({ targetKey: issueB.key, type: "blocks", lagDays: -1 }),
     });
 
-    // Zod min(0) rejects at schema validation level → 400 from Fastify+Zod
-    // The DB CHECK and service guard are defense-in-depth
-    expect(res.statusCode).toBeGreaterThanOrEqual(400);
-    expect(res.statusCode).toBeLessThan(500);
+    // Zod .min(0) on lagDays triggers ZodError → error-handler maps to 400 VALIDATION_ERROR
+    // The DB CHECK and service INVALID_LAG guard are defense-in-depth only
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("VALIDATION_ERROR");
+  });
+
+  // ── T.8: duplicate (source,target,type) → 409 DEPENDENCY_EXISTS ──────────────
+
+  it("T.8: duplicate (source,target,type) POST → second returns 409 DEPENDENCY_EXISTS", async () => {
+    const ws = await seedTestWorkspace();
+    const member = await seedTestMemberWithRole(ws.id, "member");
+    const project = await seedTestProject(ws.id, "K101T8");
+    await seedTestProjectMember(member.userId, project.id, "member");
+
+    const issueA = await seedIssue(project.id, "t8-src");
+    const issueB = await seedIssue(project.id, "t8-tgt");
+
+    const body = JSON.stringify({ targetKey: issueB.key, type: "blocks", lagDays: 0 });
+    const headers = {
+      authorization: `Bearer ${member.token}`,
+      "content-type": "application/json",
+    };
+
+    // First create — must succeed
+    const first = await app.inject({
+      method: "POST",
+      url: `/api/issues/${issueA.key}/dependencies`,
+      headers,
+      body,
+    });
+    expect(first.statusCode).toBe(201);
+
+    // Second create — same (source,target,type) → must be 409 DEPENDENCY_EXISTS
+    const second = await app.inject({
+      method: "POST",
+      url: `/api/issues/${issueA.key}/dependencies`,
+      headers,
+      body,
+    });
+    expect(second.statusCode).toBe(409);
+    expect(second.json().code).toBe("DEPENDENCY_EXISTS");
   });
 
   // ── T.3: Cycle dep → 400 DEPENDENCY_CYCLE ────────────────────────────────────

@@ -156,23 +156,28 @@ describe("IssueDependencyService", () => {
     });
   });
 
-  // ── 1.2.4: duplicate same-type edge → P2002 bubbles ──────────────────────
+  // ── 1.2.4: duplicate same-type edge → P2002 mapped to 409 DEPENDENCY_EXISTS ──
 
   describe("createDependency — duplicate same-type edge", () => {
-    it("[RED] Prisma P2002 bubbles through for duplicate same-type dep", async () => {
+    it("[RED→GREEN] Prisma P2002 on duplicate dep → AppError 409 DEPENDENCY_EXISTS", async () => {
+      const { PrismaClientKnownRequestError } = await import("@prisma/client/runtime/library.js");
       mockIssueFind
         .mockResolvedValueOnce(fakeSourceIssue)
         .mockResolvedValueOnce(fakeTargetIssue);
       mockDepFindMany.mockResolvedValue([]);
 
-      const p2002Error = Object.assign(new Error("Unique constraint failed"), {
-        code: "P2002",
-      });
+      const p2002Error = new PrismaClientKnownRequestError(
+        "Unique constraint failed on the constraint: `IssueDependency_sourceId_targetId_type_key`",
+        { code: "P2002", clientVersion: "6.0.0" },
+      );
       mockDepCreate.mockRejectedValue(p2002Error);
 
       await expect(
         createDependency("KAN-1", { targetKey: "KAN-2", type: "blocks", lagDays: 0 }, "member-1"),
-      ).rejects.toMatchObject({ code: "P2002" });
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        code: "DEPENDENCY_EXISTS",
+      });
     });
 
     it("[RED] different-type edge between same pair is allowed", async () => {
