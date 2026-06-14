@@ -128,7 +128,8 @@ function serializeSchedule(s: {
     startDate: s.startDate?.toISOString() ?? null,
     dueDate: s.dueDate?.toISOString() ?? null,
     progress: s.progress,
-    estimateHours: s.estimateHours?.toString() ?? null,
+    // Decimal convention: toFixed(2) preserves "3.50" not "3.5" (Prisma strips trailing zeros)
+    estimateHours: s.estimateHours != null ? Number(s.estimateHours.toString()).toFixed(2) : null,
     baselineStart: s.baselineStart?.toISOString() ?? null,
     baselineEnd: s.baselineEnd?.toISOString() ?? null,
     baselineSetAt: s.baselineSetAt?.toISOString() ?? null,
@@ -153,7 +154,8 @@ function serializeRevision(r: {
   return {
     id: r.id,
     issueId: r.issueId,
-    hours: r.hours.toString(),
+    // Decimal convention: toFixed(2) ensures "3.50" not "3.5" (Prisma strips trailing zeros)
+    hours: Number(r.hours.toString()).toFixed(2),
     reason: r.reason,
     authorId: r.authorId,
     via: r.via,
