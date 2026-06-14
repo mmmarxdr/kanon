@@ -132,3 +132,9 @@ export const notificationPreferenceKeys = {
   detail: (workspaceId: string) =>
     [...notificationPreferenceKeys.details(), workspaceId] as const,
 };
+
+export const scheduleKeys = {
+  all: ["schedules"] as const,
+  details: () => [...scheduleKeys.all, "detail"] as const,
+  detail: (issueKey: string) => [...scheduleKeys.details(), issueKey] as const,
+};

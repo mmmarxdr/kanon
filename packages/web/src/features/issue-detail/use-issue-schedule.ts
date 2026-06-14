@@ -1,42 +1,53 @@
 /**
- * KAN-108 slice 6 — PPM Schedule Slot null adapter
+ * KAN-98 / PR4 — Real TanStack Query hook for IssueSchedule.
  *
- * TODO(KAN-98): wire to real scheduling API once ADR-0005 backend lands.
+ * Wires to GET /api/issues/:key/schedule and parses the response with the
+ * shared issueScheduleSchema. Decimal convention: estimateHours is a string
+ * at the API boundary ("8.00"). Call Number(estimateHours) only at display edges.
  *
- * Interface shaped to ADR-0005 D2 (IssueSchedule model) so the KAN-98 swap is
- * a localized change — only this function body gains a useQuery call.
+ * 404 handling: an issue may have no IssueSchedule row yet (schedule was never
+ * upserted). The hook treats 404 as a valid "no schedule" state and returns
+ * { data: null, isSuccess: true } rather than propagating an error. All other
+ * HTTP errors bubble as query errors for the caller to handle.
  */
 
-/**
- * IssueSchedule mirrors the ADR-0005 D2 `IssueSchedule` Prisma model fields
- * that are relevant for the Gantt / schedule slot UI:
- *
- * - startDate / dueDate   → Plan plane (human-owned commitment, ADR-0005 D1)
- * - progress              → 0–100, human/agent-reported (stored as Int 0-100 in DB)
- * - estimateHours         → hours distinct from Issue.estimate story-points (ADR-0005 D2)
- * - baselineStart / baselineEnd → immutable snapshot set at cycle activation (ADR-0005 D1)
- */
-export interface IssueSchedule {
-  startDate: string | null;
-  dueDate: string | null;
-  /** Progress reported by human/agent, 0–100 (matches the ADR-0005 DB Int).
-   *  UI consumers divide by 100 where a 0..1 fraction is needed (e.g. progress bars). */
-  progress: number | null;
-  /** Estimated effort in hours (ADR-0005 D2). Distinct from Issue.estimate story points. */
-  estimateHours: number | null;
-  baselineStart: string | null;
-  baselineEnd: string | null;
-}
+import { useQuery } from "@tanstack/react-query";
+import { fetchApiValidated, ApiError } from "@/lib/api-client";
+import { scheduleKeys } from "@/lib/query-keys";
+import { issueScheduleSchema } from "@kanon/shared";
+import type { IssueSchedule } from "@kanon/shared";
+
+export type { IssueSchedule };
 
 /**
- * Null adapter — always returns { data: null, isLoading: false }.
+ * Fetches the IssueSchedule for a given issue key.
  *
- * When KAN-98 lands, replace the body with a real useQuery call.
- * The slot component's null→populated branch already exists.
+ * Returns:
+ *  - data: IssueSchedule — when the issue has a schedule row
+ *  - data: null           — when the issue has no schedule yet (404)
+ *  - isLoading: true      — while the request is in-flight
+ *
+ * The query is disabled when issueKey is empty (guards against open panels
+ * with no key loaded yet).
  */
-export function useIssueSchedule(
-  _issueKey: string,
-): { data: IssueSchedule | null; isLoading: boolean } {
-  // TODO(KAN-98): replace with useQuery(scheduleQueryOptions(issueKey))
-  return { data: null, isLoading: false };
+export function useIssueSchedule(issueKey: string) {
+  return useQuery({
+    queryKey: scheduleKeys.detail(issueKey),
+    queryFn: async (): Promise<IssueSchedule | null> => {
+      try {
+        return await fetchApiValidated(
+          `/api/issues/${encodeURIComponent(issueKey)}/schedule`,
+          issueScheduleSchema,
+        );
+      } catch (err) {
+        // 404 = no schedule row yet — valid state, return null
+        if (err instanceof ApiError && err.status === 404) {
+          return null;
+        }
+        throw err;
+      }
+    },
+    enabled: !!issueKey,
+    staleTime: 1000 * 60, // 1 minute — schedule data is low-churn
+  });
 }
