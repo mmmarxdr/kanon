@@ -84,7 +84,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
       try {
         const {
           projectKey: explicitProjectKey, title, description, type, priority, labels, groupKey,
-          assigneeId, cycleId, parentId, dueDate, template, format,
+          assigneeId, cycleId, parentId, template, format,
         } = input as z.infer<typeof CreateIssueInput> & { format?: "ack" | "slim" | "full" };
         const resolved = resolveProjectKey(explicitProjectKey, binding);
         if (!resolved.ok) return errorResult(new Error(resolved.error));
@@ -98,7 +98,6 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
         if (assigneeId !== undefined) body["assigneeId"] = assigneeId;
         if (cycleId !== undefined) body["cycleId"] = cycleId;
         if (parentId !== undefined) body["parentId"] = parentId;
-        if (dueDate !== undefined) body["dueDate"] = dueDate;
         if (template !== undefined) body["templateKey"] = template;
 
         const issue = await client.createIssue(projectKey, body);
@@ -117,7 +116,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
     "kanon_update_issue",
     "Update issue fields. Read first, append don't overwrite. cycleId=null detaches. Returns ack {ok,id,key}; format:'full' for entity.",
     UpdateIssueInput.shape,
-    async ({ issueKey, title, description, priority, labels, assigneeId, cycleId, dueDate, roadmapItemId, format }) => {
+    async ({ issueKey, title, description, priority, labels, assigneeId, cycleId, roadmapItemId, format }) => {
       try {
         const body: Record<string, unknown> = {};
         if (title !== undefined) body["title"] = title;
@@ -126,7 +125,6 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
         if (labels !== undefined) body["labels"] = labels;
         if (assigneeId !== undefined) body["assigneeId"] = assigneeId;
         if (cycleId !== undefined) body["cycleId"] = cycleId;
-        if (dueDate !== undefined) body["dueDate"] = dueDate;
         if (roadmapItemId !== undefined) body["roadmapItemId"] = roadmapItemId;
 
         const issue = await client.updateIssue(issueKey, body);

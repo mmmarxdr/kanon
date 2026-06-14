@@ -57,7 +57,6 @@ const ISSUE_NO_ASSIGNEE = {
   projectId: "proj-uuid-1",
   createdAt: "2026-06-12T00:00:00.000Z",
   updatedAt: "2026-06-12T00:00:00.000Z",
-  dueDate: null,             // extra Prisma field — stripped
   completedAt: null,         // extra Prisma field — stripped
   cycleId: null,             // extra Prisma field — stripped
   roadmapItemId: null,       // extra Prisma field — stripped

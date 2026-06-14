@@ -131,7 +131,6 @@ export async function createIssue(
       priority: resolvedPriority,
       state: body.state,
       labels: resolvedLabels,
-      dueDate: body.dueDate ? new Date(body.dueDate) : undefined,
       groupKey: body.groupKey,
       projectId: project.id,
       assigneeId: body.assigneeId,
@@ -450,10 +449,6 @@ export async function updateIssue(
   if (body.priority !== undefined) data.priority = body.priority;
   if (body.labels !== undefined) data.labels = body.labels;
   if (body.groupKey !== undefined) data.groupKey = body.groupKey;
-  if (body.dueDate !== undefined) {
-    data.dueDate = body.dueDate ? new Date(body.dueDate) : null;
-  }
-
   // Handle relation fields
   if (body.assigneeId !== undefined) {
     if (body.assigneeId === null) {

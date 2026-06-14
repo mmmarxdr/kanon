@@ -46,7 +46,6 @@ function makeFullIssue(overrides: Partial<KanonIssue> = {}): KanonIssue {
     description: "Full description of the bug",
     labels: ["auth"],
     groupKey: "backlog",
-    dueDate: "2026-04-01",
     projectId: "proj_001",
     sequenceNum: 42,
     sortOrder: 5,
