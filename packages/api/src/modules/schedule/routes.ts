@@ -1,8 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { requireIssueRole } from "../../middleware/require-role.js";
-import { AppError } from "../../shared/types.js";
-import { prisma } from "../../config/prisma.js";
 import { IssueKeyParam, UpsertPlanBody, ReviseEstimateBody } from "./schema.js";
 import * as scheduleService from "./service.js";
 
@@ -116,7 +114,7 @@ function serializeSchedule(s: {
   startDate: Date | null;
   dueDate: Date | null;
   progress: number;
-  estimateHours: { toString(): string } | null;
+  estimateHours: { toFixed(dp: number): string } | null;
   baselineStart: Date | null;
   baselineEnd: Date | null;
   baselineSetAt: Date | null;
@@ -128,8 +126,9 @@ function serializeSchedule(s: {
     startDate: s.startDate?.toISOString() ?? null,
     dueDate: s.dueDate?.toISOString() ?? null,
     progress: s.progress,
-    // Decimal convention: toFixed(2) preserves "3.50" not "3.5" (Prisma strips trailing zeros)
-    estimateHours: s.estimateHours != null ? Number(s.estimateHours.toString()).toFixed(2) : null,
+    // Decimal convention: call toFixed(2) directly on Prisma.Decimal (extends decimal.js)
+    // — avoids float round-trip via Number() which defeats the purpose of arbitrary precision.
+    estimateHours: s.estimateHours != null ? s.estimateHours.toFixed(2) : null,
     baselineStart: s.baselineStart?.toISOString() ?? null,
     baselineEnd: s.baselineEnd?.toISOString() ?? null,
     baselineSetAt: s.baselineSetAt?.toISOString() ?? null,
@@ -145,7 +144,7 @@ function serializeSchedule(s: {
 function serializeRevision(r: {
   id: string;
   issueId: string;
-  hours: { toString(): string };
+  hours: { toFixed(dp: number): string };
   reason: string | null;
   authorId: string;
   via: string | null;
@@ -154,8 +153,9 @@ function serializeRevision(r: {
   return {
     id: r.id,
     issueId: r.issueId,
-    // Decimal convention: toFixed(2) ensures "3.50" not "3.5" (Prisma strips trailing zeros)
-    hours: Number(r.hours.toString()).toFixed(2),
+    // Decimal convention: call toFixed(2) directly on Prisma.Decimal (extends decimal.js)
+    // — avoids float round-trip via Number() which defeats the purpose of arbitrary precision.
+    hours: r.hours.toFixed(2),
     reason: r.reason,
     authorId: r.authorId,
     via: r.via,

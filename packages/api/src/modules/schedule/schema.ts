@@ -20,7 +20,10 @@ export type UpsertPlanBody = z.infer<typeof UpsertPlanBody>;
 export const ReviseEstimateBody = z.object({
   hours: z
     .string()
-    .regex(/^\d+(\.\d{1,2})?$/, "hours must be a non-negative decimal with up to 2 decimal places"),
+    .regex(
+      /^\d{1,6}(\.\d{1,2})?$/,
+      "hours must be a non-negative decimal with up to 2 decimal places and max 999999.99",
+    ),
   reason: z.string().max(500).optional(),
 });
 export type ReviseEstimateBody = z.infer<typeof ReviseEstimateBody>;

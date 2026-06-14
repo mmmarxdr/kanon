@@ -47,11 +47,26 @@ export async function upsertPlan(
     throw new AppError(422, "INVALID_PROGRESS", "progress must be between 0 and 100");
   }
 
-  // Guard: startDate ≤ dueDate
-  if (body.startDate && body.dueDate) {
-    const start = new Date(body.startDate);
-    const due = new Date(body.dueDate);
-    if (start > due) {
+  // Guard: startDate ≤ dueDate — partial-update safe.
+  // If only one date is in the body, read the persisted row to get the other
+  // so we can validate the combined range before writing.
+  if (body.startDate !== undefined || body.dueDate !== undefined) {
+    let effectiveStart: Date | null = body.startDate ? new Date(body.startDate) : null;
+    let effectiveDue: Date | null = body.dueDate ? new Date(body.dueDate) : null;
+
+    if (effectiveStart === null || effectiveDue === null) {
+      // At least one side is missing from the body — fetch the persisted row
+      const existing = await prisma.issueSchedule.findUnique({
+        where: { issueId: issue.id },
+        select: { startDate: true, dueDate: true },
+      });
+      if (existing) {
+        if (effectiveStart === null) effectiveStart = existing.startDate;
+        if (effectiveDue === null) effectiveDue = existing.dueDate;
+      }
+    }
+
+    if (effectiveStart !== null && effectiveDue !== null && effectiveStart > effectiveDue) {
       throw new AppError(
         422,
         "INVALID_DATE_RANGE",

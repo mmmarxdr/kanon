@@ -11,7 +11,9 @@ CREATE TABLE "issue_schedules" (
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "issue_schedules_pkey" PRIMARY KEY ("issueId")
+    CONSTRAINT "issue_schedules_pkey" PRIMARY KEY ("issueId"),
+    CONSTRAINT "issue_schedules_progress_check" CHECK ("progress" >= 0 AND "progress" <= 100),
+    CONSTRAINT "issue_schedules_date_range_check" CHECK ("start_date" IS NULL OR "due_date" IS NULL OR "start_date" <= "due_date")
 );
 
 -- CreateTable

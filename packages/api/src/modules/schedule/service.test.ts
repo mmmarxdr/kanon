@@ -154,6 +154,48 @@ describe("ScheduleService", () => {
       expect(mockScheduleUpsert).not.toHaveBeenCalled();
     });
 
+    it("[RED→GREEN] throws 422 INVALID_DATE_RANGE when only dueDate provided conflicts with persisted startDate", async () => {
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      // Simulate persisted schedule with startDate = Aug 1
+      vi.mocked(prisma.issueSchedule.findUnique).mockResolvedValue(
+        makeSchedule({ startDate: new Date("2026-08-01T00:00:00.000Z"), dueDate: null }),
+      );
+
+      await expect(
+        upsertPlan(
+          "KAN-99",
+          { dueDate: "2026-07-01T00:00:00.000Z" },
+          "member-1",
+        ),
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: "INVALID_DATE_RANGE",
+      });
+
+      expect(mockScheduleUpsert).not.toHaveBeenCalled();
+    });
+
+    it("[RED→GREEN] throws 422 INVALID_DATE_RANGE when only startDate provided conflicts with persisted dueDate", async () => {
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      // Simulate persisted schedule with dueDate = Jul 1
+      vi.mocked(prisma.issueSchedule.findUnique).mockResolvedValue(
+        makeSchedule({ startDate: null, dueDate: new Date("2026-07-01T00:00:00.000Z") }),
+      );
+
+      await expect(
+        upsertPlan(
+          "KAN-99",
+          { startDate: "2026-08-01T00:00:00.000Z" },
+          "member-1",
+        ),
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: "INVALID_DATE_RANGE",
+      });
+
+      expect(mockScheduleUpsert).not.toHaveBeenCalled();
+    });
+
     it("allows startDate === dueDate (boundary: equal is valid)", async () => {
       mockIssueFind.mockResolvedValue(fakeIssue);
       mockScheduleUpsert.mockResolvedValue(makeSchedule());
@@ -264,7 +306,7 @@ describe("ScheduleService", () => {
       expect(capturedScheduleUpsert).toMatchObject({
         where: { issueId: "issue-1" },
         create: expect.objectContaining({ issueId: "issue-1" }),
-        update: expect.objectContaining({}),
+        update: expect.objectContaining({ estimateHours: expect.any(Prisma.Decimal) }),
       });
       // estimateHours should be a Prisma.Decimal object
       const updateData = capturedScheduleUpsert.update;

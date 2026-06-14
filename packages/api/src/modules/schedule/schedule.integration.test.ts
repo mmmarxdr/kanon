@@ -241,6 +241,30 @@ describe("Schedule Routes (integration)", () => {
       // 404 from requireIssueRole guard or service
       expect(res.statusCode).toBe(404);
     });
+
+    it("[RED→GREEN] partial-date conflict: PUT dueDate before persisted startDate returns 422 INVALID_DATE_RANGE", async () => {
+      const { member, issue } = await seedIssueContext();
+
+      // First PUT: set startDate = Aug 1
+      await app.inject({
+        method: "PUT",
+        url: `/api/issues/${issue.key}/schedule`,
+        headers: { authorization: `Bearer ${member.token}` },
+        payload: { startDate: "2026-08-01T00:00:00.000Z" },
+      });
+
+      // Second PUT: try to set dueDate = Jul 1 (before the persisted startDate).
+      // The partial-update guard must read the persisted startDate and detect start > due.
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/issues/${issue.key}/schedule`,
+        headers: { authorization: `Bearer ${member.token}` },
+        payload: { dueDate: "2026-07-01T00:00:00.000Z" },
+      });
+
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe("INVALID_DATE_RANGE");
+    });
   });
 
   // ── POST /api/issues/:key/estimate ─────────────────────────────────────
@@ -368,6 +392,21 @@ describe("Schedule Routes (integration)", () => {
       expect(res.statusCode).toBe(201);
       // toFixed(2) serialization: "0" → "0.00"
       expect(res.json().hours).toBe("0.00");
+    });
+
+    it("[RED→GREEN] rejects 7-integer-digit hours with 400 (DECIMAL(8,2) overflow guard)", async () => {
+      const { member, issue } = await seedIssueContext();
+
+      // "1234567" has 7 integer digits — overflows DECIMAL(8,2) max 999999.99
+      // The /^\d{1,6}(\.\d{1,2})?$/ regex must reject this before it reaches the DB.
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/issues/${issue.key}/estimate`,
+        headers: { authorization: `Bearer ${member.token}` },
+        payload: { hours: "1234567" },
+      });
+
+      expect(res.statusCode).toBe(400);
     });
 
     it("GET schedule after estimate shows estimateHours as string", async () => {
