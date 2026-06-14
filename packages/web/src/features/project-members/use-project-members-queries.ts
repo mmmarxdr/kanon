@@ -4,7 +4,7 @@ import { projectMemberKeys } from "@/lib/query-keys";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-export type MemberRole = "owner" | "admin" | "member" | "viewer";
+export type MemberRole = "owner" | "admin" | "pm" | "member" | "viewer";
 
 export interface EffectiveMemberRow {
   userId: string;

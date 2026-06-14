@@ -70,6 +70,88 @@ describe("analysis state — validateTransition (KAN-99 PR1)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// CRITICAL 1 — analysis column index (RED: must fail before auto-transition.ts is fixed)
+// A parent whose children are ALL in "analysis" must compute column index 1
+// (not fall back to 0/backlog) and auto-advance to analysis correctly.
+// ---------------------------------------------------------------------------
+
+describe("checkAndAdvanceParent — analysis column (CRITICAL-1)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("AT-A1: parent in backlog auto-advances to analysis when all children are in analysis (index 1, not 0)", async () => {
+    const prisma = makePrisma();
+
+    // Parent is in 'backlog' (should be column 0); all children in 'analysis' (should be column 1)
+    (prisma.issue.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "parent-a1",
+      state: "backlog",
+      children: [
+        { id: "child-a1", state: "analysis" },
+        { id: "child-a2", state: "analysis" },
+      ],
+    });
+
+    await checkAndAdvanceParent(
+      prisma,
+      { parentId: "parent-a1" },
+      "member-1",
+    );
+
+    // Must have advanced — parent moves from backlog → analysis
+    expect(prisma.issue.update).toHaveBeenCalledOnce();
+    const updateCall = (prisma.issue.update as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
+    expect(updateCall.data.state).toBe("analysis");
+    // completedAt must be null (not done)
+    expect(updateCall.data.completedAt).toBeNull();
+  });
+
+  it("AT-A2: mixed children (analysis + backlog) — parent does NOT advance (min col is backlog=0)", async () => {
+    const prisma = makePrisma();
+
+    // Parent in backlog; children split between analysis (col 1) and backlog (col 0)
+    // min column = 0 (backlog) so no advance
+    (prisma.issue.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "parent-a2",
+      state: "backlog",
+      children: [
+        { id: "child-a3", state: "analysis" },
+        { id: "child-a4", state: "backlog" },
+      ],
+    });
+
+    await checkAndAdvanceParent(
+      prisma,
+      { parentId: "parent-a2" },
+      "member-1",
+    );
+
+    expect(prisma.issue.update).not.toHaveBeenCalled();
+  });
+
+  it("AT-A3: parent in analysis does NOT advance when children are all in analysis (same column, no forward progress)", async () => {
+    const prisma = makePrisma();
+
+    // Parent already in analysis; children also in analysis — no forward progress
+    (prisma.issue.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "parent-a3",
+      state: "analysis",
+      children: [{ id: "child-a5", state: "analysis" }],
+    });
+
+    await checkAndAdvanceParent(
+      prisma,
+      { parentId: "parent-a3" },
+      "member-1",
+    );
+
+    expect(prisma.issue.update).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // KAN-35 — checkAndAdvanceParent must stamp completedAt on parent → done
 // ---------------------------------------------------------------------------
 

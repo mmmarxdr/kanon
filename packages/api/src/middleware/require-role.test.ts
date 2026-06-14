@@ -7,6 +7,7 @@ import {
   requireProjectMember,
   enforceProjectAccess,
   requireInstanceAdmin,
+  ROLE_HIERARCHY,
 } from "./require-role.js";
 import type { FastifyRequest, FastifyReply } from "fastify";
 
@@ -574,6 +575,40 @@ describe("enforceProjectAccess", () => {
     ).rejects.toMatchObject({ statusCode: 403, code: "FORBIDDEN" });
     expect(mockProjectMemberFindUnique).not.toHaveBeenCalled();
   });
+
+  // ── WARNING-5: pm workspace member — ProjectMember row required ──────────
+  // pm is NOT in the bypass set (owner/admin only). It must follow the
+  // member/viewer path: requires an explicit ProjectMember row.
+  it("(pm-no-row) pm workspace member WITHOUT a ProjectMember row is rejected 403", async () => {
+    // Workspace member has role "pm" — not in the owner/admin bypass set
+    mockFindUnique.mockResolvedValue({ id: "wm-pm-1", role: "pm" } as any);
+    // No ProjectMember row for this project
+    mockProjectMemberFindUnique.mockResolvedValue(null);
+
+    await expect(
+      enforceProjectAccess(USER_ID, PROJECT_ID, WORKSPACE_ID),
+    ).rejects.toMatchObject({ statusCode: 403, code: "FORBIDDEN" });
+    // Must have attempted the ProjectMember lookup (no bypass)
+    expect(mockProjectMemberFindUnique).toHaveBeenCalledWith({
+      where: { userId_projectId: { userId: USER_ID, projectId: PROJECT_ID } },
+      select: { id: true, role: true },
+    });
+  });
+
+  it("(pm-with-row) pm workspace member WITH a ProjectMember row of sufficient role is accepted", async () => {
+    // Workspace member has role "pm"
+    mockFindUnique.mockResolvedValue({ id: "wm-pm-2", role: "pm" } as any);
+    // ProjectMember row exists with role "member" (sufficient for member-minimum)
+    mockProjectMemberFindUnique.mockResolvedValue({ id: "pm-row-2", role: "member" } as any);
+
+    const result = await enforceProjectAccess(USER_ID, PROJECT_ID, WORKSPACE_ID, "member");
+
+    // Must have gone through the ProjectMember path (not bypassed)
+    expect(mockProjectMemberFindUnique).toHaveBeenCalledOnce();
+    // result.member.id MUST be the workspace Member.id (R-INV1)
+    expect(result.member.id).toBe("wm-pm-2");
+    expect(result.projectRole).toBe("member");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -795,13 +830,18 @@ describe("MemberRole.pm hierarchy (PR1)", () => {
   });
 
   it("hierarchy order is viewer < member < pm < admin < owner", () => {
-    // Import the require-role module and verify the ROLE_HIERARCHY contains pm
-    // between member and admin. We do this by checking that pm (index 2)
-    // is greater than member (index 1) and less than admin (index 3).
-    // We can validate via enforceProjectAccess tests above.
-    // This test verifies pm's position explicitly via index comparison in the
-    // module's ROLE_HIERARCHY. We test indirectly via round-trip behaviours above.
-    expect(true).toBe(true); // positional: verified via pass/fail tests above
+    // Assert exact positional ordering using the exported ROLE_HIERARCHY array.
+    const idx = (r: string) => (ROLE_HIERARCHY as readonly string[]).indexOf(r);
+    expect(idx("viewer")).toBeLessThan(idx("member"));
+    expect(idx("member")).toBeLessThan(idx("pm"));
+    expect(idx("pm")).toBeLessThan(idx("admin"));
+    expect(idx("admin")).toBeLessThan(idx("owner"));
+    // All five roles must be present (no missing entry)
+    expect(idx("viewer")).toBeGreaterThanOrEqual(0);
+    expect(idx("member")).toBeGreaterThanOrEqual(0);
+    expect(idx("pm")).toBeGreaterThanOrEqual(0);
+    expect(idx("admin")).toBeGreaterThanOrEqual(0);
+    expect(idx("owner")).toBeGreaterThanOrEqual(0);
   });
 });
 
