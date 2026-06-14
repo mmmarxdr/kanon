@@ -33,6 +33,7 @@ export default async function milestoneRoutes(fastify: FastifyInstance): Promise
         request.projectId!,
         request.body,
         request.member!.id,
+        request.member!.workspaceId,
       );
       return reply.status(201).send(milestone);
     },
@@ -72,7 +73,11 @@ export default async function milestoneRoutes(fastify: FastifyInstance): Promise
       },
     },
     async (request, _reply) => {
-      return milestoneService.updateMilestone(request.params.id, request.body);
+      return milestoneService.updateMilestone(
+        request.params.id,
+        request.body,
+        request.member!.workspaceId,
+      );
     },
   );
 
@@ -97,6 +102,7 @@ export default async function milestoneRoutes(fastify: FastifyInstance): Promise
         request.params.id,
         request.body.issueKey,
         request.member!.id,
+        request.projectId,
       );
       return reply.status(201).send(deliverable);
     },
