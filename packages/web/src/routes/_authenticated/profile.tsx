@@ -149,7 +149,7 @@ function ProfilePage() {
             </div>
           </div>
 
-          <form onSubmit={handleProfileSubmit} className="space-y-4">
+          <form onSubmit={(e) => { void handleProfileSubmit(e); }} className="space-y-4">
             <div className="space-y-2">
               <label
                 htmlFor="displayName"
@@ -212,7 +212,7 @@ function ProfilePage() {
             Change Password
           </h2>
 
-          <form onSubmit={handlePasswordSubmit} className="space-y-4">
+          <form onSubmit={(e) => { void handlePasswordSubmit(e); }} className="space-y-4">
             <div className="space-y-2">
               <label
                 htmlFor="currentPassword"

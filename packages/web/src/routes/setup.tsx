@@ -198,7 +198,7 @@ export function SetupForm({ onNavigate }: SetupFormProps) {
       subtitle="Set up the super-admin account. This can only be done once."
     >
       <form
-        onSubmit={handleSubmit}
+        onSubmit={(e) => { void handleSubmit(e); }}
         data-testid="setup-form"
         style={{ display: "flex", flexDirection: "column", gap: 22 }}
       >

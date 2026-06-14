@@ -172,6 +172,8 @@ export function CloseCycleDialog({ cycle, cycles, onClose }: CloseCycleDialogPro
     attachMutation,
     closeMutation,
     onClose,
+    projectKey,
+    queryClient,
   ]);
 
   return (
