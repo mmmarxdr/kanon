@@ -1031,6 +1031,7 @@ function groupByState(issues: CycleIssue[]) {
     review: "In review",
     todo: "Todo",
     backlog: "Backlog",
+    analysis: "Analysis",
     done: "Done",
   };
   return order

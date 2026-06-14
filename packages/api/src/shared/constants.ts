@@ -10,9 +10,11 @@ export const INSTANCE_SETTINGS_ID = "00000000-0000-0000-0000-000000000001";
 /**
  * Ordered issue states for the Kanon workflow.
  * Index determines forward/backward direction for regression detection.
+ * KAN-99 PR1: "analysis" inserted at index 1 (between backlog and todo).
  */
 export const ORDERED_STATES: readonly IssueState[] = [
   "backlog",
+  "analysis",
   "todo",
   "in_progress",
   "review",
@@ -51,12 +53,14 @@ export const ISSUE_TYPES = ["feature", "bug", "task", "spike"] as const;
 export const ISSUE_PRIORITIES = ["critical", "high", "medium", "low"] as const;
 export const ISSUE_STATES = [
   "backlog",
+  "analysis",
   "todo",
   "in_progress",
   "review",
   "done",
 ] as const;
-export const MEMBER_ROLES = ["owner", "admin", "member", "viewer"] as const;
+// KAN-99 PR1: pm inserted between admin and member.
+export const MEMBER_ROLES = ["owner", "admin", "pm", "member", "viewer"] as const;
 export const ACTIVITY_ACTIONS = [
   "created",
   "state_changed",
