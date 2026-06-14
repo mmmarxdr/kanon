@@ -98,9 +98,10 @@ describe("TimesheetService", () => {
     it("creates a draft TimeEntry from a WorkLog (happy path)", async () => {
       const wl = makeWorkLog();
       mockWorkLogFind.mockResolvedValue(wl);
-      mockEntryCreate.mockResolvedValue(makeEntry({ sourceWorkLogId: "wl-1" }));
+      const createdEntry = makeEntry({ sourceWorkLogId: "wl-1" });
+      mockEntryCreate.mockResolvedValue(createdEntry);
 
-      await promoteWorkLog("wl-1", {}, MEMBER_ID, "web");
+      const result = await promoteWorkLog("wl-1", {}, MEMBER_ID, "web");
 
       expect(mockEntryCreate).toHaveBeenCalledOnce();
       // hours = durationS / 3600 = 2.00
@@ -110,6 +111,8 @@ describe("TimesheetService", () => {
       expect(data.memberId).toBe(MEMBER_ID);
       expect(data.issueId).toBe(ISSUE_ID);
       expect(data.status).toBe("draft");
+      // Returns { entry, created: true } on the new-create path
+      expect(result).toEqual({ entry: createdEntry, created: true });
     });
 
     it("[GUARD] throws 404 WORKLOG_NOT_FOUND when worklog does not exist", async () => {
@@ -148,7 +151,8 @@ describe("TimesheetService", () => {
 
       const result = await promoteWorkLog("wl-1", {}, MEMBER_ID);
 
-      expect(result).toEqual(existingEntry);
+      // created=false signals the idempotent path (existing entry, not a new one)
+      expect(result).toEqual({ entry: existingEntry, created: false });
       // No throw — idempotent
       expect(mockEntryFind).toHaveBeenCalledWith(
         expect.objectContaining({ where: { sourceWorkLogId: "wl-1" } }),
@@ -331,21 +335,40 @@ describe("TimesheetService", () => {
 
   // ── approveEntry ───────────────────────────────────────────────────────
 
+  /**
+   * Helper: build a tx mock for the atomic updateMany + findUniqueOrThrow pattern
+   * used by approveEntry and rejectEntry after the TOCTOU fix.
+   *
+   * - updateMany resolves with { count: 1 } (success) by default.
+   * - findUniqueOrThrow resolves with the given entry.
+   * - Pass count=0 + existingEntry to simulate the count=0 branch.
+   */
+  function makeAtomicApproveTx(
+    approvedEntry: any,
+    opts: { count?: number; existingForReread?: any } = {},
+  ) {
+    const count = opts.count ?? 1;
+    const tx = {
+      timeEntry: {
+        updateMany: vi.fn().mockResolvedValue({ count }),
+        findUnique: vi.fn().mockResolvedValue(opts.existingForReread ?? null),
+        findUniqueOrThrow: vi.fn().mockResolvedValue(approvedEntry),
+      },
+    };
+    return tx;
+  }
+
   describe("approveEntry", () => {
     it("approves a submitted entry via $transaction (happy path)", async () => {
-      mockEntryFind.mockResolvedValue(makeEntry({ status: "submitted" }));
-
       const approvedEntry = makeEntry({
         status: "approved",
         approvedById: "pm-member",
         approvedAt: new Date(),
+        member: { workspaceId: WORKSPACE_ID },
       });
 
       mockTransaction.mockImplementation(async (cb: any) => {
-        const tx = {
-          timeEntry: { update: vi.fn().mockResolvedValue(approvedEntry) },
-        };
-        return cb(tx);
+        return cb(makeAtomicApproveTx(approvedEntry));
       });
 
       const result = await approveEntry("te-1", "pm-member", "web");
@@ -355,29 +378,40 @@ describe("TimesheetService", () => {
     });
 
     it("[GUARD] throws 404 TIME_ENTRY_NOT_FOUND when entry does not exist", async () => {
-      mockEntryFind.mockResolvedValue(null);
+      // count=0 + existingForReread=null → 404
+      mockTransaction.mockImplementation(async (cb: any) => {
+        return cb(makeAtomicApproveTx(null, { count: 0, existingForReread: null }));
+      });
 
       await expect(approveEntry("te-missing", "pm-member")).rejects.toMatchObject({
         statusCode: 404,
         code: "TIME_ENTRY_NOT_FOUND",
       });
-
-      expect(mockTransaction).not.toHaveBeenCalled();
     });
 
     it("[GUARD] throws 409 INVALID_STATUS when entry is not submitted", async () => {
-      mockEntryFind.mockResolvedValue(makeEntry({ status: "draft" }));
+      // count=0 + existingForReread has status=draft → 409
+      mockTransaction.mockImplementation(async (cb: any) => {
+        return cb(makeAtomicApproveTx(null, {
+          count: 0,
+          existingForReread: makeEntry({ status: "draft" }),
+        }));
+      });
 
       await expect(approveEntry("te-1", "pm-member")).rejects.toMatchObject({
         statusCode: 409,
         code: "INVALID_STATUS",
       });
-
-      expect(mockTransaction).not.toHaveBeenCalled();
     });
 
     it("[GUARD] throws 409 INVALID_STATUS when entry is already approved", async () => {
-      mockEntryFind.mockResolvedValue(makeEntry({ status: "approved" }));
+      // count=0 + existingForReread has status=approved → 409
+      mockTransaction.mockImplementation(async (cb: any) => {
+        return cb(makeAtomicApproveTx(null, {
+          count: 0,
+          existingForReread: makeEntry({ status: "approved" }),
+        }));
+      });
 
       await expect(approveEntry("te-1", "pm-member")).rejects.toMatchObject({
         statusCode: 409,
@@ -385,14 +419,11 @@ describe("TimesheetService", () => {
       });
     });
 
-    it("calls $transaction callback form (atomic path)", async () => {
-      mockEntryFind.mockResolvedValue(makeEntry({ status: "submitted" }));
+    it("calls $transaction callback form (atomic updateMany path)", async () => {
+      const approvedEntry = makeEntry({ status: "approved", member: { workspaceId: WORKSPACE_ID } });
 
       mockTransaction.mockImplementation(async (cb: any) => {
-        const tx = {
-          timeEntry: { update: vi.fn().mockResolvedValue(makeEntry({ status: "approved" })) },
-        };
-        return cb(tx);
+        return cb(makeAtomicApproveTx(approvedEntry));
       });
 
       await approveEntry("te-1", "pm-member");
@@ -400,17 +431,18 @@ describe("TimesheetService", () => {
       expect(mockTransaction).toHaveBeenCalledOnce();
     });
 
-    it("sets approvedById and approvedAt inside the transaction", async () => {
-      mockEntryFind.mockResolvedValue(makeEntry({ status: "submitted" }));
+    it("sets approvedById and approvedAt inside the transaction via updateMany", async () => {
+      const approvedEntry = makeEntry({ status: "approved", member: { workspaceId: WORKSPACE_ID } });
 
-      let capturedUpdate: any;
+      let capturedUpdateMany: any;
       mockTransaction.mockImplementation(async (cb: any) => {
         const tx = {
           timeEntry: {
-            update: vi.fn().mockImplementation((args: any) => {
-              capturedUpdate = args;
-              return Promise.resolve(makeEntry({ status: "approved" }));
+            updateMany: vi.fn().mockImplementation((args: any) => {
+              capturedUpdateMany = args;
+              return Promise.resolve({ count: 1 });
             }),
+            findUniqueOrThrow: vi.fn().mockResolvedValue(approvedEntry),
           },
         };
         return cb(tx);
@@ -418,24 +450,26 @@ describe("TimesheetService", () => {
 
       await approveEntry("te-1", "pm-member", "web");
 
-      expect(capturedUpdate.data).toMatchObject({
+      expect(capturedUpdateMany.where).toMatchObject({ id: "te-1", status: "submitted" });
+      expect(capturedUpdateMany.data).toMatchObject({
         status: "approved",
         approvedById: "pm-member",
       });
-      expect(capturedUpdate.data.approvedAt).toBeInstanceOf(Date);
+      expect(capturedUpdateMany.data.approvedAt).toBeInstanceOf(Date);
     });
 
     it("rate snapshots remain null (TODO(KAN-rate) hook present)", async () => {
-      mockEntryFind.mockResolvedValue(makeEntry({ status: "submitted" }));
+      const approvedEntry = makeEntry({ status: "approved", member: { workspaceId: WORKSPACE_ID } });
 
-      let capturedUpdate: any;
+      let capturedUpdateMany: any;
       mockTransaction.mockImplementation(async (cb: any) => {
         const tx = {
           timeEntry: {
-            update: vi.fn().mockImplementation((args: any) => {
-              capturedUpdate = args;
-              return Promise.resolve(makeEntry({ status: "approved" }));
+            updateMany: vi.fn().mockImplementation((args: any) => {
+              capturedUpdateMany = args;
+              return Promise.resolve({ count: 1 });
             }),
+            findUniqueOrThrow: vi.fn().mockResolvedValue(approvedEntry),
           },
         };
         return cb(tx);
@@ -444,18 +478,20 @@ describe("TimesheetService", () => {
       await approveEntry("te-1", "pm-member");
 
       // Rate snapshots NOT set in W1 — the TODO(KAN-rate) hook is a no-op
-      expect(capturedUpdate.data.costRateSnapshot).toBeUndefined();
-      expect(capturedUpdate.data.billRateSnapshot).toBeUndefined();
+      expect(capturedUpdateMany.data.costRateSnapshot).toBeUndefined();
+      expect(capturedUpdateMany.data.billRateSnapshot).toBeUndefined();
     });
 
     it("emits time-entry.approved after commit (fire-and-forget)", async () => {
-      mockEntryFind.mockResolvedValue(makeEntry({ status: "submitted" }));
+      const approvedEntry = makeEntry({
+        status: "approved",
+        approvedById: "pm-member",
+        issueId: ISSUE_ID,
+        member: { workspaceId: WORKSPACE_ID },
+      });
 
       mockTransaction.mockImplementation(async (cb: any) => {
-        const tx = {
-          timeEntry: { update: vi.fn().mockResolvedValue(makeEntry({ status: "approved" })) },
-        };
-        return cb(tx);
+        return cb(makeAtomicApproveTx(approvedEntry));
       });
 
       await approveEntry("te-1", "pm-member", "claude-code");
@@ -471,13 +507,10 @@ describe("TimesheetService", () => {
     });
 
     it("does not throw when event emission fails (fire-and-forget guard)", async () => {
-      mockEntryFind.mockResolvedValue(makeEntry({ status: "submitted" }));
+      const approvedEntry = makeEntry({ status: "approved", member: { workspaceId: WORKSPACE_ID } });
 
       mockTransaction.mockImplementation(async (cb: any) => {
-        const tx = {
-          timeEntry: { update: vi.fn().mockResolvedValue(makeEntry({ status: "approved" })) },
-        };
-        return cb(tx);
+        return cb(makeAtomicApproveTx(approvedEntry));
       });
 
       mockEmit.mockImplementationOnce(() => {
@@ -490,22 +523,46 @@ describe("TimesheetService", () => {
 
   // ── rejectEntry ────────────────────────────────────────────────────────
 
+  /**
+   * Helper: build a tx mock for the atomic updateMany + findUniqueOrThrow pattern
+   * used by rejectEntry after the TOCTOU consistency fix.
+   */
+  function makeAtomicRejectTx(
+    rejectedEntry: any,
+    opts: { count?: number; existingForReread?: any } = {},
+  ) {
+    const count = opts.count ?? 1;
+    return {
+      timeEntry: {
+        updateMany: vi.fn().mockResolvedValue({ count }),
+        findUnique: vi.fn().mockResolvedValue(opts.existingForReread ?? null),
+        findUniqueOrThrow: vi.fn().mockResolvedValue(rejectedEntry),
+      },
+    };
+  }
+
   describe("rejectEntry", () => {
-    it("rejects a submitted entry (happy path)", async () => {
-      mockEntryFind.mockResolvedValue(makeEntry({ status: "submitted" }));
-      mockEntryUpdate.mockResolvedValue(makeEntry({ status: "rejected" }));
+    it("rejects a submitted entry via $transaction (happy path)", async () => {
+      const rejectedEntry = makeEntry({
+        status: "rejected",
+        member: { workspaceId: WORKSPACE_ID },
+      });
 
-      await rejectEntry("te-1", "pm-member", {}, "web");
+      mockTransaction.mockImplementation(async (cb: any) => {
+        return cb(makeAtomicRejectTx(rejectedEntry));
+      });
 
-      expect(mockEntryUpdate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: "rejected" }),
-        }),
-      );
+      const result = await rejectEntry("te-1", "pm-member", {}, "web");
+
+      expect(mockTransaction).toHaveBeenCalledOnce();
+      expect(result.status).toBe("rejected");
     });
 
     it("[GUARD] throws 404 TIME_ENTRY_NOT_FOUND when entry does not exist", async () => {
-      mockEntryFind.mockResolvedValue(null);
+      // count=0 + existingForReread=null → 404
+      mockTransaction.mockImplementation(async (cb: any) => {
+        return cb(makeAtomicRejectTx(null, { count: 0, existingForReread: null }));
+      });
 
       await expect(rejectEntry("te-missing", "pm-member", {})).rejects.toMatchObject({
         statusCode: 404,
@@ -514,18 +571,28 @@ describe("TimesheetService", () => {
     });
 
     it("[GUARD] throws 409 INVALID_STATUS when entry is not submitted", async () => {
-      mockEntryFind.mockResolvedValue(makeEntry({ status: "draft" }));
+      // count=0 + existingForReread has status=draft → 409
+      mockTransaction.mockImplementation(async (cb: any) => {
+        return cb(makeAtomicRejectTx(null, {
+          count: 0,
+          existingForReread: makeEntry({ status: "draft" }),
+        }));
+      });
 
       await expect(rejectEntry("te-1", "pm-member", {})).rejects.toMatchObject({
         statusCode: 409,
         code: "INVALID_STATUS",
       });
-
-      expect(mockEntryUpdate).not.toHaveBeenCalled();
     });
 
     it("[GUARD] throws 409 INVALID_STATUS when entry is already rejected", async () => {
-      mockEntryFind.mockResolvedValue(makeEntry({ status: "rejected" }));
+      // count=0 + existingForReread has status=rejected → 409
+      mockTransaction.mockImplementation(async (cb: any) => {
+        return cb(makeAtomicRejectTx(null, {
+          count: 0,
+          existingForReread: makeEntry({ status: "rejected" }),
+        }));
+      });
 
       await expect(rejectEntry("te-1", "pm-member", {})).rejects.toMatchObject({
         statusCode: 409,
@@ -533,9 +600,16 @@ describe("TimesheetService", () => {
       });
     });
 
-    it("emits time-entry.rejected after update (fire-and-forget)", async () => {
-      mockEntryFind.mockResolvedValue(makeEntry({ status: "submitted" }));
-      mockEntryUpdate.mockResolvedValue(makeEntry({ status: "rejected" }));
+    it("emits time-entry.rejected after commit (fire-and-forget)", async () => {
+      const rejectedEntry = makeEntry({
+        status: "rejected",
+        issueId: ISSUE_ID,
+        member: { workspaceId: WORKSPACE_ID },
+      });
+
+      mockTransaction.mockImplementation(async (cb: any) => {
+        return cb(makeAtomicRejectTx(rejectedEntry));
+      });
 
       await rejectEntry("te-1", "pm-member", {}, "cursor");
 
@@ -549,14 +623,27 @@ describe("TimesheetService", () => {
       );
     });
 
-    it("threads via into the rejection update", async () => {
-      mockEntryFind.mockResolvedValue(makeEntry({ status: "submitted" }));
-      mockEntryUpdate.mockResolvedValue(makeEntry({ status: "rejected" }));
+    it("threads via into the rejection updateMany", async () => {
+      const rejectedEntry = makeEntry({ status: "rejected", member: { workspaceId: WORKSPACE_ID } });
+
+      let capturedUpdateMany: any;
+      mockTransaction.mockImplementation(async (cb: any) => {
+        const tx = {
+          timeEntry: {
+            updateMany: vi.fn().mockImplementation((args: any) => {
+              capturedUpdateMany = args;
+              return Promise.resolve({ count: 1 });
+            }),
+            findUniqueOrThrow: vi.fn().mockResolvedValue(rejectedEntry),
+          },
+        };
+        return cb(tx);
+      });
 
       await rejectEntry("te-1", "pm-member", {}, "claude-code");
 
-      const updateArg = mockEntryUpdate.mock.calls[0]![0] as any;
-      expect(updateArg.data.via).toBe("claude-code");
+      expect(capturedUpdateMany.data.via).toBe("claude-code");
+      expect(capturedUpdateMany.where).toMatchObject({ id: "te-1", status: "submitted" });
     });
   });
 
@@ -694,6 +781,64 @@ describe("TimesheetService", () => {
 
       const createArg = (mockEntryCreate.mock.calls[0]![0] as any).data;
       expect(createArg.issueId).toBe("other-issue");
+    });
+
+    it("[GUARD] throws 403 FORBIDDEN when caller is NOT the owner of the original entry", async () => {
+      // CRITICAL: owner-only policy — any project member must NOT be able to
+      // create an adjustment against another member's approved entry (payroll integrity).
+      const original = makeEntry({ status: "approved", id: "te-original", memberId: "other-member" });
+      mockEntryFind.mockResolvedValue(original);
+
+      await expect(
+        createAdjustment(
+          "te-original",
+          { hours: "-1.00", workedOn: "2026-06-14T00:00:00.000Z" },
+          MEMBER_ID, // MEMBER_ID !== "other-member"
+        ),
+      ).rejects.toMatchObject({
+        statusCode: 403,
+        code: "FORBIDDEN",
+      });
+
+      // The create must NOT have been called — ownership check fires before DB write
+      expect(mockEntryCreate).not.toHaveBeenCalled();
+    });
+
+    it("[GUARD] owner CAN create an adjustment against their own approved entry", async () => {
+      // Verify the positive path: when caller IS the owner, no ownership error
+      const original = makeEntry({ status: "approved", id: "te-original", memberId: MEMBER_ID });
+      mockEntryFind.mockResolvedValue(original);
+      mockEntryCreate.mockResolvedValue(makeEntry({ adjustsId: "te-original" }));
+
+      await expect(
+        createAdjustment(
+          "te-original",
+          { hours: "-1.00", workedOn: "2026-06-14T00:00:00.000Z" },
+          MEMBER_ID, // caller is the owner
+        ),
+      ).resolves.toBeDefined();
+
+      expect(mockEntryCreate).toHaveBeenCalledOnce();
+    });
+  });
+
+  // ── approveEntry (additional TOCTOU guard tests) ───────────────────────
+
+  describe("approveEntry — additional review-fix tests", () => {
+    it("[GUARD] throws 409 INVALID_STATUS when entry is already approved (non-submitted)", async () => {
+      // Regression for TOCTOU: if two PMs race, second call sees count=0 with
+      // status=approved → must 409 (not quietly succeed or throw 404).
+      mockTransaction.mockImplementation(async (cb: any) => {
+        return cb(makeAtomicApproveTx(null, {
+          count: 0,
+          existingForReread: makeEntry({ status: "approved" }),
+        }));
+      });
+
+      await expect(approveEntry("te-1", "pm-member")).rejects.toMatchObject({
+        statusCode: 409,
+        code: "INVALID_STATUS",
+      });
     });
   });
 });

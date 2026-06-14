@@ -561,9 +561,16 @@ export function requireEntryRole(entryIdParam: string, ...roles: MemberRole[]): 
     // member's workspace (issue-less entries are workspace-gated only).
     const projectContext = entry.issue?.project ?? null;
     if (!projectContext) {
-      // Issue-less time entry: require workspace membership only.
-      // We do not have a project to gate against, so we use workspace membership check.
-      // minRole is still enforced at workspace level (e.g. "pm" requires workspace pm).
+      // Issue-less time entry: fall back to workspace membership check.
+      //
+      // When the time entry has no issueId there is no project to gate against,
+      // so the KAN-19 allowedProjectIds project-scoping check (inside
+      // enforceProjectAccess) cannot apply — there is no projectId to compare.
+      // This is a deliberate, accepted limitation for issue-less entries:
+      // authz falls back to workspace membership + role check only.
+      // If stricter per-project scoping is ever needed for issue-less entries,
+      // a follow-up ticket should add an explicit projectId field to TimeEntry
+      // so the project can be derived without going through an issue. (KAN-19)
       const minimumRole = roles.length > 0
         ? roles.reduce((least, r) =>
             ROLE_HIERARCHY.indexOf(r) < ROLE_HIERARCHY.indexOf(least) ? r : least,

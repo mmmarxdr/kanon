@@ -145,11 +145,11 @@ describe("Timesheet Routes (integration)", () => {
       expect(body.hours).toBe("2.00");
     });
 
-    it("promote idempotency: same workLogId twice returns the same entry id", async () => {
+    it("promote idempotency: first call → 201, second call → 200 with same entry id", async () => {
       const { member, issue } = await seedContext();
       const wl = await seedTestWorkLog(member.id, issue.id);
 
-      // First promote
+      // First promote — creates a new entry → 201
       const res1 = await app.inject({
         method: "POST",
         url: `/api/worklogs/${wl.id}/promote`,
@@ -159,14 +159,15 @@ describe("Timesheet Routes (integration)", () => {
       expect(res1.statusCode).toBe(201);
       const id1 = res1.json().id;
 
-      // Second promote — unique index fires; service catches P2002 and returns existing
+      // Second promote — unique index fires; service catches P2002 and returns existing.
+      // Route returns 200 (not 201) on the idempotent path.
       const res2 = await app.inject({
         method: "POST",
         url: `/api/worklogs/${wl.id}/promote`,
         headers: { authorization: `Bearer ${member.token}` },
         payload: {},
       });
-      expect(res2.statusCode).toBe(201);
+      expect(res2.statusCode).toBe(200);
       const id2 = res2.json().id;
 
       expect(id1).toBe(id2);
@@ -345,6 +346,99 @@ describe("Timesheet Routes (integration)", () => {
       expect(res.statusCode).toBe(403);
     });
 
+    it("[GUARD] approving an already-approved entry returns 409 INVALID_STATUS", async () => {
+      const { member, pm, issue } = await seedDualContext();
+      const wl = await seedTestWorkLog(member.id, issue.id);
+
+      const promoteRes = await app.inject({
+        method: "POST",
+        url: `/api/worklogs/${wl.id}/promote`,
+        headers: { authorization: `Bearer ${member.token}` },
+        payload: {},
+      });
+      const entryId = promoteRes.json().id;
+
+      // Submit and approve once
+      await app.inject({
+        method: "POST",
+        url: `/api/time-entries/${entryId}/submit`,
+        headers: { authorization: `Bearer ${member.token}` },
+        payload: {},
+      });
+      await app.inject({
+        method: "POST",
+        url: `/api/time-entries/${entryId}/approve`,
+        headers: { authorization: `Bearer ${pm.token}` },
+        payload: {},
+      });
+
+      // Second approve — entry is already approved → 409
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/time-entries/${entryId}/approve`,
+        headers: { authorization: `Bearer ${pm.token}` },
+        payload: {},
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json().code).toBe("INVALID_STATUS");
+    });
+
+    it("[SUGGESTION] viewer cannot approve and cannot reject → 403 (PM-gate contract)", async () => {
+      // Seeds workspace + member (submitter) + viewer (gated) + pm (already tested above).
+      const ws = await seedTestWorkspace();
+      await seedTestMemberWithRole(ws.id, "owner");
+      const member = await seedTestMemberWithRole(ws.id, "member");
+      const viewer = await seedTestMemberWithRole(ws.id, "viewer");
+      const project = await seedTestProject(ws.id);
+      await seedTestProjectMember(member.userId, project.id, "member");
+      await seedTestProjectMember(viewer.userId, project.id, "viewer");
+      const issue = await prisma.issue.create({
+        data: {
+          key: `${project.key}-1`,
+          title: "Viewer gate test",
+          type: "task",
+          state: "backlog",
+          projectId: project.id,
+          sequenceNum: 1,
+        },
+      });
+
+      // Promote + submit so the entry is in "submitted" state
+      const wl = await seedTestWorkLog(member.id, issue.id);
+      const promoteRes = await app.inject({
+        method: "POST",
+        url: `/api/worklogs/${wl.id}/promote`,
+        headers: { authorization: `Bearer ${member.token}` },
+        payload: {},
+      });
+      const entryId = promoteRes.json().id;
+      await app.inject({
+        method: "POST",
+        url: `/api/time-entries/${entryId}/submit`,
+        headers: { authorization: `Bearer ${member.token}` },
+        payload: {},
+      });
+
+      // Viewer tries to approve → 403 (requireEntryRole pm gate)
+      const approveRes = await app.inject({
+        method: "POST",
+        url: `/api/time-entries/${entryId}/approve`,
+        headers: { authorization: `Bearer ${viewer.token}` },
+        payload: {},
+      });
+      expect(approveRes.statusCode).toBe(403);
+
+      // Viewer tries to reject → 403 (requireEntryRole pm gate)
+      const rejectRes = await app.inject({
+        method: "POST",
+        url: `/api/time-entries/${entryId}/reject`,
+        headers: { authorization: `Bearer ${viewer.token}` },
+        payload: {},
+      });
+      expect(rejectRes.statusCode).toBe(403);
+    });
+
     it("full promote → submit → approve happy path (end-to-end)", async () => {
       const { member, pm, issue } = await seedDualContext();
       const wl = await seedTestWorkLog(member.id, issue.id, { durationS: 3600 });
@@ -512,6 +606,68 @@ describe("Timesheet Routes (integration)", () => {
       expect(body.adjustsId).toBe(approvedId);
       expect(body.status).toBe("draft");
       expect(body.hours).toBe("-1.00");
+    });
+
+    it("[CRITICAL] non-owner cannot create an adjustment against another member's approved entry → 403", async () => {
+      // Seed two members in the same project so the non-owner passes the route guard
+      // but must be blocked by the service's ownership check.
+      const ws = await seedTestWorkspace();
+      await seedTestMemberWithRole(ws.id, "owner");
+      const owner = await seedTestMemberWithRole(ws.id, "member");   // owns the entry
+      const other = await seedTestMemberWithRole(ws.id, "member");   // different member
+      const pm = await seedTestMemberWithRole(ws.id, "pm");
+      const project = await seedTestProject(ws.id);
+      await seedTestProjectMember(owner.userId, project.id, "member");
+      await seedTestProjectMember(other.userId, project.id, "member");
+      await seedTestProjectMember(pm.userId, project.id, "pm");
+      const issue = await prisma.issue.create({
+        data: {
+          key: `${project.key}-1`,
+          title: "Ownership test issue",
+          type: "task",
+          state: "backlog",
+          projectId: project.id,
+          sequenceNum: 1,
+        },
+      });
+
+      // owner promotes + submits + pm approves
+      const wl = await seedTestWorkLog(owner.id, issue.id);
+      const approvedId = await createApprovedEntry(owner.token, pm.token, wl.id);
+
+      // other (non-owner, same project) tries to adjust the owner's approved entry → 403
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/time-entries/${approvedId}/adjust`,
+        headers: { authorization: `Bearer ${other.token}` },
+        payload: {
+          hours: "-1.00",
+          workedOn: "2026-06-14T00:00:00.000Z",
+        },
+      });
+
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe("FORBIDDEN");
+    });
+
+    it("[CRITICAL] owner CAN create an adjustment against their own approved entry → 201", async () => {
+      const { member, pm, issue } = await seedDualContext();
+      const wl = await seedTestWorkLog(member.id, issue.id);
+      const approvedId = await createApprovedEntry(member.token, pm.token, wl.id);
+
+      // owner creates adjustment against their own approved entry → 201
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/time-entries/${approvedId}/adjust`,
+        headers: { authorization: `Bearer ${member.token}` },
+        payload: {
+          hours: "-0.50",
+          workedOn: "2026-06-14T00:00:00.000Z",
+        },
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(res.json().adjustsId).toBe(approvedId);
     });
 
     it("[GUARD] returns 409 NOT_APPROVED when original is not approved", async () => {

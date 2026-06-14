@@ -75,9 +75,10 @@ export async function promoteWorkLog(
       },
     });
 
-    return entry;
+    return { entry, created: true };
   } catch (err: unknown) {
-    // Idempotent: P2002 unique violation on sourceWorkLogId → return existing entry
+    // Idempotent: P2002 unique violation on sourceWorkLogId → return existing entry.
+    // created=false signals the caller this is the existing row, not a new one.
     if (
       err instanceof Error &&
       (err as any).code === "P2002"
@@ -85,7 +86,7 @@ export async function promoteWorkLog(
       const existing = await prisma.timeEntry.findUnique({
         where: { sourceWorkLogId: workLogId },
       });
-      if (existing) return existing;
+      if (existing) return { entry: existing, created: false };
     }
     throw err;
   }
@@ -212,9 +213,10 @@ export async function submitEntry(
 /**
  * Approve a submitted TimeEntry — PM-gated (enforced at route level).
  *
- * Uses $transaction(callback) to atomically:
- *   1. Update status → approved, set approvedById + approvedAt
- *   (Rate snapshots remain null in W1 — see TODO below)
+ * TOCTOU-safe: the status check is ATOMIC with the write.
+ * Uses tx.timeEntry.updateMany with `where: { id, status: "submitted" }`.
+ * If count === 0, re-read to distinguish 404 NOT_FOUND from 409 INVALID_STATUS.
+ * On success, fetch the updated entry for the response + event payload.
  *
  * INVARIANT #2: only submitted entries may be approved.
  *
@@ -233,34 +235,14 @@ export async function approveEntry(
   memberId: string,
   via?: string | null,
 ) {
-  const entry = await prisma.timeEntry.findUnique({
-    where: { id: entryId },
-    select: {
-      id: true,
-      status: true,
-      issueId: true,
-      member: { select: { workspaceId: true } },
-    },
-  });
-
-  if (!entry) {
-    throw new AppError(404, "TIME_ENTRY_NOT_FOUND", `Time entry "${entryId}" not found`);
-  }
-
-  // Guard: only submitted entries may be approved
-  if (entry.status !== "submitted") {
-    throw new AppError(
-      409,
-      "INVALID_STATUS",
-      `Cannot approve a time entry with status "${entry.status}"; must be "submitted"`,
-    );
-  }
-
   const now = new Date();
 
   const approved = await prisma.$transaction(async (tx) => {
-    return tx.timeEntry.update({
-      where: { id: entryId },
+    // Atomic conditional update: only succeeds when status is still "submitted".
+    // This collapses the read-check-then-write into a single DB round-trip,
+    // preventing two concurrent PMs from both passing the status guard.
+    const result = await tx.timeEntry.updateMany({
+      where: { id: entryId, status: "submitted" },
       data: {
         status: "approved",
         approvedById: memberId,
@@ -271,18 +253,57 @@ export async function approveEntry(
         // billRateSnapshot: ...,
       },
     });
+
+    if (result.count === 0) {
+      // Re-read to give a precise error: 404 if missing, 409 if wrong status.
+      const existing = await tx.timeEntry.findUnique({
+        where: { id: entryId },
+        select: { id: true, status: true },
+      });
+      if (!existing) {
+        throw new AppError(404, "TIME_ENTRY_NOT_FOUND", `Time entry "${entryId}" not found`);
+      }
+      throw new AppError(
+        409,
+        "INVALID_STATUS",
+        `Cannot approve a time entry with status "${existing.status}"; must be "submitted"`,
+      );
+    }
+
+    // Fetch the updated row for the response + event payload.
+    return tx.timeEntry.findUniqueOrThrow({
+      where: { id: entryId },
+      select: {
+        id: true,
+        memberId: true,
+        issueId: true,
+        hours: true,
+        workedOn: true,
+        status: true,
+        sourceWorkLogId: true,
+        adjustsId: true,
+        costRateSnapshot: true,
+        billRateSnapshot: true,
+        via: true,
+        approvedById: true,
+        approvedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        member: { select: { workspaceId: true } },
+      },
+    });
   });
 
-  // Fire-and-forget post-commit event
+  // Fire-and-forget post-commit event (outside the transaction)
   try {
     eventBus.emit({
       type: "time-entry.approved",
-      workspaceId: entry.member.workspaceId,
+      workspaceId: approved.member.workspaceId,
       actorId: memberId,
       via: via ?? null,
       payload: {
         entryId,
-        issueId: entry.issueId ?? null,
+        issueId: approved.issueId ?? null,
         approvedAt: now.toISOString(),
       },
     });
@@ -298,11 +319,15 @@ export async function approveEntry(
 /**
  * Reject a submitted TimeEntry — PM-gated (enforced at route level).
  *
+ * TOCTOU-safe: same atomic conditional-update pattern as approveEntry.
+ * Uses tx.timeEntry.updateMany with `where: { id, status: "submitted" }`.
+ * If count === 0, re-read to distinguish 404 NOT_FOUND from 409 INVALID_STATUS.
+ *
  * Guards:
  *   - Entry must exist → 404 TIME_ENTRY_NOT_FOUND
  *   - Status must be submitted → 409 INVALID_STATUS
  *
- * Emits: time-entry.rejected (fire-and-forget)
+ * Emits: time-entry.rejected (fire-and-forget, post-commit)
  */
 export async function rejectEntry(
   entryId: string,
@@ -310,42 +335,61 @@ export async function rejectEntry(
   _body: RejectEntryBody,
   via?: string | null,
 ) {
-  const entry = await prisma.timeEntry.findUnique({
-    where: { id: entryId },
-    select: {
-      id: true,
-      status: true,
-      issueId: true,
-      member: { select: { workspaceId: true } },
-    },
+  const rejected = await prisma.$transaction(async (tx) => {
+    // Atomic conditional update: only succeeds when status is still "submitted".
+    const result = await tx.timeEntry.updateMany({
+      where: { id: entryId, status: "submitted" },
+      data: { status: "rejected", via: via ?? null },
+    });
+
+    if (result.count === 0) {
+      // Re-read to give a precise error: 404 if missing, 409 if wrong status.
+      const existing = await tx.timeEntry.findUnique({
+        where: { id: entryId },
+        select: { id: true, status: true },
+      });
+      if (!existing) {
+        throw new AppError(404, "TIME_ENTRY_NOT_FOUND", `Time entry "${entryId}" not found`);
+      }
+      throw new AppError(
+        409,
+        "INVALID_STATUS",
+        `Cannot reject a time entry with status "${existing.status}"; must be "submitted"`,
+      );
+    }
+
+    // Fetch the updated row for the response + event payload.
+    return tx.timeEntry.findUniqueOrThrow({
+      where: { id: entryId },
+      select: {
+        id: true,
+        memberId: true,
+        issueId: true,
+        hours: true,
+        workedOn: true,
+        status: true,
+        sourceWorkLogId: true,
+        adjustsId: true,
+        costRateSnapshot: true,
+        billRateSnapshot: true,
+        via: true,
+        approvedById: true,
+        approvedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        member: { select: { workspaceId: true } },
+      },
+    });
   });
 
-  if (!entry) {
-    throw new AppError(404, "TIME_ENTRY_NOT_FOUND", `Time entry "${entryId}" not found`);
-  }
-
-  // Guard: only submitted entries may be rejected
-  if (entry.status !== "submitted") {
-    throw new AppError(
-      409,
-      "INVALID_STATUS",
-      `Cannot reject a time entry with status "${entry.status}"; must be "submitted"`,
-    );
-  }
-
-  const rejected = await prisma.timeEntry.update({
-    where: { id: entryId },
-    data: { status: "rejected", via: via ?? null },
-  });
-
-  // Fire-and-forget event
+  // Fire-and-forget post-commit event (outside the transaction)
   try {
     eventBus.emit({
       type: "time-entry.rejected",
-      workspaceId: entry.member.workspaceId,
+      workspaceId: rejected.member.workspaceId,
       actorId: memberId,
       via: via ?? null,
-      payload: { entryId, issueId: entry.issueId ?? null },
+      payload: { entryId, issueId: rejected.issueId ?? null },
     });
   } catch {
     // Never break the mutation
@@ -366,9 +410,15 @@ export async function rejectEntry(
  *
  * INVARIANT #2: the original MUST be approved; draft/submitted/rejected → 409
  *
+ * Ownership policy (least-privilege, consistent with promote/update/submit):
+ *   Only the OWNER of the original entry may create an adjustment for it.
+ *   Any project member discovering an approved entry they do not own MUST NOT
+ *   be able to inject an adjustment row — this protects payroll integrity.
+ *
  * Guards:
  *   - Original entry must exist → 404 TIME_ENTRY_NOT_FOUND
  *   - Original status must be approved → 409 NOT_APPROVED
+ *   - Caller must be the owner of the original entry → 403 FORBIDDEN
  */
 export async function createAdjustment(
   originalEntryId: string,
@@ -397,6 +447,12 @@ export async function createAdjustment(
       "NOT_APPROVED",
       `Cannot create an adjustment for a time entry with status "${original.status}"; original must be "approved"`,
     );
+  }
+
+  // Ownership guard (owner-only policy): only the original entry owner may create an adjustment.
+  // Checked AFTER the status guard so we don't leak membership info for non-approved entries.
+  if (original.memberId !== memberId) {
+    throw new AppError(403, "FORBIDDEN", "Only the time entry owner may create an adjustment");
   }
 
   const hours = new Prisma.Decimal(body.hours);

@@ -38,7 +38,10 @@ export default async function timesheetRoutes(
 
   /**
    * POST /api/worklogs/:id/promote
-   * Promote a WorkLog to a draft TimeEntry (idempotent).
+   * Promote a WorkLog to a draft TimeEntry.
+   *
+   * Idempotency: a second promote of the same WorkLog returns the existing
+   * TimeEntry with 200 (not 201). created=true → 201, created=false → 200.
    * Any project member may call this, but only the WorkLog owner succeeds.
    */
   app.post(
@@ -51,14 +54,14 @@ export default async function timesheetRoutes(
       },
     },
     async (request, reply) => {
-      const entry = await timesheetService.promoteWorkLog(
+      const { entry, created } = await timesheetService.promoteWorkLog(
         request.params.id,
         request.body,
         request.member!.id,
         request.via,
       );
 
-      return reply.status(201).send(serializeEntry(entry));
+      return reply.status(created ? 201 : 200).send(serializeEntry(entry));
     },
   );
 
@@ -164,7 +167,12 @@ export default async function timesheetRoutes(
    * POST /api/time-entries/:id/adjust
    * Create an adjustment TimeEntry for an approved entry.
    * Original must be approved; negative hours allowed.
-   * Owner-or-any-member may create adjustments (service checks ownership separately).
+   *
+   * Ownership policy (owner-only, least-privilege):
+   *   Only the OWNER of the original approved entry may create an adjustment.
+   *   The route guard (requireEntryRole) allows any project member to reach
+   *   this handler, but the service enforces owner-only at the DB lookup stage.
+   *   This is consistent with promote/update/submit being owner-only.
    */
   app.post(
     "/time-entries/:id/adjust",
