@@ -4,12 +4,17 @@ import tseslint from "typescript-eslint";
 import globals from "globals";
 import prettierConfig from "eslint-config-prettier";
 import reactHooks from "eslint-plugin-react-hooks";
+import { fileURLToPath } from "url";
+import { dirname } from "path";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /**
- * ESLint 9 flat config - KAN-62 baseline
+ * ESLint 9 flat config - KAN-62 baseline + KAN-92 type-aware gate
  *
- * All rules are set to "warn" so eslint exits 0 on the legacy codebase.
- * A hard-error gate and type-aware rules are deferred to KAN-92.
+ * All recommended rules are set to "warn" so eslint exits 0 on the legacy codebase
+ * (KAN-62 strategy). The curated type-aware rules for packages/web are declared as
+ * explicit "error" overrides that bypass the warnify() shim — see the web gate block.
  *
  * Grandfathering strategy: existing source files under packages/star/src are not
  * auto-fixed. Prettier is also configured to skip those paths. New files added
@@ -92,6 +97,44 @@ export default tseslint.config(
       // KAN-92 will flip these to error once the codebase is clean.
       "react-hooks/rules-of-hooks": "warn",
       "react-hooks/exhaustive-deps": "warn",
+    },
+  },
+
+  // KAN-92: Type-aware error gate — curated rules for packages/web production source only.
+  //
+  // These rules are declared as EXPLICIT errors here so they are NOT passed
+  // through the warnify() shim applied to the recommended presets above.
+  //
+  // Scoped to production source (not test files, not vite/vitest configs) because:
+  // - vite.config.ts / vitest.config.ts are not included in packages/web/tsconfig.json
+  //   so parserOptions.project cannot resolve them.
+  // - Test files use mock patterns that produce unsafe-* noise unrelated to
+  //   the production reliability gate this AC targets.
+  {
+    files: ["packages/web/src/**/*.tsx", "packages/web/src/**/*.ts"],
+    ignores: [
+      "packages/web/src/**/*.test.tsx",
+      "packages/web/src/**/*.test.ts",
+      "packages/web/src/**/*.spec.tsx",
+      "packages/web/src/**/*.spec.ts",
+      "packages/web/src/**/__tests__/**",
+    ],
+    languageOptions: {
+      parserOptions: {
+        project: ["packages/web/tsconfig.json"],
+        tsconfigRootDir: __dirname,
+      },
+    },
+    rules: {
+      // Type-aware reliability rules — all at error
+      "@typescript-eslint/no-misused-promises": "error",
+      "@typescript-eslint/no-floating-promises": "error",
+      "@typescript-eslint/no-unsafe-member-access": "error",
+      "@typescript-eslint/no-unsafe-argument": "error",
+      "@typescript-eslint/no-unsafe-call": "error",
+      "@typescript-eslint/consistent-type-assertions": "error",
+      // Flip from warn (KAN-62) to error now that violations are fixed
+      "react-hooks/exhaustive-deps": "error",
     },
   },
 

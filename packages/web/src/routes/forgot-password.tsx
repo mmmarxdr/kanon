@@ -110,7 +110,7 @@ function ForgotPasswordPage() {
       footer={backToSignIn}
     >
       <form
-        onSubmit={handleSubmit}
+        onSubmit={(e) => { void handleSubmit(e); }}
         style={{ display: "flex", flexDirection: "column", gap: 22 }}
       >
         <div>

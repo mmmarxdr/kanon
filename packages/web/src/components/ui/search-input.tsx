@@ -23,7 +23,9 @@ export function SearchInput({
     setLocalValue(value);
   }, [value]);
 
-  // Debounce onChange calls by 300ms
+  // Debounce onChange calls by 300ms.
+  // onChange and value are intentionally omitted from deps: including them would
+  // restart the debounce timer on every parent re-render and defeat the 300ms delay.
   useEffect(() => {
     // Skip if already in sync
     if (localValue === value) return;
@@ -35,7 +37,8 @@ export function SearchInput({
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [localValue]); // intentionally exclude onChange/value to avoid re-triggers
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [localValue]);
 
   function handleChange(e: ChangeEvent<HTMLInputElement>) {
     setLocalValue(e.target.value);

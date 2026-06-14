@@ -549,6 +549,10 @@ export const BurnupChart = React.memo(function BurnupChart({ cycle }: { cycle: C
     const xTicks = Array.from(new Set(rawTicks));
 
     return { max, xStep, y, burnPath, burnArea, scopePath, idealPath, cur, projPath, xTicks };
+  // P is a component-internal layout constant with stable numeric values — its object
+  // identity changes each render but the numbers never change, so omitting it
+  // from deps is intentional and avoids a pointless recalculation on every render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cycle.burnup, cycle.scopeLine, cycle.days, cycle.scope, cycle.dayIndex]);
 
   return (
@@ -1078,6 +1082,10 @@ const VelocityHistory = React.memo(function VelocityHistory({ cycles }: { cycles
       data.reduce((s, c) => s + c.velocity, 0) / Math.max(data.length, 1),
     );
     return { data, max, avg, slot, barW, y };
+  // P is a component-internal layout constant with stable numeric values — its object
+  // identity changes each render but the numbers never change, so omitting it
+  // from deps is intentional and avoids a pointless recalculation on every render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cycles]);
 
   if (data.length === 0) return null;

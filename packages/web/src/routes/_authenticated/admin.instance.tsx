@@ -391,7 +391,7 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
           )}
 
           <form
-            onSubmit={handleSave}
+            onSubmit={(e) => { void handleSave(e); }}
             data-testid="admin-instance-form"
             style={{ display: "flex", flexDirection: "column", gap: 16 }}
           >

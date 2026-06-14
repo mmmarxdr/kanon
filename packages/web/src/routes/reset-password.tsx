@@ -159,7 +159,7 @@ function ResetPasswordPage() {
       footer={backToSignIn}
     >
       <form
-        onSubmit={handleSubmit}
+        onSubmit={(e) => { void handleSubmit(e); }}
         data-testid="reset-password-form"
         style={{ display: "flex", flexDirection: "column", gap: 22 }}
       >

@@ -146,7 +146,7 @@ export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
       }
     >
       <form
-        onSubmit={handleSubmit}
+        onSubmit={(e) => { void handleSubmit(e); }}
         data-testid="register-form"
         style={{ display: "flex", flexDirection: "column", gap: 22 }}
       >

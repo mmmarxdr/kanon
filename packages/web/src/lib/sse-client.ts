@@ -42,7 +42,7 @@ export class SseClient {
   /** Start the SSE connection. */
   connect(): void {
     this.closed = false;
-    this.doConnect();
+    void this.doConnect();
   }
 
   /** Permanently close the connection and stop reconnection. */
@@ -111,7 +111,7 @@ export class SseClient {
     this.setStatus("connecting");
 
     this.reconnectTimer = setTimeout(() => {
-      this.doConnect();
+      void this.doConnect();
     }, this.backoffMs);
 
     // Exponential backoff: 1s -> 2s -> 4s -> 8s (cap)

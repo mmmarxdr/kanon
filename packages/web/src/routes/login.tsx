@@ -131,7 +131,7 @@ export function LoginForm({ invite, onNavigate }: LoginFormProps) {
       }
     >
       <form
-        onSubmit={handleSubmit}
+        onSubmit={(e) => { void handleSubmit(e); }}
         data-testid="login-form"
         style={{ display: "flex", flexDirection: "column", gap: 22 }}
       >

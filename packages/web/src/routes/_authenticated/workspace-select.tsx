@@ -322,7 +322,7 @@ export function WorkspaceSelectPage() {
         <button
           type="button"
           onClick={() => {
-            useAuthStore.getState().logout();
+            void useAuthStore.getState().logout();
             void navigate({ to: "/login" });
           }}
           style={{
