@@ -505,6 +505,178 @@ export function requireDependencyMember(depIdParam: string): preHandlerHookHandl
 }
 
 // ---------------------------------------------------------------------------
+// TimeEntry-scoped factories (routes like /api/time-entries/:id/...)
+// TimeEntry id is a UUID PK. Resolves project via timeEntry → issue? → project.
+// For issue-less entries the entry is gated on the entry owner's workspace project.
+// ---------------------------------------------------------------------------
+
+/**
+ * Like requireDependencyRole in shape, but resolves workspace + project from a
+ * TimeEntry ID URL param and then enforces the effective-role gate (KAN-16).
+ *
+ * Resolution chain (KAN-100):
+ *   timeEntry.id → time_entries row → (issueId → issue → project → workspace)
+ *   OR (memberId → member → workspace) as fallback when issueId is null.
+ *
+ * For approve/reject gates, pass minRole "pm" — the ROLE_HIERARCHY ensures
+ * owner/admin/pm pass; member/viewer get 403.
+ *
+ * Sets `request.member` (workspace Member.id — INVARIANT R-INV1) and
+ * `request.projectRole`.
+ *
+ * @param entryIdParam - The name of the URL param holding the TimeEntry UUID (e.g. 'id')
+ * @param roles - Allowed MemberRole values. If empty, any project membership is sufficient.
+ */
+export function requireEntryRole(entryIdParam: string, ...roles: MemberRole[]): preHandlerHookHandler {
+  return async (request, _reply) => {
+    const user = request.user;
+
+    if (!user) {
+      throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+    }
+
+    const entryId = (request.params as Record<string, string>)[entryIdParam];
+    if (!entryId) {
+      throw new AppError(400, "ENTRY_ID_REQUIRED", "Time entry ID is required");
+    }
+
+    const entry = await prisma.timeEntry.findUnique({
+      where: { id: entryId },
+      select: {
+        memberId: true,
+        issue: {
+          select: { project: { select: { id: true, workspaceId: true } } },
+        },
+        member: {
+          select: { workspaceId: true },
+        },
+      },
+    });
+
+    if (!entry) {
+      throw new AppError(404, "TIME_ENTRY_NOT_FOUND", `Time entry "${entryId}" not found`);
+    }
+
+    // Resolve project + workspace from issue if present; fall back to the
+    // member's workspace (issue-less entries are workspace-gated only).
+    const projectContext = entry.issue?.project ?? null;
+    if (!projectContext) {
+      // Issue-less time entry: require workspace membership only.
+      // We do not have a project to gate against, so we use workspace membership check.
+      // minRole is still enforced at workspace level (e.g. "pm" requires workspace pm).
+      const minimumRole = roles.length > 0
+        ? roles.reduce((least, r) =>
+            ROLE_HIERARCHY.indexOf(r) < ROLE_HIERARCHY.indexOf(least) ? r : least,
+          )
+        : undefined;
+      request.member = await resolveAndCheckMember(
+        user.userId,
+        entry.member.workspaceId,
+        minimumRole,
+      );
+      return;
+    }
+
+    const minimumRole = roles.length > 0
+      ? roles.reduce((least, r) =>
+          ROLE_HIERARCHY.indexOf(r) < ROLE_HIERARCHY.indexOf(least) ? r : least,
+        )
+      : undefined;
+
+    request.projectId = projectContext.id;
+
+    const { member, projectRole } = await enforceProjectAccess(
+      user.userId,
+      projectContext.id,
+      projectContext.workspaceId,
+      minimumRole,
+      user.allowedProjectIds,
+    );
+
+    request.member = member;
+    request.projectRole = projectRole;
+  };
+}
+
+/**
+ * Shorthand: require time-entry project membership with no minimum role.
+ */
+export function requireEntryMember(entryIdParam: string): preHandlerHookHandler {
+  return requireEntryRole(entryIdParam);
+}
+
+// ---------------------------------------------------------------------------
+// WorkLog-scoped factories (routes like /api/worklogs/:id/...)
+// WorkLog id is a UUID PK. Resolves project via workLog → issue → project.
+// ---------------------------------------------------------------------------
+
+/**
+ * Like requireEntryRole in shape, but resolves workspace + project from a
+ * WorkLog ID URL param and then enforces the effective-role gate (KAN-16).
+ *
+ * Resolution chain: workLog.id → work_logs row → issue → project → workspace.
+ *
+ * Sets `request.member` (workspace Member.id — INVARIANT R-INV1) and
+ * `request.projectRole`.
+ *
+ * @param workLogIdParam - The name of the URL param holding the WorkLog UUID (e.g. 'id')
+ * @param roles - Allowed MemberRole values. If empty, any project membership is sufficient.
+ */
+export function requireWorkLogRole(workLogIdParam: string, ...roles: MemberRole[]): preHandlerHookHandler {
+  return async (request, _reply) => {
+    const user = request.user;
+
+    if (!user) {
+      throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+    }
+
+    const workLogId = (request.params as Record<string, string>)[workLogIdParam];
+    if (!workLogId) {
+      throw new AppError(400, "WORKLOG_ID_REQUIRED", "WorkLog ID is required");
+    }
+
+    const workLog = await prisma.workLog.findUnique({
+      where: { id: workLogId },
+      select: {
+        issue: {
+          select: { project: { select: { id: true, workspaceId: true } } },
+        },
+      },
+    });
+
+    if (!workLog) {
+      throw new AppError(404, "WORKLOG_NOT_FOUND", `WorkLog "${workLogId}" not found`);
+    }
+
+    const minimumRole = roles.length > 0
+      ? roles.reduce((least, r) =>
+          ROLE_HIERARCHY.indexOf(r) < ROLE_HIERARCHY.indexOf(least) ? r : least,
+        )
+      : undefined;
+
+    request.projectId = workLog.issue.project.id;
+
+    const { member, projectRole } = await enforceProjectAccess(
+      user.userId,
+      workLog.issue.project.id,
+      workLog.issue.project.workspaceId,
+      minimumRole,
+      user.allowedProjectIds,
+    );
+
+    request.member = member;
+    request.projectRole = projectRole;
+  };
+}
+
+/**
+ * Shorthand: require worklog project membership with no minimum role.
+ */
+export function requireWorkLogMember(workLogIdParam: string): preHandlerHookHandler {
+  return requireWorkLogRole(workLogIdParam);
+}
+
+// ---------------------------------------------------------------------------
 // Comment-scoped factories (routes like /api/comments/:id)
 // Comment id is a UUID PK. Resolves project via comment → issue → project.
 // Uses inline KAN-19 scope guard + workspace-member resolution (NOT enforceProjectAccess)

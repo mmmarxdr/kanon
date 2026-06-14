@@ -117,6 +117,16 @@ enum RefreshSource {
   LOGIN
 }
 
+/// KAN-100 PR3: TimeEntry approval state machine.
+/// draft → submitted → approved / rejected
+/// Adjustments (negative-hours corrections) re-enter at draft.
+enum TimeEntryStatus {
+  draft
+  submitted
+  approved
+  rejected
+}
+
 // ─── Models ─────────────────────────────────────────────────────────────────
 
 model User {
@@ -285,6 +295,8 @@ model Issue {
   // PPM schedule (KAN-99 PR2a)
   schedule          IssueSchedule?
   estimateRevisions EstimateRevision[]
+  // PPM timesheet (KAN-100 PR3)
+  timeEntries       TimeEntry[]
 
   @@unique([projectId, key])
   @@unique([projectId, sequenceNum])
@@ -444,6 +456,9 @@ model Member {
   notificationPreference      NotificationPreference?
   // PPM relations (KAN-99 PR2a)
   estimateRevisions           EstimateRevision[]
+  // PPM timesheet (KAN-100 PR3)
+  timeEntries                 TimeEntry[]        @relation("TimeEntryMember")
+  approvedTimeEntries         TimeEntry[]        @relation("TimeEntryApprover")
 
   @@unique([userId, workspaceId])
   @@unique([workspaceId, username])
@@ -781,9 +796,64 @@ model WorkLog {
 
   createdAt DateTime @default(now()) @map("created_at")
 
+  // PPM timesheet back-relation (KAN-100 PR3)
+  timeEntry TimeEntry?
+
   @@index([issueId, endedAt(sort: Desc)])  // GET /issues/:key/worklogs
   @@index([memberId, endedAt(sort: Desc)]) // GET /me/worklogs
   @@map("work_logs")
+}
+
+/// KAN-100 PR3 — TimeEntry: records billable work against an issue.
+/// Lifecycle: draft → submitted → approved / rejected.
+/// Adjustments (negative hours) link back to an approved entry via adjustsId.
+///
+/// Invariants (ppm-engine §8):
+///   #1  WorkLog is read-only from timesheet — no update path.
+///   #2  Approved entries are immutable — amendments go via createAdjustment.
+///   #3  Negative hours only when adjustsId IS NOT NULL (DB CHECK + service guard).
+///   #7  via + human owner on every row and event.
+model TimeEntry {
+  id        String          @id @default(uuid()) @db.Uuid
+  memberId  String          @map("member_id") @db.Uuid
+  member    Member          @relation("TimeEntryMember", fields: [memberId], references: [id], onDelete: Restrict)
+  issueId   String?         @map("issue_id") @db.Uuid
+  /// Issue may be null for issue-less work (e.g. internal overhead).
+  /// ON DELETE SET NULL: if the issue is deleted, the time entry is kept but unlinked.
+  issue     Issue?          @relation(fields: [issueId], references: [id], onDelete: SetNull)
+  hours     Decimal         @db.Decimal(8, 2)
+  workedOn  DateTime        @map("worked_on")
+  status    TimeEntryStatus @default(draft)
+
+  /// Idempotency: at most one TimeEntry per WorkLog source.
+  /// We declare @unique here so Prisma can express the 1:1 WorkLog→TimeEntry relation.
+  /// The migration SQL drops Prisma's full unique index and replaces it with a
+  /// PARTIAL UNIQUE INDEX (WHERE source_work_log_id IS NOT NULL), ensuring NULLs
+  /// (manual entries without a source WorkLog) can coexist freely.
+  sourceWorkLogId String?  @unique @map("source_work_log_id") @db.Uuid
+  sourceWorkLog   WorkLog? @relation(fields: [sourceWorkLogId], references: [id], onDelete: SetNull)
+
+  /// Self-FK: adjustments point back to the original approved entry.
+  adjustsId   String?    @map("adjusts_id") @db.Uuid
+  adjusts     TimeEntry? @relation("TimeEntryAdjustments", fields: [adjustsId], references: [id], onDelete: SetNull)
+  adjustments TimeEntry[] @relation("TimeEntryAdjustments")
+
+  /// Rate snapshots: set to null in W1 (MemberRate model not yet landed).
+  /// TODO(KAN-rate / PPM P1): copy MemberRate snapshots when the money model lands.
+  costRateSnapshot Decimal? @map("cost_rate_snapshot") @db.Decimal(12, 2)
+  billRateSnapshot Decimal? @map("bill_rate_snapshot") @db.Decimal(12, 2)
+
+  via         String?  @map("via")
+  approvedById String? @map("approved_by_id") @db.Uuid
+  approvedBy  Member? @relation("TimeEntryApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedAt  DateTime? @map("approved_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([memberId, workedOn])
+  @@index([issueId, status])
+  @@map("time_entries")
 }
 
 model Notification {

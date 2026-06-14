@@ -41,6 +41,12 @@ export {
 } from "./schedule.js";
 export type { IssueSchedule, EstimateRevision } from "./schedule.js";
 
+export {
+  timeEntryStatusSchema,
+  timeEntrySchema,
+} from "./timesheet.js";
+export type { TimeEntryStatus, TimeEntry } from "./timesheet.js";
+
 export type {
   SddPhase,
   SddArtifact,
