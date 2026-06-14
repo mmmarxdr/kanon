@@ -505,6 +505,82 @@ export function requireDependencyMember(depIdParam: string): preHandlerHookHandl
 }
 
 // ---------------------------------------------------------------------------
+// Milestone-scoped factories (routes like /api/milestones/:id/...)
+// Milestone id is a UUID PK — no workspace-scope fix needed (A4).
+// Resolves project via milestone → project → workspace, then enforces role.
+// Write gate requires "pm" minimum; read gate requires project membership.
+// ---------------------------------------------------------------------------
+
+/**
+ * Like requireDependencyRole in shape, but resolves workspace + project from a
+ * Milestone ID URL param and then enforces the effective-role gate (KAN-16).
+ *
+ * Resolution chain: milestone id → milestones row → project {id, workspaceId}
+ * → enforceProjectAccess.
+ *
+ * 404 is returned when the milestone does not exist, consistent with other
+ * ID-scoped resolution patterns.
+ *
+ * Sets `request.member` (workspace Member.id — INVARIANT R-INV1) and
+ * `request.projectRole`.
+ *
+ * @param milestoneIdParam - The name of the URL param holding the milestone UUID (e.g. 'id')
+ * @param roles - Allowed MemberRole values. If empty, any project membership is sufficient.
+ */
+export function requireMilestoneRole(milestoneIdParam: string, ...roles: MemberRole[]): preHandlerHookHandler {
+  return async (request, _reply) => {
+    const user = request.user;
+
+    if (!user) {
+      throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+    }
+
+    const milestoneId = (request.params as Record<string, string>)[milestoneIdParam];
+    if (!milestoneId) {
+      throw new AppError(400, "MILESTONE_ID_REQUIRED", "Milestone ID is required");
+    }
+
+    const milestone = await prisma.milestone.findUnique({
+      where: { id: milestoneId },
+      select: {
+        project: { select: { id: true, workspaceId: true } },
+      },
+    });
+
+    if (!milestone) {
+      throw new AppError(404, "MILESTONE_NOT_FOUND", "Milestone not found");
+    }
+
+    const minimumRole = roles.length > 0
+      ? roles.reduce((least, r) =>
+          ROLE_HIERARCHY.indexOf(r) < ROLE_HIERARCHY.indexOf(least) ? r : least,
+        )
+      : undefined;
+
+    // Mirror requireDependencyRole: set request.projectId before enforceProjectAccess
+    request.projectId = milestone.project.id;
+
+    const { member, projectRole } = await enforceProjectAccess(
+      user.userId,
+      milestone.project.id,
+      milestone.project.workspaceId,
+      minimumRole,
+      user.allowedProjectIds,
+    );
+
+    request.member = member;
+    request.projectRole = projectRole;
+  };
+}
+
+/**
+ * Shorthand: require milestone project membership with no minimum role.
+ */
+export function requireMilestoneMember(milestoneIdParam: string): preHandlerHookHandler {
+  return requireMilestoneRole(milestoneIdParam);
+}
+
+// ---------------------------------------------------------------------------
 // TimeEntry-scoped factories (routes like /api/time-entries/:id/...)
 // TimeEntry id is a UUID PK. Resolves project via timeEntry → issue? → project.
 // For issue-less entries the entry is gated on the entry owner's workspace project.

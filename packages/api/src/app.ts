@@ -34,6 +34,7 @@ import cycleRoutes from "./modules/cycle/routes.js";
 import workSessionRoutes from "./modules/work-session/routes.js";
 import scheduleRoutes from "./modules/schedule/routes.js";
 import timesheetRoutes from "./modules/timesheet/routes.js";
+import milestoneRoutes from "./modules/milestone/routes.js";
 import notificationRoutes, { notificationActionRoutes } from "./modules/notification/routes.js";
 import issueSubscriptionRoutes from "./modules/issue-subscription/routes.js";
 import { workspaceInviteRoutes, publicInviteRoutes } from "./modules/invite/routes.js";
@@ -183,6 +184,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(workSessionRoutes, { prefix: "/api" });
   await app.register(scheduleRoutes, { prefix: "/api" });
   await app.register(timesheetRoutes, { prefix: "/api" });
+  await app.register(milestoneRoutes, { prefix: "/api" });
   await app.register(notificationRoutes, { prefix: "/api/workspaces" });
   await app.register(notificationActionRoutes, { prefix: "/api" });
   await app.register(issueSubscriptionRoutes, { prefix: "/api" });
