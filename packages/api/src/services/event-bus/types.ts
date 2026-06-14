@@ -41,7 +41,10 @@ export type DomainEventType =
   | "schedule.updated"
   | "time-entry.approved"
   | "time-entry.rejected"
-  | "worklog.promoted";
+  | "worklog.promoted"
+  // KAN-101 PPM W2: dependency lifecycle event for forecast trigger (KAN-102).
+  // Emitted post-commit fire-and-forget on create + delete.
+  | "dependency.changed";
 
 /**
  * A typed domain event emitted after a successful mutation.

@@ -141,7 +141,8 @@ const issueSummarySchema = z.object({
 
 export const issueDependencyEdgeSchema = z.object({
   id: z.string(),
-  type: z.literal("blocks"),
+  type: z.enum(["blocks", "FS", "SS", "FF", "SF"]),
+  lagDays: z.number().int().optional(),
   createdAt: z.string(),
   source: issueSummarySchema.optional(),
   target: issueSummarySchema.optional(),
