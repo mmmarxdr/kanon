@@ -203,15 +203,19 @@ export function backwardPass(
 
   const structuralEdges = edges.filter((e) => e.type !== "blocks");
 
-  // Build reverse-edge map (target → [{source, lagDays}])
-  const inEdges = new Map<string, Array<{ source: string; lagDays: number }>>();
+  // Build reverse-edge map (target → [{source, type, lagDays}]).
+  // Edge type is kept: the backward constraint differs per type (see below).
+  const inEdges = new Map<
+    string,
+    Array<{ source: string; type: ForecastEdge["type"]; lagDays: number }>
+  >();
   for (const id of ordered) {
     inEdges.set(id, []);
   }
   for (const e of structuralEdges) {
     const list = inEdges.get(e.target);
     if (list !== undefined) {
-      list.push({ source: e.source, lagDays: e.lagDays });
+      list.push({ source: e.source, type: e.type, lagDays: e.lagDays });
     }
   }
 
@@ -247,12 +251,41 @@ export function backwardPass(
     const lateStart = addDays(lateFinish, -dur);
     s.lateStart = lateStart;
 
-    // Propagate late-finish constraint backward to predecessors
-    for (const { source, lagDays } of inEdges.get(id) ?? []) {
+    // Propagate the late-finish constraint backward to each predecessor.
+    // The constraint is the dual of the forward edge semantics, so it depends
+    // on the edge type (succ.LS = lateStart, succ.LF = lateFinish):
+    //   FS  succ.start ≥ pred.end + lag   → pred.LF = succ.LS − lag
+    //   SS  succ.start ≥ pred.start + lag → pred.LS = succ.LS − lag → pred.LF = pred.LS + predDur
+    //   FF  succ.end   ≥ pred.end + lag   → pred.LF = succ.LF − lag
+    //   SF  succ.end   ≥ pred.start + lag → pred.LS = succ.LF − lag → pred.LF = pred.LS + predDur
+    for (const { source, type, lagDays } of inEdges.get(id) ?? []) {
       const predState = nodeStates.get(source);
       if (predState === undefined) continue;
-      // pred.lateFinish = min(pred.lateFinish, lateStart - lagDays)
-      const constraintEnd = addDays(lateStart, -lagDays);
+
+      // Start-anchored constraints (SS/SF) bound pred.LS; convert to pred.LF by
+      // adding the predecessor's own duration.
+      const predDur = Math.round(
+        (predState.forecastEnd.getTime() - predState.forecastStart.getTime()) / DAY_MS,
+      );
+
+      let constraintEnd: Date;
+      switch (type) {
+        case "SS":
+          constraintEnd = addDays(lateStart, predDur - lagDays);
+          break;
+        case "FF":
+          constraintEnd = addDays(lateFinish, -lagDays);
+          break;
+        case "SF":
+          constraintEnd = addDays(lateFinish, predDur - lagDays);
+          break;
+        case "FS":
+        default:
+          constraintEnd = addDays(lateStart, -lagDays);
+          break;
+      }
+
+      // pred.lateFinish = min(pred.lateFinish, constraintEnd)
       if (
         predState.lateFinish === undefined ||
         constraintEnd.getTime() < predState.lateFinish.getTime()

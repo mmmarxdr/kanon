@@ -1484,6 +1484,90 @@ describe("backwardPass — float and critical hardening", () => {
   });
 });
 
+// ─── KAN-112: backward pass is edge-type-aware (SS/FF/SF), not FS-for-all ─────
+// The forward pass already schedules FS/SS/FF/SF correctly. The backward (CPM)
+// pass used to strip edge type and apply FS lag semantics to every edge, so
+// critical/floatDays were only right for FS graphs. Each test below builds a
+// 2-node graph whose float/critical flips depending on whether the edge type is
+// honoured. The "FS-for-all" value (what the old code produced) is noted inline.
+
+describe("backwardPass — edge-type-aware float/critical (KAN-112)", () => {
+  const start = new Date("2026-06-01T00:00:00.000Z");
+  // Each test uses a NON-ZERO lag so the lag term is observable: a mutant that
+  // flips the lag sign (predDur − lagDays → predDur + lagDays, or −lag → +lag)
+  // must change the result. "FS-for-all" = the old behaviour this ticket fixes.
+
+  it("FF: pred late-finish anchors on succ.LF − lag, not succ.LS", () => {
+    // A →FF B, lag 1.  A: 1 day (June1→June2).  B: 3 days (June1→June4).
+    // projectEnd = June4; B critical (LS=June1). FF: A.LF = B.LF − 1 = June3 →
+    // A.LS = June2 → float(A) = 1 (not critical).
+    // +lag mutant: A.LF = June4+1 capped at June4 → float 2 (killed).
+    // FS-for-all (old): A.LF = B.LS − 1 = May31 → float −2 (wrongly critical).
+    const nA = node({ issueId: "A", startDate: start, estimateHours: 8 });
+    const nB = node({ issueId: "B", startDate: start, estimateHours: 24 });
+    const result = computeForecast(
+      {
+        nodes: [nA, nB],
+        edges: [{ source: "A", target: "B", type: "FF", lagDays: 1 }],
+        milestones: [],
+      },
+      { hoursPerDay: HOURS_PER_DAY }
+    );
+    const fA = result.forecasts.get("A");
+    expect(fA!.floatDays).toBe(1);
+    expect(fA!.critical).toBe(false);
+  });
+
+  it("SS: pred late-start tracks succ.LS − lag, plus its own duration", () => {
+    // A →SS B, lag −1 (lead).  A: 2 days (June1→June3).  B: 5 days (June1→June6, long pole).
+    // projectEnd = June6; B critical (LS=June1). SS: A.LS = B.LS − (−1) = June2 →
+    // A.LF = June2 + dur(A)=2 = June4 → float(A) = 1 (not critical).
+    // +lag mutant: predDur + (−1) = 1 → A.LF = June2 → float −1 (killed).
+    // FS-for-all (old): A.LF = B.LS − (−1) = June2 → A.LS = May31 → float −1 (wrongly critical).
+    const nA = node({ issueId: "A", startDate: start, estimateHours: 16 });
+    const nB = node({ issueId: "B", startDate: start, estimateHours: 40 });
+    const result = computeForecast(
+      {
+        nodes: [nA, nB],
+        edges: [{ source: "A", target: "B", type: "SS", lagDays: -1 }],
+        milestones: [],
+      },
+      { hoursPerDay: HOURS_PER_DAY }
+    );
+    const fA = result.forecasts.get("A");
+    expect(fA!.floatDays).toBe(1);
+    expect(fA!.critical).toBe(false);
+  });
+
+  it("SF: pred late-start anchors on succ.LF − lag (chain pulls succ.LF below project end)", () => {
+    // SF is the loosest constraint, so it only binds when the successor's own
+    // late-finish sits below project end — here B→FS D (D critical) pulls it down.
+    // A →SF B (lag 1).  A: 1 day.  B: 1 day.  B →FS D.  D: 3 days.
+    // Forward: A June1→June2, B June1→June2, D June2→June5. projectEnd June5.
+    // Backward: D.LS=June2 → B.LF=June2 → SF: A.LS = B.LF − 1 = June1 →
+    // A.LF = June1 + dur(A)=1 = June2 → float(A) = 0 (critical).
+    // +lag mutant: predDur + 1 = 2 → A.LF = June4 → float 2 (killed).
+    // FS-for-all (old): A.LF = B.LS − 1 = May31 → float −2 (still wrong, killed).
+    const nA = node({ issueId: "A", startDate: start, estimateHours: 8 });
+    const nB = node({ issueId: "B", startDate: start, estimateHours: 8 });
+    const nD = node({ issueId: "D", startDate: start, estimateHours: 24 });
+    const result = computeForecast(
+      {
+        nodes: [nA, nB, nD],
+        edges: [
+          { source: "A", target: "B", type: "SF", lagDays: 1 },
+          { source: "B", target: "D", type: "FS", lagDays: 0 },
+        ],
+        milestones: [],
+      },
+      { hoursPerDay: HOURS_PER_DAY }
+    );
+    const fA = result.forecasts.get("A");
+    expect(fA!.floatDays).toBe(0);
+    expect(fA!.critical).toBe(true);
+  });
+});
+
 // ─── Mutation-hardening: computeForecast forward pass (null-start branch) ────
 // Kills: lines 290, 292, 330-332, 341
 
