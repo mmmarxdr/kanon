@@ -112,3 +112,60 @@ describe("envSchema (base) — COOKIE_SECRET empty-string guard", () => {
     }
   });
 });
+
+// KAN-102: forecast engine env vars
+describe("envSchema — FORECAST_* env vars", () => {
+  const base = {
+    DATABASE_URL: "postgresql://user:pass@localhost:5432/kanon",
+    JWT_SECRET: "a".repeat(16),
+    JWT_REFRESH_SECRET: "b".repeat(16),
+  };
+
+  it("uses defaults when FORECAST_* vars are omitted", () => {
+    const result = envSchema.parse({ ...base });
+    expect(result.FORECAST_DEBOUNCE_MS).toBe(3000);
+    expect(result.FORECAST_AT_RISK_BUFFER_DAYS).toBe(3);
+    expect(result.FORECAST_HOURS_PER_DAY).toBe(8);
+  });
+
+  it("accepts a valid FORECAST_DEBOUNCE_MS override and returns a number", () => {
+    const result = envSchema.parse({ ...base, FORECAST_DEBOUNCE_MS: "5000" });
+    expect(result.FORECAST_DEBOUNCE_MS).toBe(5000);
+  });
+
+  it("rejects FORECAST_DEBOUNCE_MS below 100 (min guard)", () => {
+    const result = envSchema.safeParse({ ...base, FORECAST_DEBOUNCE_MS: "50" });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const paths = result.error.issues.map((i) => i.path.join("."));
+      expect(paths.some((p) => p.includes("FORECAST_DEBOUNCE_MS"))).toBe(true);
+    }
+  });
+
+  it("rejects FORECAST_AT_RISK_BUFFER_DAYS below 0 (min guard)", () => {
+    const result = envSchema.safeParse({ ...base, FORECAST_AT_RISK_BUFFER_DAYS: "-1" });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const paths = result.error.issues.map((i) => i.path.join("."));
+      expect(paths.some((p) => p.includes("FORECAST_AT_RISK_BUFFER_DAYS"))).toBe(true);
+    }
+  });
+
+  it("rejects FORECAST_HOURS_PER_DAY below 1 (min guard)", () => {
+    const result = envSchema.safeParse({ ...base, FORECAST_HOURS_PER_DAY: "0" });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const paths = result.error.issues.map((i) => i.path.join("."));
+      expect(paths.some((p) => p.includes("FORECAST_HOURS_PER_DAY"))).toBe(true);
+    }
+  });
+
+  it("rejects FORECAST_HOURS_PER_DAY above 24 (max guard)", () => {
+    const result = envSchema.safeParse({ ...base, FORECAST_HOURS_PER_DAY: "25" });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const paths = result.error.issues.map((i) => i.path.join("."));
+      expect(paths.some((p) => p.includes("FORECAST_HOURS_PER_DAY"))).toBe(true);
+    }
+  });
+});
