@@ -167,11 +167,40 @@ function renderPalette(
 // Tests
 // --------------------------------------------------------------------------
 
+describe("CommandPalette — loading indicator (W2 / KAN-111)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseActiveProjectKey.mockReturnValue("KAN");
+    mockUseIssueSearchQuery.mockReturnValue({ data: [], isFetching: false });
+  });
+
+  it("shows the searching indicator when isFetching is true", () => {
+    mockUseIssueSearchQuery.mockReturnValue({ data: [], isFetching: true });
+    renderPalette();
+    expect(screen.getByTestId("palette-searching")).toBeInTheDocument();
+  });
+
+  it("hides the searching indicator when isFetching is false", () => {
+    mockUseIssueSearchQuery.mockReturnValue({ data: [], isFetching: false });
+    renderPalette();
+    expect(screen.queryByTestId("palette-searching")).not.toBeInTheDocument();
+  });
+
+  it("does NOT show the searching indicator on no-project route (regression guard: disabled query must not show spinner)", () => {
+    // On a route with no project, the query is disabled → isFetching stays false.
+    // The mock simulates that correctly by not returning isFetching: true.
+    mockUseActiveProjectKey.mockReturnValue(null);
+    mockUseIssueSearchQuery.mockReturnValue({ data: undefined, isFetching: false });
+    renderPalette();
+    expect(screen.queryByTestId("palette-searching")).not.toBeInTheDocument();
+  });
+});
+
 describe("CommandPalette — server results (KAN-111)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseActiveProjectKey.mockReturnValue("KAN");
-    mockUseIssueSearchQuery.mockReturnValue({ data: [], isPending: false });
+    mockUseIssueSearchQuery.mockReturnValue({ data: [], isPending: false, isFetching: false });
   });
 
   // ── Render ─────────────────────────────────────────────────────────────
@@ -211,6 +240,8 @@ describe("CommandPalette — server results (KAN-111)", () => {
 
     expect(() => renderPalette()).not.toThrow();
     expect(screen.getByTestId("command-palette")).toBeInTheDocument();
+    // isPending=true but isFetching=falsy must NOT show the loading indicator
+    expect(screen.queryByTestId("palette-searching")).not.toBeInTheDocument();
   });
 
   // ── KAN-90 regression: no crash on missing/undefined data ─────────────

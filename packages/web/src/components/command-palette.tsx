@@ -36,7 +36,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
   const projectKey = useActiveProjectKey();
 
   // Server-backed issue search — replaces the old cachedIssues/getQueriesData path
-  const { data: serverIssues, isPending } = useIssueSearchQuery(projectKey, q, filters);
+  const { data: serverIssues, isFetching } = useIssueSearchQuery(projectKey, q, filters);
 
   const searchResults: Issue[] = serverIssues ?? [];
 
@@ -156,9 +156,6 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
   const actionItems = items.filter((i) => i.type === "action");
   const actionIndexOffset = issueItems.length;
 
-  // Suppress unused variable warning — isPending may be used for a loading indicator in future
-  void isPending;
-
   return (
     <div
       data-testid="command-palette-overlay"
@@ -224,6 +221,20 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
               color: "var(--ink)",
             }}
           />
+          {isFetching && (
+            <span
+              role="status"
+              data-testid="palette-searching"
+              style={{
+                fontSize: 11,
+                color: "var(--ink-4)",
+                fontFamily: "Inter Tight",
+                flexShrink: 0,
+              }}
+            >
+              Searching…
+            </span>
+          )}
           <Kbd>Esc</Kbd>
         </div>
 
