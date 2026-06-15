@@ -208,6 +208,11 @@ model McpProposal {
 
   @@index([workspaceId, status])
   @@index([projectId, status])
+  // KAN-116: a partial UNIQUE index `mcp_proposals_pending_generic_target_ref_key`
+  // on (workspace_id, target_ref) WHERE status='pending' AND kind='generic' enforces
+  // at most one pending generic proposal per targetRef PER WORKSPACE (multi-instance
+  // dedup backstop; tenant-local since target_ref/issue keys are per-workspace).
+  // Partial indexes aren't expressible in Prisma schema — see the migration.
   @@map("mcp_proposals")
 }
 

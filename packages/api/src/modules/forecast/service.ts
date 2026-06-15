@@ -344,6 +344,10 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
       // One findMany instead of N findFirst calls (kills the N+1)
       const existingProposals = await tx.mcpProposal.findMany({
         where: {
+          // KAN-116: dedup is workspace-local (matches the partial unique index on
+          // (workspace_id, target_ref)). target_ref = issue key, unique only per
+          // workspace, so an unscoped read could skip a legitimately-new proposal.
+          workspaceId,
           targetRef: { in: candidateKeys },
           status: "pending",
           kind: "generic",

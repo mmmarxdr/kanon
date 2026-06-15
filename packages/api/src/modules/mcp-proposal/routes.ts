@@ -86,23 +86,37 @@ export async function workspaceProposalRoutes(
       schema: { params: WorkspaceIdParam, body: CreateProposalBody },
     },
     async (request, reply) => {
-      const proposal = await prisma.mcpProposal.create({
-        data: {
-          workspaceId: request.params.id,
-          kind: request.body.kind,
-          title: request.body.title,
-          reason: request.body.reason,
-          targetRef: request.body.targetRef,
-          // KAN-80: typed Json instead of the old `as never`. Absent → SQL NULL.
-          payload:
-            request.body.payload === undefined
-              ? Prisma.DbNull
-              : (request.body.payload as Prisma.InputJsonValue),
-          generatedBy: request.body.generatedBy ?? "claude-mcp",
-          projectId: request.body.projectId,
-        },
-      });
-      return reply.status(201).send(proposal);
+      try {
+        const proposal = await prisma.mcpProposal.create({
+          data: {
+            workspaceId: request.params.id,
+            kind: request.body.kind,
+            title: request.body.title,
+            reason: request.body.reason,
+            targetRef: request.body.targetRef,
+            // KAN-80: typed Json instead of the old `as never`. Absent → SQL NULL.
+            payload:
+              request.body.payload === undefined
+                ? Prisma.DbNull
+                : (request.body.payload as Prisma.InputJsonValue),
+            generatedBy: request.body.generatedBy ?? "claude-mcp",
+            projectId: request.body.projectId,
+          },
+        });
+        return reply.status(201).send(proposal);
+      } catch (err) {
+        // KAN-116: the partial unique index mcp_proposals_pending_generic_target_ref_key
+        // forbids a second PENDING GENERIC proposal for the same targetRef (the
+        // multi-instance dedup backstop). Surface the duplicate as 409, not a raw 500.
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+          throw new AppError(
+            409,
+            "PROPOSAL_DUPLICATE",
+            "A pending generic proposal already exists for this targetRef",
+          );
+        }
+        throw err;
+      }
     },
   );
 }
