@@ -1,4 +1,6 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
+import { useEscapeKey } from "@/hooks/use-escape-key";
+import { useBackdropClose } from "@/hooks/use-backdrop-close";
 import { FocusTrap } from "focus-trap-react";
 import { useCreateIssueMutation } from "./use-create-issue-mutation";
 import { useIssuesQuery } from "./use-issues-query";
@@ -124,13 +126,7 @@ export function NewIssueModal({
   const [parentId, setParentId] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState("");
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [onClose]);
+  useEscapeKey(onClose);
 
   const handleSubmit = useCallback(() => {
     const trimmedTitle = title.trim();
@@ -165,12 +161,7 @@ export function NewIssueModal({
     [title, handleSubmit],
   );
 
-  const handleBackdropClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
+  const handleBackdropClick = useBackdropClose(onClose);
 
   const handleTemplateChange = useCallback((key: string) => {
     setSelectedTemplate(key);

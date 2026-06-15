@@ -1,4 +1,5 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useRef } from "react";
+import { useEscapeKey } from "@/hooks/use-escape-key";
 import { useGroupIssuesQuery } from "./use-issues-query";
 import { IssueCard } from "./issue-card";
 import { humanizeGroupKey } from "@/lib/humanize-group-key";
@@ -24,20 +25,7 @@ export function GroupDrillDown({
   const panelRef = useRef<HTMLDivElement>(null);
   const { data: issues, isLoading, error } = useGroupIssuesQuery(projectKey, groupKey);
 
-  // Close on Escape
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-      }
-    },
-    [onClose],
-  );
-
-  useEffect(() => {
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [handleKeyDown]);
+  useEscapeKey(onClose);
 
   const displayTitle = humanizeGroupKey(groupKey);
 

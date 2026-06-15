@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useBackdropClose } from "@/hooks/use-backdrop-close";
 import { useNavigate } from "@tanstack/react-router";
 import type { Issue } from "@/types/issue";
 import { useCommandPaletteStore } from "@/stores/command-palette-store";
@@ -149,12 +150,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
     if (selected) selected.scrollIntoView({ block: "nearest" });
   }, [selectedIndex]);
 
-  const handleBackdropClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
+  const handleBackdropClick = useBackdropClose(onClose);
 
   const issueItems = items.filter((i) => i.type === "issue");
   const actionItems = items.filter((i) => i.type === "action");

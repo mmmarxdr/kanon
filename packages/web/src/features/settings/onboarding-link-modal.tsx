@@ -1,4 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
+import { useEscapeKey } from "@/hooks/use-escape-key";
+import { useBackdropClose } from "@/hooks/use-backdrop-close";
 import { FocusTrap } from "focus-trap-react";
 
 interface OnboardingLinkModalProps {
@@ -25,14 +27,7 @@ export function OnboardingLinkModal({
 }: OnboardingLinkModalProps) {
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [open, onClose]);
+  useEscapeKey(onClose, open);
 
   const handleCopy = useCallback(() => {
     void navigator.clipboard.writeText(url).then(() => {
@@ -41,12 +36,7 @@ export function OnboardingLinkModal({
     });
   }, [url]);
 
-  const handleBackdropClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
+  const handleBackdropClick = useBackdropClose(onClose);
 
   if (!open) return null;
 

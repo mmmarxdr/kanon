@@ -1,4 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
+import { useEscapeKey } from "@/hooks/use-escape-key";
+import { useBackdropClose } from "@/hooks/use-backdrop-close";
 import { useCreateProjectMutation } from "@/hooks/use-create-project-mutation";
 import { Icon } from "@/components/ui/icons";
 
@@ -66,20 +68,9 @@ export function CreateProjectModal({ workspaceId, onClose }: CreateProjectModalP
   const nameValid = nameTrimmed.length > 0 && nameTrimmed.length <= MAX_NAME_LENGTH;
   const isValid = nameValid && keyValid;
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [onClose]);
+  useEscapeKey(onClose);
 
-  const handleBackdropClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
+  const handleBackdropClick = useBackdropClose(onClose);
 
   const handleSubmit = useCallback(() => {
     if (!isValid || createMutation.isPending) return;

@@ -1,4 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useEscapeKey } from "@/hooks/use-escape-key";
+import { useBackdropClose } from "@/hooks/use-backdrop-close";
 import { FocusTrap } from "focus-trap-react";
 import { useCreateRoadmapMutation } from "./use-roadmap-query";
 import type { Horizon } from "@/types/roadmap";
@@ -49,14 +51,7 @@ export function NewRoadmapItemModal({
     titleRef.current?.focus();
   }, []);
 
-  // Escape key handler
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [onClose]);
+  useEscapeKey(onClose);
 
   const handleSubmit = useCallback(() => {
     const trimmedTitle = title.trim();
@@ -85,12 +80,7 @@ export function NewRoadmapItemModal({
     );
   }, [title, description, horizon, effort, impact, labels, targetDate, createMutation, onClose]);
 
-  const handleBackdropClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
+  const handleBackdropClick = useBackdropClose(onClose);
 
   return (
     <FocusTrap

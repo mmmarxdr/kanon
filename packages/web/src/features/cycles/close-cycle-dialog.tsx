@@ -1,4 +1,6 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
+import { useEscapeKey } from "@/hooks/use-escape-key";
+import { useBackdropClose } from "@/hooks/use-backdrop-close";
 import { useQueryClient } from "@tanstack/react-query";
 import { FocusTrap } from "focus-trap-react";
 import {
@@ -83,20 +85,9 @@ export function CloseCycleDialog({ cycle, cycles, onClose }: CloseCycleDialogPro
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [onClose]);
+  useEscapeKey(onClose);
 
-  const handleBackdropClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
+  const handleBackdropClick = useBackdropClose(onClose);
 
   const handleConfirm = useCallback(async () => {
     setIsSubmitting(true);
