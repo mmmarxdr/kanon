@@ -297,8 +297,20 @@ export function computeForecast(
   }
 
   // Step 2: Topological sort + forward pass
-  const order = topoSort(input.nodes, input.edges);
+  // Compute structuralEdges once — used by topoSort, forward pass, and backwardPass.
   const structuralEdges = input.edges.filter((e) => e.type !== "blocks");
+  const order = topoSort(input.nodes, structuralEdges);
+
+  // Build successor adjacency map once: O(E) — avoids O(V·E) inner scan.
+  const succEdges = new Map<string, ForecastEdge[]>();
+  for (const e of structuralEdges) {
+    let list = succEdges.get(e.source);
+    if (list === undefined) {
+      list = [];
+      succEdges.set(e.source, list);
+    }
+    list.push(e);
+  }
 
   for (const uid of order) {
     const uState = nodeStates.get(uid);
@@ -306,8 +318,7 @@ export function computeForecast(
     const uNode = nodeMap.get(uid);
     if (uNode === undefined) continue;
 
-    for (const edge of structuralEdges) {
-      if (edge.source !== uid) continue;
+    for (const edge of succEdges.get(uid) ?? []) {
       const vState = nodeStates.get(edge.target);
       const vNode = nodeMap.get(edge.target);
       if (vState === undefined || vNode === undefined) continue;
@@ -316,7 +327,7 @@ export function computeForecast(
   }
 
   // Step 3: Backward pass (CPM)
-  backwardPass(order, nodeStates, input.edges);
+  backwardPass(order, nodeStates, structuralEdges);
 
   // Step 4: Build result
   const computedAt = new Date();

@@ -406,3 +406,185 @@ describe("L9 — dependency.changed triggers a rebuild (resolved via sourceIssue
     unsub();
   });
 });
+
+// ─── L10: worklog.created triggers a rebuild ─────────────────────────────────
+// Kills survivors at listener.ts:177/179 (worklog.created switch arm + p.issueId ?? null).
+
+/** Build an estimate.revised event for a given issueId */
+function makeEstimateRevisedEvent(issueId: string): Partial<DomainEvent> {
+  return {
+    type: "estimate.revised",
+    payload: { issueId, revisionId: "rev-1", hours: "8" },
+  };
+}
+
+describe("L10 — worklog.created triggers a rebuild", () => {
+  it("fires rebuild when worklog.created is received for an issue", async () => {
+    const bus = makeStubBus();
+    const unsub = registerForecastListener(bus, stubLogger);
+
+    bus.fire(makeWorklogCreatedEvent("issue-1"));
+
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10);
+
+    expect(mockRebuild).toHaveBeenCalledTimes(1);
+    expect(mockRebuild).toHaveBeenCalledWith("project-A");
+
+    unsub();
+  });
+});
+
+// ─── L11: estimate.revised triggers a rebuild ────────────────────────────────
+// Kills survivors at listener.ts:171/173 (estimate.revised switch arm + p.issueId ?? null).
+
+describe("L11 — estimate.revised triggers a rebuild", () => {
+  it("fires rebuild when estimate.revised is received for an issue", async () => {
+    const bus = makeStubBus();
+    const unsub = registerForecastListener(bus, stubLogger);
+
+    bus.fire(makeEstimateRevisedEvent("issue-1"));
+
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10);
+
+    expect(mockRebuild).toHaveBeenCalledTimes(1);
+    expect(mockRebuild).toHaveBeenCalledWith("project-A");
+
+    unsub();
+  });
+});
+
+// ─── L4b: unsubscribe clears a PENDING timer (clearTimeout path) ─────────────
+// The original L4 never gets the timer set before calling unsub() because
+// handleEvent is still pending on the microtask queue. This test flushes
+// microtasks first so scheduleRebuild runs and sets the timer BEFORE unsub().
+//
+// Mutation gate: if the clearTimeout(handle) call in unsubscribe() is removed,
+// the timer fires and mockRebuild IS called → test FAILS. Verified manually
+// by the RED → GREEN cycle below.
+
+describe("L4b — unsubscribe clears a timer that was already scheduled (clearTimeout path)", () => {
+  it("does not fire rebuild when timer is already set and unsubscribe() clears it", async () => {
+    const bus = makeStubBus();
+    const unsub = registerForecastListener(bus, stubLogger);
+
+    bus.fire(makeScheduleUpdatedEvent("issue-1"));
+
+    // Flush microtasks so handleEvent's await resolveProjectIdFromIssue() resolves
+    // and scheduleRebuild() executes → timer is NOW set in the timers Map.
+    await vi.advanceTimersByTimeAsync(0);
+
+    // At this point the debounce timer is pending. Unsubscribe must clearTimeout it.
+    unsub();
+
+    // Advance well past the debounce window — rebuild must NOT fire (timer was cleared).
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS * 2);
+
+    expect(mockRebuild).not.toHaveBeenCalled();
+  });
+
+  it("active-flag path: unsubscribe BEFORE handleEvent resolves still prevents rebuild", async () => {
+    // Original L4 scenario: unsub() called synchronously after bus.fire() while
+    // handleEvent is still awaiting the DB lookup. active=false prevents
+    // scheduleRebuild from setting any timer. This verifies the active-flag guard.
+    const bus = makeStubBus();
+    const unsub = registerForecastListener(bus, stubLogger);
+
+    bus.fire(makeScheduleUpdatedEvent("issue-1"));
+    // Unsubscribe BEFORE any microtasks flush → active=false before scheduleRebuild runs.
+    unsub();
+
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS * 2);
+
+    expect(mockRebuild).not.toHaveBeenCalled();
+  });
+});
+
+// ─── L12: outer-catch (handler failed) kills survivors 239/241/242 ───────────
+// When resolveProjectIdFromIssue() throws, handleEvent() propagates the error
+// and the outer .catch() on the bus.subscribe callback logs "forecast listener
+// event handler failed". Verifies the catch path and that no rebuild fires.
+
+describe("L12 — outer-catch: bus handler logs 'forecast listener event handler failed' on DB error", () => {
+  it("logs the handler-failed message when resolveProjectIdFromIssue rejects", async () => {
+    const bus = makeStubBus();
+    mockIssueFindUnique.mockRejectedValueOnce(new Error("db down"));
+
+    const unsub = registerForecastListener(bus, stubLogger);
+    bus.fire(makeScheduleUpdatedEvent("issue-1"));
+
+    // Flush microtasks + any timers so the rejection propagates to the outer catch.
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10);
+
+    expect(stubLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "schedule.updated" }),
+      expect.stringContaining("forecast listener event handler failed")
+    );
+    // No rebuild should have fired — the handler errored before scheduleRebuild.
+    expect(mockRebuild).not.toHaveBeenCalled();
+
+    unsub();
+  });
+
+  it("does not call rebuild when the DB lookup rejects", async () => {
+    const bus = makeStubBus();
+    mockIssueFindUnique.mockRejectedValueOnce(new Error("connection lost"));
+
+    const unsub = registerForecastListener(bus, stubLogger);
+    bus.fire(makeWorklogCreatedEvent("issue-1"));
+
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10);
+
+    expect(mockRebuild).not.toHaveBeenCalled();
+
+    unsub();
+  });
+});
+
+// ─── L13: projectId cache — avoids repeat DB lookups, expires on TTL ──────────
+// resolveProjectIdFromIssue caches issueId→projectId (TTL 30s). These tests
+// cover the cache-hit return path and the TTL-expiry re-query (kills the
+// listener.ts:125 hit/TTL survivors and the cache no-coverage mutants).
+// NOTE: the size-cap eviction branch (listener.ts:137-141) is a rarely-hit
+// safety valve whose async set-ordering makes a deterministic test
+// disproportionately costly — left as a documented minor gap (tracked in KAN-115).
+
+describe("L13 — projectId cache", () => {
+  it("serves a repeat lookup for the same issue from cache (1 DB call, not 2)", async () => {
+    const bus = makeStubBus();
+    const unsub = registerForecastListener(bus, stubLogger);
+
+    // First event: cache miss → 1 DB lookup, entry cached.
+    bus.fire(makeScheduleUpdatedEvent("issue-1"));
+    await vi.advanceTimersByTimeAsync(0); // flush handleEvent so the cache is set
+    expect(mockIssueFindUnique).toHaveBeenCalledTimes(1);
+
+    // Second event for the SAME issue within TTL → cache hit, NO new DB lookup.
+    bus.fire(makeScheduleUpdatedEvent("issue-1"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockIssueFindUnique).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10);
+    expect(mockRebuild).toHaveBeenCalledWith("project-A");
+
+    unsub();
+  });
+
+  it("re-queries the DB after the cache entry expires (TTL = 30s)", async () => {
+    const bus = makeStubBus();
+    const unsub = registerForecastListener(bus, stubLogger);
+
+    bus.fire(makeScheduleUpdatedEvent("issue-1"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockIssueFindUnique).toHaveBeenCalledTimes(1);
+
+    // Advance past the 30s TTL so the cached entry is stale.
+    await vi.advanceTimersByTimeAsync(30_000 + 1);
+
+    // Same issue again → entry expired → DB queried a second time.
+    bus.fire(makeScheduleUpdatedEvent("issue-1"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockIssueFindUnique).toHaveBeenCalledTimes(2);
+
+    unsub();
+  });
+});
