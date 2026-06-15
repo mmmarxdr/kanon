@@ -19,6 +19,7 @@ export default defineConfig({
     include: [
       "src/modules/events/**/*.test.ts",
       "src/modules/roadmap/**/*.test.ts",
+      "src/modules/forecast/**/*.test.ts",
     ],
     setupFiles: ["src/test/setup.ts"],
     testTimeout: 15000,

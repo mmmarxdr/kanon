@@ -103,6 +103,25 @@ export const envSchema = z.object({
     .default("7")
     .transform((val) => parseInt(val, 10))
     .pipe(z.number().int().min(1).max(365)),
+  // KAN-102: forecast engine
+  FORECAST_DEBOUNCE_MS: z
+    .string()
+    .optional()
+    .default("3000")
+    .transform((val) => parseInt(val, 10))
+    .pipe(z.number().int().min(100)),
+  FORECAST_AT_RISK_BUFFER_DAYS: z
+    .string()
+    .optional()
+    .default("3")
+    .transform((val) => parseInt(val, 10))
+    .pipe(z.number().int().min(0)),
+  FORECAST_HOURS_PER_DAY: z
+    .string()
+    .optional()
+    .default("8")
+    .transform((val) => parseInt(val, 10))
+    .pipe(z.number().int().min(1).max(24)),
   CORS_ORIGIN: z
     .string()
     .optional()

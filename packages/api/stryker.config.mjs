@@ -24,10 +24,12 @@ export default {
   },
   // KAN-84 slice 1: SSE/eventing surface (KAN-76 hardened).
   // KAN-84 slice 3: roadmap-sync pure logic (computeStatus + syncRoadmapItemStatus).
+  // KAN-102: forecast engine pure logic (topo + forward/backward pass + forecastEnd).
   // Note: service.ts is DB-orchestration only — line coverage is the bar there, not mutation.
   mutate: [
     "src/modules/events/workspace-events.ts",
     "src/modules/roadmap/roadmap-sync.ts",
+    "src/modules/forecast/engine.ts",
   ],
   reporters: ["html", "clear-text", "progress"],
   // Re-evaluate only mutants affected by changes between runs.

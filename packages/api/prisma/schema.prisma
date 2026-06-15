@@ -300,6 +300,8 @@ model Issue {
   timeEntries       TimeEntry[]
   // PPM milestones (KAN-101 PR2)
   milestoneDeliverables MilestoneDeliverable[]
+  // PPM forecast (KAN-102 PR1)
+  forecast              IssueForecast?
 
   @@unique([projectId, key])
   @@unique([projectId, sequenceNum])
@@ -439,6 +441,25 @@ model MilestoneDeliverable {
   @@unique([milestoneId, issueId])
   @@index([issueId])
   @@map("milestone_deliverables")
+}
+
+// ─── PPM Forecast (KAN-102 PR1) ──────────────────────────────────────────────
+
+/// L2 derived forecast plane. One row per Issue. Engine writes it; rebuilt
+/// fully per debounced event. inputsHash is used to skip no-op writes.
+model IssueForecast {
+  issueId       String    @id @db.Uuid
+  issue         Issue     @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  forecastStart DateTime? @map("forecast_start")
+  forecastEnd   DateTime? @map("forecast_end")
+  slipDays      Int       @default(0) @map("slip_days")
+  critical      Boolean   @default(false)
+  floatDays     Int?      @map("float_days")
+  inputsHash    String?   @map("inputs_hash")
+  computedAt    DateTime  @map("computed_at")
+
+  @@index([critical])
+  @@map("issue_forecasts")
 }
 
 model Cycle {
