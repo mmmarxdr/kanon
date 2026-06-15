@@ -1,7 +1,7 @@
 import type { IssueState } from "@/stores/board-store";
 import type { DocumentKind } from "@kanon/shared";
 
-export type IssueType = "feature" | "bug" | "task" | "spike";
+export type IssueType = "feature" | "bug" | "task" | "spike" | "incident";
 export type IssuePriority = "critical" | "high" | "medium" | "low";
 
 /**

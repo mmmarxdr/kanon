@@ -14,6 +14,7 @@ enum IssueType {
   bug
   task
   spike
+  incident
 }
 
 enum IssuePriority {
@@ -307,6 +308,9 @@ model Issue {
   milestoneDeliverables MilestoneDeliverable[]
   // PPM forecast (KAN-102 PR1)
   forecast              IssueForecast?
+  // PPM incidents (KAN-103 PR1)
+  interruptionsCaused   Interruption[] @relation("IncidentInterruptions")
+  interruptionsSuffered Interruption[] @relation("InterruptedWork")
 
   @@unique([projectId, key])
   @@unique([projectId, sequenceNum])
@@ -551,6 +555,8 @@ model Member {
   approvedTimeEntries         TimeEntry[]        @relation("TimeEntryApprover")
   // PPM milestones (KAN-101 PR2)
   ownedMilestones             Milestone[]
+  // PPM incidents (KAN-103 PR1)
+  interruptions               Interruption[]
 
   @@unique([userId, workspaceId])
   @@unique([workspaceId, username])
@@ -894,6 +900,38 @@ model WorkLog {
   @@index([issueId, endedAt(sort: Desc)])  // GET /issues/:key/worklogs
   @@index([memberId, endedAt(sort: Desc)]) // GET /me/worklogs
   @@map("work_logs")
+}
+
+/// KAN-103 (ADR-0005 D6) — the Interruption edge: what an incident displaced.
+/// Written automatically when work switches to an incident while a session is
+/// active (via "session_switch"), or recorded manually (via "manual"). Incident
+/// hours themselves flow through the normal WorkLog→TimeEntry path; this row only
+/// records the displacement so PPM/forecast can attribute the unplanned work.
+model Interruption {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// The incident issue that displaced the interrupted work.
+  incidentIssueId String @map("incident_issue_id") @db.Uuid
+  incidentIssue   Issue  @relation("IncidentInterruptions", fields: [incidentIssueId], references: [id], onDelete: Cascade)
+
+  /// The issue whose work was displaced.
+  interruptedIssueId String @map("interrupted_issue_id") @db.Uuid
+  interruptedIssue   Issue  @relation("InterruptedWork", fields: [interruptedIssueId], references: [id], onDelete: Cascade)
+
+  memberId String @map("member_id") @db.Uuid
+  member   Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  startedAt DateTime  @default(now()) @map("started_at")
+  endedAt   DateTime? @map("ended_at")
+  /// Capture mechanism — "session_switch" (auto) or "manual" (provenance, per KAN-100 §8 #7).
+  via       String
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([incidentIssueId])
+  @@index([interruptedIssueId])
+  @@index([memberId, startedAt(sort: Desc)])
+  @@map("interruptions")
 }
 
 /// KAN-100 PR3 — TimeEntry: records billable work against an issue.

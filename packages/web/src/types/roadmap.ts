@@ -72,7 +72,7 @@ export interface UpdateRoadmapItemInput {
  */
 export interface PromoteRoadmapItemInput {
   title?: string;
-  type?: "feature" | "bug" | "task" | "spike";
+  type?: "feature" | "bug" | "task" | "spike" | "incident";
   priority?: "critical" | "high" | "medium" | "low";
   labels?: string[];
   groupKey?: string;

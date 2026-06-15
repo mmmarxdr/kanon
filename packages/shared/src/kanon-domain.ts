@@ -69,7 +69,7 @@ export type KanonIssueState =
 /**
  * Kanon issue types — mirrors the Prisma IssueType enum.
  */
-export type KanonIssueType = "feature" | "bug" | "task" | "spike";
+export type KanonIssueType = "feature" | "bug" | "task" | "spike" | "incident";
 
 /**
  * Kanon issue priority — mirrors the Prisma IssuePriority enum.

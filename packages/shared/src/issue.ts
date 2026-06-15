@@ -31,7 +31,7 @@ export const issueStateSchema = z.enum([
 ]);
 export type IssueState = z.infer<typeof issueStateSchema>;
 
-export const issueTypeSchema = z.enum(["feature", "bug", "task", "spike"]);
+export const issueTypeSchema = z.enum(["feature", "bug", "task", "spike", "incident"]);
 export type IssueType = z.infer<typeof issueTypeSchema>;
 
 export const issuePrioritySchema = z.enum([
