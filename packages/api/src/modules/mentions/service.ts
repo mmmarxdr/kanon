@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import type { ITXClientDenyList } from "@prisma/client/runtime/library.js";
 import { prisma } from "../../config/prisma.js";
+import { eventBus } from "../../services/event-bus/index.js";
 
 /**
  * Prisma transaction client type (subset of PrismaClient without tx-banned methods).
@@ -43,6 +44,54 @@ export interface MentionDeltaEntry {
  */
 export interface ParseAndUpsertMentionsResult {
   created: MentionDeltaEntry[];
+}
+
+/**
+ * Emit one `mention.created` event per newly-created mention. Each emit is
+ * wrapped in its own try/catch — event emission is fire-and-forget and must
+ * never break the surrounding mutation. Returns the memberIds whose event was
+ * emitted successfully (callers that need to dedup against other notifications,
+ * e.g. createComment, use this; others ignore it).
+ */
+export function emitMentionEvents(
+  created: MentionDeltaEntry[],
+  params: {
+    workspaceId: string;
+    actorMemberId: string;
+    issueId: string;
+    issueKey: string;
+    issueTitle: string;
+    commentId: string | null;
+    via?: string | null;
+  },
+): string[] {
+  const emittedMemberIds: string[] = [];
+  for (const entry of created) {
+    try {
+      eventBus.emit({
+        type: "mention.created",
+        workspaceId: params.workspaceId,
+        actorId: params.actorMemberId,
+        payload: {
+          mentionId: entry.mentionId,
+          issueId: params.issueId,
+          issueKey: params.issueKey,
+          issueTitle: params.issueTitle,
+          commentId: params.commentId,
+          mentionedMemberId: entry.mentionedMemberId,
+          mentionedByMemberId: params.actorMemberId,
+          context: entry.context,
+        },
+        via: params.via ?? null,
+      });
+      // Only record after a successful emit — if emit throws, the member is NOT
+      // recorded, so callers won't wrongly exclude them from other notifications.
+      emittedMemberIds.push(entry.mentionedMemberId);
+    } catch {
+      // Fire-and-forget; never break the mutation.
+    }
+  }
+  return emittedMemberIds;
 }
 
 /**

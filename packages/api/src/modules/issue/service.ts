@@ -25,7 +25,7 @@ import {
   validateCycleBelongsToProject,
   dayIndex,
 } from "../cycle/service.js";
-import { parseAndUpsertMentions } from "../mentions/service.js";
+import { parseAndUpsertMentions, emitMentionEvents } from "../mentions/service.js";
 import { autoSubscribe, getStatus as getSubscriptionStatus } from "../issue-subscription/service.js";
 
 /**
@@ -191,28 +191,15 @@ export async function createIssue(
         body: issue.description,
         authorMemberId: memberId,
       });
-      for (const entry of created) {
-        try {
-          eventBus.emit({
-            type: "mention.created",
-            workspaceId: project.workspaceId,
-            actorId: memberId,
-            payload: {
-              mentionId: entry.mentionId,
-              issueId: issue.id,
-              issueKey: issue.key,
-              issueTitle: issue.title,
-              commentId: null,
-              mentionedMemberId: entry.mentionedMemberId,
-              mentionedByMemberId: memberId,
-              context: entry.context,
-            },
-            via: via ?? null,
-          });
-        } catch {
-          // Fire-and-forget
-        }
-      }
+      emitMentionEvents(created, {
+        workspaceId: project.workspaceId,
+        actorMemberId: memberId,
+        issueId: issue.id,
+        issueKey: issue.key,
+        issueTitle: issue.title,
+        commentId: null,
+        via,
+      });
     } catch {
       // Mention parsing failure is non-fatal — continue
     }
@@ -631,29 +618,16 @@ export async function updateIssue(
         body: body.description ?? "",
         authorMemberId: memberId,
       });
-      for (const entry of created) {
-        try {
-          eventBus.emit({
-            type: "mention.created",
-            workspaceId: issue.project.workspaceId,
-            actorId: memberId,
-            payload: {
-              mentionId: entry.mentionId,
-              issueId: issue.id,
-              issueKey: key,
-              // updated.title reflects any title change in this update call
-              issueTitle: (body.title !== undefined ? body.title : issue.title) ?? key,
-              commentId: null,
-              mentionedMemberId: entry.mentionedMemberId,
-              mentionedByMemberId: memberId,
-              context: entry.context,
-            },
-            via: via ?? null,
-          });
-        } catch {
-          // Fire-and-forget
-        }
-      }
+      emitMentionEvents(created, {
+        workspaceId: issue.project.workspaceId,
+        actorMemberId: memberId,
+        issueId: issue.id,
+        issueKey: key,
+        // updated.title reflects any title change in this update call
+        issueTitle: (body.title !== undefined ? body.title : issue.title) ?? key,
+        commentId: null,
+        via,
+      });
     } catch {
       // Mention parsing failure is non-fatal — continue
     }

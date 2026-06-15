@@ -1,7 +1,7 @@
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 import { createActivityLog } from "../activity/service.js";
-import { parseAndUpsertMentions } from "../mentions/service.js";
+import { parseAndUpsertMentions, emitMentionEvents } from "../mentions/service.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import { autoSubscribe } from "../issue-subscription/service.js";
 import type { CreateCommentBody } from "./schema.js";
@@ -75,7 +75,7 @@ export async function createComment(
   // subscribed_activity and are not silently dropped (no double-notification gap).
   // This is stricter than using created.map() up-front (which would exclude members
   // even if their mention.created emit failed). Wave 1 scope: per-event, not per-issue-lifetime.
-  const mentionedMemberIds: string[] = [];
+  let mentionedMemberIds: string[] = [];
   try {
     const { created } = await parseAndUpsertMentions({
       workspaceId: issue.project.workspaceId,
@@ -84,32 +84,15 @@ export async function createComment(
       body: body.body,
       authorMemberId: memberId,
     });
-    for (const entry of created) {
-      try {
-        eventBus.emit({
-          type: "mention.created",
-          workspaceId: issue.project.workspaceId,
-          actorId: memberId,
-          payload: {
-            mentionId: entry.mentionId,
-            issueId: issue.id,
-            issueKey: issue.key,
-            issueTitle: issue.title,
-            commentId: comment.id,
-            mentionedMemberId: entry.mentionedMemberId,
-            mentionedByMemberId: memberId,
-            context: entry.context,
-          },
-          via: via ?? null,
-        });
-        // Only add to mentionedMemberIds after a successful emit — if emit throws,
-        // the member is NOT excluded from subscribed_activity (no silent double-notify gap).
-        mentionedMemberIds.push(entry.mentionedMemberId);
-      } catch {
-        // Event emission is fire-and-forget; never break the mutation.
-        // Member NOT added to mentionedMemberIds — they will still receive subscribed_activity.
-      }
-    }
+    mentionedMemberIds = emitMentionEvents(created, {
+      workspaceId: issue.project.workspaceId,
+      actorMemberId: memberId,
+      issueId: issue.id,
+      issueKey: issue.key,
+      issueTitle: issue.title,
+      commentId: comment.id,
+      via,
+    });
   } catch {
     // Mention parsing failure is non-fatal — log silently and continue.
     // mentionedMemberIds stays at whatever was successfully emitted so far.
@@ -222,28 +205,15 @@ export async function updateComment(
       body,
       authorMemberId: memberId,
     });
-    for (const entry of created) {
-      try {
-        eventBus.emit({
-          type: "mention.created",
-          workspaceId: existing.issue.project.workspaceId,
-          actorId: memberId,
-          payload: {
-            mentionId: entry.mentionId,
-            issueId: existing.issue.id,
-            issueKey: existing.issue.key,
-            issueTitle: existing.issue.title,
-            commentId,
-            mentionedMemberId: entry.mentionedMemberId,
-            mentionedByMemberId: memberId,
-            context: entry.context,
-          },
-          via: null, // updateComment has no via param yet (future improvement)
-        });
-      } catch {
-        // Fire-and-forget
-      }
-    }
+    emitMentionEvents(created, {
+      workspaceId: existing.issue.project.workspaceId,
+      actorMemberId: memberId,
+      issueId: existing.issue.id,
+      issueKey: existing.issue.key,
+      issueTitle: existing.issue.title,
+      commentId,
+      via: null, // updateComment has no via param yet (future improvement)
+    });
   } catch {
     // Mention parsing failure is non-fatal — log silently and continue
   }
