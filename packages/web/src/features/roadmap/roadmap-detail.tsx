@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useBackdropClose } from "@/hooks/use-backdrop-close";
 import { FocusTrap } from "focus-trap-react";
 import type { RoadmapItem, RoadmapDependency, Horizon, RoadmapStatus } from "@/types/roadmap";
 import {
@@ -164,12 +165,7 @@ export function RoadmapDetail({
     promoteMutation.mutate({ itemId: item.id });
   }, [promoteMutation, item.id]);
 
-  const handleBackdropClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
+  const handleBackdropClick = useBackdropClose(onClose);
 
   return (
     <FocusTrap

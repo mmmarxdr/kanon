@@ -31,12 +31,7 @@ import { eventBus } from "../../services/event-bus/index.js";
 import { env } from "../../config/env.js";
 import { computeForecast } from "./engine.js";
 import { computeForecastHash, proposalExceedsThreshold, milestoneIsManual } from "./rules.js";
-import type {
-  ForecastNode,
-  ForecastEdge,
-  ForecastMilestoneInput,
-  ForecastStats,
-} from "./types.js";
+import type { ForecastNode, ForecastEdge, ForecastMilestoneInput, ForecastStats } from "./types.js";
 
 // ─── Loader types (internal) ─────────────────────────────────────────────────
 
@@ -173,13 +168,13 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
     // estimateHours is a Prisma Decimal object; use .toNumber() consistently.
     // (The approved-hours path already used .toNumber(); this aligns the two.)
     const rawEst = sched?.estimateHours ?? null;
-    const estimateHoursNum =
-      rawEst !== null && rawEst !== undefined ? rawEst.toNumber() : null;
+    const estimateHoursNum = rawEst !== null && rawEst !== undefined ? rawEst.toNumber() : null;
     return {
       issueId: issue.id,
       startDate: sched?.startDate ?? null,
       dueDate: sched?.dueDate ?? null,
-      estimateHours: estimateHoursNum !== null && !isNaN(estimateHoursNum) ? estimateHoursNum : null,
+      estimateHours:
+        estimateHoursNum !== null && !isNaN(estimateHoursNum) ? estimateHoursNum : null,
       progress: sched?.progress ?? 0,
       state: issue.state,
       completedAt: issue.completedAt,
@@ -243,10 +238,8 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
     inputsHash: string;
     computedAt: Date;
   }
-  interface UpdateRow extends CreateRow {}
-
   const toCreate: CreateRow[] = [];
-  const toUpdate: UpdateRow[] = [];
+  const toUpdate: CreateRow[] = [];
 
   for (const node of nodes) {
     const entry = result.forecasts.get(node.issueId);
@@ -281,8 +274,7 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
   // Milestone updates: collect only those that need a status change (skip manual)
   const milestoneUpdates = result.milestoneRollups.filter(
     (rollup) =>
-      !milestoneIsManual(rollup.currentStatus) &&
-      rollup.computedStatus !== rollup.currentStatus,
+      !milestoneIsManual(rollup.currentStatus) && rollup.computedStatus !== rollup.currentStatus
   );
 
   // McpProposal: collect over-threshold slips, dedup in one query
@@ -328,8 +320,8 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
               inputsHash: r.inputsHash,
               computedAt: r.computedAt,
             },
-          }),
-        ),
+          })
+        )
       );
     }
 
@@ -340,8 +332,8 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
           tx.milestone.update({
             where: { id: rollup.milestoneId },
             data: { status: rollup.computedStatus as "upcoming" | "at_risk" },
-          }),
-        ),
+          })
+        )
       );
     }
 
