@@ -35,6 +35,8 @@ export default {
     "src/modules/roadmap/roadmap-sync.ts",
     "src/modules/forecast/engine.ts",
     "src/modules/forecast/listener.ts",
+    // KAN-113: pure decision rules extracted from service.ts (mutation-testable)
+    "src/modules/forecast/rules.ts",
   ],
   reporters: ["html", "clear-text", "progress"],
   // Re-evaluate only mutants affected by changes between runs.
