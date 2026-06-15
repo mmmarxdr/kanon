@@ -455,6 +455,10 @@ model IssueForecast {
   slipDays      Int       @default(0) @map("slip_days")
   critical      Boolean   @default(false)
   floatDays     Int?      @map("float_days")
+  /// Hash of the COMPUTED forecast output {forecastStart,forecastEnd,slipDays,critical,floatDays},
+  /// NOT of the issue's inputs. The skip-write gate must catch propagated slip from upstream
+  /// predecessors (a successor's forecast changes while its own inputs don't), so it keys on
+  /// output. Column name kept for back-compat (no migration). See KAN-102 PR2.
   inputsHash    String?   @map("inputs_hash")
   computedAt    DateTime  @map("computed_at")
 

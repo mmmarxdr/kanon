@@ -46,6 +46,7 @@ import { cleanupExpired } from "./modules/work-session/service.js";
 import { registerNotificationService } from "./services/notification/index.js";
 import { createEmailProvider } from "./services/email/index.js";
 import type { EmailProvider } from "./services/email/types.js";
+import { registerForecastListener } from "./modules/forecast/index.js";
 
 export interface BuildAppOptions {
   /** Optional override for the email provider (useful for testing with a spy). */
@@ -152,6 +153,17 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   });
   app.addHook("onClose", async () => {
     unsubscribeNotifications();
+  });
+
+  // ─── ForecastListener ─────────────────────────────────────────────────
+  // Subscribe to forecast-relevant domain events at startup; unsubscribe on
+  // close (mirrors NotificationService spine above). Per-project trailing
+  // debounce (FORECAST_DEBOUNCE_MS, default 3000ms) collapses bursts into a
+  // single full-project rebuild. Fire-and-forget — a forecast failure must
+  // never break the emitting mutation (KAN-102).
+  const unsubscribeForecast = registerForecastListener(eventBus, app.log);
+  app.addHook("onClose", async () => {
+    unsubscribeForecast();
   });
 
   // Health check with DB connectivity (always public, before auth)
