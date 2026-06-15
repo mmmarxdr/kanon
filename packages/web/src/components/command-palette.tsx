@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { useQueryClient } from "@tanstack/react-query";
-import { issueKeys } from "@/lib/query-keys";
-import { aggregateIssuesFromQueries } from "@/lib/aggregate-issues";
 import type { Issue } from "@/types/issue";
 import { useCommandPaletteStore } from "@/stores/command-palette-store";
 import { Icon } from "@/components/ui/icons";
 import { Kbd, StatePip, TypeGlyph } from "@/components/ui/primitives";
-
+import { PaletteFilterBar } from "@/components/palette-filter-bar";
+import { useActiveProjectKey } from "@/hooks/use-active-project-key";
+import { useIssueSearchQuery } from "@/features/board/use-issue-search-query";
+import { parseSearchTokens } from "@/features/board/parse-search-tokens";
 
 interface CommandPaletteProps {
   onClose: () => void;
@@ -29,35 +29,23 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  // mode is always "search" — AI mode removed (KAN-33)
 
-  const cachedIssues = useMemo(() => {
-    // Scope to issueKeys.lists() — the ["issues","list"] prefix — so we only
-    // pick up flat Issue[] caches (useIssuesQuery, useBacklogQuery, etc.).
-    // issueKeys.all ("issues") is a prefix of ALL issue query keys, including
-    // detail (single Issue), groups (GroupSummary[]), documents, context, etc.
-    // Spreading a non-array value throws "data is not iterable" (KAN-90).
-    // aggregateIssuesFromQueries handles all edge cases defensively.
-    const listQueries = queryClient.getQueriesData<Issue[]>({
-      queryKey: issueKeys.lists(),
-    });
-    return aggregateIssuesFromQueries(listQueries as [unknown, unknown][]);
-  }, [queryClient]);
+  // Single source of truth: raw input → derive q + filters via parseSearchTokens (ADR-4)
+  const { q, filters } = useMemo(() => parseSearchTokens(search), [search]);
+
+  const projectKey = useActiveProjectKey();
+
+  // Server-backed issue search — replaces the old cachedIssues/getQueriesData path
+  const { data: serverIssues, isPending } = useIssueSearchQuery(projectKey, q, filters);
+
+  const searchResults: Issue[] = serverIssues ?? [];
 
   const items = useMemo(() => {
     const result: CommandItem[] = [];
-    const query = search.toLowerCase().trim();
+    const rawQuery = search.toLowerCase().trim();
 
-    const filteredIssues = query
-      ? cachedIssues.filter(
-          (issue) =>
-            issue.title.toLowerCase().includes(query) ||
-            issue.key.toLowerCase().includes(query),
-        )
-      : cachedIssues.slice(0, 5);
-
-    for (const issue of filteredIssues.slice(0, 10)) {
+    // Issue results from server (already filtered server-side)
+    for (const issue of searchResults.slice(0, 10)) {
       result.push({
         id: `issue-${issue.id}`,
         type: "issue",
@@ -90,9 +78,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
         label: "Go to Board",
         sub: "G B",
         onSelect: () => {
-          const firstIssue = cachedIssues[0];
-          if (firstIssue) {
-            const projectKey = firstIssue.key.split("-")[0] ?? "";
+          if (projectKey) {
             void navigate({
               to: "/board/$projectKey",
               params: { projectKey },
@@ -107,8 +93,8 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
       { id: "go-settings",     label: "Go to Settings",     sub: "G S", onSelect: onClose },
     ];
 
-    const filteredActions = query
-      ? actions.filter((a) => a.label.toLowerCase().includes(query))
+    const filteredActions = rawQuery
+      ? actions.filter((a) => a.label.toLowerCase().includes(rawQuery))
       : actions;
 
     for (const action of filteredActions) {
@@ -122,7 +108,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
     }
 
     return result;
-  }, [search, cachedIssues, navigate, onClose, onCreateIssue]);
+  }, [search, searchResults, navigate, onClose, onCreateIssue, projectKey]);
 
   useEffect(() => {
     setSelectedIndex(0);
@@ -169,6 +155,9 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
   const issueItems = items.filter((i) => i.type === "issue");
   const actionItems = items.filter((i) => i.type === "action");
   const actionIndexOffset = issueItems.length;
+
+  // Suppress unused variable warning — isPending may be used for a loading indicator in future
+  void isPending;
 
   return (
     <div
@@ -238,10 +227,13 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
           <Kbd>Esc</Kbd>
         </div>
 
+        {/* Filter bar — chips write through the raw input (ADR-4) */}
+        <PaletteFilterBar raw={search} onRawChange={setSearch} />
+
         {/* Results */}
         <div
           ref={listRef}
-          style={{ maxHeight: 420, overflow: "auto", padding: "6px 0 8px" }}
+          style={{ maxHeight: 380, overflow: "auto", padding: "6px 0 8px" }}
         >
           {items.length === 0 ? (
             <div
@@ -275,7 +267,10 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
                       title={it.label}
                       right={
                         it.issue ? (
-                          <StatePip state={it.issue.state} />
+                          <>
+                            {docIndicator(it.issue)}
+                            <StatePip state={it.issue.state} />
+                          </>
                         ) : null
                       }
                     />
@@ -338,6 +333,63 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Renders an inline document-kind indicator for an issue row.
+ * ADR → "ADR" pill; other kinds → generic doc dot.
+ * Returns null when documentKinds is empty or absent.
+ */
+function docIndicator(issue: Issue): React.ReactNode {
+  const kinds = issue.documentKinds;
+  if (!kinds || kinds.length === 0) return null;
+
+  const isAdr = kinds.includes("adr");
+
+  return (
+    <span
+      data-testid={`doc-indicator-${issue.key}`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 2,
+        marginRight: 4,
+      }}
+    >
+      {isAdr ? (
+        <span
+          style={{
+            fontSize: 9,
+            fontFamily: "monospace",
+            letterSpacing: "0.04em",
+            color: "var(--ink-3)",
+            background: "var(--bg-3)",
+            border: "1px solid var(--line)",
+            borderRadius: 3,
+            padding: "1px 4px",
+            lineHeight: 1.4,
+          }}
+        >
+          ADR
+        </span>
+      ) : (
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="var(--ink-3)"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-label="has document"
+        >
+          <rect x="3" y="2" width="10" height="12" rx="1.5" />
+          <path d="M6 6h4M6 9h4M6 12h2" />
+        </svg>
+      )}
+    </span>
   );
 }
 
