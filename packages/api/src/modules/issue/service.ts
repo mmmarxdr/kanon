@@ -278,6 +278,9 @@ export async function listIssues(
 
   // KAN-111: free-text search — title OR key, case-insensitive substring.
   // Empty/whitespace q is treated as no-op (enabled-gated on the web side too).
+  // NOTE: if `keys` is also set, Prisma ANDs them (key IN [...] AND (title|key
+  // CONTAINS q)) — i.e. q narrows within the key set. The palette never sends
+  // `keys` + `q` together, so this combination is benign; documented for clarity.
   if (filters.q && filters.q.trim().length > 0) {
     where.OR = [
       { title: { contains: filters.q, mode: "insensitive" } },

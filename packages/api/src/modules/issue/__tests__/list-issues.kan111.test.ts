@@ -38,6 +38,7 @@ vi.mock("../../work-session/service.js", () => ({
 
 import { prisma } from "../../../config/prisma.js";
 import { listIssues } from "../service.js";
+import { IssueFilterQuery } from "../schema.js";
 
 const mockProjectFindUnique = vi.mocked(prisma.project.findUnique);
 const mockIssueFindMany = vi.mocked(prisma.issue.findMany);
@@ -253,6 +254,29 @@ describe("listIssues — q and filters compose (KAN-111)", () => {
         { key: { contains: "billing", mode: "insensitive" } },
       ],
     });
+  });
+});
+
+// ─── has_documents wire parsing (KAN-111, review fix) ─────────────────────────
+
+describe("IssueFilterQuery — has_documents wire parsing (KAN-111)", () => {
+  it("parses has_documents='true' to boolean true", () => {
+    expect(IssueFilterQuery.parse({ has_documents: "true" }).has_documents).toBe(
+      true,
+    );
+  });
+
+  it("parses has_documents='false' to boolean false (NOT true)", () => {
+    // Regression guard: z.coerce.boolean() would wrongly coerce the string
+    // "false" to `true` (JS truthiness), so the web sending ?has_documents=false
+    // to clear the filter would silently still filter. Must parse to false.
+    expect(IssueFilterQuery.parse({ has_documents: "false" }).has_documents).toBe(
+      false,
+    );
+  });
+
+  it("leaves has_documents undefined when the param is absent", () => {
+    expect(IssueFilterQuery.parse({}).has_documents).toBeUndefined();
   });
 });
 

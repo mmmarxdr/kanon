@@ -91,8 +91,14 @@ export const IssueFilterQuery = z.object({
   keys: z.string().optional(),
   // KAN-111: free-text search (title OR key, case-insensitive substring)
   q: z.string().optional(),
-  // KAN-111: filter to issues that have at least one attached document
-  has_documents: z.coerce.boolean().optional(),
+  // KAN-111: filter to issues that have at least one attached document.
+  // NOT z.coerce.boolean() — that coerces the string "false" to `true` (JS
+  // truthiness), so the web sending ?has_documents=false to clear the filter
+  // would silently still filter. Parse the wire string explicitly.
+  has_documents: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .optional(),
   // KAN-111: filter to issues that have at least one document of this kind
   document_kind: documentKindSchema.optional(),
 });
