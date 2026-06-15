@@ -38,7 +38,11 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
   // Server-backed issue search — replaces the old cachedIssues/getQueriesData path
   const { data: serverIssues, isFetching } = useIssueSearchQuery(projectKey, q, filters);
 
-  const searchResults: Issue[] = serverIssues ?? [];
+  // Memoize so the empty-array fallback keeps a stable identity across renders
+  // (serverIssues is undefined while the query is disabled/loading). Without this,
+  // `serverIssues ?? []` is a fresh array every render and busts the `items` useMemo
+  // below (react-hooks/exhaustive-deps).
+  const searchResults = useMemo<Issue[]>(() => serverIssues ?? [], [serverIssues]);
 
   const items = useMemo(() => {
     const result: CommandItem[] = [];
