@@ -24,7 +24,7 @@ import type { PromoteWorkLogBody, UpdateEntryBody, RejectEntryBody, CreateAdjust
  * hours default = workLog.durationS / 3600 as Prisma.Decimal.
  * hours body override (string) → new Prisma.Decimal(body.hours).
  *
- * Emits: worklog.promoted (optional, fire-and-forget)
+ * Emits: nothing — creates a TimeEntry row only; no domain events.
  */
 export async function promoteWorkLog(
   workLogId: string,

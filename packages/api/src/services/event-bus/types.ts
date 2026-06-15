@@ -41,10 +41,15 @@ export type DomainEventType =
   | "schedule.updated"
   | "time-entry.approved"
   | "time-entry.rejected"
-  | "worklog.promoted"
+  // worklog.promoted removed KAN-102 (dead event — never emitted anywhere)
+  // KAN-102: emitted from work-session/service.ts when WorkLog is created
+  | "worklog.created"
   // KAN-101 PPM W2: dependency lifecycle event for forecast trigger (KAN-102).
   // Emitted post-commit fire-and-forget on create + delete.
-  | "dependency.changed";
+  | "dependency.changed"
+  // TODO KAN-103: add "interruption.opened" | "interruption.closed"
+  // KAN-102: seam for PPM P2 rollup-listener
+  | "ppm.forecast.updated";
 
 /**
  * A typed domain event emitted after a successful mutation.
