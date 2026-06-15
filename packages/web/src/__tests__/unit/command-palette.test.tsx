@@ -111,7 +111,8 @@ vi.mock("@/components/palette-filter-bar", () => ({
 }));
 
 // useActiveProjectKey — returns "KAN" by default
-const mockUseActiveProjectKey = vi.fn<[], string | null>(() => "KAN");
+function defaultProjectKey(): string | null { return "KAN"; }
+const mockUseActiveProjectKey = vi.fn(defaultProjectKey);
 vi.mock("@/hooks/use-active-project-key", () => ({
   useActiveProjectKey: () => mockUseActiveProjectKey(),
 }));
