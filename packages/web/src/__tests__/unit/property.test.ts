@@ -2,8 +2,7 @@
  * Property-based tests (fast-check) for pure logic in @kanon/web.
  *
  * Targets:
- *  1. aggregateIssuesFromQueries  — the KAN-90 cache-shape class
- *  2. issueKeys / cycleKeys       — query-key builder invariants
+ *  1. issueKeys / cycleKeys — query-key builder invariants
  *     (prefix hierarchy underpins the KAN-88 SSE-scoping fix)
  */
 
@@ -17,76 +16,10 @@ import {
   roadmapKeys,
   notificationKeys,
 } from "@/lib/query-keys";
-import { aggregateIssuesFromQueries } from "@/lib/aggregate-issues";
-import type { Issue } from "@/types/issue";
 
 // ---------------------------------------------------------------------------
 // Arbitraries
 // ---------------------------------------------------------------------------
-
-/** A minimal valid Issue — all required fields, realistic values. */
-const issueArb: fc.Arbitrary<Issue> = fc.record({
-  id: fc.uuid(),
-  key: fc.stringMatching(/^[A-Z]{2,6}-\d{1,4}$/),
-  title: fc.string({ minLength: 1, maxLength: 120 }),
-  description: fc.option(fc.string(), { nil: null }),
-  type: fc.constantFrom("feature", "bug", "task", "spike" as const),
-  priority: fc.constantFrom("critical", "high", "medium", "low" as const),
-  state: fc.constantFrom(
-    "todo",
-    "in_progress",
-    "done",
-    "review",
-    "backlog",
-  ),
-  labels: fc.array(fc.string({ minLength: 1, maxLength: 20 }), {
-    maxLength: 5,
-  }),
-  assigneeId: fc.option(fc.uuid(), { nil: null }),
-  assignee: fc.option(
-    fc.record({ username: fc.string({ minLength: 1, maxLength: 30 }) }),
-    { nil: null },
-  ),
-  parentId: fc.option(fc.uuid(), { nil: null }),
-  groupKey: fc.option(fc.string({ minLength: 1, maxLength: 30 }), {
-    nil: null,
-  }),
-  projectId: fc.uuid(),
-  // noInvalidDate: fc.date() emits `new Date(NaN)` even with min/max bounds,
-  // and Invalid Date throws RangeError on toISOString()
-  createdAt: fc
-    .date({ min: new Date("2020-01-01"), max: new Date("2030-12-31"), noInvalidDate: true })
-    .map((d) => d.toISOString()),
-  updatedAt: fc
-    .date({ min: new Date("2020-01-01"), max: new Date("2030-12-31"), noInvalidDate: true })
-    .map((d) => d.toISOString()),
-});
-
-/**
- * Arbitrary cache entry value — covers every shape the TanStack Query cache
- * could realistically contain when scoped to issueKeys.lists():
- *   - Issue[]         normal case
- *   - Issue           single object (the KAN-90 trigger)
- *   - null            in-flight / stale
- *   - undefined       never-fetched
- *   - GroupSummary[]  wrong-key bleed (defensive)
- *   - number / string pathological
- */
-const cacheValueArb: fc.Arbitrary<unknown> = fc.oneof(
-  fc.array(issueArb, { maxLength: 10 }),             // Issue[] — normal
-  issueArb,                                           // single Issue — KAN-90 trigger
-  fc.constant(null),                                  // null
-  fc.constant(undefined),                             // undefined
-  fc.array(fc.record({ groupKey: fc.string(), count: fc.nat() }), { maxLength: 5 }), // wrong type
-  fc.integer(),                                       // pathological scalar
-  fc.string(),                                        // pathological scalar
-);
-
-/** A getQueriesData-style entries array: [QueryKey, data][] */
-const queriesDataArb: fc.Arbitrary<[unknown, unknown][]> = fc.array(
-  fc.tuple(fc.array(fc.string(), { maxLength: 4 }), cacheValueArb),
-  { maxLength: 20 },
-);
 
 /** Non-empty printable string — for query key builder inputs. */
 const keyStringArb = fc.string({ minLength: 1, maxLength: 40 }).filter(
@@ -94,90 +27,7 @@ const keyStringArb = fc.string({ minLength: 1, maxLength: 40 }).filter(
 );
 
 // ---------------------------------------------------------------------------
-// 1. aggregateIssuesFromQueries — cache-shape robustness (KAN-90 class)
-// ---------------------------------------------------------------------------
-
-describe("aggregateIssuesFromQueries — property tests", () => {
-  it("never throws regardless of cache shape", () => {
-    fc.assert(
-      fc.property(queriesDataArb, (entries) => {
-        // Must not throw for ANY input shape.
-        let threw = false;
-        try {
-          aggregateIssuesFromQueries(entries);
-        } catch {
-          threw = true;
-        }
-        return !threw;
-      }),
-    );
-  });
-
-  it("always returns an array", () => {
-    fc.assert(
-      fc.property(queriesDataArb, (entries) => {
-        const result = aggregateIssuesFromQueries(entries);
-        return Array.isArray(result);
-      }),
-    );
-  });
-
-  it("result count equals the sum of items in Issue[] entries only", () => {
-    fc.assert(
-      fc.property(queriesDataArb, (entries) => {
-        const expected = entries.reduce((sum, [, data]) => {
-          return sum + (Array.isArray(data) ? data.length : 0);
-        }, 0);
-        const result = aggregateIssuesFromQueries(entries);
-        return result.length === expected;
-      }),
-    );
-  });
-
-  it("a single-Issue object (KAN-90 trigger) is silently ignored, not spread-thrown", () => {
-    fc.assert(
-      fc.property(issueArb, fc.array(issueArb, { maxLength: 5 }), (singleIssue, listIssues) => {
-        // One entry is a bare Issue object (not an array) — the exact KAN-90 shape.
-        const entries: [unknown, unknown][] = [
-          [["issues", "list", "KAN-90-project"], singleIssue],  // bare object — should be skipped
-          [["issues", "list", "other-project"], listIssues],    // array — should be included
-        ];
-        const result = aggregateIssuesFromQueries(entries);
-        // Should include exactly the listIssues contents, not the single issue.
-        return result.length === listIssues.length;
-      }),
-    );
-  });
-
-  it("empty entries array returns empty array", () => {
-    fc.assert(
-      fc.property(fc.constant([] as [unknown, unknown][]), (entries) => {
-        return aggregateIssuesFromQueries(entries).length === 0;
-      }),
-    );
-  });
-
-  it("all-null/undefined entries return empty array", () => {
-    fc.assert(
-      fc.property(
-        fc.array(
-          fc.tuple(
-            fc.array(fc.string(), { maxLength: 4 }),
-            fc.oneof(fc.constant(null), fc.constant(undefined)),
-          ),
-          { minLength: 1, maxLength: 10 },
-        ),
-        (entries) => {
-          const result = aggregateIssuesFromQueries(entries as [unknown, unknown][]);
-          return result.length === 0;
-        },
-      ),
-    );
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 2. issueKeys — query-key builder invariants
+// 1. issueKeys — query-key builder invariants
 // ---------------------------------------------------------------------------
 
 describe("issueKeys — property tests", () => {

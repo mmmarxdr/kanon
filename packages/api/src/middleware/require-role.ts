@@ -497,13 +497,6 @@ export function requireDependencyRole(depIdParam: string, ...roles: MemberRole[]
   };
 }
 
-/**
- * Shorthand: require dependency project membership with no minimum role.
- */
-export function requireDependencyMember(depIdParam: string): preHandlerHookHandler {
-  return requireDependencyRole(depIdParam);
-}
-
 // ---------------------------------------------------------------------------
 // Milestone-scoped factories (routes like /api/milestones/:id/...)
 // Milestone id is a UUID PK — no workspace-scope fix needed (A4).
@@ -571,13 +564,6 @@ export function requireMilestoneRole(milestoneIdParam: string, ...roles: MemberR
     request.member = member;
     request.projectRole = projectRole;
   };
-}
-
-/**
- * Shorthand: require milestone project membership with no minimum role.
- */
-export function requireMilestoneMember(milestoneIdParam: string): preHandlerHookHandler {
-  return requireMilestoneRole(milestoneIdParam);
 }
 
 // ---------------------------------------------------------------------------
@@ -681,13 +667,6 @@ export function requireEntryRole(entryIdParam: string, ...roles: MemberRole[]): 
   };
 }
 
-/**
- * Shorthand: require time-entry project membership with no minimum role.
- */
-export function requireEntryMember(entryIdParam: string): preHandlerHookHandler {
-  return requireEntryRole(entryIdParam);
-}
-
 // ---------------------------------------------------------------------------
 // WorkLog-scoped factories (routes like /api/worklogs/:id/...)
 // WorkLog id is a UUID PK. Resolves project via workLog → issue → project.
@@ -750,13 +729,6 @@ export function requireWorkLogRole(workLogIdParam: string, ...roles: MemberRole[
     request.member = member;
     request.projectRole = projectRole;
   };
-}
-
-/**
- * Shorthand: require worklog project membership with no minimum role.
- */
-export function requireWorkLogMember(workLogIdParam: string): preHandlerHookHandler {
-  return requireWorkLogRole(workLogIdParam);
 }
 
 // ---------------------------------------------------------------------------
@@ -969,13 +941,6 @@ export function requireProposalRole(proposalIdParam: string, ...roles: MemberRol
 
     request.member = await resolveAndCheckMember(user.userId, proposal.workspaceId, minimumRole);
   };
-}
-
-/**
- * Shorthand: require proposal workspace membership with no minimum role.
- */
-export function requireProposalMember(proposalIdParam: string): preHandlerHookHandler {
-  return requireProposalRole(proposalIdParam);
 }
 
 // ---------------------------------------------------------------------------
