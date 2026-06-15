@@ -25,11 +25,16 @@ export default {
   // KAN-84 slice 1: SSE/eventing surface (KAN-76 hardened).
   // KAN-84 slice 3: roadmap-sync pure logic (computeStatus + syncRoadmapItemStatus).
   // KAN-102: forecast engine pure logic (topo + forward/backward pass + forecastEnd).
-  // Note: service.ts is DB-orchestration only — line coverage is the bar there, not mutation.
+  // KAN-115: forecast listener (debounce + event→projectId resolution + cache),
+  //   unit-tested with mocked bus/prisma — a valid mutation target.
+  // Note: service.ts is DB-orchestration whose only tests are DB integration tests,
+  //   which don't execute under Stryker's dry-run — line coverage is the bar there,
+  //   not mutation. Extract its pure decision logic to make it mutation-testable (KAN-113).
   mutate: [
     "src/modules/events/workspace-events.ts",
     "src/modules/roadmap/roadmap-sync.ts",
     "src/modules/forecast/engine.ts",
+    "src/modules/forecast/listener.ts",
   ],
   reporters: ["html", "clear-text", "progress"],
   // Re-evaluate only mutants affected by changes between runs.
