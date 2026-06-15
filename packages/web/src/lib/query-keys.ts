@@ -28,6 +28,14 @@ export const issueKeys = {
    */
   documents: (issueKey: string) =>
     [...issueKeys.all, "documents", issueKey] as const,
+  /**
+   * KAN-111: Palette server search key — nested under `.all` so SSE
+   * `issue.updated` invalidations automatically refresh search results.
+   * Distinct from `.list` so palette search never collides with board full-list.
+   * Shape: ["issues", "search", projectKey, q, filters]
+   */
+  search: (projectKey: string, q: string, filters: object) =>
+    [...issueKeys.all, "search", projectKey, q, filters] as const,
 };
 
 export const projectKeys = {
