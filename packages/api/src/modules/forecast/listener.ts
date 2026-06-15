@@ -76,13 +76,18 @@ interface IssueTransitionedPayload {
 
 // ─── projectId resolution ────────────────────────────────────────────────────
 
-// ─── In-memory projectId cache constants ─────────────────────────────────────
-// issueId → projectId is stable (issues don't move between projects).
-// The cache is instance-scoped (lives inside registerForecastListener) so each
-// listener has its own cache — makes tests predictable and avoids module-level state.
-
-const PROJECT_ID_CACHE_TTL_MS = 30_000; // 30 s
-const PROJECT_ID_CACHE_MAX = 500;
+/**
+ * Resolve the projectId for an issue. Returns null if the issue was deleted
+ * between event emit and handler. A single indexed PK lookup — cheap enough to
+ * run per event; the per-project debounce collapses bursts to one rebuild.
+ */
+async function resolveProjectIdFromIssue(issueId: string): Promise<string | null> {
+  const issue = await prisma.issue.findUnique({
+    where: { id: issueId },
+    select: { projectId: true },
+  });
+  return issue?.projectId ?? null;
+}
 
 // ─── Main export ─────────────────────────────────────────────────────────────
 
@@ -107,45 +112,6 @@ export function registerForecastListener(
 
   // Per-project trailing debounce timers.
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
-
-  // ── Instance-scoped projectId cache ─────────────────────────────────────
-  // Each listener instance gets its own cache so tests are isolated and there
-  // is no module-level mutable state. TTL=30s, bounded at 500 entries.
-  interface CacheEntry {
-    projectId: string;
-    expiresAt: number;
-  }
-  const projectIdCache = new Map<string, CacheEntry>();
-
-  async function resolveProjectIdFromIssue(issueId: string): Promise<string | null> {
-    const now = Date.now();
-
-    // Cache hit?
-    const cached = projectIdCache.get(issueId);
-    if (cached !== undefined && cached.expiresAt > now) {
-      return cached.projectId;
-    }
-
-    const issue = await prisma.issue.findUnique({
-      where: { id: issueId },
-      select: { projectId: true },
-    });
-    const projectId = issue?.projectId ?? null;
-
-    if (projectId !== null) {
-      // Evict oldest entry when at cap.
-      if (projectIdCache.size >= PROJECT_ID_CACHE_MAX) {
-        const oldestKey = projectIdCache.keys().next().value;
-        if (oldestKey !== undefined) {
-          projectIdCache.delete(oldestKey);
-        }
-      }
-      projectIdCache.set(issueId, { projectId, expiresAt: now + PROJECT_ID_CACHE_TTL_MS });
-    }
-
-    return projectId;
-  }
-  // ────────────────────────────────────────────────────────────────────────
 
   // Active flag: set to false on unsubscribe() so any in-flight async
   // handleEvent calls do not schedule new timers after shutdown.
