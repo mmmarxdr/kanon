@@ -58,12 +58,14 @@ export type {
 } from "./kanon-domain.js";
 
 export {
+  documentKindSchema,
   issueStateSchema,
   issueTypeSchema,
   issuePrioritySchema,
   activeWorkerSchema,
   childIssueSummarySchema,
   issueSchema,
+  issueFilterValueSchema,
   groupSummarySchema,
   issueDependencyEdgeSchema,
   issueDetailSchema,
@@ -71,12 +73,14 @@ export {
   groupSummaryListSchema,
 } from "./issue.js";
 export type {
+  DocumentKind,
   IssueState,
   IssueType,
   IssuePriority,
   ActiveWorker,
   ChildIssueSummary,
   Issue,
+  IssueFilters,
   GroupSummary,
   IssueDependencyEdge,
   IssueDetail,

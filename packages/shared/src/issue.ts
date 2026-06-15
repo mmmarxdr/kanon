@@ -16,6 +16,10 @@ import { z } from "zod";
 
 // ─── Enums ──────────────────────────────────────────────────────────────────
 
+// KAN-111: Document kind enum — 4 values bound to the IssueDocument.kind column.
+export const documentKindSchema = z.enum(["adr", "pdr", "rfc", "note"]);
+export type DocumentKind = z.infer<typeof documentKindSchema>;
+
 // KAN-99 PR1: "analysis" added at index 1 (between backlog and todo).
 export const issueStateSchema = z.enum([
   "backlog",
@@ -96,6 +100,8 @@ export const issueSchema: z.ZodType<Issue> = z.lazy(() =>
     updatedAt: z.string(),
     children: z.array(issueSchema).optional(),
     activeWorkers: z.array(activeWorkerSchema).optional(),
+    // KAN-111: distinct document kinds attached to this issue (select+distinct, no N+1)
+    documentKinds: z.array(documentKindSchema).optional(),
   }),
 );
 
@@ -117,7 +123,25 @@ export type Issue = {
   updatedAt: string;
   children?: Issue[];
   activeWorkers?: ActiveWorker[];
+  // KAN-111: distinct document kinds from the documents relation
+  documentKinds?: DocumentKind[];
 };
+
+// ─── IssueFilters (ADR-3) ─────────────────────────────────────────────────────
+//
+// VALUE schema for client-side filter state — camelCase, no coercion.
+// The api wire schema (snake_case + z.coerce) lives in api/src/modules/issue/schema.ts.
+// Web builds an IssueFilters object and maps it to query params via buildIssueSearchParams.
+
+export const issueFilterValueSchema = z.object({
+  state: issueStateSchema.optional(),
+  type: issueTypeSchema.optional(),
+  priority: issuePrioritySchema.optional(),
+  q: z.string().optional(),
+  hasDocuments: z.boolean().optional(),
+  documentKind: documentKindSchema.optional(),
+});
+export type IssueFilters = z.infer<typeof issueFilterValueSchema>;
 
 // ─── GroupSummary ─────────────────────────────────────────────────────────────
 
