@@ -1,34 +1,38 @@
 /**
- * Regression tests for KAN-90: command-palette crash when the query cache
- * contains non-array shapes under the `issueKeys.all` prefix.
+ * CommandPalette — KAN-111 PR2b test suite.
  *
- * Root cause: `getQueriesData({ queryKey: issueKeys.all })` returns every
- * cached entry whose key starts with ["issues"], including:
- *   - issueKeys.detail(key)  → a single Issue object (not iterable)
- *   - issueKeys.groups(key)  → a grouped summary structure (not Issue[])
- *   - issueKeys.documents(key) / issueKeys.context(key) → other shapes
+ * KAN-90 regression intent preserved:
+ *  - The palette no longer uses getQueriesData/aggregateIssuesFromQueries.
+ *    The crash class is gone. Defensive handling is verified: palette handles
+ *    empty/undefined server results without throwing.
  *
- * `issues.push(...data)` then throws `TypeError: data is not iterable`
- * which bubbles up through the render and white-screens the route.
- *
- * Fix: scope the lookup to `issueKeys.lists()` (the ["issues","list"] prefix
- * that only matches flat paginated list caches) and add an Array.isArray
- * guard as belt-and-suspenders.
+ * New scenarios (KAN-111):
+ *  - Server results via useIssueSearchQuery render correctly
+ *  - ADR / doc indicator shows when documentKinds is non-empty
+ *  - No indicator shows when documentKinds is empty
+ *  - Keyboard nav (↑↓ Enter Esc) works with server results
+ *  - Actions section still renders and fires correctly
+ *  - Empty state renders "No results"
+ *  - Loading (pending) state renders without crashing
+ *  - No-project fallback: projectKey null → issues hidden, actions work
  */
+import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, fireEvent } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { issueKeys } from "@/lib/query-keys";
-import type { Issue, IssueDetail } from "@/types/issue";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { CommandPalette } from "@/components/command-palette";
+import type { Issue } from "@/types/issue";
 
 // --------------------------------------------------------------------------
-// Module mocks — keep the component renderable in jsdom
+// Module mocks — must be hoisted before any imports that touch the mocked modules
 // --------------------------------------------------------------------------
+
+const mockNavigate = vi.fn();
 
 vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => vi.fn(),
+  useNavigate: () => mockNavigate,
+  useLocation: () => ({ pathname: "/board/KAN" }),
 }));
 
 vi.mock("@/hooks/use-workspace-query", () => ({
@@ -46,15 +50,77 @@ vi.mock("@/stores/command-palette-store", () => ({
 
 vi.mock("@/components/ui/icons", () => ({
   Icon: {
-    Search: () => null,
+    Search: () => <span data-testid="icon-search" />,
     Spark: () => null,
+    FileText: () => <span data-testid="icon-filetext" />,
   },
 }));
 
 vi.mock("@/components/ui/primitives", () => ({
   Kbd: ({ children }: { children: ReactNode }) => <span>{children}</span>,
-  StatePip: () => null,
-  TypeGlyph: () => null,
+  StatePip: () => <span data-testid="state-pip" />,
+  TypeGlyph: () => <span data-testid="type-glyph" />,
+  FilterChipSelect: ({
+    label,
+    onChange,
+  }: {
+    label: string;
+    value: string;
+    options: { value: string; label: string }[];
+    onChange: (v: string) => void;
+  }) => (
+    <button
+      data-testid={`chip-${label.toLowerCase()}`}
+      onClick={() => onChange("bug")}
+    >
+      {label}
+    </button>
+  ),
+}));
+
+// PaletteFilterBar — rendered as a simple stub so command-palette tests focus on palette logic
+vi.mock("@/components/palette-filter-bar", () => ({
+  PaletteFilterBar: ({
+    raw: _raw,
+    onRawChange: _onRawChange,
+  }: {
+    raw: string;
+    onRawChange: (r: string) => void;
+  }) => (
+    <div data-testid="palette-filter-bar">
+      <button
+        data-testid="chip-state"
+        onClick={() => _onRawChange("state:done")}
+      >
+        State
+      </button>
+      <button
+        data-testid="chip-type"
+        onClick={() => _onRawChange("type:bug")}
+      >
+        Type
+      </button>
+      <button
+        data-testid="chip-priority"
+        onClick={() => _onRawChange("priority:high")}
+      >
+        Priority
+      </button>
+    </div>
+  ),
+}));
+
+// useActiveProjectKey — returns "KAN" by default
+function defaultProjectKey(): string | null { return "KAN"; }
+const mockUseActiveProjectKey = vi.fn(defaultProjectKey);
+vi.mock("@/hooks/use-active-project-key", () => ({
+  useActiveProjectKey: () => mockUseActiveProjectKey(),
+}));
+
+// useIssueSearchQuery — fully controllable per test
+const mockUseIssueSearchQuery = vi.fn();
+vi.mock("@/features/board/use-issue-search-query", () => ({
+  useIssueSearchQuery: (...args: unknown[]) => mockUseIssueSearchQuery(...args),
 }));
 
 // --------------------------------------------------------------------------
@@ -73,28 +139,26 @@ function makeIssue(overrides: Partial<Issue> = {}): Issue {
     projectId: "p-1",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    documentKinds: [],
     ...overrides,
   };
 }
 
-function makeDetailIssue(key: string): IssueDetail {
-  return {
-    ...makeIssue({ key, id: `i-${key}` }),
-    project: { id: "p-1", key: "KAN", name: "Kanon" },
-    // IssueDetail narrows assignee to { id, username, email }; clear the base
-    // Issue's { username } shape so the types are compatible.
-    assignee: undefined,
-  };
-}
-
-function renderPalette(queryClient: QueryClient) {
+function renderPalette(
+  opts: { onClose?: () => void; onCreateIssue?: () => void } = {},
+): ReturnType<typeof render> {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   const Wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   );
-
   return render(
     <Wrapper>
-      <CommandPalette onClose={vi.fn()} onCreateIssue={vi.fn()} />
+      <CommandPalette
+        onClose={opts.onClose ?? vi.fn()}
+        onCreateIssue={opts.onCreateIssue ?? vi.fn()}
+      />
     </Wrapper>,
   );
 }
@@ -103,68 +167,250 @@ function renderPalette(queryClient: QueryClient) {
 // Tests
 // --------------------------------------------------------------------------
 
-describe("CommandPalette — KAN-90 non-array cache shapes", () => {
-  let queryClient: QueryClient;
-
+describe("CommandPalette — loading indicator (W2 / KAN-111)", () => {
   beforeEach(() => {
-    queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
+    vi.clearAllMocks();
+    mockUseActiveProjectKey.mockReturnValue("KAN");
+    mockUseIssueSearchQuery.mockReturnValue({ data: [], isFetching: false });
+  });
+
+  it("shows the searching indicator when isFetching is true", () => {
+    mockUseIssueSearchQuery.mockReturnValue({ data: [], isFetching: true });
+    renderPalette();
+    expect(screen.getByTestId("palette-searching")).toBeInTheDocument();
+  });
+
+  it("hides the searching indicator when isFetching is false", () => {
+    mockUseIssueSearchQuery.mockReturnValue({ data: [], isFetching: false });
+    renderPalette();
+    expect(screen.queryByTestId("palette-searching")).not.toBeInTheDocument();
+  });
+
+  it("does NOT show the searching indicator on no-project route (regression guard: disabled query must not show spinner)", () => {
+    // On a route with no project, the query is disabled → isFetching stays false.
+    // The mock simulates that correctly by not returning isFetching: true.
+    mockUseActiveProjectKey.mockReturnValue(null);
+    mockUseIssueSearchQuery.mockReturnValue({ data: undefined, isFetching: false });
+    renderPalette();
+    expect(screen.queryByTestId("palette-searching")).not.toBeInTheDocument();
+  });
+});
+
+describe("CommandPalette — server results (KAN-111)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseActiveProjectKey.mockReturnValue("KAN");
+    mockUseIssueSearchQuery.mockReturnValue({ data: [], isPending: false, isFetching: false });
+  });
+
+  // ── Render ─────────────────────────────────────────────────────────────
+
+  it("renders the palette dialog", () => {
+    renderPalette();
+    expect(screen.getByTestId("command-palette")).toBeInTheDocument();
+  });
+
+  it("renders server results in the Issues section", () => {
+    mockUseIssueSearchQuery.mockReturnValue({
+      data: [
+        makeIssue({ key: "KAN-5", title: "Auth module" }),
+        makeIssue({ key: "KAN-6", title: "Billing flow" }),
+      ],
+      isPending: false,
     });
+
+    renderPalette();
+
+    expect(screen.getByText("Auth module")).toBeInTheDocument();
+    expect(screen.getByText("Billing flow")).toBeInTheDocument();
   });
 
-  it("renders without crashing when only list cache entries exist", () => {
-    queryClient.setQueryData(issueKeys.list("KAN"), [makeIssue()]);
+  it("does NOT show Issues section when query returns no results (actions still shown)", () => {
+    mockUseIssueSearchQuery.mockReturnValue({ data: [], isPending: false });
 
-    expect(() => renderPalette(queryClient)).not.toThrow();
+    renderPalette();
+
+    // Actions section is always present; Issues section heading only shows with results
+    expect(screen.queryByText("Issues")).not.toBeInTheDocument();
+    expect(screen.getByText(/go to board/i)).toBeInTheDocument();
+  });
+
+  it("renders without crashing when query is pending (loading state)", () => {
+    mockUseIssueSearchQuery.mockReturnValue({ data: undefined, isPending: true });
+
+    expect(() => renderPalette()).not.toThrow();
+    expect(screen.getByTestId("command-palette")).toBeInTheDocument();
+    // isPending=true but isFetching=falsy must NOT show the loading indicator
+    expect(screen.queryByTestId("palette-searching")).not.toBeInTheDocument();
+  });
+
+  // ── KAN-90 regression: no crash on missing/undefined data ─────────────
+
+  it("renders without crashing when data is undefined (network error / no cache)", () => {
+    mockUseIssueSearchQuery.mockReturnValue({ data: undefined, isPending: false });
+
+    expect(() => renderPalette()).not.toThrow();
     expect(screen.getByTestId("command-palette")).toBeInTheDocument();
   });
 
-  it("renders without crashing when a detail cache entry is present (the KAN-90 repro)", () => {
-    // This is the exact condition that triggers the crash:
-    // Open an issue detail → populates issueKeys.detail("KAN-1")
-    // Then open the command palette → iterates cache → tries to spread a single Issue
-    queryClient.setQueryData(issueKeys.detail("KAN-1"), makeDetailIssue("KAN-1"));
+  // ── ADR / doc indicator ────────────────────────────────────────────────
 
-    expect(() => renderPalette(queryClient)).not.toThrow();
+  it("shows doc indicator when issue has documentKinds=['adr']", () => {
+    mockUseIssueSearchQuery.mockReturnValue({
+      data: [makeIssue({ key: "KAN-10", title: "Has ADR", documentKinds: ["adr"] })],
+      isPending: false,
+    });
+
+    renderPalette();
+
+    expect(screen.getByTestId("doc-indicator-KAN-10")).toBeInTheDocument();
+  });
+
+  it("shows 'ADR' label when documentKinds includes 'adr'", () => {
+    mockUseIssueSearchQuery.mockReturnValue({
+      data: [makeIssue({ key: "KAN-11", title: "ADR issue", documentKinds: ["adr"] })],
+      isPending: false,
+    });
+
+    renderPalette();
+
+    expect(screen.getByText("ADR")).toBeInTheDocument();
+  });
+
+  it("shows generic doc indicator when documentKinds has non-adr kind", () => {
+    mockUseIssueSearchQuery.mockReturnValue({
+      data: [makeIssue({ key: "KAN-12", title: "RFC issue", documentKinds: ["rfc"] })],
+      isPending: false,
+    });
+
+    renderPalette();
+
+    expect(screen.getByTestId("doc-indicator-KAN-12")).toBeInTheDocument();
+  });
+
+  it("shows no doc indicator when documentKinds is empty", () => {
+    mockUseIssueSearchQuery.mockReturnValue({
+      data: [makeIssue({ key: "KAN-13", title: "No docs", documentKinds: [] })],
+      isPending: false,
+    });
+
+    renderPalette();
+
+    expect(screen.queryByTestId("doc-indicator-KAN-13")).not.toBeInTheDocument();
+  });
+
+  it("shows no doc indicator when documentKinds is absent", () => {
+    mockUseIssueSearchQuery.mockReturnValue({
+      data: [
+        makeIssue({ key: "KAN-14", title: "No kinds field", documentKinds: undefined }),
+      ],
+      isPending: false,
+    });
+
+    renderPalette();
+
+    expect(screen.queryByTestId("doc-indicator-KAN-14")).not.toBeInTheDocument();
+  });
+
+  // ── No-project fallback ────────────────────────────────────────────────
+
+  it("renders without crashing on no-project route", () => {
+    mockUseActiveProjectKey.mockReturnValue(null);
+    mockUseIssueSearchQuery.mockReturnValue({ data: undefined, isPending: false });
+
+    expect(() => renderPalette()).not.toThrow();
     expect(screen.getByTestId("command-palette")).toBeInTheDocument();
   });
 
-  it("renders without crashing when a groups cache entry is present", () => {
-    // issueKeys.groups(projectKey) → an array of GroupSummary, not Issue[]
-    queryClient.setQueryData(issueKeys.groups("KAN"), [
-      { groupKey: "g-1", count: 3, latestState: "todo", title: "Group", updatedAt: "" },
-    ]);
+  it("still shows Actions section when projectKey is null", () => {
+    mockUseActiveProjectKey.mockReturnValue(null);
+    mockUseIssueSearchQuery.mockReturnValue({ data: undefined, isPending: false });
 
-    expect(() => renderPalette(queryClient)).not.toThrow();
-    expect(screen.getByTestId("command-palette")).toBeInTheDocument();
+    renderPalette();
+
+    expect(screen.getByText(/create new issue/i)).toBeInTheDocument();
   });
 
-  it("renders without crashing when detail AND list entries coexist", () => {
-    // Both shapes in cache at the same time — the scenario after normal use
-    queryClient.setQueryData(issueKeys.list("KAN"), [makeIssue()]);
-    queryClient.setQueryData(issueKeys.detail("KAN-1"), makeDetailIssue("KAN-1"));
+  it("does NOT show Issues section heading when there are no results", () => {
+    mockUseActiveProjectKey.mockReturnValue(null);
+    mockUseIssueSearchQuery.mockReturnValue({ data: undefined, isPending: false });
 
-    expect(() => renderPalette(queryClient)).not.toThrow();
-    expect(screen.getByTestId("command-palette")).toBeInTheDocument();
+    renderPalette();
+
+    // Section label uses uppercase transform in CSS, text content is "Issues"
+    expect(screen.queryByText("Issues")).not.toBeInTheDocument();
   });
 
-  it("surfaces list-cached issues in the palette results", () => {
-    queryClient.setQueryData(issueKeys.list("KAN"), [
-      makeIssue({ key: "KAN-5", title: "My important issue" }),
-    ]);
+  // ── Keyboard navigation ────────────────────────────────────────────────
 
-    renderPalette(queryClient);
+  it("keyboard nav (↓↑ Enter) does not crash", () => {
+    mockUseIssueSearchQuery.mockReturnValue({
+      data: [makeIssue({ key: "KAN-20", title: "Nav issue" })],
+      isPending: false,
+    });
 
-    expect(screen.getByText("My important issue")).toBeInTheDocument();
+    renderPalette();
+
+    const dialog = screen.getByTestId("command-palette");
+    expect(() => {
+      fireEvent.keyDown(dialog, { key: "ArrowDown" });
+      fireEvent.keyDown(dialog, { key: "ArrowUp" });
+      fireEvent.keyDown(dialog, { key: "Enter" });
+    }).not.toThrow();
   });
 
-  it("does not surface the detail-cached single issue as a result (no duplication)", () => {
-    // detail cache should NOT be iterated as a list — only list caches should
-    queryClient.setQueryData(issueKeys.detail("KAN-1"), makeDetailIssue("KAN-1"));
+  it("Esc key calls onClose", () => {
+    mockUseIssueSearchQuery.mockReturnValue({ data: [], isPending: false });
+    const onClose = vi.fn();
 
-    renderPalette(queryClient);
+    renderPalette({ onClose });
 
-    // The detail issue title must NOT appear because detail isn't a flat list
-    expect(screen.queryByText("Test issue")).not.toBeInTheDocument();
+    const dialog = screen.getByTestId("command-palette");
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  // ── Actions section ────────────────────────────────────────────────────
+
+  it("renders the Actions section", () => {
+    mockUseIssueSearchQuery.mockReturnValue({ data: [], isPending: false });
+
+    renderPalette();
+
+    expect(screen.getByText(/go to board/i)).toBeInTheDocument();
+  });
+
+  it("calls onCreateIssue when Create new issue is activated via Enter (no issues → first item)", () => {
+    mockUseIssueSearchQuery.mockReturnValue({ data: [], isPending: false });
+    const onCreateIssue = vi.fn();
+    const onClose = vi.fn();
+
+    renderPalette({ onClose, onCreateIssue });
+
+    // With no server issues, "Create new issue" is at index 0
+    const dialog = screen.getByTestId("command-palette");
+    fireEvent.keyDown(dialog, { key: "Enter" });
+
+    expect(onCreateIssue).toHaveBeenCalledOnce();
+  });
+
+  // ── Filter bar ─────────────────────────────────────────────────────────
+
+  it("renders the filter bar (PaletteFilterBar stub present)", () => {
+    mockUseIssueSearchQuery.mockReturnValue({ data: [], isPending: false });
+
+    renderPalette();
+
+    expect(screen.getByTestId("palette-filter-bar")).toBeInTheDocument();
+  });
+
+  it("renders filter chips in filter bar", () => {
+    mockUseIssueSearchQuery.mockReturnValue({ data: [], isPending: false });
+
+    renderPalette();
+
+    expect(screen.getByTestId("chip-state")).toBeInTheDocument();
+    expect(screen.getByTestId("chip-type")).toBeInTheDocument();
+    expect(screen.getByTestId("chip-priority")).toBeInTheDocument();
   });
 });

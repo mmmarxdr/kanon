@@ -1,4 +1,5 @@
 import type { IssueState } from "@/stores/board-store";
+import type { DocumentKind } from "@kanon/shared";
 
 export type IssueType = "feature" | "bug" | "task" | "spike";
 export type IssuePriority = "critical" | "high" | "medium" | "low";
@@ -30,6 +31,8 @@ export interface Issue {
   updatedAt: string;
   children?: Issue[];
   activeWorkers?: ActiveWorker[];
+  /** Distinct document kinds attached to this issue (from server, KAN-111). */
+  documentKinds?: DocumentKind[];
 }
 
 /**
@@ -112,7 +115,8 @@ export interface IssueDetail extends Omit<Issue, "children" | "assignee"> {
 
 export type CommentSource = "human" | "mcp" | "engram_sync" | "system" | "adr";
 
-export type DocumentKind = "adr" | "pdr" | "rfc" | "note";
+// Re-export DocumentKind from shared so file-local usage is consistent.
+export type { DocumentKind };
 
 /**
  * Design record attached to an issue.
