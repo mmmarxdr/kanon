@@ -4,6 +4,7 @@ import {
   ISSUE_PRIORITIES,
   ISSUE_STATES,
 } from "../../shared/constants.js";
+import { documentKindSchema } from "@kanon/shared";
 
 /**
  * Create issue request body.
@@ -88,6 +89,12 @@ export const IssueFilterQuery = z.object({
    * Cross-project keys silently omitted (only matched keys returned).
    */
   keys: z.string().optional(),
+  // KAN-111: free-text search (title OR key, case-insensitive substring)
+  q: z.string().optional(),
+  // KAN-111: filter to issues that have at least one attached document
+  has_documents: z.coerce.boolean().optional(),
+  // KAN-111: filter to issues that have at least one document of this kind
+  document_kind: documentKindSchema.optional(),
 });
 export type IssueFilterQuery = z.infer<typeof IssueFilterQuery>;
 

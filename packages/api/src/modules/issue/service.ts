@@ -276,6 +276,22 @@ export async function listIssues(
     }
   }
 
+  // KAN-111: free-text search — title OR key, case-insensitive substring.
+  // Empty/whitespace q is treated as no-op (enabled-gated on the web side too).
+  if (filters.q && filters.q.trim().length > 0) {
+    where.OR = [
+      { title: { contains: filters.q, mode: "insensitive" } },
+      { key: { contains: filters.q, mode: "insensitive" } },
+    ];
+  }
+
+  // KAN-111: document filters — document_kind takes precedence over has_documents.
+  if (filters.document_kind) {
+    where.documents = { some: { kind: filters.document_kind } };
+  } else if (filters.has_documents) {
+    where.documents = { some: {} };
+  }
+
   const issues = await prisma.issue.findMany({
     where,
     orderBy: { createdAt: "desc" },
@@ -287,6 +303,12 @@ export async function listIssues(
           user: { select: { email: true } },
         },
       },
+      // KAN-111: select+distinct keeps payload bounded to ≤4 rows/issue (DocumentKind cardinality).
+      // NOT groupBy — avoids a second round-trip. See design.md ADR-2.
+      documents: {
+        select: { kind: true },
+        distinct: ["kind"],
+      },
     },
   });
 
@@ -294,9 +316,12 @@ export async function listIssues(
   const issueIds = issues.map((i) => i.id);
   const workersMap = await getActiveWorkersForIssues(issueIds);
 
-  return issues.map((issue) => ({
+  return issues.map(({ documents, ...issue }) => ({
     ...issue,
     activeWorkers: workersMap.get(issue.id) ?? [],
+    // KAN-111: map distinct document kinds; destructure `documents` OUT so the
+    // raw relation array never leaks into the response (design.md risk note).
+    documentKinds: documents.map((d) => d.kind),
   }));
 }
 
