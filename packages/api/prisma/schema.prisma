@@ -231,6 +231,7 @@ model Project {
   roadmapItems   RoadmapItem[]
   proposals      McpProposal[]
   projectMembers ProjectMember[]
+  milestones     Milestone[]
 
   @@unique([workspaceId, key])
   @@index([workspaceId])
@@ -297,6 +298,8 @@ model Issue {
   estimateRevisions EstimateRevision[]
   // PPM timesheet (KAN-100 PR3)
   timeEntries       TimeEntry[]
+  // PPM milestones (KAN-101 PR2)
+  milestoneDeliverables MilestoneDeliverable[]
 
   @@unique([projectId, key])
   @@unique([projectId, sequenceNum])
@@ -314,6 +317,15 @@ enum IssueDependencyType {
   SS
   FF
   SF
+}
+
+/// KAN-101 PR2: Milestone lifecycle states.
+/// upcoming → at_risk (management signal) → met (manually via PATCH) | missed
+enum MilestoneStatus {
+  upcoming
+  at_risk
+  met
+  missed
 }
 
 // ─── PPM Schedule Models (KAN-99 PR2a) ───────────────────────────────────────
@@ -384,6 +396,49 @@ model IssueDependency {
   @@index([sourceId])
   @@index([targetId])
   @@map("issue_dependencies")
+}
+
+// ─── PPM Milestones (KAN-101 PR2) ────────────────────────────────────────────
+
+/// Project-level planning milestone. Owns a set of MilestoneDeliverable edges.
+/// ownerId defaults to the creating actor at the service layer.
+/// metOn is SET MANUALLY via PATCH (v1 — no auto-stamp on status→met).
+model Milestone {
+  id        String          @id @default(uuid()) @db.Uuid
+  name      String
+  target    DateTime
+  status    MilestoneStatus @default(upcoming)
+  metOn     DateTime?       @map("met_on")
+  createdAt DateTime        @default(now()) @map("created_at")
+
+  projectId String  @map("project_id") @db.Uuid
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  ownerId String @map("owner_id") @db.Uuid
+  owner   Member @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+
+  deliverables MilestoneDeliverable[]
+
+  @@index([projectId])
+  @@map("milestones")
+}
+
+/// Join table: Milestone M:N Issue.
+/// @@unique([milestoneId, issueId]) prevents duplicate attachments.
+/// Issue MUST belong to the milestone's project (enforced at service layer).
+model MilestoneDeliverable {
+  id        String   @id @default(uuid()) @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  milestoneId String    @map("milestone_id") @db.Uuid
+  milestone   Milestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+
+  issueId String @map("issue_id") @db.Uuid
+  issue   Issue  @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@unique([milestoneId, issueId])
+  @@index([issueId])
+  @@map("milestone_deliverables")
 }
 
 model Cycle {
@@ -464,6 +519,8 @@ model Member {
   // PPM timesheet (KAN-100 PR3)
   timeEntries                 TimeEntry[]        @relation("TimeEntryMember")
   approvedTimeEntries         TimeEntry[]        @relation("TimeEntryApprover")
+  // PPM milestones (KAN-101 PR2)
+  ownedMilestones             Milestone[]
 
   @@unique([userId, workspaceId])
   @@unique([workspaceId, username])
