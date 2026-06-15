@@ -734,6 +734,124 @@ describe("WorkSessionService", () => {
     });
   });
 
+  // ── Phase 4 (KAN-102): worklog.created emission ───────────────────────────
+  //
+  // 4.1 stopWork path: after $transaction succeeds for a ≥ 60s session,
+  //     eventBus.emit must receive EXACTLY ONE call of type "worklog.created"
+  //     with payload { workLogId, issueId, workspaceId }.
+  //
+  // 4.2 cleanupExpired path: same guarantee for the expiry loop.
+
+  describe("stopWork — worklog.created emission (task 4.1)", () => {
+    it("emits worklog.created with correct payload after ≥ 60s stopWork", async () => {
+      const startedAt = new Date(Date.now() - 90_000); // 90 s session
+      const session90s = { ...fakeSession, startedAt, lastHeartbeat: new Date() };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(session90s);
+      const fakeWorkLog = { id: "wl-created-1", durationS: 90 };
+      mockTransaction.mockResolvedValue([fakeWorkLog, session90s]);
+
+      mockEmit.mockClear();
+      await stopWork("KAN-42", "user-1", "member-1");
+
+      const worklogEmit = mockEmit.mock.calls.find(
+        ([arg]) => (arg as { type: string }).type === "worklog.created",
+      );
+      expect(worklogEmit).toBeDefined();
+      expect(worklogEmit![0]).toMatchObject({
+        type: "worklog.created",
+        payload: {
+          workLogId: "wl-created-1",
+          issueId: "issue-1",
+          workspaceId: "ws-1",
+        },
+      });
+    });
+
+    it("does NOT emit worklog.created for < 60s stopWork", async () => {
+      const startedAt = new Date(Date.now() - 30_000); // 30 s — sub-minute
+      const session30s = { ...fakeSession, startedAt, lastHeartbeat: new Date() };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(session30s);
+      mockSessionDelete.mockResolvedValue(session30s);
+
+      mockEmit.mockClear();
+      await stopWork("KAN-42", "user-1", "member-1");
+
+      const worklogEmit = mockEmit.mock.calls.find(
+        ([arg]) => (arg as { type: string }).type === "worklog.created",
+      );
+      expect(worklogEmit).toBeUndefined();
+    });
+  });
+
+  describe("cleanupExpired — worklog.created emission (task 4.2)", () => {
+    it("emits worklog.created with correct payload after ≥ 60s expiry cleanup", async () => {
+      const startedAt = new Date(Date.now() - 120_000);
+      const lastHeartbeat = new Date(Date.now() - 10_000); // duration ~110s
+      const expiredSessions = [
+        {
+          id: "s-emit",
+          memberId: "m-1",
+          userId: "u-1",
+          issueId: "i-emit",
+          source: "mcp",
+          startedAt,
+          lastHeartbeat,
+          issue: { key: "KAN-10", project: { workspaceId: "ws-emit" } },
+        },
+      ] as any;
+
+      mockSessionFindMany.mockResolvedValue(expiredSessions);
+      const fakeWorkLog = { id: "wl-expired-1", durationS: 110 };
+      mockTransaction.mockResolvedValue([fakeWorkLog, {}]);
+
+      mockEmit.mockClear();
+      await cleanupExpired();
+
+      const worklogEmit = mockEmit.mock.calls.find(
+        ([arg]) => (arg as { type: string }).type === "worklog.created",
+      );
+      expect(worklogEmit).toBeDefined();
+      expect(worklogEmit![0]).toMatchObject({
+        type: "worklog.created",
+        payload: {
+          workLogId: "wl-expired-1",
+          issueId: "i-emit",
+          workspaceId: "ws-emit",
+        },
+      });
+    });
+
+    it("does NOT emit worklog.created for < 60s expiry cleanup", async () => {
+      const startedAt = new Date(Date.now() - 30_000);
+      const lastHeartbeat = new Date(Date.now() - 20_000); // duration ~10s
+      const expiredSessions = [
+        {
+          id: "s-short-emit",
+          memberId: "m-1",
+          userId: "u-1",
+          issueId: "i-short",
+          source: "web",
+          startedAt,
+          lastHeartbeat,
+          issue: { key: "KAN-11", project: { workspaceId: "ws-short" } },
+        },
+      ] as any;
+
+      mockSessionFindMany.mockResolvedValue(expiredSessions);
+      mockSessionDelete.mockResolvedValue({} as any);
+
+      mockEmit.mockClear();
+      await cleanupExpired();
+
+      const worklogEmit = mockEmit.mock.calls.find(
+        ([arg]) => (arg as { type: string }).type === "worklog.created",
+      );
+      expect(worklogEmit).toBeUndefined();
+    });
+  });
+
   // ── Fix 2: normalizeVia('mcp') → null ─────────────────────────────────────
   // Documented in via.ts: 'mcp' is deliberately excluded from the vocabulary
   // because it is a transport name, not a client identity.

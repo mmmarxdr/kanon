@@ -234,6 +234,23 @@ export async function stopWork(
         prisma.workSession.delete({ where: { id: existing.id } }),
       ]);
       workLog = { id: createdWorkLog.id, durationS };
+
+      // KAN-102: Emit worklog.created so the forecast engine can react.
+      // Fire-and-forget — never throws into the caller.
+      try {
+        eventBus.emit({
+          type: "worklog.created",
+          workspaceId: issue.project.workspaceId,
+          actorId: memberId,
+          payload: {
+            workLogId: createdWorkLog.id,
+            issueId: issue.id,
+            workspaceId: issue.project.workspaceId,
+          },
+        });
+      } catch {
+        // Never let event emission break the mutation
+      }
     } catch (err: unknown) {
       if (
         typeof err === "object" &&
@@ -387,7 +404,7 @@ export async function cleanupExpired(
 
     try {
       if (durationS >= MIN_WORKLOG_DURATION_S) {
-        await prisma.$transaction([
+        const [createdWorkLog] = await prisma.$transaction([
           prisma.workLog.create({
             data: {
               startedAt: s.startedAt,
@@ -401,6 +418,23 @@ export async function cleanupExpired(
           }),
           prisma.workSession.delete({ where: { id: s.id } }),
         ]);
+
+        // KAN-102: Emit worklog.created so the forecast engine can react.
+        // Fire-and-forget — never throws into the caller.
+        try {
+          eventBus.emit({
+            type: "worklog.created",
+            workspaceId: s.issue.project.workspaceId,
+            actorId: s.memberId,
+            payload: {
+              workLogId: createdWorkLog.id,
+              issueId: s.issueId,
+              workspaceId: s.issue.project.workspaceId,
+            },
+          });
+        } catch {
+          // Never let event emission break cleanup
+        }
       } else {
         await prisma.workSession.delete({ where: { id: s.id } });
       }
