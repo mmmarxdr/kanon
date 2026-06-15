@@ -384,3 +384,25 @@ describe("L8 — issue.transitioned triggers a rebuild (state change affects for
     unsub();
   });
 });
+
+// ─── L9: dependency.changed triggers a rebuild (via sourceIssueId) ────────────
+
+describe("L9 — dependency.changed triggers a rebuild (resolved via sourceIssueId)", () => {
+  it("fires rebuild when a dependency is created/removed", async () => {
+    const bus = makeStubBus();
+    const unsub = registerForecastListener(bus, stubLogger);
+
+    // dependency.changed carries sourceIssueId (not issueId) — the source issue
+    // always belongs to the project. A dependency edit changes the schedule graph,
+    // so it MUST trigger a rebuild. Guards against a silent break if the emit
+    // payload field is ever renamed.
+    bus.fire(makeDependencyChangedEvent("issue-1"));
+
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10);
+
+    expect(mockRebuild).toHaveBeenCalledTimes(1);
+    expect(mockRebuild).toHaveBeenCalledWith("project-A");
+
+    unsub();
+  });
+});

@@ -347,20 +347,24 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
   // ── Step 8: Emit ppm.forecast.updated (thin payload — decision #8) ───────
   // Fire-and-forget; emission errors must not block the caller.
   // worstSlipDays = max positive slip across project, 0 if all ahead/on-time (decision #13).
-  try {
-    eventBus.emit({
-      type: "ppm.forecast.updated",
-      workspaceId: workspaceId ?? "",
-      actorId: "forecast-engine",
-      payload: {
-        projectId,
-        issueCount: result.stats.issueCount,
-        criticalCount: result.stats.criticalCount,
-        worstSlipDays: result.stats.worstSlipDays,
-      },
-    });
-  } catch {
-    // Fire-and-forget: log suppressed; a forecast bug must never break a caller
+  // Skip emission when the project (hence workspace) vanished mid-rebuild — there is
+  // no workspace to announce to, and an empty workspaceId would be a malformed event.
+  if (workspaceId) {
+    try {
+      eventBus.emit({
+        type: "ppm.forecast.updated",
+        workspaceId,
+        actorId: "forecast-engine",
+        payload: {
+          projectId,
+          issueCount: result.stats.issueCount,
+          criticalCount: result.stats.criticalCount,
+          worstSlipDays: result.stats.worstSlipDays,
+        },
+      });
+    } catch {
+      // Fire-and-forget: log suppressed; a forecast bug must never break a caller
+    }
   }
 
   return result.stats;

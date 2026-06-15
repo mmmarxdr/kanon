@@ -487,20 +487,22 @@ describe("Forecast Service — rebuildProjectForecast (integration)", () => {
 
       await rebuildProjectForecast(projectId);
 
-      // Single issue → critical path → slipDays > 0 → should have a proposal
+      // Single issue → critical path → slipDays > 0 → MUST have a proposal.
       const forecastRow = await prisma.issueForecast.findUnique({
         where: { issueId: issue.id },
       });
       expect(forecastRow).not.toBeNull();
+      // Assert the preconditions UNCONDITIONALLY — gating these behind `if`
+      // would let the test pass vacuously and hide a critical/slip regression.
+      expect(forecastRow!.critical).toBe(true);
+      expect(forecastRow!.slipDays).toBeGreaterThan(0);
 
-      if (forecastRow!.critical && forecastRow!.slipDays > 0) {
-        const proposals = await prisma.mcpProposal.findMany({
-          where: { projectId, status: "pending", kind: "generic" },
-        });
-        expect(proposals.length).toBeGreaterThanOrEqual(1);
-        const p = proposals.find((p) => p.targetRef === `KFK-1`);
-        expect(p).toBeDefined();
-      }
+      const proposals = await prisma.mcpProposal.findMany({
+        where: { projectId, status: "pending", kind: "generic" },
+      });
+      expect(proposals.length).toBeGreaterThanOrEqual(1);
+      const p = proposals.find((p) => p.targetRef === `KFK-1`);
+      expect(p).toBeDefined();
 
       void workspaceId;
     });
@@ -544,14 +546,17 @@ describe("Forecast Service — rebuildProjectForecast (integration)", () => {
       const forecastB = await prisma.issueForecast.findUnique({
         where: { issueId: issueB.id },
       });
-      // B should be non-critical (float > 0) with slip = 1
-      if (forecastB && !forecastB.critical && forecastB.slipDays <= 2) {
-        const proposals = await prisma.mcpProposal.findMany({
-          where: { projectId, status: "pending", kind: "generic", targetRef: "KFL-2" },
-        });
-        // Should NOT have created a proposal for non-critical slip ≤ 2
-        expect(proposals).toHaveLength(0);
-      }
+      expect(forecastB).not.toBeNull();
+      // Preconditions (unconditional): B is non-critical (has float) and slips by 1 (≤ 2).
+      expect(forecastB!.critical).toBe(false);
+      expect(forecastB!.slipDays).toBeGreaterThan(0);
+      expect(forecastB!.slipDays).toBeLessThanOrEqual(2);
+
+      const proposals = await prisma.mcpProposal.findMany({
+        where: { projectId, status: "pending", kind: "generic", targetRef: "KFL-2" },
+      });
+      // Non-critical slip ≤ 2 → NO proposal.
+      expect(proposals).toHaveLength(0);
 
       void ownerId;
     });
@@ -580,14 +585,15 @@ describe("Forecast Service — rebuildProjectForecast (integration)", () => {
       const forecastB = await prisma.issueForecast.findUnique({
         where: { issueId: issueB.id },
       });
+      expect(forecastB).not.toBeNull();
+      // Preconditions (unconditional): B is non-critical with a slip > 2.
+      expect(forecastB!.critical).toBe(false);
+      expect(forecastB!.slipDays).toBeGreaterThan(2);
 
-      // B should be non-critical with slip > 2
-      if (forecastB && !forecastB.critical && forecastB.slipDays > 2) {
-        const proposals = await prisma.mcpProposal.findMany({
-          where: { projectId, status: "pending", kind: "generic", targetRef: "KFM-2" },
-        });
-        expect(proposals.length).toBeGreaterThanOrEqual(1);
-      }
+      const proposals = await prisma.mcpProposal.findMany({
+        where: { projectId, status: "pending", kind: "generic", targetRef: "KFM-2" },
+      });
+      expect(proposals.length).toBeGreaterThanOrEqual(1);
 
       void issueA;
       void ownerId;
@@ -609,17 +615,16 @@ describe("Forecast Service — rebuildProjectForecast (integration)", () => {
       const countAfterFirst = await prisma.mcpProposal.count({
         where: { projectId, status: "pending", kind: "generic", targetRef: "KFN-1" },
       });
+      // Precondition (unconditional): the first rebuild creates exactly one proposal.
+      expect(countAfterFirst).toBe(1);
 
-      if (countAfterFirst > 0) {
-        // Second call: same data → must NOT create a duplicate
-        await rebuildProjectForecast(projectId);
+      // Second call: same data → must NOT create a duplicate
+      await rebuildProjectForecast(projectId);
 
-        const countAfterSecond = await prisma.mcpProposal.count({
-          where: { projectId, status: "pending", kind: "generic", targetRef: "KFN-1" },
-        });
-
-        expect(countAfterSecond).toBe(countAfterFirst);
-      }
+      const countAfterSecond = await prisma.mcpProposal.count({
+        where: { projectId, status: "pending", kind: "generic", targetRef: "KFN-1" },
+      });
+      expect(countAfterSecond).toBe(countAfterFirst);
 
       void issue;
       void ownerId;
