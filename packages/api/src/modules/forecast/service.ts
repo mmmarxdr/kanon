@@ -1,31 +1,41 @@
 /**
- * Forecast service — KAN-102 PR2.
+ * Forecast service — KAN-102 PR2, optimised in KAN-113.
  *
  * rebuildProjectForecast(projectId) is an internal exported function (no HTTP
- * endpoint v1 — decision #9). It is called by the forecast listener (Phase 8)
- * after a debounced event fires, and may also be called directly as a job.
+ * endpoint v1 — decision #9). It is called by the forecast listener after a
+ * debounced event fires, and may also be called directly as a job.
  *
  * Architecture:
- *   1. Load graph in 4 bounded parallel queries (Promise.all).
+ *   1. Load graph in 5 parallel queries (Promise.all) — includes workspaceId.
  *   2. Convert Prisma Decimal → number at the loader boundary.
  *   3. Call computeForecast() — pure engine, zero I/O.
- *   4. Persist each IssueForecast row; skip write when inputsHash is unchanged.
- *   5. Roll up Milestone.status (upcoming ↔ at_risk only; SKIP met/missed).
- *   6. Create McpProposal for escalation-worthy slips (dedup by targetRef+pending+generic).
- *   7. Emit ppm.forecast.updated with thin payload.
- *   8. Return ForecastStats.
+ *   4. Compute desired IssueForecast rows; batch writes in a transaction:
+ *        a. createMany for new rows (skipDuplicates safety net).
+ *        b. Parallel updates for changed rows (hash changed).
+ *        c. Parallel milestone status updates (upcoming ↔ at_risk only; SKIP met/missed).
+ *        d. One McpProposal dedup query + createMany for over-threshold slips.
+ *   5. Emit ppm.forecast.updated AFTER transaction commit (fire-and-forget).
+ *   6. Return ForecastStats.
+ *
+ * KAN-113 optimizations:
+ *   - workspaceId folded into the 4-loader Promise.all → 5-loader Promise.all.
+ *   - IssueForecast: per-issue await upsert loop → createMany + parallel updates.
+ *   - McpProposal: per-slip findFirst loop (N+1) → one findMany + createMany.
+ *   - Milestone updates: sequential awaits → Promise.all.
+ *   - All writes wrapped in prisma.$transaction.
+ *   - Decimal handling: estimateHours consistently uses .toNumber() (was parseFloat).
+ *   - Pure decision logic imported from rules.ts (mutation-testable).
  */
-import { createHash } from "node:crypto";
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import { env } from "../../config/env.js";
 import { computeForecast } from "./engine.js";
+import { computeForecastHash, proposalExceedsThreshold, milestoneIsManual } from "./rules.js";
 import type {
   ForecastNode,
   ForecastEdge,
   ForecastMilestoneInput,
   ForecastStats,
-  IssueForecastEntry,
 } from "./types.js";
 
 // ─── Loader types (internal) ─────────────────────────────────────────────────
@@ -40,12 +50,10 @@ interface IssueRow {
     startDate: Date | null;
     dueDate: Date | null;
     progress: number;
-    estimateHours: string | null; // Prisma returns Decimal as string at JSON boundary
+    // Prisma returns Decimal objects for Decimal fields; typed accordingly.
+    estimateHours: { toNumber(): number } | null;
   } | null;
 }
-
-// Note: Prisma groupBy returns Decimal objects for Decimal fields.
-// We extract the value via .toNumber() at the boundary (see approvedHoursMap build below).
 
 interface DependencyRow {
   sourceId: string;
@@ -64,42 +72,13 @@ interface DeliverableRow {
   };
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/** SHA-256 hex of a deterministic string. Used for the skip-on-no-change gate. */
-function sha256(input: string): string {
-  return createHash("sha256").update(input).digest("hex");
-}
-
-/**
- * Hash of an issue's COMPUTED forecast output (stored in the inputsHash column).
- *
- * We key the skip-write gate on the OUTPUT, NOT on the issue's local inputs.
- * This is a forward-pass/CPM engine: a successor's forecast changes when an
- * upstream predecessor slips, while the successor's OWN inputs (estimate,
- * progress, logged hours, dates, dep structure) stay identical. An input-keyed
- * hash would skip the successor's write and leave its row stale, silently
- * dropping propagated slip — the core behaviour of this engine. Hashing the
- * output makes the gate change exactly when the persisted forecast would.
- */
-function computeForecastHash(entry: IssueForecastEntry): string {
-  const payload = JSON.stringify({
-    forecastStart: entry.forecastStart?.toISOString() ?? null,
-    forecastEnd: entry.forecastEnd?.toISOString() ?? null,
-    slipDays: entry.slipDays,
-    critical: entry.critical,
-    floatDays: entry.floatDays,
-  });
-  return sha256(payload);
-}
-
 // ─── Main export ─────────────────────────────────────────────────────────────
 
 /**
  * Full project forecast rebuild.
  *
  * Idempotent: calling multiple times produces the same row count as issue count.
- * Skip-on-no-change: if inputsHash is unchanged from the stored row, the upsert
+ * Skip-on-no-change: if inputsHash is unchanged from the stored row, the write
  * is skipped entirely (computedAt is NOT updated).
  *
  * @param projectId - UUID of the project to rebuild.
@@ -109,8 +88,10 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
   const hoursPerDay = env.FORECAST_HOURS_PER_DAY;
   const atRiskBufferDays = env.FORECAST_AT_RISK_BUFFER_DAYS;
 
-  // ── Step 1: Load project graph in 4 parallel queries ────────────────────
-  const [issues, approvedHoursRows, dependencies, deliverables] = await Promise.all([
+  // ── Step 1: Load project graph in 5 parallel queries ────────────────────
+  // workspaceId is folded in here (was a separate sequential query in the
+  // original service, running after the upsert loop — now free via parallelism).
+  const [issues, approvedHoursRows, dependencies, deliverables, project] = await Promise.all([
     // Loader 1: issues + schedule for this project
     prisma.issue.findMany({
       where: { projectId },
@@ -160,7 +141,15 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
         },
       },
     }) as Promise<DeliverableRow[]>,
+
+    // Loader 5: project workspaceId (folded in from sequential post-loop query)
+    prisma.project.findUnique({
+      where: { id: projectId },
+      select: { workspaceId: true },
+    }),
   ]);
+
+  const workspaceId = project?.workspaceId;
 
   // ── Step 2: Convert Decimal → number at the boundary ────────────────────
   // Prisma groupBy returns Decimal objects for Decimal fields. We call .toNumber()
@@ -169,7 +158,6 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
   for (const row of approvedHoursRows) {
     if (row.issueId === null) continue; // guard (filtered above, but be safe)
     const raw = row._sum.hours;
-    // Prisma Decimal has .toNumber(); fall back to Number() for safety.
     const h =
       raw !== null && raw !== undefined
         ? typeof (raw as { toNumber?: () => number }).toNumber === "function"
@@ -182,13 +170,16 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
   // ── Step 3: Build engine input ───────────────────────────────────────────
   const nodes: ForecastNode[] = issues.map((issue) => {
     const sched = issue.schedule;
+    // estimateHours is a Prisma Decimal object; use .toNumber() consistently.
+    // (The approved-hours path already used .toNumber(); this aligns the two.)
     const rawEst = sched?.estimateHours ?? null;
-    const estimateHours = rawEst !== null && rawEst !== undefined ? parseFloat(rawEst) : null;
+    const estimateHoursNum =
+      rawEst !== null && rawEst !== undefined ? rawEst.toNumber() : null;
     return {
       issueId: issue.id,
       startDate: sched?.startDate ?? null,
       dueDate: sched?.dueDate ?? null,
-      estimateHours: estimateHours !== null && !isNaN(estimateHours) ? estimateHours : null,
+      estimateHours: estimateHoursNum !== null && !isNaN(estimateHoursNum) ? estimateHoursNum : null,
       progress: sched?.progress ?? 0,
       state: issue.state,
       completedAt: issue.completedAt,
@@ -229,122 +220,182 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
   // ── Step 4: Run pure engine ──────────────────────────────────────────────
   const result = computeForecast({ nodes, edges, milestones }, { hoursPerDay, atRiskBufferDays });
 
-  // ── Step 5: Persist IssueForecast rows (skip if computed forecast unchanged) ──
-  const computedAt = new Date();
-
-  // Load existing rows in one query for hash comparison
+  // ── Step 5: Load existing IssueForecast rows for hash comparison ─────────
+  // One query outside the transaction (read-only, no need to lock).
   const existingRows = await prisma.issueForecast.findMany({
     where: { issue: { projectId } },
-    select: { issueId: true, inputsHash: true, computedAt: true },
+    select: { issueId: true, inputsHash: true },
   });
   const existingMap = new Map(existingRows.map((r) => [r.issueId, r]));
 
   const issueKeyMap = new Map(issues.map((i) => [i.id, i.key]));
+  const computedAt = new Date();
+
+  // ── Step 6: Compute desired write sets ──────────────────────────────────
+  // Apply the inputsHash skip gate exactly as before: skip if hash unchanged.
+  interface CreateRow {
+    issueId: string;
+    forecastStart: Date | null;
+    forecastEnd: Date | null;
+    slipDays: number;
+    critical: boolean;
+    floatDays: number | null;
+    inputsHash: string;
+    computedAt: Date;
+  }
+  interface UpdateRow extends CreateRow {}
+
+  const toCreate: CreateRow[] = [];
+  const toUpdate: UpdateRow[] = [];
 
   for (const node of nodes) {
     const entry = result.forecasts.get(node.issueId);
     if (!entry) continue;
 
     const inputsHash = computeForecastHash(entry);
-
     const existing = existingMap.get(node.issueId);
+
     if (existing?.inputsHash === inputsHash) {
       // Computed forecast unchanged → skip write (idempotent, no computedAt update)
       continue;
     }
 
-    await prisma.issueForecast.upsert({
-      where: { issueId: node.issueId },
-      update: {
-        forecastStart: entry.forecastStart,
-        forecastEnd: entry.forecastEnd,
-        slipDays: entry.slipDays,
-        critical: entry.critical,
-        floatDays: entry.floatDays,
-        inputsHash,
-        computedAt,
-      },
-      create: {
-        issueId: node.issueId,
-        forecastStart: entry.forecastStart,
-        forecastEnd: entry.forecastEnd,
-        slipDays: entry.slipDays,
-        critical: entry.critical,
-        floatDays: entry.floatDays,
-        inputsHash,
-        computedAt,
-      },
-    });
-  }
+    const row: CreateRow = {
+      issueId: node.issueId,
+      forecastStart: entry.forecastStart,
+      forecastEnd: entry.forecastEnd,
+      slipDays: entry.slipDays,
+      critical: entry.critical,
+      floatDays: entry.floatDays,
+      inputsHash,
+      computedAt,
+    };
 
-  // ── Step 6: Milestone rollup (upcoming ↔ at_risk only; SKIP met/missed) ──
-  for (const rollup of result.milestoneRollups) {
-    // INVARIANT: engine only writes upcoming/at_risk; never met/missed.
-    // SKIP if milestone is already met or missed.
-    if (rollup.currentStatus === "met" || rollup.currentStatus === "missed") {
-      continue;
-    }
-
-    if (rollup.computedStatus !== rollup.currentStatus) {
-      await prisma.milestone.update({
-        where: { id: rollup.milestoneId },
-        data: { status: rollup.computedStatus as "upcoming" | "at_risk" },
-      });
+    if (existing === undefined) {
+      toCreate.push(row);
+    } else {
+      toUpdate.push(row);
     }
   }
 
-  // ── Step 7: McpProposal escalation (dedup by targetRef+pending+generic) ──
-  // Fetch workspace for proposal FK
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: { workspaceId: true },
-  });
-  const workspaceId = project?.workspaceId;
+  // Milestone updates: collect only those that need a status change (skip manual)
+  const milestoneUpdates = result.milestoneRollups.filter(
+    (rollup) =>
+      !milestoneIsManual(rollup.currentStatus) &&
+      rollup.computedStatus !== rollup.currentStatus,
+  );
+
+  // McpProposal: collect over-threshold slips, dedup in one query
+  interface ProposalCandidate {
+    issueKey: string;
+    slip: { issueId: string; slipDays: number; critical: boolean };
+  }
+  const proposalCandidates: ProposalCandidate[] = [];
 
   if (workspaceId) {
     for (const slip of result.slips) {
-      // Thresholds: any slip on critical path; > 2 days elsewhere (decision #7)
-      const overThreshold = slip.critical ? slip.slipDays > 0 : slip.slipDays > 2;
-      if (!overThreshold) continue;
-
+      if (!proposalExceedsThreshold(slip)) continue;
       const issueKey = issueKeyMap.get(slip.issueId);
       if (!issueKey) continue;
-
-      const entry = result.forecasts.get(slip.issueId);
-
-      // Dedup: skip if a pending generic proposal already exists for this targetRef
-      const existing = await prisma.mcpProposal.findFirst({
-        where: { targetRef: issueKey, status: "pending", kind: "generic" },
-        select: { id: true },
-      });
-      if (existing) continue;
-
-      await prisma.mcpProposal.create({
-        data: {
-          workspaceId,
-          projectId,
-          kind: "generic",
-          status: "pending",
-          targetRef: issueKey,
-          title: `Forecast slip: ${issueKey} is ${slip.slipDays} day(s) late`,
-          reason: slip.critical
-            ? `Issue ${issueKey} is on the critical path and slipping by ${slip.slipDays} day(s).`
-            : `Issue ${issueKey} is slipping by ${slip.slipDays} day(s) (>${2} days threshold).`,
-          payload: {
-            issueId: slip.issueId,
-            issueKey,
-            slipDays: slip.slipDays,
-            forecastEnd: entry?.forecastEnd?.toISOString() ?? null,
-            suggestion: "Review schedule and adjust dependencies or scope.",
-            critical: slip.critical,
-          },
-          generatedBy: "forecast-engine",
-        },
-      });
+      proposalCandidates.push({ issueKey, slip });
     }
   }
 
-  // ── Step 8: Emit ppm.forecast.updated (thin payload — decision #8) ───────
+  // ── Step 7: Wrap writes in a single transaction ──────────────────────────
+  // Reads (loaders + existingRows) are outside the transaction — they are
+  // idempotent and don't need rollback semantics. Only writes are wrapped.
+  await prisma.$transaction(async (tx) => {
+    // 7a. IssueForecast: batch create new rows
+    if (toCreate.length > 0) {
+      await tx.issueForecast.createMany({
+        data: toCreate,
+        skipDuplicates: true, // safety net: race-condition guard
+      });
+    }
+
+    // 7b. IssueForecast: parallel updates for changed rows
+    if (toUpdate.length > 0) {
+      await Promise.all(
+        toUpdate.map((r) =>
+          tx.issueForecast.update({
+            where: { issueId: r.issueId },
+            data: {
+              forecastStart: r.forecastStart,
+              forecastEnd: r.forecastEnd,
+              slipDays: r.slipDays,
+              critical: r.critical,
+              floatDays: r.floatDays,
+              inputsHash: r.inputsHash,
+              computedAt: r.computedAt,
+            },
+          }),
+        ),
+      );
+    }
+
+    // 7c. Milestone status updates (parallel)
+    if (milestoneUpdates.length > 0) {
+      await Promise.all(
+        milestoneUpdates.map((rollup) =>
+          tx.milestone.update({
+            where: { id: rollup.milestoneId },
+            data: { status: rollup.computedStatus as "upcoming" | "at_risk" },
+          }),
+        ),
+      );
+    }
+
+    // 7d. McpProposal: one dedup query + createMany
+    if (workspaceId && proposalCandidates.length > 0) {
+      const candidateKeys = proposalCandidates.map((c) => c.issueKey);
+
+      // One findMany instead of N findFirst calls (kills the N+1)
+      const existingProposals = await tx.mcpProposal.findMany({
+        where: {
+          targetRef: { in: candidateKeys },
+          status: "pending",
+          kind: "generic",
+        },
+        select: { targetRef: true },
+      });
+      const existingProposalRefs = new Set(existingProposals.map((p) => p.targetRef));
+
+      const newProposals = proposalCandidates
+        .filter((c) => !existingProposalRefs.has(c.issueKey))
+        .map((c) => {
+          const entry = result.forecasts.get(c.slip.issueId);
+          return {
+            workspaceId: workspaceId,
+            projectId,
+            kind: "generic" as const,
+            status: "pending" as const,
+            targetRef: c.issueKey,
+            title: `Forecast slip: ${c.issueKey} is ${c.slip.slipDays} day(s) late`,
+            reason: c.slip.critical
+              ? `Issue ${c.issueKey} is on the critical path and slipping by ${c.slip.slipDays} day(s).`
+              : `Issue ${c.issueKey} is slipping by ${c.slip.slipDays} day(s) (>2 days threshold).`,
+            payload: {
+              issueId: c.slip.issueId,
+              issueKey: c.issueKey,
+              slipDays: c.slip.slipDays,
+              forecastEnd: entry?.forecastEnd?.toISOString() ?? null,
+              suggestion: "Review schedule and adjust dependencies or scope.",
+              critical: c.slip.critical,
+            },
+            generatedBy: "forecast-engine",
+          };
+        });
+
+      if (newProposals.length > 0) {
+        await tx.mcpProposal.createMany({
+          data: newProposals,
+          skipDuplicates: true, // extra dedup safety (targetRef is not unique-indexed, but safe)
+        });
+      }
+    }
+  });
+
+  // ── Step 8: Emit ppm.forecast.updated AFTER transaction commit ────────────
   // Fire-and-forget; emission errors must not block the caller.
   // worstSlipDays = max positive slip across project, 0 if all ahead/on-time (decision #13).
   // Skip emission when the project (hence workspace) vanished mid-rebuild — there is
