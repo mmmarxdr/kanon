@@ -19,6 +19,7 @@ import { prisma } from "../../../config/prisma.js";
  *   B  same targetRef, different kind              → 201   (kind = 'generic')
  *   C  generic + NULL targetRef, twice             → 201   (NULLs are distinct)
  *   D  first leaves 'pending', then re-create      → 201   (status = 'pending')
+ *   E  same targetRef in a DIFFERENT workspace     → 201   (key is workspace_id, target_ref)
  */
 describe("KAN-116: McpProposal pending-generic dedup", () => {
   let app: FastifyInstance;
@@ -87,5 +88,23 @@ describe("KAN-116: McpProposal pending-generic dedup", () => {
 
     const second = await postProposal({ kind: "generic", title: "g2", targetRef: "KAN-60" });
     expect(second.statusCode).toBe(201);
+  });
+
+  it("E: the same targetRef in a DIFFERENT workspace is allowed (dedup is tenant-local)", async () => {
+    // Workspace A (from beforeEach) takes targetRef "KAN-99".
+    const inA = await postProposal({ kind: "generic", title: "A", targetRef: "KAN-99" });
+    expect(inA.statusCode).toBe(201);
+
+    // A second workspace with the SAME targetRef must NOT collide — issue keys are
+    // unique only per-workspace, so a global index would wrongly 409 here.
+    const wsB = await seedTestWorkspace(`k116b${Math.random().toString(36).slice(2, 7)}`);
+    const memberB = await seedTestMemberWithRole(wsB.id, "member");
+    const inB = await app.inject({
+      method: "POST",
+      url: `/api/workspaces/${wsB.id}/proposals`,
+      headers: { authorization: `Bearer ${memberB.token}` },
+      payload: { kind: "generic", title: "B", targetRef: "KAN-99" },
+    });
+    expect(inB.statusCode).toBe(201);
   });
 });

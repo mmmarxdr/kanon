@@ -7,6 +7,10 @@
 -- guarantee atomic at the DB level; createMany's skipDuplicates then cooperates with it.
 --
 -- Scope is intentionally narrow (mirrors time_entries_source_work_log_id_key):
+--   * (workspace_id, target_ref) — dedup is TENANT-LOCAL. Project keys (hence the
+--     issue keys used as target_ref) are unique only per-workspace (Project
+--     @@unique([workspaceId, key])) and the route's target_ref is free-form, so a
+--     global key on target_ref alone would raise false cross-workspace conflicts.
 --   * WHERE kind = 'generic'  — only forecast-style generic proposals are deduped;
 --     other kinds (promote_roadmap_item, add_dependency, …) are unconstrained.
 --   * WHERE status = 'pending' — once applied/dismissed a row leaves the index, so a
@@ -16,5 +20,5 @@
 --
 -- Partial indexes aren't expressible in the Prisma schema, so this is raw SQL.
 CREATE UNIQUE INDEX "mcp_proposals_pending_generic_target_ref_key"
-  ON "mcp_proposals"("target_ref")
+  ON "mcp_proposals"("workspace_id", "target_ref")
   WHERE "status" = 'pending' AND "kind" = 'generic';
