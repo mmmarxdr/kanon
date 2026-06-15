@@ -87,13 +87,14 @@ export function Prio({ value }: { value: Priority }) {
    TypeGlyph — single-letter monospace tile
    ==================================================================== */
 
-export type IssueType = "feature" | "bug" | "task" | "spike";
+export type IssueType = "feature" | "bug" | "task" | "spike" | "incident";
 
 const TYPE_MAP: Record<IssueType, { letter: string; color: string; bg: string }> = {
-  feature: { letter: "F", color: "var(--accent-ink)", bg: "var(--accent-2)" },
-  bug:     { letter: "B", color: "var(--bad)",        bg: "color-mix(in oklch, var(--bad) 14%, transparent)" },
-  task:    { letter: "T", color: "var(--ink-2)",      bg: "var(--bg-3)" },
-  spike:   { letter: "S", color: "var(--ai)",         bg: "var(--ai-2)" },
+  feature:  { letter: "F", color: "var(--accent-ink)", bg: "var(--accent-2)" },
+  bug:      { letter: "B", color: "var(--bad)",        bg: "color-mix(in oklch, var(--bad) 14%, transparent)" },
+  task:     { letter: "T", color: "var(--ink-2)",      bg: "var(--bg-3)" },
+  spike:    { letter: "S", color: "var(--ai)",         bg: "var(--ai-2)" },
+  incident: { letter: "I", color: "var(--bad)",        bg: "color-mix(in oklch, var(--bad) 22%, transparent)" },
 };
 
 export function TypeGlyph({ value }: { value: IssueType }) {
