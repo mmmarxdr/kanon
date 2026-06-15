@@ -25,10 +25,7 @@ export async function createTestApp(opts: BuildAppOptions = {}): Promise<Fastify
  * Generate a valid JWT access token for testing.
  * Token payload: { sub: userId, email }
  */
-export function generateTestToken(overrides?: {
-  userId?: string;
-  email?: string;
-}): string {
+export function generateTestToken(overrides?: { userId?: string; email?: string }): string {
   const payload = {
     sub: overrides?.userId ?? randomUUID(),
     email: overrides?.email ?? `test-${randomUUID().slice(0, 8)}@kanon.test`,
@@ -43,10 +40,7 @@ export function generateTestToken(overrides?: {
  * Generate a valid JWT refresh token for testing.
  * Token payload: { sub: userId, email }
  */
-export function generateTestRefreshToken(overrides?: {
-  userId?: string;
-  email?: string;
-}): string {
+export function generateTestRefreshToken(overrides?: { userId?: string; email?: string }): string {
   const payload = {
     sub: overrides?.userId ?? randomUUID(),
     email: overrides?.email ?? `test-${randomUUID().slice(0, 8)}@kanon.test`,
@@ -69,7 +63,7 @@ export function authHeader(token?: string): { authorization: string } {
  * Seed a test workspace and return its ID.
  */
 export async function seedTestWorkspace(
-  slug?: string,
+  slug?: string
 ): Promise<{ id: string; name: string; slug: string }> {
   const ws = await prisma.workspace.create({
     data: {
@@ -83,10 +77,13 @@ export async function seedTestWorkspace(
 /**
  * Seed a test user + member in a workspace and return member + auth token.
  */
-export async function seedTestMember(workspaceId: string, overrides?: {
-  email?: string;
-  username?: string;
-}): Promise<{ id: string; email: string; token: string; userId: string }> {
+export async function seedTestMember(
+  workspaceId: string,
+  overrides?: {
+    email?: string;
+    username?: string;
+  }
+): Promise<{ id: string; email: string; token: string; userId: string }> {
   // Use bcrypt-compatible hash for "password123"
   // Pre-computed to avoid slow bcrypt in tests
   const bcrypt = await import("bcryptjs");
@@ -123,7 +120,7 @@ export async function seedTestMember(workspaceId: string, overrides?: {
  */
 export async function seedTestProject(
   workspaceId: string,
-  key?: string,
+  key?: string
 ): Promise<{ id: string; key: string }> {
   const projectKey = key ?? `T${randomUUID().slice(0, 3).toUpperCase()}`;
   const project = await prisma.project.create({
@@ -155,6 +152,8 @@ export async function cleanDatabase(): Promise<void> {
   // PPM timesheet (KAN-100 PR3): delete adjustments before originals (self-FK)
   await prisma.timeEntry.deleteMany({ where: { adjustsId: { not: null } } });
   await prisma.timeEntry.deleteMany();
+  // Interruption references issues + member (Cascade) — delete before them (KAN-103)
+  await prisma.interruption.deleteMany();
   // WorkLog depends on Issue (Cascade) — delete before issues for explicit ordering
   await prisma.workLog.deleteMany();
   await prisma.issue.deleteMany();
@@ -186,10 +185,7 @@ export async function cleanDatabase(): Promise<void> {
  * Build a cookie header string for authenticated requests via cookies.
  * Includes kanon_at (access token) and optionally kanon_csrf.
  */
-export function authCookies(
-  token: string,
-  csrfToken?: string,
-): { cookie: string } {
+export function authCookies(token: string, csrfToken?: string): { cookie: string } {
   const parts = [`kanon_at=${token}`];
   if (csrfToken) {
     parts.push(`kanon_csrf=${csrfToken}`);
@@ -202,13 +198,11 @@ export function authCookies(
  * Returns a map of cookie name → value.
  */
 export function parseCookies(
-  setCookieHeaders: string | string[] | undefined,
+  setCookieHeaders: string | string[] | undefined
 ): Record<string, string> {
   const result: Record<string, string> = {};
   if (!setCookieHeaders) return result;
-  const headers = Array.isArray(setCookieHeaders)
-    ? setCookieHeaders
-    : [setCookieHeaders];
+  const headers = Array.isArray(setCookieHeaders) ? setCookieHeaders : [setCookieHeaders];
   for (const header of headers) {
     const match = header.match(/^([^=]+)=([^;]*)/);
     if (match) {
@@ -233,7 +227,7 @@ export function buildCookieString(cookies: Record<string, string>): string {
 export async function seedTestMemberWithRole(
   workspaceId: string,
   role: "owner" | "admin" | "pm" | "member" | "viewer",
-  overrides?: { email?: string; username?: string },
+  overrides?: { email?: string; username?: string }
 ): Promise<{ id: string; email: string; token: string; userId: string }> {
   const bcrypt = await import("bcryptjs");
   const hash = await bcrypt.hash("password123", 4);
@@ -272,7 +266,7 @@ export async function seedTestMemberWithRole(
 export async function seedTestProjectMember(
   userId: string,
   projectId: string,
-  role: "owner" | "admin" | "pm" | "member" | "viewer",
+  role: "owner" | "admin" | "pm" | "member" | "viewer"
 ): Promise<{ id: string; userId: string; projectId: string; role: string }> {
   const pm = await prisma.projectMember.upsert({
     where: { userId_projectId: { userId, projectId } },
@@ -301,7 +295,7 @@ export async function seedTestWorkLog(
     startedAt?: Date;
     endedAt?: Date;
     via?: string;
-  },
+  }
 ): Promise<{ id: string }> {
   const startedAt = overrides?.startedAt ?? new Date("2026-06-14T09:00:00.000Z");
   const endedAt = overrides?.endedAt ?? new Date("2026-06-14T11:00:00.000Z");
