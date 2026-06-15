@@ -12,6 +12,8 @@ vi.mock("../../config/prisma.js", () => ({
       deleteMany: vi.fn(),
     },
     workLog: { create: vi.fn(), findMany: vi.fn() },
+    // KAN-103: startWork closes open interruptions (resume); incident-start opens them.
+    interruption: { updateMany: vi.fn(), create: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
@@ -28,13 +30,7 @@ vi.mock("../activity/service.js", () => ({
 
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
-import {
-  startWork,
-  heartbeat,
-  stopWork,
-  getActiveWorkers,
-  cleanupExpired,
-} from "./service.js";
+import { startWork, heartbeat, stopWork, getActiveWorkers, cleanupExpired } from "./service.js";
 
 const mockIssueFind = vi.mocked(prisma.issue.findUnique);
 const mockIssueUpdate = vi.mocked(prisma.issue.update);
@@ -98,7 +94,7 @@ describe("WorkSessionService", () => {
           where: { userId_issueId: { userId: "user-1", issueId: "issue-1" } },
           create: expect.objectContaining({ userId: "user-1", issueId: "issue-1" }),
           update: expect.objectContaining({ source: "mcp" }),
-        }),
+        })
       );
     });
 
@@ -130,7 +126,7 @@ describe("WorkSessionService", () => {
         expect.objectContaining({
           where: { id: "issue-1" },
           data: { assignee: { connect: { id: "member-1" } } },
-        }),
+        })
       );
     });
 
@@ -158,7 +154,7 @@ describe("WorkSessionService", () => {
           type: "work_session.started",
           workspaceId: "ws-1",
           actorId: "member-1",
-        }),
+        })
       );
     });
 
@@ -183,7 +179,7 @@ describe("WorkSessionService", () => {
         expect.objectContaining({
           create: expect.objectContaining({ source: "claude-code" }),
           update: expect.objectContaining({ source: "claude-code" }),
-        }),
+        })
       );
     });
   });
@@ -302,7 +298,7 @@ describe("WorkSessionService", () => {
           type: "work_session.ended",
           workspaceId: "ws-1",
           payload: expect.objectContaining({ workLogId: "wl-99", durationS: 90 }),
-        }),
+        })
       );
     });
 
@@ -319,7 +315,7 @@ describe("WorkSessionService", () => {
         expect.objectContaining({
           type: "work_session.ended",
           payload: expect.objectContaining({ workLogId: null }),
-        }),
+        })
       );
     });
 
@@ -339,7 +335,7 @@ describe("WorkSessionService", () => {
       expect(mockWorkLogCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ via: "claude-code" }),
-        }),
+        })
       );
     });
 
@@ -379,7 +375,7 @@ describe("WorkSessionService", () => {
       mockTransaction.mockRejectedValueOnce(dbError);
 
       await expect(stopWork("KAN-42", "user-1", "member-1")).rejects.toThrow(
-        "Constraint violation",
+        "Constraint violation"
       );
     });
 
@@ -457,7 +453,7 @@ describe("WorkSessionService", () => {
             issueId: "issue-1",
             lastHeartbeat: { gt: expect.any(Date) },
           }),
-        }),
+        })
       );
     });
   });
@@ -534,18 +530,33 @@ describe("WorkSessionService", () => {
 
       const expiredSessions = [
         {
-          id: "s-1", memberId: "m-1", userId: "u-1", issueId: "i-1",
-          source: "mcp", startedAt: startedAt1, lastHeartbeat: hb1,
+          id: "s-1",
+          memberId: "m-1",
+          userId: "u-1",
+          issueId: "i-1",
+          source: "mcp",
+          startedAt: startedAt1,
+          lastHeartbeat: hb1,
           issue: { key: "KAN-1", project: { workspaceId: "ws-1" } },
         },
         {
-          id: "s-2", memberId: "m-2", userId: "u-2", issueId: "i-2",
-          source: "web", startedAt: startedAt2, lastHeartbeat: hb2,
+          id: "s-2",
+          memberId: "m-2",
+          userId: "u-2",
+          issueId: "i-2",
+          source: "web",
+          startedAt: startedAt2,
+          lastHeartbeat: hb2,
           issue: { key: "KAN-2", project: { workspaceId: "ws-1" } },
         },
         {
-          id: "s-3", memberId: "m-3", userId: "u-3", issueId: "i-3",
-          source: "cli", startedAt: startedAt3, lastHeartbeat: hb3,
+          id: "s-3",
+          memberId: "m-3",
+          userId: "u-3",
+          issueId: "i-3",
+          source: "cli",
+          startedAt: startedAt3,
+          lastHeartbeat: hb3,
           issue: { key: "KAN-3", project: { workspaceId: "ws-1" } },
         },
       ] as any;
@@ -632,10 +643,7 @@ describe("WorkSessionService", () => {
       const logger = { info: vi.fn(), error: vi.fn() };
       await cleanupExpired(logger);
 
-      expect(logger.info).toHaveBeenCalledWith(
-        { count: 1 },
-        "Cleaned up expired work sessions",
-      );
+      expect(logger.info).toHaveBeenCalledWith({ count: 1 }, "Cleaned up expired work sessions");
     });
 
     // ── Fix 6: 60s exact boundary (expiry path) ────────────────────────────
@@ -729,7 +737,7 @@ describe("WorkSessionService", () => {
       expect(mockWorkLogCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ via: "claude-code" }),
-        }),
+        })
       );
     });
   });
@@ -755,7 +763,7 @@ describe("WorkSessionService", () => {
       await stopWork("KAN-42", "user-1", "member-1");
 
       const worklogEmit = mockEmit.mock.calls.find(
-        ([arg]) => (arg as { type: string }).type === "worklog.created",
+        ([arg]) => (arg as { type: string }).type === "worklog.created"
       );
       expect(worklogEmit).toBeDefined();
       expect(worklogEmit![0]).toMatchObject({
@@ -779,7 +787,7 @@ describe("WorkSessionService", () => {
       await stopWork("KAN-42", "user-1", "member-1");
 
       const worklogEmit = mockEmit.mock.calls.find(
-        ([arg]) => (arg as { type: string }).type === "worklog.created",
+        ([arg]) => (arg as { type: string }).type === "worklog.created"
       );
       expect(worklogEmit).toBeUndefined();
     });
@@ -810,7 +818,7 @@ describe("WorkSessionService", () => {
       await cleanupExpired();
 
       const worklogEmit = mockEmit.mock.calls.find(
-        ([arg]) => (arg as { type: string }).type === "worklog.created",
+        ([arg]) => (arg as { type: string }).type === "worklog.created"
       );
       expect(worklogEmit).toBeDefined();
       expect(worklogEmit![0]).toMatchObject({
@@ -846,7 +854,7 @@ describe("WorkSessionService", () => {
       await cleanupExpired();
 
       const worklogEmit = mockEmit.mock.calls.find(
-        ([arg]) => (arg as { type: string }).type === "worklog.created",
+        ([arg]) => (arg as { type: string }).type === "worklog.created"
       );
       expect(worklogEmit).toBeUndefined();
     });

@@ -20,6 +20,16 @@ export const StartWorkSessionBody = z.object({
 export type StartWorkSessionBody = z.infer<typeof StartWorkSessionBody>;
 
 /**
+ * KAN-103 — manually record an Interruption (no active session required).
+ * :key is the incident issue; interruptedIssueKey is the displaced issue.
+ */
+export const RecordInterruptionBody = z.object({
+  interruptedIssueKey: z.string(),
+  via: z.string().max(50).optional(),
+});
+export type RecordInterruptionBody = z.infer<typeof RecordInterruptionBody>;
+
+/**
  * Active worker response shape.
  */
 export const ActiveWorkerResponse = z.object({

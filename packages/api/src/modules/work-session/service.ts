@@ -36,6 +36,29 @@ export async function startWork(
     throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${issueKey}" not found`);
   }
 
+  // KAN-103: incident switch — starting work on an incident displaces the user's
+  // other active session(s). Stop each (normal WorkLog) and open an Interruption
+  // edge per displaced issue (via "session_switch"); endedAt is stamped on
+  // resume (startWork on the interrupted issue) or close (stopWork on the incident).
+  if (issue.type === "incident") {
+    const switchCutoff = new Date(Date.now() - SESSION_TTL_MS);
+    const displaced = await prisma.workSession.findMany({
+      where: { userId, issueId: { not: issue.id }, lastHeartbeat: { gt: switchCutoff } },
+      include: { issue: { select: { key: true } } },
+    });
+    for (const s of displaced) {
+      await stopWork(s.issue.key, userId, s.memberId, via ?? null);
+      await prisma.interruption.create({
+        data: {
+          incidentIssueId: issue.id,
+          interruptedIssueId: s.issueId,
+          memberId,
+          via: "session_switch",
+        },
+      });
+    }
+  }
+
   const now = new Date();
   // Prefer via as session source — it carries the normalized client identity
   // (e.g. 'claude-code') so that cleanupExpired can carry it to WorkLog.via.
@@ -60,6 +83,13 @@ export async function startWork(
       source: sessionSource,
       startedAt: now,
     },
+  });
+
+  // KAN-103: resume — (re)starting work on a previously-interrupted issue closes
+  // its still-open Interruption edge(s).
+  await prisma.interruption.updateMany({
+    where: { interruptedIssueId: issue.id, memberId, endedAt: null },
+    data: { endedAt: now },
   });
 
   // Check for other active workers on this issue
@@ -287,7 +317,54 @@ export async function stopWork(
     // Never let event emission break the mutation
   }
 
+  // KAN-103: close — stopping an incident session ends its open Interruption edge(s).
+  if (issue.type === "incident") {
+    await prisma.interruption.updateMany({
+      where: { incidentIssueId: issue.id, memberId, endedAt: null },
+      data: { endedAt },
+    });
+  }
+
   return { ok: true, deleted: true, workLog };
+}
+
+/**
+ * KAN-103: manually record an Interruption — an incident displacing work on
+ * another issue, without requiring an active work session. via defaults to "manual".
+ */
+export async function recordInterruption(
+  incidentIssueKey: string,
+  interruptedIssueKey: string,
+  memberId: string,
+  via: string = "manual",
+) {
+  const [incident, interrupted] = await Promise.all([
+    prisma.issue.findUnique({
+      where: { key: incidentIssueKey },
+      select: { id: true, type: true },
+    }),
+    prisma.issue.findUnique({
+      where: { key: interruptedIssueKey },
+      select: { id: true },
+    }),
+  ]);
+  if (!incident) {
+    throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${incidentIssueKey}" not found`);
+  }
+  if (incident.type !== "incident") {
+    throw new AppError(400, "NOT_AN_INCIDENT", `Issue "${incidentIssueKey}" is not an incident`);
+  }
+  if (!interrupted) {
+    throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${interruptedIssueKey}" not found`);
+  }
+  return prisma.interruption.create({
+    data: {
+      incidentIssueId: incident.id,
+      interruptedIssueId: interrupted.id,
+      memberId,
+      via,
+    },
+  });
 }
 
 /**
