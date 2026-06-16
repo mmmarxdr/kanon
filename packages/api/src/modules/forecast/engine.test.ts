@@ -39,6 +39,7 @@ function node(overrides: Partial<ForecastNode> & { issueId: string }): ForecastN
     state: "backlog",
     completedAt: null,
     loggedH: 0,
+    interruptedDays: 0,
     ...overrides,
   };
 }
@@ -1038,6 +1039,96 @@ describe("laterOf boundary (via applyEdge)", () => {
     applyEdge(edge, node({ issueId: "pred" }), predState, succNode, succState, HOURS_PER_DAY);
     // SS: laterOf(succStart=June3, predStart+0=June3) — both equal, must return June3 (not crash)
     expect(succState.forecastStart.toISOString()).toBe(equalDate.toISOString());
+  });
+});
+
+// ─── KAN-103 PR3: interruptedDays extends forecastEnd ────────────────────────
+
+describe("forecastEndFor — interruptedDays (KAN-103 PR3)", () => {
+  it("interruptedDays=3 pushes forecastEnd out by exactly 3 days in the estimate branch", () => {
+    const start = new Date("2026-06-01T00:00:00.000Z");
+    const base = node({
+      issueId: "A",
+      startDate: start,
+      estimateHours: 8, // 1 day → forecastEnd = June 2
+      progress: 0,
+      loggedH: 0,
+      interruptedDays: 0,
+    });
+    const interrupted = node({
+      issueId: "A",
+      startDate: start,
+      estimateHours: 8,
+      progress: 0,
+      loggedH: 0,
+      interruptedDays: 3,
+    });
+    const baseEnd = forecastEndFor(base, HOURS_PER_DAY);
+    const shiftedEnd = forecastEndFor(interrupted, HOURS_PER_DAY);
+    expect(baseEnd).not.toBeNull();
+    expect(shiftedEnd).not.toBeNull();
+    // shiftedEnd should be exactly 3 days after baseEnd
+    expect(shiftedEnd!.getTime() - baseEnd!.getTime()).toBe(3 * 86_400_000);
+  });
+
+  it("interruptedDays=0 → no change to forecastEnd", () => {
+    const start = new Date("2026-06-01T00:00:00.000Z");
+    const n = node({
+      issueId: "A",
+      startDate: start,
+      estimateHours: 8,
+      progress: 0,
+      loggedH: 0,
+      interruptedDays: 0,
+    });
+    const result = forecastEndFor(n, HOURS_PER_DAY);
+    expect(result?.toISOString()).toBe(addDays(start, 1).toISOString());
+  });
+
+  it("done+completedAt branch ignores interruptedDays", () => {
+    const completedAt = new Date("2026-06-05T00:00:00.000Z");
+    const n = node({
+      issueId: "A",
+      startDate: new Date("2026-06-01T00:00:00.000Z"),
+      estimateHours: 8,
+      state: "done",
+      completedAt,
+      interruptedDays: 5, // must be ignored in done branch
+    });
+    const result = forecastEndFor(n, HOURS_PER_DAY);
+    expect(result?.toISOString()).toBe(completedAt.toISOString());
+  });
+
+  it("cascade: a FS successor shifts when predecessor has interruptedDays > 0", () => {
+    const start = new Date("2026-06-01T00:00:00.000Z");
+    // Predecessor: 1 day estimate + 2 interruptedDays → forecastEnd = June 4
+    // Successor: 1 day → forecastEnd should be June 5
+    const predNode = node({
+      issueId: "pred",
+      startDate: start,
+      estimateHours: 8,
+      interruptedDays: 2,
+    });
+    const succNode = node({
+      issueId: "succ",
+      startDate: start,
+      estimateHours: 8,
+      interruptedDays: 0,
+    });
+    const input: ForecastGraphInput = {
+      nodes: [predNode, succNode],
+      edges: [{ source: "pred", target: "succ", type: "FS", lagDays: 0 }],
+      milestones: [],
+    };
+    const result = computeForecast(input, { hoursPerDay: HOURS_PER_DAY });
+    const fPred = result.forecasts.get("pred");
+    const fSucc = result.forecasts.get("succ");
+    expect(fPred).toBeDefined();
+    expect(fSucc).toBeDefined();
+    // pred forecastEnd = June 1 + 1 day estimate + 2 interrupted = June 4
+    expect(fPred!.forecastEnd?.toISOString()).toBe(addDays(start, 3).toISOString());
+    // succ forecastEnd = pred.forecastEnd (June 4) + 1 day = June 5
+    expect(fSucc!.forecastEnd?.toISOString()).toBe(addDays(start, 4).toISOString());
   });
 });
 
@@ -2174,6 +2265,126 @@ describe("computeForecast — null-start fEnd branch (line 330) — near-equival
     );
     // null-start: s === undefined; line 330: fEnd = false (startDate===null) → slipDays=0
     expect(result.forecasts.get("A")!.slipDays).toBe(0);
+  });
+});
+
+// ─── KAN-103 PR3 FIX: applyEdge preserves successor's own interruptedDays ─────
+// Bug: applyEdge computed durDays from estimateHours only, stripping interruptedDays
+// that forecastEndFor had already baked into the node's forecastEnd in Step 1.
+// Fix: durDays = days(estimateHours, hpd) + succNode.interruptedDays (estimate branch only).
+
+describe("applyEdge — successor interruptedDays survives edge recompute (KAN-103 PR3 fix)", () => {
+  it("FS: successor with estimateHours AND interruptedDays=2 → forecastEnd is 2 days later than zero-interruption baseline", () => {
+    // Regression guard: without the fix, both variants produce the same forecastEnd
+    // because applyEdge recomputes durDays from estimateHours alone, losing interruptedDays.
+    const predStart = new Date("2026-06-01T00:00:00.000Z");
+    const predEnd   = new Date("2026-06-03T00:00:00.000Z"); // 2-day pred
+
+    const predNode2 = node({ issueId: "pred", startDate: predStart, estimateHours: 16 });
+    const predState2 = { forecastStart: predStart, forecastEnd: predEnd };
+
+    // Baseline: successor with no interruptions
+    const succBase = node({ issueId: "succ", startDate: predStart, estimateHours: 8, interruptedDays: 0 });
+    const succStateBase = { forecastStart: predStart, forecastEnd: addDays(predStart, 1) };
+    applyEdge(
+      { source: "pred", target: "succ", type: "FS", lagDays: 0 },
+      predNode2, predState2, succBase, succStateBase, HOURS_PER_DAY
+    );
+
+    // Interrupted variant: 2 interruptedDays added
+    const succInt = node({ issueId: "succ", startDate: predStart, estimateHours: 8, interruptedDays: 2 });
+    const succStateInt = { forecastStart: predStart, forecastEnd: addDays(predStart, 3) }; // forecastEndFor already applied +2
+    applyEdge(
+      { source: "pred", target: "succ", type: "FS", lagDays: 0 },
+      predNode2, predState2, succInt, succStateInt, HOURS_PER_DAY
+    );
+
+    // With fix: interrupted variant's forecastEnd is exactly 2 days later than baseline
+    // RED (before fix): both equal → diff = 0, not 2*DAY_MS
+    const diffMs = succStateInt.forecastEnd.getTime() - succStateBase.forecastEnd.getTime();
+    expect(diffMs).toBe(2 * 86_400_000);
+  });
+
+  it("SS: successor with estimateHours AND interruptedDays=3 → forecastEnd is 3 days later than baseline", () => {
+    const predStart = new Date("2026-06-01T00:00:00.000Z");
+    const predEnd   = new Date("2026-06-03T00:00:00.000Z");
+
+    const predNode2 = node({ issueId: "pred", startDate: predStart, estimateHours: 16 });
+    const predState2 = { forecastStart: predStart, forecastEnd: predEnd };
+
+    const succBase = node({ issueId: "succ", startDate: predStart, estimateHours: 8, interruptedDays: 0 });
+    const succStateBase = { forecastStart: predStart, forecastEnd: addDays(predStart, 1) };
+    applyEdge(
+      { source: "pred", target: "succ", type: "SS", lagDays: 0 },
+      predNode2, predState2, succBase, succStateBase, HOURS_PER_DAY
+    );
+
+    const succInt = node({ issueId: "succ", startDate: predStart, estimateHours: 8, interruptedDays: 3 });
+    const succStateInt = { forecastStart: predStart, forecastEnd: addDays(predStart, 4) };
+    applyEdge(
+      { source: "pred", target: "succ", type: "SS", lagDays: 0 },
+      predNode2, predState2, succInt, succStateInt, HOURS_PER_DAY
+    );
+
+    const diffMs = succStateInt.forecastEnd.getTime() - succStateBase.forecastEnd.getTime();
+    expect(diffMs).toBe(3 * 86_400_000);
+  });
+
+  it("FF: successor with estimateHours AND interruptedDays=2 → forecastStart shifts back 2 extra days", () => {
+    // FF recomputes forecastStart = forecastEnd - durDays.
+    // With fix durDays is larger, so forecastStart is pushed further back.
+    const predStart = new Date("2026-06-01T00:00:00.000Z");
+    const predEnd   = new Date("2026-06-06T00:00:00.000Z"); // pred ends June6
+
+    const predNode2 = node({ issueId: "pred", startDate: predStart, estimateHours: 40 });
+    const predState2 = { forecastStart: predStart, forecastEnd: predEnd };
+
+    const succBase = node({ issueId: "succ", startDate: predStart, estimateHours: 8, interruptedDays: 0 });
+    const succStateBase = { forecastStart: predStart, forecastEnd: addDays(predStart, 1) };
+    applyEdge(
+      { source: "pred", target: "succ", type: "FF", lagDays: 0 },
+      predNode2, predState2, succBase, succStateBase, HOURS_PER_DAY
+    );
+
+    const succInt = node({ issueId: "succ", startDate: predStart, estimateHours: 8, interruptedDays: 2 });
+    const succStateInt = { forecastStart: predStart, forecastEnd: addDays(predStart, 3) };
+    applyEdge(
+      { source: "pred", target: "succ", type: "FF", lagDays: 0 },
+      predNode2, predState2, succInt, succStateInt, HOURS_PER_DAY
+    );
+
+    // FF: forecastEnd = max(succEnd, predEnd+lag) → same for both (predEnd dominates).
+    // With fix: forecastEnd same, but forecastStart is shifted back by 2 (durDays is bigger).
+    expect(succStateBase.forecastEnd.toISOString()).toBe(succStateInt.forecastEnd.toISOString());
+    const startDiffMs = succStateBase.forecastStart.getTime() - succStateInt.forecastStart.getTime();
+    expect(startDiffMs).toBe(2 * 86_400_000);
+  });
+
+  it("computeForecast end-to-end: FS successor with interruptedDays=2 → its forecastEnd is 2 days later than no-interruption graph", () => {
+    // This is the PPM regression case: issue has estimate + dependency + interruption.
+    const start = new Date("2026-06-01T00:00:00.000Z");
+    const predNode2 = node({ issueId: "pred", startDate: start, estimateHours: 8 }); // 1 day → June2
+
+    // Without interruption on successor
+    const succNoInt = node({ issueId: "succ", startDate: start, estimateHours: 8, interruptedDays: 0 });
+    const resultNoInt = computeForecast(
+      { nodes: [predNode2, succNoInt], edges: [{ source: "pred", target: "succ", type: "FS", lagDays: 0 }], milestones: [] },
+      { hoursPerDay: HOURS_PER_DAY }
+    );
+
+    // With 2 interruption days on successor
+    const succWithInt = node({ issueId: "succ", startDate: start, estimateHours: 8, interruptedDays: 2 });
+    const resultWithInt = computeForecast(
+      { nodes: [predNode2, succWithInt], edges: [{ source: "pred", target: "succ", type: "FS", lagDays: 0 }], milestones: [] },
+      { hoursPerDay: HOURS_PER_DAY }
+    );
+
+    const endNoInt   = resultNoInt.forecasts.get("succ")!.forecastEnd!;
+    const endWithInt = resultWithInt.forecasts.get("succ")!.forecastEnd!;
+
+    // RED before fix: diffMs = 0 (interruptedDays stripped by applyEdge)
+    const diffMs = endWithInt.getTime() - endNoInt.getTime();
+    expect(diffMs).toBe(2 * 86_400_000);
   });
 });
 

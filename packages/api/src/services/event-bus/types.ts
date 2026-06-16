@@ -47,7 +47,9 @@ export type DomainEventType =
   // KAN-101 PPM W2: dependency lifecycle event for forecast trigger (KAN-102).
   // Emitted post-commit fire-and-forget on create + delete.
   | "dependency.changed"
-  // TODO KAN-103: add "interruption.opened" | "interruption.closed"
+  // KAN-103 PR3: forecast trigger when an incident opens/closes an interruption.
+  | "interruption.opened"
+  | "interruption.closed"
   // KAN-102: seam for PPM P2 rollup-listener
   | "ppm.forecast.updated";
 

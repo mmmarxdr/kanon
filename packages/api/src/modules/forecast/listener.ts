@@ -16,8 +16,8 @@
  * The AC trigger "issue.state_changed" maps to the real event "issue.transitioned"
  * (the union has no event by that literal name) — wired below.
  *
- * TODO KAN-103: add "interruption.opened" | "interruption.closed" subscriptions
- *   once those event types land in DomainEventType (currently deferred to KAN-103).
+ * KAN-103 PR3: "interruption.opened" | "interruption.closed" now wired here.
+ *   Payload carries interruptedIssueId — the issue whose forecast changes.
  */
 
 import { prisma } from "../../config/prisma.js";
@@ -72,6 +72,13 @@ interface IssueTransitionedPayload {
   projectKey: string;
   from: string;
   to: string;
+}
+
+interface InterruptionPayload {
+  interruptionId: string;
+  incidentIssueId: string;
+  interruptedIssueId: string;
+  memberId: string;
 }
 
 // ─── projectId resolution ────────────────────────────────────────────────────
@@ -206,13 +213,18 @@ export function registerForecastListener(
         break;
       }
 
+      case "interruption.opened":
+      case "interruption.closed": {
+        // KAN-103 PR3: forecast that changes is the interrupted issue's project.
+        const p = event.payload as unknown as InterruptionPayload;
+        issueId = p.interruptedIssueId ?? null;
+        break;
+      }
+
       // ── Explicitly ignored events ────────────────────────────────────────
       case "ppm.forecast.updated":
         // Own output — must NOT self-trigger (infinite loop prevention).
         return;
-
-      // TODO KAN-103: wire "interruption.opened" | "interruption.closed" here
-      // once those event types are added to DomainEventType.
 
       default:
         // Not a forecast-relevant event — ignore silently.

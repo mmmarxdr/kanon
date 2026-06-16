@@ -6,7 +6,7 @@
  * debounced event fires, and may also be called directly as a job.
  *
  * Architecture:
- *   1. Load graph in 5 parallel queries (Promise.all) — includes workspaceId.
+ *   1. Load graph in 6 parallel queries (Promise.all) — includes workspaceId and interruptions.
  *   2. Convert Prisma Decimal → number at the loader boundary.
  *   3. Call computeForecast() — pure engine, zero I/O.
  *   4. Compute desired IssueForecast rows; batch writes in a transaction:
@@ -83,10 +83,12 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
   const hoursPerDay = env.FORECAST_HOURS_PER_DAY;
   const atRiskBufferDays = env.FORECAST_AT_RISK_BUFFER_DAYS;
 
-  // ── Step 1: Load project graph in 5 parallel queries ────────────────────
+  // ── Step 1: Load project graph in 6 parallel queries ────────────────────
   // workspaceId is folded in here (was a separate sequential query in the
   // original service, running after the upsert loop — now free via parallelism).
-  const [issues, approvedHoursRows, dependencies, deliverables, project] = await Promise.all([
+  // KAN-103 PR3: interruptions loader added as 6th query.
+  const now = new Date();
+  const [issues, approvedHoursRows, dependencies, deliverables, project, interruptionRows] = await Promise.all([
     // Loader 1: issues + schedule for this project
     prisma.issue.findMany({
       where: { projectId },
@@ -142,9 +144,40 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
       where: { id: projectId },
       select: { workspaceId: true },
     }),
+
+    // Loader 6: KAN-103 PR3 — interruptions for issues in this project.
+    // Open interruptions (endedAt null) use `now` as end — slip is visible immediately.
+    prisma.interruption.findMany({
+      where: { interruptedIssue: { projectId } },
+      select: { interruptedIssueId: true, startedAt: true, endedAt: true },
+    }),
   ]);
 
   const workspaceId = project?.workspaceId;
+
+  // ── Step 1b: Build interruptedDaysMap (KAN-103 PR3) ─────────────────────
+  // For each interrupted issue, accumulate displaced milliseconds across all
+  // interruptions (open or closed). Open ones (endedAt null) use `now` as end
+  // so an active incident shows slip immediately and grows until closed.
+  //
+  // KAN-103: ignore sub-30-min switches so brief context-switches don't inflate
+  // the forecast by a full day.
+  const MIN_INTERRUPTION_MS = 30 * 60 * 1000;
+  const interruptedMsMap = new Map<string, number>();
+  for (const row of interruptionRows) {
+    const endMs = (row.endedAt ?? now).getTime();
+    const startMs = row.startedAt.getTime();
+    const displacedMs = Math.max(0, endMs - startMs);
+    if (displacedMs < MIN_INTERRUPTION_MS) continue;
+    interruptedMsMap.set(
+      row.interruptedIssueId,
+      (interruptedMsMap.get(row.interruptedIssueId) ?? 0) + displacedMs,
+    );
+  }
+  const interruptedDaysMap = new Map<string, number>();
+  for (const [issueId, totalMs] of interruptedMsMap) {
+    interruptedDaysMap.set(issueId, Math.ceil(totalMs / 86_400_000));
+  }
 
   // ── Step 2: Convert Decimal → number at the boundary ────────────────────
   // Prisma groupBy returns Decimal objects for Decimal fields. We call .toNumber()
@@ -179,6 +212,7 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
       state: issue.state,
       completedAt: issue.completedAt,
       loggedH: approvedHoursMap.get(issue.id) ?? 0,
+      interruptedDays: interruptedDaysMap.get(issue.id) ?? 0,
     };
   });
 

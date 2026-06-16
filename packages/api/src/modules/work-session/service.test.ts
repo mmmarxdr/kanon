@@ -13,7 +13,8 @@ vi.mock("../../config/prisma.js", () => ({
     },
     workLog: { create: vi.fn(), findMany: vi.fn() },
     // KAN-103: startWork closes open interruptions (resume); incident-start opens them.
-    interruption: { updateMany: vi.fn(), create: vi.fn() },
+    // KAN-103 PR3: findMany added for pre-close query before emit.
+    interruption: { updateMany: vi.fn(), create: vi.fn(), findMany: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
@@ -30,7 +31,7 @@ vi.mock("../activity/service.js", () => ({
 
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
-import { startWork, heartbeat, stopWork, getActiveWorkers, cleanupExpired } from "./service.js";
+import { startWork, heartbeat, stopWork, getActiveWorkers, cleanupExpired, recordInterruption } from "./service.js";
 
 const mockIssueFind = vi.mocked(prisma.issue.findUnique);
 const mockIssueUpdate = vi.mocked(prisma.issue.update);
@@ -59,9 +60,16 @@ const fakeSession = {
   lastHeartbeat: new Date(),
 } as any;
 
+const mockInterruptionFindManyGlobal = vi.mocked(prisma.interruption.findMany);
+const mockInterruptionUpdateManyGlobal = vi.mocked(prisma.interruption.updateMany);
+const mockInterruptionCreateGlobal = vi.mocked(prisma.interruption.create);
+
 describe("WorkSessionService", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // KAN-103 PR3: safe default — no open interruptions unless a test explicitly overrides.
+    mockInterruptionFindManyGlobal.mockResolvedValue([]);
+    mockInterruptionUpdateManyGlobal.mockResolvedValue({ count: 0 } as any);
   });
 
   // ── startWork ──────────────────────────────────────────────────────────
@@ -869,6 +877,216 @@ describe("WorkSessionService", () => {
       // Import normalizeVia inline to avoid circular mock issues
       const { normalizeVia } = await import("../../shared/via.js");
       expect(normalizeVia("mcp")).toBeNull();
+    });
+  });
+
+  // ── KAN-103 PR3: interruption event emission ───────────────────────────────
+
+  describe("KAN-103 PR3 — interruption event emission", () => {
+    const mockInterruptionCreate = mockInterruptionCreateGlobal;
+    const mockInterruptionFindMany = mockInterruptionFindManyGlobal;
+    const mockInterruptionUpdateMany = mockInterruptionUpdateManyGlobal;
+
+    const incidentIssue = {
+      id: "incident-1",
+      key: "INC-1",
+      type: "incident",
+      assigneeId: "member-1",
+      project: { workspaceId: "ws-1", key: "KAN" },
+    } as any;
+
+    const taskIssue = {
+      id: "task-1",
+      key: "KAN-99",
+      type: "task",
+      assigneeId: "member-1",
+      project: { workspaceId: "ws-1", key: "KAN" },
+    } as any;
+
+    it("startWork on incident emits interruption.opened for each displaced session", async () => {
+      // incident switch: displaced session on task-1
+      mockIssueFind
+        .mockResolvedValueOnce(incidentIssue) // first call: the incident
+        .mockResolvedValueOnce(taskIssue);    // stopWork call for displaced session
+      // displaced sessions
+      mockSessionFindMany
+        .mockResolvedValueOnce([
+          { id: "s-displaced", userId: "u-1", memberId: "m-1", issueId: "task-1",
+            lastHeartbeat: new Date(), issue: { key: "KAN-99" } },
+        ] as any) // displaced sessions query
+        .mockResolvedValueOnce([]); // other workers query (after upsert)
+      // stopWork inner calls
+      mockSessionFindUnique
+        .mockResolvedValueOnce({ id: "s-displaced", startedAt: new Date(), memberId: "m-1" } as any);
+      mockSessionDelete.mockResolvedValue({} as any);
+      mockSessionUpsert.mockResolvedValue({ id: "s-new" } as any);
+      mockInterruptionFindMany.mockResolvedValue([]); // resume-close: no open interruptions
+      mockInterruptionUpdateMany.mockResolvedValue({ count: 0 } as any);
+      mockInterruptionCreate.mockResolvedValue({
+        id: "int-auto-1",
+        incidentIssueId: "incident-1",
+        interruptedIssueId: "task-1",
+        memberId: "m-1",
+      } as any);
+      mockIssueUpdate.mockResolvedValue({} as any);
+
+      mockEmit.mockClear();
+      await startWork("INC-1", "member-1", "u-1", "mcp");
+
+      const openedEmit = mockEmit.mock.calls.find(
+        ([arg]) => (arg as { type: string }).type === "interruption.opened"
+      );
+      expect(openedEmit).toBeDefined();
+      expect(openedEmit![0]).toMatchObject({
+        type: "interruption.opened",
+        workspaceId: "ws-1",
+        payload: {
+          interruptionId: "int-auto-1",
+          incidentIssueId: "incident-1",
+          interruptedIssueId: "task-1",
+        },
+      });
+    });
+
+    it("startWork (resume) emits interruption.closed for each open interruption closed", async () => {
+      mockIssueFind.mockResolvedValue(taskIssue);
+      mockSessionUpsert.mockResolvedValue({ id: "s-1" } as any);
+      mockSessionFindMany.mockResolvedValue([]); // no other workers
+      mockInterruptionFindMany.mockResolvedValue([
+        { id: "int-1", incidentIssueId: "incident-1", interruptedIssueId: "task-1", memberId: "m-1" },
+      ] as any);
+      mockInterruptionUpdateMany.mockResolvedValue({ count: 1 } as any);
+      mockIssueUpdate.mockResolvedValue({} as any);
+
+      mockEmit.mockClear();
+      await startWork("KAN-99", "member-1", "u-1", "mcp");
+
+      const closedEmit = mockEmit.mock.calls.find(
+        ([arg]) => (arg as { type: string }).type === "interruption.closed"
+      );
+      expect(closedEmit).toBeDefined();
+      expect(closedEmit![0]).toMatchObject({
+        type: "interruption.closed",
+        workspaceId: "ws-1",
+        payload: {
+          interruptionId: "int-1",
+          incidentIssueId: "incident-1",
+          interruptedIssueId: "task-1",
+        },
+      });
+    });
+
+    it("stopWork on incident emits interruption.closed for each open interruption closed", async () => {
+      mockIssueFind.mockResolvedValue(incidentIssue);
+      mockSessionFindUnique.mockResolvedValue({
+        id: "s-inc", startedAt: new Date(Date.now() - 30_000), memberId: "m-1",
+      } as any);
+      mockSessionDelete.mockResolvedValue({} as any);
+      mockInterruptionFindMany.mockResolvedValue([
+        { id: "int-2", incidentIssueId: "incident-1", interruptedIssueId: "task-1", memberId: "m-1" },
+      ] as any);
+      mockInterruptionUpdateMany.mockResolvedValue({ count: 1 } as any);
+
+      mockEmit.mockClear();
+      await stopWork("INC-1", "u-1", "m-1");
+
+      const closedEmit = mockEmit.mock.calls.find(
+        ([arg]) => (arg as { type: string }).type === "interruption.closed"
+      );
+      expect(closedEmit).toBeDefined();
+      expect(closedEmit![0]).toMatchObject({
+        type: "interruption.closed",
+        workspaceId: "ws-1",
+        payload: {
+          interruptionId: "int-2",
+          incidentIssueId: "incident-1",
+          interruptedIssueId: "task-1",
+        },
+      });
+    });
+
+    it("cleanupExpired on expired incident session closes open interruptions and emits interruption.closed", async () => {
+      const lastHeartbeat = new Date(Date.now() - 10_000);
+      const startedAt = new Date(Date.now() - 120_000);
+      const expiredIncidentSession = {
+        id: "s-inc-expired",
+        memberId: "m-1",
+        userId: "u-1",
+        issueId: "incident-1",
+        source: "mcp",
+        startedAt,
+        lastHeartbeat,
+        issue: {
+          key: "INC-1",
+          type: "incident",
+          project: { workspaceId: "ws-1" },
+        },
+      } as any;
+
+      mockSessionFindMany.mockResolvedValue([expiredIncidentSession]);
+      mockTransaction.mockResolvedValue([{ id: "wl-exp", durationS: 110 }, {}]);
+      mockInterruptionFindMany.mockResolvedValue([
+        { id: "int-exp-1", incidentIssueId: "incident-1", interruptedIssueId: "task-99", memberId: "m-1" },
+      ] as any);
+      mockInterruptionUpdateMany.mockResolvedValue({ count: 1 } as any);
+
+      mockEmit.mockClear();
+      await cleanupExpired();
+
+      // Interruption must be closed with endedAt = lastHeartbeat
+      expect(mockInterruptionUpdateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ incidentIssueId: "incident-1", memberId: "m-1", endedAt: null }),
+          data: { endedAt: lastHeartbeat },
+        })
+      );
+
+      // interruption.closed event must be emitted
+      const closedEmit = mockEmit.mock.calls.find(
+        ([arg]) => (arg as { type: string }).type === "interruption.closed"
+      );
+      expect(closedEmit).toBeDefined();
+      expect(closedEmit![0]).toMatchObject({
+        type: "interruption.closed",
+        workspaceId: "ws-1",
+        payload: {
+          interruptionId: "int-exp-1",
+          incidentIssueId: "incident-1",
+          interruptedIssueId: "task-99",
+          memberId: "m-1",
+        },
+      });
+    });
+
+    it("recordInterruption emits interruption.opened", async () => {
+      // recordInterruption needs to look up both issues
+      mockIssueFind
+        .mockResolvedValueOnce(incidentIssue)
+        .mockResolvedValueOnce(taskIssue);
+      mockInterruptionCreate.mockResolvedValue({
+        id: "int-manual-1",
+        incidentIssueId: "incident-1",
+        interruptedIssueId: "task-1",
+        memberId: "m-1",
+      } as any);
+
+      mockEmit.mockClear();
+      await recordInterruption("INC-1", "KAN-99", "m-1", "manual");
+
+      const openedEmit = mockEmit.mock.calls.find(
+        ([arg]) => (arg as { type: string }).type === "interruption.opened"
+      );
+      expect(openedEmit).toBeDefined();
+      expect(openedEmit![0]).toMatchObject({
+        type: "interruption.opened",
+        workspaceId: "ws-1",
+        payload: {
+          interruptionId: "int-manual-1",
+          incidentIssueId: "incident-1",
+          interruptedIssueId: "task-1",
+          memberId: "m-1",
+        },
+      });
     });
   });
 });

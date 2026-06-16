@@ -50,7 +50,7 @@ export async function startWork(
     });
     for (const s of displaced) {
       await stopWork(s.issue.key, userId, s.memberId, via ?? null);
-      await prisma.interruption.create({
+      const interruption = await prisma.interruption.create({
         data: {
           incidentIssueId: issue.id,
           interruptedIssueId: s.issueId,
@@ -58,6 +58,22 @@ export async function startWork(
           via: "session_switch",
         },
       });
+      // KAN-103 PR3: emit interruption.opened so forecast rebuilds for the interrupted issue.
+      try {
+        eventBus.emit({
+          type: "interruption.opened",
+          workspaceId: issue.project.workspaceId,
+          actorId: s.memberId,
+          payload: {
+            interruptionId: interruption.id,
+            incidentIssueId: issue.id,
+            interruptedIssueId: s.issueId,
+            memberId: s.memberId,
+          },
+        });
+      } catch {
+        // Fire-and-forget: never let event emission break the mutation
+      }
     }
   }
 
@@ -89,10 +105,32 @@ export async function startWork(
 
   // KAN-103: resume — (re)starting work on a previously-interrupted issue closes
   // its still-open Interruption edge(s).
+  const openInterruptions = await prisma.interruption.findMany({
+    where: { interruptedIssueId: issue.id, memberId, endedAt: null },
+    select: { id: true, incidentIssueId: true, interruptedIssueId: true, memberId: true },
+  });
   await prisma.interruption.updateMany({
     where: { interruptedIssueId: issue.id, memberId, endedAt: null },
     data: { endedAt: now },
   });
+  // KAN-103 PR3: emit interruption.closed per closed row so forecast rebuilds.
+  for (const row of openInterruptions) {
+    try {
+      eventBus.emit({
+        type: "interruption.closed",
+        workspaceId: issue.project.workspaceId,
+        actorId: memberId,
+        payload: {
+          interruptionId: row.id,
+          incidentIssueId: row.incidentIssueId,
+          interruptedIssueId: row.interruptedIssueId,
+          memberId: row.memberId,
+        },
+      });
+    } catch {
+      // Fire-and-forget: never let event emission break the mutation
+    }
+  }
 
   // Check for other active workers on this issue
   const cutoff = new Date(Date.now() - SESSION_TTL_MS);
@@ -321,10 +359,32 @@ export async function stopWork(
 
   // KAN-103: close — stopping an incident session ends its open Interruption edge(s).
   if (issue.type === "incident") {
+    const openIncidentInterruptions = await prisma.interruption.findMany({
+      where: { incidentIssueId: issue.id, memberId, endedAt: null },
+      select: { id: true, incidentIssueId: true, interruptedIssueId: true, memberId: true },
+    });
     await prisma.interruption.updateMany({
       where: { incidentIssueId: issue.id, memberId, endedAt: null },
       data: { endedAt },
     });
+    // KAN-103 PR3: emit interruption.closed per closed row so forecast rebuilds.
+    for (const row of openIncidentInterruptions) {
+      try {
+        eventBus.emit({
+          type: "interruption.closed",
+          workspaceId: issue.project.workspaceId,
+          actorId: memberId,
+          payload: {
+            interruptionId: row.id,
+            incidentIssueId: row.incidentIssueId,
+            interruptedIssueId: row.interruptedIssueId,
+            memberId: row.memberId,
+          },
+        });
+      } catch {
+        // Fire-and-forget: never let event emission break the mutation
+      }
+    }
   }
 
   return { ok: true, deleted: true, workLog };
@@ -362,7 +422,7 @@ export async function recordInterruption(
   if (!interrupted || interrupted.project.workspaceId !== incident.project.workspaceId) {
     throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${interruptedIssueKey}" not found`);
   }
-  return prisma.interruption.create({
+  const interruption = await prisma.interruption.create({
     data: {
       incidentIssueId: incident.id,
       interruptedIssueId: interrupted.id,
@@ -370,6 +430,23 @@ export async function recordInterruption(
       via,
     },
   });
+  // KAN-103 PR3: emit interruption.opened so forecast rebuilds for the interrupted issue.
+  try {
+    eventBus.emit({
+      type: "interruption.opened",
+      workspaceId: incident.project.workspaceId,
+      actorId: memberId,
+      payload: {
+        interruptionId: interruption.id,
+        incidentIssueId: incident.id,
+        interruptedIssueId: interrupted.id,
+        memberId,
+      },
+    });
+  } catch {
+    // Fire-and-forget: never let event emission break the mutation
+  }
+  return interruption;
 }
 
 /**
@@ -467,6 +544,7 @@ export async function cleanupExpired(
       issue: {
         select: {
           key: true,
+          type: true,
           project: { select: { workspaceId: true } },
         },
       },
@@ -485,6 +563,38 @@ export async function cleanupExpired(
     const via = normalizeVia(s.source);
 
     try {
+      // KAN-103 PR3: close open Interruption edges BEFORE the session delete so
+      // a mid-cleanup crash cannot strand interruptions open forever.
+      // Closing first is safe: if the session delete later fails, the interruption
+      // is already correctly closed with endedAt = lastHeartbeat (independent of worklog).
+      if (s.issue.type === "incident") {
+        const openInterruptions = await prisma.interruption.findMany({
+          where: { incidentIssueId: s.issueId, memberId: s.memberId, endedAt: null },
+          select: { id: true, incidentIssueId: true, interruptedIssueId: true, memberId: true },
+        });
+        await prisma.interruption.updateMany({
+          where: { incidentIssueId: s.issueId, memberId: s.memberId, endedAt: null },
+          data: { endedAt },
+        });
+        for (const row of openInterruptions) {
+          try {
+            eventBus.emit({
+              type: "interruption.closed",
+              workspaceId: s.issue.project.workspaceId,
+              actorId: s.memberId,
+              payload: {
+                interruptionId: row.id,
+                incidentIssueId: row.incidentIssueId,
+                interruptedIssueId: row.interruptedIssueId,
+                memberId: row.memberId,
+              },
+            });
+          } catch {
+            // Fire-and-forget: never let event emission break cleanup
+          }
+        }
+      }
+
       if (durationS >= MIN_WORKLOG_DURATION_S) {
         const [createdWorkLog] = await prisma.$transaction([
           prisma.workLog.create({

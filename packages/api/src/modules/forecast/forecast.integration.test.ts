@@ -660,3 +660,318 @@ describe("Forecast Service — rebuildProjectForecast (integration)", () => {
     });
   });
 });
+
+// ── KAN-103 PR3: 30-minute minimum floor on interruptions ─────────────────────
+
+describe("KAN-103 PR3 — 30-min floor: sub-threshold interruptions do not inflate forecastEnd", () => {
+  let projectId: string;
+  let workspaceId: string;
+  let memberId: string;
+
+  beforeEach(async () => {
+    await cleanDatabase();
+    await cleanForecastData();
+    const ctx = await seedProjectContext();
+    projectId = ctx.projectId;
+    workspaceId = ctx.workspaceId;
+    memberId = ctx.ownerId;
+  });
+
+  afterAll(async () => {
+    await disconnectTestDb();
+  });
+
+  it("10-minute closed interruption contributes 0 interruptedDays (forecastEnd unchanged vs baseline)", async () => {
+    const startDate = new Date("2026-06-01T00:00:00.000Z");
+    const issue = await seedScheduledIssue(projectId, "INT-FLOOR-1", 1, {
+      startDate,
+      estimateHours: 8, // 1 day
+      progress: 0,
+    });
+
+    // Establish baseline forecastEnd (no interruptions yet)
+    await rebuildProjectForecast(projectId);
+    const baselineRow = await prisma.issueForecast.findUnique({ where: { issueId: issue.id } });
+    expect(baselineRow).not.toBeNull();
+    const baselineEnd = baselineRow!.forecastEnd!;
+
+    const incidentIssue = await prisma.issue.create({
+      data: {
+        key: "INC-FLOOR-1",
+        title: "Short incident",
+        type: "incident",
+        state: "in_progress",
+        projectId,
+        sequenceNum: 99,
+      },
+    });
+
+    // Create a 10-minute interruption (below 30-min floor)
+    const intStart = new Date("2026-06-01T08:00:00.000Z");
+    const intEnd = new Date("2026-06-01T08:10:00.000Z"); // exactly 10 min
+    await prisma.interruption.create({
+      data: {
+        incidentIssueId: incidentIssue.id,
+        interruptedIssueId: issue.id,
+        memberId,
+        startedAt: intStart,
+        endedAt: intEnd,
+        via: "manual",
+      },
+    });
+
+    // Force a fresh rebuild
+    await prisma.issueForecast.deleteMany({ where: { issueId: issue.id } });
+    await rebuildProjectForecast(projectId);
+    const afterRow = await prisma.issueForecast.findUnique({ where: { issueId: issue.id } });
+    expect(afterRow).not.toBeNull();
+
+    // Sub-30-min interruption must be ignored → forecastEnd identical to baseline
+    expect(afterRow!.forecastEnd!.getTime()).toBe(baselineEnd.getTime());
+
+    void workspaceId;
+  });
+
+  it("45-minute closed interruption counts as 1 interruptedDay (forecastEnd pushed by 1 day)", async () => {
+    const startDate = new Date("2026-06-01T00:00:00.000Z");
+    const issue = await seedScheduledIssue(projectId, "INT-FLOOR-2", 1, {
+      startDate,
+      estimateHours: 8, // 1 day
+      progress: 0,
+    });
+
+    // Baseline
+    await rebuildProjectForecast(projectId);
+    const baselineRow = await prisma.issueForecast.findUnique({ where: { issueId: issue.id } });
+    expect(baselineRow).not.toBeNull();
+    const baselineEnd = baselineRow!.forecastEnd!;
+
+    const incidentIssue = await prisma.issue.create({
+      data: {
+        key: "INC-FLOOR-2",
+        title: "45-min incident",
+        type: "incident",
+        state: "in_progress",
+        projectId,
+        sequenceNum: 99,
+      },
+    });
+
+    // Create a 45-minute interruption (above 30-min floor → counts)
+    const intStart = new Date("2026-06-01T09:00:00.000Z");
+    const intEnd = new Date("2026-06-01T09:45:00.000Z"); // exactly 45 min
+    await prisma.interruption.create({
+      data: {
+        incidentIssueId: incidentIssue.id,
+        interruptedIssueId: issue.id,
+        memberId,
+        startedAt: intStart,
+        endedAt: intEnd,
+        via: "manual",
+      },
+    });
+
+    // Force fresh rebuild
+    await prisma.issueForecast.deleteMany({ where: { issueId: issue.id } });
+    await rebuildProjectForecast(projectId);
+    const afterRow = await prisma.issueForecast.findUnique({ where: { issueId: issue.id } });
+    expect(afterRow).not.toBeNull();
+
+    // 45 min >= 30 min floor → ceil(45min / 1day) = 1 interruptedDay → forecastEnd +1 day
+    const diffDays = Math.round(
+      (afterRow!.forecastEnd!.getTime() - baselineEnd.getTime()) / 86_400_000
+    );
+    expect(diffDays).toBe(1);
+
+    void workspaceId;
+  });
+
+  it("two 20-minute interruptions on the same issue → 0 interruptedDays (floor is per-interruption, not summed)", async () => {
+    const startDate = new Date("2026-06-01T00:00:00.000Z");
+    const issue = await seedScheduledIssue(projectId, "INT-FLOOR-3", 1, {
+      startDate,
+      estimateHours: 8, // 1 day
+      progress: 0,
+    });
+
+    // Baseline
+    await rebuildProjectForecast(projectId);
+    const baselineRow = await prisma.issueForecast.findUnique({ where: { issueId: issue.id } });
+    expect(baselineRow).not.toBeNull();
+    const baselineEnd = baselineRow!.forecastEnd!;
+
+    const incidentIssue = await prisma.issue.create({
+      data: {
+        key: "INC-FLOOR-3",
+        title: "Two short incidents",
+        type: "incident",
+        state: "in_progress",
+        projectId,
+        sequenceNum: 99,
+      },
+    });
+
+    // First 20-minute interruption
+    await prisma.interruption.create({
+      data: {
+        incidentIssueId: incidentIssue.id,
+        interruptedIssueId: issue.id,
+        memberId,
+        startedAt: new Date("2026-06-01T10:00:00.000Z"),
+        endedAt: new Date("2026-06-01T10:20:00.000Z"), // 20 min
+        via: "manual",
+      },
+    });
+    // Second 20-minute interruption
+    await prisma.interruption.create({
+      data: {
+        incidentIssueId: incidentIssue.id,
+        interruptedIssueId: issue.id,
+        memberId,
+        startedAt: new Date("2026-06-01T14:00:00.000Z"),
+        endedAt: new Date("2026-06-01T14:20:00.000Z"), // 20 min
+        via: "manual",
+      },
+    });
+
+    // Force fresh rebuild
+    await prisma.issueForecast.deleteMany({ where: { issueId: issue.id } });
+    await rebuildProjectForecast(projectId);
+    const afterRow = await prisma.issueForecast.findUnique({ where: { issueId: issue.id } });
+    expect(afterRow).not.toBeNull();
+
+    // Each 20-min interruption is individually below 30-min floor → both skipped
+    // forecastEnd must remain identical to baseline
+    expect(afterRow!.forecastEnd!.getTime()).toBe(baselineEnd.getTime());
+
+    void workspaceId;
+  });
+});
+
+// ── KAN-103 PR3: interruption integration tests ───────────────────────────────
+
+describe("KAN-103 PR3 — interruptions shift forecastEnd in rebuildProjectForecast", () => {
+  let projectId: string;
+  let workspaceId: string;
+  let memberId: string;
+
+  beforeEach(async () => {
+    await cleanDatabase();
+    await cleanForecastData();
+    const ctx = await seedProjectContext();
+    projectId = ctx.projectId;
+    workspaceId = ctx.workspaceId;
+    memberId = ctx.ownerId;
+  });
+
+  afterAll(async () => {
+    await disconnectTestDb();
+  });
+
+  it("closed interruption (fixed startedAt/endedAt = 2 days) pushes forecastEnd out by 2 days vs baseline", async () => {
+    // Seed a baseline issue with no interruptions
+    const startDate = new Date("2026-06-01T00:00:00.000Z");
+    const baseIssue = await seedScheduledIssue(projectId, "INT-BASE-1", 1, {
+      startDate,
+      estimateHours: 8, // 1 day → forecastEnd = June 2 (baseline)
+      progress: 0,
+    });
+
+    // Build baseline forecastEnd
+    await rebuildProjectForecast(projectId);
+    const baselineRow = await prisma.issueForecast.findUnique({ where: { issueId: baseIssue.id } });
+    expect(baselineRow).not.toBeNull();
+    const baselineEnd = baselineRow!.forecastEnd!;
+
+    // Seed incident issue for the interruption FK
+    const incidentIssue = await prisma.issue.create({
+      data: {
+        key: "INC-1",
+        title: "Incident 1",
+        type: "incident",
+        state: "in_progress",
+        projectId,
+        sequenceNum: 99,
+      },
+    });
+
+    // Create a CLOSED interruption spanning exactly 2 days
+    const intStart = new Date("2026-06-01T00:00:00.000Z");
+    const intEnd = new Date("2026-06-03T00:00:00.000Z"); // 2 days exactly
+    await prisma.interruption.create({
+      data: {
+        incidentIssueId: incidentIssue.id,
+        interruptedIssueId: baseIssue.id,
+        memberId,
+        startedAt: intStart,
+        endedAt: intEnd,
+        via: "manual",
+      },
+    });
+
+    // Rebuild — now with interruption; clear the cached row first
+    await prisma.issueForecast.deleteMany({ where: { issueId: baseIssue.id } });
+    await rebuildProjectForecast(projectId);
+    const interruptedRow = await prisma.issueForecast.findUnique({ where: { issueId: baseIssue.id } });
+    expect(interruptedRow).not.toBeNull();
+    const interruptedEnd = interruptedRow!.forecastEnd!;
+
+    // forecastEnd should be exactly 2 days later than baseline
+    const diffDays = Math.round(
+      (interruptedEnd.getTime() - baselineEnd.getTime()) / 86_400_000
+    );
+    expect(diffDays).toBe(2);
+
+    void workspaceId;
+  });
+
+  it("open interruption (endedAt null, startedAt in the past) makes forecastEnd later than baseline", async () => {
+    const startDate = new Date("2026-06-01T00:00:00.000Z");
+    const baseIssue = await seedScheduledIssue(projectId, "INT-OPEN-1", 2, {
+      startDate,
+      estimateHours: 8,
+      progress: 0,
+    });
+
+    // Baseline rebuild
+    await rebuildProjectForecast(projectId);
+    const baselineRow = await prisma.issueForecast.findUnique({ where: { issueId: baseIssue.id } });
+    const baselineEnd = baselineRow!.forecastEnd!;
+
+    const incidentIssue = await prisma.issue.create({
+      data: {
+        key: "INC-OPEN-1",
+        title: "Incident Open",
+        type: "incident",
+        state: "in_progress",
+        projectId,
+        sequenceNum: 98,
+      },
+    });
+
+    // Create an OPEN interruption that started 1 day ago (endedAt null)
+    const intStart = new Date(Date.now() - 86_400_000); // 1 day ago
+    await prisma.interruption.create({
+      data: {
+        incidentIssueId: incidentIssue.id,
+        interruptedIssueId: baseIssue.id,
+        memberId,
+        startedAt: intStart,
+        endedAt: null, // open — uses `now` as end
+        via: "manual",
+      },
+    });
+
+    // Rebuild with open interruption
+    await prisma.issueForecast.deleteMany({ where: { issueId: baseIssue.id } });
+    await rebuildProjectForecast(projectId);
+    const openRow = await prisma.issueForecast.findUnique({ where: { issueId: baseIssue.id } });
+    expect(openRow).not.toBeNull();
+    const openEnd = openRow!.forecastEnd!;
+
+    // Open interruption started 1 day ago → at least 1 displaced day → forecastEnd is later
+    expect(openEnd.getTime()).toBeGreaterThan(baselineEnd.getTime());
+
+    void workspaceId;
+  });
+});
