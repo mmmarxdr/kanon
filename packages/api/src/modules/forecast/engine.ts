@@ -60,6 +60,11 @@ export function forecastEndFor(
   const totalH = node.loggedH + remaining;
   let end = addDays(node.startDate, days(totalH, hoursPerDay));
 
+  // KAN-103: interruptions displaced work — push forecastEnd out by lost days.
+  if (node.interruptedDays > 0) {
+    end = addDays(end, node.interruptedDays);
+  }
+
   // 6. Clamp: end must be at least 1 day after start
   if (end.getTime() <= node.startDate.getTime()) {
     end = addDays(node.startDate, 1);
@@ -94,10 +99,11 @@ export function applyEdge(
 
   const L = edge.lagDays;
 
-  // Duration comes from the node's estimate, not the current span
+  // Duration comes from the node's estimate, not the current span.
+  // KAN-103: include interruption days so a successor's own displaced time survives the edge recompute.
   const durDays =
     succNode.estimateHours !== null
-      ? days(succNode.estimateHours, hoursPerDay)
+      ? days(succNode.estimateHours, hoursPerDay) + succNode.interruptedDays
       : Math.round(
           (succState.forecastEnd.getTime() - succState.forecastStart.getTime()) /
             DAY_MS,

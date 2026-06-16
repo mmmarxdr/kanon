@@ -499,6 +499,58 @@ describe("L4b — unsubscribe clears a timer that was already scheduled (clearTi
   });
 });
 
+// ─── L13: interruption.opened triggers a rebuild (KAN-103 PR3) ───────────────
+
+describe("L13 — interruption.opened triggers a rebuild for the interrupted issue's project", () => {
+  it("fires rebuild when interruption.opened is received with interruptedIssueId", async () => {
+    const bus = makeStubBus();
+    const unsub = registerForecastListener(bus, stubLogger);
+
+    bus.fire({
+      type: "interruption.opened",
+      payload: {
+        interruptionId: "int-1",
+        incidentIssueId: "incident-1",
+        interruptedIssueId: "issue-1",
+        memberId: "member-1",
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10);
+
+    expect(mockRebuild).toHaveBeenCalledTimes(1);
+    expect(mockRebuild).toHaveBeenCalledWith("project-A");
+
+    unsub();
+  });
+});
+
+// ─── L14: interruption.closed triggers a rebuild (KAN-103 PR3) ───────────────
+
+describe("L14 — interruption.closed triggers a rebuild for the interrupted issue's project", () => {
+  it("fires rebuild when interruption.closed is received with interruptedIssueId", async () => {
+    const bus = makeStubBus();
+    const unsub = registerForecastListener(bus, stubLogger);
+
+    bus.fire({
+      type: "interruption.closed",
+      payload: {
+        interruptionId: "int-1",
+        incidentIssueId: "incident-1",
+        interruptedIssueId: "issue-1",
+        memberId: "member-1",
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10);
+
+    expect(mockRebuild).toHaveBeenCalledTimes(1);
+    expect(mockRebuild).toHaveBeenCalledWith("project-A");
+
+    unsub();
+  });
+});
+
 // ─── L12: outer-catch (handler failed) kills survivors 239/241/242 ───────────
 // When resolveProjectIdFromIssue() throws, handleEvent() propagates the error
 // and the outer .catch() on the bus.subscribe callback logs "forecast listener

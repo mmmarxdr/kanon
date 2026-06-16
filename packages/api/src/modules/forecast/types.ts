@@ -7,6 +7,8 @@ export interface ForecastNode {
   state: string;
   completedAt: Date | null;
   loggedH: number;
+  /** KAN-103 PR3: whole days displaced by interruptions (incident switch). Pure input — engine shifts forecastEnd accordingly. */
+  interruptedDays: number;
 }
 
 export interface ForecastEdge {
