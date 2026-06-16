@@ -767,6 +767,19 @@ export class KanonClient {
     );
   }
 
+  // ─── Members ────────────────────────────────────────────────────────────
+
+  /**
+   * List effective members of a project (explicit PM rows + implicit ws owner/admin rows).
+   * Route: GET /api/projects/:key/members
+   * Response: { members: EffectiveMemberRow[] }
+   *   Each row: userId, email, displayName, role, source ('project'|'workspace')
+   *   source:'project' rows also carry pmId; source:'workspace' rows carry implicit:true.
+   */
+  async listProjectMembers(projectKey: string): Promise<unknown> {
+    return this.request<unknown>("GET", `/api/projects/${projectKey}/members`);
+  }
+
   // ─── Timesheet ──────────────────────────────────────────────────────────
 
   /**

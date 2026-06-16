@@ -5,19 +5,21 @@
 // declared here so the host can hide them behind a ToolSearch step rather than
 // surfacing them eagerly in every turn's context.
 //
-// The server still registers all 38 tools normally — hosts that ignore
+// The server still registers all 39 tools normally — hosts that ignore
 // `instructions` simply surface every tool. No SDK feature detection needed.
 // See design ADR-1 and ADR-2 for rationale.
 // 5 admin/rare tools + 3 document tools (rare-path, design-coherent)
 // + 2 PM-only timesheet tools (approve/reject)
-// + 3 occasion-only tools (add/remove dependency, adjust time entry) = 13 deferred.
+// + 3 occasion-only tools (add/remove dependency, adjust time entry)
+// + 1 resolution helper (kanon_list_members) = 14 deferred.
 
 /**
- * The 13 admin/rare/PM-gated/occasion-only tools deferred behind ToolSearch.
+ * The 14 admin/rare/PM-gated/occasion-only/resolution-helper tools deferred behind ToolSearch.
  * Canonical list — consumed by index.ts and instructions.test.ts.
  * Document tools are deferred: most issues need none; propose before creating.
  * Timesheet approve/reject are PM-only — keep dev-agent context lean.
  * Dependency and adjust tools are occasion-only — not part of daily board flow.
+ * kanon_list_members is a resolution helper (assigneeId lookup, activity id→name) — not daily board flow.
  */
 export const DEFERRED_TOOLS = [
   "kanon_create_project",
@@ -33,6 +35,7 @@ export const DEFERRED_TOOLS = [
   "kanon_add_dependency",
   "kanon_remove_dependency",
   "kanon_adjust_time_entry",
+  "kanon_list_members",
 ] as const;
 
 /**
