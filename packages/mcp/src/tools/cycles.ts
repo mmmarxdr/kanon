@@ -28,6 +28,44 @@ import type { KanonBinding } from "../kanon-binding.js";
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
+ * Thrown when a multi-step cycle close sequence fails mid-way.
+ * Carries a human/agent-readable description of what completed, what failed,
+ * and any compensation attempted — so the caller can surface it precisely
+ * rather than a generic error message.
+ */
+export class PartialCycleMutationError extends Error {
+  public readonly failedStep: string;
+  public readonly partialState: string;
+  public readonly compensationAttempted: boolean;
+  public readonly compensationSucceeded: boolean | null;
+
+  constructor(opts: {
+    failedStep: string;
+    partialState: string;
+    compensationAttempted?: boolean;
+    compensationSucceeded?: boolean | null;
+    cause?: unknown;
+  }) {
+    const comp = opts.compensationAttempted
+      ? opts.compensationSucceeded
+        ? " Compensation (re-attach to current cycle) succeeded."
+        : " Compensation (re-attach to current cycle) also failed — manual recovery required."
+      : "";
+    super(
+      `Partial mutation: step '${opts.failedStep}' failed. ${opts.partialState}.${comp}`,
+    );
+    this.name = "PartialCycleMutationError";
+    this.failedStep = opts.failedStep;
+    this.partialState = opts.partialState;
+    this.compensationAttempted = opts.compensationAttempted ?? false;
+    this.compensationSucceeded = opts.compensationSucceeded ?? null;
+    if (opts.cause instanceof Error) {
+      this.cause = opts.cause;
+    }
+  }
+}
+
+/**
  * Normalize a YYYY-MM-DD string to a full ISO datetime at UTC midnight.
  * Pass through full ISO datetimes unchanged.
  */
@@ -69,8 +107,21 @@ export async function closeCycleWithDisposition(
       if (reason !== undefined) body.reason = reason;
       await client.attachIssuesToCycle(cycleId, body);
     }
-    const closed = await client.closeCycle(cycleId);
-    return { closed, movedIssueKeys: incompleteKeys, disposition };
+    // If closeCycle fails here, issues have already been detached from the cycle.
+    // There is no safe automatic compensation (re-attaching would undo the user's intent).
+    try {
+      const closed = await client.closeCycle(cycleId);
+      return { closed, movedIssueKeys: incompleteKeys, disposition };
+    } catch (err) {
+      throw new PartialCycleMutationError({
+        failedStep: "close cycle",
+        partialState: incompleteKeys.length > 0
+          ? `Issues [${incompleteKeys.join(", ")}] were detached from cycle ${cycleId} (moved to backlog) but the cycle was NOT closed`
+          : `No issues needed moving but cycle ${cycleId} was NOT closed`,
+        compensationAttempted: false,
+        cause: err,
+      });
+    }
   }
 
   // disposition === "move_to_next"
@@ -102,13 +153,47 @@ export async function closeCycleWithDisposition(
     if (reason !== undefined) removeBody.reason = reason;
     await client.attachIssuesToCycle(cycleId, removeBody);
 
+    // Step: attach to next cycle. If this fails, issues are in limbo (detached from current,
+    // not yet in next). Attempt compensation: re-attach to current cycle.
     const addBody: { add: string[]; reason?: string } = { add: incompleteKeys };
     if (reason !== undefined) addBody.reason = reason;
-    await client.attachIssuesToCycle(nextCycle.id, addBody);
+    try {
+      await client.attachIssuesToCycle(nextCycle.id, addBody);
+    } catch (addErr) {
+      let compensationSucceeded: boolean | null = null;
+      try {
+        const reattachBody: { add: string[]; reason?: string } = { add: incompleteKeys };
+        if (reason !== undefined) reattachBody.reason = reason;
+        await client.attachIssuesToCycle(cycleId, reattachBody);
+        compensationSucceeded = true;
+      } catch {
+        compensationSucceeded = false;
+      }
+      throw new PartialCycleMutationError({
+        failedStep: "attach issues to next cycle",
+        partialState: `Issues [${incompleteKeys.join(", ")}] were detached from cycle ${cycleId} but could NOT be attached to next cycle ${nextCycle.id} (${nextCycle.name})`,
+        compensationAttempted: true,
+        compensationSucceeded,
+        cause: addErr,
+      });
+    }
   }
 
-  const closed = await client.closeCycle(cycleId);
-  return { closed, movedIssueKeys: incompleteKeys, disposition };
+  // Step: close the current cycle. By this point issues are already in the next cycle.
+  // No safe compensation — do not move issues back, just report the partial state clearly.
+  try {
+    const closed = await client.closeCycle(cycleId);
+    return { closed, movedIssueKeys: incompleteKeys, disposition };
+  } catch (err) {
+    throw new PartialCycleMutationError({
+      failedStep: "close cycle",
+      partialState: incompleteKeys.length > 0
+        ? `Issues [${incompleteKeys.join(", ")}] were successfully moved to next cycle ${nextCycle.id} (${nextCycle.name}) but cycle ${cycleId} was NOT closed`
+        : `No issues needed moving; cycle ${cycleId} was NOT closed`,
+      compensationAttempted: false,
+      cause: err,
+    });
+  }
 }
 
 // ─── Registration ───────────────────────────────────────────────────────────
