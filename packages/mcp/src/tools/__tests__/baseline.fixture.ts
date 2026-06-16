@@ -22,10 +22,12 @@
  *   not zod .describe() calls in types.ts. Consistent with existing E2 test
  *   infrastructure. Measured BEFORE any Phase 2 description trims.
  *   Measured via manual byte count of all 30 topline strings (2026-05-22).
- *   Surface is now 33 tools (PR-4a added kanon_create_document,
- *   kanon_list_documents, kanon_get_document); DESCRIPTION_BASELINE_BYTES
- *   remains the 30-tool baseline constant — ~32 B remaining margin
- *   (3,677 B actual vs 3,709 B ceiling; baseline constant unchanged).
+ *   Surface is now 38 tools (KAN-104 added 7 timesheet tools:
+ *   kanon_list_my_worklogs, kanon_promote_worklog, kanon_update_time_entry,
+ *   kanon_submit_time_entry, kanon_approve_time_entry, kanon_reject_time_entry,
+ *   kanon_adjust_time_entry); DESCRIPTION_BASELINE_BYTES re-anchored to 4562
+ *   (3,677 B pre-KAN-104 actual + 885 B pre-trim estimate for 7 new tools).
+ *   Ceiling: 4562 − 300 = 4262; actual at landing: 4,197 B (margin: 65 B).
  *
  * These constants are READ-ONLY — do NOT modify after initial capture.
  * Downstream tests assert reductions relative to these values.
@@ -36,7 +38,8 @@
 export const SKILL_BASELINE_BYTES = 6659;
 
 /**
- * Sum of topline description bytes across all 30 MCP tools before Phase 2 trims.
+ * Sum of topline description bytes across all 38 MCP tools before Phase 2 trims.
  * Parser: parseAllToolDescriptions() — topline strings only.
+ * Re-anchored at KAN-104: 4562 B (was 4009 B for 30 tools; +7 timesheet tools).
  */
-export const DESCRIPTION_BASELINE_BYTES = 4009;
+export const DESCRIPTION_BASELINE_BYTES = 4562;

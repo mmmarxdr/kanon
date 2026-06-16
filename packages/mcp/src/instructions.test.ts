@@ -22,8 +22,9 @@ describe("Win B — SERVER_INSTRUCTIONS deferred tools block", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/DEFERRED TOOLS/i);
   });
 
-  it("B2: DEFERRED_TOOLS array has exactly 8 entries", () => {
-    expect(DEFERRED_TOOLS).toHaveLength(8);
+  it("B2: DEFERRED_TOOLS array has exactly 10 entries", () => {
+    // Updated for KAN-104: +2 PM-only timesheet tools (approve/reject).
+    expect(DEFERRED_TOOLS).toHaveLength(10);
   });
 
   it("B3: each deferred tool name appears verbatim in SERVER_INSTRUCTIONS", () => {
@@ -54,11 +55,11 @@ describe("Win B — SERVER_INSTRUCTIONS deferred tools block", () => {
 // ─── PM Persona — byte ceiling and firing pins ───────────────────────────────
 
 describe("PM Persona — byte ceiling and firing pins", () => {
-  it("P1: SERVER_INSTRUCTIONS byte length ≤ 1600", () => {
-    // ceiling re-anchored for 33-tool surface with 8 deferred (was 1,500 @ 5 deferred);
-    // adding 3 document tool names to DEFERRED_TOOLS adds ~68 B, pushing past 1,500.
+  it("P1: SERVER_INSTRUCTIONS byte length ≤ 1800", () => {
+    // ceiling re-anchored for 38-tool surface with 10 deferred (was 1,600 @ 8 deferred);
+    // KAN-104: +2 deferred names (~54 B) + 2 core tool lines (~105 B) → ~159 B added.
     expect(Buffer.byteLength(SERVER_INSTRUCTIONS, "utf8")).toBeLessThanOrEqual(
-      1600,
+      1800,
     );
   });
 

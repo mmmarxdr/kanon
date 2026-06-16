@@ -767,6 +767,85 @@ export class KanonClient {
     );
   }
 
+  // ─── Timesheet ──────────────────────────────────────────────────────────
+
+  /**
+   * List the authenticated user's own WorkLogs in a workspace.
+   * Route: GET /api/me/worklogs?workspaceId=<id>[&from=...&to=...&limit=...]
+   */
+  async listMyWorklogs(
+    workspaceId: string,
+    from?: string,
+    to?: string,
+    limit?: number,
+  ): Promise<unknown> {
+    const params = new URLSearchParams({ workspaceId });
+    if (from !== undefined) params.set("from", from);
+    if (to !== undefined) params.set("to", to);
+    if (limit !== undefined) params.set("limit", String(limit));
+    return this.request<unknown>("GET", `/api/me/worklogs?${params.toString()}`);
+  }
+
+  /**
+   * Promote a WorkLog to a draft TimeEntry (idempotent).
+   * Route: POST /api/worklogs/:id/promote
+   */
+  async promoteWorklog(
+    worklogId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.request<unknown>("POST", `/api/worklogs/${worklogId}/promote`, body);
+  }
+
+  /**
+   * Partial-update a draft or submitted TimeEntry (owner-only, service guard).
+   * Route: PATCH /api/time-entries/:id
+   */
+  async updateTimeEntry(
+    timeEntryId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.request<unknown>("PATCH", `/api/time-entries/${timeEntryId}`, body);
+  }
+
+  /**
+   * Transition a draft TimeEntry to submitted (owner-only, service guard).
+   * Route: POST /api/time-entries/:id/submit
+   */
+  async submitTimeEntry(timeEntryId: string): Promise<unknown> {
+    return this.request<unknown>("POST", `/api/time-entries/${timeEntryId}/submit`);
+  }
+
+  /**
+   * Approve a submitted TimeEntry — PM gate enforced API-side.
+   * Route: POST /api/time-entries/:id/approve
+   */
+  async approveTimeEntry(timeEntryId: string): Promise<unknown> {
+    return this.request<unknown>("POST", `/api/time-entries/${timeEntryId}/approve`);
+  }
+
+  /**
+   * Reject a submitted TimeEntry — PM gate enforced API-side.
+   * Route: POST /api/time-entries/:id/reject
+   */
+  async rejectTimeEntry(
+    timeEntryId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.request<unknown>("POST", `/api/time-entries/${timeEntryId}/reject`, body);
+  }
+
+  /**
+   * Create an adjustment TimeEntry for an approved entry (owner-only, service guard).
+   * Route: POST /api/time-entries/:id/adjust
+   */
+  async adjustTimeEntry(
+    timeEntryId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.request<unknown>("POST", `/api/time-entries/${timeEntryId}/adjust`, body);
+  }
+
   // ─── Health ─────────────────────────────────────────────────────────────
 
   /**
