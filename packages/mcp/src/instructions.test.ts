@@ -1,10 +1,10 @@
 /**
  * instructions.test.ts — Win B + PM Persona ceiling
  *
- * Win B: SERVER_INSTRUCTIONS contains DEFERRED TOOLS heading, all 8 deferred
+ * Win B: SERVER_INSTRUCTIONS contains DEFERRED TOOLS heading, all 14 deferred
  *        tool names, and is wired into McpServer constructor.
  *
- * PM Persona (new): byte ceiling ≤ 1600 (re-anchored for 33-tool surface @ 8 deferred),
+ * PM Persona (new): byte ceiling ≤ 1800 (re-anchored for 39-tool surface @ 14 deferred),
  *                   persona block firing pins.
  */
 
@@ -22,10 +22,11 @@ describe("Win B — SERVER_INSTRUCTIONS deferred tools block", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/DEFERRED TOOLS/i);
   });
 
-  it("B2: DEFERRED_TOOLS array has exactly 13 entries", () => {
+  it("B2: DEFERRED_TOOLS array has exactly 14 entries", () => {
     // Updated for KAN-104: +2 PM-only timesheet tools (approve/reject).
     // Updated for KAN-118: +3 occasion-only tools (add/remove dependency, adjust time entry).
-    expect(DEFERRED_TOOLS).toHaveLength(13);
+    // Updated for KAN-119: +1 resolution helper (kanon_list_members).
+    expect(DEFERRED_TOOLS).toHaveLength(14);
   });
 
   it("B3: each deferred tool name appears verbatim in SERVER_INSTRUCTIONS", () => {
