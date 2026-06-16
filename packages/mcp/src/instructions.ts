@@ -5,15 +5,17 @@
 // declared here so the host can hide them behind a ToolSearch step rather than
 // surfacing them eagerly in every turn's context.
 //
-// The server still registers all 31 tools normally — hosts that ignore
+// The server still registers all 38 tools normally — hosts that ignore
 // `instructions` simply surface every tool. No SDK feature detection needed.
 // See design ADR-1 and ADR-2 for rationale.
-// 5 admin/rare tools + 3 document tools (rare-path, design-coherent) = 8 deferred.
+// 5 admin/rare tools + 3 document tools (rare-path, design-coherent)
+// + 2 PM-only timesheet tools (approve/reject) = 10 deferred.
 
 /**
- * The 8 admin/rare tools that should be deferred behind ToolSearch.
+ * The 10 admin/rare/PM-gated tools that should be deferred behind ToolSearch.
  * Canonical list — consumed by index.ts and instructions.test.ts.
  * Document tools are deferred: most issues need none; propose before creating.
+ * Timesheet approve/reject are PM-only — keep dev-agent context lean.
  */
 export const DEFERRED_TOOLS = [
   "kanon_create_project",
@@ -24,6 +26,8 @@ export const DEFERRED_TOOLS = [
   "kanon_create_document",
   "kanon_list_documents",
   "kanon_get_document",
+  "kanon_approve_time_entry",
+  "kanon_reject_time_entry",
 ] as const;
 
 /**
@@ -63,5 +67,7 @@ kanon_list_workspaces, kanon_list_projects, kanon_get_project,
 kanon_list_roadmap, kanon_create_roadmap_item, kanon_update_roadmap_item,
 kanon_promote_roadmap_item, kanon_add_dependency, kanon_remove_dependency,
 kanon_list_cycles, kanon_get_cycle,
-kanon_create_cycle, kanon_attach_issues_to_cycle, kanon_close_cycle
+kanon_create_cycle, kanon_attach_issues_to_cycle, kanon_close_cycle,
+kanon_list_my_worklogs, kanon_promote_worklog, kanon_update_time_entry,
+kanon_submit_time_entry, kanon_adjust_time_entry
 `.trim();

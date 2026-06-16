@@ -32,7 +32,8 @@ const TOOLS_DIR = __dirname;
  * Updated for KAN-23 (Batch G, 2026-05-01): +1 tool kanon_delete_cycle added.
  * New baseline = 5730 (5393 + ~337 pre-trim estimate for the new tool).
  */
-const BASELINE_BYTES = 5730;
+// Updated for KAN-104 (2026-06-16): +7 timesheet tools → 38 tools. New baseline: 6455.
+const BASELINE_BYTES = 6455;
 
 function collectDescriptions() {
   const files = readdirSync(TOOLS_DIR)
@@ -47,15 +48,16 @@ function collectDescriptions() {
 }
 
 describe("tool descriptions — trim ≥ 30% (Batch E)", () => {
-  it("E1: parses 31 tools (30 pre-PR4a + 3 document tools added in PR-4a, minus 2 engram tools removed in KAN-68); BASELINE_BYTES is 5730", () => {
+  it("E1: parses 38 tools (31 pre-KAN-104 + 7 timesheet tools added in KAN-104); BASELINE_BYTES is 6455", () => {
     const tools = collectDescriptions();
-    // Verify the parser finds exactly 31 tools (was 33 before KAN-68 removed
-    // kanon_get_issue_context and kanon_sync_observation).
-    expect(tools).toHaveLength(31);
+    // Verify the parser finds exactly 38 tools (was 31 before KAN-104 added
+    // 7 timesheet tools: list_my_worklogs, promote_worklog, update/submit/
+    // approve/reject/adjust_time_entry).
+    expect(tools).toHaveLength(38);
     // BASELINE_BYTES is the historical pre-trim value — used only as the
     // threshold denominator in E2. We don't assert the current total equals it
     // (E3 trimmed descriptions are in the same files the parser reads).
-    expect(BASELINE_BYTES).toBe(5730);
+    expect(BASELINE_BYTES).toBe(6455);
   });
 
   it("E2a: total trimmed bytes < 70% of baseline (≥ 30% reduction)", () => {

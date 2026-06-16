@@ -11,6 +11,7 @@ import { registerRoadmapTools } from "./tools/roadmap.js";
 import { registerWorkSessionTools } from "./tools/work-sessions.js";
 import { registerCycleTools } from "./tools/cycles.js";
 import { registerDocumentTools } from "./tools/documents.js";
+import { registerTimesheetTools } from "./tools/timesheet.js";
 import { shutdownAllHeartbeats } from "./heartbeat.js";
 import { startSseClient, stopSseClient } from "./sse-client.js";
 import { SERVER_INSTRUCTIONS, DEFERRED_TOOLS } from "./instructions.js";
@@ -85,6 +86,7 @@ registerRoadmapTools(server, client, kanonBinding);
 registerWorkSessionTools(server, client);
 registerCycleTools(server, client, kanonBinding);
 registerDocumentTools(server, client);
+registerTimesheetTools(server, client);
 
 // ─── Connect ────────────────────────────────────────────────────────────────
 
