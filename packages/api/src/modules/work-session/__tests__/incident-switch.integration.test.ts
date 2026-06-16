@@ -155,4 +155,24 @@ describe("KAN-103 PR2: incident switch flow + manual interruption", () => {
     });
     expect(unknown.statusCode).toBe(404);
   });
+
+  it("manual interruption rejects an interrupted issue in another workspace (404, no cross-scope probing)", async () => {
+    const inc = await seedIssue("incident");
+    // A separate workspace + issue, outside the caller's scope.
+    const ws2 = await seedTestWorkspace();
+    await seedTestMemberWithRole(ws2.id, "owner");
+    const project2 = await seedTestProject(ws2.id);
+    const other = await prisma.issue.create({
+      data: { key: `${project2.key}-1`, title: "other-ws", type: "task", state: "backlog", projectId: project2.id, sequenceNum: 1 },
+      select: { key: true },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/issues/${inc}/interruptions`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { interruptedIssueKey: other.key },
+    });
+    expect(res.statusCode).toBe(404);
+  });
 });

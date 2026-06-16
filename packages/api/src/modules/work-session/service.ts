@@ -43,7 +43,9 @@ export async function startWork(
   if (issue.type === "incident") {
     const switchCutoff = new Date(Date.now() - SESSION_TTL_MS);
     const displaced = await prisma.workSession.findMany({
-      where: { userId, issueId: { not: issue.id }, lastHeartbeat: { gt: switchCutoff } },
+      // Scope to the caller's CURRENT membership: a user with memberships in
+      // several workspaces must only displace sessions in this one (review).
+      where: { userId, memberId, issueId: { not: issue.id }, lastHeartbeat: { gt: switchCutoff } },
       include: { issue: { select: { key: true } } },
     });
     for (const s of displaced) {
@@ -52,7 +54,7 @@ export async function startWork(
         data: {
           incidentIssueId: issue.id,
           interruptedIssueId: s.issueId,
-          memberId,
+          memberId: s.memberId,
           via: "session_switch",
         },
       });
@@ -341,11 +343,11 @@ export async function recordInterruption(
   const [incident, interrupted] = await Promise.all([
     prisma.issue.findUnique({
       where: { key: incidentIssueKey },
-      select: { id: true, type: true },
+      select: { id: true, type: true, project: { select: { workspaceId: true } } },
     }),
     prisma.issue.findUnique({
       where: { key: interruptedIssueKey },
-      select: { id: true },
+      select: { id: true, project: { select: { workspaceId: true } } },
     }),
   ]);
   if (!incident) {
@@ -354,7 +356,10 @@ export async function recordInterruption(
   if (incident.type !== "incident") {
     throw new AppError(400, "NOT_AN_INCIDENT", `Issue "${incidentIssueKey}" is not an incident`);
   }
-  if (!interrupted) {
+  // Authorize the interrupted issue in the same scope as the incident: it must be
+  // in the same workspace. Out-of-scope keys are reported as not-found so the
+  // endpoint can't probe issue existence across workspaces (review).
+  if (!interrupted || interrupted.project.workspaceId !== incident.project.workspaceId) {
     throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${interruptedIssueKey}" not found`);
   }
   return prisma.interruption.create({
