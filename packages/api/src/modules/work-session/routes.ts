@@ -1,6 +1,12 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
-import { IssueKeyParam, StartWorkSessionBody, MeWorkLogsQuery, WorkLogListResponse } from "./schema.js";
+import {
+  IssueKeyParam,
+  StartWorkSessionBody,
+  RecordInterruptionBody,
+  MeWorkLogsQuery,
+  WorkLogListResponse,
+} from "./schema.js";
 import { requireIssueMember } from "../../middleware/require-role.js";
 import * as workSessionService from "./service.js";
 import { prisma } from "../../config/prisma.js";
@@ -85,6 +91,30 @@ export default async function workSessionRoutes(
         request.member!.id,
         request.via,
       );
+    },
+  );
+
+  /**
+   * POST /api/issues/:key/interruptions — manually record an Interruption (KAN-103).
+   * :key is the incident issue; body.interruptedIssueKey is the displaced issue.
+   */
+  app.post(
+    "/issues/:key/interruptions",
+    {
+      preHandler: [requireIssueMember("key")],
+      schema: {
+        params: IssueKeyParam,
+        body: RecordInterruptionBody,
+      },
+    },
+    async (request, reply) => {
+      const row = await workSessionService.recordInterruption(
+        request.params.key,
+        request.body.interruptedIssueKey,
+        request.member!.id,
+        request.body.via,
+      );
+      return reply.status(201).send(row);
     },
   );
 
