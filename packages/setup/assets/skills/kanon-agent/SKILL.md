@@ -4,6 +4,8 @@ description: Project board PM assistant — create issues, manage cycles, captur
 trigger: list issues, create issue, update issue, close issue, board management, start cycle, close sprint, roadmap item, track this, log a bug, deferred work
 ---
 
+<!-- compact-rules: [Area] title required | kanon_list_groups before create | deferred→roadmap not backlog | fail gracefully -->
+
 ## Core Philosophy
 
 One issue = one unit of work. Every card must be readable by a teammate who never touched the code.

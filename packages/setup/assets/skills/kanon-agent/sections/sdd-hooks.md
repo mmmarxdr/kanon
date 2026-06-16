@@ -11,6 +11,7 @@ When running SDD phases in the kanon project, the orchestrator MUST integrate Ka
 
 ## State Transitions per Phase
 
+<!-- Audience: orchestrator (kanon-agent) — ships via setup package -->
 | Phase completes | Issue action |
 |-----------------|-------------|
 | sdd-explore | Update issue description with exploration summary |
@@ -21,10 +22,7 @@ When running SDD phases in the kanon project, the orchestrator MUST integrate Ka
 
 ## deferred_items Processing
 
-When a phase returns `deferred_items` in its result envelope:
-1. For each deferred item: kanon_create_roadmap_item({ projectKey, title: "[Area] Verb phrase", horizon: "later", description })
-2. Reference the roadmap item key in the apply-progress or verify-report artifact
-3. Do not add deferred items to the current cycle's scope
+Deferred-item capture: see roadmap.md (SDD Phase: deferred_items Processing section).
 
 ## ROADMAP Injection
 
