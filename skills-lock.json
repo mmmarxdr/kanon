@@ -1,4 +1,5 @@
 {
+  "_comment": "This file tracks the EXTERNAL vercel-labs/skills registry (sourceType: github), NOT Kanon's own skill assets in packages/setup/assets/skills/. It is a lockfile for the upstream skills registry sync, not for internal Kanon skills.",
   "version": 1,
   "skills": {
     "find-skills": {

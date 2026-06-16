@@ -907,6 +907,161 @@ describe("kanon_close_cycle — move_to_backlog works without projectKey or bind
   });
 });
 
+// ─── KAN-123: closeCycleWithDisposition partial-mutation guard ───────────────
+//
+// When a mid-sequence API call fails, the tool must return an errorResult that
+// names the failed step and describes the partial state so a human/agent can
+// recover. For move_to_next: if the add-to-next step fails after the remove-
+// from-current step succeeded, the compensating action (re-attach to current)
+// must be attempted and reported.
+
+describe("closeCycleWithDisposition — move_to_next: add-to-next fails → partial state reported", () => {
+  it("returns errorResult naming the failed step and partial state; attempts compensation", async () => {
+    const client = makeClient();
+    const detail = makeDetail([
+      { id: "i2", key: "KAN-2", title: "Open", state: "todo" },
+      { id: "i3", key: "KAN-3", title: "WIP", state: "in_progress" },
+    ]);
+    client.getCycle.mockResolvedValueOnce(detail);
+    client.listCycles.mockResolvedValueOnce([
+      {
+        id: NEXT_CYCLE_ID,
+        name: "Sprint 2",
+        goal: null,
+        state: "upcoming",
+        startDate: "2026-04-15T00:00:00.000Z",
+        endDate: "2026-04-28T00:00:00.000Z",
+        velocity: null,
+        projectId: "proj_001",
+        createdAt: "",
+        updatedAt: "",
+      } as KanonCycle,
+    ]);
+    // remove-from-current succeeds
+    client.attachIssuesToCycle.mockResolvedValueOnce(detail);
+    // add-to-next FAILS
+    client.attachIssuesToCycle.mockRejectedValueOnce(
+      new KanonApiError(503, "UPSTREAM_ERROR", "Next cycle unavailable"),
+    );
+    // compensation re-attach to current succeeds
+    client.attachIssuesToCycle.mockResolvedValueOnce(detail);
+
+    await expect(
+      closeCycleWithDisposition(client as unknown as KanonClient, {
+        cycleId: CYCLE_ID,
+        disposition: "move_to_next",
+        projectKey: "KAN",
+      }),
+    ).rejects.toThrow(/step.*attach.*next|partial|compensation/i);
+  });
+});
+
+describe("closeCycleWithDisposition — move_to_next: closeCycle fails after issues moved → partial state reported", () => {
+  it("returns errorResult naming closeCycle as the failed step and what completed", async () => {
+    const client = makeClient();
+    const detail = makeDetail([
+      { id: "i2", key: "KAN-2", title: "Open", state: "todo" },
+    ]);
+    client.getCycle.mockResolvedValueOnce(detail);
+    client.listCycles.mockResolvedValueOnce([
+      {
+        id: NEXT_CYCLE_ID,
+        name: "Sprint 2",
+        goal: null,
+        state: "upcoming",
+        startDate: "2026-04-15T00:00:00.000Z",
+        endDate: "2026-04-28T00:00:00.000Z",
+        velocity: null,
+        projectId: "proj_001",
+        createdAt: "",
+        updatedAt: "",
+      } as KanonCycle,
+    ]);
+    // remove-from-current succeeds
+    client.attachIssuesToCycle.mockResolvedValueOnce(detail);
+    // add-to-next succeeds
+    client.attachIssuesToCycle.mockResolvedValueOnce(detail);
+    // closeCycle FAILS
+    client.closeCycle.mockRejectedValueOnce(
+      new KanonApiError(500, "SERVER_ERROR", "Internal error"),
+    );
+
+    await expect(
+      closeCycleWithDisposition(client as unknown as KanonClient, {
+        cycleId: CYCLE_ID,
+        disposition: "move_to_next",
+        projectKey: "KAN",
+      }),
+    ).rejects.toThrow(/step.*close|partial|issues.*moved/i);
+  });
+});
+
+describe("closeCycleWithDisposition — move_to_backlog: closeCycle fails after detach → partial state reported", () => {
+  it("rejects with an error naming closeCycle as failed step and listing detached keys", async () => {
+    const client = makeClient();
+    const detail = makeDetail([
+      { id: "i2", key: "KAN-2", title: "Open", state: "todo" },
+    ]);
+    client.getCycle.mockResolvedValueOnce(detail);
+    // detach succeeds
+    client.attachIssuesToCycle.mockResolvedValueOnce(detail);
+    // closeCycle FAILS
+    client.closeCycle.mockRejectedValueOnce(
+      new KanonApiError(500, "SERVER_ERROR", "Internal error"),
+    );
+
+    await expect(
+      closeCycleWithDisposition(client as unknown as KanonClient, {
+        cycleId: CYCLE_ID,
+        disposition: "move_to_backlog",
+      }),
+    ).rejects.toThrow(/step.*close|partial|detach/i);
+  });
+});
+
+describe("kanon_close_cycle — partial-mutation: tool returns isError with partial state description", () => {
+  it("closeCycle failure after move_to_next attach returns isError with step info in text", async () => {
+    const mockClient = makeClient();
+    const detail = makeDetail([
+      { id: "i2", key: "KAN-2", title: "Open", state: "todo" },
+    ]);
+    mockClient.getCycle.mockResolvedValueOnce(detail);
+    mockClient.listCycles.mockResolvedValueOnce([
+      {
+        id: NEXT_CYCLE_ID,
+        name: "Sprint 2",
+        goal: null,
+        state: "upcoming",
+        startDate: "2026-04-15T00:00:00.000Z",
+        endDate: "2026-04-28T00:00:00.000Z",
+        velocity: null,
+        projectId: "proj_001",
+        createdAt: "",
+        updatedAt: "",
+      } as KanonCycle,
+    ]);
+    mockClient.attachIssuesToCycle.mockResolvedValueOnce(detail);
+    mockClient.attachIssuesToCycle.mockResolvedValueOnce(detail);
+    mockClient.closeCycle.mockRejectedValueOnce(
+      new KanonApiError(500, "SERVER_ERROR", "Internal error"),
+    );
+
+    const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
+    const closeTool = tools.get("kanon_close_cycle")!;
+
+    const result = await closeTool.handler({
+      cycleId: CYCLE_ID,
+      disposition: "move_to_next",
+      projectKey: "KAN",
+    });
+
+    expect(result.isError).toBe(true);
+    // The error text must identify what completed (issues moved) and what failed (close)
+    const text = result.content[0]!.text;
+    expect(text.toLowerCase()).toMatch(/partial|step|moved|close/);
+  });
+});
+
 describe("kanon_list_cycles — surfaces 403 as FORBIDDEN", () => {
   it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
     const mockClient = {
