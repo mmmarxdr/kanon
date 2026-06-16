@@ -22,9 +22,10 @@ describe("Win B — SERVER_INSTRUCTIONS deferred tools block", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/DEFERRED TOOLS/i);
   });
 
-  it("B2: DEFERRED_TOOLS array has exactly 10 entries", () => {
+  it("B2: DEFERRED_TOOLS array has exactly 13 entries", () => {
     // Updated for KAN-104: +2 PM-only timesheet tools (approve/reject).
-    expect(DEFERRED_TOOLS).toHaveLength(10);
+    // Updated for KAN-118: +3 occasion-only tools (add/remove dependency, adjust time entry).
+    expect(DEFERRED_TOOLS).toHaveLength(13);
   });
 
   it("B3: each deferred tool name appears verbatim in SERVER_INSTRUCTIONS", () => {
