@@ -48,6 +48,14 @@
       "sessions": 0,
       "memories": 2,
       "prompts": 0
+    },
+    {
+      "id": "3820cda1",
+      "created_by": "marcd",
+      "created_at": "2026-06-16T00:19:57Z",
+      "sessions": 11,
+      "memories": 95,
+      "prompts": 0
     }
   ]
 }
