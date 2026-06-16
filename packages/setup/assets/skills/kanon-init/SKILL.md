@@ -222,19 +222,5 @@ Save project onboarding context with `topic_key: kanon-project/{KEY}`.
 
 - **No recognizable project files**: Derive metadata from directory name. Still allow project creation.
 - **Key exceeds 6 characters**: Truncate intelligently. Prefer acronyms.
-- **Project key already exists**: Reuse the existing project.
-- **Very large codebase**: The 20-match grep cap and 10-issue cap prevent overwhelming the board.
-- **Re-run on onboarded project**: Idempotency check prevents duplicates.
 - **No TODOs found**: Skip TODO-derived issues. Architecture-gap issues still created.
-- **MCP call failure**: Log warning and continue. Never block the entire flow.
-
----
-
-## Best Practices
-
-1. **Clean titles for seeded issues** — Expand terse TODO comments into proper `[Area] Description` titles.
-2. **Respect all caps** — 10 issues, 5 roadmap items, 5 groups. Quality over quantity.
-3. **Save to engram** — The onboarding context is valuable for future sessions.
-4. **Fail gracefully** — If any MCP call fails, log and continue.
-5. **Idempotency first** — Always check for existing items before creating.
-6. **One project per run** — For monorepos, suggest running once per sub-project.
+- **One project per run**: For monorepos, suggest running once per sub-project.

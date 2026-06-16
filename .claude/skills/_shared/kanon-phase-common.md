@@ -25,6 +25,7 @@ Update the issue description to append your phase's findings:
 
 ## Phase-to-State and Enrichment Mapping
 
+<!-- Audience: SDD sub-agents (apply/verify) — dev-only, NOT shipped -->
 | Phase | Kanon State | Section to Add/Update | Content |
 |-------|-------------|----------------------|---------|
 | explore | `in_progress` | **Context** | Investigation findings, problem statement |

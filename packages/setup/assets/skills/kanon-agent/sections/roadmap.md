@@ -23,6 +23,13 @@ When a user mentions deferred work during conversation or SDD phases:
 2. kanon_create_roadmap_item({ projectKey, title: "[Area] Verb phrase", horizon, description })
 3. Reference the roadmap item in the current issue or SDD artifact
 
+### SDD Phase: deferred_items Processing
+
+When an SDD phase returns `deferred_items` in its result envelope:
+1. For each deferred item: kanon_create_roadmap_item({ projectKey, title: "[Area] Verb phrase", horizon: "later", description })
+2. Reference the roadmap item key in the apply-progress or verify-report artifact
+3. Do NOT add deferred items to the current cycle's scope
+
 ## Promote to Issue
 
 When a roadmap item becomes actionable:
