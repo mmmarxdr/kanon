@@ -26,6 +26,12 @@ const REAL_ASSETS_DIR = path.resolve(__dirname, "../../assets");
 const FORBIDDEN_BASENAMES = ["settings.json", "GEMINI.md", "keybindings.json"];
 const FORBIDDEN_SEGMENTS = [".atl"];
 
+/** Hermetic — do not call resolveWrapperPath() (needs install.sh layout on disk). */
+const FAKE_WRAPPER = {
+  mode: "local" as const,
+  path: "/fake/kanon-mcp/wrapper-cli.js",
+};
+
 function walkFiles(dir: string, base = dir): string[] {
   if (!fs.existsSync(dir)) return [];
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -74,6 +80,7 @@ describe("antigravity-cli install smoke — KAN-130", () => {
       "https://api.kanon.test",
       "direct",
       process.execPath,
+      FAKE_WRAPPER,
     );
     mergeConfig(configPath, tool.rootKey, entry);
     installSkills(skillDir, REAL_ASSETS_DIR);
@@ -112,6 +119,7 @@ describe("antigravity-cli install smoke — KAN-130", () => {
           "https://api.kanon.test",
           "direct",
           process.execPath,
+          FAKE_WRAPPER,
         ),
       ) as { command?: string; args?: string[]; type?: string };
 
