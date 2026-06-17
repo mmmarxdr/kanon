@@ -181,7 +181,7 @@ describe("IssuePage — zone+dock layout: all sections always present (KAN-108)"
     expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
   });
 
-  it("T2 — all top-zone sections render simultaneously (no tab gating)", async () => {
+  it("T2 — all top-zone and rail sections render simultaneously (no tab gating)", async () => {
     mockUseSearch.mockReturnValue({ from: undefined });
     await renderIssuePage();
 
@@ -193,6 +193,11 @@ describe("IssuePage — zone+dock layout: all sections always present (KAN-108)"
     expect(screen.getByTestId("document-list")).toBeInTheDocument();
     expect(screen.getByTestId("children-section")).toBeInTheDocument();
     expect(screen.getByTestId("dependencies-section")).toBeInTheDocument();
+
+    // Right rail sections stay mounted together as KAN-33 adds provenance UI.
+    expect(screen.getByTestId("metadata-section")).toBeInTheDocument();
+    expect(screen.getByTestId("synced-from-tools")).toBeInTheDocument();
+    expect(screen.getByTestId("schedule-slot")).toBeInTheDocument();
   });
 
   it("T3 — sections are disclosures, not a tab strip", async () => {

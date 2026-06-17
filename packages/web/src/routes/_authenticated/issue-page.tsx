@@ -5,6 +5,7 @@ import { MetadataSection } from "@/features/issue-detail/metadata-section";
 import { IssueTopZone } from "@/features/issue-detail/issue-top-zone";
 import { IssueTimelineDock } from "@/features/issue-detail/issue-timeline-dock";
 import { IssueScheduleSlot } from "@/features/issue-detail/issue-schedule-slot";
+import { SyncedFromToolsSlot } from "@/features/issue-detail/synced-from-tools-slot";
 import { Icon } from "@/components/ui/icons";
 
 export default function IssuePage() {
@@ -154,6 +155,9 @@ export default function IssuePage() {
             }}
           />
         </div>
+
+        {/* KAN-33 slice 1 — right-rail provenance log of tool-attributed activity */}
+        <SyncedFromToolsSlot issueKey={issueKey} />
 
         {/* PPM schedule slot — null adapter until KAN-98 / ADR-0005 backend lands */}
         <IssueScheduleSlot issueKey={issueKey} />
