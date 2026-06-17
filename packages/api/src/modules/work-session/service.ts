@@ -351,6 +351,10 @@ export async function stopWork(
         userId,
         workLogId: workLog?.id ?? null,
         durationS,
+        // work-session-resilience (Slice A): explicit user-driven stop must
+        // be distinguishable from cleanupExpired (which emits reason: "expired").
+        // Downstream listeners (forecast, telemetry) key off this field.
+        reason: "stopped",
       },
     });
   } catch {

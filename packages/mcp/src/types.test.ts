@@ -320,6 +320,196 @@ describe("PR-2 — description field coaching annotations", () => {
   });
 });
 
+// ─── work-session-resilience: UUID normalization (Slice A, Phase 1) ──────
+// The MCP `kanon_create_issue` and `kanon_update_issue` tools must accept
+// `""` for `assigneeId` / `cycleId` / `parentId` / `roadmapItemId` and
+// normalize it to `undefined` (or `null` for the nullable update fields).
+// This matches the API's `z.string().uuid().nullable().optional()` and
+// prevents a 400 from the API when an agent passes an empty string from
+// a form-clear gesture.
+
+const UUID_A = "550e8400-e29b-41d4-a716-446655440000";
+const UUID_B = "550e8400-e29b-41d4-a716-446655440001";
+
+describe("CreateIssueInput — UUID optional fields normalize empty string to undefined", () => {
+  it("accepts empty-string assigneeId (treated as cleared)", () => {
+    const result = CreateIssueInput.safeParse({
+      title: "[Auth] Fix redirect",
+      projectKey: "KAN",
+      assigneeId: "",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.assigneeId).toBeUndefined();
+    }
+  });
+
+  it("accepts valid UUID for assigneeId", () => {
+    const result = CreateIssueInput.safeParse({
+      title: "[Auth] Fix redirect",
+      projectKey: "KAN",
+      assigneeId: UUID_A,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.assigneeId).toBe(UUID_A);
+    }
+  });
+
+  it("rejects non-UUID assigneeId with a ZodError", () => {
+    const result = CreateIssueInput.safeParse({
+      title: "[Auth] Fix redirect",
+      projectKey: "KAN",
+      assigneeId: "not-a-uuid",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts empty-string cycleId (treated as cleared)", () => {
+    const result = CreateIssueInput.safeParse({
+      title: "[Auth] Fix redirect",
+      projectKey: "KAN",
+      cycleId: "",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.cycleId).toBeUndefined();
+    }
+  });
+
+  it("accepts empty-string parentId (treated as cleared)", () => {
+    const result = CreateIssueInput.safeParse({
+      title: "[Auth] Fix redirect",
+      projectKey: "KAN",
+      parentId: "",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.parentId).toBeUndefined();
+    }
+  });
+});
+
+describe("UpdateIssueInput — UUID optional fields normalize empty string", () => {
+  it("accepts empty-string assigneeId and normalizes to undefined", () => {
+    const result = UpdateIssueInput.safeParse({
+      issueKey: "KAN-42",
+      assigneeId: "",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.assigneeId).toBeUndefined();
+    }
+  });
+
+  it("forwards explicit null assigneeId as null (for clearing)", () => {
+    const result = UpdateIssueInput.safeParse({
+      issueKey: "KAN-42",
+      assigneeId: null,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.assigneeId).toBeNull();
+    }
+  });
+
+  it("accepts valid UUID for cycleId", () => {
+    const result = UpdateIssueInput.safeParse({
+      issueKey: "KAN-42",
+      cycleId: UUID_A,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.cycleId).toBe(UUID_A);
+    }
+  });
+
+  it("accepts empty-string cycleId and normalizes to undefined", () => {
+    const result = UpdateIssueInput.safeParse({
+      issueKey: "KAN-42",
+      cycleId: "",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.cycleId).toBeUndefined();
+    }
+  });
+
+  it("forwards explicit null cycleId as null (detach)", () => {
+    const result = UpdateIssueInput.safeParse({
+      issueKey: "KAN-42",
+      cycleId: null,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.cycleId).toBeNull();
+    }
+  });
+
+  it("rejects non-UUID cycleId with a ZodError", () => {
+    const result = UpdateIssueInput.safeParse({
+      issueKey: "KAN-42",
+      cycleId: "not-a-uuid",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts empty-string parentId and normalizes to undefined", () => {
+    const result = UpdateIssueInput.safeParse({
+      issueKey: "KAN-42",
+      parentId: "",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.parentId).toBeUndefined();
+    }
+  });
+
+  it("forwards explicit null parentId as null (unlink)", () => {
+    const result = UpdateIssueInput.safeParse({
+      issueKey: "KAN-42",
+      parentId: null,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.parentId).toBeNull();
+    }
+  });
+
+  it("accepts empty-string roadmapItemId and normalizes to undefined", () => {
+    const result = UpdateIssueInput.safeParse({
+      issueKey: "KAN-42",
+      roadmapItemId: "",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.roadmapItemId).toBeUndefined();
+    }
+  });
+
+  it("forwards explicit null roadmapItemId as null (unlink)", () => {
+    const result = UpdateIssueInput.safeParse({
+      issueKey: "KAN-42",
+      roadmapItemId: null,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.roadmapItemId).toBeNull();
+    }
+  });
+
+  it("accepts valid UUID for roadmapItemId", () => {
+    const result = UpdateIssueInput.safeParse({
+      issueKey: "KAN-42",
+      roadmapItemId: UUID_B,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.roadmapItemId).toBe(UUID_B);
+    }
+  });
+});
+
 // ─── UpdateIssueInput.title refine ───────────────────────────────────────────
 
 describe("UpdateIssueInput.title refine", () => {

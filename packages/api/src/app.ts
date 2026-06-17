@@ -227,21 +227,47 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     }
   });
 
-  // ─── Work Session Cleanup (background interval) ──────────────────────
-  let cleanupInterval: ReturnType<typeof setInterval> | undefined;
+  // ─── Work Session Cleanup (self-rescheduling, non-overlapping) ─────
+  // Slice A (work-session-resilience): the previous `setInterval` could fire a
+  // second tick while a slow DB run was still in flight. Replace it with a
+  // `setTimeout` that re-arms itself in `finally`; a module-scoped `running`
+  // flag short-circuits overlapping ticks. `onClose` clears the pending timer
+  // so no cleanup runs after shutdown begins.
+  const CLEANUP_INTERVAL_MS = 60_000;
+  let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+  let cleanupRunning = false;
+
+  const scheduleCleanupTick = (): void => {
+    cleanupTimer = setTimeout(() => {
+      if (cleanupRunning) {
+        // Previous run is still in flight — skip this tick and re-arm so the
+        // NEXT interval still fires on schedule.
+        scheduleCleanupTick();
+        return;
+      }
+      cleanupRunning = true;
+      cleanupExpired(app.log)
+        .catch((err) => {
+          app.log.error({ err }, "Work session cleanup failed");
+        })
+        .finally(() => {
+          cleanupRunning = false;
+          scheduleCleanupTick();
+        });
+    }, CLEANUP_INTERVAL_MS);
+    // Allow the process to exit even if this timer is pending.
+    cleanupTimer.unref?.();
+  };
 
   app.addHook("onReady", async () => {
-    cleanupInterval = setInterval(() => {
-      cleanupExpired(app.log).catch((err) => {
-        app.log.error({ err }, "Work session cleanup failed");
-      });
-    }, 60_000); // every 60 seconds
-    app.log.info("Work session cleanup interval started (every 60s)");
+    scheduleCleanupTick();
+    app.log.info(`Work session cleanup interval started (every ${CLEANUP_INTERVAL_MS / 1000}s, non-overlapping)`);
   });
 
   app.addHook("onClose", async () => {
-    if (cleanupInterval) {
-      clearInterval(cleanupInterval);
+    if (cleanupTimer) {
+      clearTimeout(cleanupTimer);
+      cleanupTimer = undefined;
       app.log.info("Work session cleanup interval stopped");
     }
   });

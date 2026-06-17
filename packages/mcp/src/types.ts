@@ -61,6 +61,30 @@ export const LimitParam = z.number().int().min(1).max(100).default(10)
 export const OffsetParam = z.number().int().min(0).default(0)
   .describe("Number of items to skip for pagination");
 
+// ─── work-session-resilience (Slice A) ──────────────────────────────────────
+// Optional UUID fields accept `""` (form-clear) and normalize it to `undefined`.
+// This matches the API's `z.string().uuid().nullable().optional()` so an MCP
+// agent never sees a 400 from the wire boundary for an empty string.
+
+/** Optional UUID — undefined, missing, or valid UUID. `""` → undefined. */
+export const OptionalUuid = z
+  .string()
+  .refine((v) => v === "" || z.string().uuid().safeParse(v).success, {
+    message: "Must be a valid UUID or empty string",
+  })
+  .optional()
+  .transform((v) => (v === "" ? undefined : v));
+
+/** Optional+nullable UUID — `null` preserved, `""` → undefined. */
+export const NullableOptionalUuid = z
+  .string()
+  .refine((v) => v === "" || z.string().uuid().safeParse(v).success, {
+    message: "Must be a valid UUID or empty string",
+  })
+  .nullable()
+  .optional()
+  .transform((v) => (v === "" ? undefined : v));
+
 // ─── Tool Input Schemas ─────────────────────────────────────────────────────
 
 /** kanon_list_projects */
@@ -116,9 +140,9 @@ export const CreateIssueInput = z.object({
   priority: z.enum(ISSUE_PRIORITIES).optional().describe("Issue priority"),
   labels: z.array(z.string()).optional().describe("Labels to attach"),
   groupKey: z.string().optional().describe("Group key to assign"),
-  assigneeId: z.string().optional().describe("Assignee member ID"),
-  cycleId: z.string().uuid().optional().describe("Cycle ID to attach on create"),
-  parentId: z.string().optional().describe("Parent issue ID"),
+  assigneeId: OptionalUuid.describe("Assignee member ID (UUID, empty string clears)"),
+  cycleId: OptionalUuid.describe("Cycle ID to attach on create (UUID, empty string clears)"),
+  parentId: OptionalUuid.describe("Parent issue ID (UUID, empty string clears)"),
   template: z
     .enum(["bug-report", "feature-request", "task", "spike"])
     .optional()
@@ -133,9 +157,10 @@ export const UpdateIssueInput = z.object({
   description: z.string().nullable().optional().describe("New description (markdown). Preserve ## Context / ## Acceptance Criteria / ## Notes when replacing"),
   priority: z.enum(ISSUE_PRIORITIES).optional().describe("New priority"),
   labels: z.array(z.string()).optional().describe("New labels"),
-  assigneeId: z.string().nullable().optional().describe("New assignee ID"),
-  cycleId: z.string().uuid().nullable().optional().describe("Cycle ID to attach (or null to detach)"),
-  roadmapItemId: z.string().nullable().optional().describe("Roadmap item ID to link (UUID, null to unlink)"),
+  assigneeId: NullableOptionalUuid.describe("New assignee ID (UUID, null/empty clears)"),
+  cycleId: NullableOptionalUuid.describe("Cycle ID to attach (or null/empty to detach)"),
+  parentId: NullableOptionalUuid.describe("Parent issue ID (UUID, null/empty unlinks)"),
+  roadmapItemId: NullableOptionalUuid.describe("Roadmap item ID to link (UUID, null/empty unlinks)"),
   ...WriteFormatField,
 });
 
