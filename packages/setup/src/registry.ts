@@ -9,7 +9,7 @@ import { commandExists } from "./detect.js";
  * Resolve Codex CLI home directory, respecting CODEX_HOME override.
  */
 export function resolveCodexHome(ctx: PlatformContext, ...segments: string[]): string {
-  const base = process.env.CODEX_HOME ?? path.join(ctx.homedir, ".codex");
+  const base = process.env["CODEX_HOME"] ?? path.join(ctx.homedir, ".codex");
   return segments.length ? path.join(base, ...segments) : base;
 }
 

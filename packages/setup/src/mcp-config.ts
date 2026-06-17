@@ -123,7 +123,7 @@ export function mergeTomlMcpConfig(
     args: entry.args,
   };
   if (entry.env) {
-    serverEntry.env = entry.env;
+    serverEntry["env"] = entry.env;
   }
 
   servers[serverName] = serverEntry;
