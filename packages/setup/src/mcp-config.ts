@@ -1,6 +1,7 @@
 // ─── MCP Config Merger ───────────────────────────────────────────────────────
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse, stringify } from "smol-toml";
@@ -265,15 +266,51 @@ export function removeConfig(configPath: string, rootKey: string): boolean {
   return true;
 }
 
-export type McpResolution =
-  | { mode: "local"; path: string }
-  | { mode: "npx" };
+export type McpResolution = { mode: "local"; path: string };
+
+export const MCP_NOT_FOUND_MESSAGE =
+  "Kanon MCP not found. Install via the signed release tarball first (install.sh — see docs/AI_TOOLS.md).";
+
+/**
+ * Candidate paths for MCP binaries installed via install.sh (~/.kanon/mcp).
+ * Tarball layout nests under `mcp/dist/`; flat `dist/` is accepted as fallback.
+ */
+function resolveInstalledMcpPaths(
+  basename: "wrapper-cli.js" | "index.js",
+): string[] {
+  const installDir =
+    process.env["KANON_INSTALL_DIR"] ?? path.join(os.homedir(), ".kanon", "mcp");
+  return [
+    path.join(installDir, "mcp", "dist", basename),
+    path.join(installDir, "dist", basename),
+  ];
+}
+
+function firstExistingPath(candidates: string[]): string | undefined {
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function requireLocalMcpResolution(
+  label: "wrapper-cli.js" | "index.js",
+  candidates: string[],
+): McpResolution {
+  const found = firstExistingPath(candidates);
+  if (found) {
+    return { mode: "local", path: found };
+  }
+  throw new Error(MCP_NOT_FOUND_MESSAGE);
+}
 
 /**
  * Build the MCP server entry for Kanon.
  *
  * Uses PlatformContext + McpMode to determine the entry format:
- * - 'direct': linux, wsl-native tools, or win32 — uses node/npx directly
+ * - 'direct': linux, wsl-native tools, or win32 — uses node + local MCP path
  * - 'wsl-bridge': Windows-side tools invoked from WSL — uses `wsl` wrapper
  */
 export type McpEntryMode = "static-key" | "wrapper";
@@ -287,44 +324,25 @@ export function buildMcpEntry(
   nodeBin: string,
   entryMode: McpEntryMode = "static-key",
 ): McpServerEntry {
-  const isNpx = resolution.mode === "npx";
-
   // ── Wrapper mode: token-based auth, no KANON_API_KEY ─────────────────────────
   if (entryMode === "wrapper") {
-    const wrapperPath = isNpx ? undefined : resolution.path;
     if (mcpMode === "wsl-bridge") {
       return {
         command: "wsl",
-        args: [
-          nodeBin,
-          ...(wrapperPath ? [wrapperPath] : []),
-          "--server",
-          apiUrl,
-        ],
+        args: [nodeBin, resolution.path, "--server", apiUrl],
       };
     }
     return {
       command: nodeBin,
-      args: [
-        ...(wrapperPath ? [wrapperPath] : []),
-        "--server",
-        apiUrl,
-      ],
+      args: [resolution.path, "--server", apiUrl],
     };
   }
 
   // ── Static-key mode (default) ─────────────────────────────────────────────────
   if (mcpMode === "wsl-bridge") {
-    // Windows-side tools invoked via WSL wrapper
     const envArgs = [`KANON_API_URL=${apiUrl}`];
     if (apiKey) {
       envArgs.push(`KANON_API_KEY=${apiKey}`);
-    }
-    if (isNpx) {
-      return {
-        command: "wsl",
-        args: ["env", ...envArgs, "npx", "@kanon/mcp@>=0.3.0"],
-      };
     }
     return {
       command: "wsl",
@@ -338,14 +356,6 @@ export function buildMcpEntry(
     env["KANON_API_KEY"] = apiKey;
   }
 
-  if (isNpx) {
-    return {
-      command: "npx",
-      args: ["@kanon/mcp@>=0.3.0"],
-      env,
-    };
-  }
-
   return {
     command: nodeBin,
     args: [resolution.path],
@@ -355,28 +365,24 @@ export function buildMcpEntry(
 
 /**
  * Resolve how to invoke the Kanon MCP wrapper-cli.
- * Same precedence as resolveMcpServerPath but targets wrapper-cli.js so
- * onboard-mode entries point at the wrapper (refresh→exchange→spawn) rather
- * than the bare server (which expects KANON_API_KEY in env).
+ *
+ * Search order:
+ *   1. Relative to setup dist (install.sh layout: setup/dist → mcp/dist)
+ *   2. Monorepo node_modules (@kanon/mcp)
+ *   3. install.sh target (~/.kanon/mcp/mcp/dist or KANON_INSTALL_DIR)
+ *
+ * No npx fallback — @kanon/mcp is not published to npm; distribution is tarball-only.
  */
 export function resolveWrapperPath(): McpResolution {
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-  const localWrapper = path.resolve(scriptDir, "../../mcp/dist/wrapper-cli.js");
-  if (fs.existsSync(localWrapper)) {
-    return { mode: "local", path: localWrapper };
-  }
-  try {
-    const resolved = path.resolve(
+  return requireLocalMcpResolution("wrapper-cli.js", [
+    path.resolve(scriptDir, "../../mcp/dist/wrapper-cli.js"),
+    path.resolve(
       scriptDir,
       "../../../node_modules/@kanon/mcp/dist/wrapper-cli.js",
-    );
-    if (fs.existsSync(resolved)) {
-      return { mode: "local", path: resolved };
-    }
-  } catch {
-    // ignore
-  }
-  return { mode: "npx" };
+    ),
+    ...resolveInstalledMcpPaths("wrapper-cli.js"),
+  ]);
 }
 
 /**
@@ -399,27 +405,12 @@ export function buildWrapperMcpEntry(
   workspaceId?: string,
 ): McpServerEntry {
   const canonUrl = canonicalizeApiUrl(apiUrl);
-  const isNpx = resolution.mode === "npx";
 
   if (mcpMode === "wsl-bridge") {
-    // wsl-bridge: no env object — args only
     return {
       command: "wsl",
-      args: isNpx
-        ? ["npx", "-p", "@kanon/mcp@>=0.3.0", "kanon-mcp-wrapper", "--server", canonUrl]
-        : [nodeBin, resolution.path, "--server", canonUrl],
+      args: [nodeBin, resolution.path, "--server", canonUrl],
     };
-  }
-
-  if (isNpx) {
-    const entry: McpServerEntry = {
-      command: "npx",
-      args: ["-p", "@kanon/mcp@>=0.3.0", "kanon-mcp-wrapper", "--server", canonUrl],
-    };
-    if (workspaceId) {
-      entry.env = { KANON_WORKSPACE_ID: workspaceId };
-    }
-    return entry;
   }
 
   const entry: McpServerEntry = {
@@ -433,34 +424,19 @@ export function buildWrapperMcpEntry(
 }
 
 /**
- * Resolve how to invoke the Kanon MCP server.
- * When running from the monorepo or with @kanon/mcp installed locally,
- * returns a local path. Otherwise falls back to npx for dynamic resolution.
+ * Resolve how to invoke the Kanon MCP server (static-key mode).
+ * Same search order as resolveWrapperPath(); throws if not found.
  */
 export function resolveMcpServerPath(): McpResolution {
-  // Try to find the local monorepo MCP dist
-  // Use fileURLToPath() instead of .pathname to handle Windows drive letters correctly
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-  const localMcp = path.resolve(scriptDir, "../../mcp/dist/index.js");
-  if (fs.existsSync(localMcp)) {
-    return { mode: "local", path: localMcp };
-  }
-
-  // Fallback: try to find it in node_modules
-  try {
-    const resolved = path.resolve(
+  return requireLocalMcpResolution("index.js", [
+    path.resolve(scriptDir, "../../mcp/dist/index.js"),
+    path.resolve(
       scriptDir,
       "../../../node_modules/@kanon/mcp/dist/index.js",
-    );
-    if (fs.existsSync(resolved)) {
-      return { mode: "local", path: resolved };
-    }
-  } catch {
-    // ignore
-  }
-
-  // Final fallback — resolve dynamically via npx at runtime
-  return { mode: "npx" };
+    ),
+    ...resolveInstalledMcpPaths("index.js"),
+  ]);
 }
 
 /**

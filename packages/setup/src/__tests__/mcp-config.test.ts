@@ -16,6 +16,8 @@ import {
   formatMcpEntry,
   installToolMcpConfig,
   removeToolMcpConfig,
+  resolveWrapperPath,
+  MCP_NOT_FOUND_MESSAGE,
 } from "../mcp-config.js";
 import type { McpServerEntry, PlatformContext } from "../types.js";
 
@@ -314,16 +316,22 @@ describe("mcp-config", () => {
       expect(entry.env).toEqual({ KANON_API_URL: "http://api.test", KANON_API_KEY: "key123" });
     });
 
-    it("should build a wsl-bridge npx entry", () => {
+    it("should build a wsl-bridge entry with local MCP path", () => {
       const ctx = { platform: "wsl" as const, homedir: "/home/user", winHome: "/mnt/c/Users/User" };
       const entry = buildMcpEntry(
-        { mode: "npx" },
+        { mode: "local", path: "/path/to/server.js" },
         "http://api.test", "key123",
         ctx, "wsl-bridge", "/usr/bin/node",
       );
 
       expect(entry.command).toBe("wsl");
-      expect(entry.args).toEqual(["env", "KANON_API_URL=http://api.test", "KANON_API_KEY=key123", "npx", "@kanon/mcp@>=0.3.0"]);
+      expect(entry.args).toEqual([
+        "env",
+        "KANON_API_URL=http://api.test",
+        "KANON_API_KEY=key123",
+        "/usr/bin/node",
+        "/path/to/server.js",
+      ]);
     });
 
     it("should omit KANON_API_KEY when empty in new signature", () => {
@@ -878,5 +886,43 @@ args = ["/srv.js"]
       });
       expect(removed).toBe(true);
     });
+  });
+});
+
+describe("resolveWrapperPath — installed MCP layout", () => {
+  let tmpInstallDir: string;
+  let prevInstallDir: string | undefined;
+
+  beforeEach(() => {
+    tmpInstallDir = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-mcp-install-"));
+    prevInstallDir = process.env.KANON_INSTALL_DIR;
+    process.env.KANON_INSTALL_DIR = tmpInstallDir;
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpInstallDir, { recursive: true, force: true });
+    if (prevInstallDir === undefined) {
+      delete process.env.KANON_INSTALL_DIR;
+    } else {
+      process.env.KANON_INSTALL_DIR = prevInstallDir;
+    }
+  });
+
+  it("resolves wrapper from install.sh layout (mcp/dist/wrapper-cli.js)", () => {
+    const wrapperPath = path.join(
+      tmpInstallDir,
+      "mcp",
+      "dist",
+      "wrapper-cli.js",
+    );
+    fs.mkdirSync(path.dirname(wrapperPath), { recursive: true });
+    fs.writeFileSync(wrapperPath, "// wrapper\n");
+
+    const resolution = resolveWrapperPath();
+    expect(resolution).toEqual({ mode: "local", path: wrapperPath });
+  });
+
+  it("throws when MCP is not installed (no npx fallback)", () => {
+    expect(() => resolveWrapperPath()).toThrow(MCP_NOT_FOUND_MESSAGE);
   });
 });
