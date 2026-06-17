@@ -16,6 +16,10 @@ export type DomainEventType =
   | "member.removed"
   | "member.role_changed"
   | "work_session.started"
+  // work_session.ended payload carries `reason: "stopped" | "expired"` —
+  // "stopped" = explicit user-driven stopWork; "expired" = cleanupExpired
+  // (S2 / KAN-26) closed the session. Downstream listeners (forecast,
+  // telemetry) key off this field to distinguish stop from crash/expiry.
   | "work_session.ended"
   | "invite.created"
   | "invite.revoked"

@@ -310,6 +310,48 @@ describe("WorkSessionService", () => {
       );
     });
 
+    // ── work-session-resilience (Slice A) — explicit stop emits reason: "stopped"
+    // Symmetric with cleanupExpired which emits reason: "expired". Forecast and
+    // other downstream listeners must be able to distinguish stop from expiry
+    // on the `reason` field alone.
+
+    it("emits work_session.ended with reason: 'stopped' on explicit stopWork", async () => {
+      const startedAt = new Date(Date.now() - 90_000);
+      const session90s = { ...fakeSession, startedAt, lastHeartbeat: new Date() };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(session90s);
+      const fakeWorkLog = { id: "wl-stopped-1", durationS: 90 };
+      mockTransaction.mockResolvedValue([fakeWorkLog, session90s]);
+
+      mockEmit.mockClear();
+      await stopWork("KAN-42", "user-1", "member-1");
+
+      expect(mockEmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "work_session.ended",
+          payload: expect.objectContaining({ reason: "stopped" }),
+        })
+      );
+    });
+
+    it("emits work_session.ended with reason: 'stopped' for sub-minute stopWork too", async () => {
+      const startedAt = new Date(Date.now() - 30_000);
+      const session30s = { ...fakeSession, startedAt, lastHeartbeat: new Date() };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(session30s);
+      mockSessionDelete.mockResolvedValue(session30s);
+
+      mockEmit.mockClear();
+      await stopWork("KAN-42", "user-1", "member-1");
+
+      expect(mockEmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "work_session.ended",
+          payload: expect.objectContaining({ reason: "stopped" }),
+        })
+      );
+    });
+
     it("emits work_session.ended even for < 60s (no workLog in payload)", async () => {
       const startedAt = new Date(Date.now() - 30_000);
       const session30s = { ...fakeSession, startedAt, lastHeartbeat: new Date() };
