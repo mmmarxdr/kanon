@@ -11,8 +11,8 @@ import {
   buildMcpEntry,
   buildWrapperMcpEntry,
   extractExistingWorkspaceId,
-  mergeConfig,
-  removeConfig,
+  installToolMcpConfig,
+  removeToolMcpConfig,
   resolveMcpServerPath,
   resolveNodeBin,
 } from "./mcp-config.js";
@@ -50,7 +50,7 @@ program
   .option("--api-key <key>", "Kanon API key")
   .option(
     "--tool <name>",
-    "Target a specific tool (claude-code, cursor, antigravity, opencode)",
+    "Target a specific tool (claude-code, cursor, antigravity, opencode, codex)",
   )
   .option("--all", "Configure all detected tools")
   .option("--remove", "Remove Kanon configuration from tools")
@@ -306,7 +306,7 @@ async function run(options: {
 
     if (removeMode) {
       // ── Remove Mode ──────────────────────────────────────────────
-      const removed = removeConfig(configPath, tool.rootKey);
+      const removed = removeToolMcpConfig(configPath, tool);
       if (removed) {
         console.log(
           chalk.green("  ✓") +
@@ -383,7 +383,11 @@ async function run(options: {
             platformPaths.mcpMode,
             nodeBin,
             undefined,
-            extractExistingWorkspaceId(configPath, tool.rootKey),
+            extractExistingWorkspaceId(
+              configPath,
+              tool.rootKey,
+              tool.configFormat,
+            ),
           )
         : buildMcpEntry(
             mcpResolution,
@@ -401,7 +405,7 @@ async function run(options: {
       // OpenCode array form via `formatMcpEntry("mcp", entry)` — output is
       // `{ type: "local", command: string[]; environment?; enabled? }` per
       // OpenCode's `McpLocalConfig` schema.
-      mergeConfig(configPath, tool.rootKey, entry);
+      installToolMcpConfig(configPath, tool, entry);
       console.log(
         chalk.green("  ✓") +
           ` Configured MCP for ${chalk.bold(tool.displayName)} (${configPath})`,

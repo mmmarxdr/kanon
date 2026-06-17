@@ -68,6 +68,28 @@ Restart your AI tool and the `kanon_*` tools are live against your board.
 | Cursor      | Windows, WSL2, Linux  | Supported |
 | Antigravity | Windows, WSL2, Linux  | Supported |
 | OpenCode    | macOS, Linux, WSL2    | Beta      |
+| Codex CLI   | macOS, Linux, WSL2, Windows | Supported |
+
+### Codex CLI paths
+
+Codex uses a global home directory (not project-scoped):
+
+| Path | Purpose |
+| ---- | ------- |
+| `$CODEX_HOME` (default `~/.codex`) | Codex CLI home override |
+| `$CODEX_HOME/config.toml` | MCP server config (TOML) |
+| `$CODEX_HOME/skills/` | Global skills directory |
+
+Install or remove Kanon for Codex only:
+
+```bash
+kanon-setup --tool codex -y
+kanon-setup --tool codex --remove -y
+```
+
+Setup writes `[mcp_servers.kanon-mcp]` with flat `command`/`args` and env vars
+under `[mcp_servers.kanon-mcp.env]`. TOML round-trip via `smol-toml` may drop
+comments in `config.toml` — only the `kanon-mcp` tables are touched.
 
 ## Non-interactive use
 

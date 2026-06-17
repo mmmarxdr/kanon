@@ -11,6 +11,9 @@
  */
 
 import { describe, it, expect } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { getToolByName, toolRegistry } from "../registry.js";
 import type { PlatformContext } from "../types.js";
 
@@ -65,6 +68,102 @@ describe("registry — opencode", () => {
 
   it("appears in the toolRegistry", () => {
     const found = toolRegistry.find((t) => t.name === "opencode");
+    expect(found).toBeDefined();
+  });
+});
+
+/**
+ * G5 — Registry tests for the `codex` tool (KAN-128).
+ */
+describe("registry — codex", () => {
+  it("registers a `codex` ToolDefinition", () => {
+    const tool = getToolByName("codex");
+    expect(tool).toBeDefined();
+  });
+
+  it("uses `mcp_servers` rootKey with `toml` configFormat", () => {
+    const tool = getToolByName("codex")!;
+    expect(tool.rootKey).toBe("mcp_servers");
+    expect(tool.configFormat).toBe("toml");
+  });
+
+  it("declares darwin, linux, wsl, and win32 platforms", () => {
+    const tool = getToolByName("codex")!;
+    const declared = Object.keys(tool.platforms).sort();
+    expect(declared).toEqual(["darwin", "linux", "win32", "wsl"]);
+  });
+
+  it("uses `direct` mcpMode for every declared platform", () => {
+    const tool = getToolByName("codex")!;
+    for (const [name, paths] of Object.entries(tool.platforms)) {
+      expect(paths!.mcpMode, `platform ${name} should use direct`).toBe("direct");
+    }
+  });
+
+  it("does NOT declare template, agents, or commands paths", () => {
+    const tool = getToolByName("codex")!;
+    for (const [name, paths] of Object.entries(tool.platforms)) {
+      expect(paths!.template, `platform ${name} should not have template`).toBeUndefined();
+      expect(paths!.agents, `platform ${name} should not have agents`).toBeUndefined();
+      expect(paths!.commands, `platform ${name} should not have commands`).toBeUndefined();
+    }
+  });
+
+  it("resolves default config and skills paths under ~/.codex/", () => {
+    const tool = getToolByName("codex")!;
+    const ctx: PlatformContext = { platform: "linux", homedir: "/home/test" };
+    const paths = tool.platforms.linux!;
+
+    expect(paths.config(ctx)).toBe("/home/test/.codex/config.toml");
+    expect(paths.skills(ctx)).toBe("/home/test/.codex/skills");
+  });
+
+  it("resolves paths under CODEX_HOME when env is set", () => {
+    const prev = process.env.CODEX_HOME;
+    const override = "/tmp/custom-codex-home";
+    process.env.CODEX_HOME = override;
+
+    try {
+      const tool = getToolByName("codex")!;
+      const ctx: PlatformContext = { platform: "linux", homedir: "/home/test" };
+      const paths = tool.platforms.linux!;
+
+      expect(paths.config(ctx)).toBe(path.join(override, "config.toml"));
+      expect(paths.skills(ctx)).toBe(path.join(override, "skills"));
+    } finally {
+      if (prev === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = prev;
+      }
+    }
+  });
+
+  it("detect returns true when config.toml exists under codex home", async () => {
+    const prev = process.env.CODEX_HOME;
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-codex-detect-"));
+    process.env.CODEX_HOME = tmpHome;
+
+    try {
+      fs.mkdirSync(tmpHome, { recursive: true });
+      fs.writeFileSync(path.join(tmpHome, "config.toml"), "# codex\n");
+
+      const tool = getToolByName("codex")!;
+      const ctx: PlatformContext = { platform: "linux", homedir: "/home/test" };
+      const detected = await tool.platforms.linux!.detect(ctx);
+      expect(detected).toBe(true);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+      if (prev === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = prev;
+      }
+    }
+  });
+
+  it("appears in the toolRegistry", () => {
+    const found = toolRegistry.find((t) => t.name === "codex");
     expect(found).toBeDefined();
   });
 });

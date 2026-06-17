@@ -6,6 +6,14 @@ import type { ToolDefinition, PlatformContext, PlatformPaths } from "./types.js"
 import { commandExists } from "./detect.js";
 
 /**
+ * Resolve Codex CLI home directory, respecting CODEX_HOME override.
+ */
+export function resolveCodexHome(ctx: PlatformContext, ...segments: string[]): string {
+  const base = process.env.CODEX_HOME ?? path.join(ctx.homedir, ".codex");
+  return segments.length ? path.join(base, ...segments) : base;
+}
+
+/**
  * OpenCode platform paths — shared across darwin/linux/wsl.
  *
  * OpenCode persists config, skills, and commands under
@@ -26,6 +34,21 @@ const OPENCODE_PATHS: PlatformPaths = {
   config: (ctx) => path.join(ctx.homedir, ".config", "opencode", "opencode.json"),
   skills: (ctx) => path.join(ctx.homedir, ".config", "opencode", "skills"),
   commands: (ctx) => path.join(ctx.homedir, ".config", "opencode", "commands"),
+  mcpMode: "direct",
+};
+
+/**
+ * Codex CLI platform paths — shared across darwin/linux/wsl/win32.
+ *
+ * Codex is a product surface only: MCP config + skills. No template,
+ * agents, or commands paths (see leakage-guard.test.ts).
+ */
+const CODEX_PATHS: PlatformPaths = {
+  detect: async (ctx) =>
+    commandExists("codex", ctx.platform) ||
+    fs.existsSync(resolveCodexHome(ctx, "config.toml")),
+  config: (ctx) => resolveCodexHome(ctx, "config.toml"),
+  skills: (ctx) => resolveCodexHome(ctx, "skills"),
   mcpMode: "direct",
 };
 
@@ -195,6 +218,25 @@ export const toolRegistry: ToolDefinition[] = [
       darwin: OPENCODE_PATHS,
       linux: OPENCODE_PATHS,
       wsl: OPENCODE_PATHS,
+    },
+  },
+
+  // ── Codex CLI ──────────────────────────────────────────────────────────
+  // OpenAI Codex CLI — global install under $CODEX_HOME (default ~/.codex).
+  // Product surface only: TOML MCP config + skills. No AGENTS.md writes.
+  {
+    name: "codex",
+    displayName: "Codex CLI",
+    rootKey: "mcp_servers",
+    configFormat: "toml",
+    templateSource: "",
+    templateMode: "marker-inject",
+
+    platforms: {
+      darwin: CODEX_PATHS,
+      linux: CODEX_PATHS,
+      wsl: CODEX_PATHS,
+      win32: CODEX_PATHS,
     },
   },
 ];

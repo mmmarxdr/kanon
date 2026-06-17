@@ -1,6 +1,6 @@
 ---
 name: kanon-onboard
-description: Team onboarding — invite teammates to a workspace, walk a new dev through `kanon-setup <kanon://link>`, and troubleshoot the resulting MCP wrapper config across Claude Code, Cursor, and Antigravity.
+description: Team onboarding — invite teammates to a workspace, walk a new dev through `kanon-setup <kanon://link>`, and troubleshoot the resulting MCP wrapper config across Claude Code, Cursor, Antigravity, OpenCode, and Codex CLI.
 version: 1.0.0
 tags: [kanon, onboarding, team, invite, mcp, wrapper, setup]
 ---
@@ -41,7 +41,7 @@ If the user asks "where is my API key?" the correct answer is: there isn't one �
 ## The Happy Path (teammate side)
 
 1. **Receive the link.** Format: `kanon://<host>[:port]/onboard?token=<jwt>`. Localhost resolves to `http://`; everything else resolves to `https://`.
-2. **Run** `kanon-setup <kanon://link>` on a machine where any of Claude Code, Cursor, or Antigravity is installed.
+2. **Run** `kanon-setup <kanon://link>` on a machine where any supported AI tool is installed (Claude Code, Cursor, Antigravity, OpenCode, or Codex CLI).
 3. **Read the success output** — three blocks in order:
    - `✓ Onboarded as <email>` + server URL + credentials path
    - `✓ Configured N tool(s):` + a per-tool line with the config file that was updated
@@ -73,7 +73,24 @@ The setup CLI exits non-zero with a specific message for each failure. Map the m
 | `Network request failed — server unreachable` | Wrong server URL, server down, or VPN required | Verify the link's host, ping the server, check VPN |
 | `Unexpected response from server: …` | Server version mismatch (CLI expects a schema the server doesn't return) | Update `@kanon/setup` (`pnpm dlx @kanon/setup@latest …`) |
 | `Failed to save credentials` | Permission issue on `~/.kanon/credentials` | `chmod` the file, or `rm` it and re-run |
-| `No supported AI tools detected on this machine.` | None of Claude Code / Cursor / Antigravity have config dirs | Install at least one tool, then re-run `kanon-setup --tool <name>` |
+| `No supported AI tools detected on this machine.` | None of the supported tools have config dirs | Install at least one tool, then re-run `kanon-setup --tool <name>` |
+
+### Codex CLI troubleshooting
+
+Codex stores MCP config in **TOML** at `$CODEX_HOME/config.toml` (default `~/.codex`).
+Skills land in `$CODEX_HOME/skills/`. Set `CODEX_HOME` before running setup when
+Codex uses a non-default home.
+
+| Symptom | Cause | Fix |
+| ------- | ----- | --- |
+| Config written to wrong directory | `CODEX_HOME` unset or different from Codex runtime | Export `CODEX_HOME`, then `kanon-setup --tool codex -y` |
+| MCP entry missing after setup | Wrong file edited manually | Look for `[mcp_servers.kanon-mcp]` with `command` + `args`; env vars under `[mcp_servers.kanon-mcp.env]` |
+| Re-run duplicates or corrupts config | Hand-edited TOML | Re-run `kanon-setup --tool codex -y` — merge is idempotent and overwrites only `kanon-mcp` |
+| Comments disappeared in `config.toml` | TOML parse/stringify round-trip | Expected — setup only touches `kanon-mcp` tables; restore comments manually if needed |
+| Manual rollback | User wants to uninstall Kanon only | Remove `[mcp_servers.kanon-mcp]` and `[mcp_servers.kanon-mcp.env]` from `config.toml`, delete `kanon-*` under `$CODEX_HOME/skills/`, or run `kanon-setup --tool codex --remove -y` |
+
+Codex install does **not** write `AGENTS.md` — that file is personal harness, not product surface.
+
 | `⚠  Failed to register MCP entry: …` | Credentials saved but config write failed (permissions, malformed JSON) | Investigate the specific path printed; credentials are kept so we don't redo the network call |
 | MCP tools don't appear after restart | Tool wasn't restarted, or the wrapper can't find creds | Verify `~/.kanon/credentials` has a key matching the `--server <url>` value in the tool's MCP config; both must be identical |
 

@@ -41,6 +41,8 @@ export interface ToolDefinition {
   name: string;
   displayName: string;
   rootKey: string;
+  /** On-disk config format — default `"json"` (Claude / Cursor / Antigravity / OpenCode). */
+  configFormat?: "json" | "toml";
   templateSource: string;
   templateMode: "marker-inject" | "file-copy";
 
