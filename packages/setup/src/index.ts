@@ -50,7 +50,7 @@ program
   .option("--api-key <key>", "Kanon API key")
   .option(
     "--tool <name>",
-    "Target a specific tool (claude-code, cursor, antigravity, opencode, codex)",
+    "Target a specific tool (claude-code, cursor, antigravity, opencode, codex, antigravity-cli)",
   )
   .option("--all", "Configure all detected tools")
   .option("--remove", "Remove Kanon configuration from tools")

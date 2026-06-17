@@ -1,5 +1,5 @@
 /**
- * Codex CLI install smoke test — KAN-128.
+ * Antigravity CLI install smoke test — KAN-130.
  *
  * Composed primitives (NOT run()) — mirrors opencode-install-smoke.test.ts.
  */
@@ -9,14 +9,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parse } from "smol-toml";
 
 import { getToolByName } from "../registry.js";
 import {
-  mergeTomlMcpConfig,
-  removeTomlMcpConfig,
-  formatCodexMcpEntry,
+  mergeConfig,
+  removeConfig,
   buildWrapperMcpEntry,
+  formatMcpEntry,
 } from "../mcp-config.js";
 import { installSkills, removeSkills, PRODUCT_SKILLS } from "../skills.js";
 import type { PlatformContext } from "../types.js";
@@ -24,7 +23,7 @@ import type { PlatformContext } from "../types.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REAL_ASSETS_DIR = path.resolve(__dirname, "../../assets");
 
-const FORBIDDEN_BASENAMES = ["AGENTS.md"];
+const FORBIDDEN_BASENAMES = ["settings.json", "GEMINI.md", "keybindings.json"];
 const FORBIDDEN_SEGMENTS = [".atl"];
 
 /** Hermetic — do not call resolveWrapperPath() (needs install.sh layout on disk). */
@@ -48,102 +47,115 @@ function walkFiles(dir: string, base = dir): string[] {
   return result;
 }
 
-describe("codex install smoke — KAN-128", () => {
+describe("antigravity-cli install smoke — KAN-130", () => {
   let tmpHome: string;
-  let codexHome: string;
   let ctx: PlatformContext;
   let configPath: string;
   let skillDir: string;
-  let prevCodexHome: string | undefined;
+  let cliHome: string;
 
   beforeEach(() => {
-    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-codex-smoke-"));
-    codexHome = path.join(tmpHome, "codex-home");
-    prevCodexHome = process.env.CODEX_HOME;
-    process.env.CODEX_HOME = codexHome;
-
+    tmpHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), "kanon-antigravity-cli-smoke-"),
+    );
     ctx = { platform: "linux", homedir: tmpHome };
+    cliHome = path.join(tmpHome, ".gemini", "antigravity-cli");
 
-    const codex = getToolByName("codex");
-    if (!codex) throw new Error("codex registry entry missing");
-    const paths = codex.platforms.linux;
-    if (!paths) throw new Error("codex has no linux platform entry");
+    const tool = getToolByName("antigravity-cli");
+    if (!tool) throw new Error("antigravity-cli registry entry missing");
+    const paths = tool.platforms.linux;
+    if (!paths) throw new Error("antigravity-cli has no linux platform entry");
 
     configPath = paths.config(ctx);
     skillDir = paths.skills(ctx);
   });
 
   afterEach(() => {
-    if (prevCodexHome === undefined) {
-      delete process.env.CODEX_HOME;
-    } else {
-      process.env.CODEX_HOME = prevCodexHome;
-    }
     fs.rmSync(tmpHome, { recursive: true, force: true });
   });
 
   function runInstall() {
+    const tool = getToolByName("antigravity-cli")!;
     const entry = buildWrapperMcpEntry(
       "https://api.kanon.test",
       "direct",
       process.execPath,
       FAKE_WRAPPER,
     );
-    mergeTomlMcpConfig(configPath, "kanon-mcp", formatCodexMcpEntry(entry));
+    mergeConfig(configPath, tool.rootKey, entry);
     installSkills(skillDir, REAL_ASSETS_DIR);
   }
 
   describe("install path", () => {
     beforeEach(() => {
-      fs.mkdirSync(codexHome, { recursive: true });
+      fs.mkdirSync(cliHome, { recursive: true });
       fs.writeFileSync(
         configPath,
-        `
-[mcp_servers.other]
-command = "other"
-args = ["run"]
-`,
+        JSON.stringify({
+          mcpServers: {
+            other: { command: "other", args: ["run"] },
+          },
+        }),
       );
       runInstall();
     });
 
-    it("writes config.toml under CODEX_HOME", () => {
+    it("writes mcp_config.json under ~/.gemini/antigravity-cli/", () => {
       expect(fs.existsSync(configPath)).toBe(true);
-      expect(configPath.startsWith(codexHome)).toBe(true);
+      expect(configPath.startsWith(cliHome)).toBe(true);
     });
 
-    it("contains mcp_servers.kanon-mcp with command and args", () => {
-      const config = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
-      const servers = config["mcp_servers"] as Record<string, unknown>;
+    it("contains mcpServers.kanon-mcp with object form", () => {
+      const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<
+        string,
+        unknown
+      >;
+      const servers = config["mcpServers"] as Record<string, unknown>;
       expect(servers["kanon-mcp"]).toBeDefined();
 
-      const entry = servers["kanon-mcp"] as {
+      const entry = formatMcpEntry(
+        "mcpServers",
+        buildWrapperMcpEntry(
+          "https://api.kanon.test",
+          "direct",
+          process.execPath,
+          FAKE_WRAPPER,
+        ),
+      ) as { command?: string; args?: string[]; type?: string };
+
+      const onDisk = servers["kanon-mcp"] as {
         command?: string;
         args?: string[];
+        type?: string;
       };
-      expect(typeof entry.command).toBe("string");
-      expect(Array.isArray(entry.args)).toBe(true);
-      expect(entry.args!.length).toBeGreaterThan(0);
+      expect(onDisk.type).toBeUndefined();
+      expect(typeof onDisk.command).toBe("string");
+      expect(Array.isArray(onDisk.args)).toBe(true);
+      expect(entry.type).toBeUndefined();
     });
 
-    it("preserves unrelated mcp_servers entries", () => {
-      const config = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
-      const servers = config["mcp_servers"] as Record<string, unknown>;
+    it("preserves unrelated mcpServers entries", () => {
+      const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<
+        string,
+        unknown
+      >;
+      const servers = config["mcpServers"] as Record<string, unknown>;
       expect(servers["other"]).toEqual({ command: "other", args: ["run"] });
     });
 
-    it("installs all 3 product skills under CODEX_HOME/skills", () => {
+    it("installs all 3 product skills under antigravity-cli/skills", () => {
       for (const skill of PRODUCT_SKILLS) {
         expect(
           fs.existsSync(path.join(skillDir, skill, "SKILL.md")),
           `expected ${skill}/SKILL.md`,
         ).toBe(true);
       }
-      expect(skillDir.startsWith(codexHome)).toBe(true);
+      expect(skillDir).toContain("antigravity-cli/skills");
+      expect(skillDir).not.toContain("antigravity/skills");
     });
 
-    it("LEAKAGE — no AGENTS.md written under CODEX_HOME", () => {
-      const allFiles = walkFiles(codexHome);
+    it("LEAKAGE — no settings.json, GEMINI.md, or keybindings.json written", () => {
+      const allFiles = walkFiles(tmpHome);
       for (const forbidden of FORBIDDEN_BASENAMES) {
         const leaked = allFiles.filter((f) => path.basename(f) === forbidden);
         expect(leaked, `leaked ${forbidden}`).toEqual([]);
@@ -151,7 +163,7 @@ args = ["run"]
     });
 
     it("LEAKAGE — no .atl/ segment in written paths", () => {
-      const allFiles = walkFiles(codexHome);
+      const allFiles = walkFiles(tmpHome);
       for (const file of allFiles) {
         const segments = file.split(path.sep).filter(Boolean);
         for (const seg of FORBIDDEN_SEGMENTS) {
@@ -166,28 +178,47 @@ args = ["run"]
       runInstall();
       runInstall();
 
-      const config = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
-      const servers = config["mcp_servers"] as Record<string, unknown>;
-      expect(Object.keys(servers).filter((k) => k === "kanon-mcp")).toHaveLength(1);
+      const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<
+        string,
+        unknown
+      >;
+      const servers = config["mcpServers"] as Record<string, unknown>;
+      expect(Object.keys(servers).filter((k) => k === "kanon-mcp")).toHaveLength(
+        1,
+      );
     });
 
     it("remove cleans MCP + skills; second remove is a no-op", () => {
+      fs.mkdirSync(cliHome, { recursive: true });
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          mcpServers: {
+            other: { command: "other", args: ["run"] },
+          },
+        }),
+      );
       runInstall();
 
-      expect(removeTomlMcpConfig(configPath, "kanon-mcp")).toBe(true);
+      const tool = getToolByName("antigravity-cli")!;
+      expect(removeConfig(configPath, tool.rootKey)).toBe(true);
       removeSkills(skillDir);
 
-      const config = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
-      const servers = config["mcp_servers"] as Record<string, unknown> | undefined;
+      const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<
+        string,
+        unknown
+      >;
+      const servers = config["mcpServers"] as Record<string, unknown> | undefined;
       if (servers) {
         expect(servers["kanon-mcp"]).toBeUndefined();
+        expect(servers["other"]).toEqual({ command: "other", args: ["run"] });
       }
 
       for (const skill of PRODUCT_SKILLS) {
         expect(fs.existsSync(path.join(skillDir, skill))).toBe(false);
       }
 
-      expect(removeTomlMcpConfig(configPath, "kanon-mcp")).toBe(false);
+      expect(removeConfig(configPath, tool.rootKey)).toBe(false);
       expect(() => removeSkills(skillDir)).not.toThrow();
     });
   });

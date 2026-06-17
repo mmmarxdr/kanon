@@ -67,8 +67,31 @@ Restart your AI tool and the `kanon_*` tools are live against your board.
 | Claude Code | WSL2, Linux           | Supported |
 | Cursor      | Windows, WSL2, Linux  | Supported |
 | Antigravity | Windows, WSL2, Linux  | Supported |
+| Antigravity CLI | macOS, Linux, WSL2, Windows | Supported |
 | OpenCode    | macOS, Linux, WSL2    | Beta      |
 | Codex CLI   | macOS, Linux, WSL2, Windows | Supported |
+
+### Antigravity IDE vs Antigravity CLI
+
+These are **separate registry entries** with different config directories:
+
+| Surface | Binary | MCP config | Skills |
+| ------- | ------ | ---------- | ------ |
+| Antigravity IDE | Desktop app | `~/.gemini/antigravity/mcp_config.json` | `~/.gemini/antigravity/skills/` |
+| Antigravity CLI | `agy` | `~/.gemini/antigravity-cli/mcp_config.json` | `~/.gemini/antigravity-cli/skills/` |
+
+On WSL, the **IDE** entry bridges to the Windows host (`wsl-bridge`). The **CLI** entry writes to the WSL Linux homedir (`direct`) because `agy` runs natively in WSL.
+
+Install or remove Kanon for Antigravity CLI only:
+
+```bash
+kanon-setup --tool antigravity-cli -y
+kanon-setup --tool antigravity-cli --remove -y
+```
+
+On Windows, ensure `%LOCALAPPDATA%\agy\bin` is on PATH after `agy install`, or run setup after the CLI has created `~/.gemini/antigravity-cli/`.
+
+Setup does **not** write `settings.json` or `keybindings.json` — those are personal CLI preferences, not MCP config.
 
 ### Codex CLI paths
 

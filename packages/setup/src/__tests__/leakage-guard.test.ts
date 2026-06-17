@@ -190,3 +190,81 @@ describe("codex — personal-config leakage guard", () => {
     });
   }
 });
+
+/**
+ * Antigravity CLI leakage guard — KAN-130.
+ *
+ * CLI install MUST NOT write settings.json, GEMINI.md, or keybindings.json.
+ * Skills must live under antigravity-cli/, not IDE antigravity/.
+ */
+describe("antigravity-cli — personal-config leakage guard", () => {
+  const tool = getToolByName("antigravity-cli");
+  if (!tool) {
+    it.skip("antigravity-cli registry entry is missing — leakage guard cannot run", () => {});
+    return;
+  }
+
+  const FORBIDDEN_BASENAMES = [
+    "settings.json",
+    "GEMINI.md",
+    "keybindings.json",
+  ] as const;
+
+  const ctx: PlatformContext = { platform: "linux", homedir: "/home/test" };
+  const darwinCtx: PlatformContext = { platform: "darwin", homedir: "/Users/test" };
+  const wslCtx: PlatformContext = {
+    platform: "wsl",
+    homedir: "/home/test",
+    winHome: "/mnt/c/Users/test",
+  };
+  const winCtx: PlatformContext = {
+    platform: "win32",
+    homedir: "C:\\Users\\test",
+    appDataDir: "C:\\Users\\test\\AppData\\Roaming",
+  };
+  const contexts: Array<[string, PlatformContext]> = [
+    ["linux", ctx],
+    ["darwin", darwinCtx],
+    ["wsl", wslCtx],
+    ["win32", winCtx],
+  ];
+
+  for (const [name, ctxFor] of contexts) {
+    describe(`platform=${name}`, () => {
+      const paths = tool.platforms[name as keyof typeof tool.platforms];
+      if (!paths) {
+        it.skip(`antigravity-cli does not declare ${name}`, () => {});
+        return;
+      }
+
+      for (const forbidden of FORBIDDEN_BASENAMES) {
+        it(`config path MUST NOT be ${forbidden}`, () => {
+          const configPath = paths.config(ctxFor);
+          expect(configPath.endsWith(forbidden)).toBe(false);
+        });
+      }
+
+      it("skills path MUST be under antigravity-cli/skills, not IDE antigravity/skills", () => {
+        const skillPath = paths.skills(ctxFor);
+        expect(skillPath).toContain("antigravity-cli");
+        expect(skillPath).not.toMatch(/[\\/]antigravity[\\/]skills$/);
+      });
+
+      it("does NOT declare a `template` path", () => {
+        expect(paths.template).toBeUndefined();
+      });
+
+      it("does NOT declare an `agents` directory", () => {
+        expect(paths.agents).toBeUndefined();
+      });
+
+      it("does NOT declare a `commands` directory", () => {
+        expect(paths.commands).toBeUndefined();
+      });
+
+      it("does NOT declare a `workflows` directory", () => {
+        expect(paths.workflows).toBeUndefined();
+      });
+    });
+  }
+});

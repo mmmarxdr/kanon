@@ -52,6 +52,28 @@ const CODEX_PATHS: PlatformPaths = {
   mcpMode: "direct",
 };
 
+/**
+ * Antigravity CLI platform paths — shared across darwin/linux/wsl/win32.
+ *
+ * Antigravity CLI (`agy`) is a product surface only: MCP config + skills.
+ * Config lives at `~/.gemini/antigravity-cli/mcp_config.json` — sibling to
+ * the IDE entry at `~/.gemini/antigravity/`, not the same directory.
+ * WSL uses `direct` + Linux homedir (CLI runs in WSL, not Windows host).
+ */
+const ANTIGRAVITY_CLI_PATHS: PlatformPaths = {
+  detect: async (ctx) =>
+    commandExists("agy", ctx.platform) ||
+    fs.existsSync(
+      path.join(ctx.homedir, ".gemini", "antigravity-cli", "mcp_config.json"),
+    ) ||
+    fs.existsSync(path.join(ctx.homedir, ".gemini", "antigravity-cli")),
+  config: (ctx) =>
+    path.join(ctx.homedir, ".gemini", "antigravity-cli", "mcp_config.json"),
+  skills: (ctx) =>
+    path.join(ctx.homedir, ".gemini", "antigravity-cli", "skills"),
+  mcpMode: "direct",
+};
+
 export const toolRegistry: ToolDefinition[] = [
   // ── Claude Code ──────────────────────────────────────────────────────
   {
@@ -237,6 +259,25 @@ export const toolRegistry: ToolDefinition[] = [
       linux: CODEX_PATHS,
       wsl: CODEX_PATHS,
       win32: CODEX_PATHS,
+    },
+  },
+
+  // ── Antigravity CLI ────────────────────────────────────────────────────
+  // Google Antigravity CLI (`agy`) — global install under
+  // ~/.gemini/antigravity-cli/. Product surface only: JSON MCP + skills.
+  // Separate from IDE `antigravity` entry (different paths, WSL semantics).
+  {
+    name: "antigravity-cli",
+    displayName: "Antigravity CLI",
+    rootKey: "mcpServers",
+    templateSource: "",
+    templateMode: "marker-inject",
+
+    platforms: {
+      darwin: ANTIGRAVITY_CLI_PATHS,
+      linux: ANTIGRAVITY_CLI_PATHS,
+      wsl: ANTIGRAVITY_CLI_PATHS,
+      win32: ANTIGRAVITY_CLI_PATHS,
     },
   },
 ];

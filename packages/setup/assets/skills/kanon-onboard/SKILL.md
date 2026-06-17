@@ -1,6 +1,6 @@
 ---
 name: kanon-onboard
-description: Team onboarding — invite teammates to a workspace, walk a new dev through `kanon-setup <kanon://link>`, and troubleshoot the resulting MCP wrapper config across Claude Code, Cursor, Antigravity, OpenCode, and Codex CLI.
+description: Team onboarding — invite teammates to a workspace, walk a new dev through `kanon-setup <kanon://link>`, and troubleshoot the resulting MCP wrapper config across Claude Code, Cursor, Antigravity, Antigravity CLI, OpenCode, and Codex CLI.
 version: 1.0.0
 tags: [kanon, onboarding, team, invite, mcp, wrapper, setup]
 ---
@@ -41,7 +41,7 @@ If the user asks "where is my API key?" the correct answer is: there isn't one �
 ## The Happy Path (teammate side)
 
 1. **Receive the link.** Format: `kanon://<host>[:port]/onboard?token=<jwt>`. Localhost resolves to `http://`; everything else resolves to `https://`.
-2. **Run** `kanon-setup <kanon://link>` on a machine where any supported AI tool is installed (Claude Code, Cursor, Antigravity, OpenCode, or Codex CLI).
+2. **Run** `kanon-setup <kanon://link>` on a machine where any supported AI tool is installed (Claude Code, Cursor, Antigravity IDE, Antigravity CLI, OpenCode, or Codex CLI).
 3. **Read the success output** — three blocks in order:
    - `✓ Onboarded as <email>` + server URL + credentials path
    - `✓ Configured N tool(s):` + a per-tool line with the config file that was updated
@@ -90,6 +90,27 @@ Codex uses a non-default home.
 | Manual rollback | User wants to uninstall Kanon only | Remove `[mcp_servers.kanon-mcp]` and `[mcp_servers.kanon-mcp.env]` from `config.toml`, delete `kanon-*` under `$CODEX_HOME/skills/`, or run `kanon-setup --tool codex --remove -y` |
 
 Codex install does **not** write `AGENTS.md` — that file is personal harness, not product surface.
+
+### Antigravity CLI troubleshooting
+
+Antigravity CLI (`agy`) is a **separate entry** from the Antigravity IDE. Do not confuse paths:
+
+| Surface | Setup flag | MCP config | Skills |
+| ------- | ---------- | ---------- | ------ |
+| Antigravity IDE | `--tool antigravity` | `~/.gemini/antigravity/mcp_config.json` | `~/.gemini/antigravity/skills/` |
+| Antigravity CLI | `--tool antigravity-cli` | `~/.gemini/antigravity-cli/mcp_config.json` | `~/.gemini/antigravity-cli/skills/` |
+
+On WSL, IDE setup writes to the Windows host (`wsl-bridge`); CLI setup writes to the WSL Linux homedir because `agy` runs in WSL.
+
+| Symptom | Cause | Fix |
+| ------- | ----- | --- |
+| Tool not detected | `agy` not on PATH and no config dir yet | Install CLI (`agy install`), or create `~/.gemini/antigravity-cli/` by running `agy` once, then `kanon-setup --tool antigravity-cli -y` |
+| MCP written to IDE path instead | Used `--tool antigravity` | Re-run with `--tool antigravity-cli` |
+| MCP tools missing after setup | CLI session not restarted | Quit and restart `agy` — MCP loads at startup |
+| Re-run duplicates entry | Hand-edited JSON | Re-run `kanon-setup --tool antigravity-cli -y` — merge is idempotent |
+| Manual rollback | User wants to uninstall Kanon only | Delete `mcpServers.kanon-mcp` from `mcp_config.json`, remove `kanon-*` under `skills/`, or run `kanon-setup --tool antigravity-cli --remove -y` |
+
+CLI install does **not** write `settings.json`, `keybindings.json`, or `GEMINI.md`.
 
 | `⚠  Failed to register MCP entry: …` | Credentials saved but config write failed (permissions, malformed JSON) | Investigate the specific path printed; credentials are kept so we don't redo the network call |
 | MCP tools don't appear after restart | Tool wasn't restarted, or the wrapper can't find creds | Verify `~/.kanon/credentials` has a key matching the `--server <url>` value in the tool's MCP config; both must be identical |
@@ -146,7 +167,7 @@ The credential store and wrapper are designed so a single user can be onboarded 
 ### "Maya says `kanon-setup` finished but Claude Code doesn't show kanon tools"
 
 1. Confirm she restarted Claude Code (not just reloaded a window — full quit and reopen).
-2. Open `~/.claude.json` (or `%APPDATA%\Claude\claude_desktop_config.json` on Windows-native), look for the `kanon-mcp` entry. It should have `command: node ...wrapper-cli.js` (or the npx form) and `--server <apiUrl>` in args.
+2. Open `~/.claude.json` (or `%APPDATA%\Claude\claude_desktop_config.json` on Windows-native), look for the `kanon-mcp` entry. It should have `command: node ...wrapper-cli.js` and `--server <apiUrl>` in args.
 3. Open `~/.kanon/credentials`. Check there's a top-level key whose value is exactly the `--server` value from step 2 (full URL, scheme + host + port).
 4. If those two strings differ, that is the bug — re-run `kanon-setup` to repair, or fix the credentials key by hand if the user knows what they're doing.
 5. If both look right, run the wrapper directly: `node <wrapper-cli.js> --server <apiUrl>` and inspect stderr — it logs the refresh→exchange step.

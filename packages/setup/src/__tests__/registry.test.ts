@@ -167,3 +167,81 @@ describe("registry — codex", () => {
     expect(found).toBeDefined();
   });
 });
+
+/**
+ * G5 — Registry tests for the `antigravity-cli` tool (KAN-130).
+ */
+describe("registry — antigravity-cli", () => {
+  it("registers an `antigravity-cli` ToolDefinition", () => {
+    const tool = getToolByName("antigravity-cli");
+    expect(tool).toBeDefined();
+  });
+
+  it("uses `mcpServers` rootKey without `toml` configFormat", () => {
+    const tool = getToolByName("antigravity-cli")!;
+    expect(tool.rootKey).toBe("mcpServers");
+    expect(tool.configFormat).not.toBe("toml");
+  });
+
+  it("declares darwin, linux, wsl, and win32 platforms", () => {
+    const tool = getToolByName("antigravity-cli")!;
+    const declared = Object.keys(tool.platforms).sort();
+    expect(declared).toEqual(["darwin", "linux", "win32", "wsl"]);
+  });
+
+  it("uses `direct` mcpMode for every declared platform", () => {
+    const tool = getToolByName("antigravity-cli")!;
+    for (const [name, paths] of Object.entries(tool.platforms)) {
+      expect(paths!.mcpMode, `platform ${name} should use direct`).toBe("direct");
+    }
+  });
+
+  it("does NOT declare template, agents, commands, or workflows paths", () => {
+    const tool = getToolByName("antigravity-cli")!;
+    for (const [name, paths] of Object.entries(tool.platforms)) {
+      expect(paths!.template, `platform ${name} should not have template`).toBeUndefined();
+      expect(paths!.agents, `platform ${name} should not have agents`).toBeUndefined();
+      expect(paths!.commands, `platform ${name} should not have commands`).toBeUndefined();
+      expect(paths!.workflows, `platform ${name} should not have workflows`).toBeUndefined();
+    }
+  });
+
+  it("resolves config and skills paths under ~/.gemini/antigravity-cli/", () => {
+    const tool = getToolByName("antigravity-cli")!;
+    const ctx: PlatformContext = { platform: "linux", homedir: "/home/test" };
+    const paths = tool.platforms.linux!;
+
+    expect(paths.config(ctx)).toBe(
+      "/home/test/.gemini/antigravity-cli/mcp_config.json",
+    );
+    expect(paths.skills(ctx)).toBe("/home/test/.gemini/antigravity-cli/skills");
+    expect(paths.skills(ctx)).not.toContain("/antigravity/skills");
+  });
+
+  it("detect returns true when mcp_config.json exists under temp homedir", async () => {
+    const tmpHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), "kanon-antigravity-cli-detect-"),
+    );
+
+    try {
+      const cliDir = path.join(tmpHome, ".gemini", "antigravity-cli");
+      fs.mkdirSync(cliDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(cliDir, "mcp_config.json"),
+        JSON.stringify({ mcpServers: {} }),
+      );
+
+      const tool = getToolByName("antigravity-cli")!;
+      const ctx: PlatformContext = { platform: "linux", homedir: tmpHome };
+      const detected = await tool.platforms.linux!.detect(ctx);
+      expect(detected).toBe(true);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("appears in the toolRegistry", () => {
+    const found = toolRegistry.find((t) => t.name === "antigravity-cli");
+    expect(found).toBeDefined();
+  });
+});
