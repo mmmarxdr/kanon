@@ -1,0 +1,31 @@
+change: codex-cli-integration
+issue: KAN-128
+branch: feat/kan-128-codex-antigravity-agents
+worktree: .claude/worktrees/agent-codex-agy-1781703794
+
+phases:
+  explore:
+    status: done
+    artifact: exploration.md
+  propose:
+    status: done
+    artifact: proposal.md
+  spec:
+    status: done
+    artifact: specs/codex-install-parity/spec.md
+  design:
+    status: done
+    artifact: design.md
+  tasks:
+    status: done
+    artifact: tasks.md
+  apply:
+    status: done
+    artifact: apply-progress.md
+  verify:
+    status: done
+    artifact: verify-report.md
+  archive:
+    status: pending
+
+next_recommended: sdd-tasks

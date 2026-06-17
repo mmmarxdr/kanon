@@ -127,3 +127,66 @@ describe("opencode — personal-config leakage guard", () => {
     });
   }
 });
+
+/**
+ * Codex CLI leakage guard — KAN-128.
+ *
+ * Codex install MUST NOT write AGENTS.md or declare template/agents/commands paths.
+ */
+describe("codex — personal-config leakage guard", () => {
+  const codex = getToolByName("codex");
+  if (!codex) {
+    it.skip("codex registry entry is missing — leakage guard cannot run", () => {});
+    return;
+  }
+
+  const FORBIDDEN_BASENAMES = ["AGENTS.md"] as const;
+
+  const ctx: PlatformContext = { platform: "linux", homedir: "/home/test" };
+  const darwinCtx: PlatformContext = { platform: "darwin", homedir: "/Users/test" };
+  const wslCtx: PlatformContext = {
+    platform: "wsl",
+    homedir: "/home/test",
+    winHome: "/mnt/c/Users/test",
+  };
+  const winCtx: PlatformContext = {
+    platform: "win32",
+    homedir: "C:\\Users\\test",
+    appDataDir: "C:\\Users\\test\\AppData\\Roaming",
+  };
+  const contexts: Array<[string, PlatformContext]> = [
+    ["linux", ctx],
+    ["darwin", darwinCtx],
+    ["wsl", wslCtx],
+    ["win32", winCtx],
+  ];
+
+  for (const [name, ctxFor] of contexts) {
+    describe(`platform=${name}`, () => {
+      const paths = codex.platforms[name as keyof typeof codex.platforms];
+      if (!paths) {
+        it.skip(`codex does not declare ${name}`, () => {});
+        return;
+      }
+
+      for (const forbidden of FORBIDDEN_BASENAMES) {
+        it(`config path MUST NOT be ${forbidden}`, () => {
+          const configPath = paths.config(ctxFor);
+          expect(configPath.endsWith(forbidden)).toBe(false);
+        });
+      }
+
+      it("does NOT declare a `template` path", () => {
+        expect(paths.template).toBeUndefined();
+      });
+
+      it("does NOT declare an `agents` directory", () => {
+        expect(paths.agents).toBeUndefined();
+      });
+
+      it("does NOT declare a `commands` directory", () => {
+        expect(paths.commands).toBeUndefined();
+      });
+    });
+  }
+});

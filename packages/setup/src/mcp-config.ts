@@ -3,10 +3,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse, stringify } from "smol-toml";
 import type {
   McpServerEntry,
   McpMode,
   PlatformContext,
+  ToolDefinition,
 } from "./types.js";
 import { toolRegistry } from "./registry.js";
 import { canonicalizeApiUrl } from "./canonical-url.js";
@@ -65,6 +67,131 @@ export function formatMcpEntry(rootKey: string, entry: McpServerEntry): ToolMcpE
   }
   // Default: object form (Claude / Cursor / Antigravity).
   return entry;
+}
+
+/**
+ * Format a Kanon MCP entry for Codex CLI TOML config (`config.toml`).
+ * Uses flat `command`/`args` with env mapped to a nested `.env` subtable.
+ */
+export function formatCodexMcpEntry(entry: McpServerEntry): {
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+} {
+  const out: {
+    command: string;
+    args: string[];
+    env?: Record<string, string>;
+  } = {
+    command: entry.command,
+    args: entry.args,
+  };
+  if (entry.env) {
+    out.env = entry.env;
+  }
+  return out;
+}
+
+function parseTomlConfigFile(configPath: string): Record<string, unknown> {
+  try {
+    if (!fs.existsSync(configPath)) {
+      return {};
+    }
+    const content = fs.readFileSync(configPath, "utf8");
+    return parse(content) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Merge a Kanon MCP server entry into a Codex CLI TOML config file.
+ * Idempotent — overwrites only the named server entry.
+ */
+export function mergeTomlMcpConfig(
+  configPath: string,
+  serverName: string,
+  entry: ReturnType<typeof formatCodexMcpEntry>,
+): void {
+  const config = parseTomlConfigFile(configPath);
+
+  const servers = (config["mcp_servers"] as Record<string, unknown>) || {};
+  delete servers["kanon"];
+
+  const serverEntry: Record<string, unknown> = {
+    command: entry.command,
+    args: entry.args,
+  };
+  if (entry.env) {
+    serverEntry["env"] = entry.env;
+  }
+
+  servers[serverName] = serverEntry;
+  config["mcp_servers"] = servers;
+
+  const dir = path.dirname(configPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
+  fs.writeFileSync(configPath, stringify(config) + "\n");
+}
+
+/**
+ * Remove a named MCP server from a Codex CLI TOML config file.
+ */
+export function removeTomlMcpConfig(
+  configPath: string,
+  serverName: string,
+): boolean {
+  if (!fs.existsSync(configPath)) {
+    return false;
+  }
+
+  let config: Record<string, unknown>;
+  try {
+    config = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+  } catch {
+    return false;
+  }
+
+  const servers = config["mcp_servers"] as Record<string, unknown> | undefined;
+  if (!servers || !(serverName in servers)) {
+    return false;
+  }
+
+  delete servers[serverName];
+  config["mcp_servers"] = servers;
+  fs.writeFileSync(configPath, stringify(config) + "\n");
+  return true;
+}
+
+/**
+ * Install MCP config using the correct merge path for the tool's config format.
+ */
+export function installToolMcpConfig(
+  configPath: string,
+  tool: Pick<ToolDefinition, "rootKey" | "configFormat">,
+  entry: McpServerEntry,
+): void {
+  if (tool.configFormat === "toml") {
+    mergeTomlMcpConfig(configPath, "kanon-mcp", formatCodexMcpEntry(entry));
+    return;
+  }
+  mergeConfig(configPath, tool.rootKey, entry);
+}
+
+/**
+ * Remove MCP config using the correct path for the tool's config format.
+ */
+export function removeToolMcpConfig(
+  configPath: string,
+  tool: Pick<ToolDefinition, "rootKey" | "configFormat">,
+): boolean {
+  if (tool.configFormat === "toml") {
+    return removeTomlMcpConfig(configPath, "kanon-mcp");
+  }
+  return removeConfig(configPath, tool.rootKey);
 }
 
 /**
@@ -445,6 +572,37 @@ export function extractExistingAuth(
 
     const configPath = platformPaths.config(ctx);
 
+    if (tool.configFormat === "toml") {
+      let config: Record<string, unknown>;
+      try {
+        const content = fs.readFileSync(configPath, "utf8");
+        config = parse(content) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+
+      const servers = config[tool.rootKey] as
+        | Record<string, unknown>
+        | undefined;
+      if (!servers) continue;
+
+      const raw = servers["kanon-mcp"] as RawMcpEntry | undefined;
+      if (!raw) continue;
+
+      const entry: RawMcpEntry = {
+        command: raw.command,
+        args: raw.args,
+        env: raw.env,
+      };
+
+      const found = extractAuthFromEntry(entry);
+      if (!apiUrl && found.apiUrl) apiUrl = found.apiUrl;
+      if (!apiKey && found.apiKey) apiKey = found.apiKey;
+
+      if (apiUrl && apiKey) break;
+      continue;
+    }
+
     let config: Record<string, unknown>;
     try {
       const content = fs.readFileSync(configPath, "utf8");
@@ -488,7 +646,25 @@ export function extractExistingAuth(
  * Returns undefined when the file doesn't exist, the entry is absent, or the
  * workspace ID was not written (older install).
  */
-export function extractExistingWorkspaceId(configPath: string, rootKey: string): string | undefined {
+export function extractExistingWorkspaceId(
+  configPath: string,
+  rootKey: string,
+  configFormat?: "json" | "toml",
+): string | undefined {
+  if (configFormat === "toml") {
+    try {
+      const content = fs.readFileSync(configPath, "utf8");
+      const config = parse(content) as Record<string, unknown>;
+      const servers = config[rootKey] as Record<string, unknown> | undefined;
+      if (!servers) return undefined;
+
+      const entry = servers["kanon-mcp"] as { env?: Record<string, string> } | undefined;
+      return entry?.env?.["KANON_WORKSPACE_ID"];
+    } catch {
+      return undefined;
+    }
+  }
+
   let config: Record<string, unknown>;
   try {
     const content = fs.readFileSync(configPath, "utf8");

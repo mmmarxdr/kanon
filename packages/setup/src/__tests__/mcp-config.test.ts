@@ -2,13 +2,20 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { parse } from "smol-toml";
 import {
   mergeConfig,
   removeConfig,
+  mergeTomlMcpConfig,
+  removeTomlMcpConfig,
+  formatCodexMcpEntry,
   buildMcpEntry,
   extractExistingAuth,
+  extractExistingWorkspaceId,
   extractAuthFromEntry,
   formatMcpEntry,
+  installToolMcpConfig,
+  removeToolMcpConfig,
 } from "../mcp-config.js";
 import type { McpServerEntry, PlatformContext } from "../types.js";
 
@@ -583,6 +590,293 @@ describe("mcp-config", () => {
         command: ["node", "/srv.js"],
       });
       expect((result as { environment?: unknown }).environment).toBeUndefined();
+    });
+  });
+
+  describe("mergeTomlMcpConfig", () => {
+    it("upserts kanon-mcp into a missing config file", () => {
+      const configPath = path.join(tmpDir, "config.toml");
+      const entry = formatCodexMcpEntry({
+        command: "node",
+        args: ["/wrapper.js", "--server", "https://api.test"],
+      });
+
+      mergeTomlMcpConfig(configPath, "kanon-mcp", entry);
+
+      const result = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+      const servers = result["mcp_servers"] as Record<string, unknown>;
+      expect(servers["kanon-mcp"]).toEqual({
+        command: "node",
+        args: ["/wrapper.js", "--server", "https://api.test"],
+      });
+    });
+
+    it("preserves other mcp_servers entries", () => {
+      const configPath = path.join(tmpDir, "config.toml");
+      fs.writeFileSync(
+        configPath,
+        `
+[mcp_servers.other]
+command = "other"
+args = ["run"]
+`,
+      );
+
+      mergeTomlMcpConfig(
+        configPath,
+        "kanon-mcp",
+        formatCodexMcpEntry({ command: "node", args: ["/srv.js"] }),
+      );
+
+      const result = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+      const servers = result["mcp_servers"] as Record<string, unknown>;
+      expect(servers["other"]).toEqual({ command: "other", args: ["run"] });
+      expect(servers["kanon-mcp"]).toEqual({ command: "node", args: ["/srv.js"] });
+    });
+
+    it("writes env vars under mcp_servers.kanon-mcp.env subtable", () => {
+      const configPath = path.join(tmpDir, "config.toml");
+      mergeTomlMcpConfig(
+        configPath,
+        "kanon-mcp",
+        formatCodexMcpEntry({
+          command: "node",
+          args: ["/srv.js"],
+          env: {
+            KANON_API_URL: "http://localhost:4001",
+            KANON_API_KEY: "sk-test",
+          },
+        }),
+      );
+
+      const result = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+      const entry = (result["mcp_servers"] as Record<string, unknown>)["kanon-mcp"] as {
+        env?: Record<string, string>;
+      };
+      expect(entry.env).toEqual({
+        KANON_API_URL: "http://localhost:4001",
+        KANON_API_KEY: "sk-test",
+      });
+    });
+
+    it("deletes legacy kanon key during merge", () => {
+      const configPath = path.join(tmpDir, "config.toml");
+      fs.writeFileSync(
+        configPath,
+        `
+[mcp_servers.kanon]
+command = "legacy"
+args = ["old"]
+`,
+      );
+
+      mergeTomlMcpConfig(
+        configPath,
+        "kanon-mcp",
+        formatCodexMcpEntry({ command: "node", args: ["/srv.js"] }),
+      );
+
+      const result = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+      const servers = result["mcp_servers"] as Record<string, unknown>;
+      expect(servers["kanon"]).toBeUndefined();
+      expect(servers["kanon-mcp"]).toBeDefined();
+    });
+
+    it("is idempotent — running twice produces the same file", () => {
+      const configPath = path.join(tmpDir, "config.toml");
+      const entry = formatCodexMcpEntry({ command: "node", args: ["/srv.js"] });
+
+      mergeTomlMcpConfig(configPath, "kanon-mcp", entry);
+      const first = fs.readFileSync(configPath, "utf8");
+
+      mergeTomlMcpConfig(configPath, "kanon-mcp", entry);
+      const second = fs.readFileSync(configPath, "utf8");
+
+      expect(first).toBe(second);
+    });
+  });
+
+  describe("removeTomlMcpConfig", () => {
+    it("removes kanon-mcp table and env subtable", () => {
+      const configPath = path.join(tmpDir, "config.toml");
+      fs.writeFileSync(
+        configPath,
+        `
+[mcp_servers.kanon-mcp]
+command = "node"
+args = ["/srv.js"]
+
+[mcp_servers.kanon-mcp.env]
+KANON_WORKSPACE_ID = "ws-1"
+`,
+      );
+
+      const removed = removeTomlMcpConfig(configPath, "kanon-mcp");
+      expect(removed).toBe(true);
+
+      const result = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+      const servers = result["mcp_servers"] as Record<string, unknown> | undefined;
+      expect(servers?.["kanon-mcp"]).toBeUndefined();
+    });
+
+    it("preserves unrelated mcp_servers entries", () => {
+      const configPath = path.join(tmpDir, "config.toml");
+      fs.writeFileSync(
+        configPath,
+        `
+[mcp_servers.other]
+command = "other"
+args = ["run"]
+
+[mcp_servers.kanon-mcp]
+command = "node"
+args = ["/srv.js"]
+`,
+      );
+
+      removeTomlMcpConfig(configPath, "kanon-mcp");
+
+      const result = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+      const servers = result["mcp_servers"] as Record<string, unknown>;
+      expect(servers["other"]).toEqual({ command: "other", args: ["run"] });
+      expect(servers["kanon-mcp"]).toBeUndefined();
+    });
+
+    it("returns false when config file does not exist", () => {
+      const configPath = path.join(tmpDir, "missing.toml");
+      expect(removeTomlMcpConfig(configPath, "kanon-mcp")).toBe(false);
+    });
+
+    it("returns false when kanon-mcp entry is absent (no-op)", () => {
+      const configPath = path.join(tmpDir, "config.toml");
+      fs.writeFileSync(
+        configPath,
+        `
+[mcp_servers.other]
+command = "other"
+args = ["run"]
+`,
+      );
+
+      expect(removeTomlMcpConfig(configPath, "kanon-mcp")).toBe(false);
+    });
+  });
+
+  describe("extractExistingAuth — codex TOML", () => {
+    it("extracts static-key credentials from mcp_servers.kanon-mcp.env", () => {
+      const codexHome = path.join(tmpDir, ".codex");
+      fs.mkdirSync(codexHome, { recursive: true });
+      const configPath = path.join(codexHome, "config.toml");
+      fs.writeFileSync(
+        configPath,
+        `
+[mcp_servers.kanon-mcp]
+command = "node"
+args = ["/srv.js"]
+
+[mcp_servers.kanon-mcp.env]
+KANON_API_URL = "http://localhost:4001"
+KANON_API_KEY = "toml-key-123"
+`,
+      );
+
+      const ctx: PlatformContext = { platform: "linux", homedir: tmpDir };
+      const result = extractExistingAuth(ctx);
+
+      expect(result.apiUrl).toBe("http://localhost:4001");
+      expect(result.apiKey).toBe("toml-key-123");
+    });
+
+    it("extracts wrapper-mode apiUrl from --server argv in TOML config", () => {
+      const codexHome = path.join(tmpDir, ".codex");
+      fs.mkdirSync(codexHome, { recursive: true });
+      const configPath = path.join(codexHome, "config.toml");
+      fs.writeFileSync(
+        configPath,
+        `
+[mcp_servers.kanon-mcp]
+command = "node"
+args = ["/wrapper.js", "--server", "https://server.example.com"]
+`,
+      );
+
+      const ctx: PlatformContext = { platform: "linux", homedir: tmpDir };
+      const result = extractExistingAuth(ctx);
+
+      expect(result.apiUrl).toBe("https://server.example.com");
+      expect(result.apiKey).toBeUndefined();
+    });
+  });
+
+  describe("extractExistingWorkspaceId — TOML", () => {
+    it("reads KANON_WORKSPACE_ID from mcp_servers.kanon-mcp.env", () => {
+      const configPath = path.join(tmpDir, "config.toml");
+      fs.writeFileSync(
+        configPath,
+        `
+[mcp_servers.kanon-mcp]
+command = "node"
+args = ["/wrapper.js", "--server", "https://api.test"]
+
+[mcp_servers.kanon-mcp.env]
+KANON_WORKSPACE_ID = "ws-toml-42"
+`,
+      );
+
+      expect(
+        extractExistingWorkspaceId(configPath, "mcp_servers", "toml"),
+      ).toBe("ws-toml-42");
+    });
+  });
+
+  describe("installToolMcpConfig / removeToolMcpConfig dispatch", () => {
+    it("routes toml tools to mergeTomlMcpConfig (not mergeConfig)", () => {
+      const configPath = path.join(tmpDir, "config.toml");
+      const entry: McpServerEntry = {
+        command: "node",
+        args: ["/srv.js"],
+        env: { KANON_API_URL: "http://api.test" },
+      };
+
+      installToolMcpConfig(configPath, {
+        rootKey: "mcp_servers",
+        configFormat: "toml",
+      }, entry);
+
+      expect(fs.existsSync(configPath)).toBe(true);
+      const parsed = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+      expect(parsed["mcp_servers"]).toBeDefined();
+    });
+
+    it("routes json tools to mergeConfig path", () => {
+      const configPath = path.join(tmpDir, "mcp.json");
+      const entry: McpServerEntry = { command: "node", args: ["/srv.js"] };
+
+      installToolMcpConfig(configPath, {
+        rootKey: "mcpServers",
+        configFormat: "json",
+      }, entry);
+
+      const parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      expect(parsed.mcpServers["kanon-mcp"]).toEqual(entry);
+    });
+
+    it("routes toml remove to removeTomlMcpConfig", () => {
+      const configPath = path.join(tmpDir, "config.toml");
+      fs.writeFileSync(
+        configPath,
+        `
+[mcp_servers.kanon-mcp]
+command = "node"
+args = ["/srv.js"]
+`,
+      );
+
+      const removed = removeToolMcpConfig(configPath, {
+        rootKey: "mcp_servers",
+        configFormat: "toml",
+      });
+      expect(removed).toBe(true);
     });
   });
 });
