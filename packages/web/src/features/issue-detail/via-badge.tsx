@@ -22,6 +22,15 @@ const VIA_LABELS: Record<string, string> = {
   cli: "CLI",
 };
 
+/**
+ * The set of `via` values that represent real tool provenance (as opposed to
+ * null / "web" / unknown). Exported so the right-rail "Synced from your tools"
+ * slot can filter to the same set without duplicating the source-of-truth.
+ */
+export const SUPPORTED_TOOL_VIAS: ReadonlySet<string> = new Set(
+  Object.keys(VIA_LABELS),
+);
+
 interface ViaBadgeProps {
   via: string | null;
 }
