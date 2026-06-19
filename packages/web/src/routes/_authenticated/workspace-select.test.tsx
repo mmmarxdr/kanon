@@ -49,10 +49,16 @@ vi.mock("@/stores/toast-store", () => ({
 }));
 
 // --- Auth store mock -------------------------------------------------------
+// Mutable so individual tests can toggle isInstanceAdmin (create is admin-gated).
+const authState = vi.hoisted(() => ({
+  user: { email: "test@example.com", isInstanceAdmin: true } as
+    | { email: string; isInstanceAdmin: boolean }
+    | null,
+}));
 vi.mock("@/stores/auth-store", () => ({
   useAuthStore: Object.assign(
-    (selector: (s: { user: { email: string } | null }) => unknown) =>
-      selector({ user: { email: "test@example.com" } }),
+    (selector: (s: { user: typeof authState.user }) => unknown) =>
+      selector({ user: authState.user }),
     { getState: vi.fn(() => ({ logout: vi.fn() })) },
   ),
 }));
@@ -123,6 +129,8 @@ describe("WorkspaceSelectPage — create-workspace flow", () => {
   beforeEach(() => {
     mockNavigate.mockReset();
     vi.mocked(fetchApi).mockReset();
+    // Default to instance-admin — the create-workspace flow is admin-gated.
+    authState.user = { email: "test@example.com", isInstanceAdmin: true };
   });
 
   afterEach(() => {
@@ -272,5 +280,36 @@ describe("WorkspaceSelectPage — create-workspace flow", () => {
     expect(
       screen.getByRole("textbox", { name: /workspace name/i }),
     ).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // WS-7: Non-admin with no workspaces sees an invite message, NOT a create
+  // form that would 403 (workspace creation is instance-admin-only, KAN-49).
+  // -------------------------------------------------------------------------
+  it("WS-7: non-admin empty state shows an invite message and no create form", () => {
+    authState.user = { email: "test@example.com", isInstanceAdmin: false };
+    const { wrapper } = createWrapper([]);
+    render(<WorkspaceSelectPage />, { wrapper });
+
+    expect(screen.getByTestId("workspace-no-membership")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: /workspace name/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /create workspace/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // WS-8: Non-admin with multiple workspaces does NOT see "+ New workspace".
+  // -------------------------------------------------------------------------
+  it("WS-8: non-admin with multiple workspaces has no '+ New workspace' affordance", () => {
+    authState.user = { email: "test@example.com", isInstanceAdmin: false };
+    const { wrapper } = createWrapper([WORKSPACE_1, WORKSPACE_2]);
+    render(<WorkspaceSelectPage />, { wrapper });
+
+    expect(
+      screen.queryByRole("button", { name: /new workspace/i }),
+    ).not.toBeInTheDocument();
   });
 });
