@@ -6,6 +6,7 @@ import { registerRoute } from "./routes/register";
 import { forgotPasswordRoute } from "./routes/forgot-password";
 import { resetPasswordRoute } from "./routes/reset-password";
 import { verifyEmailRoute } from "./routes/verify-email";
+import { magicLinkRoute } from "./routes/magic-link";
 import { inviteRoute } from "./routes/invite";
 import { authenticatedRoute } from "./routes/_authenticated";
 import { workspaceSelectRoute } from "./routes/_authenticated/workspace-select";
@@ -30,6 +31,7 @@ const routeTree = rootRoute.addChildren([
   forgotPasswordRoute,
   resetPasswordRoute,
   verifyEmailRoute,
+  magicLinkRoute,
   inviteRoute,
   setupRoute,
   authenticatedRoute.addChildren([

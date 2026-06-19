@@ -28,6 +28,10 @@ import {
   VerifyEmailBody,
   VerifyEmailResponse,
   ResendVerificationResponse,
+  MagicLinkBody,
+  MagicLinkResponse,
+  VerifyMagicLinkBody,
+  VerifyMagicLinkResponse,
 } from "./schema.js";
 import { z } from "zod";
 import * as authService from "./service.js";
@@ -484,6 +488,73 @@ export default async function authRoutes(
       const authUser = manualAuth(request);
       await authService.resendVerification(authUser.userId, authUser.email, emailProvider);
       return { message: "If your email is unverified, a new verification email has been sent" };
+    },
+  );
+
+  /**
+   * POST /api/auth/magic-link
+   * Sends a magic-link sign-in email if the account exists.
+   * Always returns 200 to prevent email enumeration (KAN-9).
+   * Rate limited 3/min per IP (parity with forgot-password). Repeated sends to
+   * the same address only rotate the token (requestMagicLink deletes prior
+   * tokens), so inbox accumulation is bounded.
+   * ponytail: per-email throttle would need a second limiter (one keyGenerator
+   * can only bucket one dimension); per-IP is the right baseline — add a
+   * dedicated per-email limiter if rotating-IP inbox spam becomes a real abuse.
+   */
+  app.post(
+    "/magic-link",
+    {
+      config: {
+        rateLimit: {
+          max: 3,
+          timeWindow: "1 minute",
+        },
+      },
+      schema: {
+        body: MagicLinkBody,
+        response: { 200: MagicLinkResponse },
+      },
+    },
+    async (request, _reply) => {
+      await authService.requestMagicLink(
+        (request.body as MagicLinkBody).email,
+        emailProvider,
+      );
+      return {
+        message:
+          "If that email is registered, you will receive a sign-in link",
+      };
+    },
+  );
+
+  /**
+   * POST /api/auth/verify-magic-link
+   * Validates a magic-link token and issues auth cookies + tokens (KAN-9).
+   * Rate limited: 10 attempts per minute per IP.
+   */
+  app.post(
+    "/verify-magic-link",
+    {
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: "1 minute",
+        },
+      },
+      schema: {
+        body: VerifyMagicLinkBody,
+        response: { 200: VerifyMagicLinkResponse },
+      },
+    },
+    async (request, reply) => {
+      const { token } = request.body as VerifyMagicLinkBody;
+      const tokens = await authService.verifyMagicLink(token);
+
+      // Set the same auth cookies as /login
+      setAuthCookies(reply, tokens.accessToken, tokens.refreshToken);
+
+      return tokens;
     },
   );
 }

@@ -159,6 +159,7 @@ model User {
   refreshTokens            RefreshToken[]
   projectMembers           ProjectMember[]
   emailVerificationTokens  EmailVerificationToken[]
+  magicLinkTokens          MagicLinkToken[]
   instanceOwnership        InstanceSettings?
   createdInstanceInvites   InstanceAdminInvite[]
 
@@ -763,6 +764,18 @@ model EmailVerificationToken {
 
   @@index([userId])
   @@map("email_verification_tokens")
+}
+
+model MagicLinkToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  userId    String    @map("user_id") @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now()) @map("created_at")
+  @@index([userId])
+  @@map("magic_link_tokens")
 }
 
 model RefreshToken {

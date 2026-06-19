@@ -14,6 +14,7 @@ import {
   GhostBtn,
   MonoDivider,
   ComingSoonTooltip,
+  SuccessBox,
 } from "@/components/auth-layout";
 
 interface LoginSearch {
@@ -43,6 +44,81 @@ export function LoginForm({ invite, onNavigate }: LoginFormProps) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Magic-link state
+  const [magicLinkSent, setMagicLinkSent] = useState(false);
+  const [magicLinkLoading, setMagicLinkLoading] = useState(false);
+  const [magicLinkError, setMagicLinkError] = useState<string | null>(null);
+
+  async function handleMagicLink() {
+    if (!email.trim()) {
+      setMagicLinkError("Enter your email address above first.");
+      return;
+    }
+    setMagicLinkError(null);
+    setMagicLinkLoading(true);
+    try {
+      const res = await fetch("/api/auth/magic-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email }),
+      });
+      if (!res.ok) {
+        throw new Error("Request failed");
+      }
+      setMagicLinkSent(true);
+    } catch {
+      setMagicLinkError("Could not send sign-in link. Please try again.");
+    } finally {
+      setMagicLinkLoading(false);
+    }
+  }
+
+  // ── Magic-link sent state ─────────────────────────────────────────────────
+  if (magicLinkSent) {
+    return (
+      <AuthLayout
+        eyebrow="Check your inbox"
+        title="Sign-in link sent."
+        subtitle="We emailed you a magic link. Click it to sign in instantly."
+        footer={
+          <div style={{ display: "flex", justifyContent: "flex-end", fontSize: 12, color: "var(--ink-3)" }}>
+            <button
+              type="button"
+              onClick={() => { setMagicLinkSent(false); setMagicLinkError(null); }}
+              style={{ color: "var(--ink-3)" }}
+            >
+              ← Try a different email
+            </button>
+          </div>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+          <div>
+            <H2>Check your email</H2>
+            <Sub>We sent a sign-in link to <strong>{email}</strong>. The link is valid for 15 minutes.</Sub>
+          </div>
+          <SuccessBox>Sign-in link sent — check your inbox (and spam folder).</SuccessBox>
+          {magicLinkError && <ErrorBox>{magicLinkError}</ErrorBox>}
+          <PrimaryBtn
+            type="button"
+            disabled={magicLinkLoading}
+            onClick={() => { void handleMagicLink(); }}
+          >
+            {magicLinkLoading ? "Sending…" : "Resend →"}
+          </PrimaryBtn>
+          <button
+            type="button"
+            onClick={() => void onNavigate({ to: "/login" })}
+            style={{ fontSize: 12, color: "var(--ink-3)", textAlign: "center" }}
+          >
+            Back to sign in with password
+          </button>
+        </div>
+      </AuthLayout>
+    );
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -246,23 +322,30 @@ export function LoginForm({ invite, onNavigate }: LoginFormProps) {
           <PrimaryBtn disabled={loading}>
             {loading ? "Signing in…" : "Sign in →"}
           </PrimaryBtn>
-          <ComingSoonTooltip>
-            <button
-              type="button"
-              disabled
-              data-testid="magic-link-btn"
-              style={{
-                height: 32,
-                fontSize: 12,
-                color: "var(--ink-3)",
-                cursor: "not-allowed",
-                width: "100%",
-                opacity: 0.6,
-              }}
-            >
-              Email me a magic link instead
-            </button>
-          </ComingSoonTooltip>
+          {magicLinkError && (
+            <div data-testid="magic-link-error" style={{ fontSize: 12, color: "var(--bad)" }}>
+              {magicLinkError}
+            </div>
+          )}
+          <button
+            type="button"
+            disabled={magicLinkLoading}
+            data-testid="magic-link-btn"
+            onClick={() => { void handleMagicLink(); }}
+            style={{
+              height: 32,
+              fontSize: 12,
+              color: "var(--accent-ink)",
+              cursor: magicLinkLoading ? "wait" : "pointer",
+              width: "100%",
+              opacity: magicLinkLoading ? 0.6 : 1,
+              textDecoration: "underline",
+              background: "none",
+              border: "none",
+            }}
+          >
+            {magicLinkLoading ? "Sending…" : "Email me a magic link instead"}
+          </button>
         </div>
       </form>
     </AuthLayout>
