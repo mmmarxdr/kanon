@@ -247,11 +247,10 @@ describe("WorkspaceSelectPage — create-workspace flow", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WS-5: "+ New workspace" button is visible when user has ≥2 workspaces
-  // (with exactly 1 workspace, the component auto-redirects and shows a
-  //  spinner — the affordance is only reachable for 2+ workspace users)
+  // WS-5: "+ New workspace" button is visible when user has ≥1 workspace
+  // (instance-admin with exactly 1 workspace stays on picker to create more)
   // -------------------------------------------------------------------------
-  it("WS-5: shows '+ New workspace' affordance when user has two or more workspaces", () => {
+  it("WS-5: shows '+ New workspace' affordance when instance-admin has one or more workspaces", () => {
     const { wrapper } = createWrapper([WORKSPACE_1, WORKSPACE_2]);
     render(<WorkspaceSelectPage />, { wrapper });
 
@@ -311,5 +310,48 @@ describe("WorkspaceSelectPage — create-workspace flow", () => {
     expect(
       screen.queryByRole("button", { name: /new workspace/i }),
     ).not.toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // WS-9: Instance-admin with exactly 1 workspace stays on picker (no redirect).
+  // -------------------------------------------------------------------------
+  it("WS-9: instance-admin with exactly 1 workspace does NOT auto-redirect and sees the workspace and '+ New workspace'", async () => {
+    authState.user = { email: "test@example.com", isInstanceAdmin: true };
+    const { wrapper } = createWrapper([WORKSPACE_1]);
+    render(<WorkspaceSelectPage />, { wrapper });
+
+    // Must NOT auto-redirect
+    await waitFor(() => {
+      // Give the effect a chance to fire — if navigate were called it would have by now
+      expect(mockNavigate).not.toHaveBeenCalledWith(
+        expect.objectContaining({ to: "/inbox" }),
+      );
+      expect(mockNavigate).not.toHaveBeenCalledWith(
+        expect.objectContaining({ to: "/workspaces/$workspaceId/projects" }),
+      );
+    });
+
+    // Workspace listed
+    expect(screen.getByTestId("workspace-item-alpha")).toBeInTheDocument();
+
+    // "+ New workspace" visible
+    expect(
+      screen.getByRole("button", { name: /new workspace/i }),
+    ).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // WS-10: Non-admin with exactly 1 workspace still auto-redirects (unchanged).
+  // -------------------------------------------------------------------------
+  it("WS-10: non-admin with exactly 1 workspace still auto-redirects", async () => {
+    authState.user = { email: "test@example.com", isInstanceAdmin: false };
+    // fetchApi is called for project list by the auto-redirect effect
+    vi.mocked(fetchApi).mockResolvedValue([] as unknown as never);
+    const { wrapper } = createWrapper([WORKSPACE_1]);
+    render(<WorkspaceSelectPage />, { wrapper });
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalled();
+    });
   });
 });

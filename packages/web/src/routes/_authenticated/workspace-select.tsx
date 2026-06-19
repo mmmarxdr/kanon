@@ -205,7 +205,7 @@ export function WorkspaceSelectPage() {
     if (didAutoRedirect.current) return;
     if (!workspacesQuery.data) return;
 
-    if (workspacesQuery.data.length === 1) {
+    if (workspacesQuery.data.length === 1 && !isInstanceAdmin) {
       didAutoRedirect.current = true;
       const workspace = workspacesQuery.data[0]!;
       void fetchApi<Project[]>(`/api/workspaces/${workspace.id}/projects`).then(
@@ -225,7 +225,7 @@ export function WorkspaceSelectPage() {
 
   if (
     workspacesQuery.isLoading ||
-    (workspacesQuery.data?.length === 1 && !didAutoRedirect.current)
+    (workspacesQuery.data?.length === 1 && !isInstanceAdmin && !didAutoRedirect.current)
   ) {
     return (
       <div
@@ -308,7 +308,7 @@ export function WorkspaceSelectPage() {
           kanon
         </span>
         <span style={{ flex: 1 }} />
-        {isInstanceAdmin && workspacesQuery.data && workspacesQuery.data.length > 1 && (
+        {isInstanceAdmin && workspacesQuery.data && workspacesQuery.data.length >= 1 && (
           <button
             type="button"
             aria-label="New workspace"
@@ -458,7 +458,7 @@ export function WorkspaceSelectPage() {
             </div>
           )}
 
-          {workspacesQuery.data && workspacesQuery.data.length > 1 && (
+          {workspacesQuery.data && workspacesQuery.data.length >= 1 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {workspacesQuery.data.map((ws) => {
                 const initial =
