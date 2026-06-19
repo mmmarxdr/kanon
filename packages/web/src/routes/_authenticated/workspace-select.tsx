@@ -189,6 +189,10 @@ interface Project {
 export function WorkspaceSelectPage() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
+  // Workspace creation is instance-admin-only (KAN-49: POST /api/workspaces is
+  // guarded by requireInstanceAdmin). Gate the create affordances on the same
+  // flag so non-admins don't hit a 403 dead-end — they join via invite instead.
+  const isInstanceAdmin = user?.isInstanceAdmin ?? false;
   const didAutoRedirect = useRef(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
 
@@ -201,7 +205,7 @@ export function WorkspaceSelectPage() {
     if (didAutoRedirect.current) return;
     if (!workspacesQuery.data) return;
 
-    if (workspacesQuery.data.length === 1) {
+    if (workspacesQuery.data.length === 1 && !isInstanceAdmin) {
       didAutoRedirect.current = true;
       const workspace = workspacesQuery.data[0]!;
       void fetchApi<Project[]>(`/api/workspaces/${workspace.id}/projects`).then(
@@ -217,11 +221,11 @@ export function WorkspaceSelectPage() {
         },
       );
     }
-  }, [workspacesQuery.data, navigate]);
+  }, [workspacesQuery.data, navigate, isInstanceAdmin]);
 
   if (
     workspacesQuery.isLoading ||
-    (workspacesQuery.data?.length === 1 && !didAutoRedirect.current)
+    (workspacesQuery.data?.length === 1 && !isInstanceAdmin && !didAutoRedirect.current)
   ) {
     return (
       <div
@@ -304,7 +308,7 @@ export function WorkspaceSelectPage() {
           kanon
         </span>
         <span style={{ flex: 1 }} />
-        {workspacesQuery.data && workspacesQuery.data.length > 1 && (
+        {isInstanceAdmin && workspacesQuery.data && workspacesQuery.data.length >= 1 && (
           <button
             type="button"
             aria-label="New workspace"
@@ -395,20 +399,33 @@ export function WorkspaceSelectPage() {
                 background: "var(--panel)",
               }}
             >
-              <p
-                style={{
-                  margin: "0 0 16px",
-                  fontSize: 13,
-                  color: "var(--ink-3)",
-                }}
-              >
-                Create your first workspace to get started.
-              </p>
-              <CreateWorkspaceForm onCreated={handleWorkspaceCreated} />
+              {isInstanceAdmin ? (
+                <>
+                  <p
+                    style={{
+                      margin: "0 0 16px",
+                      fontSize: 13,
+                      color: "var(--ink-3)",
+                    }}
+                  >
+                    Create your first workspace to get started.
+                  </p>
+                  <CreateWorkspaceForm onCreated={handleWorkspaceCreated} />
+                </>
+              ) : (
+                <p
+                  data-testid="workspace-no-membership"
+                  style={{ margin: 0, fontSize: 13, color: "var(--ink-3)", lineHeight: 1.5 }}
+                >
+                  You're not a member of any workspace yet. Ask an instance
+                  admin to invite you — they can send an invite from their
+                  workspace settings.
+                </p>
+              )}
             </div>
           )}
 
-          {showCreateForm && workspacesQuery.data && workspacesQuery.data.length >= 1 && (
+          {showCreateForm && isInstanceAdmin && workspacesQuery.data && workspacesQuery.data.length >= 1 && (
             <div
               style={{
                 padding: 24,
@@ -441,7 +458,7 @@ export function WorkspaceSelectPage() {
             </div>
           )}
 
-          {workspacesQuery.data && workspacesQuery.data.length > 1 && (
+          {workspacesQuery.data && workspacesQuery.data.length >= 1 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {workspacesQuery.data.map((ws) => {
                 const initial =
