@@ -18,6 +18,7 @@ import type { RegisterBody, LoginBody } from "./schema.js";
 import type { EmailProvider } from "../../services/email/types.js";
 import { buildVerifyEmail } from "../../services/email/templates/verify.js";
 import { buildResetEmail } from "../../services/email/templates/reset.js";
+import { buildMagicLinkEmail } from "../../services/email/templates/magic-link.js";
 import { ProjectAssignmentSchema } from "../invite/schema.js";
 import { createProjectMembersInTx } from "../project/project-member-service.js";
 import { acceptInvite, deriveUsername } from "../invite/service.js";
@@ -770,6 +771,120 @@ export async function onboard(token: string) {
       expiresAt: refreshTokenRow.expiresAt.toISOString(),
     };
   });
+}
+
+// ── Magic-link (KAN-9) ────────────────────────────────────────────────────────
+
+/**
+ * Magic-link token TTL: 15 minutes.
+ */
+const MAGIC_LINK_TOKEN_EXPIRY_MS = 15 * 60 * 1000;
+
+/**
+ * Request a magic-link sign-in email for the given address.
+ * Silently returns if the email is not found (no user enumeration).
+ * Deletes any prior magic-link tokens for the user before creating a new one.
+ */
+export async function requestMagicLink(
+  email: string,
+  emailProvider: EmailProvider,
+): Promise<void> {
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, email: true },
+  });
+
+  if (!user) {
+    // Silent return — don't reveal whether the email exists
+    return;
+  }
+
+  // Delete all existing magic-link tokens for this user
+  await prisma.magicLinkToken.deleteMany({
+    where: { userId: user.id },
+  });
+
+  // Generate raw token and store only the hash
+  const token = randomBytes(32).toString("base64url");
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+
+  await prisma.magicLinkToken.create({
+    data: {
+      tokenHash,
+      userId: user.id,
+      expiresAt: new Date(Date.now() + MAGIC_LINK_TOKEN_EXPIRY_MS),
+    },
+  });
+
+  // Build magic-link URL and send email
+  const magicUrl = `${env.APP_URL}/magic-link?token=${token}`;
+  const magicEmail = buildMagicLinkEmail({ url: magicUrl });
+
+  await emailProvider.send({
+    to: user.email,
+    subject: magicEmail.subject,
+    html: magicEmail.html,
+    text: magicEmail.text,
+  });
+}
+
+/**
+ * Verify a magic-link token and return a JWT pair.
+ * Marks the token as used and sets emailVerifiedAt if not already set.
+ * Throws INVALID_MAGIC_LINK (400) if the token is invalid, expired, or already used.
+ * Allows users with passwordHash === null (passwordless accounts).
+ */
+export async function verifyMagicLink(token: string): Promise<{
+  accessToken: string;
+  refreshToken: string;
+}> {
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+
+  const magicToken = await prisma.magicLinkToken.findFirst({
+    where: {
+      tokenHash,
+      usedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+    include: {
+      user: {
+        select: { id: true, email: true, emailVerifiedAt: true },
+      },
+    },
+  });
+
+  if (!magicToken) {
+    throw new AppError(
+      400,
+      "INVALID_MAGIC_LINK",
+      "Invalid or expired magic link",
+    );
+  }
+
+  const { user } = magicToken;
+
+  // Mark token used and optionally set emailVerifiedAt — atomically
+  await prisma.$transaction([
+    prisma.magicLinkToken.update({
+      where: { id: magicToken.id },
+      data: { usedAt: new Date() },
+    }),
+    ...(user.emailVerifiedAt === null
+      ? [
+          prisma.user.update({
+            where: { id: user.id },
+            data: { emailVerifiedAt: new Date() },
+          }),
+        ]
+      : []),
+  ]);
+
+  const payload: TokenPayload = {
+    sub: user.id,
+    email: user.email,
+  };
+
+  return signTokens(payload);
 }
 
 // ── D8: exchange() ────────────────────────────────────────────────────────────

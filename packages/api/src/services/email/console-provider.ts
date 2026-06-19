@@ -9,11 +9,18 @@ export class ConsoleProvider implements EmailProvider {
     console.log(`  Subject: ${message.subject}`);
     console.log("─".repeat(60));
 
-    // Extract and highlight any reset URL for easy copy-paste in dev
-    const urlMatch = message.html.match(/href="([^"]*reset-password[^"]*)"/);
-    if (urlMatch) {
+    // Extract and highlight any action URL for easy copy-paste in dev
+    const resetMatch = message.html.match(/href="([^"]*reset-password[^"]*)"/);
+    if (resetMatch) {
       console.log("");
-      console.log(`  🔗 Reset URL: ${urlMatch[1]}`);
+      console.log(`  🔗 Reset URL: ${resetMatch[1]}`);
+      console.log("");
+    }
+
+    const magicMatch = message.html.match(/href="([^"]*magic-link[^"]*)"/);
+    if (magicMatch) {
+      console.log("");
+      console.log(`  🔗 Magic Link URL: ${magicMatch[1]}`);
       console.log("");
     }
 

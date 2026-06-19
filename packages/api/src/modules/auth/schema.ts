@@ -152,6 +152,40 @@ export const ResetPasswordResponse = z.object({
   message: z.string(),
 });
 
+// ── Magic Link (KAN-9) ────────────────────────────────────────────────────────
+
+/**
+ * POST /api/auth/magic-link request body.
+ */
+export const MagicLinkBody = z.object({
+  email: z.string().email("Invalid email address"),
+});
+export type MagicLinkBody = z.infer<typeof MagicLinkBody>;
+
+/**
+ * POST /api/auth/magic-link response.
+ * Always 200 — no enumeration.
+ */
+export const MagicLinkResponse = z.object({
+  message: z.string(),
+});
+
+/**
+ * POST /api/auth/verify-magic-link request body.
+ */
+export const VerifyMagicLinkBody = z.object({
+  token: z.string().min(1, "Token is required"),
+});
+export type VerifyMagicLinkBody = z.infer<typeof VerifyMagicLinkBody>;
+
+/**
+ * POST /api/auth/verify-magic-link success response.
+ */
+export const VerifyMagicLinkResponse = z.object({
+  accessToken: z.string(),
+  refreshToken: z.string(),
+});
+
 // ── Onboarding (CLI token exchange) ──────────────────────────────────────────
 
 /**
