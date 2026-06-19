@@ -221,7 +221,7 @@ export function WorkspaceSelectPage() {
         },
       );
     }
-  }, [workspacesQuery.data, navigate]);
+  }, [workspacesQuery.data, navigate, isInstanceAdmin]);
 
   if (
     workspacesQuery.isLoading ||
