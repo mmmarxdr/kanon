@@ -495,7 +495,12 @@ export default async function authRoutes(
    * POST /api/auth/magic-link
    * Sends a magic-link sign-in email if the account exists.
    * Always returns 200 to prevent email enumeration (KAN-9).
-   * Rate limited: 3 attempts per minute per IP.
+   * Rate limited 3/min per IP (parity with forgot-password). Repeated sends to
+   * the same address only rotate the token (requestMagicLink deletes prior
+   * tokens), so inbox accumulation is bounded.
+   * ponytail: per-email throttle would need a second limiter (one keyGenerator
+   * can only bucket one dimension); per-IP is the right baseline — add a
+   * dedicated per-email limiter if rotating-IP inbox spam becomes a real abuse.
    */
   app.post(
     "/magic-link",

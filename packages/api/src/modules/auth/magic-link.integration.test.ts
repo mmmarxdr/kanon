@@ -11,6 +11,7 @@ import {
   cleanDatabase,
   disconnectTestDb,
 } from "../../test/helpers.js";
+import { COOKIE_NAMES } from "../../shared/constants.js";
 
 /**
  * Captured emails from the mocked email provider.
@@ -141,7 +142,8 @@ describe("Magic Link", () => {
     expect(sentEmails).toHaveLength(1);
 
     const token = extractMagicToken(sentEmails[0]!.html);
-    expect(token).toBeTruthy();
+    expect(token, "magic-link token must be extractable from email HTML").not.toBeNull();
+    expect(token, "magic-link token must be a non-empty string").toBeTruthy();
 
     // Verify the token
     const verifyRes = await app.inject({
@@ -157,12 +159,15 @@ describe("Magic Link", () => {
     expect(typeof body.accessToken).toBe("string");
     expect(typeof body.refreshToken).toBe("string");
 
-    // Auth cookies must be set
+    // Auth cookies must be set with required security attributes
     const cookies = verifyRes.headers["set-cookie"];
     expect(cookies).toBeDefined();
-    const cookieStr = Array.isArray(cookies) ? cookies.join("; ") : cookies;
-    expect(cookieStr).toContain("access_token=");
-    expect(cookieStr).toContain("refresh_token=");
+    const cookieStr = Array.isArray(cookies) ? cookies.join("; ") : (cookies ?? "");
+    expect(cookieStr).toContain(`${COOKIE_NAMES.ACCESS}=`);
+    expect(cookieStr).toContain(`${COOKIE_NAMES.REFRESH}=`);
+    // HttpOnly and SameSite must be present on auth cookies
+    expect(cookieStr).toMatch(/HttpOnly/i);
+    expect(cookieStr).toMatch(/SameSite=/i);
   });
 
   it("returns 400 when the same token is used a second time (single-use)", async () => {
@@ -175,7 +180,8 @@ describe("Magic Link", () => {
     });
 
     const token = extractMagicToken(sentEmails[0]!.html);
-    expect(token).toBeTruthy();
+    expect(token, "magic-link token must be extractable from email HTML").not.toBeNull();
+    expect(token, "magic-link token must be a non-empty string").toBeTruthy();
 
     // First use — should succeed
     const first = await app.inject({

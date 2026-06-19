@@ -839,13 +839,27 @@ export async function verifyMagicLink(token: string): Promise<{
   refreshToken: string;
 }> {
   const tokenHash = createHash("sha256").update(token).digest("hex");
+  const now = new Date();
 
-  const magicToken = await prisma.magicLinkToken.findFirst({
-    where: {
-      tokenHash,
-      usedAt: null,
-      expiresAt: { gt: new Date() },
-    },
+  // Atomic claim: UPDATE WHERE usedAt IS NULL AND expiresAt > now.
+  // Only one concurrent request can win — the loser gets count 0.
+  const claim = await prisma.magicLinkToken.updateMany({
+    where: { tokenHash, usedAt: null, expiresAt: { gt: now } },
+    data: { usedAt: now },
+  });
+
+  if (claim.count === 0) {
+    throw new AppError(
+      400,
+      "INVALID_MAGIC_LINK",
+      "Invalid or expired magic link",
+    );
+  }
+
+  // Token is atomically claimed — read the full row for user info.
+  // Non-null guaranteed by the successful updateMany above.
+  const magicToken = await prisma.magicLinkToken.findUnique({
+    where: { tokenHash },
     include: {
       user: {
         select: { id: true, email: true, emailVerifiedAt: true },
@@ -853,6 +867,7 @@ export async function verifyMagicLink(token: string): Promise<{
     },
   });
 
+  // Type-safety guard (magicToken is non-null here)
   if (!magicToken) {
     throw new AppError(
       400,
@@ -863,21 +878,14 @@ export async function verifyMagicLink(token: string): Promise<{
 
   const { user } = magicToken;
 
-  // Mark token used and optionally set emailVerifiedAt — atomically
-  await prisma.$transaction([
-    prisma.magicLinkToken.update({
-      where: { id: magicToken.id },
-      data: { usedAt: new Date() },
-    }),
-    ...(user.emailVerifiedAt === null
-      ? [
-          prisma.user.update({
-            where: { id: user.id },
-            data: { emailVerifiedAt: new Date() },
-          }),
-        ]
-      : []),
-  ]);
+  // Set emailVerifiedAt if not already set (plain update, no race possible —
+  // the token claim above already serialized concurrent requests).
+  if (user.emailVerifiedAt === null) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { emailVerifiedAt: new Date() },
+    });
+  }
 
   const payload: TokenPayload = {
     sub: user.id,

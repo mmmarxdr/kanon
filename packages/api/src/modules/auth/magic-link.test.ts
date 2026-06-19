@@ -18,7 +18,9 @@ vi.mock("../../config/prisma.js", () => ({
       deleteMany: vi.fn(),
       create: vi.fn(),
       findFirst: vi.fn(),
+      findUnique: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     $transaction: vi.fn(),
   },
@@ -97,8 +99,10 @@ describe("verifyMagicLink", () => {
     vi.clearAllMocks();
   });
 
-  it("throws 400 when token is not found (bad token)", async () => {
-    vi.mocked(prisma.magicLinkToken.findFirst).mockResolvedValue(null);
+  it("throws 400 when updateMany returns count 0 (bad/expired/already-used token)", async () => {
+    // Atomic gate: count 0 means token not claimable (covers bad token, expired, already-used,
+    // and concurrent race loser — all in one branch).
+    vi.mocked(prisma.magicLinkToken.updateMany).mockResolvedValue({ count: 0 });
 
     await expect(verifyMagicLink("bad-token")).rejects.toMatchObject({
       statusCode: 400,
@@ -106,44 +110,26 @@ describe("verifyMagicLink", () => {
     });
   });
 
-  it("throws 400 when token is expired (findFirst returns null for expired)", async () => {
-    // findFirst with expiresAt: { gt: now } returns null for expired tokens
-    vi.mocked(prisma.magicLinkToken.findFirst).mockResolvedValue(null);
+  it("throws 400 when token is already used — race loser gets count 0", async () => {
+    // Second concurrent request sees count 0 because first already set usedAt
+    vi.mocked(prisma.magicLinkToken.updateMany).mockResolvedValue({ count: 0 });
 
-    await expect(verifyMagicLink("expired-token")).rejects.toMatchObject({
+    await expect(verifyMagicLink("raced-token")).rejects.toMatchObject({
       statusCode: 400,
       code: "INVALID_MAGIC_LINK",
     });
   });
 
-  it("throws 400 when token is already used (usedAt not null — filtered by findFirst)", async () => {
-    vi.mocked(prisma.magicLinkToken.findFirst).mockResolvedValue(null);
-
-    await expect(verifyMagicLink("used-token")).rejects.toMatchObject({
-      statusCode: 400,
-      code: "INVALID_MAGIC_LINK",
-    });
-  });
-
-  it("returns signTokens pair, marks usedAt, and sets emailVerifiedAt when null", async () => {
+  it("returns signTokens pair, marks usedAt atomically, and sets emailVerifiedAt when null", async () => {
     const tokenRow = {
       id: "tok-uuid-1",
-      userId: "user-uuid-1",
       tokenHash: sha256("valid-token"),
       expiresAt: new Date(Date.now() + 10 * 60 * 1000),
-      usedAt: null,
+      usedAt: new Date(), // already set by updateMany
       user: { id: "user-uuid-1", email: "alice@example.com", emailVerifiedAt: null },
     };
-    vi.mocked(prisma.magicLinkToken.findFirst).mockResolvedValue(
-      tokenRow as any,
-    );
-
-    // $transaction with an array of promises — resolve each promise in place
-    vi.mocked(prisma.$transaction).mockImplementation(async (ops: any) => {
-      if (Array.isArray(ops)) return Promise.all(ops);
-      return ops(prisma);
-    });
-    vi.mocked(prisma.magicLinkToken.update).mockResolvedValue({} as any);
+    vi.mocked(prisma.magicLinkToken.updateMany).mockResolvedValue({ count: 1 });
+    vi.mocked(prisma.magicLinkToken.findUnique).mockResolvedValue(tokenRow as any);
     vi.mocked(prisma.user.update).mockResolvedValue({} as any);
 
     const result = await verifyMagicLink("valid-token");
@@ -154,33 +140,41 @@ describe("verifyMagicLink", () => {
     expect(typeof result.accessToken).toBe("string");
     expect(typeof result.refreshToken).toBe("string");
 
-    // Must mark token used in a transaction
-    expect(prisma.$transaction).toHaveBeenCalled();
-  });
-
-  it("returns signTokens pair WITHOUT setting emailVerifiedAt when already verified", async () => {
-    const tokenRow = {
-      id: "tok-uuid-2",
-      userId: "user-uuid-2",
-      tokenHash: sha256("valid-token-2"),
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
-      usedAt: null,
-      user: { id: "user-uuid-2", email: "bob@example.com", emailVerifiedAt: new Date() },
-    };
-    vi.mocked(prisma.magicLinkToken.findFirst).mockResolvedValue(
-      tokenRow as any,
+    // updateMany is the atomic gate
+    expect(prisma.magicLinkToken.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ usedAt: null }),
+        data: expect.objectContaining({ usedAt: expect.any(Date) }),
+      }),
     );
 
-    vi.mocked(prisma.$transaction).mockImplementation(async (ops: any) => {
-      if (Array.isArray(ops)) return Promise.all(ops);
-      return ops(prisma);
-    });
-    vi.mocked(prisma.magicLinkToken.update).mockResolvedValue({} as any);
+    // emailVerifiedAt was null → user.update must be called
+    expect(prisma.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "user-uuid-1" },
+        data: expect.objectContaining({ emailVerifiedAt: expect.any(Date) }),
+      }),
+    );
+  });
+
+  it("returns signTokens pair WITHOUT calling user.update when emailVerifiedAt already set (S-1)", async () => {
+    const tokenRow = {
+      id: "tok-uuid-2",
+      tokenHash: sha256("valid-token-2"),
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      usedAt: new Date(),
+      user: { id: "user-uuid-2", email: "bob@example.com", emailVerifiedAt: new Date() },
+    };
+    vi.mocked(prisma.magicLinkToken.updateMany).mockResolvedValue({ count: 1 });
+    vi.mocked(prisma.magicLinkToken.findUnique).mockResolvedValue(tokenRow as any);
     vi.mocked(prisma.user.update).mockResolvedValue({} as any);
 
     const result = await verifyMagicLink("valid-token-2");
 
     expect(result).toHaveProperty("accessToken");
     expect(result).toHaveProperty("refreshToken");
+
+    // emailVerifiedAt already set — user.update must NOT be called (S-1)
+    expect(prisma.user.update).not.toHaveBeenCalled();
   });
 });

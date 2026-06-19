@@ -112,7 +112,8 @@ test.describe("Magic Link flow @magic-link", () => {
     await page.goto("/magic-link");
 
     await expect(page.getByText("Sign-in failed")).toBeVisible({ timeout: 5_000 });
-    await expect(page.getByText("Back to sign in")).toBeVisible();
+    // "Back to sign in" appears twice (footer link + primary button) — assert at least one.
+    await expect(page.getByText("Back to sign in").first()).toBeVisible();
   });
 
   test("/magic-link page with a bad token shows an error", async ({ page }) => {

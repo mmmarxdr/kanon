@@ -100,15 +100,13 @@ export function LoginForm({ invite, onNavigate }: LoginFormProps) {
             <Sub>We sent a sign-in link to <strong>{email}</strong>. The link is valid for 15 minutes.</Sub>
           </div>
           <SuccessBox>Sign-in link sent — check your inbox (and spam folder).</SuccessBox>
+          {magicLinkError && <ErrorBox>{magicLinkError}</ErrorBox>}
           <PrimaryBtn
             type="button"
-            onClick={() => {
-              setMagicLinkSent(false);
-              setMagicLinkLoading(false);
-              setMagicLinkError(null);
-            }}
+            disabled={magicLinkLoading}
+            onClick={() => { void handleMagicLink(); }}
           >
-            Resend →
+            {magicLinkLoading ? "Sending…" : "Resend →"}
           </PrimaryBtn>
           <button
             type="button"

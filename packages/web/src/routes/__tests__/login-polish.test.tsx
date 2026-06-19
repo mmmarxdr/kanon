@@ -100,4 +100,44 @@ describe("LoginForm — auth screen polish (SSO + magic-link)", () => {
       expect.objectContaining({ method: "POST" }),
     );
   });
+
+  it("LP-7: clicking Resend calls the API again with the same email", async () => {
+    // First call — enters sent state
+    vi.mocked(globalThis.fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({ message: "If that email is registered, you will receive a sign-in link" }),
+    } as Response);
+
+    render(<LoginForm invite={undefined} onNavigate={mockNavigate} />);
+
+    const emailInput = screen.getByLabelText(/work email/i);
+    fireEvent.change(emailInput, { target: { value: "alice@example.com" } });
+
+    fireEvent.click(screen.getByTestId("magic-link-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Check your email/i)).toBeTruthy();
+    });
+
+    // Now in sent state — click Resend
+    const resendBtn = screen.getByRole("button", { name: /resend/i });
+    fireEvent.click(resendBtn);
+
+    await waitFor(() => {
+      // fetch called twice total (first send + resend)
+      expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(2);
+    });
+
+    // Both calls must use the same email
+    const calls = vi.mocked(globalThis.fetch).mock.calls;
+    const body1 = JSON.parse((calls[0]![1] as RequestInit).body as string);
+    const body2 = JSON.parse((calls[1]![1] as RequestInit).body as string);
+    expect(body1.email).toBe("alice@example.com");
+    expect(body2.email).toBe("alice@example.com");
+
+    // After resend completes, still shows sent state (not reset)
+    await waitFor(() => {
+      expect(screen.getByText(/Check your email/i)).toBeTruthy();
+    });
+  });
 });
