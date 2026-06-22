@@ -139,3 +139,14 @@ export const scheduleKeys = {
   details: () => [...scheduleKeys.all, "detail"] as const,
   detail: (issueKey: string) => [...scheduleKeys.details(), issueKey] as const,
 };
+
+/**
+ * Query keys for the schedule-timeline endpoint (KAN-105 PR1).
+ * Nested under "schedule-timeline" to avoid collision with per-issue scheduleKeys.
+ */
+export const scheduleTimelineKeys = {
+  all: ["schedule-timeline"] as const,
+  projects: () => [...scheduleTimelineKeys.all, "project"] as const,
+  project: (projectKey: string) =>
+    [...scheduleTimelineKeys.projects(), projectKey] as const,
+};

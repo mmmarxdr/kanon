@@ -1,8 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
-import { requireIssueRole } from "../../middleware/require-role.js";
-import { IssueKeyParam, UpsertPlanBody, ReviseEstimateBody } from "./schema.js";
+import { requireIssueRole, requireProjectMember } from "../../middleware/require-role.js";
+import { IssueKeyParam, ProjectKeyParam, UpsertPlanBody, ReviseEstimateBody } from "./schema.js";
 import * as scheduleService from "./service.js";
+import * as timelineService from "./timeline-service.js";
 
 /**
  * Schedule routes plugin — PPM KAN-99.
@@ -99,6 +100,31 @@ export default async function scheduleRoutes(
       );
 
       return reply.status(201).send(serializeRevision(revision));
+    },
+  );
+  /**
+   * GET /api/projects/:key/schedule-timeline
+   * Returns ScheduleTimelineRow[] for all issues in the project.
+   * Any project member may read (mirrors GET /api/projects/:key/roadmap guard).
+   * Returns [] for a project with no issues; 404 if project key unknown.
+   * KAN-105 PR1.
+   */
+  app.get(
+    "/projects/:key/schedule-timeline",
+    {
+      preHandler: [requireProjectMember("key")],
+      schema: {
+        params: ProjectKeyParam,
+      },
+    },
+    async (request, reply) => {
+      // request.projectId is set by requireProjectMember (requireProjectRole)
+      // scoped to the caller's workspace — use it directly instead of re-resolving
+      // by key, which would be vulnerable to cross-workspace key collisions.
+      const rows = await timelineService.getProjectScheduleTimeline(
+        request.projectId!,
+      );
+      return reply.status(200).send(rows);
     },
   );
 }
