@@ -22,7 +22,7 @@ Element.prototype.getBoundingClientRect = function () {
   return { ...rect, width: rect.width || 1200, height: rect.height || 600 } as DOMRect;
 };
 
-// ── Mock the hook ────────────────────────────────────────────────────────────
+// ── Mock the hooks ───────────────────────────────────────────────────────────
 
 const mockUseProjectScheduleTimeline = vi.fn();
 
@@ -36,6 +36,11 @@ vi.mock("../use-project-schedule-timeline", async () => {
       mockUseProjectScheduleTimeline(key),
   };
 });
+
+// KAN-105 PR3: mock useUpsertPlanMutation so ScheduleGantt renders without a QueryClient
+vi.mock("../use-upsert-plan-mutation", () => ({
+  useUpsertPlanMutation: () => ({ mutate: vi.fn() }),
+}));
 
 // ── Import AFTER mocks ───────────────────────────────────────────────────────
 

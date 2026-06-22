@@ -1,22 +1,28 @@
 /**
- * KAN-105 PR2 — ThreePlaneRow: renders one issue row with three vertically-
+ * KAN-105 PR3 — ThreePlaneRow: renders one issue row with three vertically-
  * distinguishable Gantt planes using the timeline-scale pixel math.
  *
  * Planes (bottom to top by z-index):
  *   1. Baseline ghost — muted ghost behind the plan, shows original commitment.
- *   2. Plan bar       — solid colored bar, progress fill overlay.
+ *   2. Plan bar       — solid colored bar, progress fill overlay. DRAGGABLE (move).
  *   3. Forecast overlay — translucent accent outline, live reality.
  *   + Slip gap         — warn-colored gap from dueDate to forecastEnd when slipping.
  *
- * No drag, no mutations, no SSE — PR3.
+ * PR3 adds:
+ *   - Horizontal pointer-drag on the plan bar to MOVE the whole plan.
+ *   - onPlanChange callback prop for the parent (ScheduleGantt) to wire the mutation.
+ *   - data-draggable="true" on the plan bar when draggable.
+ *
+ * ponytail: MOVE only (shift start+due by same delta). Per-edge resize handles
+ *   (independent start/due) are a follow-up if needed.
  *
  * Styling mirrors the roadmap timeline-bar.tsx aesthetic using the same
  * CSS-var palette. Written from scratch — does NOT import from roadmap/.
  */
 
-import type { CSSProperties, ReactNode } from "react";
+import { useState, useRef, useCallback, type CSSProperties, type ReactNode, type PointerEvent } from "react";
 import type { ScheduleTimelineRow } from "./use-project-schedule-timeline";
-import { barBox, type DateDomain } from "./timeline-scale";
+import { barBox, pixelToDate, type DateDomain } from "./timeline-scale";
 
 // ── Layout ───────────────────────────────────────────────────────────────────
 
@@ -66,10 +72,18 @@ function tokensForState(state: string): StateTokens {
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
+export interface PlanChangePayload {
+  issueKey: string;
+  startDate: string;
+  dueDate: string;
+}
+
 export interface ThreePlaneRowProps {
   row: ScheduleTimelineRow;
   domain: DateDomain;
   trackWidth: number;
+  /** Called when the user drops the plan bar after dragging (non-zero day delta). */
+  onPlanChange?: (payload: PlanChangePayload) => void;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -79,9 +93,80 @@ export interface ThreePlaneRowProps {
  * The parent (ScheduleGantt) positions this absolutely; this component only
  * handles the horizontal/vertical geometry within a single row.
  */
-export function ThreePlaneRow({ row, domain, trackWidth }: ThreePlaneRowProps) {
+export function ThreePlaneRow({ row, domain, trackWidth, onPlanChange }: ThreePlaneRowProps) {
   const tokens = tokensForState(row.state);
   const isCritical = row.critical === true;
+
+  // ── Drag state ──────────────────────────────────────────────────────────
+  // dragOffsetPx: visual translation applied while dragging (px). Reset on drop.
+  const [dragOffsetPx, setDragOffsetPx] = useState(0);
+  const dragStartXRef = useRef<number | null>(null);
+
+  const isDraggable = !!(row.startDate && row.dueDate && onPlanChange);
+
+  const handlePointerDown = useCallback(
+    (e: PointerEvent<HTMLDivElement>) => {
+      if (!isDraggable) return;
+      // setPointerCapture may be absent in test environments (jsdom).
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* no-op */ }
+      dragStartXRef.current = e.clientX;
+    },
+    [isDraggable],
+  );
+
+  const handlePointerMove = useCallback(
+    (e: PointerEvent<HTMLDivElement>) => {
+      if (dragStartXRef.current === null) return;
+      setDragOffsetPx(e.clientX - dragStartXRef.current);
+    },
+    [],
+  );
+
+  const handlePointerUp = useCallback(
+    (e: PointerEvent<HTMLDivElement>) => {
+      if (dragStartXRef.current === null) return;
+      const totalOffsetPx = e.clientX - dragStartXRef.current;
+      dragStartXRef.current = null;
+      setDragOffsetPx(0);
+
+      if (!onPlanChange || !row.startDate || !row.dueDate) return;
+
+      // Compute the day delta by converting the start and shifted-start positions
+      // back to dates using pixelToDate, then diff in whole days.
+      // We need to know the pixel position of the original startDate so we can
+      // add the offset to it and convert back to a date.
+      //
+      // Approach: use pixelToDate on two reference pixel values.
+      //   anchorPx = some reference pixel (e.g. trackWidth / 2)
+      //   shiftedPx = anchorPx + totalOffsetPx
+      // The day delta = pixelToDate(shiftedPx) - pixelToDate(anchorPx) in days.
+      //
+      // This is equivalent to: delta_days = round(totalOffsetPx / pxPerDay)
+      // where pxPerDay = trackWidth / domainSpanDays.
+      const domainSpanMs = domain.max.getTime() - domain.min.getTime();
+      if (domainSpanMs <= 0 || trackWidth <= 0) return;
+
+      const anchorPx = trackWidth / 2;
+      const anchorDate = pixelToDate(anchorPx, domain, trackWidth);
+      const shiftedDate = pixelToDate(anchorPx + totalOffsetPx, domain, trackWidth);
+      const deltaDays = Math.round(
+        (shiftedDate.getTime() - anchorDate.getTime()) / (1000 * 60 * 60 * 24),
+      );
+
+      if (deltaDays === 0) return; // no-op — skip write
+
+      const deltaMs = deltaDays * 24 * 60 * 60 * 1000;
+      const newStart = new Date(new Date(row.startDate).getTime() + deltaMs);
+      const newDue = new Date(new Date(row.dueDate).getTime() + deltaMs);
+
+      onPlanChange({
+        issueKey: row.issueKey,
+        startDate: newStart.toISOString(),
+        dueDate: newDue.toISOString(),
+      });
+    },
+    [onPlanChange, row, domain, trackWidth],
+  );
 
   // ── Baseline ghost ──────────────────────────────────────────────────────
   let baselineEl: ReactNode = null;
@@ -121,7 +206,7 @@ export function ThreePlaneRow({ row, domain, trackWidth }: ThreePlaneRowProps) {
       position: "absolute",
       top: BAR_TOP,
       height: BAR_H,
-      left: `${box.left}px`,
+      left: `${box.left + dragOffsetPx}px`,
       width: `${box.width}px`,
       borderRadius: 4,
       background: tokens.background,
@@ -132,7 +217,9 @@ export function ThreePlaneRow({ row, domain, trackWidth }: ThreePlaneRowProps) {
       boxShadow: isCritical
         ? `0 0 0 2px var(--warn), 0 0 8px color-mix(in oklch, var(--warn) 30%, transparent)`
         : "none",
-      transition: "box-shadow 120ms ease",
+      transition: dragOffsetPx !== 0 ? "none" : "box-shadow 120ms ease",
+      cursor: isDraggable ? "grab" : undefined,
+      touchAction: "none",
     };
 
     const showProgress = row.progress > 0 && row.progress < 100;
@@ -140,10 +227,14 @@ export function ThreePlaneRow({ row, domain, trackWidth }: ThreePlaneRowProps) {
       <div
         data-testid="plane-plan"
         data-critical={isCritical ? "true" : undefined}
+        data-draggable={isDraggable ? "true" : undefined}
         role={isCritical ? "img" : undefined}
         aria-label={isCritical ? "Critical path issue" : undefined}
         title={isCritical ? "Critical path issue" : undefined}
         style={planStyle}
+        onPointerDown={isDraggable ? handlePointerDown : undefined}
+        onPointerMove={isDraggable ? handlePointerMove : undefined}
+        onPointerUp={isDraggable ? handlePointerUp : undefined}
       >
         {showProgress && (
           <div
