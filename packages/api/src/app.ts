@@ -12,6 +12,7 @@ import { prisma } from "./config/prisma.js";
 import errorHandler from "./plugins/error-handler.js";
 import authPlugin from "./plugins/auth.js";
 import csrfPlugin from "./plugins/csrf.js";
+import metricsPlugin from "./plugins/metrics.js";
 import viaPlugin from "./plugins/via.js";
 import authRoutes from "./modules/auth/routes.js";
 import activityRoutes from "./modules/activity/routes.js";
@@ -78,6 +79,23 @@ export async function buildApp(opts: BuildAppOptions = {}) {
         process.env["NODE_ENV"] !== "production"
           ? { target: "pino-pretty" }
           : undefined,
+      // Observability slice 1: redact secrets from structured log output so
+      // they never reach log aggregators. Pino replaces matched paths with
+      // "[Redacted]". Paths are pino-style dot-notation; Authorization and
+      // cookie cover auth material; password covers login-request bodies.
+      redact: [
+        "req.headers.authorization",
+        "req.headers.cookie",
+        "req.body.password",
+      ],
+      // ^ceiling: extend redact list if new sensitive fields are added (e.g.
+      // req.body.token, req.body.refreshToken).
+      base: { service: "kanon-api" },
+      formatters: {
+        // Emit level as human-readable string ("info") not pino's integer (30).
+        // Aligns with log aggregator expectations (CloudWatch, Datadog, Loki).
+        level: (label: string) => ({ level: label }),
+      },
     },
   });
 
@@ -135,6 +153,10 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(authPlugin);
   await app.register(viaPlugin);
   await app.register(csrfPlugin);
+  // Observability slice 1: Prometheus metrics endpoint (GET /metrics).
+  // Registered after csrf (which early-returns on GET, so no csrf conflict)
+  // and before routes so all route metrics are captured.
+  await app.register(metricsPlugin);
 
   // ─── Domain EventBus ──────────────────────────────────────────────────
   app.decorate("eventBus", eventBus);
