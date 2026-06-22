@@ -29,9 +29,15 @@ vi.mock("../activity/service.js", () => ({
   createActivityLog: vi.fn(),
 }));
 
+// ── Mock issue service (for Fix B: auto-transition) ────────────────────────
+vi.mock("../issue/service.js", () => ({
+  transitionIssue: vi.fn(),
+}));
+
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import { startWork, heartbeat, stopWork, getActiveWorkers, cleanupExpired, recordInterruption } from "./service.js";
+import { transitionIssue } from "../issue/service.js";
 
 const mockIssueFind = vi.mocked(prisma.issue.findUnique);
 const mockIssueUpdate = vi.mocked(prisma.issue.update);
@@ -1203,6 +1209,115 @@ describe("WorkSessionService", () => {
 
       expect(result.workLog).toBeNull();
       expect(mockTransaction).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Fix B (KAN-143): auto-advance issue state on startWork ─────────────────
+  //
+  // startWork must transition backlog/todo → in_progress when opening a session.
+  // Issues already in_progress/review/done must NOT be touched (idempotent).
+  // The transition must use transitionIssue (issue service) so ActivityLog +
+  // issue.transitioned event fire consistently.
+
+  describe("Fix B — auto-advance issue state on startWork", () => {
+    const mockTransitionIssue = vi.mocked(transitionIssue);
+
+    beforeEach(() => {
+      mockTransitionIssue.mockResolvedValue({} as any);
+    });
+
+    it("transitions backlog issue to in_progress on startWork", async () => {
+      const backlogIssue = { ...fakeIssue, state: "backlog", assigneeId: "existing" };
+      mockIssueFind.mockResolvedValue(backlogIssue);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+
+      await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      // via is null when source="mcp" (transport, not identity) and no explicit via passed
+      expect(mockTransitionIssue).toHaveBeenCalledWith(
+        "KAN-42",
+        "in_progress",
+        "member-1",
+        null,
+      );
+    });
+
+    it("transitions todo issue to in_progress on startWork", async () => {
+      const todoIssue = { ...fakeIssue, state: "todo", assigneeId: "existing" };
+      mockIssueFind.mockResolvedValue(todoIssue);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+
+      await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      expect(mockTransitionIssue).toHaveBeenCalledWith(
+        "KAN-42",
+        "in_progress",
+        "member-1",
+        null,
+      );
+    });
+
+    it("does NOT transition in_progress issue (idempotent)", async () => {
+      const inProgressIssue = { ...fakeIssue, state: "in_progress", assigneeId: "existing" };
+      mockIssueFind.mockResolvedValue(inProgressIssue);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+
+      await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      expect(mockTransitionIssue).not.toHaveBeenCalled();
+    });
+
+    it("does NOT transition review issue", async () => {
+      const reviewIssue = { ...fakeIssue, state: "review", assigneeId: "existing" };
+      mockIssueFind.mockResolvedValue(reviewIssue);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+
+      await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      expect(mockTransitionIssue).not.toHaveBeenCalled();
+    });
+
+    it("does NOT transition done issue", async () => {
+      const doneIssue = { ...fakeIssue, state: "done", assigneeId: "existing" };
+      mockIssueFind.mockResolvedValue(doneIssue);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+
+      await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      expect(mockTransitionIssue).not.toHaveBeenCalled();
+    });
+
+    it("swallows transition error — session still opens (best-effort guard)", async () => {
+      const backlogIssue = { ...fakeIssue, state: "backlog", assigneeId: "existing" };
+      mockIssueFind.mockResolvedValue(backlogIssue);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+      mockTransitionIssue.mockRejectedValueOnce(new Error("workflow guard blocked transition"));
+
+      // Must NOT throw — session opens even if transition fails
+      const result = await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      expect(result.session).toEqual(fakeSession);
+    });
+
+    it("auto-assign fires before transition (assign first, then move to in_progress)", async () => {
+      const backlogUnassigned = { ...fakeIssue, state: "backlog", assigneeId: null };
+      mockIssueFind.mockResolvedValue(backlogUnassigned);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+
+      const callOrder: string[] = [];
+      mockIssueUpdate.mockImplementation(async () => { callOrder.push("assign"); return {} as any; });
+      mockTransitionIssue.mockImplementation(async () => { callOrder.push("transition"); return {} as any; });
+
+      await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      expect(callOrder).toEqual(["assign", "transition"]);
     });
   });
 });

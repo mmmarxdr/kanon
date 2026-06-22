@@ -30,6 +30,8 @@ export async function startWork(
 ) {
   const issue = await prisma.issue.findUnique({
     where: { key: issueKey },
+    // KAN-143 Fix B: state is a default scalar field on Issue — no extra select needed.
+    // It is used below to auto-transition backlog/todo → in_progress.
     include: { project: { select: { workspaceId: true, key: true } } },
   });
   if (!issue) {
@@ -189,6 +191,18 @@ export async function startWork(
       });
     } catch {
       // Never let event emission break the mutation
+    }
+  }
+
+  // KAN-143 Fix B: auto-advance issue state backlog/todo → in_progress.
+  // Dynamic import avoids a circular module dependency (issue/service imports work-session/service).
+  // Best-effort: a transition failure (e.g. workflow guard) must never break session opening.
+  if (issue.state === "backlog" || issue.state === "todo") {
+    try {
+      const { transitionIssue } = await import("../issue/service.js");
+      await transitionIssue(issueKey, "in_progress", memberId, via ?? null);
+    } catch {
+      // ponytail: swallowed — session is already created; log if a logger is available
     }
   }
 
