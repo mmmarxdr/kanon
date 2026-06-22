@@ -33,3 +33,9 @@ export const IssueKeyParam = z.object({
   key: z.string(),
 });
 export type IssueKeyParam = z.infer<typeof IssueKeyParam>;
+
+/** URL param for project-key routes (KAN-105 PR1). */
+export const ProjectKeyParam = z.object({
+  key: z.string(),
+});
+export type ProjectKeyParam = z.infer<typeof ProjectKeyParam>;
