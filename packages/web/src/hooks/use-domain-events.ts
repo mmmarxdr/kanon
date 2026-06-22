@@ -153,6 +153,7 @@ export function useDomainEvents(workspaceId: string | undefined): void {
 
     // ── Cleanup ───────────────────────────────────────────────────────
     return () => {
+      es.removeEventListener("ppm.forecast.updated", handleForecastEvent);
       es.close();
       eventSourceRef.current = null;
     };

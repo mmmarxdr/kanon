@@ -103,6 +103,30 @@ describe("useDomainEvents — ppm.forecast.updated SSE handler (KAN-105 PR3)", (
     );
   });
 
+  it("removes ppm.forecast.updated listener on cleanup (no invalidate after unmount)", async () => {
+    const { queryClient, wrapper } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { useDomainEvents } = await import("../use-domain-events");
+    const { unmount } = renderHook(() => useDomainEvents(WORKSPACE_ID), { wrapper });
+
+    // Unmount — cleanup should remove the listener
+    unmount();
+
+    act(() => {
+      FakeEventSource.lastInstance!.dispatch("ppm.forecast.updated", {
+        projectId: "project-123",
+      });
+    });
+
+    // After unmount, dispatching the event must NOT trigger invalidation
+    expect(invalidateSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        queryKey: scheduleTimelineKeys.projects(),
+      }),
+    );
+  });
+
   it("ppm.forecast.updated does NOT invalidate unrelated issue or project keys", async () => {
     const { queryClient, wrapper } = createWrapper();
     const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");

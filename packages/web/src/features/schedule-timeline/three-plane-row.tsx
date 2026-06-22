@@ -104,6 +104,12 @@ export function ThreePlaneRow({ row, domain, trackWidth, onPlanChange }: ThreePl
 
   const isDraggable = !!(row.startDate && row.dueDate && onPlanChange);
 
+  /** Resets all drag state without writing — used by cancel and lost-capture. */
+  const resetDrag = useCallback(() => {
+    dragStartXRef.current = null;
+    setDragOffsetPx(0);
+  }, []);
+
   const handlePointerDown = useCallback(
     (e: PointerEvent<HTMLDivElement>) => {
       if (!isDraggable) return;
@@ -158,6 +164,11 @@ export function ThreePlaneRow({ row, domain, trackWidth, onPlanChange }: ThreePl
       const deltaMs = deltaDays * 24 * 60 * 60 * 1000;
       const newStart = new Date(new Date(row.startDate).getTime() + deltaMs);
       const newDue = new Date(new Date(row.dueDate).getTime() + deltaMs);
+
+      // Snap to UTC midnight: preserve day-granular invariant regardless of
+      // the original date's time component.
+      newStart.setUTCHours(0, 0, 0, 0);
+      newDue.setUTCHours(0, 0, 0, 0);
 
       onPlanChange({
         issueKey: row.issueKey,
@@ -235,6 +246,8 @@ export function ThreePlaneRow({ row, domain, trackWidth, onPlanChange }: ThreePl
         onPointerDown={isDraggable ? handlePointerDown : undefined}
         onPointerMove={isDraggable ? handlePointerMove : undefined}
         onPointerUp={isDraggable ? handlePointerUp : undefined}
+        onPointerCancel={isDraggable ? resetDrag : undefined}
+        onLostPointerCapture={isDraggable ? resetDrag : undefined}
       >
         {showProgress && (
           <div

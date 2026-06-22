@@ -18,7 +18,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
 import type { ScheduleTimelineRow } from "../use-project-schedule-timeline";
 import { ThreePlaneRow } from "../three-plane-row";
-import { computeDomain } from "../timeline-scale";
+import { computeDomain, pixelToDate } from "../timeline-scale";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -180,6 +180,120 @@ describe("ThreePlaneRow — null plan row is not draggable", () => {
 
     expect(container.querySelector("[data-testid='plane-plan']")).toBeNull();
     expect(onPlanChange).not.toHaveBeenCalled();
+  });
+});
+
+// ── pointercancel resets drag without writing ─────────────────────────────────
+
+describe("ThreePlaneRow — pointercancel resets drag without calling onPlanChange", () => {
+  it("fires pointercancel after a move → does NOT call onPlanChange and offset resets to 0", () => {
+    const row = makeRow();
+    const domain = makeDomain(row);
+    const onPlanChange = vi.fn();
+
+    const { container } = render(
+      <ThreePlaneRow
+        row={row}
+        domain={domain}
+        trackWidth={TRACK_W}
+        onPlanChange={onPlanChange}
+      />,
+    );
+
+    const plan = container.querySelector("[data-testid='plane-plan']") as HTMLElement;
+    expect(plan).toBeTruthy();
+
+    const domainSpanMs = domain.max.getTime() - domain.min.getTime();
+    const domainSpanDays = domainSpanMs / (1000 * 60 * 60 * 24);
+    const pxPerDay = TRACK_W / domainSpanDays;
+    const dragPx = Math.round(7 * pxPerDay);
+
+    fireEvent.pointerDown(plan, { clientX: 0, pointerId: 1 });
+    fireEvent.pointerMove(plan, { clientX: dragPx, pointerId: 1 });
+    // Browser cancels the gesture (touch scroll, system gesture, etc.)
+    fireEvent.pointerCancel(plan, { clientX: dragPx, pointerId: 1 });
+
+    // Must NOT write anything
+    expect(onPlanChange).not.toHaveBeenCalled();
+    // Bar offset must have been reset: left should equal base (no dragOffsetPx)
+    const baseLeft = parseFloat(plan.style.left);
+    // After cancel the left should be back to what barBox computes (no offset)
+    // We verify by re-rendering without drag and comparing
+    const { container: freshContainer } = render(
+      <ThreePlaneRow
+        row={row}
+        domain={domain}
+        trackWidth={TRACK_W}
+        onPlanChange={onPlanChange}
+      />,
+    );
+    const freshPlan = freshContainer.querySelector("[data-testid='plane-plan']") as HTMLElement;
+    expect(baseLeft).toBe(parseFloat(freshPlan.style.left));
+  });
+});
+
+// ── UTC midnight snap ─────────────────────────────────────────────────────────
+
+describe("ThreePlaneRow — drag output dates are snapped to UTC midnight", () => {
+  it("emits T00:00:00.000Z dates even when row dates carry a non-midnight time", () => {
+    const row = makeRow({
+      startDate: "2026-03-01T14:00:00Z",
+      dueDate: "2026-03-15T14:00:00Z",
+    });
+    const domain = makeDomain(row);
+    const onPlanChange = vi.fn();
+
+    const { container } = render(
+      <ThreePlaneRow
+        row={row}
+        domain={domain}
+        trackWidth={TRACK_W}
+        onPlanChange={onPlanChange}
+      />,
+    );
+
+    const plan = container.querySelector("[data-testid='plane-plan']") as HTMLElement;
+    expect(plan).toBeTruthy();
+
+    const domainSpanMs = domain.max.getTime() - domain.min.getTime();
+    const domainSpanDays = domainSpanMs / (1000 * 60 * 60 * 24);
+    const pxPerDay = TRACK_W / domainSpanDays;
+    // Drag at least 3 days worth of pixels to guarantee a non-zero delta
+    const dragPx = Math.round(3 * pxPerDay);
+
+    fireEvent.pointerDown(plan, { clientX: 0, pointerId: 1 });
+    fireEvent.pointerMove(plan, { clientX: dragPx, pointerId: 1 });
+    fireEvent.pointerUp(plan, { clientX: dragPx, pointerId: 1 });
+
+    expect(onPlanChange).toHaveBeenCalledTimes(1);
+    const call = onPlanChange.mock.calls[0]![0] as { startDate: string; dueDate: string };
+
+    // Both emitted ISO strings must end in T00:00:00.000Z (UTC midnight)
+    expect(call.startDate).toMatch(/T00:00:00\.000Z$/);
+    expect(call.dueDate).toMatch(/T00:00:00\.000Z$/);
+
+    // Duration must be preserved (14 days — snapping both by equal amounts)
+    const emittedStart = new Date(call.startDate).getTime();
+    const emittedDue = new Date(call.dueDate).getTime();
+    expect(emittedDue - emittedStart).toBe(14 * 24 * 60 * 60 * 1000);
+
+    // Compute the actual delta that the pixel math will produce (same logic as component)
+    const anchorPx = TRACK_W / 2;
+    const anchorDate = pixelToDate(anchorPx, domain, TRACK_W);
+    const shiftedDate = pixelToDate(anchorPx + dragPx, domain, TRACK_W);
+    const deltaDays = Math.round(
+      (shiftedDate.getTime() - anchorDate.getTime()) / (1000 * 60 * 60 * 24),
+    );
+    expect(deltaDays).toBeGreaterThan(0); // guard: must be a real drag
+
+    // Original dates snapped to midnight, then shifted by deltaDays
+    const expectedStart = new Date("2026-03-01T00:00:00Z");
+    expectedStart.setUTCDate(expectedStart.getUTCDate() + deltaDays);
+    const expectedDue = new Date("2026-03-15T00:00:00Z");
+    expectedDue.setUTCDate(expectedDue.getUTCDate() + deltaDays);
+
+    expect(call.startDate.slice(0, 10)).toBe(expectedStart.toISOString().slice(0, 10));
+    expect(call.dueDate.slice(0, 10)).toBe(expectedDue.toISOString().slice(0, 10));
   });
 });
 
