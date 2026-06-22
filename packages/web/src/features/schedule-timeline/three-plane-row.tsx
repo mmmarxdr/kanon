@@ -140,6 +140,7 @@ export function ThreePlaneRow({ row, domain, trackWidth }: ThreePlaneRowProps) {
       <div
         data-testid="plane-plan"
         data-critical={isCritical ? "true" : undefined}
+        role={isCritical ? "img" : undefined}
         aria-label={isCritical ? "Critical path issue" : undefined}
         title={isCritical ? "Critical path issue" : undefined}
         style={planStyle}
@@ -216,6 +217,7 @@ export function ThreePlaneRow({ row, domain, trackWidth }: ThreePlaneRowProps) {
       slipEl = (
         <div
           data-testid="slip-gap"
+          role="img"
           style={slipStyle}
           title={slipLabel}
           aria-label={slipLabel}
