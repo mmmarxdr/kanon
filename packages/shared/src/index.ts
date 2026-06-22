@@ -42,6 +42,15 @@ export {
 export type { IssueSchedule, EstimateRevision } from "./schedule.js";
 
 export {
+  scheduleTimelineRowSchema,
+  scheduleTimelineResponseSchema,
+} from "./schedule-timeline.js";
+export type {
+  ScheduleTimelineRow,
+  ScheduleTimelineResponse,
+} from "./schedule-timeline.js";
+
+export {
   timeEntryStatusSchema,
   timeEntrySchema,
 } from "./timesheet.js";
