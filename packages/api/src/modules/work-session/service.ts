@@ -4,6 +4,7 @@ import { createActivityLog } from "../activity/service.js";
 import { normalizeVia } from "../../shared/via.js";
 import { AppError } from "../../shared/types.js";
 import { autoSubscribe } from "../issue-subscription/service.js";
+import { ORDERED_STATES } from "../../shared/constants.js";
 
 /** Sessions with lastHeartbeat older than this are considered expired. */
 const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -27,6 +28,7 @@ export async function startWork(
   userId: string,
   source: string = "mcp",
   via?: string | null,
+  logger?: { info?: (obj: unknown, msg: string) => void; error?: (obj: unknown, msg: string) => void },
 ) {
   const issue = await prisma.issue.findUnique({
     where: { key: issueKey },
@@ -194,15 +196,24 @@ export async function startWork(
     }
   }
 
-  // KAN-143 Fix B: auto-advance issue state backlog/todo → in_progress.
+  // KAN-143 Fix B: auto-advance issue state → in_progress when the issue is in any
+  // pre-in_progress state (backlog, analysis, todo). Uses ORDERED_STATES index comparison
+  // so this remains correct as the pipeline evolves — any state whose index is before
+  // "in_progress" triggers the transition; in_progress/review/done are left untouched.
+  //
+  // FIX 4: reusing transitionIssue is intentional — it fires the full transition cascade
+  // (ActivityLog, issue.transitioned event, checkAndAdvanceParent, syncRoadmapItemStatus),
+  // so opening a session reflects on the board exactly like a manual state move.
+  //
   // Dynamic import avoids a circular module dependency (issue/service imports work-session/service).
   // Best-effort: a transition failure (e.g. workflow guard) must never break session opening.
-  if (issue.state === "backlog" || issue.state === "todo") {
+  if (ORDERED_STATES.indexOf(issue.state as typeof ORDERED_STATES[number]) < ORDERED_STATES.indexOf("in_progress")) {
     try {
       const { transitionIssue } = await import("../issue/service.js");
       await transitionIssue(issueKey, "in_progress", memberId, via ?? null);
-    } catch {
-      // ponytail: swallowed — session is already created; log if a logger is available
+    } catch (err) {
+      // Best-effort: session is already created; log for observability but do not throw.
+      logger?.error?.({ err, issueKey }, "auto-transition on startWork failed");
     }
   }
 

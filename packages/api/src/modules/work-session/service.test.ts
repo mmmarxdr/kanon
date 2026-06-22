@@ -53,6 +53,9 @@ const fakeIssue = {
   id: "issue-1",
   key: "KAN-42",
   assigneeId: null,
+  // state: "in_progress" so pre-existing startWork tests deterministically
+  // do NOT trigger the auto-transition guard (Fix B test hygiene).
+  state: "in_progress",
   project: { workspaceId: "ws-1", key: "KAN" },
 } as any;
 
@@ -1318,6 +1321,57 @@ describe("WorkSessionService", () => {
       await startWork("KAN-42", "member-1", "user-1", "mcp");
 
       expect(callOrder).toEqual(["assign", "transition"]);
+    });
+
+    // ── FIX 1: generalize guard to all pre-in_progress states (ORDERED_STATES) ──
+
+    it("transitions analysis issue to in_progress on startWork (FIX 1 generalization)", async () => {
+      const analysisIssue = { ...fakeIssue, state: "analysis", assigneeId: "existing" };
+      mockIssueFind.mockResolvedValue(analysisIssue);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+
+      await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      expect(mockTransitionIssue).toHaveBeenCalledWith(
+        "KAN-42",
+        "in_progress",
+        "member-1",
+        null,
+      );
+    });
+
+    // ── FIX 2: logger threading — logger?.error called on transition failure ──
+
+    it("calls logger.error when transition fails (FIX 2: no silent swallow)", async () => {
+      const backlogIssue = { ...fakeIssue, state: "backlog", assigneeId: "existing" };
+      mockIssueFind.mockResolvedValue(backlogIssue);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+      mockTransitionIssue.mockRejectedValueOnce(new Error("db down"));
+
+      const logger = { info: vi.fn(), error: vi.fn() };
+      const result = await startWork("KAN-42", "member-1", "user-1", "mcp", undefined, logger);
+
+      // Session still opens
+      expect(result.session).toEqual(fakeSession);
+      // Error was logged
+      expect(logger.error).toHaveBeenCalledOnce();
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ issueKey: "KAN-42" }),
+        expect.stringContaining("auto-transition"),
+      );
+    });
+
+    it("does not throw when no logger provided and transition fails (backward-compat)", async () => {
+      const backlogIssue = { ...fakeIssue, state: "backlog", assigneeId: "existing" };
+      mockIssueFind.mockResolvedValue(backlogIssue);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+      mockTransitionIssue.mockRejectedValueOnce(new Error("workflow guard"));
+
+      // No logger argument — must not throw
+      await expect(startWork("KAN-42", "member-1", "user-1", "mcp")).resolves.toBeTruthy();
     });
   });
 });
