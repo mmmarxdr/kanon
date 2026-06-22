@@ -13,7 +13,6 @@
  */
 
 import { prisma } from "../../config/prisma.js";
-import { AppError } from "../../shared/types.js";
 import type { ScheduleTimelineRow } from "@kanon/shared";
 
 // ── Types for internal mapping ────────────────────────────────────────────
@@ -87,28 +86,18 @@ export function serializeTimelineRow(issue: IssueWithRelations): ScheduleTimelin
 // ── getProjectScheduleTimeline ────────────────────────────────────────────
 
 /**
- * Fetch all issues for a project (by project key) and return their
- * three-plane schedule data.
+ * Fetch all issues for a project (by middleware-resolved projectId) and return
+ * their three-plane schedule data.
  *
- * @throws AppError(404) if the project key is unknown
+ * The caller must pass the projectId already resolved and authorized by the
+ * requireProjectMember/requireProjectRole middleware — no additional project
+ * lookup is performed here.
  */
 export async function getProjectScheduleTimeline(
-  projectKey: string,
+  projectId: string,
 ): Promise<ScheduleTimelineRow[]> {
-  // Resolve project — 404 if unknown (mirrors roadmap route behaviour).
-  // Project.key is unique within a workspace but not globally; use findFirst.
-  // ponytail: assumes keys are unique across workspaces in practice (single-tenant v1).
-  const project = await prisma.project.findFirst({
-    where: { key: projectKey },
-    select: { id: true },
-  });
-
-  if (!project) {
-    throw new AppError(404, "PROJECT_NOT_FOUND", `Project "${projectKey}" not found`);
-  }
-
   const issues = await prisma.issue.findMany({
-    where: { projectId: project.id },
+    where: { projectId },
     select: {
       id: true,
       key: true,

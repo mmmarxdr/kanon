@@ -288,7 +288,7 @@ describe("Schedule Timeline Routes (integration)", () => {
         },
       });
 
-      await prisma.issue.create({
+      const scheduleOnly = await prisma.issue.create({
         data: {
           key: `${project.key}-2`,
           title: "Schedule only",
@@ -297,6 +297,10 @@ describe("Schedule Timeline Routes (integration)", () => {
           projectId: project.id,
           sequenceNum: 2,
         },
+      });
+      // Add IssueSchedule so this is genuinely schedule-only (no IssueForecast)
+      await prisma.issueSchedule.create({
+        data: { issueId: scheduleOnly.id, progress: 0 },
       });
 
       await prisma.issue.create({
@@ -320,6 +324,81 @@ describe("Schedule Timeline Routes (integration)", () => {
       const body = res.json();
       // All 3 issues must appear
       expect(body).toHaveLength(3);
+    });
+
+    it("STL-8: cross-workspace same key — member of WS-A sees only WS-A issues (never WS-B)", async () => {
+      // Seed workspace A with project key "ACME" and one issue
+      const wsA = await seedTestWorkspace();
+      const memberA = await seedTestMemberWithRole(wsA.id, "member");
+      const projectA = await seedTestProject(wsA.id, "ACME");
+      await seedTestProjectMember(memberA.userId, projectA.id, "member");
+      await prisma.issue.create({
+        data: {
+          key: "ACME-1",
+          title: "WS-A issue",
+          type: "task",
+          state: "backlog",
+          projectId: projectA.id,
+          sequenceNum: 1,
+        },
+      });
+
+      // Seed workspace B with a DIFFERENT project also keyed "ACME" and one issue
+      const wsB = await seedTestWorkspace();
+      const projectB = await seedTestProject(wsB.id, "ACME");
+      await prisma.issue.create({
+        data: {
+          key: "ACME-B-1",
+          title: "WS-B issue",
+          type: "task",
+          state: "backlog",
+          projectId: projectB.id,
+          sequenceNum: 1,
+        },
+      });
+
+      // memberA (only in WS-A) calls the endpoint with key "ACME"
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/projects/ACME/schedule-timeline`,
+        headers: { authorization: `Bearer ${memberA.token}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      // Must return exactly WS-A's issue — never WS-B's
+      expect(body).toHaveLength(1);
+      expect(body[0].title).toBe("WS-A issue");
+    });
+
+    it("STL-9: cross-workspace same key — outsider with no membership in either workspace gets 404", async () => {
+      // Seed workspace A with project key "ACME"
+      const wsA = await seedTestWorkspace();
+      const projectA = await seedTestProject(wsA.id, "ACME");
+      await prisma.issue.create({
+        data: {
+          key: "ACME-2",
+          title: "WS-A issue 2",
+          type: "task",
+          state: "backlog",
+          projectId: projectA.id,
+          sequenceNum: 1,
+        },
+      });
+
+      // Outsider in an unrelated workspace — no membership in WS-A
+      const wsOther = await seedTestWorkspace();
+      const outsider = await seedTestMemberWithRole(wsOther.id, "member");
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/projects/ACME/schedule-timeline`,
+        headers: { authorization: `Bearer ${outsider.token}` },
+      });
+
+      // requireProjectRole scopes lookup to the caller's workspaces — ACME
+      // does not exist in wsOther, so the middleware returns 404
+      expect(res.statusCode).toBe(404);
     });
   });
 });

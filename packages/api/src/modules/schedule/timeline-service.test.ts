@@ -105,6 +105,36 @@ describe("serializeTimelineRow", () => {
     expect(row.floatDays).toBeNull();
   });
 
+  it("STR-5: maps an issue with forecast-only (no schedule) → plan/baseline null, forecast populated", () => {
+    const row = serializeTimelineRow({
+      ...BASE_ISSUE,
+      schedule: null,
+      forecast: {
+        forecastStart: new Date("2026-09-01T00:00:00.000Z"),
+        forecastEnd: new Date("2026-09-30T00:00:00.000Z"),
+        slipDays: 7,
+        critical: true,
+        floatDays: 0,
+      },
+    });
+
+    // Plan plane — all null because no schedule row
+    expect(row.startDate).toBeNull();
+    expect(row.dueDate).toBeNull();
+    expect(row.progress).toBe(0);
+
+    // Baseline plane — all null because no schedule row
+    expect(row.baselineStart).toBeNull();
+    expect(row.baselineEnd).toBeNull();
+
+    // Forecast plane — populated from IssueForecast row
+    expect(row.forecastStart).toBe("2026-09-01T00:00:00.000Z");
+    expect(row.forecastEnd).toBe("2026-09-30T00:00:00.000Z");
+    expect(row.slipDays).toBe(7);
+    expect(row.critical).toBe(true);
+    expect(row.floatDays).toBe(0);
+  });
+
   it("STR-4: null dates in schedule remain null (not converted)", () => {
     const row = serializeTimelineRow({
       ...BASE_ISSUE,

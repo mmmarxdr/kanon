@@ -118,8 +118,11 @@ export default async function scheduleRoutes(
       },
     },
     async (request, reply) => {
+      // request.projectId is set by requireProjectMember (requireProjectRole)
+      // scoped to the caller's workspace — use it directly instead of re-resolving
+      // by key, which would be vulnerable to cross-workspace key collisions.
       const rows = await timelineService.getProjectScheduleTimeline(
-        request.params.key,
+        request.projectId!,
       );
       return reply.status(200).send(rows);
     },
