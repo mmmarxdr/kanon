@@ -148,8 +148,19 @@ describe("kanon_report_incident", () => {
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.content[0]!.text);
     expect(parsed).toHaveProperty("issueKey", "KAN-99");
-    expect(parsed).toHaveProperty("sessionId");
+    // Assert the exact value (not just presence) — a mutant that replaces the
+    // session id lookup / `?? null` fallback must change this and be killed.
+    expect(parsed.sessionId).toBe("ws-uuid-1");
     expect(parsed).toHaveProperty("ok", true);
+  });
+
+  it("sessionId falls back to null when the session has no id", async () => {
+    mockClient.startWork = vi.fn().mockResolvedValue({ session: {}, warnings: [] });
+
+    const result = await tool.handler({ projectKey: "KAN", title: "[Ops] DB down" });
+
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed.sessionId).toBeNull();
   });
 
   it("passes optional description to createIssue", async () => {
@@ -174,6 +185,22 @@ describe("kanon_report_incident", () => {
     expect(createCall[1]).toHaveProperty("groupKey", "ops-incidents");
   });
 
+  it("omits description from createIssue body when not provided", async () => {
+    await tool.handler({ projectKey: "KAN", title: "[Ops] DB down" });
+
+    const createCall = mockClient.createIssue.mock.calls[0] as [string, Record<string, unknown>];
+    // The `description !== undefined` guard must NOT add the key when absent —
+    // a mutant forcing the conditional true would set description:undefined.
+    expect(createCall[1]).not.toHaveProperty("description");
+  });
+
+  it("omits groupKey from createIssue body when not provided", async () => {
+    await tool.handler({ projectKey: "KAN", title: "[Ops] DB down" });
+
+    const createCall = mockClient.createIssue.mock.calls[0] as [string, Record<string, unknown>];
+    expect(createCall[1]).not.toHaveProperty("groupKey");
+  });
+
   it("error path: startWork fails after issue created → error names the issue key", async () => {
     mockClient.startWork = vi.fn().mockRejectedValue(new Error("session conflict"));
 
@@ -181,8 +208,13 @@ describe("kanon_report_incident", () => {
 
     expect(result.isError).toBe(true);
     const parsed = JSON.parse(result.content[0]!.text);
-    // Error must surface the created issue key so it's not silently orphaned
+    // Error must surface the created issue key AND the recovery guidance, so it's
+    // not silently orphaned. Assert content from BOTH template lines + the
+    // underlying failure reason so mutating either line to empty is caught.
     expect(parsed.error).toContain("KAN-99");
+    expect(parsed.error).toContain("was created but");
+    expect(parsed.error).toContain("session conflict");
+    expect(parsed.error).toContain("kanon_start_work");
   });
 
   it("error path: createIssue fails → returns errorResult (no startWork called)", async () => {
@@ -261,6 +293,14 @@ describe("kanon_propose_estimate", () => {
 
     const [, body] = mockClient.createProposal.mock.calls[0] as [string, Record<string, unknown>];
     expect(body).toHaveProperty("reason", "Based on similar past work");
+  });
+
+  it("omits reason from the proposal body when no rationale is given", async () => {
+    await tool.handler({ workspaceId: "ws-uuid-1", issueKey: "KAN-42", estimateHours: 3 });
+
+    const [, body] = mockClient.createProposal.mock.calls[0] as [string, Record<string, unknown>];
+    // The `rationale !== undefined` guard must NOT add the key when absent.
+    expect(body).not.toHaveProperty("reason");
   });
 
   it("error path: createProposal throws → returns errorResult", async () => {
