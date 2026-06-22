@@ -42,7 +42,7 @@ set -euo pipefail
 # only the file:// local dev/test seam is exempt (not a network origin).
 EXPECTED_SHA256=""
 
-KANON_MCP_VERSION="0.6.3"
+KANON_MCP_VERSION="0.7.0"
 KANON_REPO="${KANON_REPO:-mmmarxdr/kanon}"
 DEFAULT_BASE_URL="https://github.com/${KANON_REPO}/releases/download/mcp-v${KANON_MCP_VERSION}"
 BASE_URL="${KANON_INSTALL_BASE_URL:-$DEFAULT_BASE_URL}"
