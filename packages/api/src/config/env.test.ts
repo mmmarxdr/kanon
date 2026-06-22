@@ -113,6 +113,56 @@ describe("envSchema (base) — COOKIE_SECRET empty-string guard", () => {
   });
 });
 
+// Observability slice 1: METRICS_TOKEN production guard
+describe("envSchemaWithProductionChecks — METRICS_TOKEN in production", () => {
+  const prodBase = {
+    DATABASE_URL: "postgresql://user:pass@localhost:5432/kanon",
+    JWT_SECRET: "a".repeat(32),
+    JWT_REFRESH_SECRET: "b".repeat(32),
+    COOKIE_SECRET: "c".repeat(32),
+    NODE_ENV: "production",
+  };
+
+  it("fails when METRICS_TOKEN is absent in production", () => {
+    const result = envSchemaWithProductionChecks.safeParse({ ...prodBase });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const messages = result.error.issues.map((i) => i.message);
+      expect(messages).toContain("METRICS_TOKEN is required in production");
+    }
+  });
+
+  it("passes when METRICS_TOKEN is set in production", () => {
+    const result = envSchemaWithProductionChecks.safeParse({
+      ...prodBase,
+      METRICS_TOKEN: "secret-token-value",
+    });
+    if (!result.success) {
+      const tokenIssues = result.error.issues.filter((i) =>
+        i.path.includes("METRICS_TOKEN"),
+      );
+      expect(tokenIssues).toHaveLength(0);
+    } else {
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it("passes (no METRICS_TOKEN error) in development without token", () => {
+    const result = envSchemaWithProductionChecks.safeParse({
+      DATABASE_URL: "postgresql://user:pass@localhost:5432/kanon",
+      JWT_SECRET: "a".repeat(16),
+      JWT_REFRESH_SECRET: "b".repeat(16),
+      NODE_ENV: "development",
+    });
+    if (!result.success) {
+      const tokenIssues = result.error.issues.filter((i) =>
+        i.path.includes("METRICS_TOKEN"),
+      );
+      expect(tokenIssues).toHaveLength(0);
+    }
+  });
+});
+
 // KAN-102: forecast engine env vars
 describe("envSchema — FORECAST_* env vars", () => {
   const base = {

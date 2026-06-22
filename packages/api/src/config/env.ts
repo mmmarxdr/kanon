@@ -122,6 +122,9 @@ export const envSchema = z.object({
     .default("8")
     .transform((val) => parseInt(val, 10))
     .pipe(z.number().int().min(1).max(24)),
+  // Observability slice 1: bearer token for GET /metrics scrape endpoint.
+  // Required in production (enforced by superRefine below), optional in dev/test.
+  METRICS_TOKEN: z.string().optional(),
   CORS_ORIGIN: z
     .string()
     .optional()
@@ -207,6 +210,14 @@ export const envSchemaWithProductionChecks = envSchema.superRefine((data, ctx) =
       code: z.ZodIssueCode.custom,
       path: ["COOKIE_SECRET"],
       message: "COOKIE_SECRET must be at least 32 characters in production",
+    });
+  }
+
+  if (!data.METRICS_TOKEN) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["METRICS_TOKEN"],
+      message: "METRICS_TOKEN is required in production",
     });
   }
 });
