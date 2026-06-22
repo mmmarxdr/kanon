@@ -29,9 +29,15 @@ vi.mock("../activity/service.js", () => ({
   createActivityLog: vi.fn(),
 }));
 
+// ── Mock issue service (for Fix B: auto-transition) ────────────────────────
+vi.mock("../issue/service.js", () => ({
+  transitionIssue: vi.fn(),
+}));
+
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import { startWork, heartbeat, stopWork, getActiveWorkers, cleanupExpired, recordInterruption } from "./service.js";
+import { transitionIssue } from "../issue/service.js";
 
 const mockIssueFind = vi.mocked(prisma.issue.findUnique);
 const mockIssueUpdate = vi.mocked(prisma.issue.update);
@@ -47,6 +53,9 @@ const fakeIssue = {
   id: "issue-1",
   key: "KAN-42",
   assigneeId: null,
+  // state: "in_progress" so pre-existing startWork tests deterministically
+  // do NOT trigger the auto-transition guard (Fix B test hygiene).
+  state: "in_progress",
   project: { workspaceId: "ws-1", key: "KAN" },
 } as any;
 
@@ -1129,6 +1138,240 @@ describe("WorkSessionService", () => {
           memberId: "m-1",
         },
       });
+    });
+  });
+
+  // ── Fix A (KAN-143): stopWork provenance — via fallback from session.source ──
+  //
+  // When stopWork is called without an explicit via param (e.g. MCP stop),
+  // the WorkLog.via must be derived from the session's source field via normalizeVia.
+  // When an explicit via IS provided, it still wins.
+
+  describe("Fix A — stopWork via fallback from session.source", () => {
+    it("uses normalizeVia(session.source) for WorkLog.via when no request via passed (source=claude-code)", async () => {
+      const startedAt = new Date(Date.now() - 90_000);
+      const sessionWithSource = { ...fakeSession, startedAt, source: "claude-code" };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(sessionWithSource);
+      const fakeWorkLog = { id: "wl-provenance-1", durationS: 90 };
+      mockTransaction.mockResolvedValue([fakeWorkLog, sessionWithSource]);
+
+      // No via argument passed (simulates MCP stop call without X-Kanon-Client)
+      await stopWork("KAN-42", "user-1", "member-1");
+
+      expect(mockWorkLogCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ via: "claude-code" }),
+        })
+      );
+    });
+
+    it("WorkLog.via is null when session.source='mcp' and no request via (mcp is transport, not identity)", async () => {
+      const startedAt = new Date(Date.now() - 90_000);
+      const sessionMcp = { ...fakeSession, startedAt, source: "mcp" };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(sessionMcp);
+      const fakeWorkLog = { id: "wl-provenance-mcp", durationS: 90 };
+      mockTransaction.mockResolvedValue([fakeWorkLog, sessionMcp]);
+
+      await stopWork("KAN-42", "user-1", "member-1");
+
+      expect(mockWorkLogCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ via: null }),
+        })
+      );
+    });
+
+    it("explicit request via still wins over session.source", async () => {
+      const startedAt = new Date(Date.now() - 90_000);
+      const sessionWithSource = { ...fakeSession, startedAt, source: "cursor" };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(sessionWithSource);
+      const fakeWorkLog = { id: "wl-provenance-explicit", durationS: 90 };
+      mockTransaction.mockResolvedValue([fakeWorkLog, sessionWithSource]);
+
+      // Explicit via: "claude-code" wins over session.source "cursor"
+      await stopWork("KAN-42", "user-1", "member-1", "claude-code");
+
+      expect(mockWorkLogCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ via: "claude-code" }),
+        })
+      );
+    });
+
+    it("sub-minute sessions still write no WorkLog (unchanged)", async () => {
+      const startedAt = new Date(Date.now() - 30_000);
+      const sessionShort = { ...fakeSession, startedAt, source: "claude-code" };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(sessionShort);
+      mockSessionDelete.mockResolvedValue(sessionShort);
+
+      const result = await stopWork("KAN-42", "user-1", "member-1");
+
+      expect(result.workLog).toBeNull();
+      expect(mockTransaction).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Fix B (KAN-143): auto-advance issue state on startWork ─────────────────
+  //
+  // startWork must transition backlog/todo → in_progress when opening a session.
+  // Issues already in_progress/review/done must NOT be touched (idempotent).
+  // The transition must use transitionIssue (issue service) so ActivityLog +
+  // issue.transitioned event fire consistently.
+
+  describe("Fix B — auto-advance issue state on startWork", () => {
+    const mockTransitionIssue = vi.mocked(transitionIssue);
+
+    beforeEach(() => {
+      mockTransitionIssue.mockResolvedValue({} as any);
+    });
+
+    it("transitions backlog issue to in_progress on startWork", async () => {
+      const backlogIssue = { ...fakeIssue, state: "backlog", assigneeId: "existing" };
+      mockIssueFind.mockResolvedValue(backlogIssue);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+
+      await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      // via is null when source="mcp" (transport, not identity) and no explicit via passed
+      expect(mockTransitionIssue).toHaveBeenCalledWith(
+        "KAN-42",
+        "in_progress",
+        "member-1",
+        null,
+      );
+    });
+
+    it("transitions todo issue to in_progress on startWork", async () => {
+      const todoIssue = { ...fakeIssue, state: "todo", assigneeId: "existing" };
+      mockIssueFind.mockResolvedValue(todoIssue);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+
+      await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      expect(mockTransitionIssue).toHaveBeenCalledWith(
+        "KAN-42",
+        "in_progress",
+        "member-1",
+        null,
+      );
+    });
+
+    it("does NOT transition in_progress issue (idempotent)", async () => {
+      const inProgressIssue = { ...fakeIssue, state: "in_progress", assigneeId: "existing" };
+      mockIssueFind.mockResolvedValue(inProgressIssue);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+
+      await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      expect(mockTransitionIssue).not.toHaveBeenCalled();
+    });
+
+    it("does NOT transition review issue", async () => {
+      const reviewIssue = { ...fakeIssue, state: "review", assigneeId: "existing" };
+      mockIssueFind.mockResolvedValue(reviewIssue);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+
+      await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      expect(mockTransitionIssue).not.toHaveBeenCalled();
+    });
+
+    it("does NOT transition done issue", async () => {
+      const doneIssue = { ...fakeIssue, state: "done", assigneeId: "existing" };
+      mockIssueFind.mockResolvedValue(doneIssue);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+
+      await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      expect(mockTransitionIssue).not.toHaveBeenCalled();
+    });
+
+    it("swallows transition error — session still opens (best-effort guard)", async () => {
+      const backlogIssue = { ...fakeIssue, state: "backlog", assigneeId: "existing" };
+      mockIssueFind.mockResolvedValue(backlogIssue);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+      mockTransitionIssue.mockRejectedValueOnce(new Error("workflow guard blocked transition"));
+
+      // Must NOT throw — session opens even if transition fails
+      const result = await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      expect(result.session).toEqual(fakeSession);
+    });
+
+    it("auto-assign fires before transition (assign first, then move to in_progress)", async () => {
+      const backlogUnassigned = { ...fakeIssue, state: "backlog", assigneeId: null };
+      mockIssueFind.mockResolvedValue(backlogUnassigned);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+
+      const callOrder: string[] = [];
+      mockIssueUpdate.mockImplementation(async () => { callOrder.push("assign"); return {} as any; });
+      mockTransitionIssue.mockImplementation(async () => { callOrder.push("transition"); return {} as any; });
+
+      await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      expect(callOrder).toEqual(["assign", "transition"]);
+    });
+
+    // ── FIX 1: generalize guard to all pre-in_progress states (ORDERED_STATES) ──
+
+    it("transitions analysis issue to in_progress on startWork (FIX 1 generalization)", async () => {
+      const analysisIssue = { ...fakeIssue, state: "analysis", assigneeId: "existing" };
+      mockIssueFind.mockResolvedValue(analysisIssue);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+
+      await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      expect(mockTransitionIssue).toHaveBeenCalledWith(
+        "KAN-42",
+        "in_progress",
+        "member-1",
+        null,
+      );
+    });
+
+    // ── FIX 2: logger threading — logger?.error called on transition failure ──
+
+    it("calls logger.error when transition fails (FIX 2: no silent swallow)", async () => {
+      const backlogIssue = { ...fakeIssue, state: "backlog", assigneeId: "existing" };
+      mockIssueFind.mockResolvedValue(backlogIssue);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+      mockTransitionIssue.mockRejectedValueOnce(new Error("db down"));
+
+      const logger = { info: vi.fn(), error: vi.fn() };
+      const result = await startWork("KAN-42", "member-1", "user-1", "mcp", undefined, logger);
+
+      // Session still opens
+      expect(result.session).toEqual(fakeSession);
+      // Error was logged
+      expect(logger.error).toHaveBeenCalledOnce();
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ issueKey: "KAN-42" }),
+        expect.stringContaining("auto-transition"),
+      );
+    });
+
+    it("does not throw when no logger provided and transition fails (backward-compat)", async () => {
+      const backlogIssue = { ...fakeIssue, state: "backlog", assigneeId: "existing" };
+      mockIssueFind.mockResolvedValue(backlogIssue);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+      mockTransitionIssue.mockRejectedValueOnce(new Error("workflow guard"));
+
+      // No logger argument — must not throw
+      await expect(startWork("KAN-42", "member-1", "user-1", "mcp")).resolves.toBeTruthy();
     });
   });
 });

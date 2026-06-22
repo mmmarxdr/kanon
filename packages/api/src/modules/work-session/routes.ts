@@ -41,6 +41,7 @@ export default async function workSessionRoutes(
         request.user.userId,
         request.body.source,
         request.via,
+        request.log,
       );
       return reply.status(201).send(result);
     },
