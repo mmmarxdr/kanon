@@ -1,8 +1,8 @@
 # Kanon PPM Engine — Conceptual Architecture
 
 - Status: Living document
-- Date: 2026-06-12
-- Decisions it draws from: ADR-0001 (hours gate), ADR-0002 (money model), ADR-0003 (materialization), ADR-0004 (scheduling), ADR-0005 (work-capture & scheduling data model), PRD-0001 (product scope), PDR-0002 (provenance), PDR-0003 (write policy)
+- Date: 2026-06-22
+- Decisions it draws from: ADR-0001 (hours gate), ADR-0002 (money model), ADR-0003 (materialization), ADR-0004 (scheduling), ADR-0005 (work-capture & scheduling data model), PRD-0001 (product scope), PDR-0002 (provenance), PDR-0003 (write policy), KAN-105 (three-plane Gantt UI), KAN-143 (work-capture provenance)
 - Source of truth: `docs/architecture/ppm-engine.md` — mirrored as RFC on KAN-98
 
 ## 1. Purpose & reading guide
@@ -129,6 +129,8 @@ sequenceDiagram
     L1--)L1: correction later? adjustment entry (adjustsId), same gate
 ```
 
+**Provenance nuance (KAN-143):** `WorkLog.via` is set from the `X-Kanon-Client` header value passed through `normalizeVia()`. When the session source is `"mcp"`, `normalizeVia` returns `null` by design — `mcp` is a transport name (Model Context Protocol), not a client identity. Actual client identity (e.g. `"claude-code"`, `"cursor"`) arrives in the header value and is stored as `via`. When `stop_work` is called, the `via` parameter takes precedence over the session's stored `source` for the WorkLog row. Explicit stop emits `reason: "stopped"`; TTL expiry (`cleanupExpired`) emits `reason: "expired"` — downstream listeners (forecast, telemetry) key off this field to distinguish the two paths.
+
 ### 5.2 Estimation (analysis state)
 
 `backlog → analysis`: dev (or agent via McpProposal, PRD-0004) sets `estimateHours` → `EstimateRevision` appended, current value on `IssueSchedule` → `estimate.revised` event. Re-estimation any time: another revision, history intact.
@@ -223,6 +225,8 @@ Cross-cutting: **provenance** (`via` + human owner on every write, PDR-0002), **
 | 7 | Every L0/L1 write carries `via` + resolves to a human owner | provenance middleware |
 | 8 | Baseline is written only by cycle activation or explicit re-baseline | schedule service |
 | 9 | `estimateHours` changes always append an EstimateRevision | schedule service |
+| 10 | `WorkLog.via = "mcp"` never appears — `normalizeVia("mcp")` returns null; transport ≠ identity | `normalizeVia()` in via.ts |
+| 11 | Explicit stop (`reason: "stopped"`) and TTL expiry (`reason: "expired"`) are distinguishable on every `work_session.ended` event | work-session service |
 
 ## 9. Future seams (prepared, not built)
 
@@ -231,3 +235,21 @@ Cross-cutting: **provenance** (`via` + human owner on every write, PDR-0002), **
 - **Webhook ingest (stage 3)**: external events (PR merged, CI failed) enter the same event spine; deterministic ones map to domain events, judgment-bearing ones become proposals (PDR-0003).
 - **Capacity planning**: `MemberRate.hoursPerWeek` + load semaphore are the seam (PRD-0001 non-goal v1).
 - **Forecast formula evolution**: naive extrapolation v1 → calendar-aware/velocity-weighted later; bump + rebuild, no read-path change (ADR-0003 pattern).
+
+## 10. Three-plane Gantt (KAN-105, ADR-0005 D1)
+
+The three schedule planes defined in §3 are surfaced as a per-issue Gantt row. Each row renders three overlapping bars driven by different data owners:
+
+| Plane | Data source | Who writes | User-editable |
+|---|---|---|---|
+| **Baseline ghost** | `IssueSchedule.baselineStart` / `baselineEnd` | Cycle activation only (§5.5) | No — read-only overlay |
+| **Plan bar** | `IssueSchedule.startDate` / `dueDate` | Human drag or applied McpProposal | Yes — drag persists to API |
+| **Forecast overlay** | `IssueForecast.*` (L2 derived) | forecast-listener only | No — derived, never user-editable |
+
+**Slip indicator:** when `IssueForecast.forecastEnd > IssueSchedule.dueDate` the forecast overlay extends past the plan bar end — a visual slip signal. Critical-path issues (flagged by the forecast engine) are styled distinctly.
+
+**Write path:** dragging the plan bar calls `PUT /api/issues/:key/schedule` (member+ role required) which upserts `IssueSchedule.startDate`/`dueDate` and records provenance (`via` + author). The baseline and forecast planes have no write path from the UI.
+
+**Live refresh:** the domain event `ppm.forecast.updated` (re-emitted by the forecast-listener after a rebuild, see §4) is the signal for clients to refresh forecast data. The SSE hook (`useDomainEvents`) provides the transport; Gantt rows re-render when the relevant query cache is invalidated.
+
+> **Note:** The `schedule-timeline` web feature (three-plane row components) and a dedicated `GET /api/projects/:key/schedule-timeline` endpoint are planned for KAN-105. The data model (§3), write path (`PUT /api/issues/:key/schedule`), and event spine (§4) are fully shipped. The Gantt UI layer is not yet merged to main at time of writing.
