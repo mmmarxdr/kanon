@@ -168,7 +168,10 @@ body {
   font-feature-settings: "zero", "ss02";
 }
 
-button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; white-space: nowrap; }
+/* No white-space:nowrap here — it inherits into nested block content and makes
+   multi-line button bodies (e.g. project cards with descriptions) overflow.
+   Add `whitespace-nowrap` per-button where a single-line label is required. */
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
 input, textarea, select { font: inherit; color: inherit; }
 
 /* ===========================================================================
