@@ -22,12 +22,13 @@ describe("Win B — SERVER_INSTRUCTIONS deferred tools block", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/DEFERRED TOOLS/i);
   });
 
-  it("B2: DEFERRED_TOOLS array has exactly 15 entries", () => {
+  it("B2: DEFERRED_TOOLS array has exactly 18 entries", () => {
     // Updated for KAN-104: +2 PM-only timesheet tools (approve/reject).
     // Updated for KAN-118: +3 occasion-only tools (add/remove dependency, adjust time entry).
     // Updated for KAN-119: +1 resolution helper (kanon_list_members).
     // Updated for KAN-120: +1 agent communication tool (kanon_comment_issue).
-    expect(DEFERRED_TOOLS).toHaveLength(15);
+    // Updated for KAN-104 capture tools: +3 (report_incident, propose_estimate, apply_proposal).
+    expect(DEFERRED_TOOLS).toHaveLength(18);
   });
 
   it("B3: each deferred tool name appears verbatim in SERVER_INSTRUCTIONS", () => {
@@ -58,11 +59,13 @@ describe("Win B — SERVER_INSTRUCTIONS deferred tools block", () => {
 // ─── PM Persona — byte ceiling and firing pins ───────────────────────────────
 
 describe("PM Persona — byte ceiling and firing pins", () => {
-  it("P1: SERVER_INSTRUCTIONS byte length ≤ 1800", () => {
+  it("P1: SERVER_INSTRUCTIONS byte length ≤ 1900", () => {
     // ceiling re-anchored for 38-tool surface with 10 deferred (was 1,600 @ 8 deferred);
-    // KAN-104: +2 deferred names (~54 B) + 2 core tool lines (~105 B) → ~159 B added.
+    // KAN-104 timesheet: +2 deferred names (~54 B) + 2 core tool lines (~105 B) → ~159 B added.
+    // KAN-104 capture tools: +3 deferred names (report_incident, propose_estimate, apply_proposal)
+    //   → ~72 B added; ceiling bumped to 1900 (CORE section unchanged, only DEFERRED list grows).
     expect(Buffer.byteLength(SERVER_INSTRUCTIONS, "utf8")).toBeLessThanOrEqual(
-      1800,
+      1900,
     );
   });
 

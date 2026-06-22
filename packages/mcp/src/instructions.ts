@@ -12,16 +12,18 @@
 // + 2 PM-only timesheet tools (approve/reject)
 // + 3 occasion-only tools (add/remove dependency, adjust time entry)
 // + 1 resolution helper (kanon_list_members)
-// + 1 agent communication tool (kanon_comment_issue) = 15 deferred.
+// + 1 agent communication tool (kanon_comment_issue)
+// + 3 capture tools (report_incident, propose_estimate, apply_proposal) = 18 deferred.
 
 /**
- * The 15 admin/rare/PM-gated/occasion-only/resolution-helper/agent-comms tools deferred behind ToolSearch.
+ * The 18 admin/rare/PM-gated/occasion-only/resolution-helper/agent-comms/capture tools deferred behind ToolSearch.
  * Canonical list — consumed by index.ts and instructions.test.ts.
  * Document tools are deferred: most issues need none; propose before creating.
  * Timesheet approve/reject are PM-only — keep dev-agent context lean.
  * Dependency and adjust tools are occasion-only — not part of daily board flow.
  * kanon_list_members is a resolution helper (assigneeId lookup, activity id→name) — not daily board flow.
  * kanon_comment_issue is agent communication — occasional, not daily board flow.
+ * Capture tools are occasion-only: incident reporting and estimation proposals.
  */
 export const DEFERRED_TOOLS = [
   "kanon_create_project",
@@ -39,6 +41,9 @@ export const DEFERRED_TOOLS = [
   "kanon_adjust_time_entry",
   "kanon_list_members",
   "kanon_comment_issue",
+  "kanon_report_incident",
+  "kanon_propose_estimate",
+  "kanon_apply_proposal",
 ] as const;
 
 /**
