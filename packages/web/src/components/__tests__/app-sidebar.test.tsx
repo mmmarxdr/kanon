@@ -81,6 +81,7 @@ vi.mock("@/components/ui/icons", () => ({
     Road: () => <span>Road</span>,
     Graph: () => <span>Graph</span>,
     Board: () => <span>Board</span>,
+    Timeline: () => <span>Timeline</span>,
     Cycles: () => <span>Cycles</span>,
     Settings: () => <span>Settings</span>,
     Search: () => <span>Search</span>,
