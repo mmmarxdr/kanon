@@ -1131,4 +1131,78 @@ describe("WorkSessionService", () => {
       });
     });
   });
+
+  // ── Fix A (KAN-143): stopWork provenance — via fallback from session.source ──
+  //
+  // When stopWork is called without an explicit via param (e.g. MCP stop),
+  // the WorkLog.via must be derived from the session's source field via normalizeVia.
+  // When an explicit via IS provided, it still wins.
+
+  describe("Fix A — stopWork via fallback from session.source", () => {
+    it("uses normalizeVia(session.source) for WorkLog.via when no request via passed (source=claude-code)", async () => {
+      const startedAt = new Date(Date.now() - 90_000);
+      const sessionWithSource = { ...fakeSession, startedAt, source: "claude-code" };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(sessionWithSource);
+      const fakeWorkLog = { id: "wl-provenance-1", durationS: 90 };
+      mockTransaction.mockResolvedValue([fakeWorkLog, sessionWithSource]);
+
+      // No via argument passed (simulates MCP stop call without X-Kanon-Client)
+      await stopWork("KAN-42", "user-1", "member-1");
+
+      expect(mockWorkLogCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ via: "claude-code" }),
+        })
+      );
+    });
+
+    it("WorkLog.via is null when session.source='mcp' and no request via (mcp is transport, not identity)", async () => {
+      const startedAt = new Date(Date.now() - 90_000);
+      const sessionMcp = { ...fakeSession, startedAt, source: "mcp" };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(sessionMcp);
+      const fakeWorkLog = { id: "wl-provenance-mcp", durationS: 90 };
+      mockTransaction.mockResolvedValue([fakeWorkLog, sessionMcp]);
+
+      await stopWork("KAN-42", "user-1", "member-1");
+
+      expect(mockWorkLogCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ via: null }),
+        })
+      );
+    });
+
+    it("explicit request via still wins over session.source", async () => {
+      const startedAt = new Date(Date.now() - 90_000);
+      const sessionWithSource = { ...fakeSession, startedAt, source: "cursor" };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(sessionWithSource);
+      const fakeWorkLog = { id: "wl-provenance-explicit", durationS: 90 };
+      mockTransaction.mockResolvedValue([fakeWorkLog, sessionWithSource]);
+
+      // Explicit via: "claude-code" wins over session.source "cursor"
+      await stopWork("KAN-42", "user-1", "member-1", "claude-code");
+
+      expect(mockWorkLogCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ via: "claude-code" }),
+        })
+      );
+    });
+
+    it("sub-minute sessions still write no WorkLog (unchanged)", async () => {
+      const startedAt = new Date(Date.now() - 30_000);
+      const sessionShort = { ...fakeSession, startedAt, source: "claude-code" };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(sessionShort);
+      mockSessionDelete.mockResolvedValue(sessionShort);
+
+      const result = await stopWork("KAN-42", "user-1", "member-1");
+
+      expect(result.workLog).toBeNull();
+      expect(mockTransaction).not.toHaveBeenCalled();
+    });
+  });
 });

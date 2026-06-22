@@ -296,7 +296,9 @@ export async function stopWork(
             endedAt,
             durationS,
             reason: "stopped",
-            via,
+            // KAN-143 Fix A: fall back to session source when request via is absent.
+            // Mirrors cleanupExpired which uses normalizeVia(s.source).
+            via: via ?? normalizeVia(existing.source),
             issueId: issue.id,
             memberId,
           },
