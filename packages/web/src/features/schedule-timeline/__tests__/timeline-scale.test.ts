@@ -225,4 +225,24 @@ describe("barBox", () => {
     const box = barBox(start, end, domain, trackWidth);
     expect(box.left + box.width).toBeLessThanOrEqual(trackWidth + 1); // +1 float tolerance
   });
+
+  it("inverted pair (start > end) anchors at the earlier date with width ≥ MIN_BAR_WIDTH", () => {
+    // start is AFTER end — bar should be anchored at the earlier date (end here)
+    const later = new Date("2026-08-01T00:00:00Z");
+    const earlier = new Date("2026-06-01T00:00:00Z");
+    const boxInverted = barBox(later, earlier, domain, trackWidth);
+    const boxNormal = barBox(earlier, later, domain, trackWidth);
+    // left must match the normal (earlier-anchored) box within 1px float tolerance
+    expect(boxInverted.left).toBeCloseTo(boxNormal.left, 0);
+    // width must be at least MIN_BAR_WIDTH
+    expect(boxInverted.width).toBeGreaterThanOrEqual(MIN_BAR_WIDTH);
+  });
+
+  it("start at domain.max gives width ≥ 0 (never negative)", () => {
+    // left will be at or very near trackWidth; width must not go negative
+    const start = domain.max;
+    const end = domain.max;
+    const box = barBox(start, end, domain, trackWidth);
+    expect(box.width).toBeGreaterThanOrEqual(0);
+  });
 });

@@ -128,13 +128,18 @@ export function barBox(
   domain: DateDomain,
   trackWidth: number,
 ): BarBox {
-  const left = xForDate(start, domain, trackWidth);
-  const rawRight = xForDate(end, domain, trackWidth);
+  // Normalize inverted pairs so the bar is always anchored at the earlier date.
+  const lo = start.getTime() <= end.getTime() ? start : end;
+  const hi = start.getTime() <= end.getTime() ? end : start;
+
+  const left = xForDate(lo, domain, trackWidth);
+  const rawRight = xForDate(hi, domain, trackWidth);
   const rawWidth = rawRight - left;
-  // Enforce minimum width; clamp so bar doesn't overflow track
-  const width = Math.min(
-    Math.max(rawWidth, MIN_BAR_WIDTH),
-    trackWidth - left,
+  // Enforce minimum width; clamp so bar doesn't overflow track.
+  // Math.max(0, ...) ensures the result is never negative when left === trackWidth.
+  const width = Math.max(
+    0,
+    Math.min(Math.max(rawWidth, MIN_BAR_WIDTH), trackWidth - left),
   );
   return { left, width };
 }

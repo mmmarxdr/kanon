@@ -173,6 +173,37 @@ describe("ThreePlaneRow — slip gap", () => {
   });
 });
 
+// ── Slip gap — accessibility ──────────────────────────────────────────────────
+
+describe("ThreePlaneRow — slip gap accessibility", () => {
+  it("slip-gap element has an aria-label describing the slip when slipping", () => {
+    const row = makeRow({
+      dueDate: "2026-05-01T00:00:00Z",
+      forecastEnd: "2026-05-15T00:00:00Z",
+      slipDays: 14,
+    });
+    const { container } = render(
+      <ThreePlaneRow row={row} domain={makeDomain(row)} trackWidth={TRACK_W} />,
+    );
+    const el = container.querySelector("[data-testid='slip-gap']");
+    expect(el).toBeTruthy();
+    expect(el?.getAttribute("aria-label")).toMatch(/14 day/i);
+  });
+
+  it("slip-gap element has a title attribute when slipping", () => {
+    const row = makeRow({
+      dueDate: "2026-05-01T00:00:00Z",
+      forecastEnd: "2026-05-15T00:00:00Z",
+      slipDays: 14,
+    });
+    const { container } = render(
+      <ThreePlaneRow row={row} domain={makeDomain(row)} trackWidth={TRACK_W} />,
+    );
+    const el = container.querySelector("[data-testid='slip-gap']");
+    expect(el?.getAttribute("title")).toMatch(/14 day/i);
+  });
+});
+
 // ── Critical flag ─────────────────────────────────────────────────────────────
 
 describe("ThreePlaneRow — critical flag", () => {
@@ -199,5 +230,14 @@ describe("ThreePlaneRow — critical flag", () => {
       <ThreePlaneRow row={row} domain={makeDomain(row)} trackWidth={TRACK_W} />,
     );
     expect(container.querySelector("[data-critical='true']")).toBeNull();
+  });
+
+  it("plan bar has aria-label 'Critical path issue' when critical is true", () => {
+    const row = makeRow({ critical: true });
+    const { container } = render(
+      <ThreePlaneRow row={row} domain={makeDomain(row)} trackWidth={TRACK_W} />,
+    );
+    const el = container.querySelector("[data-critical='true']");
+    expect(el?.getAttribute("aria-label")).toBe("Critical path issue");
   });
 });

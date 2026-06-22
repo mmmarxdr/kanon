@@ -14,7 +14,7 @@
  * CSS-var palette. Written from scratch — does NOT import from roadmap/.
  */
 
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import type { ScheduleTimelineRow } from "./use-project-schedule-timeline";
 import { barBox, type DateDomain } from "./timeline-scale";
 
@@ -84,7 +84,7 @@ export function ThreePlaneRow({ row, domain, trackWidth }: ThreePlaneRowProps) {
   const isCritical = row.critical === true;
 
   // ── Baseline ghost ──────────────────────────────────────────────────────
-  let baselineEl: React.ReactNode = null;
+  let baselineEl: ReactNode = null;
   if (row.baselineStart && row.baselineEnd) {
     const box = barBox(
       new Date(row.baselineStart),
@@ -109,7 +109,7 @@ export function ThreePlaneRow({ row, domain, trackWidth }: ThreePlaneRowProps) {
   }
 
   // ── Plan bar ────────────────────────────────────────────────────────────
-  let planEl: React.ReactNode = null;
+  let planEl: ReactNode = null;
   if (row.startDate && row.dueDate) {
     const box = barBox(
       new Date(row.startDate),
@@ -140,6 +140,8 @@ export function ThreePlaneRow({ row, domain, trackWidth }: ThreePlaneRowProps) {
       <div
         data-testid="plane-plan"
         data-critical={isCritical ? "true" : undefined}
+        aria-label={isCritical ? "Critical path issue" : undefined}
+        title={isCritical ? "Critical path issue" : undefined}
         style={planStyle}
       >
         {showProgress && (
@@ -162,7 +164,7 @@ export function ThreePlaneRow({ row, domain, trackWidth }: ThreePlaneRowProps) {
   }
 
   // ── Forecast overlay ────────────────────────────────────────────────────
-  let forecastEl: React.ReactNode = null;
+  let forecastEl: ReactNode = null;
   if (row.forecastStart && row.forecastEnd) {
     const box = barBox(
       new Date(row.forecastStart),
@@ -187,11 +189,16 @@ export function ThreePlaneRow({ row, domain, trackWidth }: ThreePlaneRowProps) {
   }
 
   // ── Slip gap ────────────────────────────────────────────────────────────
-  let slipEl: React.ReactNode = null;
+  let slipEl: ReactNode = null;
   if (row.dueDate && row.forecastEnd) {
     const due = new Date(row.dueDate);
     const fend = new Date(row.forecastEnd);
     if (fend.getTime() > due.getTime()) {
+      const slipDays =
+        row.slipDays != null
+          ? row.slipDays
+          : Math.round((fend.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
+      const slipLabel = `Slipping: forecast exceeds due date by ${slipDays} day(s)`;
       const box = barBox(due, fend, domain, trackWidth);
       const slipStyle: CSSProperties = {
         position: "absolute",
@@ -206,7 +213,14 @@ export function ThreePlaneRow({ row, domain, trackWidth }: ThreePlaneRowProps) {
         zIndex: 2,
         pointerEvents: "none",
       };
-      slipEl = <div data-testid="slip-gap" style={slipStyle} />;
+      slipEl = (
+        <div
+          data-testid="slip-gap"
+          style={slipStyle}
+          title={slipLabel}
+          aria-label={slipLabel}
+        />
+      );
     }
   }
 
