@@ -38,10 +38,13 @@
 export const SKILL_BASELINE_BYTES = 6659;
 
 /**
- * Sum of topline description bytes across all 40 MCP tools before Phase 2 trims.
+ * Sum of topline description bytes across all 43 MCP tools before Phase 2 trims.
  * Parser: parseAllToolDescriptions() — topline strings only.
  * Re-anchored at KAN-104: 4562 B (was 4009 B for 30 tools; +7 timesheet tools).
  * Re-anchored at KAN-119: 4722 B (4562 B + ~160 B pre-trim estimate for kanon_list_members).
  * Re-anchored at KAN-120: 4884 B (4722 B + 162 B measured for kanon_comment_issue).
+ * Re-anchored at KAN-104 capture tools: 5364 B (4884 B + 480 B measured for
+ *   kanon_report_incident + kanon_propose_estimate + kanon_apply_proposal).
+ *   Ceiling: 5364 − 300 = 5064; actual at landing: 5000 B (margin: 64 B).
  */
-export const DESCRIPTION_BASELINE_BYTES = 4884;
+export const DESCRIPTION_BASELINE_BYTES = 5364;

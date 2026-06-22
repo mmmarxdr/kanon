@@ -859,6 +859,34 @@ export class KanonClient {
     return this.request<unknown>("POST", `/api/time-entries/${timeEntryId}/adjust`, body);
   }
 
+  // ─── MCP Proposals ──────────────────────────────────────────────────────
+
+  /**
+   * Create an MCP proposal in a workspace.
+   * Route: POST /api/workspaces/:id/proposals
+   */
+  async createProposal(
+    workspaceId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.request<unknown>(
+      "POST",
+      `/api/workspaces/${workspaceId}/proposals`,
+      body,
+    );
+  }
+
+  /**
+   * Apply a pending MCP proposal (developer confirmation step).
+   * Route: POST /api/proposals/:id/apply
+   */
+  async applyProposal(proposalId: string): Promise<unknown> {
+    return this.request<unknown>(
+      "POST",
+      `/api/proposals/${proposalId}/apply`,
+    );
+  }
+
   // ─── Health ─────────────────────────────────────────────────────────────
 
   /**
