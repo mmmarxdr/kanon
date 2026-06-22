@@ -26,7 +26,7 @@ function isPublicRoute(url: string, method: string): boolean {
   // exempt from JWT authHook to avoid double-auth rejection. Match on the path
   // only (request.url includes the query string), and exact-or-subpath rather
   // than startsWith so /metricsfoo cannot bypass JWT.
-  const path = url.split("?", 1)[0];
+  const path = url.split("?", 1)[0] ?? url;
   if (path === "/metrics" || path.startsWith("/metrics/")) {
     return true;
   }
