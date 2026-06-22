@@ -40,7 +40,7 @@ set -euo pipefail
 # on the tagged, detached commit (mcp-v<version>), never touching main.
 # The KAN-52 gate below refuses unpinned network installs when this is empty;
 # only the file:// local dev/test seam is exempt (not a network origin).
-EXPECTED_SHA256=""
+EXPECTED_SHA256="d13dcbd04aa36142d4487d940d4b1e441da48834eb95c1a21f96e2b93ea4fd60"
 
 KANON_MCP_VERSION="0.7.0"
 KANON_REPO="${KANON_REPO:-mmmarxdr/kanon}"
