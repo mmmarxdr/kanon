@@ -19,6 +19,7 @@ import { cyclesRoute, cyclesIndexRoute } from "./routes/_authenticated/cycles";
 import { boardRoute } from "./routes/_authenticated/board";
 import { profileRoute } from "./routes/_authenticated/profile";
 import { roadmapRoute } from "./routes/_authenticated/roadmap";
+import { scheduleTimelineRoute } from "./routes/_authenticated/schedule-timeline";
 import { settingsRoute } from "./routes/_authenticated/settings";
 import { projectSettingsRoute } from "./routes/_authenticated/project-settings";
 import { setupRoute } from "./routes/setup";
@@ -47,6 +48,7 @@ const routeTree = rootRoute.addChildren([
     issueDocRoute,
     profileRoute,
     roadmapRoute,
+    scheduleTimelineRoute,
     dependenciesRoute,
     cyclesRoute,
     cyclesIndexRoute,
