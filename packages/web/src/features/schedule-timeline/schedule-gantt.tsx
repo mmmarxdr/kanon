@@ -12,11 +12,12 @@
  * No drag, no mutations, no SSE — PR3.
  */
 
-import { useMemo, type CSSProperties } from "react";
+import { useMemo, useCallback, type CSSProperties } from "react";
 import { useContainerWidth } from "@/features/roadmap/use-container-size";
 import { useProjectScheduleTimeline } from "./use-project-schedule-timeline";
 import { computeDomain } from "./timeline-scale";
-import { ThreePlaneRow } from "./three-plane-row";
+import { ThreePlaneRow, type PlanChangePayload } from "./three-plane-row";
+import { useUpsertPlanMutation } from "./use-upsert-plan-mutation";
 
 // ── Layout constants (mirror gantt-timeline.tsx) ─────────────────────────────
 
@@ -76,9 +77,17 @@ export interface ScheduleGanttProps {
 export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
   const { data, isLoading, isError } = useProjectScheduleTimeline(projectKey);
   const [containerRef, containerWidth] = useContainerWidth();
+  const upsertPlan = useUpsertPlanMutation();
 
   const canvasW = Math.max(containerWidth || 0, MIN_CANVAS_W);
   const trackW = Math.max(canvasW - LEFT, 200);
+
+  const handlePlanChange = useCallback(
+    ({ issueKey, startDate, dueDate }: PlanChangePayload) => {
+      upsertPlan.mutate({ issueKey, projectKey, startDate, dueDate });
+    },
+    [upsertPlan, projectKey],
+  );
 
   const domain = useMemo(
     () => computeDomain(data ?? []),
@@ -324,7 +333,12 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
                   overflow: "hidden",
                 }}
               >
-                <ThreePlaneRow row={row} domain={domain} trackWidth={trackW} />
+                <ThreePlaneRow
+                  row={row}
+                  domain={domain}
+                  trackWidth={trackW}
+                  onPlanChange={handlePlanChange}
+                />
               </div>
             </div>
           ))}

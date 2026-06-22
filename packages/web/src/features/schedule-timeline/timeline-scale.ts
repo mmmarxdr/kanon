@@ -113,6 +113,32 @@ export function xForDate(date: Date, domain: DateDomain, trackWidth: number): nu
 }
 
 /**
+ * Convert a pixel offset back to a Date — the inverse of {@link xForDate}.
+ *
+ * Clamps to the domain boundaries and snaps to whole-day UTC granularity
+ * (sets hours/minutes/seconds/ms to 0 in UTC). This ensures drag deltas always
+ * round to whole days, preventing fractional-day schedule entries.
+ *
+ * @param px         Pixel offset from the left edge of the track.
+ * @param domain     The computed domain from {@link computeDomain}.
+ * @param trackWidth The pixel width of the scrollable track area.
+ */
+export function pixelToDate(px: number, domain: DateDomain, trackWidth: number): Date {
+  const span = domain.max.getTime() - domain.min.getTime();
+  if (span <= 0 || trackWidth <= 0) return new Date(domain.min);
+
+  // Clamp the pixel offset to [0, trackWidth] before computing the ratio.
+  const clampedPx = Math.min(trackWidth, Math.max(0, px));
+  const ratio = clampedPx / trackWidth;
+  const rawMs = domain.min.getTime() + ratio * span;
+
+  // Snap to whole-day UTC by truncating to midnight UTC.
+  const d = new Date(rawMs);
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
+
+/**
  * Compute the {left, width} pixel box for a bar given its start/end dates.
  * Enforces MIN_BAR_WIDTH so very short bars remain clickable and visible.
  * Width is clamped so the bar never overflows the track.

@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import {
   computeDomain,
   xForDate,
+  pixelToDate,
   barBox,
   MIN_BAR_WIDTH,
   FALLBACK_DOMAIN_DAYS,
@@ -178,6 +179,57 @@ describe("xForDate", () => {
   it("clamps to trackWidth for dates after domain.max", () => {
     const after = new Date("2028-01-01T00:00:00Z");
     expect(xForDate(after, domain, trackWidth)).toBe(trackWidth);
+  });
+});
+
+// ── pixelToDate ───────────────────────────────────────────────────────────────
+
+describe("pixelToDate — inverse of xForDate", () => {
+  const domain = {
+    min: new Date("2026-01-01T00:00:00Z"),
+    max: new Date("2026-12-31T00:00:00Z"),
+  };
+  const trackWidth = 1200;
+
+  it("round-trips: pixelToDate(xForDate(d)) === d (day granularity)", () => {
+    const d = new Date("2026-06-15T00:00:00Z");
+    const px = xForDate(d, domain, trackWidth);
+    const result = pixelToDate(px, domain, trackWidth);
+    // Must be within the same UTC day
+    expect(result.toISOString().slice(0, 10)).toBe("2026-06-15");
+  });
+
+  it("round-trips for the domain start date", () => {
+    const px = xForDate(domain.min, domain, trackWidth);
+    const result = pixelToDate(px, domain, trackWidth);
+    expect(result.toISOString().slice(0, 10)).toBe("2026-01-01");
+  });
+
+  it("round-trips for the domain end date", () => {
+    const px = xForDate(domain.max, domain, trackWidth);
+    const result = pixelToDate(px, domain, trackWidth);
+    expect(result.toISOString().slice(0, 10)).toBe("2026-12-31");
+  });
+
+  it("clamps to domain.min when px <= 0", () => {
+    const result = pixelToDate(-50, domain, trackWidth);
+    expect(result.toISOString().slice(0, 10)).toBe("2026-01-01");
+  });
+
+  it("clamps to domain.max when px >= trackWidth", () => {
+    const result = pixelToDate(trackWidth + 100, domain, trackWidth);
+    expect(result.toISOString().slice(0, 10)).toBe("2026-12-31");
+  });
+
+  it("snaps to whole-day UTC (midnight) — no sub-day component", () => {
+    const d = new Date("2026-08-20T14:30:00Z"); // mid-day
+    const px = xForDate(d, domain, trackWidth);
+    const result = pixelToDate(px, domain, trackWidth);
+    // Hours/minutes/seconds must all be 0 in UTC
+    expect(result.getUTCHours()).toBe(0);
+    expect(result.getUTCMinutes()).toBe(0);
+    expect(result.getUTCSeconds()).toBe(0);
+    expect(result.getUTCMilliseconds()).toBe(0);
   });
 });
 

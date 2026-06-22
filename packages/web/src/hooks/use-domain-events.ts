@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { issueKeys, projectKeys, workspaceKeys, cycleKeys, notificationKeys } from "@/lib/query-keys";
+import { issueKeys, projectKeys, workspaceKeys, cycleKeys, notificationKeys, scheduleTimelineKeys } from "@/lib/query-keys";
 
 /**
  * Connects to the workspace-scoped SSE endpoint for domain events
@@ -15,6 +15,7 @@ import { issueKeys, projectKeys, workspaceKeys, cycleKeys, notificationKeys } fr
  * - project.* -> invalidate project queries
  * - member.* -> invalidate workspace/member queries
  * - work_session.* -> invalidate issue list queries (for activeWorkers)
+ * - ppm.forecast.updated -> invalidate schedule-timeline cache (KAN-105 PR3)
  *
  * KAN-88 Slice 1 — P0 invalidation-storm fix:
  * - issue.* events now invalidate issueKeys.list(projectKey) + issueKeys.groups(projectKey)
@@ -136,8 +137,23 @@ export function useDomainEvents(workspaceId: string | undefined): void {
     es.addEventListener("notification.created", handleNotificationEvent);
     es.addEventListener("notification.marked_read", handleNotificationEvent);
 
+    // ── Forecast events (KAN-105 PR3) ─────────────────────────────────
+    // ppm.forecast.updated fires after a forecast rebuild. The payload carries
+    // projectId (not projectKey), so we cannot scope to a single project cache
+    // entry. We invalidate the intermediate scheduleTimelineKeys.projects() key
+    // (covers all schedule-timeline project rows) — this event is rare (only on
+    // forecast recompute), so the broad invalidation is acceptable.
+    const handleForecastEvent = () => {
+      void queryClient.invalidateQueries({
+        queryKey: scheduleTimelineKeys.projects(),
+      });
+    };
+
+    es.addEventListener("ppm.forecast.updated", handleForecastEvent);
+
     // ── Cleanup ───────────────────────────────────────────────────────
     return () => {
+      es.removeEventListener("ppm.forecast.updated", handleForecastEvent);
       es.close();
       eventSourceRef.current = null;
     };
