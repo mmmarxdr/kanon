@@ -39,6 +39,13 @@ export const Icon = {
       <rect x="10.5" y="2" width="3.5" height="10" rx="0.6" />
     </svg>
   ),
+  Timeline: (p: IcoProps) => (
+    <svg {...base} {...p}>
+      <rect x="2" y="3" width="7" height="2.4" rx="0.6" />
+      <rect x="5" y="6.8" width="8" height="2.4" rx="0.6" />
+      <rect x="3.5" y="10.6" width="6" height="2.4" rx="0.6" />
+    </svg>
+  ),
   Road: (p: IcoProps) => (
     <svg {...base} {...p}><path d="M2 4h12M3 8h10M5 12h8" /></svg>
   ),

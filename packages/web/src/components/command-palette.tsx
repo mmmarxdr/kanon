@@ -92,6 +92,20 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
           onClose();
         },
       },
+      {
+        id: "go-schedule",
+        label: "Go to Schedule",
+        sub: "G T",
+        onSelect: () => {
+          if (projectKey) {
+            void navigate({
+              to: "/schedule/$projectKey",
+              params: { projectKey },
+            });
+          }
+          onClose();
+        },
+      },
       { id: "go-inbox",        label: "Go to Inbox",        sub: "G I", onSelect: onClose },
       { id: "go-roadmap",      label: "Go to Roadmap",      sub: "G R", onSelect: onClose },
       { id: "go-dependencies", label: "Go to Dependencies", sub: "G D", onSelect: onClose },

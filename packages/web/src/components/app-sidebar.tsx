@@ -29,6 +29,7 @@ function buildNavItems(projectKey: string): NavItem[] {
     { label: "Dependencies", icon: Icon.Graph,    href: `/dependencies/${projectKey}`,  matchPrefix: "/dependencies", hint: "G D", requiresProject: true },
     { label: "Board",        icon: Icon.Board,    href: `/board/${projectKey}`,         matchPrefix: "/board",        hint: "G B", requiresProject: true },
     { label: "Cycles",       icon: Icon.Cycles,   href: projectKey ? `/cycles/${projectKey}` : "/cycles", matchPrefix: "/cycles",       hint: "G C" },
+    { label: "Schedule",     icon: Icon.Timeline, href: `/schedule/${projectKey}`,      matchPrefix: "/schedule",     hint: "G T", requiresProject: true },
     { label: "Settings",     icon: Icon.Settings, href: "/settings",                    matchPrefix: "/settings",     hint: "G S" },
   ];
 }
@@ -96,7 +97,7 @@ export function AppSidebar() {
   const workspaceId = useActiveWorkspaceId();
   const { data: projects, isLoading: projectsLoading } = useProjectsQuery(workspaceId);
   const projectKey =
-    location.pathname.match(/^\/(board|roadmap|dependencies|cycles|project-settings)\/([^/]+)/)?.[2] ?? "";
+    location.pathname.match(/^\/(board|roadmap|dependencies|cycles|project-settings|schedule)\/([^/]+)/)?.[2] ?? "";
   const navItems = buildNavItems(projectKey);
 
   const displayName = user?.displayName ?? user?.email ?? "User";
