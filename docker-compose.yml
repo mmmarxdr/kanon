@@ -28,8 +28,14 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: "postgresql://kanon:kanon@postgres:5432/kanon?schema=public"
-      JWT_SECRET: "${JWT_SECRET:-dev-jwt-secret-change-in-production}"
-      JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET:-dev-jwt-refresh-secret-change-in-production}"
+      # The prod image strips devDeps (no pino-pretty), so NODE_ENV must stay
+      # "production". That triggers env validation requiring 32+ char,
+      # non-default secrets below. Secure cookies work over http://localhost
+      # because browsers treat localhost as a secure context.
+      JWT_SECRET: "${JWT_SECRET:-dev-local-jwt-secret-0123456789abcdefghij}"
+      JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET:-dev-local-jwt-refresh-secret-0123456789abcdefghij}"
+      COOKIE_SECRET: "${COOKIE_SECRET:-dev-local-cookie-secret-0123456789abcdefghij}"
+      METRICS_TOKEN: "${METRICS_TOKEN:-dev-local-metrics-token}"
       PORT: "${KANON_API_PORT:-3000}"
       HOST: "0.0.0.0"
       NODE_ENV: "production"
