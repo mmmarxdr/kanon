@@ -45,6 +45,8 @@ interface IssueWithRelations {
   title: string;
   state: string;
   type: string;
+  cycleId?: string | null;
+  cycle?: { name: string } | null;
   schedule: ScheduleSlice | null;
   forecast: ForecastSlice | null;
   /** Outgoing dependency edges (this issue is the source). Optional for unit tests. */
@@ -72,6 +74,10 @@ export function serializeTimelineRow(issue: IssueWithRelations): ScheduleTimelin
     title: issue.title,
     state: issue.state,
     type: issue.type,
+
+    // Cycle / sprint membership
+    cycleId: issue.cycleId ?? null,
+    cycleName: issue.cycle?.name ?? null,
 
     // Plan plane
     startDate: s?.startDate?.toISOString() ?? null,
@@ -119,6 +125,8 @@ export async function getProjectScheduleTimeline(
       title: true,
       state: true,
       type: true,
+      cycleId: true,
+      cycle: { select: { name: true } },
       schedule: {
         select: {
           startDate: true,

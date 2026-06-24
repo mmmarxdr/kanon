@@ -41,6 +41,11 @@ export const scheduleTimelineRowSchema = z.object({
   state: z.string(),
   type: z.string(),
 
+  // Cycle / sprint membership (for the Gantt cycle filter). Defaulted so older
+  // payloads (pre-cycle-filter) still parse.
+  cycleId: z.string().uuid().nullable().default(null),
+  cycleName: z.string().nullable().default(null),
+
   // Plan plane (IssueSchedule)
   startDate: z.string().datetime().nullable(),
   dueDate: z.string().datetime().nullable(),

@@ -166,7 +166,22 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
   const [tierFilter, setTierFilter] = useState<TierFilter>("all");
   const [hideDone, setHideDone] = useState(false);
   const [slippingOnly, setSlippingOnly] = useState(false);
+  const [cycleFilter, setCycleFilter] = useState<string>("all");
   const [compact, setCompact] = useState(true);
+
+  // Distinct cycles present in the data, for the cycle/sprint filter dropdown.
+  const cycleOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    let hasNoCycle = false;
+    for (const row of data ?? []) {
+      if (row.cycleId) seen.set(row.cycleId, row.cycleName ?? row.cycleId);
+      else hasNoCycle = true;
+    }
+    return {
+      cycles: [...seen.entries()].map(([id, name]) => ({ id, name })),
+      hasNoCycle,
+    };
+  }, [data]);
 
   const rowH = compact ? ROW_H_COMPACT : ROW_H_EXPANDED;
   const barH = compact ? BAR_H_COMPACT : BAR_H_EXPANDED;
@@ -178,12 +193,14 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
     return base.filter((row) => {
       if (hideDone && row.state === "done") return false;
       if (slippingOnly && !isSlipping(row)) return false;
+      if (cycleFilter === "none" && row.cycleId != null) return false;
+      if (cycleFilter !== "all" && cycleFilter !== "none" && row.cycleId !== cycleFilter) return false;
       if (tierFilter === "all") return true;
       const tier = rowTier(row);
       if (tierFilter === "critical") return tier === "critical";
       return tier === "critical" || tier === "near"; // "atrisk"
     });
-  }, [data, tierFilter, hideDone, slippingOnly]);
+  }, [data, tierFilter, hideDone, slippingOnly, cycleFilter]);
 
   const handlePlanChange = useCallback(
     ({ issueKey, startDate, dueDate }: PlanChangePayload) => {
@@ -333,6 +350,9 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
         onHideDone={setHideDone}
         slippingOnly={slippingOnly}
         onSlippingOnly={setSlippingOnly}
+        cycleFilter={cycleFilter}
+        onCycleFilter={setCycleFilter}
+        cycleOptions={cycleOptions}
         compact={compact}
         onCompact={setCompact}
       />
@@ -884,6 +904,9 @@ function GanttLegend({
   onHideDone,
   slippingOnly,
   onSlippingOnly,
+  cycleFilter,
+  onCycleFilter,
+  cycleOptions,
   compact,
   onCompact,
 }: {
@@ -896,6 +919,9 @@ function GanttLegend({
   onHideDone?: (v: boolean) => void;
   slippingOnly?: boolean;
   onSlippingOnly?: (v: boolean) => void;
+  cycleFilter?: string;
+  onCycleFilter?: (v: string) => void;
+  cycleOptions?: { cycles: Array<{ id: string; name: string }>; hasNoCycle: boolean };
   compact?: boolean;
   onCompact?: (v: boolean) => void;
 }) {
@@ -937,6 +963,32 @@ function GanttLegend({
 
       {/* Right-aligned controls: filters + zoom (KAN-148) + scroll-to-today (KAN-151). */}
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        {onCycleFilter && cycleOptions && (cycleOptions.cycles.length > 0 || cycleOptions.hasNoCycle) && (
+          <select
+            data-testid="schedule-gantt-cycle-filter"
+            aria-label="Filter by cycle"
+            value={cycleFilter ?? "all"}
+            onChange={(e) => onCycleFilter(e.target.value)}
+            className="mono"
+            style={{
+              fontSize: 11,
+              color: cycleFilter && cycleFilter !== "all" ? "var(--ink-1)" : "var(--ink-3)",
+              background: cycleFilter && cycleFilter !== "all" ? "var(--bg-3)" : "var(--panel)",
+              border: `1px solid ${cycleFilter && cycleFilter !== "all" ? "var(--accent)" : "var(--line-2)"}`,
+              borderRadius: 4,
+              padding: "3px 6px",
+              cursor: "pointer",
+            }}
+          >
+            <option value="all">All cycles</option>
+            {cycleOptions.cycles.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+            {cycleOptions.hasNoCycle && <option value="none">No cycle</option>}
+          </select>
+        )}
         {onTierFilter && (
           <div
             data-testid="schedule-gantt-filter"

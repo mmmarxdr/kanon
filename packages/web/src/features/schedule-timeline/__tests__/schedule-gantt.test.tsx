@@ -55,6 +55,8 @@ function makeRow(overrides: Partial<ScheduleTimelineRow> = {}): ScheduleTimeline
     title: "Default issue",
     state: "in_progress",
     type: "issue",
+    cycleId: null,
+    cycleName: null,
     startDate: "2026-03-01T00:00:00Z",
     dueDate: "2026-05-01T00:00:00Z",
     progress: 40,
@@ -361,5 +363,47 @@ describe("ScheduleGantt — hook wiring", () => {
     });
     render(<ScheduleGantt projectKey="MYPROJ" />);
     expect(mockUseProjectScheduleTimeline).toHaveBeenCalledWith("MYPROJ");
+  });
+});
+
+// ── Cycle filter ─────────────────────────────────────────────────────────────
+
+describe("ScheduleGantt — cycle filter", () => {
+  function renderWithCycles() {
+    mockUseProjectScheduleTimeline.mockReturnValue({
+      data: [
+        makeRow({ issueId: "a", issueKey: "A-1", cycleId: "c1", cycleName: "Sprint 1" }),
+        makeRow({ issueId: "b", issueKey: "A-2", cycleId: "c2", cycleName: "Sprint 2" }),
+        makeRow({ issueId: "c", issueKey: "A-3", cycleId: "c2", cycleName: "Sprint 2" }),
+        makeRow({ issueId: "d", issueKey: "A-4", cycleId: null, cycleName: null }),
+      ],
+      isLoading: false,
+      isError: false,
+    });
+    return render(<ScheduleGantt projectKey="TST" />);
+  }
+
+  it("lists each distinct cycle plus All / No cycle", () => {
+    renderWithCycles();
+    const labels = Array.from(
+      screen.getByTestId("schedule-gantt-cycle-filter").querySelectorAll("option"),
+    ).map((o) => o.textContent);
+    expect(labels).toEqual(["All cycles", "Sprint 1", "Sprint 2", "No cycle"]);
+  });
+
+  it("filters rows to the selected cycle", () => {
+    renderWithCycles();
+    fireEvent.change(screen.getByTestId("schedule-gantt-cycle-filter"), {
+      target: { value: "c2" },
+    });
+    expect(screen.getAllByTestId("gantt-issue-row")).toHaveLength(2);
+  });
+
+  it("'No cycle' shows only issues without a cycle", () => {
+    renderWithCycles();
+    fireEvent.change(screen.getByTestId("schedule-gantt-cycle-filter"), {
+      target: { value: "none" },
+    });
+    expect(screen.getAllByTestId("gantt-issue-row")).toHaveLength(1);
   });
 });
