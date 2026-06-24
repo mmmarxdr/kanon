@@ -13,6 +13,8 @@
  * Decimal convention (inherited from schedule.ts):
  *   No Decimal fields on this response. All numeric fields (progress, slipDays,
  *   floatDays) are plain integers or nullable integers.
+ *
+ * KAN-153: Added query schema, envelope response, and isNeighbor flag.
  */
 
 import { z } from "zod";
@@ -65,13 +67,40 @@ export const scheduleTimelineRowSchema = z.object({
   // Dependency edges (KAN-149) — outgoing edges where this issue is the source.
   // Defaulted so older payloads (pre-KAN-149) still parse instead of throwing.
   deps: z.array(scheduleDepEdgeSchema).default([]),
+
+  // KAN-153: neighbor flag — true when this issue is outside the scoped set but
+  // referenced by an in-scope dependency edge (1-hop only). Defaulted so older
+  // payloads (pre-KAN-153) still parse.
+  isNeighbor: z.boolean().default(false),
 });
 
 export type ScheduleTimelineRow = z.infer<typeof scheduleTimelineRowSchema>;
 
 /**
- * Full response schema: array of timeline rows.
- * Returns [] for a project with no issues.
+ * KAN-153: Query parameters for the schedule-timeline endpoint.
+ * All fields are optional — omitting all triggers the default scoping logic.
  */
-export const scheduleTimelineResponseSchema = z.array(scheduleTimelineRowSchema);
+export const scheduleTimelineQuerySchema = z.object({
+  cycleId: z.string().uuid().optional(),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+  limit: z.coerce.number().int().min(1).max(250).default(250),
+});
+
+export type ScheduleTimelineQuery = z.infer<typeof scheduleTimelineQuerySchema>;
+
+/**
+ * KAN-153: Full response schema: envelope with rows, total, and truncated flag.
+ * Replaces the bare array from KAN-105 PR1.
+ *
+ * total    = count of in-scope rows BEFORE neighbor expansion and BEFORE cap.
+ * truncated = true when the scoped+neighbor set was capped at 250.
+ * rows     = up to 250 rows (in-scope + neighbor rows flagged with isNeighbor).
+ */
+export const scheduleTimelineResponseSchema = z.object({
+  rows: z.array(scheduleTimelineRowSchema),
+  total: z.number().int(),
+  truncated: z.boolean(),
+});
+
 export type ScheduleTimelineResponse = z.infer<typeof scheduleTimelineResponseSchema>;
