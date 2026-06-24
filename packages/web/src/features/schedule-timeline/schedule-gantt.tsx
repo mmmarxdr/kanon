@@ -22,7 +22,13 @@ import { useUpsertPlanMutation } from "./use-upsert-plan-mutation";
 // ── Layout constants (mirror gantt-timeline.tsx) ─────────────────────────────
 
 const LEFT = 240;
-const ROW_H = 44; // slightly taller than roadmap's 36 to fit the forecast band below the bar
+// Density (Compact default / Expanded). Compact keeps bars thin so more rows fit;
+// Expanded is roomier. Bars are centred in the slot so the dep-arrow anchor is
+// always rowH/2.
+const ROW_H_COMPACT = 30;
+const ROW_H_EXPANDED = 44;
+const BAR_H_COMPACT = 13;
+const BAR_H_EXPANDED = 20;
 const HDR_H = 48;
 const MIN_CANVAS_W = 1100;
 const DAY_MS = 86_400_000;
@@ -62,6 +68,13 @@ function rowTier(row: ScheduleTimelineRow): "critical" | "near" | "normal" {
   if (row.critical === true || (row.floatDays != null && row.floatDays <= 0)) return "critical";
   if (row.floatDays != null && row.floatDays <= NEAR_CRITICAL_DAYS) return "near";
   return "normal";
+}
+
+/** A row is slipping when its forecast finish runs past its due date. */
+function isSlipping(row: ScheduleTimelineRow): boolean {
+  if (row.slipDays != null) return row.slipDays > 0;
+  if (!row.dueDate || !row.forecastEnd) return false;
+  return new Date(row.forecastEnd).getTime() > new Date(row.dueDate).getTime();
 }
 
 // ── Month axis helpers ────────────────────────────────────────────────────────
@@ -104,6 +117,37 @@ function buildMonthMarkers(
   return markers;
 }
 
+/** Two-letter weekday abbreviations, indexed by Date.getUTCDay() (0 = Sunday). */
+const DOW_ABBR = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+
+/**
+ * One per-day marker: position ratio, weekday abbreviation, day-of-month, and a
+ * weekend flag. Rendered in the header strip only when the zoom gives each day
+ * enough room to be legible.
+ */
+function buildDayMarkers(
+  domainMin: Date,
+  domainMax: Date,
+): Array<{ ratio: number; abbr: string; day: number; weekend: boolean }> {
+  const span = domainMax.getTime() - domainMin.getTime();
+  if (span <= 0) return [];
+  const out: Array<{ ratio: number; abbr: string; day: number; weekend: boolean }> = [];
+  const cursor = new Date(domainMin);
+  cursor.setUTCHours(0, 0, 0, 0);
+  if (cursor.getTime() < domainMin.getTime()) cursor.setUTCDate(cursor.getUTCDate() + 1);
+  while (cursor.getTime() <= domainMax.getTime()) {
+    const dow = cursor.getUTCDay();
+    out.push({
+      ratio: (cursor.getTime() - domainMin.getTime()) / span,
+      abbr: DOW_ABBR[dow]!,
+      day: cursor.getUTCDate(),
+      weekend: dow === 0 || dow === 6,
+    });
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return out;
+}
+
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 export interface ScheduleGanttProps {
@@ -121,6 +165,11 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
   const [zoom, setZoom] = useState<ZoomLevel>("fit");
   const [tierFilter, setTierFilter] = useState<TierFilter>("all");
   const [hideDone, setHideDone] = useState(false);
+  const [slippingOnly, setSlippingOnly] = useState(false);
+  const [compact, setCompact] = useState(true);
+
+  const rowH = compact ? ROW_H_COMPACT : ROW_H_EXPANDED;
+  const barH = compact ? BAR_H_COMPACT : BAR_H_EXPANDED;
 
   // Domain is computed from ALL rows (below) so bars keep a stable scale; the
   // filter only changes which rows render.
@@ -128,12 +177,13 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
     const base = data ?? [];
     return base.filter((row) => {
       if (hideDone && row.state === "done") return false;
+      if (slippingOnly && !isSlipping(row)) return false;
       if (tierFilter === "all") return true;
       const tier = rowTier(row);
       if (tierFilter === "critical") return tier === "critical";
       return tier === "critical" || tier === "near"; // "atrisk"
     });
-  }, [data, tierFilter, hideDone]);
+  }, [data, tierFilter, hideDone, slippingOnly]);
 
   const handlePlanChange = useCallback(
     ({ issueKey, startDate, dueDate }: PlanChangePayload) => {
@@ -161,6 +211,14 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
   const monthMarkers = useMemo(
     () => buildMonthMarkers(domain.min, domain.max),
     [domain],
+  );
+
+  // Per-day header ticks appear only when each day has room to be legible.
+  const pxPerDay = trackW / domainDays;
+  const showDayLabels = pxPerDay >= 18;
+  const dayMarkers = useMemo(
+    () => (showDayLabels ? buildDayMarkers(domain.min, domain.max) : []),
+    [domain, showDayLabels],
   );
 
   // Today position ratio across the track
@@ -237,7 +295,7 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
 
   // ── Full render ───────────────────────────────────────────────────────
 
-  const totalH = HDR_H + visibleData.length * ROW_H + 32 /* legend padding */;
+  const totalH = HDR_H + visibleData.length * rowH + 32 /* legend padding */;
 
   const outerStyle: CSSProperties = {
     display: "flex",
@@ -273,6 +331,10 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
         onTierFilter={setTierFilter}
         hideDone={hideDone}
         onHideDone={setHideDone}
+        slippingOnly={slippingOnly}
+        onSlippingOnly={setSlippingOnly}
+        compact={compact}
+        onCompact={setCompact}
       />
 
       {/* Scroll container */}
@@ -336,10 +398,33 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
                 {m.label}
               </div>
             ))}
+
+            {/* Per-day ticks (weekday abbr + day number) when zoomed in */}
+            {dayMarkers.map((d, i) => (
+              <div
+                key={`day-${i}`}
+                className="mono"
+                style={{
+                  position: "absolute",
+                  left: `${LEFT + d.ratio * trackW}px`,
+                  bottom: 3,
+                  width: pxPerDay,
+                  textAlign: "center",
+                  fontSize: 9,
+                  lineHeight: 1.1,
+                  color: d.weekend ? "var(--ink-5, var(--ink-4))" : "var(--ink-4)",
+                  opacity: d.weekend ? 0.55 : 0.9,
+                  pointerEvents: "none",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {pxPerDay >= 30 ? `${d.abbr} ${d.day}` : d.abbr}
+              </div>
+            ))}
           </div>
 
           {/* Time grid: weekend shading + week/day lines (behind rows) */}
-          <GridLines domain={domain} trackW={trackW} height={visibleData.length * ROW_H} />
+          <GridLines domain={domain} trackW={trackW} height={visibleData.length * rowH} />
 
           {/* Today vertical line */}
           <div
@@ -364,10 +449,10 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
               data-testid="gantt-issue-row"
               style={{
                 position: "absolute",
-                top: HDR_H + i * ROW_H,
+                top: HDR_H + i * rowH,
                 left: 0,
                 right: 0,
-                height: ROW_H,
+                height: rowH,
                 borderBottom: "1px solid var(--line)",
                 display: "flex",
               }}
@@ -423,6 +508,8 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
                   row={row}
                   domain={domain}
                   trackWidth={trackW}
+                  rowH={rowH}
+                  barH={barH}
                   onPlanChange={handlePlanChange}
                 />
               </div>
@@ -430,7 +517,7 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
           ))}
 
           {/* KAN-149: dependency arrows overlay (above bars, below today line) */}
-          <DepArrows data={visibleData} domain={domain} trackW={trackW} />
+          <DepArrows data={visibleData} domain={domain} trackW={trackW} rowH={rowH} />
         </div>
       </div>
     </div>
@@ -438,9 +525,6 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
 }
 
 // ── Dependency arrows (KAN-149) ─────────────────────────────────────────────────
-
-/** Vertical center of a plan bar within its row (mirrors ThreePlaneRow BAR_TOP+BAR_H/2). */
-const BAR_CENTER = 18;
 
 interface BarAnchor {
   leftX: number;
@@ -490,11 +574,12 @@ function routePoints(x1: number, y1: number, x2: number, y2: number): Pt[] {
  */
 function roundedPath(pts: Pt[], r: number): string {
   if (pts.length < 2) return "";
-  let d = `M ${pts[0].x} ${pts[0].y}`;
+  const first = pts[0]!;
+  let d = `M ${first.x} ${first.y}`;
   for (let i = 1; i < pts.length - 1; i++) {
-    const p = pts[i];
-    const prev = pts[i - 1];
-    const next = pts[i + 1];
+    const p = pts[i]!;
+    const prev = pts[i - 1]!;
+    const next = pts[i + 1]!;
     const dPrev = Math.hypot(prev.x - p.x, prev.y - p.y) || 1;
     const dNext = Math.hypot(next.x - p.x, next.y - p.y) || 1;
     const rr = Math.min(r, dPrev / 2, dNext / 2);
@@ -502,7 +587,7 @@ function roundedPath(pts: Pt[], r: number): string {
     const b = { x: p.x + ((next.x - p.x) / dNext) * rr, y: p.y + ((next.y - p.y) / dNext) * rr };
     d += ` L ${a.x} ${a.y} Q ${p.x} ${p.y} ${b.x} ${b.y}`;
   }
-  const last = pts[pts.length - 1];
+  const last = pts[pts.length - 1]!;
   d += ` L ${last.x} ${last.y}`;
   return d;
 }
@@ -519,10 +604,12 @@ function DepArrows({
   data,
   domain,
   trackW,
+  rowH,
 }: {
   data: ScheduleTimelineRow[];
   domain: DateDomain;
   trackW: number;
+  rowH: number;
 }) {
   // Unique marker ids per instance so multiple Gantts on one page don't collide.
   const uid = useId();
@@ -537,7 +624,7 @@ function DepArrows({
     anchors.set(row.issueId, {
       leftX: LEFT + box.left,
       rightX: LEFT + box.left + box.width,
-      cy: HDR_H + i * ROW_H + BAR_CENTER,
+      cy: HDR_H + i * rowH + rowH / 2,
       critical: row.critical === true,
     });
   });
@@ -795,6 +882,10 @@ function GanttLegend({
   onTierFilter,
   hideDone,
   onHideDone,
+  slippingOnly,
+  onSlippingOnly,
+  compact,
+  onCompact,
 }: {
   zoom?: ZoomLevel;
   onZoom?: (z: ZoomLevel) => void;
@@ -803,6 +894,10 @@ function GanttLegend({
   onTierFilter?: (t: TierFilter) => void;
   hideDone?: boolean;
   onHideDone?: (v: boolean) => void;
+  slippingOnly?: boolean;
+  onSlippingOnly?: (v: boolean) => void;
+  compact?: boolean;
+  onCompact?: (v: boolean) => void;
 }) {
   return (
     <div
@@ -895,6 +990,49 @@ function GanttLegend({
             }}
           >
             Hide done
+          </button>
+        )}
+        {onSlippingOnly && (
+          <button
+            type="button"
+            data-testid="schedule-gantt-slipping"
+            data-active={slippingOnly ? "true" : undefined}
+            aria-pressed={slippingOnly}
+            onClick={() => onSlippingOnly(!slippingOnly)}
+            className="mono"
+            title="Show only issues forecast to finish past their due date"
+            style={{
+              fontSize: 11,
+              color: slippingOnly ? "var(--ink-1)" : "var(--ink-3)",
+              background: slippingOnly ? "var(--bg-3)" : "var(--panel)",
+              border: `1px solid ${slippingOnly ? "var(--bad)" : "var(--line-2)"}`,
+              borderRadius: 4,
+              padding: "3px 8px",
+              cursor: "pointer",
+            }}
+          >
+            Slipping
+          </button>
+        )}
+        {onCompact && (
+          <button
+            type="button"
+            data-testid="schedule-gantt-density"
+            aria-pressed={!compact}
+            onClick={() => onCompact(!compact)}
+            className="mono"
+            title={compact ? "Switch to roomier rows" : "Switch to compact rows"}
+            style={{
+              fontSize: 11,
+              color: "var(--ink-3)",
+              background: "var(--panel)",
+              border: "1px solid var(--line-2)",
+              borderRadius: 4,
+              padding: "3px 8px",
+              cursor: "pointer",
+            }}
+          >
+            {compact ? "Expand" : "Compact"}
           </button>
         )}
         <span style={{ width: 1, height: 18, background: "var(--line)", margin: "0 2px" }} />
