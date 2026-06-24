@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import type { ScheduleTimelineRow } from "../use-project-schedule-timeline";
 
 // ── ResizeObserver + getBoundingClientRect mocks (mirror gantt-timeline.test.tsx) ──
@@ -55,6 +55,8 @@ function makeRow(overrides: Partial<ScheduleTimelineRow> = {}): ScheduleTimeline
     title: "Default issue",
     state: "in_progress",
     type: "issue",
+    cycleId: null,
+    cycleName: null,
     startDate: "2026-03-01T00:00:00Z",
     dueDate: "2026-05-01T00:00:00Z",
     progress: 40,
@@ -65,6 +67,7 @@ function makeRow(overrides: Partial<ScheduleTimelineRow> = {}): ScheduleTimeline
     slipDays: 9,
     critical: false,
     floatDays: 5,
+    deps: [],
     ...overrides,
   };
 }
@@ -190,6 +193,165 @@ describe("ScheduleGantt — data rendering", () => {
   });
 });
 
+// ── Scroll-to-today (KAN-151) ──────────────────────────────────────────────────
+
+describe("ScheduleGantt — scroll to today (KAN-151)", () => {
+  it("renders a Today control", () => {
+    mockUseProjectScheduleTimeline.mockReturnValue({
+      data: [makeRow()],
+      isLoading: false,
+      isError: false,
+    });
+    render(<ScheduleGantt projectKey="TST" />);
+    expect(screen.getByTestId("schedule-gantt-today-btn")).toBeTruthy();
+  });
+
+  it("clicking Today re-centers the scroll container on the today line", () => {
+    mockUseProjectScheduleTimeline.mockReturnValue({
+      data: [makeRow()],
+      isLoading: false,
+      isError: false,
+    });
+    render(<ScheduleGantt projectKey="TST" />);
+    const scroll = screen.getByTestId("schedule-gantt-scroll");
+    // today (2026-06-24) is past the fixture's domain → ratio clamps to 1 → target > 0
+    expect(() => fireEvent.click(screen.getByTestId("schedule-gantt-today-btn"))).not.toThrow();
+    expect(scroll.scrollLeft).toBeGreaterThan(0);
+  });
+});
+
+// ── Timescale zoom (KAN-148) ───────────────────────────────────────────────────
+
+function canvasWidthPx(container: HTMLElement): number {
+  const el = container.querySelector<HTMLElement>("[data-testid='schedule-gantt-canvas']");
+  return parseFloat(el?.style.width ?? "0");
+}
+
+describe("ScheduleGantt — timescale zoom (KAN-148)", () => {
+  beforeEach(() => {
+    mockUseProjectScheduleTimeline.mockReturnValue({
+      data: [makeRow()],
+      isLoading: false,
+      isError: false,
+    });
+  });
+
+  it("renders zoom controls with Fit active by default", () => {
+    render(<ScheduleGantt projectKey="TST" />);
+    expect(screen.getByTestId("schedule-gantt-zoom")).toBeTruthy();
+    expect(screen.getByTestId("schedule-gantt-zoom-fit").getAttribute("data-active")).toBe("true");
+    expect(screen.getByTestId("schedule-gantt-zoom-day").getAttribute("data-active")).toBeNull();
+  });
+
+  it("zooming to Day widens the canvas beyond the fit width and scrolls horizontally", () => {
+    const { container } = render(<ScheduleGantt projectKey="TST" />);
+    const fitWidth = canvasWidthPx(container);
+    fireEvent.click(screen.getByTestId("schedule-gantt-zoom-day"));
+    const dayWidth = canvasWidthPx(container);
+    expect(dayWidth).toBeGreaterThan(fitWidth);
+    expect(screen.getByTestId("schedule-gantt-zoom-day").getAttribute("data-active")).toBe("true");
+  });
+
+  it("returning to Fit collapses the canvas back to the viewport width", () => {
+    const { container } = render(<ScheduleGantt projectKey="TST" />);
+    fireEvent.click(screen.getByTestId("schedule-gantt-zoom-day"));
+    const dayWidth = canvasWidthPx(container);
+    fireEvent.click(screen.getByTestId("schedule-gantt-zoom-fit"));
+    const fitWidth = canvasWidthPx(container);
+    expect(fitWidth).toBeLessThan(dayWidth);
+    // ...but never collapses below the canvas floor.
+    expect(fitWidth).toBeGreaterThanOrEqual(1100);
+  });
+});
+
+// ── Dependency arrows (KAN-149) ─────────────────────────────────────────────────
+
+describe("ScheduleGantt — dependency arrows (KAN-149)", () => {
+  it("renders no dependency overlay when there are no edges", () => {
+    mockUseProjectScheduleTimeline.mockReturnValue({
+      data: [makeRow()],
+      isLoading: false,
+      isError: false,
+    });
+    const { container } = render(<ScheduleGantt projectKey="TST" />);
+    expect(container.querySelector("[data-testid='schedule-gantt-deps']")).toBeNull();
+  });
+
+  it("draws one arrow per outgoing dependency edge", () => {
+    const rows = [
+      makeRow({
+        issueId: "id-1",
+        issueKey: "A-1",
+        deps: [{ targetIssueId: "id-2", type: "FS", lagDays: 0 }],
+      }),
+      makeRow({ issueId: "id-2", issueKey: "A-2", title: "Second" }),
+    ];
+    mockUseProjectScheduleTimeline.mockReturnValue({
+      data: rows,
+      isLoading: false,
+      isError: false,
+    });
+    const { container } = render(<ScheduleGantt projectKey="TST" />);
+    const edges = container.querySelectorAll("[data-testid='dep-edge']");
+    expect(edges.length).toBe(1);
+  });
+
+  it("FS and SS edges anchor the source at different endpoints (end vs start)", () => {
+    const edgeStartX = (type: "FS" | "SS") => {
+      mockUseProjectScheduleTimeline.mockReturnValue({
+        data: [
+          makeRow({ issueId: "id-1", issueKey: "A-1", deps: [{ targetIssueId: "id-2", type, lagDays: 0 }] }),
+          makeRow({ issueId: "id-2", issueKey: "A-2" }),
+        ],
+        isLoading: false,
+        isError: false,
+      });
+      const { container } = render(<ScheduleGantt projectKey="TST" />);
+      const d = container.querySelector("[data-testid='dep-edge']")!.getAttribute("d")!;
+      return parseFloat(d.split(" ")[1]!); // M <x1> <y1> ...
+    };
+    // FS starts at the source bar's right edge, SS at its left edge → FS x is larger.
+    expect(edgeStartX("FS")).toBeGreaterThan(edgeStartX("SS"));
+  });
+
+  it("colors an edge between two critical issues as critical", () => {
+    const rows = [
+      makeRow({
+        issueId: "id-1",
+        issueKey: "A-1",
+        critical: true,
+        deps: [{ targetIssueId: "id-2", type: "FS", lagDays: 0 }],
+      }),
+      makeRow({ issueId: "id-2", issueKey: "A-2", critical: true }),
+    ];
+    mockUseProjectScheduleTimeline.mockReturnValue({
+      data: rows,
+      isLoading: false,
+      isError: false,
+    });
+    const { container } = render(<ScheduleGantt projectKey="TST" />);
+    const edge = container.querySelector("[data-testid='dep-edge']");
+    expect(edge?.getAttribute("data-critical")).toBe("true");
+  });
+
+  it("skips edges whose target is absent from the data", () => {
+    const rows = [
+      makeRow({
+        issueId: "id-1",
+        issueKey: "A-1",
+        deps: [{ targetIssueId: "ghost", type: "FS", lagDays: 0 }],
+      }),
+    ];
+    mockUseProjectScheduleTimeline.mockReturnValue({
+      data: rows,
+      isLoading: false,
+      isError: false,
+    });
+    const { container } = render(<ScheduleGantt projectKey="TST" />);
+    expect(container.querySelector("[data-testid='schedule-gantt-deps']")).toBeNull();
+  });
+});
+
 // ── Hook wiring ──────────────────────────────────────────────────────────────
 
 describe("ScheduleGantt — hook wiring", () => {
@@ -201,5 +363,47 @@ describe("ScheduleGantt — hook wiring", () => {
     });
     render(<ScheduleGantt projectKey="MYPROJ" />);
     expect(mockUseProjectScheduleTimeline).toHaveBeenCalledWith("MYPROJ");
+  });
+});
+
+// ── Cycle filter ─────────────────────────────────────────────────────────────
+
+describe("ScheduleGantt — cycle filter", () => {
+  function renderWithCycles() {
+    mockUseProjectScheduleTimeline.mockReturnValue({
+      data: [
+        makeRow({ issueId: "a", issueKey: "A-1", cycleId: "c1", cycleName: "Sprint 1" }),
+        makeRow({ issueId: "b", issueKey: "A-2", cycleId: "c2", cycleName: "Sprint 2" }),
+        makeRow({ issueId: "c", issueKey: "A-3", cycleId: "c2", cycleName: "Sprint 2" }),
+        makeRow({ issueId: "d", issueKey: "A-4", cycleId: null, cycleName: null }),
+      ],
+      isLoading: false,
+      isError: false,
+    });
+    return render(<ScheduleGantt projectKey="TST" />);
+  }
+
+  it("lists each distinct cycle plus All / No cycle", () => {
+    renderWithCycles();
+    const labels = Array.from(
+      screen.getByTestId("schedule-gantt-cycle-filter").querySelectorAll("option"),
+    ).map((o) => o.textContent);
+    expect(labels).toEqual(["All cycles", "Sprint 1", "Sprint 2", "No cycle"]);
+  });
+
+  it("filters rows to the selected cycle", () => {
+    renderWithCycles();
+    fireEvent.change(screen.getByTestId("schedule-gantt-cycle-filter"), {
+      target: { value: "c2" },
+    });
+    expect(screen.getAllByTestId("gantt-issue-row")).toHaveLength(2);
+  });
+
+  it("'No cycle' shows only issues without a cycle", () => {
+    renderWithCycles();
+    fireEvent.change(screen.getByTestId("schedule-gantt-cycle-filter"), {
+      target: { value: "none" },
+    });
+    expect(screen.getAllByTestId("gantt-issue-row")).toHaveLength(1);
   });
 });

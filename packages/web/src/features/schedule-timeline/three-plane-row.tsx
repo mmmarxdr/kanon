@@ -25,17 +25,34 @@ import type { ScheduleTimelineRow } from "./use-project-schedule-timeline";
 import { barBox, pixelToDate, type DateDomain } from "./timeline-scale";
 
 // ── Layout ───────────────────────────────────────────────────────────────────
+// Heights are derived from the row/bar height passed by the parent (density
+// toggle). All planes scale together so Compact and Expanded stay proportional.
 
-const ROW_H = 36;
-const BAR_H = 20;
-/** Vertical offset so bars sit centred in the row. */
-const BAR_TOP = (ROW_H - BAR_H) / 2;
-/** Baseline ghost is shorter — sits slightly above centre. */
-const GHOST_H = 10;
-const GHOST_TOP = (ROW_H - GHOST_H) / 2;
-/** Forecast overlay is a thin band that sits below the plan bar. */
-const FORECAST_H = 6;
-const FORECAST_TOP = BAR_TOP + BAR_H + 2;
+const DEFAULT_ROW_H = 44;
+const DEFAULT_BAR_H = 20;
+
+interface RowMetrics {
+  barH: number;
+  planTop: number;
+  ghostH: number;
+  ghostTop: number;
+  forecastH: number;
+  forecastTop: number;
+}
+
+function rowMetrics(rowH: number, barH: number): RowMetrics {
+  const planTop = (rowH - barH) / 2;
+  const ghostH = Math.max(5, Math.round(barH * 0.45));
+  const forecastH = Math.max(3, Math.round(barH * 0.32));
+  return {
+    barH,
+    planTop,
+    ghostH,
+    ghostTop: planTop + (barH - ghostH) / 2,
+    forecastH,
+    forecastTop: planTop + barH + 2,
+  };
+}
 
 // ── State token mapping ───────────────────────────────────────────────────────
 
@@ -70,6 +87,50 @@ function tokensForState(state: string): StateTokens {
   }
 }
 
+// ── Critical-path coloring (KAN-150) ────────────────────────────────────────
+/**
+ * Issues with floatDays at or below this many days (but still positive) are
+ * "near-critical" — a small schedule slip would put them on the critical path.
+ * Matches the forecast engine's default at-risk buffer (3 days).
+ */
+const NEAR_CRITICAL_THRESHOLD = 3;
+
+type CriticalTier = "critical" | "near" | "normal";
+
+/**
+ * Classify a row by critical-path urgency. `critical` (floatDays ≤ 0) wins;
+ * otherwise a low positive float marks it near-critical. Everything else is
+ * colored by its workflow state.
+ */
+function criticalTier(row: ScheduleTimelineRow): CriticalTier {
+  if (row.critical === true) return "critical";
+  // Defensive: a zero/negative float is critical by definition, even if the
+  // engine's `critical` flag is somehow out of sync — never render it as normal.
+  if (row.floatDays != null && row.floatDays <= 0) return "critical";
+  if (row.floatDays != null && row.floatDays <= NEAR_CRITICAL_THRESHOLD) {
+    return "near";
+  }
+  return "normal";
+}
+
+/** Resolve the plan bar fill/border, overriding state color for critical tiers. */
+function barTokensFor(row: ScheduleTimelineRow): StateTokens {
+  switch (criticalTier(row)) {
+    case "critical":
+      return {
+        background: "color-mix(in oklch, var(--bad) 18%, var(--panel))",
+        border: "var(--bad)",
+      };
+    case "near":
+      return {
+        background: "color-mix(in oklch, var(--warn) 16%, var(--panel))",
+        border: "var(--warn)",
+      };
+    default:
+      return tokensForState(row.state);
+  }
+}
+
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 export interface PlanChangePayload {
@@ -82,6 +143,10 @@ export interface ThreePlaneRowProps {
   row: ScheduleTimelineRow;
   domain: DateDomain;
   trackWidth: number;
+  /** Row slot height in px (density toggle). Defaults to the expanded height. */
+  rowH?: number;
+  /** Plan bar height in px (density toggle). */
+  barH?: number;
   /** Called when the user drops the plan bar after dragging (non-zero day delta). */
   onPlanChange?: (payload: PlanChangePayload) => void;
 }
@@ -93,9 +158,19 @@ export interface ThreePlaneRowProps {
  * The parent (ScheduleGantt) positions this absolutely; this component only
  * handles the horizontal/vertical geometry within a single row.
  */
-export function ThreePlaneRow({ row, domain, trackWidth, onPlanChange }: ThreePlaneRowProps) {
-  const tokens = tokensForState(row.state);
-  const isCritical = row.critical === true;
+export function ThreePlaneRow({
+  row,
+  domain,
+  trackWidth,
+  rowH = DEFAULT_ROW_H,
+  barH = DEFAULT_BAR_H,
+  onPlanChange,
+}: ThreePlaneRowProps) {
+  const m = rowMetrics(rowH, barH);
+  const tokens = barTokensFor(row);
+  const tier = criticalTier(row);
+  const isCritical = tier === "critical";
+  const isNearCritical = tier === "near";
 
   // ── Drag state ──────────────────────────────────────────────────────────
   // dragOffsetPx: visual translation applied while dragging (px). Reset on drop.
@@ -190,8 +265,8 @@ export function ThreePlaneRow({ row, domain, trackWidth, onPlanChange }: ThreePl
     );
     const style: CSSProperties = {
       position: "absolute",
-      top: GHOST_TOP,
-      height: GHOST_H,
+      top: m.ghostTop,
+      height: m.ghostH,
       left: `${box.left}px`,
       width: `${box.width}px`,
       borderRadius: 3,
@@ -215,8 +290,8 @@ export function ThreePlaneRow({ row, domain, trackWidth, onPlanChange }: ThreePl
     );
     const planStyle: CSSProperties = {
       position: "absolute",
-      top: BAR_TOP,
-      height: BAR_H,
+      top: m.planTop,
+      height: m.barH,
       left: `${box.left + dragOffsetPx}px`,
       width: `${box.width}px`,
       borderRadius: 4,
@@ -224,10 +299,13 @@ export function ThreePlaneRow({ row, domain, trackWidth, onPlanChange }: ThreePl
       border: `1px solid ${tokens.border}`,
       overflow: "hidden",
       zIndex: 2,
-      // ponytail: critical ring uses boxShadow; a dedicated marker icon is PR3 scope.
+      // KAN-150: critical bars get a soft 1px red ring; near-critical a faint
+      // amber ring. Kept subtle so the bars read cleanly (no heavy glow halo).
       boxShadow: isCritical
-        ? `0 0 0 2px var(--warn), 0 0 8px color-mix(in oklch, var(--warn) 30%, transparent)`
-        : "none",
+        ? `0 0 0 1px var(--bad), 0 1px 5px color-mix(in oklch, var(--bad) 20%, transparent)`
+        : isNearCritical
+          ? `0 0 0 1px color-mix(in oklch, var(--warn) 55%, transparent)`
+          : "none",
       transition: dragOffsetPx !== 0 ? "none" : "box-shadow 120ms ease",
       cursor: isDraggable ? "grab" : undefined,
       touchAction: "none",
@@ -238,10 +316,23 @@ export function ThreePlaneRow({ row, domain, trackWidth, onPlanChange }: ThreePl
       <div
         data-testid="plane-plan"
         data-critical={isCritical ? "true" : undefined}
+        data-near-critical={isNearCritical ? "true" : undefined}
         data-draggable={isDraggable ? "true" : undefined}
-        role={isCritical ? "img" : undefined}
-        aria-label={isCritical ? "Critical path issue" : undefined}
-        title={isCritical ? "Critical path issue" : undefined}
+        role={isCritical || isNearCritical ? "img" : undefined}
+        aria-label={
+          isCritical
+            ? "Critical path issue"
+            : isNearCritical
+              ? "Near-critical issue (low schedule float)"
+              : undefined
+        }
+        title={
+          isCritical
+            ? "Critical path issue"
+            : isNearCritical
+              ? "Near-critical issue (low schedule float)"
+              : undefined
+        }
         style={planStyle}
         onPointerDown={isDraggable ? handlePointerDown : undefined}
         onPointerMove={isDraggable ? handlePointerMove : undefined}
@@ -251,14 +342,18 @@ export function ThreePlaneRow({ row, domain, trackWidth, onPlanChange }: ThreePl
       >
         {showProgress && (
           <div
+            data-testid="plane-progress"
+            title={`${row.progress}% complete`}
             style={{
               position: "absolute",
               left: 0,
               top: 0,
               bottom: 0,
               width: `${row.progress}%`,
-              background: "color-mix(in oklch, var(--accent) 14%, transparent)",
-              borderRight: "1px solid var(--accent)",
+              // Completed portion fills green, regardless of the bar's tier color,
+              // so "how done" reads at a glance independent of "how critical".
+              background: "color-mix(in oklch, var(--ok) 38%, transparent)",
+              borderRight: "1.5px solid var(--ok)",
               borderRadius: "4px 0 0 4px",
               pointerEvents: "none",
             }}
@@ -279,8 +374,8 @@ export function ThreePlaneRow({ row, domain, trackWidth, onPlanChange }: ThreePl
     );
     const forecastStyle: CSSProperties = {
       position: "absolute",
-      top: FORECAST_TOP,
-      height: FORECAST_H,
+      top: m.forecastTop,
+      height: m.forecastH,
       left: `${box.left}px`,
       width: `${box.width}px`,
       borderRadius: 2,
@@ -307,14 +402,19 @@ export function ThreePlaneRow({ row, domain, trackWidth, onPlanChange }: ThreePl
       const box = barBox(due, fend, domain, trackWidth);
       const slipStyle: CSSProperties = {
         position: "absolute",
-        top: BAR_TOP,
-        height: BAR_H,
+        top: m.planTop,
+        height: m.barH,
         left: `${box.left}px`,
         width: `${box.width}px`,
-        borderRadius: "0 4px 4px 0",
-        background: "color-mix(in oklch, var(--warn) 22%, transparent)",
-        border: "1px dashed var(--warn)",
-        borderLeft: "none",
+        borderRadius: "0 3px 3px 0",
+        // Diagonal hatch in danger-red: slipping is a problem, and the texture
+        // makes it unmistakable vs the solid near-critical amber bars even for
+        // color-blind users (not color-only).
+        background:
+          "repeating-linear-gradient(135deg, color-mix(in oklch, var(--bad) 32%, transparent) 0 3px, transparent 3px 7px)",
+        borderTop: "1px dashed color-mix(in oklch, var(--bad) 70%, transparent)",
+        borderBottom: "1px dashed color-mix(in oklch, var(--bad) 70%, transparent)",
+        borderRight: "1px dashed color-mix(in oklch, var(--bad) 70%, transparent)",
         zIndex: 2,
         pointerEvents: "none",
       };
@@ -332,7 +432,7 @@ export function ThreePlaneRow({ row, domain, trackWidth, onPlanChange }: ThreePl
 
   const rowStyle: CSSProperties = {
     position: "relative",
-    height: ROW_H + FORECAST_H + 2, // extra height to show forecast band below bar
+    height: rowH,
     width: "100%",
   };
 

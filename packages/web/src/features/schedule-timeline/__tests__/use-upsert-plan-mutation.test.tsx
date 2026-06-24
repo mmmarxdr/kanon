@@ -49,6 +49,9 @@ function makeRow(overrides: Partial<ScheduleTimelineRow> = {}): ScheduleTimeline
     slipDays: null,
     critical: null,
     floatDays: null,
+    deps: [],
+    cycleId: null,
+    cycleName: null,
     ...overrides,
   };
 }

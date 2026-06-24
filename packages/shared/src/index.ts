@@ -42,10 +42,12 @@ export {
 export type { IssueSchedule, EstimateRevision } from "./schedule.js";
 
 export {
+  scheduleDepEdgeSchema,
   scheduleTimelineRowSchema,
   scheduleTimelineResponseSchema,
 } from "./schedule-timeline.js";
 export type {
+  ScheduleDepEdge,
   ScheduleTimelineRow,
   ScheduleTimelineResponse,
 } from "./schedule-timeline.js";

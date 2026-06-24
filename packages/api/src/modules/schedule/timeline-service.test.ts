@@ -162,4 +162,30 @@ describe("serializeTimelineRow", () => {
     expect(row.slipDays).toBe(0);
     expect(row.critical).toBe(false);
   });
+
+  it("STR-6: maps outgoing dependency edges to deps[] (KAN-149)", () => {
+    const row = serializeTimelineRow({
+      ...BASE_ISSUE,
+      schedule: null,
+      forecast: null,
+      blocks: [
+        { targetId: "00000000-0000-0000-0000-0000000000aa", type: "FS", lagDays: 2 },
+        { targetId: "00000000-0000-0000-0000-0000000000bb", type: "SS", lagDays: 0 },
+      ],
+    });
+
+    expect(row.deps).toEqual([
+      { targetIssueId: "00000000-0000-0000-0000-0000000000aa", type: "FS", lagDays: 2 },
+      { targetIssueId: "00000000-0000-0000-0000-0000000000bb", type: "SS", lagDays: 0 },
+    ]);
+  });
+
+  it("STR-7: missing blocks relation → deps is an empty array", () => {
+    const row = serializeTimelineRow({
+      ...BASE_ISSUE,
+      schedule: null,
+      forecast: null,
+    });
+    expect(row.deps).toEqual([]);
+  });
 });

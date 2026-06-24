@@ -13,7 +13,7 @@
  */
 
 import { prisma } from "../../config/prisma.js";
-import type { ScheduleTimelineRow } from "@kanon/shared";
+import type { ScheduleTimelineRow, ScheduleDepEdge } from "@kanon/shared";
 
 // ── Types for internal mapping ────────────────────────────────────────────
 
@@ -33,14 +33,24 @@ interface ForecastSlice {
   floatDays: number | null;
 }
 
+interface DepSlice {
+  targetId: string;
+  type: ScheduleDepEdge["type"];
+  lagDays: number;
+}
+
 interface IssueWithRelations {
   id: string;
   key: string;
   title: string;
   state: string;
   type: string;
+  cycleId?: string | null;
+  cycle?: { name: string } | null;
   schedule: ScheduleSlice | null;
   forecast: ForecastSlice | null;
+  /** Outgoing dependency edges (this issue is the source). Optional for unit tests. */
+  blocks?: DepSlice[];
 }
 
 // ── Serializer (exported for unit-testing) ────────────────────────────────
@@ -65,6 +75,10 @@ export function serializeTimelineRow(issue: IssueWithRelations): ScheduleTimelin
     state: issue.state,
     type: issue.type,
 
+    // Cycle / sprint membership
+    cycleId: issue.cycleId ?? null,
+    cycleName: issue.cycle?.name ?? null,
+
     // Plan plane
     startDate: s?.startDate?.toISOString() ?? null,
     dueDate: s?.dueDate?.toISOString() ?? null,
@@ -80,6 +94,13 @@ export function serializeTimelineRow(issue: IssueWithRelations): ScheduleTimelin
     slipDays: f != null ? f.slipDays : null,
     critical: f != null ? f.critical : null,
     floatDays: f != null ? f.floatDays : null,
+
+    // Dependency edges (KAN-149)
+    deps: (issue.blocks ?? []).map((d) => ({
+      targetIssueId: d.targetId,
+      type: d.type,
+      lagDays: d.lagDays,
+    })),
   };
 }
 
@@ -104,6 +125,8 @@ export async function getProjectScheduleTimeline(
       title: true,
       state: true,
       type: true,
+      cycleId: true,
+      cycle: { select: { name: true } },
       schedule: {
         select: {
           startDate: true,
@@ -120,6 +143,14 @@ export async function getProjectScheduleTimeline(
           slipDays: true,
           critical: true,
           floatDays: true,
+        },
+      },
+      // KAN-149: outgoing typed dependency edges for arrow rendering.
+      blocks: {
+        select: {
+          targetId: true,
+          type: true,
+          lagDays: true,
         },
       },
     },

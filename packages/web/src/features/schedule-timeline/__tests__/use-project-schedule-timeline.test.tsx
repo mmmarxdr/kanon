@@ -64,6 +64,7 @@ const VALID_ROW = {
   slipDays: null,
   critical: null,
   floatDays: null,
+  deps: [],
 };
 
 describe("useProjectScheduleTimeline (KAN-105 PR1)", () => {
