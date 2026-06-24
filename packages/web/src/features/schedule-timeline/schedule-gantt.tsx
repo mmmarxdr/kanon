@@ -168,6 +168,7 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
   const [slippingOnly, setSlippingOnly] = useState(false);
   const [cycleFilter, setCycleFilter] = useState<string>("all");
   const [compact, setCompact] = useState(true);
+  const [hover, setHover] = useState<{ row: ScheduleTimelineRow; x: number; y: number } | null>(null);
 
   // Distinct cycles present in the data, for the cycle/sprint filter dropdown.
   const cycleOptions = useMemo(() => {
@@ -467,6 +468,8 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
             <div
               key={row.issueId}
               data-testid="gantt-issue-row"
+              onMouseMove={(e) => setHover({ row, x: e.clientX, y: e.clientY })}
+              onMouseLeave={() => setHover((h) => (h?.row.issueId === row.issueId ? null : h))}
               style={{
                 position: "absolute",
                 top: HDR_H + i * rowH,
@@ -540,6 +543,8 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
           <DepArrows data={visibleData} domain={domain} trackW={trackW} rowH={rowH} />
         </div>
       </div>
+
+      {hover && <GanttTooltip row={hover.row} x={hover.x} y={hover.y} />}
     </div>
   );
 }
@@ -798,6 +803,120 @@ function GridLines({
         <line key={`w-${i}`} x1={x} y1={0} x2={x} y2={height} stroke="var(--line)" strokeWidth={1} opacity={0.7} />
       ))}
     </svg>
+  );
+}
+
+// ── Hover tooltip ────────────────────────────────────────────────────────────
+
+const MONTHS_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function fmtDate(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return `${MONTHS_ABBR[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
+
+/** " (Nd)" duration suffix between two dates, or "" when either is missing. */
+function durSuffix(start: string | null, due: string | null): string {
+  if (!start || !due) return "";
+  const a = new Date(start).getTime();
+  const b = new Date(due).getTime();
+  if (Number.isNaN(a) || Number.isNaN(b)) return "";
+  return ` (${Math.max(1, Math.round((b - a) / DAY_MS))}d)`;
+}
+
+function stateLabel(state: string): string {
+  const s = state.replace(/_/g, " ");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function TipBadge({ label, color }: { label: string; color?: string }) {
+  return (
+    <span
+      className="mono"
+      style={{
+        fontSize: 10,
+        color: color ?? "var(--ink-3)",
+        border: `1px solid ${color ?? "var(--line-2)"}`,
+        borderRadius: 3,
+        padding: "1px 5px",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
+function TipField({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, lineHeight: 1.6 }}>
+      <span style={{ color: "var(--ink-4)" }}>{label}</span>
+      <span className="mono" style={{ color: valueColor ?? "var(--ink-2)" }}>{value}</span>
+    </div>
+  );
+}
+
+/** Rich hover card following the cursor, showing a row's full schedule detail. */
+function GanttTooltip({ row, x, y }: { row: ScheduleTimelineRow; x: number; y: number }) {
+  const tier = rowTier(row);
+  const slipping = isSlipping(row);
+  const slip =
+    row.slipDays != null
+      ? row.slipDays
+      : row.dueDate && row.forecastEnd
+        ? Math.round((new Date(row.forecastEnd).getTime() - new Date(row.dueDate).getTime()) / DAY_MS)
+        : null;
+
+  const W = 264;
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1920;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 1080;
+  const left = x + W + 28 > vw ? x - W - 14 : x + 14;
+  const top = Math.min(y + 16, vh - 220);
+
+  return (
+    <div
+      data-testid="schedule-gantt-tooltip"
+      style={{
+        position: "fixed",
+        left,
+        top,
+        width: W,
+        zIndex: 50,
+        pointerEvents: "none",
+        background: "var(--panel)",
+        border: "1px solid var(--line-2)",
+        borderRadius: 8,
+        boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+        padding: "10px 12px",
+        fontSize: 12,
+        color: "var(--ink-2)",
+      }}
+    >
+      <div style={{ display: "flex", gap: 8, alignItems: "baseline", marginBottom: 6, minWidth: 0 }}>
+        <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)", flexShrink: 0 }}>{row.issueKey}</span>
+        <span style={{ color: "var(--ink-1)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {row.title}
+        </span>
+      </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+        <TipBadge label={stateLabel(row.state)} />
+        {tier === "critical" && <TipBadge label="Critical" color="var(--bad)" />}
+        {tier === "near" && <TipBadge label="Near-critical" color="var(--warn)" />}
+        {row.cycleName && <TipBadge label={row.cycleName} color="var(--accent)" />}
+      </div>
+      <TipField label="Plan" value={`${fmtDate(row.startDate)} → ${fmtDate(row.dueDate)}${durSuffix(row.startDate, row.dueDate)}`} />
+      <TipField label="Forecast" value={`${fmtDate(row.forecastStart)} → ${fmtDate(row.forecastEnd)}`} />
+      {row.baselineStart && (
+        <TipField label="Baseline" value={`${fmtDate(row.baselineStart)} → ${fmtDate(row.baselineEnd)}`} />
+      )}
+      <TipField label="Progress" value={`${row.progress}%`} valueColor={row.progress > 0 ? "var(--ok)" : undefined} />
+      {slipping && slip != null && <TipField label="Slip" value={`+${slip}d`} valueColor="var(--bad)" />}
+      {row.floatDays != null && (
+        <TipField label="Float" value={`${row.floatDays}d`} valueColor={row.floatDays <= 0 ? "var(--bad)" : undefined} />
+      )}
+    </div>
   );
 }
 
