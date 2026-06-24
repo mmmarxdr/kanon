@@ -326,13 +326,6 @@ export function ThreePlaneRow({
               ? "Near-critical issue (low schedule float)"
               : undefined
         }
-        title={
-          isCritical
-            ? "Critical path issue"
-            : isNearCritical
-              ? "Near-critical issue (low schedule float)"
-              : undefined
-        }
         style={planStyle}
         onPointerDown={isDraggable ? handlePointerDown : undefined}
         onPointerMove={isDraggable ? handlePointerMove : undefined}
@@ -343,7 +336,6 @@ export function ThreePlaneRow({
         {showProgress && (
           <div
             data-testid="plane-progress"
-            title={`${row.progress}% complete`}
             style={{
               position: "absolute",
               left: 0,
@@ -423,7 +415,6 @@ export function ThreePlaneRow({
           data-testid="slip-gap"
           role="img"
           style={slipStyle}
-          title={slipLabel}
           aria-label={slipLabel}
         />
       );

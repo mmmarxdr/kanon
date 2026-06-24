@@ -4,6 +4,7 @@ import { requireIssueRole, requireProjectMember } from "../../middleware/require
 import { IssueKeyParam, ProjectKeyParam, UpsertPlanBody, ReviseEstimateBody } from "./schema.js";
 import * as scheduleService from "./service.js";
 import * as timelineService from "./timeline-service.js";
+import { scheduleTimelineQuerySchema } from "@kanon/shared";
 
 /**
  * Schedule routes plugin — PPM KAN-99.
@@ -104,10 +105,11 @@ export default async function scheduleRoutes(
   );
   /**
    * GET /api/projects/:key/schedule-timeline
-   * Returns ScheduleTimelineRow[] for all issues in the project.
+   * Returns ScheduleTimelineResponse envelope for scoped issues in the project.
    * Any project member may read (mirrors GET /api/projects/:key/roadmap guard).
-   * Returns [] for a project with no issues; 404 if project key unknown.
-   * KAN-105 PR1.
+   * Returns { rows: [], total: 0, truncated: false } for a project with no issues;
+   * 404 if project key unknown.
+   * KAN-105 PR1, KAN-153 (scoping + envelope).
    */
   app.get(
     "/projects/:key/schedule-timeline",
@@ -115,16 +117,18 @@ export default async function scheduleRoutes(
       preHandler: [requireProjectMember("key")],
       schema: {
         params: ProjectKeyParam,
+        querystring: scheduleTimelineQuerySchema,
       },
     },
     async (request, reply) => {
       // request.projectId is set by requireProjectMember (requireProjectRole)
       // scoped to the caller's workspace — use it directly instead of re-resolving
       // by key, which would be vulnerable to cross-workspace key collisions.
-      const rows = await timelineService.getProjectScheduleTimeline(
+      const result = await timelineService.getProjectScheduleTimeline(
         request.projectId!,
+        request.query,
       );
-      return reply.status(200).send(rows);
+      return reply.status(200).send(result);
     },
   );
 }

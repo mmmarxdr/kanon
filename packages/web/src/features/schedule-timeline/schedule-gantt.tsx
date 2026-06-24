@@ -14,7 +14,12 @@
 
 import { useMemo, useCallback, useState, useId, type CSSProperties } from "react";
 import { useContainerWidth } from "@/features/roadmap/use-container-size";
-import { useProjectScheduleTimeline, type ScheduleTimelineRow } from "./use-project-schedule-timeline";
+import {
+  useProjectScheduleTimeline,
+  type ScheduleTimelineRow,
+  type ScheduleTimelineParams,
+} from "./use-project-schedule-timeline";
+import { useCyclesQuery } from "@/features/cycles/use-cycles-query";
 import { computeDomain, barBox, xForDate, type DateDomain } from "./timeline-scale";
 import { ThreePlaneRow, type PlanChangePayload } from "./three-plane-row";
 import { useUpsertPlanMutation } from "./use-upsert-plan-mutation";
@@ -157,7 +162,6 @@ export interface ScheduleGanttProps {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
-  const { data, isLoading, isError } = useProjectScheduleTimeline(projectKey);
   const [containerRef, containerWidth] = useContainerWidth();
   const { mutate: mutatePlan } = useUpsertPlanMutation();
 
@@ -166,41 +170,48 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
   const [tierFilter, setTierFilter] = useState<TierFilter>("all");
   const [hideDone, setHideDone] = useState(false);
   const [slippingOnly, setSlippingOnly] = useState(false);
-  const [cycleFilter, setCycleFilter] = useState<string>("all");
+  // KAN-153: scope drives the SERVER query. "active" → server default (active
+  // cycle, else window); "window" → explicit today window; else a cycleId.
+  const [scope, setScope] = useState<string>("active");
   const [compact, setCompact] = useState(true);
+  const [hover, setHover] = useState<{ row: ScheduleTimelineRow; x: number; y: number } | null>(null);
 
-  // Distinct cycles present in the data, for the cycle/sprint filter dropdown.
-  const cycleOptions = useMemo(() => {
-    const seen = new Map<string, string>();
-    let hasNoCycle = false;
-    for (const row of data ?? []) {
-      if (row.cycleId) seen.set(row.cycleId, row.cycleName ?? row.cycleId);
-      else hasNoCycle = true;
+  const scopeParams = useMemo<ScheduleTimelineParams>(() => {
+    if (scope === "active") return {};
+    if (scope === "window") {
+      const now = Date.now();
+      return {
+        from: new Date(now - 14 * DAY_MS).toISOString(),
+        to: new Date(now + 42 * DAY_MS).toISOString(),
+      };
     }
-    return {
-      cycles: [...seen.entries()].map(([id, name]) => ({ id, name })),
-      hasNoCycle,
-    };
-  }, [data]);
+    return { cycleId: scope };
+  }, [scope]);
+
+  const { data, isLoading, isError } = useProjectScheduleTimeline(projectKey, scopeParams);
+  const { data: cycles } = useCyclesQuery(projectKey);
+
+  const rows = useMemo(() => data?.rows ?? [], [data]);
+  const total = data?.total ?? rows.length;
+  const truncated = data?.truncated ?? false;
 
   const rowH = compact ? ROW_H_COMPACT : ROW_H_EXPANDED;
   const barH = compact ? BAR_H_COMPACT : BAR_H_EXPANDED;
 
-  // Domain is computed from ALL rows (below) so bars keep a stable scale; the
-  // filter only changes which rows render.
+  // Client-side filters narrow the already-scoped server result. Neighbor rows
+  // (KAN-153 cross-boundary context) are never filtered out — they exist only
+  // to anchor dependency arrows.
   const visibleData = useMemo(() => {
-    const base = data ?? [];
-    return base.filter((row) => {
+    return rows.filter((row) => {
+      if (row.isNeighbor) return true;
       if (hideDone && row.state === "done") return false;
       if (slippingOnly && !isSlipping(row)) return false;
-      if (cycleFilter === "none" && row.cycleId != null) return false;
-      if (cycleFilter !== "all" && cycleFilter !== "none" && row.cycleId !== cycleFilter) return false;
       if (tierFilter === "all") return true;
       const tier = rowTier(row);
       if (tierFilter === "critical") return tier === "critical";
       return tier === "critical" || tier === "near"; // "atrisk"
     });
-  }, [data, tierFilter, hideDone, slippingOnly, cycleFilter]);
+  }, [rows, tierFilter, hideDone, slippingOnly]);
 
   const handlePlanChange = useCallback(
     ({ issueKey, startDate, dueDate }: PlanChangePayload) => {
@@ -209,10 +220,7 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
     [mutatePlan, projectKey],
   );
 
-  const domain = useMemo(
-    () => computeDomain(data ?? []),
-    [data],
-  );
+  const domain = useMemo(() => computeDomain(rows), [rows]);
 
   // KAN-148: track width is driven by the zoom level. "fit" stretches the whole
   // domain to the visible width; fixed levels use pixels-per-day so the canvas
@@ -292,7 +300,10 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
   }
 
   // ── Empty ─────────────────────────────────────────────────────────────
-  if (!data || data.length === 0) {
+  // Only short-circuit to the full-screen empty on the DEFAULT scope; a narrowed
+  // scope that happens to be empty still renders the toolbar so the user can
+  // widen it (otherwise they'd be stuck with no scope control).
+  if (rows.length === 0 && scope === "active") {
     return (
       <div
         data-testid="schedule-gantt-empty"
@@ -350,9 +361,12 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
         onHideDone={setHideDone}
         slippingOnly={slippingOnly}
         onSlippingOnly={setSlippingOnly}
-        cycleFilter={cycleFilter}
-        onCycleFilter={setCycleFilter}
-        cycleOptions={cycleOptions}
+        scope={scope}
+        onScope={setScope}
+        cycles={cycles}
+        shown={visibleData.filter((r) => !r.isNeighbor).length}
+        total={total}
+        truncated={truncated}
         compact={compact}
         onCompact={setCompact}
       />
@@ -467,6 +481,8 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
             <div
               key={row.issueId}
               data-testid="gantt-issue-row"
+              onMouseMove={(e) => setHover({ row, x: e.clientX, y: e.clientY })}
+              onMouseLeave={() => setHover((h) => (h?.row.issueId === row.issueId ? null : h))}
               style={{
                 position: "absolute",
                 top: HDR_H + i * rowH,
@@ -475,6 +491,8 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
                 height: rowH,
                 borderBottom: "1px solid var(--line)",
                 display: "flex",
+                // KAN-153: neighbor rows are off-scope context — muted.
+                opacity: row.isNeighbor ? 0.45 : 1,
               }}
             >
               {/* Left gutter */}
@@ -514,6 +532,22 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
                 >
                   {row.title}
                 </span>
+                {row.isNeighbor && (
+                  <span
+                    className="mono"
+                    title="Dependency context — outside the current scope"
+                    style={{
+                      fontSize: 9,
+                      color: "var(--ink-4)",
+                      border: "1px solid var(--line-2)",
+                      borderRadius: 3,
+                      padding: "0 4px",
+                      flexShrink: 0,
+                    }}
+                  >
+                    ctx
+                  </span>
+                )}
               </div>
 
               {/* Track area — ThreePlaneRow handles absolute positioning within */}
@@ -540,6 +574,8 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
           <DepArrows data={visibleData} domain={domain} trackW={trackW} rowH={rowH} />
         </div>
       </div>
+
+      {hover && <GanttTooltip row={hover.row} x={hover.x} y={hover.y} />}
     </div>
   );
 }
@@ -801,6 +837,120 @@ function GridLines({
   );
 }
 
+// ── Hover tooltip ────────────────────────────────────────────────────────────
+
+const MONTHS_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function fmtDate(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return `${MONTHS_ABBR[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
+
+/** " (Nd)" duration suffix between two dates, or "" when either is missing. */
+function durSuffix(start: string | null, due: string | null): string {
+  if (!start || !due) return "";
+  const a = new Date(start).getTime();
+  const b = new Date(due).getTime();
+  if (Number.isNaN(a) || Number.isNaN(b)) return "";
+  return ` (${Math.max(1, Math.round((b - a) / DAY_MS))}d)`;
+}
+
+function stateLabel(state: string): string {
+  const s = state.replace(/_/g, " ");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function TipBadge({ label, color }: { label: string; color?: string }) {
+  return (
+    <span
+      className="mono"
+      style={{
+        fontSize: 10,
+        color: color ?? "var(--ink-3)",
+        border: `1px solid ${color ?? "var(--line-2)"}`,
+        borderRadius: 3,
+        padding: "1px 5px",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
+function TipField({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, lineHeight: 1.6 }}>
+      <span style={{ color: "var(--ink-4)" }}>{label}</span>
+      <span className="mono" style={{ color: valueColor ?? "var(--ink-2)" }}>{value}</span>
+    </div>
+  );
+}
+
+/** Rich hover card following the cursor, showing a row's full schedule detail. */
+function GanttTooltip({ row, x, y }: { row: ScheduleTimelineRow; x: number; y: number }) {
+  const tier = rowTier(row);
+  const slipping = isSlipping(row);
+  const slip =
+    row.slipDays != null
+      ? row.slipDays
+      : row.dueDate && row.forecastEnd
+        ? Math.round((new Date(row.forecastEnd).getTime() - new Date(row.dueDate).getTime()) / DAY_MS)
+        : null;
+
+  const W = 264;
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1920;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 1080;
+  const left = x + W + 28 > vw ? x - W - 14 : x + 14;
+  const top = Math.min(y + 16, vh - 220);
+
+  return (
+    <div
+      data-testid="schedule-gantt-tooltip"
+      style={{
+        position: "fixed",
+        left,
+        top,
+        width: W,
+        zIndex: 50,
+        pointerEvents: "none",
+        background: "var(--panel)",
+        border: "1px solid var(--line-2)",
+        borderRadius: 8,
+        boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+        padding: "10px 12px",
+        fontSize: 12,
+        color: "var(--ink-2)",
+      }}
+    >
+      <div style={{ display: "flex", gap: 8, alignItems: "baseline", marginBottom: 6, minWidth: 0 }}>
+        <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)", flexShrink: 0 }}>{row.issueKey}</span>
+        <span style={{ color: "var(--ink-1)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {row.title}
+        </span>
+      </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+        <TipBadge label={stateLabel(row.state)} />
+        {tier === "critical" && <TipBadge label="Critical" color="var(--bad)" />}
+        {tier === "near" && <TipBadge label="Near-critical" color="var(--warn)" />}
+        {row.cycleName && <TipBadge label={row.cycleName} color="var(--accent)" />}
+      </div>
+      <TipField label="Plan" value={`${fmtDate(row.startDate)} → ${fmtDate(row.dueDate)}${durSuffix(row.startDate, row.dueDate)}`} />
+      <TipField label="Forecast" value={`${fmtDate(row.forecastStart)} → ${fmtDate(row.forecastEnd)}`} />
+      {row.baselineStart && (
+        <TipField label="Baseline" value={`${fmtDate(row.baselineStart)} → ${fmtDate(row.baselineEnd)}`} />
+      )}
+      <TipField label="Progress" value={`${row.progress}%`} valueColor={row.progress > 0 ? "var(--ok)" : undefined} />
+      {slipping && slip != null && <TipField label="Slip" value={`+${slip}d`} valueColor="var(--bad)" />}
+      {row.floatDays != null && (
+        <TipField label="Float" value={`${row.floatDays}d`} valueColor={row.floatDays <= 0 ? "var(--bad)" : undefined} />
+      )}
+    </div>
+  );
+}
+
 // ── Legend ────────────────────────────────────────────────────────────────────
 
 const LEGEND_ITEMS = [
@@ -904,9 +1054,12 @@ function GanttLegend({
   onHideDone,
   slippingOnly,
   onSlippingOnly,
-  cycleFilter,
-  onCycleFilter,
-  cycleOptions,
+  scope,
+  onScope,
+  cycles,
+  shown,
+  total,
+  truncated,
   compact,
   onCompact,
 }: {
@@ -919,9 +1072,12 @@ function GanttLegend({
   onHideDone?: (v: boolean) => void;
   slippingOnly?: boolean;
   onSlippingOnly?: (v: boolean) => void;
-  cycleFilter?: string;
-  onCycleFilter?: (v: string) => void;
-  cycleOptions?: { cycles: Array<{ id: string; name: string }>; hasNoCycle: boolean };
+  scope?: string;
+  onScope?: (v: string) => void;
+  cycles?: Array<{ id: string; name: string; state?: string }>;
+  shown?: number;
+  total?: number;
+  truncated?: boolean;
   compact?: boolean;
   onCompact?: (v: boolean) => void;
 }) {
@@ -963,30 +1119,44 @@ function GanttLegend({
 
       {/* Right-aligned controls: filters + zoom (KAN-148) + scroll-to-today (KAN-151). */}
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        {onCycleFilter && cycleOptions && (cycleOptions.cycles.length > 0 || cycleOptions.hasNoCycle) && (
+        {/* KAN-153: "showing N of M" + truncation signal so a scoped view never
+            looks like the whole project (and a hit cap is never silent). */}
+        {total != null && (
+          <span
+            data-testid="schedule-gantt-count"
+            className="mono"
+            style={{ fontSize: 10, color: truncated ? "var(--warn)" : "var(--ink-4)", whiteSpace: "nowrap" }}
+            title={truncated ? "Result hit the server cap — narrow the scope to see everything" : undefined}
+          >
+            {shown != null && shown !== total ? `${shown} of ${total}` : `${total}`}
+            {truncated ? " · capped" : ""}
+          </span>
+        )}
+        {onScope && (
           <select
-            data-testid="schedule-gantt-cycle-filter"
-            aria-label="Filter by cycle"
-            value={cycleFilter ?? "all"}
-            onChange={(e) => onCycleFilter(e.target.value)}
+            data-testid="schedule-gantt-scope"
+            aria-label="Schedule scope"
+            value={scope ?? "active"}
+            onChange={(e) => onScope(e.target.value)}
             className="mono"
             style={{
               fontSize: 11,
-              color: cycleFilter && cycleFilter !== "all" ? "var(--ink-1)" : "var(--ink-3)",
-              background: cycleFilter && cycleFilter !== "all" ? "var(--bg-3)" : "var(--panel)",
-              border: `1px solid ${cycleFilter && cycleFilter !== "all" ? "var(--accent)" : "var(--line-2)"}`,
+              color: scope && scope !== "active" ? "var(--ink-1)" : "var(--ink-3)",
+              background: scope && scope !== "active" ? "var(--bg-3)" : "var(--panel)",
+              border: `1px solid ${scope && scope !== "active" ? "var(--accent)" : "var(--line-2)"}`,
               borderRadius: 4,
               padding: "3px 6px",
               cursor: "pointer",
             }}
           >
-            <option value="all">All cycles</option>
-            {cycleOptions.cycles.map((c) => (
+            <option value="active">Active cycle</option>
+            <option value="window">Around today</option>
+            {(cycles ?? []).map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
+                {c.state === "active" ? " (active)" : ""}
               </option>
             ))}
-            {cycleOptions.hasNoCycle && <option value="none">No cycle</option>}
           </select>
         )}
         {onTierFilter && (

@@ -31,6 +31,7 @@ function makeRow(overrides: Partial<ScheduleTimelineRow> = {}): ScheduleTimeline
     deps: [],
     cycleId: null,
     cycleName: null,
+    isNeighbor: false,
     ...overrides,
   };
 }
@@ -193,7 +194,7 @@ describe("ThreePlaneRow — slip gap accessibility", () => {
     expect(el?.getAttribute("aria-label")).toMatch(/14 day/i);
   });
 
-  it("slip-gap element has a title attribute when slipping", () => {
+  it("slip-gap element has an accessible label when slipping", () => {
     const row = makeRow({
       dueDate: "2026-05-01T00:00:00Z",
       forecastEnd: "2026-05-15T00:00:00Z",
@@ -203,7 +204,7 @@ describe("ThreePlaneRow — slip gap accessibility", () => {
       <ThreePlaneRow row={row} domain={makeDomain(row)} trackWidth={TRACK_W} />,
     );
     const el = container.querySelector("[data-testid='slip-gap']");
-    expect(el?.getAttribute("title")).toMatch(/14 day/i);
+    expect(el?.getAttribute("aria-label")).toMatch(/14 day/i);
   });
 });
 

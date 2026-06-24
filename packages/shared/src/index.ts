@@ -45,11 +45,13 @@ export {
   scheduleDepEdgeSchema,
   scheduleTimelineRowSchema,
   scheduleTimelineResponseSchema,
+  scheduleTimelineQuerySchema,
 } from "./schedule-timeline.js";
 export type {
   ScheduleDepEdge,
   ScheduleTimelineRow,
   ScheduleTimelineResponse,
+  ScheduleTimelineQuery,
 } from "./schedule-timeline.js";
 
 export {

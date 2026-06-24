@@ -1,11 +1,16 @@
 /**
- * Unit tests for schedule timeline service (KAN-105 PR1).
+ * Unit tests for schedule timeline service (KAN-105 PR1, KAN-153).
  *
  * Tests the serializeTimelineRow mapping function in isolation:
  * - Decimal → string convention (estimateHours not on row, but progress int)
  * - Date → ISO string convention
  * - Null-safety: issues with no schedule or forecast row → all date fields null
  * - Forecast fields: slipDays, critical, floatDays from IssueForecast
+ * - KAN-153: isNeighbor flag
+ *
+ * getProjectScheduleTimeline is tested via the integration test suite
+ * (schedule-timeline.integration.test.ts) which exercises scoping, neighbors,
+ * cap/truncated, and the envelope response shape against a real DB.
  */
 
 import { describe, it, expect } from "vitest";
@@ -187,5 +192,27 @@ describe("serializeTimelineRow", () => {
       forecast: null,
     });
     expect(row.deps).toEqual([]);
+  });
+
+  // KAN-153: isNeighbor flag
+  it("STR-8: isNeighbor defaults to false when not provided", () => {
+    const row = serializeTimelineRow({
+      ...BASE_ISSUE,
+      schedule: null,
+      forecast: null,
+    });
+    expect(row.isNeighbor).toBe(false);
+  });
+
+  it("STR-9: isNeighbor=true is propagated when explicitly set", () => {
+    const row = serializeTimelineRow(
+      {
+        ...BASE_ISSUE,
+        schedule: null,
+        forecast: null,
+      },
+      true,
+    );
+    expect(row.isNeighbor).toBe(true);
   });
 });

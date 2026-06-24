@@ -1,12 +1,13 @@
 /**
- * Integration tests: GET /api/projects/:key/schedule-timeline (KAN-105 PR1).
+ * Integration tests: GET /api/projects/:key/schedule-timeline (KAN-105 PR1, KAN-153).
  *
  * Covers:
  * - Project with mixed issues (full schedule+forecast, schedule-only, bare)
  *   asserts shape, null-handling, and that bare issues still appear
  * - Non-member gets 403; project member gets 200
  * - Unknown project key returns 404
- * - Empty project returns []
+ * - Empty project returns envelope { rows: [], total: 0, truncated: false }
+ * - KAN-153: cycleId param, from/to params, envelope response shape
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
@@ -51,7 +52,7 @@ describe("Schedule Timeline Routes (integration)", () => {
   // ── GET /api/projects/:key/schedule-timeline ────────────────────────
 
   describe("GET /api/projects/:key/schedule-timeline", () => {
-    it("STL-1: returns [] for a project with no issues", async () => {
+    it("STL-1: returns envelope with empty rows for a project with no issues", async () => {
       const { member, project } = await seedProjectContext();
 
       const res = await app.inject({
@@ -61,7 +62,7 @@ describe("Schedule Timeline Routes (integration)", () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual([]);
+      expect(res.json()).toEqual({ rows: [], total: 0, truncated: false });
     });
 
     it("STL-2: 404 for non-member (project not visible outside their workspace)", async () => {
@@ -155,9 +156,12 @@ describe("Schedule Timeline Routes (integration)", () => {
 
       expect(res.statusCode).toBe(200);
       const body = res.json();
-      expect(body).toHaveLength(1);
+      // KAN-153: envelope shape
+      expect(body.total).toBe(1);
+      expect(body.truncated).toBe(false);
+      expect(body.rows).toHaveLength(1);
 
-      const row = body[0];
+      const row = body.rows[0];
       expect(row.issueId).toBe(issue.id);
       expect(row.issueKey).toBe(issue.key);
       expect(row.title).toBe("Fully scheduled");
@@ -179,6 +183,9 @@ describe("Schedule Timeline Routes (integration)", () => {
       expect(row.slipDays).toBe(5);
       expect(row.critical).toBe(true);
       expect(row.floatDays).toBe(3);
+
+      // KAN-153: isNeighbor default
+      expect(row.isNeighbor).toBe(false);
     });
 
     it("STL-5: includes schedule-only issue with null forecast fields", async () => {
@@ -213,9 +220,9 @@ describe("Schedule Timeline Routes (integration)", () => {
 
       expect(res.statusCode).toBe(200);
       const body = res.json();
-      expect(body).toHaveLength(1);
+      expect(body.rows).toHaveLength(1);
 
-      const row = body[0];
+      const row = body.rows[0];
       expect(row.startDate).toBe("2026-08-01T00:00:00.000Z");
       expect(row.forecastStart).toBeNull();
       expect(row.forecastEnd).toBeNull();
@@ -246,9 +253,9 @@ describe("Schedule Timeline Routes (integration)", () => {
 
       expect(res.statusCode).toBe(200);
       const body = res.json();
-      expect(body).toHaveLength(1);
+      expect(body.rows).toHaveLength(1);
 
-      const row = body[0];
+      const row = body.rows[0];
       expect(row.issueId).toBe(bare.id);
       expect(row.progress).toBe(0);
       expect(row.startDate).toBeNull();
@@ -322,8 +329,10 @@ describe("Schedule Timeline Routes (integration)", () => {
 
       expect(res.statusCode).toBe(200);
       const body = res.json();
-      // All 3 issues must appear
-      expect(body).toHaveLength(3);
+      // All 3 issues must appear (small project escape hatch, total <= 60)
+      expect(body.rows).toHaveLength(3);
+      expect(body.total).toBe(3);
+      expect(body.truncated).toBe(false);
     });
 
     it("STL-8: cross-workspace same key — member of WS-A sees only WS-A issues (never WS-B)", async () => {
@@ -367,8 +376,8 @@ describe("Schedule Timeline Routes (integration)", () => {
       expect(res.statusCode).toBe(200);
       const body = res.json();
       // Must return exactly WS-A's issue — never WS-B's
-      expect(body).toHaveLength(1);
-      expect(body[0].title).toBe("WS-A issue");
+      expect(body.rows).toHaveLength(1);
+      expect(body.rows[0].title).toBe("WS-A issue");
     });
 
     it("STL-9: cross-workspace same key — outsider with no membership in either workspace gets 404", async () => {
@@ -399,6 +408,239 @@ describe("Schedule Timeline Routes (integration)", () => {
       // requireProjectRole scopes lookup to the caller's workspaces — ACME
       // does not exist in wsOther, so the middleware returns 404
       expect(res.statusCode).toBe(404);
+    });
+
+    // ── KAN-153: scoping filter tests ─────────────────────────────────────
+
+    it("STL-10: ?cycleId returns only issues in that cycle", async () => {
+      const { member, project } = await seedProjectContext();
+
+      // Create a cycle
+      const cycle = await prisma.cycle.create({
+        data: {
+          name: "Sprint 1",
+          state: "active",
+          startDate: new Date("2026-07-01T00:00:00.000Z"),
+          endDate: new Date("2026-07-14T00:00:00.000Z"),
+          projectId: project.id,
+        },
+      });
+
+      // Issue in the cycle
+      await prisma.issue.create({
+        data: {
+          key: `${project.key}-1`,
+          title: "In cycle",
+          type: "task",
+          state: "todo",
+          projectId: project.id,
+          sequenceNum: 1,
+          cycleId: cycle.id,
+        },
+      });
+
+      // Issue NOT in the cycle
+      await prisma.issue.create({
+        data: {
+          key: `${project.key}-2`,
+          title: "Not in cycle",
+          type: "task",
+          state: "todo",
+          projectId: project.id,
+          sequenceNum: 2,
+        },
+      });
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/projects/${project.key}/schedule-timeline?cycleId=${cycle.id}`,
+        headers: { authorization: `Bearer ${member.token}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.rows).toHaveLength(1);
+      expect(body.rows[0].title).toBe("In cycle");
+      expect(body.total).toBe(1);
+      expect(body.truncated).toBe(false);
+    });
+
+    it("STL-11: ?from=&to= returns only issues whose plan or forecast span overlaps the window", async () => {
+      const { member, project } = await seedProjectContext();
+
+      // Issue whose plan span overlaps [2026-07-01, 2026-07-31]
+      const inWindow = await prisma.issue.create({
+        data: {
+          key: `${project.key}-1`,
+          title: "In window",
+          type: "task",
+          state: "todo",
+          projectId: project.id,
+          sequenceNum: 1,
+        },
+      });
+      await prisma.issueSchedule.create({
+        data: {
+          issueId: inWindow.id,
+          startDate: new Date("2026-07-10T00:00:00.000Z"),
+          dueDate: new Date("2026-07-20T00:00:00.000Z"),
+          progress: 0,
+        },
+      });
+
+      // Issue whose plan span is entirely before the window
+      const outWindow = await prisma.issue.create({
+        data: {
+          key: `${project.key}-2`,
+          title: "Out of window",
+          type: "task",
+          state: "todo",
+          projectId: project.id,
+          sequenceNum: 2,
+        },
+      });
+      await prisma.issueSchedule.create({
+        data: {
+          issueId: outWindow.id,
+          startDate: new Date("2026-05-01T00:00:00.000Z"),
+          dueDate: new Date("2026-06-01T00:00:00.000Z"),
+          progress: 0,
+        },
+      });
+
+      // Issue with no plan dates (bare) — should NOT match a date window
+      await prisma.issue.create({
+        data: {
+          key: `${project.key}-3`,
+          title: "Unscheduled",
+          type: "task",
+          state: "backlog",
+          projectId: project.id,
+          sequenceNum: 3,
+        },
+      });
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/projects/${project.key}/schedule-timeline?from=2026-07-01T00:00:00.000Z&to=2026-07-31T00:00:00.000Z`,
+        headers: { authorization: `Bearer ${member.token}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.rows).toHaveLength(1);
+      expect(body.rows[0].title).toBe("In window");
+      expect(body.total).toBe(1);
+    });
+
+    it("STL-12: from/to window matches forecast-only issue (no plan dates)", async () => {
+      const { member, project } = await seedProjectContext();
+
+      // Issue with forecast span overlapping the window but NO plan dates
+      const forecastOnly = await prisma.issue.create({
+        data: {
+          key: `${project.key}-1`,
+          title: "Forecast only in window",
+          type: "task",
+          state: "todo",
+          projectId: project.id,
+          sequenceNum: 1,
+        },
+      });
+      await prisma.issueForecast.create({
+        data: {
+          issueId: forecastOnly.id,
+          forecastStart: new Date("2026-07-15T00:00:00.000Z"),
+          forecastEnd: new Date("2026-07-25T00:00:00.000Z"),
+          slipDays: 0,
+          critical: false,
+          computedAt: new Date(),
+        },
+      });
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/projects/${project.key}/schedule-timeline?from=2026-07-01T00:00:00.000Z&to=2026-07-31T00:00:00.000Z`,
+        headers: { authorization: `Bearer ${member.token}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.rows).toHaveLength(1);
+      expect(body.rows[0].title).toBe("Forecast only in window");
+    });
+
+    it("STL-13: default behavior with active cycle returns only cycle issues", async () => {
+      const { member, project } = await seedProjectContext();
+
+      const cycle = await prisma.cycle.create({
+        data: {
+          name: "Active Sprint",
+          state: "active",
+          startDate: new Date("2026-07-01T00:00:00.000Z"),
+          endDate: new Date("2026-07-14T00:00:00.000Z"),
+          projectId: project.id,
+        },
+      });
+
+      // Create > 60 issues so small-project escape hatch does NOT fire
+      const issueData = Array.from({ length: 61 }, (_, i) => ({
+        key: `${project.key}-${i + 1}`,
+        title: i === 0 ? "Cycle issue" : `Backlog ${i}`,
+        type: "task" as const,
+        state: "backlog" as const,
+        projectId: project.id,
+        sequenceNum: i + 1,
+        cycleId: i === 0 ? cycle.id : null,
+      }));
+
+      for (const data of issueData) {
+        await prisma.issue.create({ data });
+      }
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/projects/${project.key}/schedule-timeline`,
+        headers: { authorization: `Bearer ${member.token}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      // Only the cycle issue should be returned
+      expect(body.rows).toHaveLength(1);
+      expect(body.rows[0].title).toBe("Cycle issue");
+      expect(body.total).toBe(1);
+    });
+
+    it("STL-14: response envelope has correct shape (rows, total, truncated)", async () => {
+      const { member, project } = await seedProjectContext();
+
+      await prisma.issue.create({
+        data: {
+          key: `${project.key}-1`,
+          title: "Issue A",
+          type: "task",
+          state: "todo",
+          projectId: project.id,
+          sequenceNum: 1,
+        },
+      });
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/projects/${project.key}/schedule-timeline`,
+        headers: { authorization: `Bearer ${member.token}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      // Envelope fields
+      expect(body).toHaveProperty("rows");
+      expect(body).toHaveProperty("total");
+      expect(body).toHaveProperty("truncated");
+      expect(Array.isArray(body.rows)).toBe(true);
+      expect(typeof body.total).toBe("number");
+      expect(typeof body.truncated).toBe("boolean");
     });
   });
 });

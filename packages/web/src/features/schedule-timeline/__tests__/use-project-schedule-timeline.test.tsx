@@ -65,6 +65,9 @@ const VALID_ROW = {
   critical: null,
   floatDays: null,
   deps: [],
+  cycleId: null,
+  cycleName: null,
+  isNeighbor: false,
 };
 
 describe("useProjectScheduleTimeline (KAN-105 PR1)", () => {
@@ -72,9 +75,9 @@ describe("useProjectScheduleTimeline (KAN-105 PR1)", () => {
     vi.restoreAllMocks();
   });
 
-  it("PSTL-1: returns parsed array when API responds 200", async () => {
+  it("PSTL-1: returns the parsed envelope when API responds 200", async () => {
     const { fetchApiValidated } = await import("@/lib/api-client");
-    vi.mocked(fetchApiValidated).mockResolvedValue([VALID_ROW]);
+    vi.mocked(fetchApiValidated).mockResolvedValue({ rows: [VALID_ROW], total: 1, truncated: false });
 
     const { useProjectScheduleTimeline } = await import(
       "../use-project-schedule-timeline"
@@ -87,9 +90,10 @@ describe("useProjectScheduleTimeline (KAN-105 PR1)", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(result.current.data).toHaveLength(1);
-    expect(result.current.data?.[0]?.issueKey).toBe("KAN-1");
-    expect(result.current.data?.[0]?.slipDays).toBeNull();
+    expect(result.current.data?.rows).toHaveLength(1);
+    expect(result.current.data?.rows?.[0]?.issueKey).toBe("KAN-1");
+    expect(result.current.data?.rows?.[0]?.slipDays).toBeNull();
+    expect(result.current.data?.total).toBe(1);
   });
 
   it("PSTL-2: is disabled when projectKey is empty", async () => {
