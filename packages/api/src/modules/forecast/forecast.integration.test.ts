@@ -528,15 +528,20 @@ describe("Forecast Service — rebuildProjectForecast (integration)", () => {
       // B: start June 1, est 8h (1 day) → end June 2. due = June 1 → slip = 1 day
       // A: start June 1, est 16h (2 days) → end June 3. A is the critical path.
       // A ends June 3 = projectEnd. B ends June 2 → float = 1 day. B.slip = 1 day. → non-critical → SKIP proposal
+      // state "todo" keeps the forecast plan-date based: KAN-145 anchoring only
+      // applies to in_progress work, so these planned issues slip deterministically
+      // from their fixed dates regardless of the current date.
       const issueA = await seedScheduledIssue(projectId, `KFL-1`, 1, {
         startDate: new Date("2026-06-01"),
         dueDate: new Date("2026-06-04"),
         estimateHours: 16, // 2 days → ends June 3
+        state: "todo",
       });
       const issueB = await seedScheduledIssue(projectId, `KFL-2`, 2, {
         startDate: new Date("2026-06-01"),
         dueDate: new Date("2026-06-01"), // due June 1, forecast ends June 2 → slip = 1
         estimateHours: 8, // 1 day → ends June 2
+        state: "todo",
       });
 
       await seedApprovedTimeEntry(ownerId, issueA.id, 0, ownerId);
@@ -569,15 +574,19 @@ describe("Forecast Service — rebuildProjectForecast (integration)", () => {
       // A: start June 1, est 24h (3 days) → ends June 4, due June 4 = no slip → critical
       // B: start May 25, due May 28, est 48h (6 days) → forecastEnd May 31 → slip = 3 days
       //    A ends June 4 = projectEnd; B ends May 31 → B has float → non-critical
+      // state "todo": KAN-145 anchoring only applies to in_progress work, so these
+      // planned issues slip deterministically from their fixed plan dates.
       const issueA = await seedScheduledIssue(projectId, `KFM-1`, 1, {
         startDate: new Date("2026-06-01"),
         dueDate: new Date("2026-06-04"),
         estimateHours: 24, // 3 days → ends June 4
+        state: "todo",
       });
       const issueB = await seedScheduledIssue(projectId, `KFM-2`, 2, {
         startDate: new Date("2026-05-25"),
         dueDate: new Date("2026-05-28"), // due May 28; forecast ends May 31 (6 days) → slip 3
         estimateHours: 48, // 6 days → forecastEnd = May 25 + 6 = May 31
+        state: "todo",
       });
 
       await rebuildProjectForecast(projectId);
