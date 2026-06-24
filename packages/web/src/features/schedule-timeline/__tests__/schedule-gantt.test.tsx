@@ -32,14 +32,27 @@ vi.mock("../use-project-schedule-timeline", async () => {
   >("../use-project-schedule-timeline");
   return {
     ...actual,
-    useProjectScheduleTimeline: (key: string) =>
-      mockUseProjectScheduleTimeline(key),
+    // KAN-153: the hook now returns an envelope { rows, total, truncated }.
+    // Tests still set `data` as a bare row array for brevity — normalize here so
+    // both shapes work.
+    useProjectScheduleTimeline: (key: string) => {
+      const r = mockUseProjectScheduleTimeline(key);
+      if (r && Array.isArray(r.data)) {
+        return { ...r, data: { rows: r.data, total: r.data.length, truncated: false } };
+      }
+      return r;
+    },
   };
 });
 
 // KAN-105 PR3: mock useUpsertPlanMutation so ScheduleGantt renders without a QueryClient
 vi.mock("../use-upsert-plan-mutation", () => ({
   useUpsertPlanMutation: () => ({ mutate: vi.fn() }),
+}));
+
+// KAN-153: the Gantt fetches the cycle list for its scope dropdown.
+vi.mock("@/features/cycles/use-cycles-query", () => ({
+  useCyclesQuery: () => ({ data: [] }),
 }));
 
 // ── Import AFTER mocks ───────────────────────────────────────────────────────
@@ -57,6 +70,7 @@ function makeRow(overrides: Partial<ScheduleTimelineRow> = {}): ScheduleTimeline
     type: "issue",
     cycleId: null,
     cycleName: null,
+    isNeighbor: false,
     startDate: "2026-03-01T00:00:00Z",
     dueDate: "2026-05-01T00:00:00Z",
     progress: 40,
@@ -366,44 +380,48 @@ describe("ScheduleGantt — hook wiring", () => {
   });
 });
 
-// ── Cycle filter ─────────────────────────────────────────────────────────────
+// ── KAN-153: scope selector + neighbor rows ──────────────────────────────────
 
-describe("ScheduleGantt — cycle filter", () => {
-  function renderWithCycles() {
+describe("ScheduleGantt — scope + neighbors (KAN-153)", () => {
+  it("scope selector offers the default scopes", () => {
+    mockUseProjectScheduleTimeline.mockReturnValue({
+      data: [makeRow()],
+      isLoading: false,
+      isError: false,
+    });
+    render(<ScheduleGantt projectKey="TST" />);
+    const labels = Array.from(
+      screen.getByTestId("schedule-gantt-scope").querySelectorAll("option"),
+    ).map((o) => o.textContent);
+    expect(labels).toContain("Active cycle");
+    expect(labels).toContain("Around today");
+  });
+
+  it("shows 'N of M' when neighbor rows pad the scoped result", () => {
     mockUseProjectScheduleTimeline.mockReturnValue({
       data: [
-        makeRow({ issueId: "a", issueKey: "A-1", cycleId: "c1", cycleName: "Sprint 1" }),
-        makeRow({ issueId: "b", issueKey: "A-2", cycleId: "c2", cycleName: "Sprint 2" }),
-        makeRow({ issueId: "c", issueKey: "A-3", cycleId: "c2", cycleName: "Sprint 2" }),
-        makeRow({ issueId: "d", issueKey: "A-4", cycleId: null, cycleName: null }),
+        makeRow({ issueId: "a", issueKey: "A-1" }),
+        makeRow({ issueId: "b", issueKey: "A-2", isNeighbor: true }),
       ],
       isLoading: false,
       isError: false,
     });
-    return render(<ScheduleGantt projectKey="TST" />);
-  }
-
-  it("lists each distinct cycle plus All / No cycle", () => {
-    renderWithCycles();
-    const labels = Array.from(
-      screen.getByTestId("schedule-gantt-cycle-filter").querySelectorAll("option"),
-    ).map((o) => o.textContent);
-    expect(labels).toEqual(["All cycles", "Sprint 1", "Sprint 2", "No cycle"]);
+    render(<ScheduleGantt projectKey="TST" />);
+    // shown (non-neighbor) = 1, total = 2 → "1 of 2"
+    expect(screen.getByTestId("schedule-gantt-count").textContent).toContain("1 of 2");
   });
 
-  it("filters rows to the selected cycle", () => {
-    renderWithCycles();
-    fireEvent.change(screen.getByTestId("schedule-gantt-cycle-filter"), {
-      target: { value: "c2" },
+  it("renders a neighbor row, muted, with a context tag", () => {
+    mockUseProjectScheduleTimeline.mockReturnValue({
+      data: [
+        makeRow({ issueId: "a", issueKey: "A-1" }),
+        makeRow({ issueId: "b", issueKey: "A-2", isNeighbor: true }),
+      ],
+      isLoading: false,
+      isError: false,
     });
+    render(<ScheduleGantt projectKey="TST" />);
     expect(screen.getAllByTestId("gantt-issue-row")).toHaveLength(2);
-  });
-
-  it("'No cycle' shows only issues without a cycle", () => {
-    renderWithCycles();
-    fireEvent.change(screen.getByTestId("schedule-gantt-cycle-filter"), {
-      target: { value: "none" },
-    });
-    expect(screen.getAllByTestId("gantt-issue-row")).toHaveLength(1);
+    expect(screen.getByText("ctx")).toBeTruthy();
   });
 });
