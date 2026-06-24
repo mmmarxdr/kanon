@@ -270,11 +270,13 @@ export function ThreePlaneRow({ row, domain, trackWidth, onPlanChange }: ThreePl
       border: `1px solid ${tokens.border}`,
       overflow: "hidden",
       zIndex: 2,
-      // KAN-150: critical bars get a red glow on top of the red fill/border;
-      // near-critical and normal bars rely on fill/border alone.
+      // KAN-150: critical bars get a soft 1px red ring; near-critical a faint
+      // amber ring. Kept subtle so the bars read cleanly (no heavy glow halo).
       boxShadow: isCritical
-        ? `0 0 0 2px var(--bad), 0 0 8px color-mix(in oklch, var(--bad) 30%, transparent)`
-        : "none",
+        ? `0 0 0 1px var(--bad), 0 1px 5px color-mix(in oklch, var(--bad) 20%, transparent)`
+        : isNearCritical
+          ? `0 0 0 1px color-mix(in oklch, var(--warn) 55%, transparent)`
+          : "none",
       transition: dragOffsetPx !== 0 ? "none" : "box-shadow 120ms ease",
       cursor: isDraggable ? "grab" : undefined,
       touchAction: "none",
@@ -371,10 +373,15 @@ export function ThreePlaneRow({ row, domain, trackWidth, onPlanChange }: ThreePl
         height: BAR_H,
         left: `${box.left}px`,
         width: `${box.width}px`,
-        borderRadius: "0 4px 4px 0",
-        background: "color-mix(in oklch, var(--warn) 22%, transparent)",
-        border: "1px dashed var(--warn)",
-        borderLeft: "none",
+        borderRadius: "0 3px 3px 0",
+        // Diagonal hatch in danger-red: slipping is a problem, and the texture
+        // makes it unmistakable vs the solid near-critical amber bars even for
+        // color-blind users (not color-only).
+        background:
+          "repeating-linear-gradient(135deg, color-mix(in oklch, var(--bad) 32%, transparent) 0 3px, transparent 3px 7px)",
+        borderTop: "1px dashed color-mix(in oklch, var(--bad) 70%, transparent)",
+        borderBottom: "1px dashed color-mix(in oklch, var(--bad) 70%, transparent)",
+        borderRight: "1px dashed color-mix(in oklch, var(--bad) 70%, transparent)",
         zIndex: 2,
         pointerEvents: "none",
       };

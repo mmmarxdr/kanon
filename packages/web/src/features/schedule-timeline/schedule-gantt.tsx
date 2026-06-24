@@ -15,7 +15,7 @@
 import { useMemo, useCallback, useState, useId, type CSSProperties } from "react";
 import { useContainerWidth } from "@/features/roadmap/use-container-size";
 import { useProjectScheduleTimeline, type ScheduleTimelineRow } from "./use-project-schedule-timeline";
-import { computeDomain, barBox, type DateDomain } from "./timeline-scale";
+import { computeDomain, barBox, xForDate, type DateDomain } from "./timeline-scale";
 import { ThreePlaneRow, type PlanChangePayload } from "./three-plane-row";
 import { useUpsertPlanMutation } from "./use-upsert-plan-mutation";
 
@@ -45,6 +45,24 @@ const ZOOM_OPTIONS: ReadonlyArray<{ value: ZoomLevel; label: string }> = [
   { value: "week", label: "Week" },
   { value: "day", label: "Day" },
 ];
+
+// ── Filters (KAN-150 polish) ─────────────────────────────────────────────────
+
+type TierFilter = "all" | "atrisk" | "critical";
+const TIER_FILTERS: ReadonlyArray<{ value: TierFilter; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "atrisk", label: "At risk" },
+  { value: "critical", label: "Critical" },
+];
+
+const NEAR_CRITICAL_DAYS = 3;
+
+/** Tier predicate mirroring ThreePlaneRow.criticalTier — used for filtering. */
+function rowTier(row: ScheduleTimelineRow): "critical" | "near" | "normal" {
+  if (row.critical === true || (row.floatDays != null && row.floatDays <= 0)) return "critical";
+  if (row.floatDays != null && row.floatDays <= NEAR_CRITICAL_DAYS) return "near";
+  return "normal";
+}
 
 // ── Month axis helpers ────────────────────────────────────────────────────────
 
@@ -101,6 +119,21 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
 
   const canvasW = Math.max(containerWidth || 0, MIN_CANVAS_W);
   const [zoom, setZoom] = useState<ZoomLevel>("fit");
+  const [tierFilter, setTierFilter] = useState<TierFilter>("all");
+  const [hideDone, setHideDone] = useState(false);
+
+  // Domain is computed from ALL rows (below) so bars keep a stable scale; the
+  // filter only changes which rows render.
+  const visibleData = useMemo(() => {
+    const base = data ?? [];
+    return base.filter((row) => {
+      if (hideDone && row.state === "done") return false;
+      if (tierFilter === "all") return true;
+      const tier = rowTier(row);
+      if (tierFilter === "critical") return tier === "critical";
+      return tier === "critical" || tier === "near"; // "atrisk"
+    });
+  }, [data, tierFilter, hideDone]);
 
   const handlePlanChange = useCallback(
     ({ issueKey, startDate, dueDate }: PlanChangePayload) => {
@@ -204,7 +237,7 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
 
   // ── Full render ───────────────────────────────────────────────────────
 
-  const totalH = HDR_H + data.length * ROW_H + 32 /* legend padding */;
+  const totalH = HDR_H + visibleData.length * ROW_H + 32 /* legend padding */;
 
   const outerStyle: CSSProperties = {
     display: "flex",
@@ -232,7 +265,15 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
   return (
     <div data-testid="schedule-gantt" style={outerStyle}>
       {/* Legend toolbar */}
-      <GanttLegend zoom={zoom} onZoom={setZoom} onToday={scrollToToday} />
+      <GanttLegend
+        zoom={zoom}
+        onZoom={setZoom}
+        onToday={scrollToToday}
+        tierFilter={tierFilter}
+        onTierFilter={setTierFilter}
+        hideDone={hideDone}
+        onHideDone={setHideDone}
+      />
 
       {/* Scroll container */}
       <div ref={containerRef} data-testid="schedule-gantt-scroll" style={scrollStyle}>
@@ -297,6 +338,9 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
             ))}
           </div>
 
+          {/* Time grid: weekend shading + week/day lines (behind rows) */}
+          <GridLines domain={domain} trackW={trackW} height={visibleData.length * ROW_H} />
+
           {/* Today vertical line */}
           <div
             data-testid="schedule-gantt-today"
@@ -314,7 +358,7 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
           />
 
           {/* Issue rows */}
-          {data.map((row, i) => (
+          {visibleData.map((row, i) => (
             <div
               key={row.issueId}
               data-testid="gantt-issue-row"
@@ -386,7 +430,7 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
           ))}
 
           {/* KAN-149: dependency arrows overlay (above bars, below today line) */}
-          <DepArrows data={data} domain={domain} trackW={trackW} />
+          <DepArrows data={visibleData} domain={domain} trackW={trackW} />
         </div>
       </div>
     </div>
@@ -403,6 +447,64 @@ interface BarAnchor {
   rightX: number;
   cy: number;
   critical: boolean;
+}
+
+interface Pt {
+  x: number;
+  y: number;
+}
+
+/**
+ * Orthogonal (right-angle) route points from a source endpoint to a target
+ * endpoint — the standard Gantt connector. Exits the source horizontally, steps
+ * to the target row, then enters the target horizontally. When the target sits
+ * left of / too close to the source it detours through the mid-row gap instead
+ * of doubling straight back.
+ */
+function routePoints(x1: number, y1: number, x2: number, y2: number): Pt[] {
+  const STUB = 12;
+  if (x2 >= x1 + STUB * 2) {
+    const kx = x1 + STUB;
+    return [
+      { x: x1, y: y1 },
+      { x: kx, y: y1 },
+      { x: kx, y: y2 },
+      { x: x2, y: y2 },
+    ];
+  }
+  const midY = (y1 + y2) / 2;
+  return [
+    { x: x1, y: y1 },
+    { x: x1 + STUB, y: y1 },
+    { x: x1 + STUB, y: midY },
+    { x: x2 - STUB, y: midY },
+    { x: x2 - STUB, y: y2 },
+    { x: x2, y: y2 },
+  ];
+}
+
+/**
+ * Build an SVG path string through `pts` with rounded corners of radius `r`.
+ * The first point is emitted verbatim as the moveto so callers/tests can read
+ * the source x from `d.split(" ")[1]`.
+ */
+function roundedPath(pts: Pt[], r: number): string {
+  if (pts.length < 2) return "";
+  let d = `M ${pts[0].x} ${pts[0].y}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const p = pts[i];
+    const prev = pts[i - 1];
+    const next = pts[i + 1];
+    const dPrev = Math.hypot(prev.x - p.x, prev.y - p.y) || 1;
+    const dNext = Math.hypot(next.x - p.x, next.y - p.y) || 1;
+    const rr = Math.min(r, dPrev / 2, dNext / 2);
+    const a = { x: p.x + ((prev.x - p.x) / dPrev) * rr, y: p.y + ((prev.y - p.y) / dPrev) * rr };
+    const b = { x: p.x + ((next.x - p.x) / dNext) * rr, y: p.y + ((next.y - p.y) / dNext) * rr };
+    d += ` L ${a.x} ${a.y} Q ${p.x} ${p.y} ${b.x} ${b.y}`;
+  }
+  const last = pts[pts.length - 1];
+  d += ` L ${last.x} ${last.y}`;
+  return d;
 }
 
 /**
@@ -488,19 +590,17 @@ function DepArrows({
       }}
     >
       <defs>
-        <marker id={arrowId} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-          <path d="M0,0 L6,3 L0,6 Z" fill="var(--ink-4)" />
+        <marker id={arrowId} markerWidth="7" markerHeight="7" refX="3.4" refY="2" orient="auto" markerUnits="userSpaceOnUse">
+          <path d="M0,0 L4,2 L0,4 Z" fill="var(--ink-3)" />
         </marker>
-        <marker id={arrowCriticalId} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-          <path d="M0,0 L6,3 L0,6 Z" fill="var(--bad)" />
+        <marker id={arrowCriticalId} markerWidth="8" markerHeight="8" refX="3.6" refY="2.2" orient="auto" markerUnits="userSpaceOnUse">
+          <path d="M0,0 L4.4,2.2 L0,4.4 Z" fill="var(--bad)" />
         </marker>
       </defs>
       {edges.map((e) => {
-        // Signed control-point offset so backward (x2<x1) and zero-distance
-        // edges bow toward each other instead of doubling back.
-        const dir = e.x2 >= e.x1 ? 1 : -1;
-        const dx = Math.min(48, Math.max(16, Math.abs(e.x2 - e.x1) * 0.4));
-        const d = `M ${e.x1} ${e.y1} C ${e.x1 + dir * dx} ${e.y1}, ${e.x2 - dir * dx} ${e.y2}, ${e.x2} ${e.y2}`;
+        // Orthogonal rounded connector — exits the source bar, steps to the
+        // target row, enters horizontally. Reads far cleaner than an S-curve.
+        const d = roundedPath(routePoints(e.x1, e.y1, e.x2, e.y2), 7);
         return (
           <path
             key={e.key}
@@ -508,13 +608,88 @@ function DepArrows({
             data-critical={e.critical ? "true" : undefined}
             d={d}
             fill="none"
-            stroke={e.critical ? "var(--bad)" : "var(--ink-4)"}
-            strokeWidth={e.critical ? 2 : 1.2}
-            strokeOpacity={e.critical ? 0.9 : 0.6}
+            stroke={e.critical ? "var(--bad)" : "var(--ink-3)"}
+            strokeWidth={e.critical ? 1.5 : 1}
+            strokeOpacity={e.critical ? 0.85 : 0.45}
+            strokeLinejoin="round"
+            strokeLinecap="round"
             markerEnd={e.critical ? `url(#${arrowCriticalId})` : `url(#${arrowId})`}
           />
         );
       })}
+    </svg>
+  );
+}
+
+// ── Grid lines + weekend shading ────────────────────────────────────────────────
+
+/**
+ * Vertical time grid behind the rows: faint weekend shading, week-boundary lines
+ * (Mondays, slightly stronger), and per-day hairlines once the zoom gives each
+ * day enough room. Gives the eye a ruler to read spans against.
+ */
+function GridLines({
+  domain,
+  trackW,
+  height,
+}: {
+  domain: DateDomain;
+  trackW: number;
+  height: number;
+}) {
+  const span = domain.max.getTime() - domain.min.getTime();
+  const pxPerDay = span > 0 ? trackW / (span / DAY_MS) : 0;
+  const showDays = pxPerDay >= 7;
+
+  const weekends: Array<{ x: number; w: number }> = [];
+  const weekLines: number[] = [];
+  const dayLines: number[] = [];
+
+  const start = new Date(domain.min);
+  start.setUTCHours(0, 0, 0, 0);
+  for (let t = start.getTime(); t <= domain.max.getTime(); t += DAY_MS) {
+    const d = new Date(t);
+    const x = xForDate(d, domain, trackW);
+    const dow = d.getUTCDay(); // 0 Sun … 6 Sat
+    if (dow === 0 || dow === 6) {
+      const x2 = xForDate(new Date(t + DAY_MS), domain, trackW);
+      weekends.push({ x, w: Math.max(0, x2 - x) });
+    }
+    if (dow === 1) weekLines.push(x);
+    else if (showDays) dayLines.push(x);
+  }
+
+  return (
+    <svg
+      data-testid="schedule-gantt-grid"
+      width={trackW}
+      height={height}
+      style={{
+        position: "absolute",
+        top: HDR_H,
+        left: LEFT,
+        zIndex: 0,
+        pointerEvents: "none",
+      }}
+    >
+      {weekends.map((w, i) => (
+        <rect
+          key={`we-${i}`}
+          x={w.x}
+          y={0}
+          width={w.w}
+          height={height}
+          fill="var(--ink-1)"
+          opacity={0.025}
+        />
+      ))}
+      {showDays &&
+        dayLines.map((x, i) => (
+          <line key={`d-${i}`} x1={x} y1={0} x2={x} y2={height} stroke="var(--line)" strokeWidth={1} opacity={0.35} />
+        ))}
+      {weekLines.map((x, i) => (
+        <line key={`w-${i}`} x1={x} y1={0} x2={x} y2={height} stroke="var(--line)" strokeWidth={1} opacity={0.7} />
+      ))}
     </svg>
   );
 }
@@ -585,16 +760,49 @@ const LEGEND_ITEMS = [
       border: "1px solid var(--warn)",
     } as CSSProperties,
   },
+  {
+    // KAN-149: dependency connector.
+    label: "Dependency",
+    style: {
+      width: 20,
+      height: 0,
+      borderTop: "1px solid var(--ink-3)",
+    } as CSSProperties,
+  },
+  {
+    label: "Critical link",
+    style: {
+      width: 20,
+      height: 0,
+      borderTop: "1.5px solid var(--bad)",
+    } as CSSProperties,
+  },
+  {
+    label: "Today",
+    style: {
+      width: 0,
+      height: 12,
+      borderLeft: "1px solid var(--accent)",
+    } as CSSProperties,
+  },
 ] as const;
 
 function GanttLegend({
   zoom,
   onZoom,
   onToday,
+  tierFilter,
+  onTierFilter,
+  hideDone,
+  onHideDone,
 }: {
   zoom?: ZoomLevel;
   onZoom?: (z: ZoomLevel) => void;
   onToday?: () => void;
+  tierFilter?: TierFilter;
+  onTierFilter?: (t: TierFilter) => void;
+  hideDone?: boolean;
+  onHideDone?: (v: boolean) => void;
 }) {
   return (
     <div
@@ -603,6 +811,8 @@ function GanttLegend({
         display: "flex",
         alignItems: "center",
         gap: 14,
+        rowGap: 8,
+        flexWrap: "wrap",
         padding: "8px 16px",
         borderBottom: "1px solid var(--line)",
         flexShrink: 0,
@@ -630,8 +840,64 @@ function GanttLegend({
         </span>
       ))}
 
-      {/* Right-aligned controls: zoom (KAN-148) + scroll-to-today (KAN-151). */}
-      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+      {/* Right-aligned controls: filters + zoom (KAN-148) + scroll-to-today (KAN-151). */}
+      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        {onTierFilter && (
+          <div
+            data-testid="schedule-gantt-filter"
+            role="group"
+            aria-label="Filter by schedule risk"
+            style={{ display: "inline-flex", gap: 2 }}
+          >
+            {TIER_FILTERS.map((opt) => {
+              const active = tierFilter === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  data-testid={`schedule-gantt-filter-${opt.value}`}
+                  data-active={active ? "true" : undefined}
+                  aria-pressed={active}
+                  onClick={() => onTierFilter(opt.value)}
+                  className="mono"
+                  style={{
+                    fontSize: 11,
+                    color: active ? "var(--ink-1)" : "var(--ink-3)",
+                    background: active ? "var(--bg-3)" : "var(--panel)",
+                    border: `1px solid ${active ? (opt.value === "critical" ? "var(--bad)" : opt.value === "atrisk" ? "var(--warn)" : "var(--accent)") : "var(--line-2)"}`,
+                    borderRadius: 4,
+                    padding: "3px 8px",
+                    cursor: "pointer",
+                  }}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {onHideDone && (
+          <button
+            type="button"
+            data-testid="schedule-gantt-hide-done"
+            data-active={hideDone ? "true" : undefined}
+            aria-pressed={hideDone}
+            onClick={() => onHideDone(!hideDone)}
+            className="mono"
+            style={{
+              fontSize: 11,
+              color: hideDone ? "var(--ink-1)" : "var(--ink-3)",
+              background: hideDone ? "var(--bg-3)" : "var(--panel)",
+              border: `1px solid ${hideDone ? "var(--accent)" : "var(--line-2)"}`,
+              borderRadius: 4,
+              padding: "3px 8px",
+              cursor: "pointer",
+            }}
+          >
+            Hide done
+          </button>
+        )}
+        <span style={{ width: 1, height: 18, background: "var(--line)", margin: "0 2px" }} />
         {onZoom && (
           <div
             data-testid="schedule-gantt-zoom"
