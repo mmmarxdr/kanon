@@ -12,7 +12,7 @@
  * No drag, no mutations, no SSE — PR3.
  */
 
-import { useMemo, useCallback, type CSSProperties } from "react";
+import { useMemo, useCallback, useState, type CSSProperties } from "react";
 import { useContainerWidth } from "@/features/roadmap/use-container-size";
 import { useProjectScheduleTimeline } from "./use-project-schedule-timeline";
 import { computeDomain } from "./timeline-scale";
@@ -25,6 +25,26 @@ const LEFT = 240;
 const ROW_H = 44; // slightly taller than roadmap's 36 to fit the forecast band below the bar
 const HDR_H = 48;
 const MIN_CANVAS_W = 1100;
+const DAY_MS = 86_400_000;
+
+// ── Zoom (KAN-148) ──────────────────────────────────────────────────────────
+// "fit" stretches the whole domain to the available track width. Fixed levels
+// pin a constant pixels-per-day so the canvas scrolls horizontally at a chosen
+// time density.
+type ZoomLevel = "fit" | "day" | "week" | "month" | "quarter";
+const PX_PER_DAY: Record<Exclude<ZoomLevel, "fit">, number> = {
+  day: 28,
+  week: 10,
+  month: 3.4,
+  quarter: 1.2,
+};
+const ZOOM_OPTIONS: ReadonlyArray<{ value: ZoomLevel; label: string }> = [
+  { value: "fit", label: "Fit" },
+  { value: "quarter", label: "Quarter" },
+  { value: "month", label: "Month" },
+  { value: "week", label: "Week" },
+  { value: "day", label: "Day" },
+];
 
 // ── Month axis helpers ────────────────────────────────────────────────────────
 
@@ -80,7 +100,7 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
   const upsertPlan = useUpsertPlanMutation();
 
   const canvasW = Math.max(containerWidth || 0, MIN_CANVAS_W);
-  const trackW = Math.max(canvasW - LEFT, 200);
+  const [zoom, setZoom] = useState<ZoomLevel>("fit");
 
   const handlePlanChange = useCallback(
     ({ issueKey, startDate, dueDate }: PlanChangePayload) => {
@@ -93,6 +113,17 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
     () => computeDomain(data ?? []),
     [data],
   );
+
+  // KAN-148: track width is driven by the zoom level. "fit" stretches the whole
+  // domain to the visible width; fixed levels use pixels-per-day so the canvas
+  // grows wider than the viewport and scrolls horizontally.
+  const domainDays = useMemo(
+    () => Math.max(1, (domain.max.getTime() - domain.min.getTime()) / DAY_MS),
+    [domain],
+  );
+  const fitTrackW = Math.max(canvasW - LEFT, 200);
+  const trackW =
+    zoom === "fit" ? fitTrackW : Math.max(domainDays * PX_PER_DAY[zoom], 200);
 
   const monthMarkers = useMemo(
     () => buildMonthMarkers(domain.min, domain.max),
@@ -191,6 +222,9 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
 
   const canvasStyle: CSSProperties = {
     position: "relative",
+    // KAN-148: canvas width follows the zoom-driven track so it scrolls when
+    // zoomed beyond the viewport; minWidth keeps a floor on tiny containers.
+    width: LEFT + trackW,
     minWidth: MIN_CANVAS_W,
     height: totalH,
   };
@@ -198,11 +232,11 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
   return (
     <div data-testid="schedule-gantt" style={outerStyle}>
       {/* Legend toolbar */}
-      <GanttLegend onToday={scrollToToday} />
+      <GanttLegend zoom={zoom} onZoom={setZoom} onToday={scrollToToday} />
 
       {/* Scroll container */}
       <div ref={containerRef} data-testid="schedule-gantt-scroll" style={scrollStyle}>
-        <div style={canvasStyle}>
+        <div data-testid="schedule-gantt-canvas" style={canvasStyle}>
 
           {/* Sticky header: month axis */}
           <div
@@ -424,7 +458,15 @@ const LEGEND_ITEMS = [
   },
 ] as const;
 
-function GanttLegend({ onToday }: { onToday?: () => void }) {
+function GanttLegend({
+  zoom,
+  onZoom,
+  onToday,
+}: {
+  zoom?: ZoomLevel;
+  onZoom?: (z: ZoomLevel) => void;
+  onToday?: () => void;
+}) {
   return (
     <div
       data-testid="schedule-gantt-legend"
@@ -458,27 +500,63 @@ function GanttLegend({ onToday }: { onToday?: () => void }) {
           <span style={{ fontSize: 11, color: "var(--ink-3)" }}>{item.label}</span>
         </span>
       ))}
-      {/* KAN-151: re-center the viewport on the today line. */}
-      {onToday && (
-        <button
-          type="button"
-          data-testid="schedule-gantt-today-btn"
-          onClick={onToday}
-          className="mono"
-          style={{
-            marginLeft: "auto",
-            fontSize: 11,
-            color: "var(--ink-3)",
-            background: "var(--panel)",
-            border: "1px solid var(--line-2)",
-            borderRadius: 4,
-            padding: "3px 10px",
-            cursor: "pointer",
-          }}
-        >
-          Today
-        </button>
-      )}
+
+      {/* Right-aligned controls: zoom (KAN-148) + scroll-to-today (KAN-151). */}
+      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+        {onZoom && (
+          <div
+            data-testid="schedule-gantt-zoom"
+            role="group"
+            aria-label="Timescale zoom"
+            style={{ display: "inline-flex", gap: 2 }}
+          >
+            {ZOOM_OPTIONS.map((opt) => {
+              const active = zoom === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  data-testid={`schedule-gantt-zoom-${opt.value}`}
+                  data-active={active ? "true" : undefined}
+                  aria-pressed={active}
+                  onClick={() => onZoom(opt.value)}
+                  className="mono"
+                  style={{
+                    fontSize: 11,
+                    color: active ? "var(--ink-1)" : "var(--ink-3)",
+                    background: active ? "var(--bg-3)" : "var(--panel)",
+                    border: `1px solid ${active ? "var(--accent)" : "var(--line-2)"}`,
+                    borderRadius: 4,
+                    padding: "3px 8px",
+                    cursor: "pointer",
+                  }}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {onToday && (
+          <button
+            type="button"
+            data-testid="schedule-gantt-today-btn"
+            onClick={onToday}
+            className="mono"
+            style={{
+              fontSize: 11,
+              color: "var(--ink-3)",
+              background: "var(--panel)",
+              border: "1px solid var(--line-2)",
+              borderRadius: 4,
+              padding: "3px 10px",
+              cursor: "pointer",
+            }}
+          >
+            Today
+          </button>
+        )}
+      </div>
     </div>
   );
 }

@@ -217,6 +217,48 @@ describe("ScheduleGantt — scroll to today (KAN-151)", () => {
   });
 });
 
+// ── Timescale zoom (KAN-148) ───────────────────────────────────────────────────
+
+function canvasWidthPx(container: HTMLElement): number {
+  const el = container.querySelector<HTMLElement>("[data-testid='schedule-gantt-canvas']");
+  return parseFloat(el?.style.width ?? "0");
+}
+
+describe("ScheduleGantt — timescale zoom (KAN-148)", () => {
+  beforeEach(() => {
+    mockUseProjectScheduleTimeline.mockReturnValue({
+      data: [makeRow()],
+      isLoading: false,
+      isError: false,
+    });
+  });
+
+  it("renders zoom controls with Fit active by default", () => {
+    render(<ScheduleGantt projectKey="TST" />);
+    expect(screen.getByTestId("schedule-gantt-zoom")).toBeTruthy();
+    expect(screen.getByTestId("schedule-gantt-zoom-fit").getAttribute("data-active")).toBe("true");
+    expect(screen.getByTestId("schedule-gantt-zoom-day").getAttribute("data-active")).toBeNull();
+  });
+
+  it("zooming to Day widens the canvas beyond the fit width and scrolls horizontally", () => {
+    const { container } = render(<ScheduleGantt projectKey="TST" />);
+    const fitWidth = canvasWidthPx(container);
+    fireEvent.click(screen.getByTestId("schedule-gantt-zoom-day"));
+    const dayWidth = canvasWidthPx(container);
+    expect(dayWidth).toBeGreaterThan(fitWidth);
+    expect(screen.getByTestId("schedule-gantt-zoom-day").getAttribute("data-active")).toBe("true");
+  });
+
+  it("returning to Fit collapses the canvas back to the viewport width", () => {
+    const { container } = render(<ScheduleGantt projectKey="TST" />);
+    fireEvent.click(screen.getByTestId("schedule-gantt-zoom-day"));
+    const dayWidth = canvasWidthPx(container);
+    fireEvent.click(screen.getByTestId("schedule-gantt-zoom-fit"));
+    const fitWidth = canvasWidthPx(container);
+    expect(fitWidth).toBeLessThan(dayWidth);
+  });
+});
+
 // ── Hook wiring ──────────────────────────────────────────────────────────────
 
 describe("ScheduleGantt — hook wiring", () => {
