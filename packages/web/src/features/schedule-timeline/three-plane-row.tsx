@@ -70,6 +70,51 @@ function tokensForState(state: string): StateTokens {
   }
 }
 
+// ── Critical-path coloring (KAN-150) ────────────────────────────────────────
+/**
+ * Issues with floatDays at or below this many days (but still positive) are
+ * "near-critical" — a small schedule slip would put them on the critical path.
+ * Matches the forecast engine's default at-risk buffer (3 days).
+ */
+const NEAR_CRITICAL_THRESHOLD = 3;
+
+type CriticalTier = "critical" | "near" | "normal";
+
+/**
+ * Classify a row by critical-path urgency. `critical` (floatDays ≤ 0) wins;
+ * otherwise a low positive float marks it near-critical. Everything else is
+ * colored by its workflow state.
+ */
+function criticalTier(row: ScheduleTimelineRow): CriticalTier {
+  if (row.critical === true) return "critical";
+  if (
+    row.floatDays != null &&
+    row.floatDays > 0 &&
+    row.floatDays <= NEAR_CRITICAL_THRESHOLD
+  ) {
+    return "near";
+  }
+  return "normal";
+}
+
+/** Resolve the plan bar fill/border, overriding state color for critical tiers. */
+function barTokensFor(row: ScheduleTimelineRow): StateTokens {
+  switch (criticalTier(row)) {
+    case "critical":
+      return {
+        background: "color-mix(in oklch, var(--bad) 18%, var(--panel))",
+        border: "var(--bad)",
+      };
+    case "near":
+      return {
+        background: "color-mix(in oklch, var(--warn) 16%, var(--panel))",
+        border: "var(--warn)",
+      };
+    default:
+      return tokensForState(row.state);
+  }
+}
+
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 export interface PlanChangePayload {
@@ -94,8 +139,10 @@ export interface ThreePlaneRowProps {
  * handles the horizontal/vertical geometry within a single row.
  */
 export function ThreePlaneRow({ row, domain, trackWidth, onPlanChange }: ThreePlaneRowProps) {
-  const tokens = tokensForState(row.state);
-  const isCritical = row.critical === true;
+  const tokens = barTokensFor(row);
+  const tier = criticalTier(row);
+  const isCritical = tier === "critical";
+  const isNearCritical = tier === "near";
 
   // ── Drag state ──────────────────────────────────────────────────────────
   // dragOffsetPx: visual translation applied while dragging (px). Reset on drop.
@@ -224,9 +271,10 @@ export function ThreePlaneRow({ row, domain, trackWidth, onPlanChange }: ThreePl
       border: `1px solid ${tokens.border}`,
       overflow: "hidden",
       zIndex: 2,
-      // ponytail: critical ring uses boxShadow; a dedicated marker icon is PR3 scope.
+      // KAN-150: critical bars get a red glow on top of the red fill/border;
+      // near-critical and normal bars rely on fill/border alone.
       boxShadow: isCritical
-        ? `0 0 0 2px var(--warn), 0 0 8px color-mix(in oklch, var(--warn) 30%, transparent)`
+        ? `0 0 0 2px var(--bad), 0 0 8px color-mix(in oklch, var(--bad) 30%, transparent)`
         : "none",
       transition: dragOffsetPx !== 0 ? "none" : "box-shadow 120ms ease",
       cursor: isDraggable ? "grab" : undefined,
@@ -238,10 +286,23 @@ export function ThreePlaneRow({ row, domain, trackWidth, onPlanChange }: ThreePl
       <div
         data-testid="plane-plan"
         data-critical={isCritical ? "true" : undefined}
+        data-near-critical={isNearCritical ? "true" : undefined}
         data-draggable={isDraggable ? "true" : undefined}
-        role={isCritical ? "img" : undefined}
-        aria-label={isCritical ? "Critical path issue" : undefined}
-        title={isCritical ? "Critical path issue" : undefined}
+        role={isCritical || isNearCritical ? "img" : undefined}
+        aria-label={
+          isCritical
+            ? "Critical path issue"
+            : isNearCritical
+              ? "Near-critical issue (low schedule float)"
+              : undefined
+        }
+        title={
+          isCritical
+            ? "Critical path issue"
+            : isNearCritical
+              ? "Near-critical issue (low schedule float)"
+              : undefined
+        }
         style={planStyle}
         onPointerDown={isDraggable ? handlePointerDown : undefined}
         onPointerMove={isDraggable ? handlePointerMove : undefined}

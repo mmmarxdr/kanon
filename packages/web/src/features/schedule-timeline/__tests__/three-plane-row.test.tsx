@@ -241,3 +241,60 @@ describe("ThreePlaneRow — critical flag", () => {
     expect(el?.getAttribute("aria-label")).toBe("Critical path issue");
   });
 });
+
+// ── Critical-path coloring (KAN-150) ───────────────────────────────────────────
+
+describe("ThreePlaneRow — critical-path coloring (KAN-150)", () => {
+  it("critical plan bar is colored red (var(--bad)) for fill and border", () => {
+    const row = makeRow({ critical: true });
+    const { container } = render(
+      <ThreePlaneRow row={row} domain={makeDomain(row)} trackWidth={TRACK_W} />,
+    );
+    const style = container.querySelector("[data-testid='plane-plan']")?.getAttribute("style") ?? "";
+    expect(style).toContain("var(--bad)");
+  });
+
+  it("near-critical (low positive floatDays) is amber, not red, with data-near-critical", () => {
+    const row = makeRow({ critical: false, floatDays: 2 });
+    const { container } = render(
+      <ThreePlaneRow row={row} domain={makeDomain(row)} trackWidth={TRACK_W} />,
+    );
+    const el = container.querySelector("[data-testid='plane-plan']");
+    expect(el?.getAttribute("data-near-critical")).toBe("true");
+    expect(el?.getAttribute("data-critical")).toBeNull();
+    const style = el?.getAttribute("style") ?? "";
+    expect(style).toContain("var(--warn)");
+    expect(style).not.toContain("var(--bad)");
+    expect(el?.getAttribute("aria-label")).toBe("Near-critical issue (low schedule float)");
+  });
+
+  it("at the near-critical threshold (floatDays=3) the bar is still amber", () => {
+    const row = makeRow({ critical: false, floatDays: 3 });
+    const { container } = render(
+      <ThreePlaneRow row={row} domain={makeDomain(row)} trackWidth={TRACK_W} />,
+    );
+    expect(
+      container.querySelector("[data-testid='plane-plan']")?.getAttribute("data-near-critical"),
+    ).toBe("true");
+  });
+
+  it("comfortable float (floatDays=5) is neither critical nor near-critical", () => {
+    const row = makeRow({ critical: false, floatDays: 5 });
+    const { container } = render(
+      <ThreePlaneRow row={row} domain={makeDomain(row)} trackWidth={TRACK_W} />,
+    );
+    const el = container.querySelector("[data-testid='plane-plan']");
+    expect(el?.getAttribute("data-critical")).toBeNull();
+    expect(el?.getAttribute("data-near-critical")).toBeNull();
+  });
+
+  it("null floatDays is not near-critical", () => {
+    const row = makeRow({ critical: false, floatDays: null });
+    const { container } = render(
+      <ThreePlaneRow row={row} domain={makeDomain(row)} trackWidth={TRACK_W} />,
+    );
+    expect(
+      container.querySelector("[data-testid='plane-plan']")?.getAttribute("data-near-critical"),
+    ).toBeNull();
+  });
+});

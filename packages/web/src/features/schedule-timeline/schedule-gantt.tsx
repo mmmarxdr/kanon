@@ -392,6 +392,28 @@ const LEGEND_ITEMS = [
       border: "1px dashed var(--warn)",
     } as CSSProperties,
   },
+  {
+    // KAN-150: critical-path bars are colored red.
+    label: "Critical",
+    style: {
+      width: 20,
+      height: 10,
+      borderRadius: 2,
+      background: "color-mix(in oklch, var(--bad) 18%, var(--panel))",
+      border: "1px solid var(--bad)",
+    } as CSSProperties,
+  },
+  {
+    // KAN-150: near-critical (low schedule float) bars are colored amber.
+    label: "Near-critical",
+    style: {
+      width: 20,
+      height: 10,
+      borderRadius: 2,
+      background: "color-mix(in oklch, var(--warn) 16%, var(--panel))",
+      border: "1px solid var(--warn)",
+    } as CSSProperties,
+  },
 ] as const;
 
 function GanttLegend() {
