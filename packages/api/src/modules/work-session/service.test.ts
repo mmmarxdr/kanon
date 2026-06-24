@@ -1238,11 +1238,13 @@ describe("WorkSessionService", () => {
       await startWork("KAN-42", "member-1", "user-1", "mcp");
 
       // via is null when source="mcp" (transport, not identity) and no explicit via passed
+      // KAN-156: cause="start_work" is threaded to prevent the circular guard loop
       expect(mockTransitionIssue).toHaveBeenCalledWith(
         "KAN-42",
         "in_progress",
         "member-1",
         null,
+        "start_work",
       );
     });
 
@@ -1254,11 +1256,13 @@ describe("WorkSessionService", () => {
 
       await startWork("KAN-42", "member-1", "user-1", "mcp");
 
+      // KAN-156: cause="start_work" is threaded to prevent the circular guard loop
       expect(mockTransitionIssue).toHaveBeenCalledWith(
         "KAN-42",
         "in_progress",
         "member-1",
         null,
+        "start_work",
       );
     });
 
@@ -1333,11 +1337,13 @@ describe("WorkSessionService", () => {
 
       await startWork("KAN-42", "member-1", "user-1", "mcp");
 
+      // KAN-156: cause="start_work" is threaded to prevent the circular guard loop
       expect(mockTransitionIssue).toHaveBeenCalledWith(
         "KAN-42",
         "in_progress",
         "member-1",
         null,
+        "start_work",
       );
     });
 

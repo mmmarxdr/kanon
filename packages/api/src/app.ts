@@ -48,6 +48,7 @@ import { registerNotificationService } from "./services/notification/index.js";
 import { createEmailProvider } from "./services/email/index.js";
 import type { EmailProvider } from "./services/email/types.js";
 import { registerForecastListener } from "./modules/forecast/index.js";
+import { registerTransitionListener } from "./modules/work-session/transition-listener.js";
 
 export interface BuildAppOptions {
   /** Optional override for the email provider (useful for testing with a spy). */
@@ -186,6 +187,15 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   const unsubscribeForecast = registerForecastListener(eventBus, app.log);
   app.addHook("onClose", async () => {
     unsubscribeForecast();
+  });
+
+  // ─── WorkSession Transition Listener ─────────────────────────────────
+  // Subscribes to issue.transitioned events and opens/closes WorkSessions
+  // based on the issue state machine (KAN-156 Slice 1). Fire-and-forget —
+  // a session failure MUST NEVER break the transition emitter.
+  const unsubscribeTransitionListener = registerTransitionListener(eventBus, app.log);
+  app.addHook("onClose", async () => {
+    unsubscribeTransitionListener();
   });
 
   // Health check with DB connectivity (always public, before auth)

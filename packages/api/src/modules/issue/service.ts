@@ -13,6 +13,7 @@ import type {
   IssueFilterQuery,
   BatchTransitionByKeysBody,
 } from "./schema.js";
+import type { IssueTransitionedPayload } from "../../services/event-bus/types.js";
 import { ORDERED_STATES } from "../../shared/constants.js";
 import { resolveTemplate } from "../../shared/issue-templates.js";
 import { eventBus } from "../../services/event-bus/index.js";
@@ -638,12 +639,18 @@ export async function updateIssue(
 
 /**
  * Transition an issue to a new state.
+ *
+ * @param cause - Optional cause tag threaded into the `issue.transitioned` payload.
+ *   Used by the work-session transition listener (KAN-156) to detect transitions
+ *   triggered by `start_work` (cause="start_work") and skip them to avoid the
+ *   KAN-143 circular feedback loop.
  */
 export async function transitionIssue(
   key: string,
   toState: string,
   memberId: string,
   via?: string | null,
+  cause?: string,
 ) {
   const issue = await prisma.issue.findUnique({
     where: { key },
@@ -687,12 +694,33 @@ export async function transitionIssue(
   await syncRoadmapItemStatus(prisma, updated.id);
 
   // Emit domain event (fire-and-forget)
+  // KAN-156: enrich payload with actor identity so the work-session transition
+  // listener can attribute sessions without a redundant DB lookup in the hot path.
   try {
+    const actor = await prisma.member.findUnique({
+      where: { id: memberId },
+      select: { userId: true },
+    });
+    const transitionedPayload: IssueTransitionedPayload = {
+      issueKey: key,
+      issueId: issue.id,
+      projectKey: issue.project.key,
+      from: issue.state,
+      to: toState,
+      // KAN-156: actor identity for the work-session transition listener.
+      // actorUserId is null when the member row is not found (deleted between
+      // transition and emit); the listener's falsy-check handles null safely.
+      actorMemberId: memberId,
+      actorUserId: actor?.userId ?? null,
+      // KAN-156 / KAN-143 circular guard: thread the cause tag so the
+      // work-session listener can skip transitions triggered by start_work.
+      ...(cause !== undefined ? { cause } : {}),
+    };
     eventBus.emit({
       type: "issue.transitioned",
       workspaceId: issue.project.workspaceId,
       actorId: memberId,
-      payload: { issueKey: key, issueId: issue.id, projectKey: issue.project.key, from: issue.state, to: toState },
+      payload: transitionedPayload as unknown as Record<string, unknown>,
       via,
     });
   } catch {
@@ -835,6 +863,47 @@ export async function transitionGroup(
     await syncRoadmapItemStatus(prisma, rep.id);
   }
 
+  // KAN-156 BUG-2/6: emit per-issue issue.transitioned events so the transition-listener
+  // can open/close sessions for group transitions. Fire-and-forget.
+  // Each emit is wrapped in its own try/catch so one failure does not skip the rest.
+  let groupActorUserId: string | null = null;
+  try {
+    const groupActor = await prisma.member.findUnique({
+      where: { id: memberId },
+      select: { userId: true },
+    });
+    groupActorUserId = groupActor?.userId ?? null;
+  } catch (err) {
+    // Non-fatal: proceed with null actorUserId — the listener has a DB fallback.
+    console.error({ groupKey, err }, "transitionGroup: actor lookup failed");
+  }
+
+  for (const issue of issuesToTransition) {
+    try {
+      const groupPayload: IssueTransitionedPayload = {
+        issueKey: issue.key,
+        issueId: issue.id,
+        projectKey: project.key,
+        from: issue.state,
+        to: targetState,
+        actorMemberId: memberId,
+        actorUserId: groupActorUserId,
+      };
+      eventBus.emit({
+        type: "issue.transitioned",
+        workspaceId: project.workspaceId,
+        actorId: memberId,
+        payload: groupPayload as unknown as Record<string, unknown>,
+      });
+    } catch (err) {
+      // Never let event emission break the mutation; isolate per-issue failures.
+      console.error(
+        { groupKey, issueKey: issue.key, err },
+        "transitionGroup: per-issue event emission failed",
+      );
+    }
+  }
+
   return { count: result.count, groupKey, state: targetState };
 }
 
@@ -971,25 +1040,42 @@ export async function batchTransitionByKeys(
     await syncRoadmapItemStatus(prisma, rep.id);
   }
 
+  // Resolve actor identity once for all per-issue events (KAN-156 BUG-2/6).
+  let batchActorUserId: string | null = null;
+  try {
+    const batchActor = await prisma.member.findUnique({
+      where: { id: memberId },
+      select: { userId: true },
+    });
+    batchActorUserId = batchActor?.userId ?? null;
+  } catch {
+    // Actor lookup failure must not block event emission
+  }
+
   // Emit per-issue issue.transitioned events for SSE consumers (fire-and-forget).
   // These carry _skipSubscribedActivity=true because the single issue.batch_transitioned
   // event below handles the fan-out in ONE grouped DB query instead of one per issue (Fix 3 / KAN-28).
+  // KAN-156 BUG-2/6: include actorMemberId/actorUserId so the transition-listener
+  // can open/close sessions for batch transitions.
   try {
     for (const issue of issuesToTransition) {
+      const batchPayload: IssueTransitionedPayload & { _skipSubscribedActivity: boolean } = {
+        issueKey: issue.key,
+        issueId: issue.id,
+        projectKey: project.key,
+        from: issue.state,
+        to: targetState,
+        actorMemberId: memberId,
+        actorUserId: batchActorUserId,
+        // Tells the notification routeEvent to skip subscribed_activity for this event
+        // — the batch event below handles fan-out grouped across all issues.
+        _skipSubscribedActivity: true,
+      };
       eventBus.emit({
         type: "issue.transitioned",
         workspaceId: project.workspaceId,
         actorId: memberId,
-        payload: {
-          issueKey: issue.key,
-          issueId: issue.id,
-          projectKey: project.key,
-          from: issue.state,
-          to: targetState,
-          // Tells the notification routeEvent to skip subscribed_activity for this event
-          // — the batch event below handles fan-out grouped across all issues.
-          _skipSubscribedActivity: true,
-        },
+        payload: batchPayload as unknown as Record<string, unknown>,
       });
     }
   } catch (err) {

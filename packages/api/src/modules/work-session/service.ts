@@ -7,7 +7,7 @@ import { autoSubscribe } from "../issue-subscription/service.js";
 import { ORDERED_STATES } from "../../shared/constants.js";
 
 /** Sessions with lastHeartbeat older than this are considered expired. */
-const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
+export const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /** Minimum session duration to be recorded as a WorkLog (seconds). */
 const MIN_WORKLOG_DURATION_S = 60;
@@ -210,7 +210,10 @@ export async function startWork(
   if (ORDERED_STATES.indexOf(issue.state as typeof ORDERED_STATES[number]) < ORDERED_STATES.indexOf("in_progress")) {
     try {
       const { transitionIssue } = await import("../issue/service.js");
-      await transitionIssue(issueKey, "in_progress", memberId, via ?? null);
+      // KAN-156 / KAN-143 circular guard: pass cause="start_work" so the
+      // work-session transition listener can detect and skip this auto-advance,
+      // preventing the feedback loop: start_work → in_progress → listener → start_work.
+      await transitionIssue(issueKey, "in_progress", memberId, via ?? null, "start_work");
     } catch (err) {
       // Best-effort: session is already created; log for observability but do not throw.
       logger?.error?.({ err, issueKey }, "auto-transition on startWork failed");
