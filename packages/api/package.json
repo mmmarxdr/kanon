@@ -11,6 +11,7 @@
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
+    "seed:schedule-demo": "tsx prisma/scripts/seed-schedule-demo.ts",
     "db:studio": "prisma studio",
     "smoke-test": "bash scripts/smoke-test.sh",
     "test": "vitest run",
