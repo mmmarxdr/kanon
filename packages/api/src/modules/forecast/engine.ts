@@ -24,16 +24,40 @@ function laterOf(a: Date, b: Date): Date {
   return a.getTime() >= b.getTime() ? a : b;
 }
 
-/** Clone date floored to start of day (local midnight). */
+/** Clone date floored to start of day (UTC midnight, timezone-stable). */
 function startOfDay(d: Date): Date {
   const out = new Date(d);
-  out.setHours(0, 0, 0, 0);
+  out.setUTCHours(0, 0, 0, 0);
   return out;
 }
 
 /** Convert hours to whole days (ceiling). */
 function days(hours: number, hoursPerDay: number): number {
   return Math.ceil(hours / hoursPerDay);
+}
+
+/**
+ * Remaining work hours under the KAN-146 trust model: reported progress reduces
+ * the remaining work (logging is optional, so progress is the primary signal).
+ * progress=100 on a non-done node is treated as 99% so it never reads as zero.
+ * Returns 0 when there is no estimate (callers guard that case separately).
+ */
+function remainingHours(node: ForecastNode): number {
+  if (node.estimateHours === null) return 0;
+  const effProgress =
+    node.progress === 100 && node.state !== "done" ? 99 : node.progress;
+  return node.estimateHours * (1 - effProgress / 100);
+}
+
+/**
+ * Whole-day forecast span of a node: logged hours already spent plus the
+ * remaining work, in days, extended by any interruption days. Used by both the
+ * isolated forecast (forecastEndFor) and CPM edge propagation (applyEdge) so a
+ * progress-reduced node keeps the same span whether or not a predecessor
+ * constrains it (KAN-146 consistency).
+ */
+function spanDays(node: ForecastNode, hoursPerDay: number): number {
+  return days(node.loggedH + remainingHours(node), hoursPerDay) + node.interruptedDays;
 }
 
 // ─── Exported pure functions ──────────────────────────────────────────────────
@@ -51,7 +75,8 @@ export function effectiveStartFor(node: ForecastNode, now?: Date): Date | null {
     node.state === "in_progress" &&
     node.startDate.getTime() < now.getTime()
   ) {
-    return now;
+    // Clone so callers can't mutate the shared `now` through the return value.
+    return new Date(now);
   }
   return node.startDate;
 }
@@ -79,26 +104,11 @@ export function forecastEndFor(
   // KAN-145: anchor overdue in_progress work to today.
   const start = effectiveStartFor(node, now) ?? node.startDate;
 
-  // 4. Guard: progress=100 but not done → treat as 99%
-  const effProgress =
-    node.progress === 100 && node.state !== "done" ? 99 : node.progress;
+  // Span = logged + remaining work (KAN-146 trust model) + interruption days
+  // (KAN-103), computed once so the isolated forecast and CPM propagation agree.
+  let end = addDays(start, spanDays(node, hoursPerDay));
 
-  // 5. Compute remaining hours and total span.
-  // KAN-146 trust model: reported progress% reduces the remaining work, even
-  // when no hours are logged (logging is optional, so a pessimistic
-  // logged-hours floor would make most in-progress forecasts useless). Logged
-  // hours still count toward the total span below, so an overrun (loggedH past
-  // the estimate) extends the forecast and optimistic progress cannot hide it.
-  const remaining = node.estimateHours * (1 - effProgress / 100);
-  const totalH = node.loggedH + remaining;
-  let end = addDays(start, days(totalH, hoursPerDay));
-
-  // KAN-103: interruptions displaced work — push forecastEnd out by lost days.
-  if (node.interruptedDays > 0) {
-    end = addDays(end, node.interruptedDays);
-  }
-
-  // 6. Clamp: end must be at least 1 day after start
+  // Clamp: end must be at least 1 day after start.
   if (end.getTime() <= start.getTime()) {
     end = addDays(start, 1);
   }
@@ -132,11 +142,14 @@ export function applyEdge(
 
   const L = edge.lagDays;
 
-  // Duration comes from the node's estimate, not the current span.
-  // KAN-103: include interruption days so a successor's own displaced time survives the edge recompute.
+  // Duration is the successor's own forecast span (logged + remaining work +
+  // interruptions), matching forecastEndFor so a progress-reduced node is not
+  // silently re-expanded to its full estimate when a predecessor constrains it
+  // (KAN-146 consistency). Falls back to the current span when there is no
+  // estimate to compute from.
   const durDays =
     succNode.estimateHours !== null
-      ? days(succNode.estimateHours, hoursPerDay) + succNode.interruptedDays
+      ? spanDays(succNode, hoursPerDay)
       : Math.round(
           (succState.forecastEnd.getTime() - succState.forecastStart.getTime()) /
             DAY_MS,

@@ -1268,7 +1268,9 @@ describe("forecastEndFor — progress=100 branch hardening", () => {
       loggedH: 0,
     });
     const result = forecastEndFor(n, HOURS_PER_DAY);
-    expect(result?.toISOString()).toBe(addDays(start, 3).toISOString());
+    // Asserting strictly beyond start+1 kills the no-clamp mutant (remaining 0 →
+    // clamp to start+1) without pinning the exact IEEE754 ceil day count.
+    expect(result!.getTime()).toBeGreaterThan(addDays(start, 1).getTime());
   });
 });
 
@@ -2414,6 +2416,18 @@ describe("effectiveStartFor (KAN-145)", () => {
     const n = node({ issueId: "A", startDate: null, state: "in_progress" });
     expect(effectiveStartFor(n, now)).toBeNull();
   });
+
+  it("plan start exactly equal to now → NOT anchored (strict <, kills <= mutant)", () => {
+    const n = node({ issueId: "A", startDate: new Date(now), state: "in_progress" });
+    expect(effectiveStartFor(n, now)!.toISOString()).toBe(now.toISOString());
+  });
+
+  it("returns a clone of now — mutating the result does not corrupt the input", () => {
+    const n = node({ issueId: "A", startDate: past, state: "in_progress" });
+    const result = effectiveStartFor(n, now)!;
+    result.setUTCFullYear(1999);
+    expect(now.toISOString()).toBe("2026-06-10T00:00:00.000Z");
+  });
 });
 
 describe("forecastEndFor — in_progress anchoring (KAN-145)", () => {
@@ -2524,5 +2538,39 @@ describe("forecastEndFor — progress reduces remaining (KAN-146)", () => {
     expect(forecastEndFor(n, HOURS_PER_DAY)!.toISOString()).toBe(
       addDays(start, 4).toISOString(),
     );
+  });
+});
+
+// ─── KAN-146: CPM propagation respects the progress-reduced span ─────────────
+// A progressed in_progress successor must keep its reduced span when a
+// predecessor pushes it out — applyEdge must not re-expand it to the full
+// estimate (review finding: forward-pass duration ignored the trust model).
+
+describe("computeForecast — progress-reduced span survives edge propagation", () => {
+  it("FS successor that is 75% done keeps its reduced duration when pushed", () => {
+    const start = new Date("2026-06-01T00:00:00.000Z");
+    const a = node({ issueId: "A", startDate: start, estimateHours: 8 }); // 1 day → ends June 2
+    // B: 80h estimate but 75% done, no logged hours → remaining 20h → span ceil(20/8)=3 days.
+    const b = node({
+      issueId: "B",
+      startDate: start,
+      estimateHours: 80,
+      progress: 75,
+      state: "in_progress",
+    });
+    const result = computeForecast(
+      {
+        nodes: [a, b],
+        edges: [{ source: "A", target: "B", type: "FS", lagDays: 0 }],
+        milestones: [],
+      },
+      { hoursPerDay: HOURS_PER_DAY },
+    );
+    const fb = result.forecasts.get("B")!;
+    const spanDays = Math.round(
+      (fb.forecastEnd!.getTime() - fb.forecastStart!.getTime()) / 86_400_000,
+    );
+    // Pushed to start after A (June 2), span stays 3 days (reduced), NOT 10 (full estimate).
+    expect(spanDays).toBe(3);
   });
 });
