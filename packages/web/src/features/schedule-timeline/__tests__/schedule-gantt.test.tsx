@@ -65,6 +65,7 @@ function makeRow(overrides: Partial<ScheduleTimelineRow> = {}): ScheduleTimeline
     slipDays: 9,
     critical: false,
     floatDays: 5,
+    deps: [],
     ...overrides,
   };
 }
@@ -256,6 +257,76 @@ describe("ScheduleGantt — timescale zoom (KAN-148)", () => {
     fireEvent.click(screen.getByTestId("schedule-gantt-zoom-fit"));
     const fitWidth = canvasWidthPx(container);
     expect(fitWidth).toBeLessThan(dayWidth);
+  });
+});
+
+// ── Dependency arrows (KAN-149) ─────────────────────────────────────────────────
+
+describe("ScheduleGantt — dependency arrows (KAN-149)", () => {
+  it("renders no dependency overlay when there are no edges", () => {
+    mockUseProjectScheduleTimeline.mockReturnValue({
+      data: [makeRow()],
+      isLoading: false,
+      isError: false,
+    });
+    const { container } = render(<ScheduleGantt projectKey="TST" />);
+    expect(container.querySelector("[data-testid='schedule-gantt-deps']")).toBeNull();
+  });
+
+  it("draws one arrow per outgoing dependency edge", () => {
+    const rows = [
+      makeRow({
+        issueId: "id-1",
+        issueKey: "A-1",
+        deps: [{ targetIssueId: "id-2", type: "FS", lagDays: 0 }],
+      }),
+      makeRow({ issueId: "id-2", issueKey: "A-2", title: "Second" }),
+    ];
+    mockUseProjectScheduleTimeline.mockReturnValue({
+      data: rows,
+      isLoading: false,
+      isError: false,
+    });
+    const { container } = render(<ScheduleGantt projectKey="TST" />);
+    const edges = container.querySelectorAll("[data-testid='dep-edge']");
+    expect(edges.length).toBe(1);
+  });
+
+  it("colors an edge between two critical issues as critical", () => {
+    const rows = [
+      makeRow({
+        issueId: "id-1",
+        issueKey: "A-1",
+        critical: true,
+        deps: [{ targetIssueId: "id-2", type: "FS", lagDays: 0 }],
+      }),
+      makeRow({ issueId: "id-2", issueKey: "A-2", critical: true }),
+    ];
+    mockUseProjectScheduleTimeline.mockReturnValue({
+      data: rows,
+      isLoading: false,
+      isError: false,
+    });
+    const { container } = render(<ScheduleGantt projectKey="TST" />);
+    const edge = container.querySelector("[data-testid='dep-edge']");
+    expect(edge?.getAttribute("data-critical")).toBe("true");
+  });
+
+  it("skips edges whose target is absent from the data", () => {
+    const rows = [
+      makeRow({
+        issueId: "id-1",
+        issueKey: "A-1",
+        deps: [{ targetIssueId: "ghost", type: "FS", lagDays: 0 }],
+      }),
+    ];
+    mockUseProjectScheduleTimeline.mockReturnValue({
+      data: rows,
+      isLoading: false,
+      isError: false,
+    });
+    const { container } = render(<ScheduleGantt projectKey="TST" />);
+    expect(container.querySelector("[data-testid='schedule-gantt-deps']")).toBeNull();
   });
 });
 

@@ -18,6 +18,18 @@
 import { z } from "zod";
 
 /**
+ * KAN-149: a typed dependency edge originating from this row's issue.
+ * `targetIssueId` is the successor; `type`/`lagDays` mirror the forecast engine
+ * (IssueDependency). Used to draw dependency arrows between Gantt bars.
+ */
+export const scheduleDepEdgeSchema = z.object({
+  targetIssueId: z.string().uuid(),
+  type: z.enum(["FS", "SS", "FF", "SF", "blocks"]),
+  lagDays: z.number().int(),
+});
+export type ScheduleDepEdge = z.infer<typeof scheduleDepEdgeSchema>;
+
+/**
  * One row of the schedule-timeline response.
  * Combines identity fields with all three schedule planes.
  */
@@ -44,6 +56,9 @@ export const scheduleTimelineRowSchema = z.object({
   slipDays: z.number().int().nullable(),
   critical: z.boolean().nullable(),
   floatDays: z.number().int().nullable(),
+
+  // Dependency edges (KAN-149) — outgoing edges where this issue is the source.
+  deps: z.array(scheduleDepEdgeSchema),
 });
 
 export type ScheduleTimelineRow = z.infer<typeof scheduleTimelineRowSchema>;

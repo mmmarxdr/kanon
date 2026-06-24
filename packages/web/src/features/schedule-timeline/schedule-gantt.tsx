@@ -14,8 +14,8 @@
 
 import { useMemo, useCallback, useState, type CSSProperties } from "react";
 import { useContainerWidth } from "@/features/roadmap/use-container-size";
-import { useProjectScheduleTimeline } from "./use-project-schedule-timeline";
-import { computeDomain } from "./timeline-scale";
+import { useProjectScheduleTimeline, type ScheduleTimelineRow } from "./use-project-schedule-timeline";
+import { computeDomain, barBox, type DateDomain } from "./timeline-scale";
 import { ThreePlaneRow, type PlanChangePayload } from "./three-plane-row";
 import { useUpsertPlanMutation } from "./use-upsert-plan-mutation";
 
@@ -384,9 +384,144 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
               </div>
             </div>
           ))}
+
+          {/* KAN-149: dependency arrows overlay (above bars, below today line) */}
+          <DepArrows data={data} domain={domain} trackW={trackW} />
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Dependency arrows (KAN-149) ─────────────────────────────────────────────────
+
+/** Vertical center of a plan bar within its row (mirrors ThreePlaneRow BAR_TOP+BAR_H/2). */
+const BAR_CENTER = 18;
+
+interface BarAnchor {
+  leftX: number;
+  rightX: number;
+  cy: number;
+  critical: boolean;
+}
+
+/**
+ * Draws an SVG arrow per typed dependency edge between plan bars.
+ * Endpoints follow the dependency semantics:
+ *   FS source.end → target.start | SS source.start → target.start
+ *   FF source.end → target.end   | SF source.start → target.end
+ *   blocks is drawn like FS.
+ * Edges between two critical-path issues are colored red.
+ */
+function DepArrows({
+  data,
+  domain,
+  trackW,
+}: {
+  data: ScheduleTimelineRow[];
+  domain: DateDomain;
+  trackW: number;
+}) {
+  // Resolve each issue's bar anchors. Rows without a plan bar can't anchor edges.
+  const anchors = new Map<string, BarAnchor>();
+  data.forEach((row, i) => {
+    if (!row.startDate || !row.dueDate) return;
+    const box = barBox(new Date(row.startDate), new Date(row.dueDate), domain, trackW);
+    anchors.set(row.issueId, {
+      leftX: LEFT + box.left,
+      rightX: LEFT + box.left + box.width,
+      cy: HDR_H + i * ROW_H + BAR_CENTER,
+      critical: row.critical === true,
+    });
+  });
+
+  const edges: Array<{
+    key: string;
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+    critical: boolean;
+  }> = [];
+
+  for (const row of data) {
+    const src = anchors.get(row.issueId);
+    if (!src) continue;
+    for (const dep of row.deps) {
+      const tgt = anchors.get(dep.targetIssueId);
+      if (!tgt) continue;
+      // Endpoint x by edge type.
+      const startFromEnd = dep.type === "FS" || dep.type === "FF" || dep.type === "blocks";
+      const endAtEnd = dep.type === "FF" || dep.type === "SF";
+      edges.push({
+        key: `${row.issueId}->${dep.targetIssueId}:${dep.type}`,
+        x1: startFromEnd ? src.rightX : src.leftX,
+        y1: src.cy,
+        x2: endAtEnd ? tgt.rightX : tgt.leftX,
+        y2: tgt.cy,
+        critical: src.critical && tgt.critical,
+      });
+    }
+  }
+
+  if (edges.length === 0) return null;
+
+  return (
+    <svg
+      data-testid="schedule-gantt-deps"
+      width={LEFT + trackW}
+      height="100%"
+      style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        width: LEFT + trackW,
+        height: "100%",
+        pointerEvents: "none",
+        zIndex: 2,
+        overflow: "visible",
+      }}
+    >
+      <defs>
+        <marker
+          id="dep-arrow"
+          markerWidth="6"
+          markerHeight="6"
+          refX="5"
+          refY="3"
+          orient="auto"
+        >
+          <path d="M0,0 L6,3 L0,6 Z" fill="var(--ink-4)" />
+        </marker>
+        <marker
+          id="dep-arrow-critical"
+          markerWidth="6"
+          markerHeight="6"
+          refX="5"
+          refY="3"
+          orient="auto"
+        >
+          <path d="M0,0 L6,3 L0,6 Z" fill="var(--bad)" />
+        </marker>
+      </defs>
+      {edges.map((e) => {
+        const dx = Math.min(48, Math.max(16, Math.abs(e.x2 - e.x1) * 0.4));
+        const d = `M ${e.x1} ${e.y1} C ${e.x1 + dx} ${e.y1}, ${e.x2 - dx} ${e.y2}, ${e.x2} ${e.y2}`;
+        return (
+          <path
+            key={e.key}
+            data-testid="dep-edge"
+            data-critical={e.critical ? "true" : undefined}
+            d={d}
+            fill="none"
+            stroke={e.critical ? "var(--bad)" : "var(--ink-4)"}
+            strokeWidth={e.critical ? 2 : 1.2}
+            strokeOpacity={e.critical ? 0.9 : 0.6}
+            markerEnd={e.critical ? "url(#dep-arrow-critical)" : "url(#dep-arrow)"}
+          />
+        );
+      })}
+    </svg>
   );
 }
 
