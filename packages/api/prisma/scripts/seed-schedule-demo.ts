@@ -155,6 +155,11 @@ const ISSUES: SeedIssue[] = [
 ];
 
 async function main() {
+  // Safety: this script deletes and recreates the SYN project. Never run it
+  // against a production database.
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("seed-schedule-demo must not run with NODE_ENV=production");
+  }
   console.log("Seeding synthetic schedule demo (SYN)…");
 
   // Reuse the dev workspace/user/member from the base seed.
@@ -216,7 +221,7 @@ async function main() {
       },
     });
 
-    if (s.loggedH && s.loggedH > 0) {
+    if (s.loggedH) {
       await prisma.timeEntry.create({
         data: {
           memberId: member.id,

@@ -12,7 +12,7 @@
  * No drag, no mutations, no SSE — PR3.
  */
 
-import { useMemo, useCallback, useState, type CSSProperties } from "react";
+import { useMemo, useCallback, useState, useId, type CSSProperties } from "react";
 import { useContainerWidth } from "@/features/roadmap/use-container-size";
 import { useProjectScheduleTimeline, type ScheduleTimelineRow } from "./use-project-schedule-timeline";
 import { computeDomain, barBox, type DateDomain } from "./timeline-scale";
@@ -97,16 +97,16 @@ export interface ScheduleGanttProps {
 export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
   const { data, isLoading, isError } = useProjectScheduleTimeline(projectKey);
   const [containerRef, containerWidth] = useContainerWidth();
-  const upsertPlan = useUpsertPlanMutation();
+  const { mutate: mutatePlan } = useUpsertPlanMutation();
 
   const canvasW = Math.max(containerWidth || 0, MIN_CANVAS_W);
   const [zoom, setZoom] = useState<ZoomLevel>("fit");
 
   const handlePlanChange = useCallback(
     ({ issueKey, startDate, dueDate }: PlanChangePayload) => {
-      upsertPlan.mutate({ issueKey, projectKey, startDate, dueDate });
+      mutatePlan({ issueKey, projectKey, startDate, dueDate });
     },
-    [upsertPlan, projectKey],
+    [mutatePlan, projectKey],
   );
 
   const domain = useMemo(
@@ -422,6 +422,11 @@ function DepArrows({
   domain: DateDomain;
   trackW: number;
 }) {
+  // Unique marker ids per instance so multiple Gantts on one page don't collide.
+  const uid = useId();
+  const arrowId = `${uid}-arrow`;
+  const arrowCriticalId = `${uid}-arrow-critical`;
+
   // Resolve each issue's bar anchors. Rows without a plan bar can't anchor edges.
   const anchors = new Map<string, BarAnchor>();
   data.forEach((row, i) => {
@@ -447,7 +452,7 @@ function DepArrows({
   for (const row of data) {
     const src = anchors.get(row.issueId);
     if (!src) continue;
-    for (const dep of row.deps) {
+    for (const dep of row.deps ?? []) {
       const tgt = anchors.get(dep.targetIssueId);
       if (!tgt) continue;
       // Endpoint x by edge type.
@@ -483,30 +488,19 @@ function DepArrows({
       }}
     >
       <defs>
-        <marker
-          id="dep-arrow"
-          markerWidth="6"
-          markerHeight="6"
-          refX="5"
-          refY="3"
-          orient="auto"
-        >
+        <marker id={arrowId} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
           <path d="M0,0 L6,3 L0,6 Z" fill="var(--ink-4)" />
         </marker>
-        <marker
-          id="dep-arrow-critical"
-          markerWidth="6"
-          markerHeight="6"
-          refX="5"
-          refY="3"
-          orient="auto"
-        >
+        <marker id={arrowCriticalId} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
           <path d="M0,0 L6,3 L0,6 Z" fill="var(--bad)" />
         </marker>
       </defs>
       {edges.map((e) => {
+        // Signed control-point offset so backward (x2<x1) and zero-distance
+        // edges bow toward each other instead of doubling back.
+        const dir = e.x2 >= e.x1 ? 1 : -1;
         const dx = Math.min(48, Math.max(16, Math.abs(e.x2 - e.x1) * 0.4));
-        const d = `M ${e.x1} ${e.y1} C ${e.x1 + dx} ${e.y1}, ${e.x2 - dx} ${e.y2}, ${e.x2} ${e.y2}`;
+        const d = `M ${e.x1} ${e.y1} C ${e.x1 + dir * dx} ${e.y1}, ${e.x2 - dir * dx} ${e.y2}, ${e.x2} ${e.y2}`;
         return (
           <path
             key={e.key}
@@ -517,7 +511,7 @@ function DepArrows({
             stroke={e.critical ? "var(--bad)" : "var(--ink-4)"}
             strokeWidth={e.critical ? 2 : 1.2}
             strokeOpacity={e.critical ? 0.9 : 0.6}
-            markerEnd={e.critical ? "url(#dep-arrow-critical)" : "url(#dep-arrow)"}
+            markerEnd={e.critical ? `url(#${arrowCriticalId})` : `url(#${arrowId})`}
           />
         );
       })}

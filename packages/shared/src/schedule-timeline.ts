@@ -58,7 +58,8 @@ export const scheduleTimelineRowSchema = z.object({
   floatDays: z.number().int().nullable(),
 
   // Dependency edges (KAN-149) — outgoing edges where this issue is the source.
-  deps: z.array(scheduleDepEdgeSchema),
+  // Defaulted so older payloads (pre-KAN-149) still parse instead of throwing.
+  deps: z.array(scheduleDepEdgeSchema).default([]),
 });
 
 export type ScheduleTimelineRow = z.infer<typeof scheduleTimelineRowSchema>;

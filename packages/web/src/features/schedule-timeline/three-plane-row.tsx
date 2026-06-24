@@ -87,11 +87,10 @@ type CriticalTier = "critical" | "near" | "normal";
  */
 function criticalTier(row: ScheduleTimelineRow): CriticalTier {
   if (row.critical === true) return "critical";
-  if (
-    row.floatDays != null &&
-    row.floatDays > 0 &&
-    row.floatDays <= NEAR_CRITICAL_THRESHOLD
-  ) {
+  // Defensive: a zero/negative float is critical by definition, even if the
+  // engine's `critical` flag is somehow out of sync — never render it as normal.
+  if (row.floatDays != null && row.floatDays <= 0) return "critical";
+  if (row.floatDays != null && row.floatDays <= NEAR_CRITICAL_THRESHOLD) {
     return "near";
   }
   return "normal";

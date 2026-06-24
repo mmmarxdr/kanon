@@ -257,6 +257,8 @@ describe("ScheduleGantt — timescale zoom (KAN-148)", () => {
     fireEvent.click(screen.getByTestId("schedule-gantt-zoom-fit"));
     const fitWidth = canvasWidthPx(container);
     expect(fitWidth).toBeLessThan(dayWidth);
+    // ...but never collapses below the canvas floor.
+    expect(fitWidth).toBeGreaterThanOrEqual(1100);
   });
 });
 
@@ -290,6 +292,24 @@ describe("ScheduleGantt — dependency arrows (KAN-149)", () => {
     const { container } = render(<ScheduleGantt projectKey="TST" />);
     const edges = container.querySelectorAll("[data-testid='dep-edge']");
     expect(edges.length).toBe(1);
+  });
+
+  it("FS and SS edges anchor the source at different endpoints (end vs start)", () => {
+    const edgeStartX = (type: "FS" | "SS") => {
+      mockUseProjectScheduleTimeline.mockReturnValue({
+        data: [
+          makeRow({ issueId: "id-1", issueKey: "A-1", deps: [{ targetIssueId: "id-2", type, lagDays: 0 }] }),
+          makeRow({ issueId: "id-2", issueKey: "A-2" }),
+        ],
+        isLoading: false,
+        isError: false,
+      });
+      const { container } = render(<ScheduleGantt projectKey="TST" />);
+      const d = container.querySelector("[data-testid='dep-edge']")!.getAttribute("d")!;
+      return parseFloat(d.split(" ")[1]!); // M <x1> <y1> ...
+    };
+    // FS starts at the source bar's right edge, SS at its left edge → FS x is larger.
+    expect(edgeStartX("FS")).toBeGreaterThan(edgeStartX("SS"));
   });
 
   it("colors an edge between two critical issues as critical", () => {
