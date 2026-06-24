@@ -21,7 +21,7 @@ import type {
   ForecastResult,
   ForecastStats,
 } from "./types.js";
-import { forecastEndFor, applyEdge, topoSort, backwardPass, computeForecast } from "./engine.js";
+import { forecastEndFor, applyEdge, topoSort, backwardPass, computeForecast, effectiveStartFor } from "./engine.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1251,24 +1251,24 @@ describe("forecastEndFor — progress=100 branch hardening", () => {
     expect(result?.toISOString()).toBe(addDays(start, 1).toISOString());
   });
 
-  it("progress=100, state=in_progress, loggedH=0, estimateHours=800 → end is far future (effProgress=99 applied)", () => {
-    // With clamp to 99: progressRemaining = 800 * 0.01 = 8h, loggedRemaining = max(800-0)=800
-    // remaining = max(8, 800) = 800; total = 800; ceil(800/8) = 100 days
-    // Without clamp (effProgress=100): progressRemaining=0; loggedRemaining=800; remaining=800; total=800; 100 days — SAME
-    // This confirms the clamp doesn't change this specific output (both paths get loggedRemaining).
-    // This is an equivalent mutant for large-estimate nodes; documented in equivalent mutant list.
+  it("progress=100, state=in_progress → effProgress clamped to 99 (not 100)", () => {
+    // KAN-146 trust model: remaining = estimate * (1 - effProgress/100).
+    // The 99 clamp means a progress=100 non-done node still has 1% of work left.
+    // est=1600 → 1% ≈ 16h ≈ 2 days (float 0.0100…→ ceil gives 3 days; the exact
+    // count is a float artifact, not the point). A mutant that skips the clamp
+    // (effProgress=100) → remaining 0 → total 0 → clamp to start+1 day, so the
+    // multi-day result kills it.
     const start = new Date("2026-06-01T00:00:00.000Z");
     const n = node({
       issueId: "n1",
       startDate: start,
-      estimateHours: 800,
+      estimateHours: 1600,
       progress: 100,
       state: "in_progress",
       loggedH: 0,
     });
     const result = forecastEndFor(n, HOURS_PER_DAY);
-    expect(result).not.toBeNull();
-    expect(result!.getTime()).toBeGreaterThan(addDays(start, 90).getTime());
+    expect(result?.toISOString()).toBe(addDays(start, 3).toISOString());
   });
 });
 
@@ -1276,23 +1276,10 @@ describe("forecastEndFor — progress=100 branch hardening", () => {
 // Kills: line 57 (effProgress*100), line 58 (Math.min), line 59 (Math.min for remaining)
 
 describe("forecastEndFor — remaining calculation hardening", () => {
-  it("loggedH > progressBased remaining → loggedRemaining wins (Math.max not Math.min)", () => {
-    // estimateHours=8, progress=50 → progressRemaining = 8*0.5 = 4
-    // loggedH=6 → loggedRemaining = max(8-6, 0) = 2... wait, 2 < 4, so progressRemaining wins.
-    // Need loggedH=2 → loggedRemaining=6 > progressRemaining=4 → loggedRemaining wins.
-    // If Math.min: remaining=min(4,6)=4 → total=2+4=6 → ceil(6/8)=1 day (WRONG)
-    // Correct: remaining=max(4,6)=6 → total=2+6=8 → ceil(8/8)=1 day ... same end result!
-    // Use different numbers: loggedH=0, progress=25, estimateHours=24
-    // progressRemaining=24*0.75=18, loggedRemaining=max(24,0)=24, remaining=max(18,24)=24
-    // total=24h → ceil(24/8)=3 days
-    // With Math.min: remaining=min(18,24)=18 → total=18 → ceil(18/8)=3 days (ceil rounds up... 18/8=2.25 → 3)
-    // ... still same. We need the paths to diverge clearly.
-    // loggedH=5, progress=50, estimateHours=16
-    // progressRemaining=16*0.5=8, loggedRemaining=max(11,0)=11, remaining=max(8,11)=11, total=16 → 2 days
-    // With Math.min: remaining=min(8,11)=8, total=5+8=13h → ceil(13/8)=2 days (same!)
-    // Try: loggedH=7, progress=50, estimateHours=8
-    // progressRemaining=8*0.5=4, loggedRemaining=max(1,0)=1, remaining=max(4,1)=4, total=7+4=11 → ceil(11/8)=2 days
-    // With Math.min remaining: min(4,1)=1, total=7+1=8 → ceil(8/8)=1 day ← DIFFERENT
+  it("logged hours count toward total span on top of progress remaining — KAN-146", () => {
+    // est=8, progress=50 → remaining = 4h. loggedH=7 already spent.
+    // total = 7 + 4 = 11h → ceil(11/8) = 2 days.
+    // The forecast reflects spent + remaining, so heavy logging extends the span.
     const start = new Date("2026-06-01T00:00:00.000Z");
     const n = node({
       issueId: "n1",
@@ -1302,41 +1289,15 @@ describe("forecastEndFor — remaining calculation hardening", () => {
       loggedH: 7,
     });
     const result = forecastEndFor(n, HOURS_PER_DAY);
-    // Correct: remaining=max(4,1)=4, total=7+4=11h → ceil=2 days
     expect(result?.toISOString()).toBe(addDays(start, 2).toISOString());
   });
 
-  it("progressRemaining wins over loggedRemaining → loggedH barely logged", () => {
-    // estimateHours=16, progress=50 → progressRemaining=8
-    // loggedH=1 → loggedRemaining=max(15,0)=15 → remaining=max(8,15)=15 → total=1+15=16h → 2 days
-    // If Math.min(loggedRemaining, 0): loggedRemaining=max(15-16,...) this won't work.
-    // Test for Math.min on loggedRemaining (line 58): Math.min(16-1,0)=min(15,0)=0
-    //   → remaining=max(8,0)=8, total=1+8=9 → ceil(9/8)=2 days (same!)
-    // Try: loggedH=20, estimateHours=16, progress=0
-    // progressRemaining=16, loggedRemaining=max(16-20,0)=max(-4,0)=0 (correct, clamped)
-    // If Math.min: loggedRemaining=min(-4,0)=-4 → remaining=max(16,-4)=16 → total=36h → ceil=5 days (WRONG)
-    // Correct: remaining=max(16,0)=16, total=20+16=36h → ceil(36/8)=5 days (same actually!)
-    // Actually this is equivalent since max(16,-4)=16 in both cases.
-    // The test for Math.min on REMAINING (line 59) needs progressRemaining≠loggedRemaining:
-    // progress=75, loggedH=0, estimateHours=8
-    // progressRemaining=8*0.25=2, loggedRemaining=max(8,0)=8
-    // Correct: remaining=max(2,8)=8, total=0+8=8 → ceil=1 day
-    // Math.min: remaining=min(2,8)=2, total=2 → ceil(2/8)=1 day (same!)
-    // This shows that when loggedH=0, both give the same result. Use loggedH>0:
-    // progress=75, loggedH=2, estimateHours=8
-    // progressRemaining=2, loggedRemaining=6, remaining=max(2,6)=6, total=8 → 1 day
-    // Math.min remaining: min(2,6)=2, total=2+2=4 → ceil(4/8)=1 day (same!)
-    // Try: progress=25, loggedH=1, estimateHours=16
-    // progressRemaining=16*0.75=12, loggedRemaining=max(15,0)=15, remaining=max(12,15)=15, total=16 → 2
-    // Math.min remaining: min(12,15)=12, total=1+12=13 → ceil(13/8)=2 (same!)
-    // The math.min vs max is hard to distinguish when the value doesn't cross a day boundary.
-    // Use: progress=50, loggedH=3, estimateHours=8
-    // progressRemaining=4, loggedRemaining=max(5,0)=5, remaining=max(4,5)=5, total=3+5=8 → 1 day
-    // Math.min remaining: min(4,5)=4, total=3+4=7 → ceil(7/8)=1 day (same!)
-    // The divergence only appears when it crosses a ceil boundary:
-    // progress=50, loggedH=3, estimateHours=24
-    // progressRemaining=12, loggedRemaining=21, remaining=max(12,21)=21, total=24 → ceil(24/8)=3
-    // Math.min remaining: min(12,21)=12, total=3+12=15 → ceil(15/8)=2 ← DIFFERENT
+  it("progress reduces remaining via (1 - p/100); logged hours add to total — KAN-146", () => {
+    // KAN-146 trust model: remaining = estimate * (1 - effProgress/100).
+    // est=24, progress=50 → remaining = 12h. loggedH=3 already spent.
+    // total = 3 + 12 = 15h → ceil(15/8) = 2 days.
+    // A `1 + p/100` mutant would inflate remaining to 36h (5 days); the old
+    // pessimistic loggedRemaining floor would have given 3 days. 2 days kills both.
     const start = new Date("2026-06-01T00:00:00.000Z");
     const n = node({
       issueId: "n1",
@@ -1346,8 +1307,7 @@ describe("forecastEndFor — remaining calculation hardening", () => {
       loggedH: 3,
     });
     const result = forecastEndFor(n, HOURS_PER_DAY);
-    // Correct: remaining=max(12,21)=21, total=24h → 3 days
-    expect(result?.toISOString()).toBe(addDays(start, 3).toISOString());
+    expect(result?.toISOString()).toBe(addDays(start, 2).toISOString());
   });
 
   it("effProgress / 100 arithmetic (not * 100): progress=50, estimateHours=8, loggedH=0", () => {
@@ -2420,5 +2380,149 @@ describe("computeForecast — cycle-excluded nodes critical field", () => {
     expect(fB?.critical).toBe(false);
     // criticalCount should be 0 (no critical cycle nodes)
     expect(result.stats.criticalCount).toBe(0);
+  });
+});
+
+// ─── KAN-145: anchor in-progress forecast to current date ────────────────────
+
+describe("effectiveStartFor (KAN-145)", () => {
+  const past = new Date("2026-06-01T00:00:00.000Z");
+  const now = new Date("2026-06-10T00:00:00.000Z");
+
+  it("in_progress whose plan start is before now → anchors to now", () => {
+    const n = node({ issueId: "A", startDate: past, state: "in_progress" });
+    expect(effectiveStartFor(n, now)!.toISOString()).toBe(now.toISOString());
+  });
+
+  it("in_progress whose plan start is after now → keeps plan start", () => {
+    const future = new Date("2026-06-20T00:00:00.000Z");
+    const n = node({ issueId: "A", startDate: future, state: "in_progress" });
+    expect(effectiveStartFor(n, now)!.toISOString()).toBe(future.toISOString());
+  });
+
+  it("non-in_progress (backlog) with past plan start → NOT anchored", () => {
+    const n = node({ issueId: "A", startDate: past, state: "backlog" });
+    expect(effectiveStartFor(n, now)!.toISOString()).toBe(past.toISOString());
+  });
+
+  it("no now provided → keeps plan start (backward compatible)", () => {
+    const n = node({ issueId: "A", startDate: past, state: "in_progress" });
+    expect(effectiveStartFor(n, undefined)!.toISOString()).toBe(past.toISOString());
+  });
+
+  it("null startDate → null", () => {
+    const n = node({ issueId: "A", startDate: null, state: "in_progress" });
+    expect(effectiveStartFor(n, now)).toBeNull();
+  });
+});
+
+describe("forecastEndFor — in_progress anchoring (KAN-145)", () => {
+  const now = new Date("2026-06-10T00:00:00.000Z");
+
+  it("overdue in_progress forecasts from now, not from past plan start", () => {
+    const n = node({
+      issueId: "A",
+      startDate: new Date("2026-06-01T00:00:00.000Z"), // 9 days before now
+      estimateHours: 16, // 2 days remaining
+      progress: 0,
+      loggedH: 0,
+      state: "in_progress",
+    });
+    // Without now (legacy): end = June 1 + 2 = June 3 (in the past)
+    expect(forecastEndFor(n, HOURS_PER_DAY)!.toISOString()).toBe(
+      addDays(new Date("2026-06-01T00:00:00.000Z"), 2).toISOString(),
+    );
+    // With now: end = June 10 + 2 = June 12 (future)
+    expect(forecastEndFor(n, HOURS_PER_DAY, now)!.toISOString()).toBe(
+      addDays(now, 2).toISOString(),
+    );
+  });
+
+  it("backlog node ignores now (plan-start based even if overdue)", () => {
+    const start = new Date("2026-06-01T00:00:00.000Z");
+    const n = node({
+      issueId: "A",
+      startDate: start,
+      estimateHours: 16,
+      state: "backlog",
+    });
+    expect(forecastEndFor(n, HOURS_PER_DAY, now)!.toISOString()).toBe(
+      addDays(start, 2).toISOString(),
+    );
+  });
+});
+
+describe("computeForecast — overdue in_progress shows positive slip (KAN-145)", () => {
+  it("overdue in_progress past its due date slips instead of completing in the past", () => {
+    const now = new Date("2026-06-10T00:00:00.000Z");
+    const n = node({
+      issueId: "A",
+      startDate: new Date("2026-06-01T00:00:00.000Z"),
+      dueDate: new Date("2026-06-04T00:00:00.000Z"), // already overdue at now
+      estimateHours: 16,
+      progress: 0,
+      loggedH: 0,
+      state: "in_progress",
+    });
+
+    const anchored = computeForecast({ nodes: [n], edges: [], milestones: [] }, {
+      hoursPerDay: HOURS_PER_DAY,
+      now,
+    });
+
+    const f = anchored.forecasts.get("A")!;
+    // forecastStart anchored to now (not the past plan start June 1)
+    expect(f.forecastStart!.toISOString()).toBe(now.toISOString());
+    // forecastEnd is now + 2 days = June 12 > due June 4 → positive slip
+    expect(f.forecastEnd!.toISOString()).toBe(addDays(now, 2).toISOString());
+    expect(f.slipDays).toBeGreaterThan(0);
+    // forecastEnd is in the future of now, never in the past
+    expect(f.forecastEnd!.getTime()).toBeGreaterThan(now.getTime());
+  });
+});
+
+// ─── KAN-146: progress% reduces forecast remaining work ──────────────────────
+// Trust model: progress% reduces remaining even with no logged hours; logged
+// hours still count toward total (so overruns extend the forecast) but never
+// act as a pessimistic floor that hides reported progress.
+
+describe("forecastEndFor — progress reduces remaining (KAN-146)", () => {
+  const start = new Date("2026-06-01T00:00:00.000Z");
+
+  it("progress 60% with loggedH=0 reduces remaining below full estimate", () => {
+    const n = node({
+      issueId: "A",
+      startDate: start,
+      estimateHours: 80, // 10 days at full estimate
+      progress: 60,
+      loggedH: 0,
+    });
+    // remaining = 80 * 0.4 = 32h → 4 days (NOT the full 10 days)
+    expect(forecastEndFor(n, HOURS_PER_DAY)!.toISOString()).toBe(
+      addDays(start, 4).toISOString(),
+    );
+  });
+
+  it("higher progress yields a shorter forecast (progress actually counts)", () => {
+    const base = node({ issueId: "A", startDate: start, estimateHours: 80, progress: 0, loggedH: 0 });
+    const advanced = node({ issueId: "A", startDate: start, estimateHours: 80, progress: 75, loggedH: 0 });
+    const baseEnd = forecastEndFor(base, HOURS_PER_DAY)!;
+    const advEnd = forecastEndFor(advanced, HOURS_PER_DAY)!;
+    expect(advEnd.getTime()).toBeLessThan(baseEnd.getTime());
+  });
+
+  it("overrun: loggedH beyond estimate still extends forecast despite high progress", () => {
+    const n = node({
+      issueId: "A",
+      startDate: start,
+      estimateHours: 16, // 2-day estimate
+      progress: 80,
+      loggedH: 24, // already burned more than the estimate
+    });
+    // remaining = 16 * 0.2 = 3.2h; total = 24 + 3.2 = 27.2h → ceil(27.2/8) = 4 days
+    // Optimistic progress does NOT hide that the task is over budget (>2 days).
+    expect(forecastEndFor(n, HOURS_PER_DAY)!.toISOString()).toBe(
+      addDays(start, 4).toISOString(),
+    );
   });
 });

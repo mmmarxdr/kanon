@@ -24,6 +24,13 @@ function laterOf(a: Date, b: Date): Date {
   return a.getTime() >= b.getTime() ? a : b;
 }
 
+/** Clone date floored to start of day (local midnight). */
+function startOfDay(d: Date): Date {
+  const out = new Date(d);
+  out.setHours(0, 0, 0, 0);
+  return out;
+}
+
 /** Convert hours to whole days (ceiling). */
 function days(hours: number, hoursPerDay: number): number {
   return Math.ceil(hours / hoursPerDay);
@@ -32,11 +39,31 @@ function days(hours: number, hoursPerDay: number): number {
 // ─── Exported pure functions ──────────────────────────────────────────────────
 
 /**
+ * The start date the forecast computes from. KAN-145: in_progress work whose
+ * plan start is already in the past is anchored to `now`, so overdue work is
+ * forecast to finish from today instead of in the past. Other states (and the
+ * case where `now` is not supplied) keep the plan start unchanged.
+ */
+export function effectiveStartFor(node: ForecastNode, now?: Date): Date | null {
+  if (node.startDate === null) return null;
+  if (
+    now !== undefined &&
+    node.state === "in_progress" &&
+    node.startDate.getTime() < now.getTime()
+  ) {
+    return now;
+  }
+  return node.startDate;
+}
+
+/**
  * Compute the forecast end date for a single node.
+ * `now` anchors overdue in_progress work to the current date (KAN-145).
  */
 export function forecastEndFor(
   node: ForecastNode,
   hoursPerDay: number,
+  now?: Date,
 ): Date | null {
   // 1. No start → cannot schedule
   if (node.startDate === null) return null;
@@ -49,16 +76,22 @@ export function forecastEndFor(
   // 3. No estimate → fall back to dueDate (may be null)
   if (node.estimateHours === null) return node.dueDate;
 
+  // KAN-145: anchor overdue in_progress work to today.
+  const start = effectiveStartFor(node, now) ?? node.startDate;
+
   // 4. Guard: progress=100 but not done → treat as 99%
   const effProgress =
     node.progress === 100 && node.state !== "done" ? 99 : node.progress;
 
-  // 5. Compute remaining hours and total span
-  const progressRemaining = node.estimateHours * (1 - effProgress / 100);
-  const loggedRemaining = Math.max(node.estimateHours - node.loggedH, 0);
-  const remaining = Math.max(progressRemaining, loggedRemaining);
+  // 5. Compute remaining hours and total span.
+  // KAN-146 trust model: reported progress% reduces the remaining work, even
+  // when no hours are logged (logging is optional, so a pessimistic
+  // logged-hours floor would make most in-progress forecasts useless). Logged
+  // hours still count toward the total span below, so an overrun (loggedH past
+  // the estimate) extends the forecast and optimistic progress cannot hide it.
+  const remaining = node.estimateHours * (1 - effProgress / 100);
   const totalH = node.loggedH + remaining;
-  let end = addDays(node.startDate, days(totalH, hoursPerDay));
+  let end = addDays(start, days(totalH, hoursPerDay));
 
   // KAN-103: interruptions displaced work — push forecastEnd out by lost days.
   if (node.interruptedDays > 0) {
@@ -66,8 +99,8 @@ export function forecastEndFor(
   }
 
   // 6. Clamp: end must be at least 1 day after start
-  if (end.getTime() <= node.startDate.getTime()) {
-    end = addDays(node.startDate, 1);
+  if (end.getTime() <= start.getTime()) {
+    end = addDays(start, 1);
   }
 
   return end;
@@ -313,10 +346,15 @@ export function backwardPass(
  */
 export function computeForecast(
   input: ForecastGraphInput,
-  opts?: { hoursPerDay?: number; atRiskBufferDays?: number },
+  opts?: { hoursPerDay?: number; atRiskBufferDays?: number; now?: Date },
 ): ForecastResult {
   const hoursPerDay = opts?.hoursPerDay ?? 8;
   const atRiskBufferDays = opts?.atRiskBufferDays ?? 3;
+  // KAN-145: anchor overdue in_progress work to "today" (injectable for tests).
+  // Floored to start-of-day so repeated recomputes on the same day are stable —
+  // a millisecond-precision anchor would make forecastEnd jitter every call and
+  // defeat the inputsHash dedup.
+  const now = opts?.now ?? startOfDay(new Date());
 
   const nodeMap = new Map<string, ForecastNode>();
   for (const n of input.nodes) {
@@ -327,10 +365,11 @@ export function computeForecast(
   const nodeStates = new Map<string, NodeState>();
   for (const n of input.nodes) {
     if (n.startDate === null) continue; // will be handled as null-start below
-    const fEnd = forecastEndFor(n, hoursPerDay);
+    const fEnd = forecastEndFor(n, hoursPerDay, now);
     if (fEnd === null) continue; // no forecastEnd means can't schedule
     nodeStates.set(n.issueId, {
-      forecastStart: n.startDate,
+      // KAN-145: forecastStart anchored alongside forecastEnd.
+      forecastStart: effectiveStartFor(n, now) ?? n.startDate,
       forecastEnd: fEnd,
     });
   }
@@ -377,7 +416,7 @@ export function computeForecast(
 
     if (s === undefined) {
       // null-start or unschedulable node
-      const fEnd = n.startDate !== null ? forecastEndFor(n, hoursPerDay) : null;
+      const fEnd = n.startDate !== null ? forecastEndFor(n, hoursPerDay, now) : null;
       const slipDays =
         n.dueDate !== null && fEnd !== null
           ? Math.max(
