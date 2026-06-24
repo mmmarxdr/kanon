@@ -106,6 +106,14 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
     return Math.min(1, Math.max(0, (Date.now() - domain.min.getTime()) / span));
   }, [domain]);
 
+  // KAN-151: re-center the scroll viewport on the today line.
+  const scrollToToday = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const targetX = LEFT + todayRatio * trackW;
+    el.scrollLeft = Math.max(0, targetX - el.clientWidth / 2);
+  }, [containerRef, todayRatio, trackW]);
+
   // ── Loading ───────────────────────────────────────────────────────────
   if (isLoading) {
     return (
@@ -190,10 +198,10 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
   return (
     <div data-testid="schedule-gantt" style={outerStyle}>
       {/* Legend toolbar */}
-      <GanttLegend />
+      <GanttLegend onToday={scrollToToday} />
 
       {/* Scroll container */}
-      <div ref={containerRef} style={scrollStyle}>
+      <div ref={containerRef} data-testid="schedule-gantt-scroll" style={scrollStyle}>
         <div style={canvasStyle}>
 
           {/* Sticky header: month axis */}
@@ -416,7 +424,7 @@ const LEGEND_ITEMS = [
   },
 ] as const;
 
-function GanttLegend() {
+function GanttLegend({ onToday }: { onToday?: () => void }) {
   return (
     <div
       data-testid="schedule-gantt-legend"
@@ -450,6 +458,27 @@ function GanttLegend() {
           <span style={{ fontSize: 11, color: "var(--ink-3)" }}>{item.label}</span>
         </span>
       ))}
+      {/* KAN-151: re-center the viewport on the today line. */}
+      {onToday && (
+        <button
+          type="button"
+          data-testid="schedule-gantt-today-btn"
+          onClick={onToday}
+          className="mono"
+          style={{
+            marginLeft: "auto",
+            fontSize: 11,
+            color: "var(--ink-3)",
+            background: "var(--panel)",
+            border: "1px solid var(--line-2)",
+            borderRadius: 4,
+            padding: "3px 10px",
+            cursor: "pointer",
+          }}
+        >
+          Today
+        </button>
+      )}
     </div>
   );
 }

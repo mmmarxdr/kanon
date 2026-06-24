@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import type { ScheduleTimelineRow } from "../use-project-schedule-timeline";
 
 // ── ResizeObserver + getBoundingClientRect mocks (mirror gantt-timeline.test.tsx) ──
@@ -187,6 +187,33 @@ describe("ScheduleGantt — data rendering", () => {
     expect(
       container.querySelector("[data-testid='schedule-gantt-legend']"),
     ).toBeTruthy();
+  });
+});
+
+// ── Scroll-to-today (KAN-151) ──────────────────────────────────────────────────
+
+describe("ScheduleGantt — scroll to today (KAN-151)", () => {
+  it("renders a Today control", () => {
+    mockUseProjectScheduleTimeline.mockReturnValue({
+      data: [makeRow()],
+      isLoading: false,
+      isError: false,
+    });
+    render(<ScheduleGantt projectKey="TST" />);
+    expect(screen.getByTestId("schedule-gantt-today-btn")).toBeTruthy();
+  });
+
+  it("clicking Today re-centers the scroll container on the today line", () => {
+    mockUseProjectScheduleTimeline.mockReturnValue({
+      data: [makeRow()],
+      isLoading: false,
+      isError: false,
+    });
+    render(<ScheduleGantt projectKey="TST" />);
+    const scroll = screen.getByTestId("schedule-gantt-scroll");
+    // today (2026-06-24) is past the fixture's domain → ratio clamps to 1 → target > 0
+    expect(() => fireEvent.click(screen.getByTestId("schedule-gantt-today-btn"))).not.toThrow();
+    expect(scroll.scrollLeft).toBeGreaterThan(0);
   });
 });
 
