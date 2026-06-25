@@ -956,19 +956,18 @@ describe("WorkSessionService", () => {
 
     it("startWork on incident emits interruption.opened for each displaced session", async () => {
       // incident switch: displaced session on task-1
-      mockIssueFind
-        .mockResolvedValueOnce(incidentIssue) // first call: the incident
-        .mockResolvedValueOnce(taskIssue);    // stopWork call for displaced session
-      // displaced sessions
+      mockIssueFind.mockResolvedValueOnce(incidentIssue); // first call: the incident
+      // displaced sessions (KAN-163: startedAt/source needed for the inline tx)
       mockSessionFindMany
         .mockResolvedValueOnce([
           { id: "s-displaced", userId: "u-1", memberId: "m-1", issueId: "task-1",
+            startedAt: new Date(), source: "mcp",
             lastHeartbeat: new Date(), issue: { key: "KAN-99" } },
         ] as any) // displaced sessions query
         .mockResolvedValueOnce([]); // other workers query (after upsert)
-      // stopWork inner calls
-      mockSessionFindUnique
-        .mockResolvedValueOnce({ id: "s-displaced", startedAt: new Date(), memberId: "m-1" } as any);
+      // KAN-163: the displaced stop + interruption.create run in one interactive
+      // transaction — execute the callback against the mocked prisma client.
+      mockTransaction.mockImplementation(async (fn: any) => fn(prisma));
       mockSessionDelete.mockResolvedValue({} as any);
       mockSessionUpsert.mockResolvedValue({ id: "s-new" } as any);
       mockInterruptionFindMany.mockResolvedValue([]); // resume-close: no open interruptions
@@ -997,6 +996,42 @@ describe("WorkSessionService", () => {
           interruptedIssueId: "task-1",
         },
       });
+    });
+
+    it("KAN-163: displaced stop + interruption.create are one atomic transaction — create failure rejects and the session delete is in the same tx scope", async () => {
+      mockIssueFind.mockResolvedValueOnce(incidentIssue);
+      mockSessionFindMany
+        .mockResolvedValueOnce([
+          { id: "s-displaced", userId: "u-1", memberId: "m-1", issueId: "task-1",
+            startedAt: new Date(), source: "mcp",
+            lastHeartbeat: new Date(), issue: { key: "KAN-99" } },
+        ] as any)
+        .mockResolvedValueOnce([]); // other-workers query — never reached (tx rejects first), set for robustness
+      // Run the interactive transaction callback against the mocked client so a
+      // create rejection propagates exactly as Postgres would (and rolls back).
+      mockTransaction.mockImplementation(async (fn: any) => fn(prisma));
+      mockSessionDelete.mockResolvedValue({} as any);
+      mockSessionUpsert.mockResolvedValue({ id: "s-new" } as any); // safety net if reject point shifts
+      mockInterruptionCreate.mockRejectedValueOnce(new Error("interruption.create failed"));
+
+      mockEmit.mockClear();
+
+      // The whole startWork must reject — the create is awaited INSIDE the tx,
+      // not fire-and-forget. This mock verifies propagation + that delete and
+      // create share the same tx callback (the atomic unit); the actual rollback
+      // of the delete is a Postgres guarantee, not something the mock simulates.
+      await expect(startWork("INC-1", "member-1", "u-1", "mcp")).rejects.toThrow();
+
+      // delete + create were issued in the same transaction callback (atomic unit).
+      expect(mockSessionDelete).toHaveBeenCalledWith({ where: { id: "s-displaced" } });
+      expect(mockInterruptionCreate).toHaveBeenCalledOnce();
+      // Sub-minute displaced session → no WorkLog written before the failure.
+      expect(mockWorkLogCreate).not.toHaveBeenCalled();
+      // No success event leaks out when the transaction fails.
+      const openedEmit = mockEmit.mock.calls.find(
+        ([arg]) => (arg as { type: string }).type === "interruption.opened"
+      );
+      expect(openedEmit).toBeUndefined();
     });
 
     it("startWork (resume) emits interruption.closed for each open interruption closed", async () => {

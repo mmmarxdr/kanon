@@ -54,15 +54,94 @@ export async function startWork(
       include: { issue: { select: { key: true } } },
     });
     for (const s of displaced) {
-      await stopWork(s.issue.key, userId, s.memberId, via ?? null);
-      const interruption = await prisma.interruption.create({
-        data: {
-          incidentIssueId: issue.id,
-          interruptedIssueId: s.issueId,
-          memberId: s.memberId,
-          via: "session_switch",
-        },
-      });
+      const endedAt = new Date();
+      const durationS = Math.floor((endedAt.getTime() - s.startedAt.getTime()) / 1000);
+
+      // KAN-163: stop the displaced session (WorkLog + session delete) AND open
+      // its Interruption edge in ONE transaction. Previously stopWork + create
+      // ran as two unguarded awaits — a create failure left the session stopped
+      // with no edge (forecast silently drops the displaced time).
+      // Atomicity is PER displaced session (the AC): a failure on one session
+      // rolls THAT session back but does not undo siblings already processed
+      // earlier in the loop — each is an independent stop, so partial progress
+      // across multiple displaced sessions is acceptable.
+      let txResult: { workLogId: string | null; interruptionId: string };
+      try {
+        txResult = await prisma.$transaction(async (tx) => {
+          let workLogId: string | null = null;
+          if (durationS >= MIN_WORKLOG_DURATION_S) {
+            const wl = await tx.workLog.create({
+              data: {
+                startedAt: s.startedAt,
+                endedAt,
+                durationS,
+                reason: "stopped",
+                // Mirror stopWork: fall back to session source when via is absent.
+                via: via ?? normalizeVia(s.source),
+                issueId: s.issueId,
+                memberId: s.memberId,
+              },
+            });
+            workLogId = wl.id;
+          }
+          await tx.workSession.delete({ where: { id: s.id } });
+          const interruption = await tx.interruption.create({
+            data: {
+              incidentIssueId: issue.id,
+              interruptedIssueId: s.issueId,
+              memberId: s.memberId,
+              via: "session_switch",
+            },
+          });
+          return { workLogId, interruptionId: interruption.id };
+        });
+      } catch (err: unknown) {
+        // P2025: the displaced session was deleted between the findMany above and
+        // this delete — a race with cleanupExpired or a concurrent incident start.
+        // Mirror stopWork's guard: treat it as already-stopped and move on rather
+        // than failing the whole incident switch.
+        if (
+          typeof err === "object" &&
+          err !== null &&
+          (err as { code?: string }).code === "P2025"
+        ) {
+          continue;
+        }
+        throw err;
+      }
+      const { workLogId, interruptionId } = txResult;
+
+      // Post-commit, fire-and-forget events (mirror stopWork + KAN-103 PR3).
+      if (workLogId) {
+        try {
+          eventBus.emit({
+            type: "worklog.created",
+            workspaceId: issue.project.workspaceId,
+            actorId: s.memberId,
+            payload: { workLogId, issueId: s.issueId, workspaceId: issue.project.workspaceId },
+          });
+        } catch {
+          // Never let event emission break the mutation
+        }
+      }
+      try {
+        eventBus.emit({
+          type: "work_session.ended",
+          workspaceId: issue.project.workspaceId,
+          actorId: s.memberId,
+          payload: {
+            issueKey: s.issue.key,
+            issueId: s.issueId,
+            memberId: s.memberId,
+            userId,
+            workLogId: workLogId ?? null,
+            durationS,
+            reason: "stopped",
+          },
+        });
+      } catch {
+        // Never let event emission break the mutation
+      }
       // KAN-103 PR3: emit interruption.opened so forecast rebuilds for the interrupted issue.
       try {
         eventBus.emit({
@@ -70,7 +149,7 @@ export async function startWork(
           workspaceId: issue.project.workspaceId,
           actorId: s.memberId,
           payload: {
-            interruptionId: interruption.id,
+            interruptionId,
             incidentIssueId: issue.id,
             interruptedIssueId: s.issueId,
             memberId: s.memberId,
