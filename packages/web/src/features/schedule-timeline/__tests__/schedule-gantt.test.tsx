@@ -38,7 +38,18 @@ vi.mock("../use-project-schedule-timeline", async () => {
     useProjectScheduleTimeline: (key: string) => {
       const r = mockUseProjectScheduleTimeline(key);
       if (r && Array.isArray(r.data)) {
-        return { ...r, data: { rows: r.data, total: r.data.length, truncated: false } };
+        return {
+          ...r,
+          data: {
+            rows: r.data,
+            total: r.data.length,
+            truncated: false,
+            // KAN-164: carry the new envelope fields so bare-array tests exercise the
+            // hidden=0 (nothing hidden) path with correct types.
+            projectTotal: r.data.length,
+            unscheduled: 0,
+          },
+        };
       }
       return r;
     },
@@ -206,6 +217,30 @@ describe("ScheduleGantt — data rendering", () => {
     expect(
       container.querySelector("[data-testid='schedule-gantt-legend']"),
     ).toBeTruthy();
+  });
+
+  it("KAN-164: shows hidden + unscheduled count when the project has more issues than the scoped view", () => {
+    // Envelope form (not a bare array) so projectTotal/unscheduled pass through the mock.
+    mockUseProjectScheduleTimeline.mockReturnValue({
+      data: { rows: [makeRow()], total: 1, truncated: false, projectTotal: 3, unscheduled: 1 },
+      isLoading: false,
+      isError: false,
+    });
+    render(<ScheduleGantt projectKey="TST" />);
+    const hidden = screen.getByTestId("schedule-gantt-hidden");
+    // hidden = projectTotal − total = 2, of which 1 is unscheduled.
+    expect(hidden.textContent).toContain("2 hidden");
+    expect(hidden.textContent).toContain("1 unscheduled");
+  });
+
+  it("KAN-164: hides the hidden-count chip when everything is in view", () => {
+    mockUseProjectScheduleTimeline.mockReturnValue({
+      data: { rows: [makeRow()], total: 1, truncated: false, projectTotal: 1, unscheduled: 0 },
+      isLoading: false,
+      isError: false,
+    });
+    render(<ScheduleGantt projectKey="TST" />);
+    expect(screen.queryByTestId("schedule-gantt-hidden")).toBeNull();
   });
 });
 

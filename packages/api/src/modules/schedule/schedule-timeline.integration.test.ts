@@ -6,7 +6,7 @@
  *   asserts shape, null-handling, and that bare issues still appear
  * - Non-member gets 403; project member gets 200
  * - Unknown project key returns 404
- * - Empty project returns envelope { rows: [], total: 0, truncated: false }
+ * - Empty project returns envelope { rows: [], total: 0, truncated: false, projectTotal: 0, unscheduled: 0 }
  * - KAN-153: cycleId param, from/to params, envelope response shape
  */
 
@@ -64,7 +64,7 @@ describe("Schedule Timeline Routes (integration)", () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({ rows: [], total: 0, truncated: false });
+      expect(res.json()).toEqual({ rows: [], total: 0, truncated: false, projectTotal: 0, unscheduled: 0 });
     });
 
     it("STL-2: 404 for non-member (project not visible outside their workspace)", async () => {
@@ -943,11 +943,61 @@ describe("Schedule Timeline Routes (integration)", () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({ rows: [], total: 0, truncated: false });
+      expect(res.json()).toEqual({ rows: [], total: 0, truncated: false, projectTotal: 0, unscheduled: 0 });
       // No issues → nothing to forecast → no rows created.
       expect(
         await prisma.issueForecast.count({ where: { issue: { projectId: project.id } } }),
       ).toBe(0);
+    });
+
+    it("STL-20: envelope reports projectTotal + unscheduled so hidden issues aren't silent (KAN-164)", async () => {
+      const { member, project } = await seedProjectContext();
+
+      // A: scheduled INSIDE the requested window.
+      const inWin = await prisma.issue.create({
+        data: { key: `${project.key}-1`, title: "In window", type: "task", state: "todo", projectId: project.id, sequenceNum: 1 },
+      });
+      await prisma.issueSchedule.create({
+        data: { issueId: inWin.id, startDate: new Date("2026-07-10T00:00:00.000Z"), dueDate: new Date("2026-07-20T00:00:00.000Z"), progress: 0 },
+      });
+      // B: scheduled OUTSIDE the window (hidden by scope, but has dates).
+      const outWin = await prisma.issue.create({
+        data: { key: `${project.key}-2`, title: "Out of window", type: "task", state: "todo", projectId: project.id, sequenceNum: 2 },
+      });
+      await prisma.issueSchedule.create({
+        data: { issueId: outWin.id, startDate: new Date("2026-05-01T00:00:00.000Z"), dueDate: new Date("2026-05-10T00:00:00.000Z"), progress: 0 },
+      });
+      // C: no dates at all → unscheduled (never appears in any window).
+      await prisma.issue.create({
+        data: { key: `${project.key}-3`, title: "Unscheduled", type: "task", state: "backlog", projectId: project.id, sequenceNum: 3 },
+      });
+      // D: start-only (no dueDate) → incomplete plan span → also unscheduled (can't
+      // render a bar and can't match the overlap filter). Locks the KAN-164 definition.
+      const startOnly = await prisma.issue.create({
+        data: { key: `${project.key}-4`, title: "Start only", type: "task", state: "todo", projectId: project.id, sequenceNum: 4 },
+      });
+      await prisma.issueSchedule.create({
+        data: { issueId: startOnly.id, startDate: new Date("2026-07-15T00:00:00.000Z"), dueDate: null, progress: 0 },
+      });
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/projects/${project.key}/schedule-timeline?from=2026-07-01T00:00:00.000Z&to=2026-07-31T00:00:00.000Z`,
+        headers: { authorization: `Bearer ${member.token}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      // Only the fully-dated in-window issue is shown — the start-only one can't be placed.
+      expect(body.rows).toHaveLength(1);
+      expect(body.rows[0].title).toBe("In window");
+      expect(body.total).toBe(1);
+      // The envelope surfaces the true project size + the count that can't be timelined.
+      expect(body.projectTotal).toBe(4);
+      // Both the bare issue and the start-only issue are unscheduled (incomplete span);
+      // the fully-dated out-of-window issue is NOT unscheduled (it just isn't in scope).
+      expect(body.unscheduled).toBe(2);
+      // hidden = projectTotal − total = 3 (out-of-window + the two unscheduled).
     });
   });
 });
