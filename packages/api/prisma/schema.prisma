@@ -256,9 +256,12 @@ model Issue {
   state       IssueState    @default(backlog)
   labels      String[]      @default([])
   /// Set to the transition timestamp when the issue moves to `done`; cleared to NULL on reopen. KAN-35.
-  completedAt  DateTime?     @map("completed_at")
-  createdAt    DateTime      @default(now()) @map("created_at")
-  updatedAt    DateTime      @updatedAt @map("updated_at")
+  completedAt      DateTime?  @map("completed_at")
+  /// KAN-157: stamped by reconcileIssueTime() when the dev confirms captured hours before →done.
+  /// Considered STALE if any WorkLog or TimeEntry for the issue was created after this timestamp.
+  timeConfirmedAt  DateTime?  @map("time_confirmed_at")
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
 
   // Grouping key for SDD change aggregation (derived from topic_key prefix)
   groupKey    String?       @map("group_key")

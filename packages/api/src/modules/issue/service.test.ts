@@ -71,6 +71,13 @@ vi.mock("../../config/prisma.js", () => ({
       create: vi.fn(),
       createMany: vi.fn(),
     },
+    // KAN-157: reconciliation gate reads workLog + timeEntry before →done.
+    workLog: {
+      findMany: vi.fn(),
+    },
+    timeEntry: {
+      findMany: vi.fn(),
+    },
     $transaction: vi.fn(),
   },
 }));
@@ -479,6 +486,9 @@ describe("batchTransitionByKeys()", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prisma.project.findUnique).mockResolvedValue(PROJECT as any);
+    // KAN-157: reconciliation gate — zero captured time → auto-pass for existing tests.
+    vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([]);
   });
 
   it("B7.1 — transitions all matched issues in one transaction", async () => {
@@ -641,6 +651,9 @@ describe("KAN-35 — transitionIssue: completedAt stamping", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prisma.project.findUnique).mockResolvedValue(PROJECT as any);
+    // KAN-157: reconciliation gate — zero captured time → auto-pass for existing tests.
+    vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([]);
   });
 
   it("C1.1 — sets completedAt to a non-null timestamp when transitioning to done", async () => {
@@ -706,6 +719,9 @@ describe("KAN-35 — transitionGroup: completedAt stamping via updateMany", () =
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prisma.project.findUnique).mockResolvedValue(PROJECT as any);
+    // KAN-157: reconciliation gate — zero captured time → auto-pass for existing tests.
+    vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([]);
   });
 
   it("C2.1 — updateMany data includes completedAt=Date when transitioning to done", async () => {
@@ -767,6 +783,9 @@ describe("KAN-35 — batchTransitionByKeys: completedAt stamping via updateMany"
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prisma.project.findUnique).mockResolvedValue(PROJECT as any);
+    // KAN-157: reconciliation gate — zero captured time → auto-pass for existing tests.
+    vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([]);
   });
 
   it("C3.1 — updateMany data includes completedAt=Date when transitioning to done", async () => {
