@@ -112,7 +112,8 @@ export function registerTransitionListener(
 
       if (!active) return; // re-check after await
 
-      await startWork(issueKey, actorMemberId, userId, "transition-listener", null);
+      // autoAssign:false — a state transition must not assign the actor (KAN-156).
+      await startWork(issueKey, actorMemberId, userId, "transition-listener", null, undefined, { autoAssign: false });
       return;
     }
 

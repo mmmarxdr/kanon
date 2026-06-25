@@ -139,7 +139,9 @@ describe("registerTransitionListener", () => {
       "member-1",
       "user-1",
       "transition-listener",
-      null
+      null,
+      undefined,
+      { autoAssign: false }
     );
   });
 
@@ -279,7 +281,9 @@ describe("registerTransitionListener", () => {
       "member-99",
       "user-99",
       "transition-listener",
-      null
+      null,
+      undefined,
+      { autoAssign: false }
     );
   });
 
@@ -486,7 +490,9 @@ describe("registerTransitionListener", () => {
       "member-1",
       "user-1",
       "transition-listener",
-      null
+      null,
+      undefined,
+      { autoAssign: false }
     );
   });
 
@@ -529,7 +535,9 @@ describe("registerTransitionListener", () => {
       "member-1",
       "user-from-db",
       "transition-listener",
-      null
+      null,
+      undefined,
+      { autoAssign: false }
     );
   });
 
@@ -570,7 +578,9 @@ describe("registerTransitionListener", () => {
       "member-1",
       "user-1",
       "transition-listener",
-      null
+      null,
+      undefined,
+      { autoAssign: false }
     );
   });
 

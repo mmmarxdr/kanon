@@ -29,6 +29,7 @@ export async function startWork(
   source: string = "mcp",
   via?: string | null,
   logger?: { info?: (obj: unknown, msg: string) => void; error?: (obj: unknown, msg: string) => void },
+  opts?: { autoAssign?: boolean },
 ) {
   const issue = await prisma.issue.findUnique({
     where: { key: issueKey },
@@ -157,9 +158,12 @@ export async function startWork(
     );
   }
 
-  // Auto-assign: if issue has no assignee, assign it to this member
+  // Auto-assign: if issue has no assignee, assign it to this member.
+  // KAN-156: a transition-triggered session (the listener) passes autoAssign:false
+  // — moving a card to in_progress must NOT assign the mover (e.g. a PM dragging
+  // cards). Auto-assign stays the default for explicit start_work.
   let autoAssigned = false;
-  if (!issue.assigneeId) {
+  if (!issue.assigneeId && opts?.autoAssign !== false) {
     await prisma.issue.update({
       where: { id: issue.id },
       data: { assignee: { connect: { id: memberId } } },
