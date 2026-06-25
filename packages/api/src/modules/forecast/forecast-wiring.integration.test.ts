@@ -124,6 +124,47 @@ beforeEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("App wiring smoke test — registerForecastListener (Phase 9)", () => {
+  it("9.2 — emitting schedule-config.updated on the real eventBus triggers a forecast rebuild (KAN-147)", async () => {
+    // Seed: workspace + member + project + issue with a schedule
+    const { workspaceId, projectId, ownerId } = await seedProjectContext();
+    await seedScheduledIssue(projectId, "KFW-CAL-1", 1, {
+      startDate: new Date("2026-06-01"),
+      estimateHours: 8,
+    });
+
+    // Confirm no forecast rows yet
+    const before = await prisma.issueForecast.findMany({
+      where: { issue: { projectId } },
+    });
+    expect(before).toHaveLength(0);
+
+    // Emit schedule-config.updated — the forecast listener handles it directly
+    // by projectId (no issue resolution step needed). The rebuild writes
+    // issue_forecasts rows just like any other trigger.
+    eventBus.emit({
+      type: "schedule-config.updated",
+      workspaceId,
+      actorId: ownerId,
+      payload: { projectId },
+    });
+
+    // Poll: wait for the debounce to fire and the rebuild to write rows.
+    const deadline = 3000 + 5000;
+    const startedAt = Date.now();
+    let after = await prisma.issueForecast.findMany({ where: { issue: { projectId } } });
+    while (after.length === 0 && Date.now() - startedAt < deadline) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 150));
+      after = await prisma.issueForecast.findMany({ where: { issue: { projectId } } });
+    }
+
+    expect(after.length).toBeGreaterThanOrEqual(1);
+    for (const row of after) {
+      expect(row.computedAt).toBeDefined();
+    }
+
+    void ownerId;
+  });
+
   it("9.1 — emitting schedule.updated on the real eventBus triggers a forecast rebuild end-to-end", async () => {
     // Seed: workspace + member + project + issue with a schedule
     const { workspaceId, projectId, ownerId } = await seedProjectContext();

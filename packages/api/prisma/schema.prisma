@@ -239,10 +239,28 @@ model Project {
   proposals      McpProposal[]
   projectMembers ProjectMember[]
   milestones     Milestone[]
+  // PPM working-day calendar (KAN-147, ADR-0007)
+  scheduleConfig ProjectScheduleConfig?
 
   @@unique([workspaceId, key])
   @@index([workspaceId])
   @@map("projects")
+}
+
+/// KAN-147 (ADR-0007): per-project working-day calendar consumed by the forecast
+/// engine. 1:1 with Project (mirrors IssueSchedule↔Issue). Absent config means
+/// Mon–Fri + no holidays, so existing projects need zero backfill.
+model ProjectScheduleConfig {
+  projectId String   @id @map("project_id") @db.Uuid
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// UTC weekday indices that are working days (0=Sun..6=Sat). Default Mon–Fri.
+  workDays  Int[]    @default([1, 2, 3, 4, 5]) @map("work_days")
+  /// ISO YYYY-MM-DD (UTC) dates that are holidays (non-working) for this project.
+  holidays  String[] @default([]) @map("holidays")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("project_schedule_configs")
 }
 
 model Issue {

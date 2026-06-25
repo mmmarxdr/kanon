@@ -1,7 +1,7 @@
 # ADR-0007: Working-day calendar in the forecast engine
 
-- Status: Proposed
-- Date: 2026-06-24
+- Status: Accepted
+- Date: 2026-06-24 (accepted 2026-06-25, implemented in KAN-147)
 - Epic: ppm-foundation (W4 — PPM Engine: Visible)
 - Issue: KAN-147
 - Related: ADR-0004 (scheduling model), ADR-0003 (critical path as read-model output)

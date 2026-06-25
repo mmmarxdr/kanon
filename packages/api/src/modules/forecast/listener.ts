@@ -73,6 +73,10 @@ interface InterruptionPayload {
   memberId: string;
 }
 
+interface ScheduleConfigUpdatedPayload {
+  projectId: string;
+}
+
 // ─── projectId resolution ────────────────────────────────────────────────────
 
 /**
@@ -159,6 +163,14 @@ export function registerForecastListener(
    */
   async function handleEvent(event: DomainEvent): Promise<void> {
     let issueId: string | null = null;
+
+    // KAN-147: project-level calendar change carries projectId directly — no
+    // issue to resolve. Schedule the rebuild and return early.
+    if (event.type === "schedule-config.updated") {
+      const p = event.payload as unknown as ScheduleConfigUpdatedPayload;
+      if (p.projectId) scheduleRebuild(p.projectId);
+      return;
+    }
 
     // ── Resolve issueId from the event payload ────────────────────────────
     switch (event.type) {

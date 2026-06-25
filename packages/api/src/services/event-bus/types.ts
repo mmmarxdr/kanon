@@ -43,6 +43,10 @@ export type DomainEventType =
   // Emitted post-commit in try/catch (fire-and-forget); emissions wired in PR2/PR3.
   | "estimate.revised"
   | "schedule.updated"
+  // KAN-147 (ADR-0007): project working-day calendar changed. Project-level
+  // (no issue) — payload carries projectId directly so the forecast listener
+  // can rebuild without an issue→project resolution step.
+  | "schedule-config.updated"
   | "time-entry.approved"
   | "time-entry.rejected"
   // worklog.promoted removed KAN-102 (dead event — never emitted anywhere)

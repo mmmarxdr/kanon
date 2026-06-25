@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import { AppError } from "../../shared/types.js";
-import type { UpsertPlanBody, ReviseEstimateBody } from "./schema.js";
+import type { UpsertPlanBody, ReviseEstimateBody, ScheduleConfigBody } from "./schema.js";
 
 // ── getSchedule ────────────────────────────────────────────────────────────
 
@@ -113,6 +113,78 @@ export async function upsertPlan(
   }
 
   return schedule;
+}
+
+// ── getScheduleConfig / upsertScheduleConfig (KAN-147, ADR-0007) ────────────
+
+/**
+ * Default working-day calendar surfaced when a project has no stored config:
+ * Mon–Fri, no holidays. Mirrors the engine default so the API reads the same
+ * effective calendar the forecast uses.
+ */
+const DEFAULT_SCHEDULE_CONFIG = { workDays: [1, 2, 3, 4, 5], holidays: [] as string[] };
+
+/**
+ * Read a project's working-day calendar. Returns the Mon–Fri default when no
+ * ProjectScheduleConfig row exists (absent config means default, ADR-0007).
+ */
+export async function getScheduleConfig(
+  projectId: string,
+): Promise<{ workDays: number[]; holidays: string[] }> {
+  const config = await prisma.projectScheduleConfig.findUnique({
+    where: { projectId },
+    select: { workDays: true, holidays: true },
+  });
+  return config ?? { ...DEFAULT_SCHEDULE_CONFIG };
+}
+
+/**
+ * Upsert a project's working-day calendar (KAN-147). Validation (non-empty
+ * workDays subset of 0..6, ISO holidays) is enforced at the zod boundary.
+ * Holidays are normalised/de-duplicated/sorted for a stable stored value.
+ *
+ * Emits schedule-config.updated (fire-and-forget, post-commit) which the
+ * forecast listener consumes to rebuild the project forecast — the same
+ * trigger mechanism used by upsertPlan/reviseEstimate.
+ */
+export async function upsertScheduleConfig(
+  projectId: string,
+  body: ScheduleConfigBody,
+  memberId: string,
+  via?: string | null,
+) {
+  const workDays = [...new Set(body.workDays)].sort((a, b) => a - b);
+  const holidays = [...new Set(body.holidays)].sort();
+
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { workspaceId: true },
+  });
+  if (!project) {
+    throw new AppError(404, "PROJECT_NOT_FOUND", "Project not found");
+  }
+  const workspaceId = project.workspaceId;
+
+  const config = await prisma.projectScheduleConfig.upsert({
+    where: { projectId },
+    create: { projectId, workDays, holidays },
+    update: { workDays, holidays },
+  });
+
+  // Fire-and-forget post-commit event → forecast rebuild trigger.
+  try {
+    eventBus.emit({
+      type: "schedule-config.updated",
+      workspaceId,
+      actorId: memberId,
+      via: via ?? null,
+      payload: { projectId },
+    });
+  } catch {
+    // Never break the mutation
+  }
+
+  return config;
 }
 
 // ── reviseEstimate ────────────────────────────────────────────────────────
