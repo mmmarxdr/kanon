@@ -10,6 +10,7 @@ import {
   IssueKeyParam,
   GroupKeyParam,
   IssueFilterQuery,
+  ReconcileTimeBody,
 } from "./schema.js";
 import {
   requireProjectMember,
@@ -18,6 +19,7 @@ import {
   requireIssueRole,
 } from "../../middleware/require-role.js";
 import * as issueService from "./service.js";
+import { reconcileIssueTime } from "./reconcile.js";
 
 /**
  * Issue routes plugin.
@@ -189,6 +191,37 @@ export default async function issueRoutes(
         request.body,
         request.member!.id,
       );
+    },
+  );
+
+  /**
+   * POST /api/issues/:key/reconcile-time
+   * KAN-157: Confirm captured time for an issue before →done.
+   *   - Promotes unpromoted WorkLogs → approved TimeEntries
+   *   - Self-approves all draft/submitted TimeEntries (dev attestation)
+   *   - Optional addHours: creates a manual approved TimeEntry
+   *   - Stamps issue.timeConfirmedAt = now
+   * Wired as issue-member (same as the transition route).
+   */
+  app.post(
+    "/issues/:key/reconcile-time",
+    {
+      preHandler: [requireIssueRole("key", "member")],
+      schema: {
+        params: IssueKeyParam,
+        body: ReconcileTimeBody,
+      },
+    },
+    async (request, reply) => {
+      // Resolve issueId from the gate-resolved field (set by requireIssueRole).
+      // Fall back to a DB lookup via the key if not set (defensive).
+      const issueId = request.issueId!;
+      const result = await reconcileIssueTime(
+        issueId,
+        request.member!.id,
+        request.body,
+      );
+      return reply.status(200).send(result);
     },
   );
 }

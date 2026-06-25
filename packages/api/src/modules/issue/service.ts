@@ -27,6 +27,7 @@ import {
   dayIndex,
 } from "../cycle/service.js";
 import { parseAndUpsertMentions, emitMentionEvents } from "../mentions/service.js";
+import { checkReconciliation } from "./reconcile.js";
 import { autoSubscribe, getStatus as getSubscriptionStatus } from "../issue-subscription/service.js";
 
 /**
@@ -660,9 +661,30 @@ export async function transitionIssue(
     throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${key}" not found`);
   }
 
+  // KAN-157: timeConfirmedAt is on the Issue model; Prisma includes it as a scalar.
+  // The reconciliation gate uses issue.timeConfirmedAt (may be null).
+
   const result = validateTransition(issue.state, toState as any);
   if (!result.allowed) {
     throw new AppError(400, "INVALID_TRANSITION", result.reason);
+  }
+
+  // KAN-157: reconciliation gate — block →done unless time is confirmed.
+  if (toState === "done") {
+    const rec = await checkReconciliation(issue.id, issue.timeConfirmedAt ?? null);
+    if (rec.needed) {
+      throw new AppError(
+        409,
+        "RECONCILIATION_REQUIRED",
+        `Issue "${key}" has unconfirmed captured time. Call POST /api/issues/${key}/reconcile-time before transitioning to done.`,
+        {
+          issueKey: key,
+          workLogs: rec.workLogs,
+          timeEntries: rec.timeEntries,
+          totalHours: rec.totalHours,
+        },
+      );
+    }
   }
 
   // KAN-35 completion-timestamp contract: set completedAt when entering done, clear on any other transition.
@@ -758,12 +780,13 @@ export async function transitionGroup(
   }
 
   // Find all issues in the group
+  // KAN-157: also fetch timeConfirmedAt for the reconciliation gate.
   const issues = await prisma.issue.findMany({
     where: {
       projectId: project.id,
       groupKey,
     },
-    select: { id: true, key: true, state: true, parentId: true, roadmapItemId: true },
+    select: { id: true, key: true, state: true, parentId: true, roadmapItemId: true, timeConfirmedAt: true },
   });
 
   if (issues.length === 0) {
@@ -803,6 +826,26 @@ export async function transitionGroup(
         400,
         "INVALID_TRANSITION",
         `Cannot transition issue "${issue.key}" from "${issue.state}" to "${targetState}": ${result.reason}`,
+      );
+    }
+  }
+
+  // KAN-157: reconciliation gate — check each issue going to done.
+  if (targetState === "done") {
+    const blockedIssues: Array<{ key: string; totalHours: number }> = [];
+    for (const issue of issuesToTransition) {
+      // Fix 6: timeConfirmedAt is in the select above — no cast needed.
+      const rec = await checkReconciliation(issue.id, issue.timeConfirmedAt ?? null);
+      if (rec.needed) {
+        blockedIssues.push({ key: issue.key, totalHours: rec.totalHours });
+      }
+    }
+    if (blockedIssues.length > 0) {
+      throw new AppError(
+        409,
+        "RECONCILIATION_REQUIRED",
+        `${blockedIssues.length} issue(s) in group "${groupKey}" have unconfirmed captured time: ${blockedIssues.map((i) => i.key).join(", ")}`,
+        { groupKey, blockedIssues },
       );
     }
   }
@@ -941,6 +984,7 @@ export async function batchTransitionByKeys(
   }
 
   // Single SELECT covering existence + cross-project + state-machine input.
+  // KAN-157: also fetch timeConfirmedAt for the reconciliation gate.
   const issues = await prisma.issue.findMany({
     where: { key: { in: body.keys } },
     select: {
@@ -950,6 +994,7 @@ export async function batchTransitionByKeys(
       projectId: true,
       parentId: true,
       roadmapItemId: true,
+      timeConfirmedAt: true,
     },
   });
 
@@ -987,6 +1032,26 @@ export async function batchTransitionByKeys(
       keys: body.keys,
       state: targetState,
     };
+  }
+
+  // KAN-157: reconciliation gate — check each issue going to done.
+  if (targetState === "done") {
+    const blockedIssues: Array<{ key: string; totalHours: number }> = [];
+    for (const issue of issuesToTransition) {
+      // Fix 6: timeConfirmedAt is in the select above — no cast needed.
+      const rec = await checkReconciliation(issue.id, issue.timeConfirmedAt ?? null);
+      if (rec.needed) {
+        blockedIssues.push({ key: issue.key, totalHours: rec.totalHours });
+      }
+    }
+    if (blockedIssues.length > 0) {
+      throw new AppError(
+        409,
+        "RECONCILIATION_REQUIRED",
+        `${blockedIssues.length} issue(s) have unconfirmed captured time and cannot be moved to done: ${blockedIssues.map((i) => i.key).join(", ")}`,
+        { blockedIssues },
+      );
+    }
   }
 
   // All-or-nothing transaction: bulk update + activity logs.

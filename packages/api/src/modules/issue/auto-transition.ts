@@ -1,5 +1,6 @@
 import type { Issue, PrismaClient } from "@prisma/client";
 import { createActivityLog } from "../activity/service.js";
+import { checkReconciliation } from "./reconcile.js";
 
 // ---------------------------------------------------------------------------
 // Board-column mapping (mirrors packages/web/src/stores/board-store.ts)
@@ -56,9 +57,13 @@ export async function checkAndAdvanceParent(
   if (!childIssue.parentId) return;
 
   // Fetch parent and all its children in one query
+  // Fix 1: also fetch timeConfirmedAt so the reconciliation gate can run before auto-done.
   const parent = await prisma.issue.findUnique({
     where: { id: childIssue.parentId },
-    include: {
+    select: {
+      id: true,
+      state: true,
+      timeConfirmedAt: true,
       children: { select: { id: true, state: true } },
     },
   });
@@ -78,6 +83,17 @@ export async function checkAndAdvanceParent(
 
   const targetState = COLUMN_DEFAULT_STATES[minChildColumn];
   if (!targetState) return;
+
+  // Fix 1 (KAN-157): before auto-advancing a parent INTO done, run the
+  // reconciliation gate. If the parent has unconfirmed captured time, skip
+  // the advance entirely — leave it at 'review' so the human must reconcile.
+  if (targetState === "done") {
+    const rec = await checkReconciliation(parent.id, parent.timeConfirmedAt ?? null);
+    if (rec.needed) {
+      // Do not auto-advance; human must reconcile time before closing.
+      return;
+    }
+  }
 
   // KAN-35 completion-timestamp contract: set completedAt when entering done, clear on any other transition.
   // Update parent state
