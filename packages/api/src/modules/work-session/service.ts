@@ -7,7 +7,7 @@ import { autoSubscribe } from "../issue-subscription/service.js";
 import { ORDERED_STATES } from "../../shared/constants.js";
 
 /** Sessions with lastHeartbeat older than this are considered expired. */
-const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
+export const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /** Minimum session duration to be recorded as a WorkLog (seconds). */
 const MIN_WORKLOG_DURATION_S = 60;
@@ -29,6 +29,7 @@ export async function startWork(
   source: string = "mcp",
   via?: string | null,
   logger?: { info?: (obj: unknown, msg: string) => void; error?: (obj: unknown, msg: string) => void },
+  opts?: { autoAssign?: boolean },
 ) {
   const issue = await prisma.issue.findUnique({
     where: { key: issueKey },
@@ -157,9 +158,12 @@ export async function startWork(
     );
   }
 
-  // Auto-assign: if issue has no assignee, assign it to this member
+  // Auto-assign: if issue has no assignee, assign it to this member.
+  // KAN-156: a transition-triggered session (the listener) passes autoAssign:false
+  // — moving a card to in_progress must NOT assign the mover (e.g. a PM dragging
+  // cards). Auto-assign stays the default for explicit start_work.
   let autoAssigned = false;
-  if (!issue.assigneeId) {
+  if (!issue.assigneeId && opts?.autoAssign !== false) {
     await prisma.issue.update({
       where: { id: issue.id },
       data: { assignee: { connect: { id: memberId } } },
@@ -210,7 +214,10 @@ export async function startWork(
   if (ORDERED_STATES.indexOf(issue.state as typeof ORDERED_STATES[number]) < ORDERED_STATES.indexOf("in_progress")) {
     try {
       const { transitionIssue } = await import("../issue/service.js");
-      await transitionIssue(issueKey, "in_progress", memberId, via ?? null);
+      // KAN-156 / KAN-143 circular guard: pass cause="start_work" so the
+      // work-session transition listener can detect and skip this auto-advance,
+      // preventing the feedback loop: start_work → in_progress → listener → start_work.
+      await transitionIssue(issueKey, "in_progress", memberId, via ?? null, "start_work");
     } catch (err) {
       // Best-effort: session is already created; log for observability but do not throw.
       logger?.error?.({ err, issueKey }, "auto-transition on startWork failed");

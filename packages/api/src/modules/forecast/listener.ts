@@ -24,7 +24,7 @@ import { prisma } from "../../config/prisma.js";
 import { env } from "../../config/env.js";
 import { rebuildProjectForecast } from "./service.js";
 import type { IEventBus } from "../../services/event-bus/interface.js";
-import type { DomainEvent } from "../../services/event-bus/types.js";
+import type { DomainEvent, IssueTransitionedPayload } from "../../services/event-bus/types.js";
 
 // ─── Logger interface (minimal — compatible with pino and console) ────────────
 
@@ -64,14 +64,6 @@ interface TimeEntryApprovedPayload {
   entryId: string;
   issueId: string | null;
   approvedAt: string;
-}
-
-interface IssueTransitionedPayload {
-  issueKey: string;
-  issueId: string;
-  projectKey: string;
-  from: string;
-  to: string;
 }
 
 interface InterruptionPayload {

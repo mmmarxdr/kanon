@@ -58,6 +58,38 @@ export type DomainEventType =
   | "ppm.forecast.updated";
 
 /**
+ * Payload shape for the `issue.transitioned` event.
+ * KAN-156: enriched with actor identity so the work-session transition listener
+ * can open/close sessions without an extra member lookup in the common path.
+ */
+export interface IssueTransitionedPayload {
+  issueKey: string;
+  issueId: string;
+  projectKey: string;
+  from: string;
+  to: string;
+  /**
+   * Member ID of the actor who performed the transition (KAN-156).
+   * Null when the member row cannot be resolved at emit time (deleted member).
+   */
+  actorMemberId: string | null;
+  /**
+   * User ID of the actor who performed the transition (KAN-156).
+   * Null when the member row cannot be resolved at emit time (deleted member).
+   */
+  actorUserId: string | null;
+  /**
+   * Optional cause tag for circular-guard detection.
+   * When set to "start_work", the work-session listener skips this event
+   * to avoid the KAN-143 feedback loop (start_work → auto-advance → re-open session).
+   * The cause IS wired: startWork → transitionIssue already threads cause="start_work"
+   * through the payload; the guard here is defense-in-depth against any future
+   * path that calls transitionIssue without setting cause.
+   */
+  cause?: string;
+}
+
+/**
  * A typed domain event emitted after a successful mutation.
  *
  * `id` is a monotonic sequence number assigned by the EventBus,
