@@ -1,21 +1,29 @@
 /**
- * work-session-resilience (Slice A) — Phase 4
+ * Activity-driven heartbeat — KAN-156 Slice 2 (reviewed)
  *
- * The MCP heartbeat scheduler must:
- *   (a) apply ±20% jitter to the base interval (`interval * (0.8 + random*0.4)`)
- *   (b) retry exactly once with a 1s backoff on a transient 5xx; on second
- *       failure, log + clear the timer (silent give-up)
- *   (c) NOT retry on HTTP 404 — session is terminal, log + clear
- *   (d) NOT retry on HTTP 401 — auth boundary, retrying won't help
+ * Model:
+ *   - startAutoHeartbeat fires ONE immediate beat and records {client, lastBeatAt, generation}.
+ *   - noteActivity() is fire-and-forget from the tool wrapper; it never rejects.
+ *   - No activity → no beats → session TTL-expires. Idle over-count bug is fixed.
  *
- * The exported `startAutoHeartbeat` triggers the FIRST fire on a setTimeout.
- * Each subsequent fire schedules the next one. We use `vi.useFakeTimers()`
- * to drive the scheduler deterministically and stub a fake `KanonClient`.
+ * Resilience (Slice A preserved):
+ *   (b) transient 5xx → one retry after 1s, then log + stop
+ *   (c) 404 → no retry, log + stop
+ *   (d) 401 → no retry, log + stop
+ *
+ * Generation guard (WARNING 3 fix):
+ *   fireOnce captures a generation token. If the issue is stopped+restarted
+ *   while a beat is in flight, the old beat sees a stale generation and no-ops
+ *   on terminal/retry actions (doesn't kill the new registration).
+ *
+ * wrapHandlerWithActivity (WARNING 4 fix):
+ *   Exported from heartbeat.ts; index.ts uses it. Tests exercise the REAL
+ *   function, not an inline re-implementation.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// ─── KanonClient stub ───────────────────────────────────────────────────────
+// ─── KanonClient stub ────────────────────────────────────────────────────────
 
 function makeKanonClient() {
   return {
@@ -26,176 +34,429 @@ function makeKanonClient() {
 
 type FakeClient = ReturnType<typeof makeKanonClient>;
 
-// We import the module under test AFTER setting up the fake timers / mocks.
 import * as heartbeatMod from "./heartbeat.js";
 
-describe("heartbeat — jitter + bounded retry (Slice A, Phase 4)", () => {
-  let client: FakeClient;
+// ─── Shared setup / teardown ─────────────────────────────────────────────────
 
-  beforeEach(() => {
-    vi.useFakeTimers();
-    // The test that asserts jitter bounds over many samples needs the
-    // function to be deterministic enough to evaluate. Spy on Math.random
-    // (NOT replace it) so other randomness elsewhere in the module still
-    // works.
-    client = makeKanonClient();
-    // Stop any leftover heartbeats from a prior test (singleton map).
-    heartbeatMod.stopAllAutoHeartbeats?.();
+beforeEach(() => {
+  vi.useFakeTimers();
+  heartbeatMod.stopAllAutoHeartbeats();
+});
+
+afterEach(() => {
+  heartbeatMod.stopAllAutoHeartbeats();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+// ─── Suite 1: startAutoHeartbeat — immediate beat + registration ─────────────
+
+describe("startAutoHeartbeat", () => {
+  it("sends an immediate first beat and records the issue as active", async () => {
+    const client = makeKanonClient();
+    client.heartbeat.mockResolvedValue(undefined);
+
+    heartbeatMod.startAutoHeartbeat("KAN-1", client as any);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(client.heartbeat).toHaveBeenCalledTimes(1);
+    expect(client.heartbeat).toHaveBeenCalledWith("KAN-1");
+    expect(heartbeatMod.getActiveIssueKeys()).toContain("KAN-1");
   });
 
-  afterEach(() => {
-    heartbeatMod.stopAllAutoHeartbeats?.();
-    vi.useRealTimers();
-    vi.restoreAllMocks();
+  it("replaces an existing registration for the same key", async () => {
+    const client = makeKanonClient();
+    client.heartbeat.mockResolvedValue(undefined);
+
+    heartbeatMod.startAutoHeartbeat("KAN-1", client as any);
+    heartbeatMod.startAutoHeartbeat("KAN-1", client as any);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(client.heartbeat).toHaveBeenCalledTimes(2);
+    expect(heartbeatMod.getActiveIssueKeys().filter((k) => k === "KAN-1")).toHaveLength(1);
+  });
+});
+
+// ─── Suite 2: noteActivity — debounce logic ──────────────────────────────────
+
+describe("noteActivity — debounce", () => {
+  const DEBOUNCE_MS = 2 * 60 * 1000;
+
+  it("does NOT fire a second heartbeat when called within the debounce window", async () => {
+    const client = makeKanonClient();
+    client.heartbeat.mockResolvedValue(undefined);
+
+    heartbeatMod.startAutoHeartbeat("KAN-10", client as any);
+    await vi.advanceTimersByTimeAsync(0);
+
+    vi.advanceTimersByTime(DEBOUNCE_MS - 1);
+    await heartbeatMod.noteActivity();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(client.heartbeat).toHaveBeenCalledTimes(1);
   });
 
-  // ── (a) jitter bounds ──────────────────────────────────────────────────
-  //
-  // Default HEARTBEAT_INTERVAL_MS = 2 * 60_000 = 120_000. Jitter ±20% →
-  // effective delay ∈ [96_000, 144_000]. We can't observe the exact delay
-  // without time-mocking the FIRST setTimeout, so we sample by spying
-  // on Math.random and checking the multipliers fall in [0.8, 1.2).
-  //
-  // The scheduler is a `setTimeout`; the first fire happens after the
-  // jittered delay. We assert that across many samples the random
-  // multiplier used by the scheduler is in [0.8, 1.2].
+  it("fires exactly one heartbeat when called after the debounce window", async () => {
+    const client = makeKanonClient();
+    client.heartbeat.mockResolvedValue(undefined);
 
-  it("applies ±20% jitter to the base interval (multiplier ∈ [0.8, 1.2])", () => {
-    // Replace Math.random with a fixed sequence; the module reads it
-    // synchronously during schedule. Capture the delay passed to setTimeout
-    // across many `startAutoHeartbeat` calls.
-    const observedMultipliers: number[] = [];
-    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    heartbeatMod.startAutoHeartbeat("KAN-10", client as any);
+    await vi.advanceTimersByTimeAsync(0);
 
-    // Make Math.random deterministic: walk 0.0 → 0.25 → 0.5 → 0.75 → 0.999
-    // to exercise the full jitter range. The module is expected to call
-    // Math.random() exactly once per schedule.
-    const randomValues = [0, 0.25, 0.5, 0.75, 0.999];
-    let idx = 0;
-    vi.spyOn(Math, "random").mockImplementation(() => {
-      const v = randomValues[idx % randomValues.length]!;
-      idx++;
-      return v;
-    });
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    await heartbeatMod.noteActivity();
+    await vi.advanceTimersByTimeAsync(0);
 
-    // BASE = 120_000. Capture the first setTimeout(..., delay) call.
-    const BASE = 120_000;
-    const seen = new Set<number>();
-    setTimeoutSpy.mockImplementation(((handler: unknown, delay?: number) => {
-      if (typeof delay === "number" && !seen.has(delay)) seen.add(delay);
-      // Return a no-op handle to avoid blocking event loop in fake timers.
-      return 0 as unknown as ReturnType<typeof setTimeout>;
-    }) as typeof setTimeout);
-
-    // Drive 5 different issues so we get 5 schedule calls.
-    for (let i = 0; i < 5; i++) {
-      heartbeatMod.startAutoHeartbeat(`KAN-${i}`, client as any);
-    }
-
-    for (const d of seen) {
-      const mult = d / BASE;
-      observedMultipliers.push(mult);
-      // Allow exact 0.8 and 1.2 inclusive; jitter formula is
-      // `0.8 + Math.random() * 0.4` → range [0.8, 1.2] inclusive.
-      expect(mult).toBeGreaterThanOrEqual(0.8);
-      expect(mult).toBeLessThanOrEqual(1.2);
-    }
-    // Should have at least one observed delay.
-    expect(observedMultipliers.length).toBeGreaterThan(0);
+    expect(client.heartbeat).toHaveBeenCalledTimes(2);
   });
 
-  // ── (b) transient 5xx → one retry after 1000ms, then give up ──────────
+  it("updates lastBeatAt so a second immediate noteActivity does not double-fire", async () => {
+    const client = makeKanonClient();
+    client.heartbeat.mockResolvedValue(undefined);
 
-  it("on transient 5xx: schedules one retry after 1000ms; on second failure clears the timer", async () => {
+    heartbeatMod.startAutoHeartbeat("KAN-10", client as any);
+    await vi.advanceTimersByTimeAsync(0);
+
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    await Promise.all([heartbeatMod.noteActivity(), heartbeatMod.noteActivity()]);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(client.heartbeat).toHaveBeenCalledTimes(2);
+  });
+
+  it("noteActivity never rejects even when a heartbeat throws", async () => {
+    const client = makeKanonClient();
+    // Make the heartbeat throw something nasty
+    client.heartbeat.mockRejectedValue(new Error("boom"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    heartbeatMod.startAutoHeartbeat("KAN-10", client as any);
+    await vi.advanceTimersByTimeAsync(0);
+
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+
+    // noteActivity must NEVER reject — this should resolve cleanly
+    await expect(heartbeatMod.noteActivity()).resolves.toBeUndefined();
+  });
+});
+
+// ─── Suite 3: THE CORE REGRESSION GUARD — no activity → no beats ────────────
+
+describe("idle session — no activity → no heartbeats after start", () => {
+  it("does NOT fire any further heartbeats if noteActivity is never called, and issue stays tracked", async () => {
+    const client = makeKanonClient();
+    client.heartbeat.mockResolvedValue(undefined);
+
+    heartbeatMod.startAutoHeartbeat("KAN-99", client as any);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(client.heartbeat).toHaveBeenCalledTimes(1);
+
+    // 30 minutes of idle — zero activity calls
+    await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+
+    // Still exactly 1 beat — idle session was NOT beaten
+    expect(client.heartbeat).toHaveBeenCalledTimes(1);
+    // Session remains tracked — future activity can still beat it (suggestion 5)
+    expect(heartbeatMod.getActiveIssueKeys()).toContain("KAN-99");
+  });
+});
+
+// ─── Suite 4: multiple active issues are debounced independently ─────────────
+
+describe("multiple active issues", () => {
+  const DEBOUNCE_MS = 2 * 60 * 1000;
+
+  it("debounces each issue independently", async () => {
+    const clientA = makeKanonClient();
+    const clientB = makeKanonClient();
+    clientA.heartbeat.mockResolvedValue(undefined);
+    clientB.heartbeat.mockResolvedValue(undefined);
+
+    heartbeatMod.startAutoHeartbeat("KAN-A", clientA as any);
+    heartbeatMod.startAutoHeartbeat("KAN-B", clientB as any);
+    await vi.advanceTimersByTimeAsync(0);
+
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    await heartbeatMod.noteActivity();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(clientA.heartbeat).toHaveBeenCalledTimes(2);
+    expect(clientB.heartbeat).toHaveBeenCalledTimes(2);
+  });
+
+  it("stopping one issue does not affect the other", async () => {
+    const client = makeKanonClient();
+    client.heartbeat.mockResolvedValue(undefined);
+
+    heartbeatMod.startAutoHeartbeat("KAN-A", client as any);
+    heartbeatMod.startAutoHeartbeat("KAN-B", client as any);
+    await vi.advanceTimersByTimeAsync(0);
+
+    heartbeatMod.stopAutoHeartbeat("KAN-A");
+
+    expect(heartbeatMod.getActiveIssueKeys()).not.toContain("KAN-A");
+    expect(heartbeatMod.getActiveIssueKeys()).toContain("KAN-B");
+  });
+});
+
+// ─── Suite 5: resilience — transient 5xx / 404 / 401 ────────────────────────
+
+describe("resilience", () => {
+  it("on transient 5xx from start beat: retries once after 1s, then stops tracking", async () => {
+    const client = makeKanonClient();
     client.heartbeat
       .mockRejectedValueOnce({ statusCode: 503, message: "Service Unavailable" })
       .mockRejectedValueOnce({ statusCode: 503, message: "Still down" });
 
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-    // Pin the jitter to 0.5 → factor = 0.8 + 0.4*0.5 = 1.0 → delay = 120_000.
-    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    vi.spyOn(console, "error").mockImplementation(() => {});
 
     heartbeatMod.startAutoHeartbeat("KAN-1", client as any);
-
-    // Fire the first scheduled tick. With jitter factor 1.0, the first timer
-    // fires at fake-t=120_000. Use a small over-advance to land cleanly
-    // past the boundary, but well within range so the +1000ms retry does
-    // NOT also fire.
-    await vi.advanceTimersByTimeAsync(120_500);
-    // Allow microtasks to flush.
     await vi.advanceTimersByTimeAsync(0);
-    // The first heartbeat call happened.
+
     expect(client.heartbeat).toHaveBeenCalledTimes(1);
 
-    // The retry is scheduled at +1000ms (per design: bounded retry, 1s
-    // backoff). Advance to that and let microtasks flush.
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.advanceTimersByTimeAsync(0);
-    // Second call happened (the retry).
     expect(client.heartbeat).toHaveBeenCalledTimes(2);
 
-    // On second failure, stopAutoHeartbeat is called → no third call.
-    // The scheduler is also self-rescheduling, so the next normal tick
-    // would be at the jittered interval. Make sure that tick DOESN'T fire
-    // (because the timer was cleared).
-    const callsAfterSecondFailure = client.heartbeat.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(120_000 * 5);
-    expect(client.heartbeat).toHaveBeenCalledTimes(callsAfterSecondFailure);
+    expect(heartbeatMod.getActiveIssueKeys()).not.toContain("KAN-1");
 
-    // console.error was called with the failure reason.
-    expect(errSpy).toHaveBeenCalled();
-    const allErrMsgs = errSpy.mock.calls.map((c) => String(c[0] ?? ""));
-    const hasGiveUp = allErrMsgs.some((m) =>
-      m.includes("KAN-1") || m.includes("heartbeat"),
-    );
-    expect(hasGiveUp).toBe(true);
+    vi.advanceTimersByTime(10 * 60 * 1000);
+    await heartbeatMod.noteActivity();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.heartbeat).toHaveBeenCalledTimes(2);
   });
 
-  // ── (c) 404 → no retry, log + clear ───────────────────────────────────
+  it("on transient 5xx from noteActivity beat: retries once after 1s, then stops tracking", async () => {
+    const client = makeKanonClient();
+    const DEBOUNCE_MS = 2 * 60 * 1000;
 
-  it("on HTTP 404: no retry, console.error logged, timer cleared", async () => {
-    client.heartbeat.mockRejectedValueOnce({
-      statusCode: 404,
-      message: "Session not found",
-    });
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    client.heartbeat
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce({ statusCode: 503, message: "Transient" })
+      .mockRejectedValueOnce({ statusCode: 503, message: "Still down" });
+
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    heartbeatMod.startAutoHeartbeat("KAN-1", client as any);
+    await vi.advanceTimersByTimeAsync(0);
+
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    await heartbeatMod.noteActivity();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.heartbeat).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.heartbeat).toHaveBeenCalledTimes(3);
+
+    expect(heartbeatMod.getActiveIssueKeys()).not.toContain("KAN-1");
+  });
+
+  it("on HTTP 404: no retry, log + stop tracking", async () => {
+    const client = makeKanonClient();
+    client.heartbeat.mockRejectedValueOnce({ statusCode: 404, message: "Session not found" });
+    vi.spyOn(console, "error").mockImplementation(() => {});
 
     heartbeatMod.startAutoHeartbeat("KAN-2", client as any);
-
-    await vi.advanceTimersByTimeAsync(120_500);
     await vi.advanceTimersByTimeAsync(0);
-    expect(client.heartbeat).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
 
-    // Advance well past the retry window — the heartbeat should NOT fire again.
-    await vi.advanceTimersByTimeAsync(120_000 * 3);
     expect(client.heartbeat).toHaveBeenCalledTimes(1);
-
-    // No retry was scheduled.
-    expect(errSpy).toHaveBeenCalled();
+    expect(heartbeatMod.getActiveIssueKeys()).not.toContain("KAN-2");
   });
 
-  // ── (d) 401 → no retry, log + clear ───────────────────────────────────
-
-  it("on HTTP 401: no retry, console.error logged, timer cleared", async () => {
-    client.heartbeat.mockRejectedValueOnce({
-      statusCode: 401,
-      message: "Unauthorized",
-    });
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.spyOn(Math, "random").mockReturnValue(0.5);
+  it("on HTTP 401: no retry, log + stop tracking", async () => {
+    const client = makeKanonClient();
+    client.heartbeat.mockRejectedValueOnce({ statusCode: 401, message: "Unauthorized" });
+    vi.spyOn(console, "error").mockImplementation(() => {});
 
     heartbeatMod.startAutoHeartbeat("KAN-3", client as any);
-
-    await vi.advanceTimersByTimeAsync(120_500);
     await vi.advanceTimersByTimeAsync(0);
-    expect(client.heartbeat).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
 
-    // Advance well past — no retry, no second fire.
-    await vi.advanceTimersByTimeAsync(120_000 * 3);
     expect(client.heartbeat).toHaveBeenCalledTimes(1);
+    expect(heartbeatMod.getActiveIssueKeys()).not.toContain("KAN-3");
+  });
+});
 
-    expect(errSpy).toHaveBeenCalled();
+// ─── Suite 6: generation guard — stale-closure race ─────────────────────────
+//
+// If an issue is stopped+restarted while an earlier beat is in-flight, the
+// old beat's terminal action (stopAutoHeartbeat on 404/401 or retry-exhausted)
+// must NOT kill the new registration.
+
+describe("generation guard (stale-closure race)", () => {
+  it("a 404 from a stale in-flight beat does NOT stop the new registration", async () => {
+    const client = makeKanonClient();
+    // The first heartbeat call hangs (we control resolution manually)
+    let resolveFirst!: () => void;
+    let rejectFirst!: (err: unknown) => void;
+    const firstBeatPromise = new Promise<void>((res, rej) => {
+      resolveFirst = res;
+      rejectFirst = rej;
+    });
+
+    client.heartbeat
+      .mockImplementationOnce(() => firstBeatPromise) // hangs
+      .mockResolvedValue(undefined); // all subsequent succeed
+
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // Start gen 1
+    heartbeatMod.startAutoHeartbeat("KAN-42", client as any);
+    await vi.advanceTimersByTimeAsync(0); // first beat is in flight
+
+    // Stop gen 1 and start gen 2 before gen 1 resolves
+    heartbeatMod.stopAutoHeartbeat("KAN-42");
+    heartbeatMod.startAutoHeartbeat("KAN-42", client as any);
+    await vi.advanceTimersByTimeAsync(0); // gen 2 immediate beat → succeeds
+
+    // Gen 1 beat comes back with 404 — stale generation
+    rejectFirst({ statusCode: 404, message: "old session" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Gen 2 registration must still be active — the 404 from gen 1 must not kill it
+    expect(heartbeatMod.getActiveIssueKeys()).toContain("KAN-42");
+  });
+
+  it("a retry-exhausted from a stale beat does NOT stop the new registration", async () => {
+    const client = makeKanonClient();
+    let rejectFirst!: (err: unknown) => void;
+    const firstBeatPromise = new Promise<void>((_, rej) => { rejectFirst = rej; });
+
+    client.heartbeat
+      .mockImplementationOnce(() => firstBeatPromise) // gen 1 hangs
+      .mockResolvedValue(undefined); // gen 2 immediate beat + retry succeed
+
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    heartbeatMod.startAutoHeartbeat("KAN-42", client as any);
+    await vi.advanceTimersByTimeAsync(0);
+
+    heartbeatMod.stopAutoHeartbeat("KAN-42");
+    heartbeatMod.startAutoHeartbeat("KAN-42", client as any);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Gen 1 comes back with 503. The post-await generation check no-ops it, so
+    // it must NOT even schedule a stale retry.
+    rejectFirst({ statusCode: 503, message: "transient" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Advance past the 1s retry backoff: a stale retry, if it had been scheduled,
+    // would fire here and could stop the new registration. It must not.
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Gen 2 must still be alive after the would-be retry window.
+    expect(heartbeatMod.getActiveIssueKeys()).toContain("KAN-42");
+  });
+});
+
+// ─── Suite 7: stop / shutdown ────────────────────────────────────────────────
+
+describe("stop and shutdown", () => {
+  it("stopAutoHeartbeat removes the issue and cancels pending retry timer", async () => {
+    const client = makeKanonClient();
+    client.heartbeat.mockRejectedValueOnce({ statusCode: 503, message: "down" });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    heartbeatMod.startAutoHeartbeat("KAN-5", client as any);
+    await vi.advanceTimersByTimeAsync(0);
+
+    heartbeatMod.stopAutoHeartbeat("KAN-5");
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(client.heartbeat).toHaveBeenCalledTimes(1);
+    expect(heartbeatMod.getActiveIssueKeys()).not.toContain("KAN-5");
+  });
+
+  it("stopAllAutoHeartbeats clears all tracked issues", async () => {
+    const client = makeKanonClient();
+    client.heartbeat.mockResolvedValue(undefined);
+
+    heartbeatMod.startAutoHeartbeat("KAN-A", client as any);
+    heartbeatMod.startAutoHeartbeat("KAN-B", client as any);
+    await vi.advanceTimersByTimeAsync(0);
+
+    heartbeatMod.stopAllAutoHeartbeats();
+
+    expect(heartbeatMod.getActiveIssueKeys()).toHaveLength(0);
+  });
+
+  it("shutdownAllHeartbeats calls stopWork for each active issue", async () => {
+    const client = makeKanonClient();
+    client.heartbeat.mockResolvedValue(undefined);
+
+    heartbeatMod.startAutoHeartbeat("KAN-X", client as any);
+    await vi.advanceTimersByTimeAsync(0);
+
+    await heartbeatMod.shutdownAllHeartbeats();
+
+    expect(client.stopWork).toHaveBeenCalledWith("KAN-X");
+    expect(heartbeatMod.getActiveIssueKeys()).toHaveLength(0);
+  });
+});
+
+// ─── Suite 8: wrapHandlerWithActivity — the REAL exported seam ───────────────
+//
+// Tests exercise the actual exported function from heartbeat.ts, not an inline
+// re-implementation. The optional `notify` parameter is used to inject a spy
+// without needing module-level interception (ESM live-binding constraint).
+
+describe("wrapHandlerWithActivity", () => {
+  it("calls noteActivity and preserves the handler return value", async () => {
+    const notifySpy = vi.fn().mockResolvedValue(undefined);
+
+    const result = Symbol("handler-result");
+    const originalHandler = vi.fn().mockResolvedValue(result);
+
+    const wrapped = heartbeatMod.wrapHandlerWithActivity(originalHandler as any, notifySpy);
+    const returned = await wrapped("arg1", "arg2");
+
+    expect(notifySpy).toHaveBeenCalledTimes(1);
+    expect(originalHandler).toHaveBeenCalledTimes(1);
+    expect(originalHandler).toHaveBeenCalledWith("arg1", "arg2");
+    expect(returned).toBe(result);
+  });
+
+  it("handler still runs and returns its value when noteActivity throws (error isolation)", async () => {
+    const notifySpy = vi.fn().mockRejectedValue(new Error("noteActivity exploded"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = Symbol("handler-result");
+    const originalHandler = vi.fn().mockResolvedValue(result);
+
+    const wrapped = heartbeatMod.wrapHandlerWithActivity(originalHandler as any, notifySpy);
+
+    // Must resolve, not reject — heartbeat error must never break the tool call
+    const returned = await wrapped();
+
+    expect(originalHandler).toHaveBeenCalledTimes(1);
+    expect(returned).toBe(result);
+  });
+
+  it("handler result resolves without waiting on a slow/never-resolving noteActivity (non-blocking)", async () => {
+    // notify returns a promise that never resolves
+    let notifyStarted = false;
+    const notifySpy = vi.fn().mockImplementation(() => {
+      notifyStarted = true;
+      return new Promise<void>(() => {}); // never resolves
+    });
+
+    const result = Symbol("handler-result");
+    const originalHandler = vi.fn().mockResolvedValue(result);
+
+    const wrapped = heartbeatMod.wrapHandlerWithActivity(originalHandler as any, notifySpy);
+
+    // Should resolve immediately (fire-and-forget), not hang on noteActivity
+    const returned = await wrapped();
+
+    expect(notifyStarted).toBe(true); // notify WAS invoked
+    expect(originalHandler).toHaveBeenCalledTimes(1);
+    expect(returned).toBe(result); // handler result returned without waiting
   });
 });

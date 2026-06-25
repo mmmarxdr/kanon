@@ -15,7 +15,7 @@ import { registerTimesheetTools } from "./tools/timesheet.js";
 import { registerMemberTools } from "./tools/members.js";
 import { registerCommentTools } from "./tools/comments.js";
 import { registerCaptureTools } from "./tools/capture.js";
-import { shutdownAllHeartbeats } from "./heartbeat.js";
+import { shutdownAllHeartbeats, wrapHandlerWithActivity } from "./heartbeat.js";
 import { startSseClient, stopSseClient } from "./sse-client.js";
 import { SERVER_INSTRUCTIONS, DEFERRED_TOOLS } from "./instructions.js";
 import { MCP_VERSION } from "./version.js";
@@ -79,6 +79,26 @@ const server = new McpServer(
     instructions: SERVER_INSTRUCTIONS,
   },
 );
+
+// ─── Activity seam ──────────────────────────────────────────────────────────
+// Wrap server.tool so every registered handler notifies the heartbeat manager
+// that real tool activity occurred. The wrapper is generic: it handles both
+//   server.tool(name, desc, schema, cb)   — 4-arg form
+//   server.tool(name, desc, cb)           — 3-arg form
+// by treating the last argument as the callback. noteActivity is fire-and-forget
+// (non-blocking, error-isolated) via wrapHandlerWithActivity from heartbeat.ts.
+{
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const origTool = server.tool.bind(server) as (...args: any[]) => any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (server as any).tool = (...args: any[]): any => {
+    const last = args[args.length - 1];
+    if (typeof last === "function") {
+      args[args.length - 1] = wrapHandlerWithActivity(last);
+    }
+    return origTool(...args);
+  };
+}
 
 // ─── Register Tools ─────────────────────────────────────────────────────────
 
