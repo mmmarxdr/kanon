@@ -132,6 +132,24 @@ export const BatchTransitionByKeysBody = z.object({
 export type BatchTransitionByKeysBody = z.infer<typeof BatchTransitionByKeysBody>;
 
 /**
+ * KAN-157: Reconcile-time request body.
+ * addHours is an optional decimal string (e.g. "1.5") for manual top-up hours.
+ */
+// Fix 5: addHours must be a non-negative decimal string with a maximum of 744 hours
+// (744 = 31 days × 24 h, a reasonable per-reconcile upper bound).
+export const ReconcileTimeBody = z.object({
+  addHours: z
+    .string()
+    .regex(/^\d+(\.\d+)?$/, "addHours must be a non-negative decimal string")
+    .refine(
+      (v) => parseFloat(v) <= 744,
+      { message: "addHours must not exceed 744 hours per reconcile" },
+    )
+    .optional(),
+});
+export type ReconcileTimeBody = z.infer<typeof ReconcileTimeBody>;
+
+/**
  * Group summary response shape (for documentation; actual response is inferred from service).
  */
 export const GroupSummaryResponse = z.object({
