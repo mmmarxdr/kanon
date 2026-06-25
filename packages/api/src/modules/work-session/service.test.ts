@@ -7,6 +7,7 @@ vi.mock("../../config/prisma.js", () => ({
     workSession: {
       upsert: vi.fn(),
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
       findMany: vi.fn(),
       delete: vi.fn(),
       deleteMany: vi.fn(),
@@ -44,6 +45,7 @@ const mockIssueUpdate = vi.mocked(prisma.issue.update);
 const mockSessionUpsert = vi.mocked(prisma.workSession.upsert);
 const mockSessionFindUnique = vi.mocked(prisma.workSession.findUnique);
 const mockSessionFindMany = vi.mocked(prisma.workSession.findMany);
+const mockSessionFindFirst = vi.mocked(prisma.workSession.findFirst);
 const mockSessionDelete = vi.mocked(prisma.workSession.delete);
 const mockTransaction = vi.mocked(prisma.$transaction);
 const mockWorkLogCreate = vi.mocked(prisma.workLog.create);
@@ -79,6 +81,8 @@ describe("WorkSessionService", () => {
     // KAN-103 PR3: safe default — no open interruptions unless a test explicitly overrides.
     mockInterruptionFindManyGlobal.mockResolvedValue([]);
     mockInterruptionUpdateManyGlobal.mockResolvedValue({ count: 0 } as any);
+    // KAN-160: default — no other active worker on the issue unless a test sets one.
+    mockSessionFindFirst.mockResolvedValue(null as any);
   });
 
   // ── startWork ──────────────────────────────────────────────────────────
@@ -115,18 +119,55 @@ describe("WorkSessionService", () => {
       );
     });
 
-    it("returns warnings when others are working on the same issue", async () => {
+    // ── KAN-160: single active worker per ticket ──────────────────────────
+    it("KAN-160: throws 409 ISSUE_BUSY when another member has an open session", async () => {
       mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindFirst.mockResolvedValue({ member: { username: "alice" } } as any);
+
+      await expect(startWork("KAN-42", "member-1", "user-1", "mcp")).rejects.toMatchObject({
+        statusCode: 409,
+        code: "ISSUE_BUSY",
+      });
+      // Refused before any mutation — no session opened.
+      expect(mockSessionUpsert).not.toHaveBeenCalled();
+    });
+
+    it("KAN-160: error names the current worker", async () => {
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindFirst.mockResolvedValue({ member: { username: "alice" } } as any);
+
+      await expect(startWork("KAN-42", "member-1", "user-1", "mcp")).rejects.toThrow(/alice/);
+    });
+
+    it("KAN-160: caller's own session is not a conflict (findFirst excludes caller, start proceeds)", async () => {
+      mockIssueFind.mockResolvedValue({ ...fakeIssue, assigneeId: "existing" });
+      // findFirst is scoped to userId != caller, so the caller's own session never matches.
+      mockSessionFindFirst.mockResolvedValue(null as any);
       mockSessionUpsert.mockResolvedValue(fakeSession);
-      mockSessionFindMany.mockResolvedValue([
-        { ...fakeSession, userId: "user-2", member: { username: "alice" } },
-      ] as any);
-      mockIssueUpdate.mockResolvedValue({} as any);
 
       const result = await startWork("KAN-42", "member-1", "user-1", "mcp");
 
-      expect(result.warnings).toHaveLength(1);
-      expect(result.warnings[0]).toContain("alice");
+      expect(result.session).toEqual(fakeSession);
+      expect(mockSessionUpsert).toHaveBeenCalledOnce();
+    });
+
+    it("KAN-160: transition-driven open no-ops (onConflict:skip) when another member works the issue", async () => {
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindFirst.mockResolvedValue({ member: { username: "alice" } } as any);
+
+      const result = await startWork(
+        "KAN-42",
+        "member-1",
+        "user-1",
+        "transition-listener",
+        null,
+        undefined,
+        { autoAssign: false, onConflict: "skip" },
+      );
+
+      // No throw, no second session opened.
+      expect(result.session).toBeNull();
+      expect(mockSessionUpsert).not.toHaveBeenCalled();
     });
 
     it("auto-assigns unassigned issue to the caller", async () => {

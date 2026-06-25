@@ -87,7 +87,8 @@ describe("Work Session Routes", () => {
       expect(body.warnings).toEqual([]);
     });
 
-    it("returns warning when someone else is working", async () => {
+    // KAN-160 (ADR-0011): single active worker per ticket.
+    it("KAN-160: refuses a second worker with 409 ISSUE_BUSY, then allows a hand-off", async () => {
       const ws = await seedTestWorkspace();
       await seedTestMemberWithRole(ws.id, "owner");
       const memberA = await seedTestMemberWithRole(ws.id, "member");
@@ -108,25 +109,83 @@ describe("Work Session Routes", () => {
       });
 
       // Member A starts work
-      await app.inject({
+      const resA = await app.inject({
         method: "POST",
         url: `/api/issues/${issue.key}/work-sessions`,
         headers: { authorization: `Bearer ${memberA.token}` },
         payload: { source: "test" },
       });
+      expect(resA.statusCode).toBe(201);
 
-      // Member B starts work — should get warning
+      // Member B tries to start — refused (single active worker).
+      const resBusy = await app.inject({
+        method: "POST",
+        url: `/api/issues/${issue.key}/work-sessions`,
+        headers: { authorization: `Bearer ${memberB.token}` },
+        payload: { source: "test" },
+      });
+      expect(resBusy.statusCode).toBe(409);
+      expect(resBusy.json().code).toBe("ISSUE_BUSY");
+
+      // Hand-off: A stops, then B can start.
+      const resStop = await app.inject({
+        method: "DELETE",
+        url: `/api/issues/${issue.key}/work-sessions`,
+        headers: { authorization: `Bearer ${memberA.token}` },
+      });
+      expect(resStop.statusCode).toBe(200);
+
+      const resHandoff = await app.inject({
+        method: "POST",
+        url: `/api/issues/${issue.key}/work-sessions`,
+        headers: { authorization: `Bearer ${memberB.token}` },
+        payload: { source: "test" },
+      });
+      expect(resHandoff.statusCode).toBe(201);
+    });
+
+    it("KAN-160: an EXPIRED other-worker session does not block a new start", async () => {
+      const ws = await seedTestWorkspace();
+      await seedTestMemberWithRole(ws.id, "owner");
+      const memberA = await seedTestMemberWithRole(ws.id, "member");
+      const memberB = await seedTestMemberWithRole(ws.id, "member");
+      const project = await seedTestProject(ws.id);
+      await seedTestProjectMember(memberA.userId, project.id, "member");
+      await seedTestProjectMember(memberB.userId, project.id, "member");
+      const issue = await prisma.issue.create({
+        data: {
+          key: `${project.key}-1`,
+          title: "Stale-session issue",
+          type: "task",
+          state: "backlog",
+          projectId: project.id,
+          sequenceNum: 1,
+        },
+      });
+
+      // Member A has a session whose lastHeartbeat is well past the 5-min TTL.
+      const stale = new Date(Date.now() - 60 * 60 * 1000); // 1h ago
+      await prisma.workSession.create({
+        data: {
+          userId: memberA.userId,
+          issueId: issue.id,
+          memberId: memberA.id,
+          source: "test",
+          startedAt: stale,
+          lastHeartbeat: stale,
+        },
+      });
+
+      // Member B starts — the expired session is excluded by the TTL filter, so no 409.
       const res = await app.inject({
         method: "POST",
         url: `/api/issues/${issue.key}/work-sessions`,
         headers: { authorization: `Bearer ${memberB.token}` },
         payload: { source: "test" },
       });
-
       expect(res.statusCode).toBe(201);
-      const body = res.json();
-      expect(body.warnings.length).toBeGreaterThan(0);
-      expect(body.warnings[0]).toContain("Other active workers");
+      // A real session opened for B (not the skip/no-op shape).
+      expect(res.json().session).not.toBeNull();
     });
 
     it("auto-assigns unassigned issue", async () => {

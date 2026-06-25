@@ -15,7 +15,12 @@ const MIN_WORKLOG_DURATION_S = 60;
 /**
  * Start a work session on an issue.
  * Upserts on (userId, issueId) — if the user already has a session, it refreshes it.
- * Returns warnings if other users are actively working on the same issue.
+ *
+ * KAN-160 (ADR-0011): single active worker per ticket. If another member holds an
+ * open (non-expired) session on the issue, this throws 409 ISSUE_BUSY — unless
+ * opts.onConflict==="skip" (the transition listener), in which case it no-ops and
+ * returns { session: null, warnings: [], autoAssigned: false }. The legacy
+ * `warnings` field is retained in the return shape but is now always empty.
  *
  * @param via - Normalized X-Kanon-Client value (request.via from viaPlugin).
  *   When provided, it is stored as the session source so that cleanupExpired
@@ -29,7 +34,7 @@ export async function startWork(
   source: string = "mcp",
   via?: string | null,
   logger?: { info?: (obj: unknown, msg: string) => void; error?: (obj: unknown, msg: string) => void },
-  opts?: { autoAssign?: boolean },
+  opts?: { autoAssign?: boolean; onConflict?: "throw" | "skip" },
 ) {
   const issue = await prisma.issue.findUnique({
     where: { key: issueKey },
@@ -39,6 +44,43 @@ export async function startWork(
   });
   if (!issue) {
     throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${issueKey}" not found`);
+  }
+
+  // KAN-160 (ADR-0011): single active worker per ticket. If ANOTHER member holds
+  // an open (non-expired) session on this issue, refuse — the forecast engine sums
+  // person-hours with no parallelism model, so two concurrent workers would inflate
+  // loggedH. This runs BEFORE any mutation so a refusal leaves no side effects.
+  //
+  // Scope is by userId (the human), NOT memberId: "another worker" means a different
+  // person, so the caller's own session never matches and re-starting just refreshes.
+  // Using memberId would be wrong — one human with two workspace memberships could
+  // then double-start. issueId is globally unique so cross-workspace can't collide.
+  //
+  // ponytail: check-then-act — "open" is TTL-based (lastHeartbeat), so it can't be a
+  // DB unique constraint; a sub-millisecond two-user race could slip past. Accepted
+  // (ADR-0011); revisit with an Issue.currentWorker FK if real contention shows up.
+  const conflictCutoff = new Date(Date.now() - SESSION_TTL_MS);
+  const otherWorker = await prisma.workSession.findFirst({
+    where: {
+      issueId: issue.id,
+      userId: { not: userId },
+      lastHeartbeat: { gt: conflictCutoff },
+    },
+    select: { member: { select: { username: true } } },
+  });
+  if (otherWorker) {
+    // Transition-driven opens (PM dragging a card) must never crash on contention —
+    // they silently decline to open a second session.
+    if (opts?.onConflict === "skip") {
+      return { session: null, warnings: [] as string[], autoAssigned: false };
+    }
+    // WorkSession.member is a required relation (onDelete: Cascade) — a session
+    // can't outlive its member, so member.username is always present here.
+    throw new AppError(
+      409,
+      "ISSUE_BUSY",
+      `${otherWorker.member.username} is already working on ${issueKey}. They must stop (or their session must expire) before you can start — this is a hand-off.`,
+    );
   }
 
   // KAN-103: incident switch — starting work on an incident displaces the user's
@@ -216,26 +258,10 @@ export async function startWork(
     }
   }
 
-  // Check for other active workers on this issue
-  const cutoff = new Date(Date.now() - SESSION_TTL_MS);
-  const otherSessions = await prisma.workSession.findMany({
-    where: {
-      issueId: issue.id,
-      userId: { not: userId },
-      lastHeartbeat: { gt: cutoff },
-    },
-    include: {
-      member: { select: { username: true, isAgent: true } },
-    },
-  });
-
+  // KAN-160: the single-worker guard above already refused if another member was
+  // active, so by here the caller is the only worker — warnings is always empty.
+  // Kept in the response for backward compatibility with the MCP client shape.
   const warnings: string[] = [];
-  if (otherSessions.length > 0) {
-    const names = otherSessions.map((s) => s.member.username).join(", ");
-    warnings.push(
-      `Other active workers on ${issueKey}: ${names}`,
-    );
-  }
 
   // Auto-assign: if issue has no assignee, assign it to this member.
   // KAN-156: a transition-triggered session (the listener) passes autoAssign:false
