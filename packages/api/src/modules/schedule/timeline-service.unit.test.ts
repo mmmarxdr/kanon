@@ -119,7 +119,7 @@ describe("getProjectScheduleTimeline — bootstrap degrade path", () => {
     const result = await getProjectScheduleTimeline(PROJECT_ID);
 
     expect(mockRebuild).not.toHaveBeenCalled();
-    expect(result).toEqual({ rows: [], total: 0, truncated: false });
+    expect(result).toEqual({ rows: [], total: 0, truncated: false, projectTotal: 0, unscheduled: 0 });
   });
 
   it("STL-UNIT-4: calls rebuildProjectForecast with suppressSideEffects:true when forecastCount < issueCount (KAN-161)", async () => {

@@ -102,14 +102,19 @@ export type ScheduleTimelineQuery = z.infer<typeof scheduleTimelineQuerySchema>;
  * KAN-153: Full response schema: envelope with rows, total, and truncated flag.
  * Replaces the bare array from KAN-105 PR1.
  *
- * total    = count of in-scope rows BEFORE neighbor expansion and BEFORE cap.
- * truncated = true when the scoped+neighbor set was capped at 250.
- * rows     = up to 250 rows (in-scope + neighbor rows flagged with isNeighbor).
+ * total       = count of in-scope rows BEFORE neighbor expansion and BEFORE cap.
+ * truncated   = true when the scoped+neighbor set was capped at 250.
+ * rows        = up to 250 rows (in-scope + neighbor rows flagged with isNeighbor).
+ * projectTotal = count of ALL issues in the project (KAN-164). hidden = projectTotal − total.
+ * unscheduled = count of project issues with no plan AND no forecast dates (KAN-164) —
+ *               they never appear in any date-scoped view; surfaced so a PM can act on them.
  */
 export const scheduleTimelineResponseSchema = z.object({
   rows: z.array(scheduleTimelineRowSchema),
   total: z.number().int(),
   truncated: z.boolean(),
+  projectTotal: z.number().int(),
+  unscheduled: z.number().int(),
 });
 
 export type ScheduleTimelineResponse = z.infer<typeof scheduleTimelineResponseSchema>;

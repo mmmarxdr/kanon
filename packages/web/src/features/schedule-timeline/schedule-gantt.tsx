@@ -194,6 +194,8 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
   const rows = useMemo(() => data?.rows ?? [], [data]);
   const total = data?.total ?? rows.length;
   const truncated = data?.truncated ?? false;
+  const projectTotal = data?.projectTotal;
+  const unscheduled = data?.unscheduled;
 
   const rowH = compact ? ROW_H_COMPACT : ROW_H_EXPANDED;
   const barH = compact ? BAR_H_COMPACT : BAR_H_EXPANDED;
@@ -367,6 +369,8 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
         shown={visibleData.filter((r) => !r.isNeighbor).length}
         total={total}
         truncated={truncated}
+        projectTotal={projectTotal}
+        unscheduled={unscheduled}
         compact={compact}
         onCompact={setCompact}
       />
@@ -1082,6 +1086,8 @@ function GanttLegend({
   shown,
   total,
   truncated,
+  projectTotal,
+  unscheduled,
   compact,
   onCompact,
 }: {
@@ -1100,9 +1106,15 @@ function GanttLegend({
   shown?: number;
   total?: number;
   truncated?: boolean;
+  projectTotal?: number;
+  unscheduled?: number;
   compact?: boolean;
   onCompact?: (v: boolean) => void;
 }) {
+  // KAN-164: issues hidden from the current view (out-of-scope + unscheduled) vs the
+  // true project total, so a scoped Gantt never silently understates the project.
+  const hidden =
+    projectTotal != null && total != null ? Math.max(0, projectTotal - total) : 0;
   return (
     <div
       data-testid="schedule-gantt-legend"
@@ -1152,6 +1164,18 @@ function GanttLegend({
           >
             {shown != null && shown !== total ? `${shown} of ${total}` : `${total}`}
             {truncated ? " · capped" : ""}
+          </span>
+        )}
+        {/* KAN-164: surface hidden + unscheduled so a scoped view never hides project size. */}
+        {hidden > 0 && (
+          <span
+            data-testid="schedule-gantt-hidden"
+            className="mono"
+            style={{ fontSize: 10, color: "var(--ink-4)", whiteSpace: "nowrap" }}
+            title={`${hidden} of ${projectTotal} project issues are outside the current scope${unscheduled ? `, including ${unscheduled} unscheduled (no usable dates)` : ""}`}
+          >
+            {`· ${hidden} hidden`}
+            {unscheduled ? ` (${unscheduled} unscheduled)` : ""}
           </span>
         )}
         {onScope && (

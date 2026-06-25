@@ -286,9 +286,23 @@ export async function getProjectScheduleTimeline(
   //
   // issueCount is reused below in the small-project escape hatch to avoid a
   // second prisma.issue.count call for the same value.
-  const [issueCount, forecastCount] = await Promise.all([
+  // issueCount doubles as projectTotal (KAN-164). unscheduledCount = project issues
+  // that can NEVER appear on the timeline — they have neither a complete plan span
+  // (startDate AND dueDate) nor a complete forecast span (forecastStart AND
+  // forecastEnd), which is exactly the set overlapFilter can't place. Defined as
+  // NOT(complete plan) AND NOT(complete forecast) so a partial-date issue (e.g.
+  // start-only) counts as unscheduled too. `{ not: null }` (IS NOT NULL) is used
+  // rather than a bare `null` filter to avoid Prisma's null-vs-undefined ambiguity.
+  const completePlan = { schedule: { is: { startDate: { not: null }, dueDate: { not: null } } } };
+  const completeForecast = {
+    forecast: { is: { forecastStart: { not: null }, forecastEnd: { not: null } } },
+  };
+  const [issueCount, forecastCount, unscheduledCount] = await Promise.all([
     prisma.issue.count({ where: { projectId } }),
     prisma.issueForecast.count({ where: { issue: { projectId } } }),
+    prisma.issue.count({
+      where: { projectId, AND: [{ NOT: completePlan }, { NOT: completeForecast }] },
+    }),
   ]);
   if (issueCount > 0 && forecastCount < issueCount) {
     try {
@@ -326,6 +340,8 @@ export async function getProjectScheduleTimeline(
         rows: issues.map((i) => serializeTimelineRow(i)),
         total: issues.length,
         truncated: false,
+        projectTotal: issueCount,
+        unscheduled: unscheduledCount,
       };
     }
 
@@ -416,5 +432,5 @@ export async function getProjectScheduleTimeline(
     }
   }
 
-  return { rows: allRows, total, truncated };
+  return { rows: allRows, total, truncated, projectTotal: issueCount, unscheduled: unscheduledCount };
 }
