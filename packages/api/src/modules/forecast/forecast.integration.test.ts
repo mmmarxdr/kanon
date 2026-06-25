@@ -21,6 +21,12 @@ import {
 } from "../../test/helpers.js";
 import { prisma } from "../../config/prisma.js";
 import { rebuildProjectForecast } from "./service.js";
+import { workingDaysBetween, isWorkingDay, type WorkingCalendar } from "./engine.js";
+
+// KAN-147: rebuildProjectForecast now applies interruption days as WORKING days
+// under the project's default Mon–Fri calendar, so interruption shifts are
+// asserted as working-day diffs (a 1-working-day shift may cross a weekend).
+const MON_FRI_CAL: WorkingCalendar = { workDays: [1, 2, 3, 4, 5], holidays: new Set() };
 
 // ── Test-local DB helpers ─────────────────────────────────────────────────────
 
@@ -786,10 +792,9 @@ describe("KAN-103 PR3 — 30-min floor: sub-threshold interruptions do not infla
     const afterRow = await prisma.issueForecast.findUnique({ where: { issueId: issue.id } });
     expect(afterRow).not.toBeNull();
 
-    // 45 min >= 30 min floor → ceil(45min / 1day) = 1 interruptedDay → forecastEnd +1 day
-    const diffDays = Math.round(
-      (afterRow!.forecastEnd!.getTime() - baselineEnd.getTime()) / 86_400_000
-    );
+    // 45 min >= 30 min floor → ceil(45min / 1day) = 1 interruptedDay → forecastEnd
+    // shifted by 1 WORKING day (KAN-147: interruption days are working days).
+    const diffDays = workingDaysBetween(baselineEnd, afterRow!.forecastEnd!, MON_FRI_CAL);
     expect(diffDays).toBe(1);
 
     void workspaceId;
@@ -925,11 +930,55 @@ describe("KAN-103 PR3 — interruptions shift forecastEnd in rebuildProjectForec
     expect(interruptedRow).not.toBeNull();
     const interruptedEnd = interruptedRow!.forecastEnd!;
 
-    // forecastEnd should be exactly 2 days later than baseline
-    const diffDays = Math.round(
-      (interruptedEnd.getTime() - baselineEnd.getTime()) / 86_400_000
-    );
+    // forecastEnd should be exactly 2 WORKING days later than baseline
+    // (KAN-147: interruption days are applied as working days).
+    const diffDays = workingDaysBetween(baselineEnd, interruptedEnd, MON_FRI_CAL);
     expect(diffDays).toBe(2);
+
+    void workspaceId;
+  });
+
+  // ── KAN-147: working-day calendar ───────────────────────────────────────
+
+  it("a Fri-spanning task forecasts onto a working day under the default Mon–Fri calendar", async () => {
+    // Friday 2026-06-26 start, 2-day estimate. Calendar-naive math would land on
+    // Sunday; the working calendar must land on a working day.
+    const issue = await seedScheduledIssue(projectId, "CAL-FRI-1", 50, {
+      startDate: new Date("2026-06-26T00:00:00.000Z"),
+      estimateHours: 16, // 2 working days
+      progress: 0,
+      state: "todo",
+    });
+
+    await rebuildProjectForecast(projectId);
+    const row = await prisma.issueForecast.findUnique({ where: { issueId: issue.id } });
+    expect(row?.forecastEnd).not.toBeNull();
+    expect(isWorkingDay(row!.forecastEnd!, MON_FRI_CAL)).toBe(true);
+  });
+
+  it("changing the project calendar invalidates inputsHash and forces a rebuild", async () => {
+    const issue = await seedScheduledIssue(projectId, "CAL-HASH-1", 51, {
+      startDate: new Date("2026-06-22T00:00:00.000Z"), // Monday
+      estimateHours: 24, // 3 working days
+      progress: 0,
+      state: "todo",
+    });
+
+    await rebuildProjectForecast(projectId);
+    const before = await prisma.issueForecast.findUnique({ where: { issueId: issue.id } });
+    expect(before).not.toBeNull();
+    const hashBefore = before!.inputsHash;
+
+    // Add a holiday inside the task's span. The output forecastEnd changes AND
+    // the calendar fingerprint changes → inputsHash must differ → row rewritten.
+    await prisma.projectScheduleConfig.create({
+      data: { projectId, workDays: [1, 2, 3, 4, 5], holidays: ["2026-06-24"] },
+    });
+    await rebuildProjectForecast(projectId);
+    const after = await prisma.issueForecast.findUnique({ where: { issueId: issue.id } });
+    expect(after!.inputsHash).not.toBe(hashBefore);
+    // The holiday pushes the end out by one calendar day at least.
+    expect(after!.forecastEnd!.getTime()).toBeGreaterThan(before!.forecastEnd!.getTime());
 
     void workspaceId;
   });

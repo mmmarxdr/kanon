@@ -29,9 +29,39 @@
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import { env } from "../../config/env.js";
-import { computeForecast } from "./engine.js";
+import { computeForecast, type WorkingCalendar } from "./engine.js";
 import { computeForecastHash, proposalExceedsThreshold, milestoneIsManual } from "./rules.js";
 import type { ForecastNode, ForecastEdge, ForecastMilestoneInput, ForecastStats } from "./types.js";
+
+// ─── Working calendar defaults (KAN-147, ADR-0007) ───────────────────────────
+
+/** Default working days when a project has no ProjectScheduleConfig: Mon–Fri. */
+const DEFAULT_WORK_DAYS = [1, 2, 3, 4, 5];
+
+/**
+ * Build the engine WorkingCalendar from a project's (optional) schedule config.
+ * Absent config ⇒ Mon–Fri + no holidays (ADR-0007 default, zero backfill).
+ */
+function buildWorkingCalendar(config: {
+  workDays: number[];
+  holidays: string[];
+} | null): WorkingCalendar {
+  const workDays =
+    config && config.workDays.length > 0 ? config.workDays : DEFAULT_WORK_DAYS;
+  const holidays = new Set(config?.holidays ?? []);
+  return { workDays, holidays };
+}
+
+/**
+ * Stable fingerprint of a calendar for the per-issue inputsHash. Sorting both
+ * lists makes the fingerprint order-insensitive so a reorder doesn't force a
+ * needless rebuild while any real membership change does.
+ */
+function calendarFingerprint(calendar: WorkingCalendar): string {
+  const days = [...calendar.workDays].sort((a, b) => a - b).join(",");
+  const hols = [...calendar.holidays].sort().join(",");
+  return `${days}|${hols}`;
+}
 
 // ─── Loader types (internal) ─────────────────────────────────────────────────
 
@@ -139,10 +169,13 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
       },
     }) as Promise<DeliverableRow[]>,
 
-    // Loader 5: project workspaceId (folded in from sequential post-loop query)
+    // Loader 5: project workspaceId + working-day calendar (KAN-147).
     prisma.project.findUnique({
       where: { id: projectId },
-      select: { workspaceId: true },
+      select: {
+        workspaceId: true,
+        scheduleConfig: { select: { workDays: true, holidays: true } },
+      },
     }),
 
     // Loader 6: KAN-103 PR3 — interruptions for issues in this project.
@@ -154,6 +187,12 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
   ]);
 
   const workspaceId = project?.workspaceId;
+
+  // KAN-147 (ADR-0007): build the working-day calendar for this project. Absent
+  // config ⇒ Mon–Fri + no holidays. The fingerprint is folded into every
+  // issue's inputsHash so a calendar change invalidates the dedup gate.
+  const calendar = buildWorkingCalendar(project?.scheduleConfig ?? null);
+  const calFingerprint = calendarFingerprint(calendar);
 
   // ── Step 1b: Build interruptedDaysMap (KAN-103 PR3) ─────────────────────
   // For each interrupted issue, accumulate displaced milliseconds across all
@@ -247,7 +286,10 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
   const milestones: ForecastMilestoneInput[] = Array.from(milestoneMap.values());
 
   // ── Step 4: Run pure engine ──────────────────────────────────────────────
-  const result = computeForecast({ nodes, edges, milestones }, { hoursPerDay, atRiskBufferDays });
+  const result = computeForecast(
+    { nodes, edges, milestones },
+    { hoursPerDay, atRiskBufferDays, calendar },
+  );
 
   // ── Step 5: Load existing IssueForecast rows for hash comparison ─────────
   // One query outside the transaction (read-only, no need to lock).
@@ -279,7 +321,7 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
     const entry = result.forecasts.get(node.issueId);
     if (!entry) continue;
 
-    const inputsHash = computeForecastHash(entry);
+    const inputsHash = computeForecastHash(entry, calFingerprint);
     const existing = existingMap.get(node.issueId);
 
     if (existing?.inputsHash === inputsHash) {

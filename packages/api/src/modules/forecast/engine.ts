@@ -12,12 +12,160 @@ import type {
 
 const DAY_MS = 86_400_000;
 
+/**
+ * KAN-147 (ADR-0007): a working-day calendar injected into the engine.
+ * The engine stays pure — the calendar is a parameter, never a global.
+ *
+ *  - workDays: UTC weekday indices that are working days (0=Sun..6=Sat).
+ *              Default Mon–Fri = [1,2,3,4,5].
+ *  - holidays: ISO "YYYY-MM-DD" (UTC) strings that are NOT working days even
+ *              when their weekday is a normal working day.
+ */
+export interface WorkingCalendar {
+  workDays: number[];
+  holidays: Set<string>;
+}
+
+/** Step cap to guarantee addWorkingDays never loops forever (ADR-0007). */
+const MAX_WORKING_STEP_DAYS = 100_000;
+
 /** Clone date and shift by N calendar days (DST-safe). */
 function addDays(base: Date, days: number): Date {
   const d = new Date(base);
   d.setDate(d.getDate() + days);
   return d;
 }
+
+/** ISO YYYY-MM-DD (UTC) of a date — the holiday-set key format. */
+function utcISODate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * KAN-147: true when `date` falls on a working day for `calendar` — its UTC
+ * weekday is in workDays AND its UTC YYYY-MM-DD is not a holiday.
+ */
+export function isWorkingDay(date: Date, calendar: WorkingCalendar): boolean {
+  const workSet =
+    calendar.workDays.length > 0 ? calendar.workDays : [0, 1, 2, 3, 4, 5, 6];
+  if (!workSet.includes(date.getUTCDay())) return false;
+  if (calendar.holidays.has(utcISODate(date))) return false;
+  return true;
+}
+
+/**
+ * KAN-147 (ADR-0007 decision #3): step forward `n` WORKING days from `date`.
+ *
+ *  - n = 0   → snap forward to the next working day (date itself if already one).
+ *  - n > 0   → advance, counting only working days.
+ *  - n < 0   → step backward, counting only working days (FF/SF backward cases).
+ *
+ * GUARD: an empty workDays or all-holiday calendar would loop forever; we treat
+ * empty workDays as all-days, and apply a hard step cap so the engine NEVER
+ * hangs even on a pathological holiday set.
+ */
+export function addWorkingDays(
+  date: Date,
+  n: number,
+  calendar: WorkingCalendar,
+): Date {
+  // Empty-calendar fallback: behave like plain calendar-day arithmetic so a
+  // misconfigured calendar can never hang the engine (validated at write time).
+  if (calendar.workDays.length === 0) {
+    return addDays(date, n);
+  }
+
+  let current = new Date(date);
+  let steps = 0;
+
+  if (n >= 0) {
+    // Snap forward to the first working day, then count remaining working days.
+    let remaining = n;
+    while (!isWorkingDay(current, calendar)) {
+      current = addDays(current, 1);
+      if (++steps > MAX_WORKING_STEP_DAYS) return addDays(date, n);
+    }
+    while (remaining > 0) {
+      current = addDays(current, 1);
+      if (isWorkingDay(current, calendar)) remaining--;
+      if (++steps > MAX_WORKING_STEP_DAYS) return addDays(date, n);
+    }
+  } else {
+    let remaining = -n;
+    while (remaining > 0) {
+      current = addDays(current, -1);
+      if (isWorkingDay(current, calendar)) remaining--;
+      if (++steps > MAX_WORKING_STEP_DAYS) return addDays(date, n);
+    }
+  }
+
+  return current;
+}
+
+/**
+ * KAN-147: count of WORKING days between `start` and `end` — the inverse of
+ * addWorkingDays.
+ *
+ * CRITICAL (ADR-0007 correctness): both this function and addWorkingDays snap a
+ * non-working-day anchor to the next working day BEFORE stepping. Without this
+ * snap the two functions disagree — addWorkingDays(Sat, 1) = Tue (snaps to Mon
+ * then +1) but a naive workingDaysBetween(Sat, Tue) counts Mon+Tue = 2 ≠ 1.
+ * Snapping `start` here (and in every place that stores forecastStart) makes the
+ * round-trip hold: workingDaysBetween(start, addWorkingDays(start, n)) === n.
+ *
+ * For the all-days fallback (workDays=[]) snap is a no-op (addDays(d,0)=d), so
+ * legacy engine tests are unaffected.
+ */
+export function workingDaysBetween(
+  start: Date,
+  end: Date,
+  calendar: WorkingCalendar,
+): number {
+  if (calendar.workDays.length === 0) {
+    return Math.round((end.getTime() - start.getTime()) / DAY_MS);
+  }
+
+  // Snap both anchors forward to the next working day so the step-counting
+  // starts from the same reference point addWorkingDays uses.
+  const snappedStart = addWorkingDays(start, 0, calendar);
+  const snappedEnd = addWorkingDays(end, 0, calendar);
+
+  const startMs = snappedStart.getTime();
+  const endMs = snappedEnd.getTime();
+  if (endMs === startMs) return 0;
+
+  let count = 0;
+  let steps = 0;
+
+  if (endMs > startMs) {
+    let cursor = new Date(snappedStart);
+    while (cursor.getTime() < endMs) {
+      cursor = addDays(cursor, 1);
+      if (isWorkingDay(cursor, calendar)) count++;
+      if (++steps > MAX_WORKING_STEP_DAYS) break;
+    }
+    return count;
+  }
+
+  let cursor = new Date(snappedStart);
+  while (cursor.getTime() > endMs) {
+    cursor = addDays(cursor, -1);
+    if (isWorkingDay(cursor, calendar)) count--;
+    if (++steps > MAX_WORKING_STEP_DAYS) break;
+  }
+  return count;
+}
+
+/**
+ * KAN-147: default calendar used when computeForecast is called WITHOUT a
+ * calendar. workDays empty ⇒ addWorkingDays/workingDaysBetween fall back to
+ * plain calendar-day arithmetic, so every pre-existing engine test (which does
+ * not pass a calendar) keeps its exact previous behaviour.
+ */
+const ALL_DAYS_CALENDAR: WorkingCalendar = {
+  workDays: [],
+  holidays: new Set<string>(),
+};
 
 /** Return the later of two dates. */
 function laterOf(a: Date, b: Date): Date {
@@ -89,6 +237,7 @@ export function forecastEndFor(
   node: ForecastNode,
   hoursPerDay: number,
   now?: Date,
+  calendar: WorkingCalendar = ALL_DAYS_CALENDAR,
 ): Date | null {
   // 1. No start → cannot schedule
   if (node.startDate === null) return null;
@@ -102,15 +251,23 @@ export function forecastEndFor(
   if (node.estimateHours === null) return node.dueDate;
 
   // KAN-145: anchor overdue in_progress work to today.
-  const start = effectiveStartFor(node, now) ?? node.startDate;
+  const rawStart = effectiveStartFor(node, now) ?? node.startDate;
+
+  // KAN-147 (ADR-0007 decision #3): snap forecastStart to the next working day
+  // so the anchor passed to addWorkingDays is always a working day. This keeps
+  // workingDaysBetween(forecastStart, forecastEnd) === spanDays (the round-trip
+  // invariant). For the all-days fallback snap is a no-op.
+  const start = addWorkingDays(rawStart, 0, calendar);
 
   // Span = logged + remaining work (KAN-146 trust model) + interruption days
   // (KAN-103), computed once so the isolated forecast and CPM propagation agree.
-  let end = addDays(start, spanDays(node, hoursPerDay));
+  // KAN-147: the span is a count of WORKING days, applied with addWorkingDays so
+  // a span crossing weekends/holidays lands on the correct calendar date.
+  let end = addWorkingDays(start, spanDays(node, hoursPerDay), calendar);
 
-  // Clamp: end must be at least 1 day after start.
+  // Clamp: end must be at least 1 working day after start.
   if (end.getTime() <= start.getTime()) {
-    end = addDays(start, 1);
+    end = addWorkingDays(start, 1, calendar);
   }
 
   return end;
@@ -137,9 +294,12 @@ export function applyEdge(
   succNode: ForecastNode,
   succState: { forecastStart: Date; forecastEnd: Date },
   hoursPerDay: number,
+  calendar: WorkingCalendar = ALL_DAYS_CALENDAR,
 ): void {
   if (edge.type === "blocks") return;
 
+  // KAN-147: lag is interpreted as WORKING days too (ADR-0007 decision #3), so
+  // an FS+2d lag means two working days, consistent with duration.
   const L = edge.lagDays;
 
   // Duration is the successor's own forecast span (logged + remaining work +
@@ -147,12 +307,17 @@ export function applyEdge(
   // silently re-expanded to its full estimate when a predecessor constrains it
   // (KAN-146 consistency). Falls back to the current span when there is no
   // estimate to compute from.
+  // KAN-147: the fallback measures the existing span in WORKING days (not
+  // calendar days), because forecastEnd was produced with addWorkingDays and the
+  // calendar diff no longer equals the working-day count once weekends are
+  // crossed.
   const durDays =
     succNode.estimateHours !== null
       ? spanDays(succNode, hoursPerDay)
-      : Math.round(
-          (succState.forecastEnd.getTime() - succState.forecastStart.getTime()) /
-            DAY_MS,
+      : workingDaysBetween(
+          succState.forecastStart,
+          succState.forecastEnd,
+          calendar,
         );
 
   switch (edge.type) {
@@ -160,43 +325,59 @@ export function applyEdge(
       // Successor starts no earlier than pred.end + lag
       succState.forecastStart = laterOf(
         succState.forecastStart,
-        addDays(predState.forecastEnd, L),
+        addWorkingDays(predState.forecastEnd, L, calendar),
       );
-      succState.forecastEnd = addDays(succState.forecastStart, durDays);
+      succState.forecastEnd = addWorkingDays(
+        succState.forecastStart,
+        durDays,
+        calendar,
+      );
       break;
     }
     case "SS": {
       // Successor starts no earlier than pred.start + lag
       succState.forecastStart = laterOf(
         succState.forecastStart,
-        addDays(predState.forecastStart, L),
+        addWorkingDays(predState.forecastStart, L, calendar),
       );
-      succState.forecastEnd = addDays(succState.forecastStart, durDays);
+      succState.forecastEnd = addWorkingDays(
+        succState.forecastStart,
+        durDays,
+        calendar,
+      );
       break;
     }
     case "FF": {
       // Successor finishes no earlier than pred.end + lag
       succState.forecastEnd = laterOf(
         succState.forecastEnd,
-        addDays(predState.forecastEnd, L),
+        addWorkingDays(predState.forecastEnd, L, calendar),
       );
-      succState.forecastStart = addDays(succState.forecastEnd, -durDays);
+      succState.forecastStart = addWorkingDays(
+        succState.forecastEnd,
+        -durDays,
+        calendar,
+      );
       break;
     }
     case "SF": {
       // Successor finishes no earlier than pred.start + lag
       succState.forecastEnd = laterOf(
         succState.forecastEnd,
-        addDays(predState.forecastStart, L),
+        addWorkingDays(predState.forecastStart, L, calendar),
       );
-      succState.forecastStart = addDays(succState.forecastEnd, -durDays);
+      succState.forecastStart = addWorkingDays(
+        succState.forecastEnd,
+        -durDays,
+        calendar,
+      );
       break;
     }
   }
 
   // Clamp: forecastEnd must not be before forecastStart
   if (succState.forecastEnd.getTime() < succState.forecastStart.getTime()) {
-    succState.forecastEnd = addDays(succState.forecastStart, 1);
+    succState.forecastEnd = addWorkingDays(succState.forecastStart, 1, calendar);
   }
 }
 
@@ -250,6 +431,7 @@ export function backwardPass(
   ordered: string[],
   nodeStates: Map<string, NodeState>,
   edges: ForecastEdge[],
+  calendar: WorkingCalendar = ALL_DAYS_CALENDAR,
 ): void {
   if (ordered.length === 0) return;
 
@@ -297,10 +479,10 @@ export function backwardPass(
     if (s === undefined) continue;
 
     const lateFinish = s.lateFinish ?? projectEnd;
-    const dur = Math.round(
-      (s.forecastEnd.getTime() - s.forecastStart.getTime()) / DAY_MS,
-    );
-    const lateStart = addDays(lateFinish, -dur);
+    // KAN-147: durations are measured and re-applied in WORKING days, since
+    // forecastStart/forecastEnd were produced with addWorkingDays.
+    const dur = workingDaysBetween(s.forecastStart, s.forecastEnd, calendar);
+    const lateStart = addWorkingDays(lateFinish, -dur, calendar);
     s.lateStart = lateStart;
 
     // Propagate the late-finish constraint backward to each predecessor.
@@ -316,24 +498,28 @@ export function backwardPass(
 
       // Start-anchored constraints (SS/SF) bound pred.LS; convert to pred.LF by
       // adding the predecessor's own duration.
-      const predDur = Math.round(
-        (predState.forecastEnd.getTime() - predState.forecastStart.getTime()) / DAY_MS,
+      // KAN-147: predDur in WORKING days, constraint dates stepped with
+      // addWorkingDays so the backward pass mirrors the forward working-day math.
+      const predDur = workingDaysBetween(
+        predState.forecastStart,
+        predState.forecastEnd,
+        calendar,
       );
 
       let constraintEnd: Date;
       switch (type) {
         case "SS":
-          constraintEnd = addDays(lateStart, predDur - lagDays);
+          constraintEnd = addWorkingDays(lateStart, predDur - lagDays, calendar);
           break;
         case "FF":
-          constraintEnd = addDays(lateFinish, -lagDays);
+          constraintEnd = addWorkingDays(lateFinish, -lagDays, calendar);
           break;
         case "SF":
-          constraintEnd = addDays(lateFinish, predDur - lagDays);
+          constraintEnd = addWorkingDays(lateFinish, predDur - lagDays, calendar);
           break;
         case "FS":
         default:
-          constraintEnd = addDays(lateStart, -lagDays);
+          constraintEnd = addWorkingDays(lateStart, -lagDays, calendar);
           break;
       }
 
@@ -347,9 +533,8 @@ export function backwardPass(
     }
 
     // Compute float and critical
-    s.floatDays = Math.round(
-      (lateStart.getTime() - s.forecastStart.getTime()) / DAY_MS,
-    );
+    // KAN-147: float is the working-day slack between forecastStart and lateStart.
+    s.floatDays = workingDaysBetween(s.forecastStart, lateStart, calendar);
     s.critical = s.floatDays <= 0;
   }
 }
@@ -359,10 +544,22 @@ export function backwardPass(
  */
 export function computeForecast(
   input: ForecastGraphInput,
-  opts?: { hoursPerDay?: number; atRiskBufferDays?: number; now?: Date },
+  opts?: {
+    hoursPerDay?: number;
+    atRiskBufferDays?: number;
+    now?: Date;
+    /**
+     * KAN-147 (ADR-0007): the working-day calendar. OPTIONAL — when absent the
+     * engine falls back to the all-days calendar (every calendar day is a
+     * working day → plain addDays), preserving pre-KAN-147 behaviour for all
+     * existing call sites and tests.
+     */
+    calendar?: WorkingCalendar;
+  },
 ): ForecastResult {
   const hoursPerDay = opts?.hoursPerDay ?? 8;
   const atRiskBufferDays = opts?.atRiskBufferDays ?? 3;
+  const calendar = opts?.calendar ?? ALL_DAYS_CALENDAR;
   // KAN-145: anchor overdue in_progress work to "today" (injectable for tests).
   // Floored to start-of-day so repeated recomputes on the same day are stable —
   // a millisecond-precision anchor would make forecastEnd jitter every call and
@@ -378,11 +575,16 @@ export function computeForecast(
   const nodeStates = new Map<string, NodeState>();
   for (const n of input.nodes) {
     if (n.startDate === null) continue; // will be handled as null-start below
-    const fEnd = forecastEndFor(n, hoursPerDay, now);
+    const fEnd = forecastEndFor(n, hoursPerDay, now, calendar);
     if (fEnd === null) continue; // no forecastEnd means can't schedule
+    // KAN-147 (ADR-0007 decision #3): snap forecastStart to the next working day
+    // so it matches the snapped anchor used inside forecastEndFor. This ensures
+    // workingDaysBetween(forecastStart, forecastEnd) === spanDays everywhere in
+    // applyEdge and backwardPass. For the all-days fallback snap is a no-op.
+    const rawStart = effectiveStartFor(n, now) ?? n.startDate;
+    const snappedStart = addWorkingDays(rawStart, 0, calendar);
     nodeStates.set(n.issueId, {
-      // KAN-145: forecastStart anchored alongside forecastEnd.
-      forecastStart: effectiveStartFor(n, now) ?? n.startDate,
+      forecastStart: snappedStart,
       forecastEnd: fEnd,
     });
   }
@@ -413,12 +615,12 @@ export function computeForecast(
       const vState = nodeStates.get(edge.target);
       const vNode = nodeMap.get(edge.target);
       if (vState === undefined || vNode === undefined) continue;
-      applyEdge(edge, uNode, uState, vNode, vState, hoursPerDay);
+      applyEdge(edge, uNode, uState, vNode, vState, hoursPerDay, calendar);
     }
   }
 
   // Step 3: Backward pass (CPM)
-  backwardPass(order, nodeStates, structuralEdges);
+  backwardPass(order, nodeStates, structuralEdges, calendar);
 
   // Step 4: Build result
   const computedAt = new Date();
@@ -429,7 +631,8 @@ export function computeForecast(
 
     if (s === undefined) {
       // null-start or unschedulable node
-      const fEnd = n.startDate !== null ? forecastEndFor(n, hoursPerDay, now) : null;
+      const fEnd =
+        n.startDate !== null ? forecastEndFor(n, hoursPerDay, now, calendar) : null;
       const slipDays =
         n.dueDate !== null && fEnd !== null
           ? Math.max(

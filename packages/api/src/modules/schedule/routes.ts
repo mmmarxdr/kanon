@@ -1,7 +1,13 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
-import { requireIssueRole, requireProjectMember } from "../../middleware/require-role.js";
-import { IssueKeyParam, ProjectKeyParam, UpsertPlanBody, ReviseEstimateBody } from "./schema.js";
+import { requireIssueRole, requireProjectMember, requireProjectRole } from "../../middleware/require-role.js";
+import {
+  IssueKeyParam,
+  ProjectKeyParam,
+  UpsertPlanBody,
+  ReviseEstimateBody,
+  ScheduleConfigBody,
+} from "./schema.js";
 import * as scheduleService from "./service.js";
 import * as timelineService from "./timeline-service.js";
 import { scheduleTimelineQuerySchema } from "@kanon/shared";
@@ -129,6 +135,48 @@ export default async function scheduleRoutes(
         request.query,
       );
       return reply.status(200).send(result);
+    },
+  );
+
+  /**
+   * GET /api/projects/:key/schedule-config — KAN-147 (ADR-0007).
+   * Returns the project's working-day calendar. Any project member may read.
+   * A project with no stored config returns the Mon–Fri default.
+   */
+  app.get(
+    "/projects/:key/schedule-config",
+    {
+      preHandler: [requireProjectMember("key")],
+      schema: { params: ProjectKeyParam },
+    },
+    async (request, reply) => {
+      const config = await scheduleService.getScheduleConfig(request.projectId!);
+      return reply.status(200).send(config);
+    },
+  );
+
+  /**
+   * PUT /api/projects/:key/schedule-config — KAN-147 (ADR-0007).
+   * Sets the project's working-day calendar (work days + holidays). Member+.
+   * Triggers a forecast rebuild via schedule-config.updated (fire-and-forget).
+   */
+  app.put(
+    "/projects/:key/schedule-config",
+    {
+      preHandler: [requireProjectRole("key", "member")],
+      schema: { params: ProjectKeyParam, body: ScheduleConfigBody },
+    },
+    async (request, reply) => {
+      const config = await scheduleService.upsertScheduleConfig(
+        request.projectId!,
+        request.body,
+        request.member!.id,
+        request.via,
+      );
+      return reply.status(200).send({
+        workDays: config.workDays,
+        holidays: config.holidays,
+      });
     },
   );
 }

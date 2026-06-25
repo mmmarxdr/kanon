@@ -39,3 +39,37 @@ export const ProjectKeyParam = z.object({
   key: z.string(),
 });
 export type ProjectKeyParam = z.infer<typeof ProjectKeyParam>;
+
+/**
+ * Body for PUT /api/projects/:key/schedule-config — KAN-147 (ADR-0007).
+ * Sets the project's working-day calendar.
+ *   - workDays: non-empty subset of 0..6 (0=Sun..6=Sat). Duplicates rejected.
+ *   - holidays: ISO YYYY-MM-DD (UTC) date strings.
+ */
+const isoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "holidays must be YYYY-MM-DD dates")
+  .refine(
+    // Round-trip check: JS rolls over invalid days (e.g. 2026-02-30 → Mar 2,
+    // 2026-06-31 → Jul 1) so !isNaN passes for impossible dates. We parse and
+    // re-serialise; if the resulting YYYY-MM-DD differs from the input the date
+    // rolled over and must be rejected. Wrap in try/catch: truly invalid dates
+    // (e.g. month 13) throw from toISOString() — treat those as invalid too.
+    (s) => {
+      try {
+        return new Date(`${s}T00:00:00.000Z`).toISOString().slice(0, 10) === s;
+      } catch {
+        return false;
+      }
+    },
+    "holidays must be valid calendar dates (no rolled-over days)",
+  );
+
+export const ScheduleConfigBody = z.object({
+  workDays: z
+    .array(z.number().int().min(0).max(6))
+    .min(1, "workDays must be a non-empty subset of 0..6")
+    .refine((d) => new Set(d).size === d.length, "workDays must not contain duplicates"),
+  holidays: z.array(isoDate).default([]),
+});
+export type ScheduleConfigBody = z.infer<typeof ScheduleConfigBody>;

@@ -28,14 +28,23 @@ function sha256(input: string): string {
  *
  * NOTE: `computedAt` is intentionally excluded from the payload so that the
  * hash stays stable across repeated rebuilds on identical data.
+ *
+ * KAN-147 (ADR-0007): an optional `calendarFingerprint` is folded into the hash
+ * so that changing a project's working-day calendar (work days / holidays)
+ * invalidates the per-issue dedup and forces a rebuild — even when an issue's
+ * own computed output would otherwise look unchanged at the moment of hashing.
  */
-export function computeForecastHash(entry: IssueForecastEntry): string {
+export function computeForecastHash(
+  entry: IssueForecastEntry,
+  calendarFingerprint?: string,
+): string {
   const payload = JSON.stringify({
     forecastStart: entry.forecastStart?.toISOString() ?? null,
     forecastEnd: entry.forecastEnd?.toISOString() ?? null,
     slipDays: entry.slipDays,
     critical: entry.critical,
     floatDays: entry.floatDays,
+    calendar: calendarFingerprint ?? null,
   });
   return sha256(payload);
 }
