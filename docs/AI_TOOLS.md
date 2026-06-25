@@ -27,7 +27,7 @@ instance that issued it. Default lifetime is 72 hours
 On the machine where your AI tools live, run:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.6.3/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.8.0/install.sh)"
 ```
 
 > Use the **tagged** installer (`mcp-v<version>`), not `main`. The tagged script has
@@ -121,7 +121,7 @@ can run unattended (CI, provisioning scripts):
 
 ```bash
 echo "kanon://<your-host>/onboard?token=<jwt>" \
-  | bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.6.3/install.sh)"
+  | bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.8.0/install.sh)"
 ```
 
 Advanced overrides (test seams / pinned mirrors) are read from the environment:

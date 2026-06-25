@@ -145,7 +145,7 @@ On the machine where your AI tools live (Claude Code, Cursor, Antigravity),
 run the installer:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.6.3/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.8.0/install.sh)"
 ```
 
 > Use the **tagged** installer (`mcp-v<version>`), not `main`. The tagged script has
