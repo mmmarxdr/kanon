@@ -10,6 +10,14 @@ vi.mock("../../activity/service.js", () => ({
   createActivityLog: vi.fn().mockResolvedValue({}),
 }));
 
+// KAN-157 added a reconciliation gate to the auto-done path. It uses the
+// module-level real prisma (not the injected client), so without this mock the
+// "done" case (AT-1) hits the DB with a fake non-UUID id. The gate has its own
+// coverage in reconcile.test.ts — here we isolate checkAndAdvanceParent's logic.
+vi.mock("../reconcile.js", () => ({
+  checkReconciliation: vi.fn().mockResolvedValue({ needed: false }),
+}));
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
