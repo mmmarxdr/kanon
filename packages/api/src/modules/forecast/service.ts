@@ -100,6 +100,31 @@ interface DeliverableRow {
 // ─── Main export ─────────────────────────────────────────────────────────────
 
 /**
+ * Options for rebuildProjectForecast.
+ *
+ * All fields default to false (i.e. standard event-driven rebuild behaviour).
+ * Only the bootstrap path in the timeline read should set these flags.
+ */
+export interface RebuildOptions {
+  /**
+   * When true, suppress all write-on-read side-effects:
+   *   - McpProposal creation (step 7d) is skipped.
+   *   - Milestone status updates (step 7c) are skipped — flipping milestone
+   *     status on a GET can fire milestone-status notifications.
+   *   - ppm.forecast.updated event emission (step 8) is skipped.
+   *
+   * ONLY IssueForecast row writes (steps 7a/7b) are preserved — the Gantt
+   * reads those directly and needs them on first load.
+   *
+   * Use this when calling from a read path (lazy bootstrap) to avoid
+   * write-on-read surprises and a cluttered proposal queue.
+   *
+   * Default: false — full standard event-driven rebuild behaviour.
+   */
+  suppressSideEffects?: boolean;
+}
+
+/**
  * Full project forecast rebuild.
  *
  * Idempotent: calling multiple times produces the same row count as issue count.
@@ -107,9 +132,14 @@ interface DeliverableRow {
  * is skipped entirely (computedAt is NOT updated).
  *
  * @param projectId - UUID of the project to rebuild.
+ * @param opts      - Optional flags; default behaviour (proposals + events) is unchanged.
  * @returns ForecastStats — thin summary for the event payload.
  */
-export async function rebuildProjectForecast(projectId: string): Promise<ForecastStats> {
+export async function rebuildProjectForecast(
+  projectId: string,
+  opts?: RebuildOptions,
+): Promise<ForecastStats> {
+  const suppressSideEffects = opts?.suppressSideEffects ?? false;
   const hoursPerDay = env.FORECAST_HOURS_PER_DAY;
   const atRiskBufferDays = env.FORECAST_AT_RISK_BUFFER_DAYS;
 
@@ -353,14 +383,16 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
       !milestoneIsManual(rollup.currentStatus) && rollup.computedStatus !== rollup.currentStatus
   );
 
-  // McpProposal: collect over-threshold slips, dedup in one query
+  // McpProposal: collect over-threshold slips, dedup in one query.
+  // Skipped on the bootstrap read path (suppressSideEffects) — no point
+  // building candidates we will never write.
   interface ProposalCandidate {
     issueKey: string;
     slip: { issueId: string; slipDays: number; critical: boolean };
   }
   const proposalCandidates: ProposalCandidate[] = [];
 
-  if (workspaceId) {
+  if (!suppressSideEffects && workspaceId) {
     for (const slip of result.slips) {
       if (!proposalExceedsThreshold(slip)) continue;
       const issueKey = issueKeyMap.get(slip.issueId);
@@ -401,8 +433,11 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
       );
     }
 
-    // 7c. Milestone status updates (parallel)
-    if (milestoneUpdates.length > 0) {
+    // 7c. Milestone status updates (parallel).
+    // Skipped on the bootstrap read path (suppressSideEffects) — flipping milestone
+    // status on a GET can fire milestone-status notifications (write-on-read concern).
+    // The Gantt reads IssueForecast, not Milestone.status, so this is safe to omit.
+    if (!suppressSideEffects && milestoneUpdates.length > 0) {
       await Promise.all(
         milestoneUpdates.map((rollup) =>
           tx.milestone.update({
@@ -414,7 +449,8 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
     }
 
     // 7d. McpProposal: one dedup query + createMany
-    if (workspaceId && proposalCandidates.length > 0) {
+    // Skipped on the bootstrap read path (suppressSideEffects) — write-on-read concern.
+    if (!suppressSideEffects && workspaceId && proposalCandidates.length > 0) {
       const candidateKeys = proposalCandidates.map((c) => c.issueKey);
 
       // One findMany instead of N findFirst calls (kills the N+1)
@@ -472,7 +508,8 @@ export async function rebuildProjectForecast(projectId: string): Promise<Forecas
   // worstSlipDays = max positive slip across project, 0 if all ahead/on-time (decision #13).
   // Skip emission when the project (hence workspace) vanished mid-rebuild — there is
   // no workspace to announce to, and an empty workspaceId would be a malformed event.
-  if (workspaceId) {
+  // Also skip on the bootstrap read path (suppressSideEffects) — write-on-read concern.
+  if (!suppressSideEffects && workspaceId) {
     try {
       eventBus.emit({
         type: "ppm.forecast.updated",

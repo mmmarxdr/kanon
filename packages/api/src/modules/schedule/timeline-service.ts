@@ -1,5 +1,5 @@
 /**
- * Schedule timeline service (KAN-105 PR1, KAN-153).
+ * Schedule timeline service (KAN-105 PR1, KAN-153, KAN-161).
  *
  * Provides per-project three-plane schedule data (baseline + plan + forecast)
  * for issues in a project, used by the Gantt timeline in PR2.
@@ -7,7 +7,15 @@
  * Design decisions:
  * - LEFT-JOIN semantics: issues with no IssueSchedule or IssueForecast row are
  *   still included when returned; their date/numeric fields are null.
- * - Read-only, no mutations, no events.
+ * - Lazy forecast bootstrap (KAN-161): if the project has issues but fewer
+ *   IssueForecast rows than issues, a one-time rebuild is triggered before the
+ *   read returns. This write-on-read is intentionally limited (suppressSideEffects):
+ *   McpProposal creation is skipped, milestone status updates are skipped (flipping
+ *   Milestone.status on a GET can fire notifications), and ppm.forecast.updated is
+ *   not emitted. ONLY IssueForecast rows are written — the Gantt reads those and
+ *   needs them on first load. If the bootstrap throws, the service degrades
+ *   gracefully to plan-only (forecast fields will be null this request; the
+ *   rebuild succeeds next time).
  * - Decimal convention: no Decimal fields on this response (progress is Int,
  *   slipDays/floatDays are Int). Date → .toISOString() ?? null.
  *
@@ -16,6 +24,7 @@
  */
 
 import { prisma } from "../../config/prisma.js";
+import { rebuildProjectForecast } from "../forecast/service.js";
 import type {
   ScheduleTimelineRow,
   ScheduleDepEdge,
@@ -217,6 +226,41 @@ export async function getProjectScheduleTimeline(
 ): Promise<ScheduleTimelineResponse> {
   const { cycleId, from, to } = query;
 
+  // ── 0. Lazy forecast bootstrap (KAN-161) ─────────────────────────────────
+  // IssueForecast rows are normally created by a debounced rebuild fired off ~8
+  // domain events. A freshly onboarded / seeded project (or one that added issues
+  // without triggering a rebuild) has fewer forecast rows than issues, so the Gantt
+  // would render plan bars with null forecast/critical/slip. If forecastCount <
+  // issueCount we rebuild before reading so every issue gets a row. IssueForecast
+  // has 1:1 cardinality per issue, so once forecastCount === issueCount we never
+  // rebuild on read again — self-limiting.
+  //
+  // Concurrency note: two concurrent first-reads could both rebuild; the rebuild is
+  // idempotent (inputsHash + createMany skipDuplicates), so the worst case is one
+  // redundant recompute, not corruption.
+  //
+  // suppressSideEffects: McpProposal creation, milestone status updates, and
+  // ppm.forecast.updated emission are SKIPPED on this read path. ONLY IssueForecast
+  // rows are written — the Gantt reads those directly and needs them on first load.
+  //
+  // Degrade: if the rebuild throws, log and continue with plan-only data (forecast
+  // fields will be null this request; the bootstrap succeeds on the next read).
+  //
+  // issueCount is reused below in the small-project escape hatch to avoid a
+  // second prisma.issue.count call for the same value.
+  const [issueCount, forecastCount] = await Promise.all([
+    prisma.issue.count({ where: { projectId } }),
+    prisma.issueForecast.count({ where: { issue: { projectId } } }),
+  ]);
+  if (issueCount > 0 && forecastCount < issueCount) {
+    try {
+      await rebuildProjectForecast(projectId, { suppressSideEffects: true });
+    } catch (err) {
+      // Degrade gracefully: forecast fields will be null this read; next read retries.
+      console.error("[timeline] lazy forecast bootstrap failed — degrading to plan-only", err);
+    }
+  }
+
   // ── 1. Resolve scoped issue IDs ──────────────────────────────────────────
 
   let scopedWhere: Record<string, unknown>;
@@ -232,9 +276,9 @@ export async function getProjectScheduleTimeline(
   } else {
     // Default scoping: active cycle or date window, with small-project escape hatch
 
-    // Small-project escape hatch: if total count <= SMALL_PROJECT_THRESHOLD, return everything
-    const totalCount = await prisma.issue.count({ where: { projectId } });
-    if (totalCount <= SMALL_PROJECT_THRESHOLD) {
+    // Small-project escape hatch: if total count <= SMALL_PROJECT_THRESHOLD, return everything.
+    // Reuse issueCount from step 0 — no second DB round-trip needed.
+    if (issueCount <= SMALL_PROJECT_THRESHOLD) {
       const issues = await prisma.issue.findMany({
         where: { projectId },
         select: ISSUE_SELECT,

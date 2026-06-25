@@ -10,7 +10,7 @@
  * - KAN-153: cycleId param, from/to params, envelope response shape
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, afterEach } from "vitest";
 import type { FastifyInstance } from "fastify";
 import {
   createTestApp,
@@ -22,6 +22,8 @@ import {
   disconnectTestDb,
 } from "../../test/helpers.js";
 import { prisma } from "../../config/prisma.js";
+import { eventBus } from "../../services/event-bus/index.js";
+import { rebuildProjectForecast } from "../forecast/service.js";
 
 describe("Schedule Timeline Routes (integration)", () => {
   let app: FastifyInstance;
@@ -188,7 +190,7 @@ describe("Schedule Timeline Routes (integration)", () => {
       expect(row.isNeighbor).toBe(false);
     });
 
-    it("STL-5: includes schedule-only issue with null forecast fields", async () => {
+    it("STL-5: schedule-only issue (no estimate) gets a bootstrapped forecast — forecastEnd falls back to dueDate (KAN-161)", async () => {
       const { member, project } = await seedProjectContext();
 
       const issue = await prisma.issue.create({
@@ -223,15 +225,18 @@ describe("Schedule Timeline Routes (integration)", () => {
       expect(body.rows).toHaveLength(1);
 
       const row = body.rows[0];
+      // Plan start is the raw stored date (not snapped).
       expect(row.startDate).toBe("2026-08-01T00:00:00.000Z");
-      expect(row.forecastStart).toBeNull();
-      expect(row.forecastEnd).toBeNull();
-      expect(row.slipDays).toBeNull();
-      expect(row.critical).toBeNull();
-      expect(row.floatDays).toBeNull();
+      // KAN-161: the lazy bootstrap rebuilt the forecast on read. With no estimate,
+      // forecastEnd falls back to the dueDate; forecastStart is populated (snapped
+      // to a working day by the calendar engine). slip/critical are no longer null.
+      expect(row.forecastStart).not.toBeNull();
+      expect(row.forecastEnd).toBe("2026-08-31T00:00:00.000Z");
+      expect(row.slipDays).toBe(0);
+      expect(typeof row.critical).toBe("boolean");
     });
 
-    it("STL-6: includes bare issue (no schedule, no forecast) with all null date fields", async () => {
+    it("STL-6: bare issue (no schedule) gets a bootstrapped forecast row — null dates, slip 0, not critical (KAN-161)", async () => {
       const { member, project } = await seedProjectContext();
 
       const bare = await prisma.issue.create({
@@ -262,10 +267,13 @@ describe("Schedule Timeline Routes (integration)", () => {
       expect(row.dueDate).toBeNull();
       expect(row.baselineStart).toBeNull();
       expect(row.baselineEnd).toBeNull();
+      // KAN-161: a forecast row is now bootstrapped on read. A bare issue has no
+      // startDate so it is unschedulable — forecast dates stay null — but the row
+      // exists with slipDays 0 (no dueDate) and critical false.
       expect(row.forecastStart).toBeNull();
       expect(row.forecastEnd).toBeNull();
-      expect(row.slipDays).toBeNull();
-      expect(row.critical).toBeNull();
+      expect(row.slipDays).toBe(0);
+      expect(row.critical).toBe(false);
       expect(row.floatDays).toBeNull();
     });
 
@@ -693,6 +701,253 @@ describe("Schedule Timeline Routes (integration)", () => {
       expect(Array.isArray(body.rows)).toBe(true);
       expect(typeof body.total).toBe("number");
       expect(typeof body.truncated).toBe("boolean");
+    });
+
+    it("STL-16: bootstraps forecast for ALL issues on first read — self-limiting invariant (KAN-161)", async () => {
+      const { member, project } = await seedProjectContext();
+
+      // Multi-issue project: one scheduled, one bare, one schedule-only.
+      // None have IssueForecast rows — simulates a freshly onboarded project.
+      const scheduled = await prisma.issue.create({
+        data: {
+          key: `${project.key}-1`,
+          title: "Scheduled with estimate",
+          type: "task",
+          state: "todo",
+          projectId: project.id,
+          sequenceNum: 1,
+        },
+      });
+      await prisma.issueSchedule.create({
+        data: {
+          issueId: scheduled.id,
+          startDate: new Date("2026-07-01T00:00:00.000Z"),
+          dueDate: new Date("2026-07-31T00:00:00.000Z"),
+          progress: 0,
+          estimateHours: 16,
+        },
+      });
+
+      const bare = await prisma.issue.create({
+        data: {
+          key: `${project.key}-2`,
+          title: "Bare issue (no schedule)",
+          type: "bug",
+          state: "backlog",
+          projectId: project.id,
+          sequenceNum: 2,
+        },
+      });
+
+      const scheduleOnly = await prisma.issue.create({
+        data: {
+          key: `${project.key}-3`,
+          title: "Schedule only (no estimate)",
+          type: "feature",
+          state: "todo",
+          projectId: project.id,
+          sequenceNum: 3,
+        },
+      });
+      await prisma.issueSchedule.create({
+        data: {
+          issueId: scheduleOnly.id,
+          startDate: new Date("2026-08-01T00:00:00.000Z"),
+          dueDate: new Date("2026-08-31T00:00:00.000Z"),
+          progress: 0,
+        },
+      });
+
+      // Precondition: zero forecast rows for this project.
+      expect(
+        await prisma.issueForecast.count({ where: { issue: { projectId: project.id } } }),
+      ).toBe(0);
+
+      // ── First GET ─────────────────────────────────────────────────────────
+      const res1 = await app.inject({
+        method: "GET",
+        url: `/api/projects/${project.key}/schedule-timeline`,
+        headers: { authorization: `Bearer ${member.token}` },
+      });
+
+      expect(res1.statusCode).toBe(200);
+      const body1 = res1.json();
+      expect(body1.rows).toHaveLength(3);
+
+      // The bootstrap must create exactly ONE IssueForecast row per issue.
+      // forecastCount === issueCount proves the self-limiting invariant.
+      const forecastCountAfterFirst = await prisma.issueForecast.count({
+        where: { issue: { projectId: project.id } },
+      });
+      expect(forecastCountAfterFirst).toBe(3);
+
+      // The scheduled issue should have non-null forecast dates.
+      const scheduledRow = body1.rows.find((r: { issueKey: string }) => r.issueKey === scheduled.key);
+      expect(scheduledRow).toBeDefined();
+      expect(scheduledRow.forecastStart).not.toBeNull();
+      expect(scheduledRow.forecastEnd).not.toBeNull();
+      expect(scheduledRow.critical).not.toBeNull();
+
+      // ── Second GET — no re-rebuild ────────────────────────────────────────
+      const res2 = await app.inject({
+        method: "GET",
+        url: `/api/projects/${project.key}/schedule-timeline`,
+        headers: { authorization: `Bearer ${member.token}` },
+      });
+
+      expect(res2.statusCode).toBe(200);
+
+      // Row count must remain at 3 — no re-rebuild created extra rows.
+      const forecastCountAfterSecond = await prisma.issueForecast.count({
+        where: { issue: { projectId: project.id } },
+      });
+      expect(forecastCountAfterSecond).toBe(3);
+    });
+
+    it("STL-18: bootstrap suppresses proposals + ppm.forecast.updated; default rebuild creates both (KAN-161)", async () => {
+      const { member, project } = await seedProjectContext();
+
+      // Seed an already-slipping issue: startDate + dueDate well in the past,
+      // with an estimate — this is exactly the profile that causes the normal
+      // event-driven rebuild to emit an over-threshold slip and create a proposal.
+      const slipping = await prisma.issue.create({
+        data: {
+          key: `${project.key}-1`,
+          title: "Slipping issue",
+          type: "task",
+          state: "in_progress",
+          projectId: project.id,
+          sequenceNum: 1,
+        },
+      });
+      await prisma.issueSchedule.create({
+        data: {
+          issueId: slipping.id,
+          startDate: new Date("2025-01-01T00:00:00.000Z"),
+          dueDate: new Date("2025-01-15T00:00:00.000Z"),
+          progress: 0,
+          estimateHours: 40,
+        },
+      });
+
+      // Precondition: no forecast rows, no proposals.
+      expect(
+        await prisma.issueForecast.count({ where: { issue: { projectId: project.id } } }),
+      ).toBe(0);
+      expect(
+        await prisma.mcpProposal.count({ where: { projectId: project.id } }),
+      ).toBe(0);
+
+      // Spy on eventBus.emit BEFORE the GET so we capture bootstrap emissions.
+      const emitSpy = vi.spyOn(eventBus, "emit");
+
+      // ── Bootstrap GET (suppressSideEffects path) ──────────────────────────
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/projects/${project.key}/schedule-timeline`,
+        headers: { authorization: `Bearer ${member.token}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+
+      // IssueForecast rows ARE written (Gantt needs them).
+      expect(
+        await prisma.issueForecast.count({ where: { issue: { projectId: project.id } } }),
+      ).toBe(1);
+
+      // McpProposals must NOT be created on the bootstrap/read path.
+      expect(
+        await prisma.mcpProposal.count({ where: { projectId: project.id } }),
+      ).toBe(0);
+
+      // ppm.forecast.updated must NOT have been emitted during the bootstrap GET.
+      const bootstrapForecastEvents = emitSpy.mock.calls.filter(
+        (call) => (call[0] as { type: string }).type === "ppm.forecast.updated",
+      );
+      expect(bootstrapForecastEvents).toHaveLength(0);
+
+      emitSpy.mockClear();
+
+      // ── Causal proof: default rebuild (no suppressSideEffects) DOES create proposals + event ──
+      // Delete the existing IssueForecast row so the rebuild is not a no-op (hash-skip gate).
+      await prisma.issueForecast.deleteMany({ where: { issue: { projectId: project.id } } });
+
+      await rebuildProjectForecast(project.id); // default opts — full side-effects
+
+      // A proposal MUST now exist — proves suppression in the bootstrap was causal.
+      expect(
+        await prisma.mcpProposal.count({ where: { projectId: project.id } }),
+      ).toBeGreaterThan(0);
+
+      // ppm.forecast.updated MUST have been emitted on the default-rebuild path.
+      const defaultForecastEvents = emitSpy.mock.calls.filter(
+        (call) => (call[0] as { type: string }).type === "ppm.forecast.updated",
+      );
+      expect(defaultForecastEvents).toHaveLength(1);
+
+      emitSpy.mockRestore();
+    });
+
+    it("STL-19: pre-seeded forecast row → guard skips rebuild, GET returns 200 with forecast data (KAN-161)", async () => {
+      // When forecastCount === issueCount the guard condition (forecastCount < issueCount)
+      // is false and rebuildProjectForecast is never called. This test confirms the guard
+      // logic and that a fully-bootstrapped project serves its cached data correctly.
+      // The explicit throw → 200 degrade path is covered by the unit test in
+      // packages/api/src/modules/schedule/timeline-service.unit.test.ts.
+      const { member, project } = await seedProjectContext();
+
+      const issue = await prisma.issue.create({
+        data: {
+          key: `${project.key}-1`,
+          title: "Already-forecast issue",
+          type: "task",
+          state: "todo",
+          projectId: project.id,
+          sequenceNum: 1,
+        },
+      });
+
+      // Pre-seed a forecast row so forecastCount === issueCount → no rebuild triggered.
+      await prisma.issueForecast.create({
+        data: {
+          issueId: issue.id,
+          forecastStart: new Date("2026-07-01T00:00:00.000Z"),
+          forecastEnd: new Date("2026-07-31T00:00:00.000Z"),
+          slipDays: 0,
+          critical: false,
+          computedAt: new Date(),
+        },
+      });
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/projects/${project.key}/schedule-timeline`,
+        headers: { authorization: `Bearer ${member.token}` },
+      });
+
+      // Must always return 200 regardless of bootstrap path.
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.rows).toHaveLength(1);
+      // Forecast data is present because the pre-seeded row was returned.
+      expect(body.rows[0].forecastEnd).toBe("2026-07-31T00:00:00.000Z");
+    });
+
+    it("STL-17: empty project does not trigger a bootstrap rebuild and returns an empty envelope (KAN-161)", async () => {
+      const { member, project } = await seedProjectContext();
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/projects/${project.key}/schedule-timeline`,
+        headers: { authorization: `Bearer ${member.token}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ rows: [], total: 0, truncated: false });
+      // No issues → nothing to forecast → no rows created.
+      expect(
+        await prisma.issueForecast.count({ where: { issue: { projectId: project.id } } }),
+      ).toBe(0);
     });
   });
 });

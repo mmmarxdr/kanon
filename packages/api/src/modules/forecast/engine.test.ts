@@ -2574,3 +2574,97 @@ describe("computeForecast — progress-reduced span survives edge propagation", 
     expect(spanDays).toBe(3);
   });
 });
+
+// ─── KAN-161: self-limiting invariant — forecasts.size === nodes.length ───────
+//
+// The lazy bootstrap guard relies on IssueForecast having 1:1 cardinality with
+// issues: once forecastCount === issueCount no rebuild is triggered. That
+// invariant only holds if computeForecast emits an entry for EVERY input node,
+// including "bare" nodes with null startDate / dueDate / estimateHours.
+// These tests lock that contract at the engine layer so a regression here breaks
+// loudly before any integration or bootstrap path is affected.
+
+describe("computeForecast — forecasts.size === nodes.length (KAN-161 self-limiting invariant)", () => {
+  it("bare node (null startDate/dueDate/estimate): still emits a forecast entry", () => {
+    const bare = node({ issueId: "bare" }); // all nulls by default from the helper
+    const result = computeForecast(
+      { nodes: [bare], edges: [], milestones: [] },
+      { hoursPerDay: HOURS_PER_DAY },
+    );
+    expect(result.forecasts.size).toBe(1);
+    const f = result.forecasts.get("bare");
+    expect(f).toBeDefined();
+    // No startDate → no forecast dates
+    expect(f!.forecastStart).toBeNull();
+    expect(f!.forecastEnd).toBeNull();
+    // No dueDate → slipDays 0, not critical (nothing to miss)
+    expect(f!.slipDays).toBe(0);
+    expect(f!.critical).toBe(false);
+  });
+
+  it("mixed bag: every node type gets an entry — forecasts.size === nodes.length", () => {
+    const start = new Date("2026-07-01T00:00:00.000Z");
+
+    const scheduled = node({
+      issueId: "scheduled",
+      startDate: start,
+      dueDate: new Date("2026-07-31T00:00:00.000Z"),
+      estimateHours: 16,
+    });
+
+    const scheduleOnly = node({
+      issueId: "scheduleOnly",
+      startDate: start,
+      dueDate: new Date("2026-07-31T00:00:00.000Z"),
+      estimateHours: null, // no estimate
+    });
+
+    const bareNode = node({ issueId: "bare" }); // null start/due/estimate
+
+    const doneClosed = node({
+      issueId: "done",
+      startDate: start,
+      state: "done",
+      completedAt: new Date("2026-07-10T00:00:00.000Z"),
+    });
+
+    const nodes = [scheduled, scheduleOnly, bareNode, doneClosed];
+    const result = computeForecast(
+      { nodes, edges: [], milestones: [] },
+      { hoursPerDay: HOURS_PER_DAY },
+    );
+
+    // Every input node must have a corresponding forecast entry.
+    expect(result.forecasts.size).toBe(nodes.length);
+    for (const n of nodes) {
+      expect(result.forecasts.has(n.issueId)).toBe(true);
+    }
+  });
+
+  it("cycle nodes still receive base forecast entries (forecasts.size === nodes.length)", () => {
+    // Nodes in a dependency cycle are excluded from the topo order but still get
+    // their base forecast computed in Step 1 — so the 1:1 invariant holds.
+    const start = new Date("2026-07-01T00:00:00.000Z");
+    const nodeA = node({ issueId: "A", startDate: start, estimateHours: 8 });
+    const nodeB = node({ issueId: "B", startDate: start, estimateHours: 8 });
+    const nodeC = node({ issueId: "C", startDate: start, estimateHours: 8 }); // not in cycle
+
+    const result = computeForecast(
+      {
+        nodes: [nodeA, nodeB, nodeC],
+        edges: [
+          { source: "A", target: "B", type: "FS", lagDays: 0 },
+          { source: "B", target: "A", type: "FS", lagDays: 0 }, // cycle
+        ],
+        milestones: [],
+      },
+      { hoursPerDay: HOURS_PER_DAY },
+    );
+
+    // All three nodes — including the two cycle nodes — must appear.
+    expect(result.forecasts.size).toBe(3);
+    expect(result.forecasts.has("A")).toBe(true);
+    expect(result.forecasts.has("B")).toBe(true);
+    expect(result.forecasts.has("C")).toBe(true);
+  });
+});
