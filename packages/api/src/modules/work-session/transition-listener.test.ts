@@ -141,7 +141,7 @@ describe("registerTransitionListener", () => {
       "transition-listener",
       null,
       undefined,
-      { autoAssign: false }
+      { autoAssign: false, onConflict: "skip" }
     );
   });
 
@@ -283,7 +283,7 @@ describe("registerTransitionListener", () => {
       "transition-listener",
       null,
       undefined,
-      { autoAssign: false }
+      { autoAssign: false, onConflict: "skip" }
     );
   });
 
@@ -492,7 +492,7 @@ describe("registerTransitionListener", () => {
       "transition-listener",
       null,
       undefined,
-      { autoAssign: false }
+      { autoAssign: false, onConflict: "skip" }
     );
   });
 
@@ -537,7 +537,7 @@ describe("registerTransitionListener", () => {
       "transition-listener",
       null,
       undefined,
-      { autoAssign: false }
+      { autoAssign: false, onConflict: "skip" }
     );
   });
 
@@ -580,7 +580,7 @@ describe("registerTransitionListener", () => {
       "transition-listener",
       null,
       undefined,
-      { autoAssign: false }
+      { autoAssign: false, onConflict: "skip" }
     );
   });
 
