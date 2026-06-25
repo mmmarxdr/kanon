@@ -215,4 +215,118 @@ describe("serializeTimelineRow", () => {
     );
     expect(row.isNeighbor).toBe(true);
   });
+
+  // ── Variance (KAN-152, ADR-0008 decision #5) ─────────────────────────────
+
+  it("STR-VAR-1: planVsBaseline/forecastVsBaseline computed in whole days", () => {
+    const row = serializeTimelineRow({
+      ...BASE_ISSUE,
+      schedule: {
+        startDate: new Date("2026-07-01T00:00:00.000Z"),
+        dueDate: new Date("2026-07-10T00:00:00.000Z"), // +3d vs baselineEnd
+        progress: 0,
+        baselineStart: new Date("2026-07-01T00:00:00.000Z"),
+        baselineEnd: new Date("2026-07-07T00:00:00.000Z"),
+      },
+      forecast: {
+        forecastStart: new Date("2026-07-01T00:00:00.000Z"),
+        forecastEnd: new Date("2026-07-12T00:00:00.000Z"), // +5d vs baselineEnd
+        slipDays: 5,
+        critical: false,
+        floatDays: 0,
+      },
+    });
+
+    expect(row.planVsBaseline).toBe(3);
+    expect(row.forecastVsBaseline).toBe(5);
+  });
+
+  it("STR-VAR-2: negative variance when plan/forecast finish before baseline", () => {
+    const row = serializeTimelineRow({
+      ...BASE_ISSUE,
+      schedule: {
+        startDate: new Date("2026-07-01T00:00:00.000Z"),
+        dueDate: new Date("2026-07-05T00:00:00.000Z"), // -2d vs baselineEnd
+        progress: 0,
+        baselineStart: new Date("2026-07-01T00:00:00.000Z"),
+        baselineEnd: new Date("2026-07-07T00:00:00.000Z"),
+      },
+      forecast: {
+        forecastStart: new Date("2026-07-01T00:00:00.000Z"),
+        forecastEnd: new Date("2026-07-04T00:00:00.000Z"), // -3d vs baselineEnd
+        slipDays: 0,
+        critical: false,
+        floatDays: 0,
+      },
+    });
+
+    expect(row.planVsBaseline).toBe(-2);
+    expect(row.forecastVsBaseline).toBe(-3);
+  });
+
+  it("STR-VAR-3: null variance when no baseline is set", () => {
+    const row = serializeTimelineRow({
+      ...BASE_ISSUE,
+      schedule: {
+        startDate: new Date("2026-07-01T00:00:00.000Z"),
+        dueDate: new Date("2026-07-10T00:00:00.000Z"),
+        progress: 0,
+        baselineStart: null,
+        baselineEnd: null,
+      },
+      forecast: {
+        forecastStart: new Date("2026-07-01T00:00:00.000Z"),
+        forecastEnd: new Date("2026-07-12T00:00:00.000Z"),
+        slipDays: 5,
+        critical: false,
+        floatDays: 0,
+      },
+    });
+
+    expect(row.planVsBaseline).toBeNull();
+    expect(row.forecastVsBaseline).toBeNull();
+  });
+
+  it("STR-VAR-4: planVsBaseline null when dueDate absent; forecastVsBaseline null when forecastEnd absent", () => {
+    const row = serializeTimelineRow({
+      ...BASE_ISSUE,
+      schedule: {
+        startDate: new Date("2026-07-01T00:00:00.000Z"),
+        dueDate: null, // no plan finish → planVsBaseline null
+        progress: 0,
+        baselineStart: new Date("2026-07-01T00:00:00.000Z"),
+        baselineEnd: new Date("2026-07-07T00:00:00.000Z"),
+      },
+      forecast: null, // no forecast row → forecastVsBaseline null
+    });
+
+    expect(row.planVsBaseline).toBeNull();
+    expect(row.forecastVsBaseline).toBeNull();
+  });
+
+  it("STR-VAR-5: non-midnight timestamps are floored to UTC midnight before diff (DST-safe)", () => {
+    // dueDate has a time component (14:30 UTC); baselineEnd has a different time (23:59 UTC).
+    // Without midnight-flooring, the raw ms diff would round to the wrong integer.
+    // With flooring: floor(2026-07-10T14:30) = 2026-07-10, floor(2026-07-07T23:59) = 2026-07-07 → +3d.
+    const row = serializeTimelineRow({
+      ...BASE_ISSUE,
+      schedule: {
+        startDate: new Date("2026-07-01T00:00:00.000Z"),
+        dueDate: new Date("2026-07-10T14:30:00.000Z"),
+        progress: 0,
+        baselineStart: new Date("2026-07-01T00:00:00.000Z"),
+        baselineEnd: new Date("2026-07-07T23:59:59.000Z"),
+      },
+      forecast: {
+        forecastStart: new Date("2026-07-01T00:00:00.000Z"),
+        forecastEnd: new Date("2026-07-12T01:00:00.000Z"), // floor → 2026-07-12, diff = +5d
+        slipDays: 5,
+        critical: false,
+        floatDays: 0,
+      },
+    });
+
+    expect(row.planVsBaseline).toBe(3);
+    expect(row.forecastVsBaseline).toBe(5);
+  });
 });

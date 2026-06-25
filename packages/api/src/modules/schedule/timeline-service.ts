@@ -83,12 +83,45 @@ interface IssueWithRelations {
  *
  * KAN-153: isNeighbor param (default false) marks cross-boundary dependency rows.
  */
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Floor a Date to UTC midnight so day-differencing is stable across time-of-day
+ * values and DST boundaries (Fix 3 / judgment-day). Without this,
+ * `later=2026-07-10T14:30Z` vs `baseline=2026-07-07T23:59Z` would round to 2
+ * (≈2.6 days raw) instead of the correct 3 calendar-day slip.
+ */
+function utcMidnight(d: Date): Date {
+  return new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
+  );
+}
+
+/**
+ * Whole-day signed delta (`later − baseline`) or null when either date is
+ * absent. Both operands are floored to UTC midnight before differencing so the
+ * result is stable regardless of time-of-day or DST offsets.
+ */
+function dayDelta(later: Date | null, baseline: Date | null): number | null {
+  if (!later || !baseline) return null;
+  return Math.round(
+    (utcMidnight(later).getTime() - utcMidnight(baseline).getTime()) /
+      ONE_DAY_MS,
+  );
+}
+
 export function serializeTimelineRow(
   issue: IssueWithRelations,
   isNeighbor = false,
 ): ScheduleTimelineRow {
   const s = issue.schedule;
   const f = issue.forecast;
+
+  // KAN-152 (ADR-0008 #5): variance derived on-read against the frozen
+  // baselineEnd. Null when there is no baseline or no date to compare.
+  const baselineEnd = s?.baselineEnd ?? null;
+  const planVsBaseline = dayDelta(s?.dueDate ?? null, baselineEnd);
+  const forecastVsBaseline = dayDelta(f?.forecastEnd ?? null, baselineEnd);
 
   return {
     issueId: issue.id,
@@ -109,6 +142,11 @@ export function serializeTimelineRow(
     // Baseline plane
     baselineStart: s?.baselineStart?.toISOString() ?? null,
     baselineEnd: s?.baselineEnd?.toISOString() ?? null,
+
+    // Variance (KAN-152) — on-read, in whole days; null when baseline/compared
+    // date is absent.
+    planVsBaseline,
+    forecastVsBaseline,
 
     // Forecast plane — null when no forecast row exists
     forecastStart: f?.forecastStart?.toISOString() ?? null,

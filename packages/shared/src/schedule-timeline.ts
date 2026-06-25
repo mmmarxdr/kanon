@@ -57,6 +57,15 @@ export const scheduleTimelineRowSchema = z.object({
   baselineStart: z.string().datetime().nullable(),
   baselineEnd: z.string().datetime().nullable(),
 
+  // Variance (KAN-152, ADR-0008 decision #5) — computed on-read, not stored.
+  // planVsBaseline     = (dueDate − baselineEnd) in whole days
+  // forecastVsBaseline = (forecastEnd − baselineEnd) in whole days
+  // null when the baseline or the compared date is absent. Positive = later
+  // than the original commitment (slip); negative = ahead of it.
+  // Defaulted so older payloads (pre-KAN-152) still parse.
+  planVsBaseline: z.number().int().nullable().default(null),
+  forecastVsBaseline: z.number().int().nullable().default(null),
+
   // Forecast plane (IssueForecast)
   forecastStart: z.string().datetime().nullable(),
   forecastEnd: z.string().datetime().nullable(),

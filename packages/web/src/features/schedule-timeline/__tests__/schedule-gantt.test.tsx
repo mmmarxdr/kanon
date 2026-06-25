@@ -70,6 +70,8 @@ function makeRow(overrides: Partial<ScheduleTimelineRow> = {}): ScheduleTimeline
     type: "issue",
     cycleId: null,
     cycleName: null,
+    planVsBaseline: null,
+    forecastVsBaseline: null,
     isNeighbor: false,
     startDate: "2026-03-01T00:00:00Z",
     dueDate: "2026-05-01T00:00:00Z",
