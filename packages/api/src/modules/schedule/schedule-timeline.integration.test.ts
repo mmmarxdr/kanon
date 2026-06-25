@@ -612,6 +612,58 @@ describe("Schedule Timeline Routes (integration)", () => {
       expect(body.total).toBe(1);
     });
 
+    it("STL-15: a cross-project dependency does not pull a foreign issue into the timeline (KAN-162)", async () => {
+      const { member, project, ws } = await seedProjectContext();
+
+      // In-scope issue in the requested project
+      const local = await prisma.issue.create({
+        data: {
+          key: `${project.key}-1`,
+          title: "Local issue",
+          type: "task",
+          state: "backlog",
+          projectId: project.id,
+          sequenceNum: 1,
+        },
+      });
+
+      // A second project in the SAME workspace with its own issue
+      const foreignProject = await seedTestProject(ws.id, "FGN");
+      const foreign = await prisma.issue.create({
+        data: {
+          key: "FGN-1",
+          title: "Foreign issue",
+          type: "task",
+          state: "backlog",
+          projectId: foreignProject.id,
+          sequenceNum: 1,
+        },
+      });
+
+      // Cross-project dependency edges in BOTH directions (the schema permits it —
+      // FK is on Issue.id only). local→foreign exercises the target-scoped edge
+      // query; foreign→local exercises the source-scoped one.
+      await prisma.issueDependency.create({
+        data: { sourceId: local.id, targetId: foreign.id, type: "blocks" },
+      });
+      await prisma.issueDependency.create({
+        data: { sourceId: foreign.id, targetId: local.id, type: "blocks" },
+      });
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/projects/${project.key}/schedule-timeline`,
+        headers: { authorization: `Bearer ${member.token}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      // Only the local issue — the foreign neighbor must never leak in
+      expect(body.rows).toHaveLength(1);
+      expect(body.rows[0].title).toBe("Local issue");
+      expect(body.rows.some((r: { title: string }) => r.title === "Foreign issue")).toBe(false);
+    });
+
     it("STL-14: response envelope has correct shape (rows, total, truncated)", async () => {
       const { member, project } = await seedProjectContext();
 

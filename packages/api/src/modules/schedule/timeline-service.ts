@@ -277,16 +277,19 @@ export async function getProjectScheduleTimeline(
 
   // ── 3. 1-hop neighbor expansion ──────────────────────────────────────────
 
-  // Find all dep edges where source OR target is in-scope
+  // Find all dep edges where source OR target is in-scope. Both queries also
+  // constrain the OUT-of-scope end to the same project so a cross-project edge
+  // (the schema permits one — the FK is on Issue.id only) can never surface a
+  // foreign issue as a neighbor (KAN-162).
   const [outgoingEdges, incomingEdges] = await Promise.all([
-    // Edges where a scoped issue is the source (target may be out-of-scope)
+    // Edges where a scoped issue is the source; the target stays in-project
     prisma.issueDependency.findMany({
-      where: { sourceId: { in: [...scopedIds] } },
+      where: { sourceId: { in: [...scopedIds] }, target: { projectId } },
       select: { sourceId: true, targetId: true },
     }),
-    // Edges where a scoped issue is the target (source may be out-of-scope)
+    // Edges where a scoped issue is the target; the source stays in-project
     prisma.issueDependency.findMany({
-      where: { targetId: { in: [...scopedIds] } },
+      where: { targetId: { in: [...scopedIds] }, source: { projectId } },
       select: { sourceId: true, targetId: true },
     }),
   ]);
