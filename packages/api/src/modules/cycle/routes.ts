@@ -47,6 +47,13 @@ const DeleteCycleBody = z.object({
   reason: z.string().min(1).max(500).optional(),
 });
 
+// KAN-152 (ADR-0008 #3): explicit re-baseline body — target whole cycle and/or
+// an explicit set of issue ids. At least one must be supplied (enforced in the
+// service so the error shape is consistent with other validation).
+const ReBaselineBody = z.object({
+  issueIds: z.array(z.string().uuid()).max(250).optional(),
+});
+
 export default async function cycleRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -119,6 +126,43 @@ export default async function cycleRoutes(fastify: FastifyInstance): Promise<voi
         remove: request.body.remove,
         reason: request.body.reason,
         authorId: request.member!.id,
+      }),
+  );
+
+  /**
+   * POST /cycles/:id/activate — KAN-152 (ADR-0008 #1).
+   * Transition an existing upcoming cycle to active AND snapshot baselines for
+   * its issues, atomically. Member+ (lifecycle action, mirrors close/create).
+   */
+  app.post(
+    "/cycles/:id/activate",
+    {
+      preHandler: [requireCycleRole("id", "member")],
+      schema: { params: CycleIdParam },
+    },
+    async (request, _reply) =>
+      cycleService.activateCycle(request.params.id, request.member!.id),
+  );
+
+  /**
+   * POST /cycles/:id/baseline — KAN-152 (ADR-0008 #3).
+   * Explicit, audited re-baseline. OVERWRITES the baseline (the only path that
+   * does) and writes an ActivityLog `baseline_set` record per issue. Admin/PM
+   * only — re-baselining destroys the original commitment, so it is gated above
+   * the member tier used for normal planning.
+   */
+  app.post(
+    "/cycles/:id/baseline",
+    {
+      preHandler: [requireCycleRole("id", "pm")],
+      schema: { params: CycleIdParam, body: ReBaselineBody },
+    },
+    async (request, _reply) =>
+      cycleService.setBaseline({
+        cycleId: request.params.id,
+        issueIds: request.body.issueIds,
+        authorId: request.member!.id,
+        via: request.via,
       }),
   );
 

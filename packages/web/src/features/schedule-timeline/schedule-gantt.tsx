@@ -841,6 +841,12 @@ function GridLines({
 
 const MONTHS_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+/** KAN-152: signed whole-day variance, e.g. "+3d", "-2d", "on baseline". */
+function fmtVariance(days: number): string {
+  if (days === 0) return "on baseline";
+  return `${days > 0 ? "+" : ""}${days}d vs baseline`;
+}
+
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -941,6 +947,22 @@ function GanttTooltip({ row, x, y }: { row: ScheduleTimelineRow; x: number; y: n
       <TipField label="Forecast" value={`${fmtDate(row.forecastStart)} → ${fmtDate(row.forecastEnd)}`} />
       {row.baselineStart && (
         <TipField label="Baseline" value={`${fmtDate(row.baselineStart)} → ${fmtDate(row.baselineEnd)}`} />
+      )}
+      {/* KAN-152: on-read variance vs the frozen baseline. Positive = later than
+          the original commitment (bad); negative = ahead (good). */}
+      {row.planVsBaseline != null && (
+        <TipField
+          label="Plan vs base"
+          value={fmtVariance(row.planVsBaseline)}
+          valueColor={row.planVsBaseline > 0 ? "var(--bad)" : row.planVsBaseline < 0 ? "var(--ok)" : undefined}
+        />
+      )}
+      {row.forecastVsBaseline != null && (
+        <TipField
+          label="Fcst vs base"
+          value={fmtVariance(row.forecastVsBaseline)}
+          valueColor={row.forecastVsBaseline > 0 ? "var(--bad)" : row.forecastVsBaseline < 0 ? "var(--ok)" : undefined}
+        />
       )}
       <TipField label="Progress" value={`${row.progress}%`} valueColor={row.progress > 0 ? "var(--ok)" : undefined} />
       {slipping && slip != null && <TipField label="Slip" value={`+${slip}d`} valueColor="var(--bad)" />}

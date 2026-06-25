@@ -42,6 +42,8 @@ function makeRow(overrides: Partial<ScheduleTimelineRow> = {}): ScheduleTimeline
     deps: [],
     cycleId: null,
     cycleName: null,
+    planVsBaseline: null,
+    forecastVsBaseline: null,
     isNeighbor: false,
     ...overrides,
   };

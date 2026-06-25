@@ -549,6 +549,13 @@ export async function createCycle(
       })),
     });
 
+    // KAN-152 (ADR-0008 #1): if the cycle is created already-active WITH issues
+    // attached, snapshot their baselines in the SAME tx — atomic with creation.
+    // `now` is captured inside snapshotBaselines (Fix 4).
+    if (input.state === "active") {
+      await snapshotBaselines(tx, created.id);
+    }
+
     return created;
   });
 
@@ -570,6 +577,233 @@ export async function createCycle(
   }
 
   return cycle;
+}
+
+// ---------------------------------------------------------------------------
+// KAN-152 — Baseline snapshot on cycle activation (ADR-0008)
+// ---------------------------------------------------------------------------
+
+/**
+ * Snapshot the plan plane into the baseline plane for every issue attached to a
+ * cycle, INSIDE the caller's transaction (ADR-0008 #1 — atomic with activation).
+ *
+ * Immutability guard (ADR-0008 #2): only schedules whose `baselineSetAt IS NULL`
+ * are touched, so re-activating a cycle preserves the ORIGINAL commitment.
+ *
+ * dueDate-required guard (Fix 2 / judgment-day): a baseline requires a committed
+ * endpoint (dueDate). An issue with only startDate → no baseline (baselineSetAt
+ * stays null). This keeps variance well-defined: planVsBaseline and
+ * forecastVsBaseline are both derived from baselineEnd, so a null baselineEnd
+ * produces null variance — indistinguishable from "no baseline at all", and the
+ * ghost bar cannot render without an end. Requiring dueDate is the only safe
+ * choice. startDate is still copied when present (baselineStart may be non-null
+ * while baselineEnd is set).
+ *
+ * Returns the number of schedules baselined (for logging/telemetry).
+ */
+async function snapshotBaselines(
+  tx: Prisma.TransactionClient,
+  cycleId: string,
+): Promise<number> {
+  // Capture `now` inside the tx so baselineSetAt reflects commit-time closely
+  // (Fix 4 / round-2 judgment-day: avoids baselineSetAt predating updatedAt on slow tx).
+  const now = new Date();
+
+  const eligible = await tx.issueSchedule.findMany({
+    where: {
+      issue: { cycleId },
+      baselineSetAt: null,
+      dueDate: { not: null }, // requires the committed endpoint (Fix 2)
+    },
+    select: { issueId: true, startDate: true, dueDate: true },
+  });
+
+  // Parallelize within the tx — all rows are independent (Fix 3 / round-2).
+  await Promise.all(
+    eligible.map((s) =>
+      tx.issueSchedule.update({
+        where: { issueId: s.issueId },
+        data: {
+          baselineStart: s.startDate,
+          baselineEnd: s.dueDate,
+          baselineSetAt: now,
+        },
+      }),
+    ),
+  );
+
+  return eligible.length;
+}
+
+/**
+ * Activate an existing cycle (upcoming → active) AND snapshot baselines for its
+ * issues in ONE transaction (ADR-0008 #1). A cycle is never half-baselined.
+ *
+ * State guards (Fix 1 / judgment-day):
+ *   - cycle.state === "active"   → idempotent no-op: return the cycle as-is.
+ *     Avoids demoting the currently-live active cycle when called twice.
+ *   - cycle.state === "done"     → 409 INVALID_CYCLE_STATE. Reopening a closed
+ *     cycle via this path would silently kill the live active cycle. Use an
+ *     explicit reopen operation if that workflow is ever required.
+ *   - cycle.state === "upcoming" → proceed: demote-other + activate + snapshot.
+ */
+export async function activateCycle(cycleId: string, authorId?: string) {
+  // Select the full cycle row so the active→no-op branch returns the same
+  // shape as the tx.cycle.update result (Fix 1 / round-2 judgment-day).
+  const cycle = await prisma.cycle.findUnique({
+    where: { id: cycleId },
+  });
+  if (!cycle) throw new AppError(404, "CYCLE_NOT_FOUND", "Cycle not found");
+
+  // Idempotent: already active → return the full row without touching anything.
+  if (cycle.state === "active") return cycle;
+
+  // Guard: only upcoming → active is permitted.
+  if (cycle.state !== "upcoming") {
+    throw new AppError(
+      409,
+      "INVALID_CYCLE_STATE",
+      `Cannot activate a cycle in state "${cycle.state}". Only upcoming cycles may be activated.`,
+    );
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    // Single-active-cycle invariant: demote any other active cycle in the project.
+    await tx.cycle.updateMany({
+      where: { projectId: cycle.projectId, state: "active", id: { not: cycleId } },
+      data: { state: "done" },
+    });
+
+    const result = await tx.cycle.update({
+      where: { id: cycleId },
+      data: { state: "active" },
+    });
+
+    // ADR-0008 #1/#2 + Fix 2: atomic, immutable, dueDate-required baseline snapshot.
+    // `now` is captured inside snapshotBaselines (Fix 4).
+    await snapshotBaselines(tx, cycleId);
+
+    return result;
+  });
+
+  // NOTE: no dedicated `cycle.activated` SSE event yet — activation is rare and
+  // the Cycles/Gantt views already refetch on navigation. A typed event can be
+  // added with its listener if live activation feedback is needed later.
+  void authorId;
+
+  return updated;
+}
+
+/**
+ * Explicit re-baseline admin operation (ADR-0008 #3). UNLIKE activation, this
+ * OVERWRITES the baseline even when already set, and writes an audit record
+ * (who, when, previous baselineStart/End) via the existing ActivityLog. This is
+ * the ONLY path that overwrites a set baseline.
+ *
+ * Targets either every issue in a cycle (`cycleId`) and/or an explicit set of
+ * issue ids (`issueIds`). Issues with no plan dates are skipped (consistent with
+ * activation — no zero/epoch baseline). Runs in one transaction.
+ *
+ * Returns the number of baselines (re)written.
+ */
+export async function setBaseline(input: {
+  /** Required: defines scope + project boundary for the operation. */
+  cycleId: string;
+  /** Optional: restrict to specific issue ids within the cycle's project. */
+  issueIds?: string[];
+  authorId: string;
+  via?: string | null;
+}): Promise<{ count: number }> {
+  // cycleId is required when issueIds are provided so the service can scope
+  // them to the cycle's project (Fix 4 / judgment-day). This prevents a caller
+  // constructing issueIds from a foreign project and overwriting their baselines
+  // via the setBaseline route (which always passes cycleId from the URL param).
+  // Standalone issueIds without cycleId is therefore not supported.
+  const cycleRecord = await prisma.cycle.findUnique({
+    where: { id: input.cycleId! },
+    select: { id: true, projectId: true },
+  });
+  if (!cycleRecord) throw new AppError(404, "CYCLE_NOT_FOUND", "Cycle not found");
+
+  // Issue filter: always scoped to the cycle's projectId (Fix 4). ANDs with
+  // the issueIds list when provided — cross-project ids simply won't match.
+  const issueFilter: Prisma.IssueWhereInput = {
+    projectId: cycleRecord.projectId,
+    cycleId: input.cycleId,
+  };
+  if (input.issueIds && input.issueIds.length > 0) {
+    issueFilter.id = { in: input.issueIds };
+  }
+
+  const count = await prisma.$transaction(async (tx) => {
+    // Capture `now` inside the tx so baselineSetAt reflects commit-time closely
+    // (Fix 4 / round-2 judgment-day: avoids baselineSetAt predating updatedAt on slow tx).
+    const txNow = new Date();
+
+    // Overwrite even when a baseline already exists — requires dueDate (Fix 2):
+    // baseline requires the committed endpoint; startDate-only is dead data.
+    const targets = await tx.issueSchedule.findMany({
+      where: {
+        issue: issueFilter,
+        dueDate: { not: null }, // dueDate-required (Fix 2)
+      },
+      select: {
+        issueId: true,
+        startDate: true,
+        dueDate: true,
+        baselineStart: true,
+        baselineEnd: true,
+      },
+    });
+
+    // Guard: when issueIds were explicitly provided but none matched, the caller
+    // likely passed wrong/cross-project ids — surface an error rather than
+    // silently returning count:0 (Fix 2 / round-2 judgment-day). The whole-cycle
+    // path (no issueIds) may legitimately match 0 (no scheduled issues yet).
+    const explicitIds = input.issueIds && input.issueIds.length > 0;
+    if (explicitIds && targets.length === 0) {
+      throw new AppError(
+        400,
+        "NO_MATCHING_ISSUES",
+        "None of the provided issueIds belong to this cycle or have a dueDate",
+      );
+    }
+
+    // Parallelize per-issue work within the tx (Fix 3 / round-2 judgment-day).
+    await Promise.all(
+      targets.map(async (s) => {
+        await tx.issueSchedule.update({
+          where: { issueId: s.issueId },
+          data: {
+            baselineStart: s.startDate,
+            baselineEnd: s.dueDate,
+            baselineSetAt: txNow,
+          },
+        });
+
+        // Audit: capture previous baseline endpoints + who/when (ADR-0008 #3).
+        await tx.activityLog.create({
+          data: {
+            issueId: s.issueId,
+            memberId: input.authorId,
+            action: "baseline_set",
+            via: input.via ?? null,
+            details: {
+              previousBaselineStart: s.baselineStart?.toISOString() ?? null,
+              previousBaselineEnd: s.baselineEnd?.toISOString() ?? null,
+              newBaselineStart: s.startDate?.toISOString() ?? null,
+              newBaselineEnd: s.dueDate?.toISOString() ?? null,
+              cycleId: input.cycleId ?? null,
+            },
+          },
+        });
+      }),
+    );
+
+    return targets.length;
+  });
+
+  return { count };
 }
 
 /**

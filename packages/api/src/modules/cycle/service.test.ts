@@ -36,6 +36,14 @@ vi.mock("../../config/prisma.js", () => ({
       findMany: vi.fn(),
       updateMany: vi.fn(),
     },
+    issueSchedule: {
+      findMany: vi.fn(),
+      updateMany: vi.fn(),
+      update: vi.fn(),
+    },
+    activityLog: {
+      create: vi.fn(),
+    },
     project: {
       findFirst: vi.fn(),
       findUnique: vi.fn(),
@@ -49,7 +57,7 @@ vi.mock("../../config/prisma.js", () => ({
 
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
-import { createCycle, getCycle, closeCycle } from "./service.js";
+import { createCycle, getCycle, closeCycle, activateCycle, setBaseline } from "./service.js";
 import { makeTxMock } from "./__test-helpers__/tx-mock.js";
 
 const PROJECT = { id: "project-1", key: "ENG", workspaceId: "ws-1" };
@@ -451,5 +459,404 @@ describe("closeCycle() — Batch B9 (minimal ack default)", () => {
     const result = await closeCycle("cycle-1", { verbose: true });
 
     expect(result).toEqual(fullCycle);
+  });
+});
+
+// ── KAN-152: baseline snapshot on activation (ADR-0008 #1, #2, #3) ──────────
+
+const NOW = new Date("2026-05-01T12:00:00.000Z");
+
+describe("activateCycle() — baseline snapshot", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("BSL-1: snapshots baselines for in-cycle issues with plan dates, inside one tx", async () => {
+    vi.mocked(prisma.cycle.findUnique).mockResolvedValue({
+      id: "cycle-1",
+      state: "upcoming",
+      projectId: PROJECT.id,
+      project: { workspaceId: PROJECT.workspaceId },
+    } as any);
+
+    const tx = makeTxMock();
+    // Two eligible schedules (baselineSetAt null, at least one plan date)
+    vi.mocked(tx.issueSchedule.findMany).mockResolvedValue([
+      {
+        issueId: "i1",
+        startDate: new Date("2026-04-20"),
+        dueDate: new Date("2026-04-25"),
+        baselineSetAt: null,
+      },
+      {
+        issueId: "i2",
+        startDate: null,
+        dueDate: new Date("2026-04-28"),
+        baselineSetAt: null,
+      },
+    ] as any);
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => cb(tx));
+
+    await activateCycle("cycle-1");
+
+    // Cycle was transitioned to active inside the tx
+    expect(tx.cycle.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "cycle-1" },
+        data: expect.objectContaining({ state: "active" }),
+      }),
+    );
+
+    // Eligible-schedule query filters on this cycle, null baseline, and a date present
+    expect(tx.issueSchedule.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          issue: { cycleId: "cycle-1" },
+          baselineSetAt: null,
+        }),
+      }),
+    );
+
+    // One per-row update copying startDate→baselineStart, dueDate→baselineEnd
+    expect(tx.issueSchedule.update).toHaveBeenCalledTimes(2);
+    expect(tx.issueSchedule.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { issueId: "i1" },
+        data: expect.objectContaining({
+          baselineStart: new Date("2026-04-20"),
+          baselineEnd: new Date("2026-04-25"),
+          baselineSetAt: expect.any(Date),
+        }),
+      }),
+    );
+  });
+
+  it("BSL-2: re-activating an already-baselined cycle does NOT overwrite (immutability)", async () => {
+    vi.mocked(prisma.cycle.findUnique).mockResolvedValue({
+      id: "cycle-1",
+      state: "upcoming",
+      projectId: PROJECT.id,
+      project: { workspaceId: PROJECT.workspaceId },
+    } as any);
+
+    const tx = makeTxMock();
+    // No eligible schedules — every row already has baselineSetAt set, so the
+    // null-guarded findMany returns nothing.
+    vi.mocked(tx.issueSchedule.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => cb(tx));
+
+    await activateCycle("cycle-1");
+
+    expect(tx.issueSchedule.update).not.toHaveBeenCalled();
+  });
+
+  it("BSL-3: issues with no dueDate are skipped — WHERE filters dueDate NOT NULL (Fix 2)", async () => {
+    vi.mocked(prisma.cycle.findUnique).mockResolvedValue({
+      id: "cycle-1",
+      state: "upcoming",
+      projectId: PROJECT.id,
+      project: { workspaceId: PROJECT.workspaceId },
+    } as any);
+
+    const tx = makeTxMock();
+    // findMany already excludes no-dueDate schedules via the WHERE clause; assert
+    // that the query uses dueDate NOT NULL (not the old OR condition).
+    vi.mocked(tx.issueSchedule.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => cb(tx));
+
+    await activateCycle("cycle-1");
+
+    const call = vi.mocked(tx.issueSchedule.findMany).mock.calls[0]![0] as any;
+    expect(call.where.dueDate).toEqual({ not: null });
+    expect(call.where.OR).toBeUndefined();
+    expect(tx.issueSchedule.update).not.toHaveBeenCalled();
+  });
+});
+
+// ── Fix 1 (CRITICAL): state guard ────────────────────────────────────────────
+
+describe("activateCycle() — state guard (Fix 1)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("BSL-SG-1: throws 409 INVALID_CYCLE_STATE when cycle.state === 'done'", async () => {
+    vi.mocked(prisma.cycle.findUnique).mockResolvedValue({
+      id: "cycle-done",
+      state: "done",
+      projectId: PROJECT.id,
+    } as any);
+
+    await expect(activateCycle("cycle-done")).rejects.toMatchObject({
+      statusCode: 409,
+      code: "INVALID_CYCLE_STATE",
+    });
+
+    // The transaction must NOT be opened — no demotion of the live active cycle
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    // updateMany must also not be called directly (belt-and-suspenders)
+    expect(prisma.cycle.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("BSL-SG-2: returns a FULL cycle row idempotently when state === 'active' (no-op, no demotion)", async () => {
+    // The initial findUnique must select enough fields to be a full row, or
+    // the service must re-fetch. Either way the returned object must carry
+    // the same shape as the tx.cycle.update result (name, startDate, etc.).
+    const fullActiveRow = {
+      id: "cycle-active",
+      name: "Sprint 1",
+      state: "active",
+      projectId: PROJECT.id,
+      goal: null,
+      startDate: new Date("2026-05-01"),
+      endDate: new Date("2026-05-14"),
+      velocity: null,
+      closedAt: null,
+      createdAt: new Date("2026-04-28"),
+      updatedAt: new Date("2026-04-29"),
+    };
+    vi.mocked(prisma.cycle.findUnique).mockResolvedValue(fullActiveRow as any);
+
+    const result = await activateCycle("cycle-active");
+
+    // Must contain the full cycle fields — not a truncated {id, state, projectId} slice
+    expect((result as any).name).toBe("Sprint 1");
+    expect((result as any).startDate).toEqual(new Date("2026-05-01"));
+    expect((result as any).endDate).toEqual(new Date("2026-05-14"));
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+// ── Fix 2: dueDate-required guard ────────────────────────────────────────────
+
+describe("activateCycle() — dueDate-required baseline guard (Fix 2)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("BSL-DG-1: start-only schedule (dueDate null) is NOT baselined; dueDate-present IS baselined", async () => {
+    vi.mocked(prisma.cycle.findUnique).mockResolvedValue({
+      id: "cycle-1",
+      state: "upcoming",
+      projectId: PROJECT.id,
+    } as any);
+
+    const tx = makeTxMock();
+    // findMany returns only the dueDate-present row (WHERE clause enforces dueDate NOT NULL)
+    vi.mocked(tx.issueSchedule.findMany).mockResolvedValue([
+      {
+        issueId: "i-with-due",
+        startDate: new Date("2026-04-20"),
+        dueDate: new Date("2026-04-25"),
+        baselineSetAt: null,
+      },
+    ] as any);
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => cb(tx));
+
+    await activateCycle("cycle-1");
+
+    // The WHERE must filter dueDate NOT null (not the old OR condition)
+    const call = vi.mocked(tx.issueSchedule.findMany).mock.calls[0]![0] as any;
+    expect(call.where.dueDate).toEqual({ not: null });
+    // No OR on startDate/dueDate
+    expect(call.where.OR).toBeUndefined();
+
+    // Only the dueDate-present row is updated
+    expect(tx.issueSchedule.update).toHaveBeenCalledTimes(1);
+    expect(tx.issueSchedule.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { issueId: "i-with-due" } }),
+    );
+  });
+});
+
+// ── Fix 4: project-scoped issueIds in setBaseline ────────────────────────────
+
+describe("setBaseline() — project-scoped issueIds (Fix 4)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("BSL-PS-1: issueIds are scoped to the cycle's projectId AND cycleId (cross-project excluded)", async () => {
+    vi.mocked(prisma.cycle.findUnique).mockResolvedValue({
+      id: "cycle-1",
+      projectId: PROJECT.id,
+    } as any);
+
+    const tx = makeTxMock();
+    // Return one matching row so the empty-result guard does not fire;
+    // the test's purpose is to assert the WHERE filter shape.
+    vi.mocked(tx.issueSchedule.findMany).mockResolvedValue([
+      {
+        issueId: "i1",
+        startDate: new Date("2026-04-20"),
+        dueDate: new Date("2026-04-25"),
+        baselineStart: null,
+        baselineEnd: null,
+      },
+    ] as any);
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => cb(tx));
+
+    await setBaseline({
+      cycleId: "cycle-1",
+      issueIds: ["issue-a", "issue-b"],
+      authorId: "member-1",
+    });
+
+    const call = vi.mocked(tx.issueSchedule.findMany).mock.calls[0]![0] as any;
+    // The issue filter must scope to the cycle's projectId
+    expect(call.where.issue.projectId).toBe(PROJECT.id);
+    // AND to the cycle itself
+    expect(call.where.issue.cycleId).toBe("cycle-1");
+    // AND restrict to the provided issueIds
+    expect(call.where.issue.id).toEqual({ in: ["issue-a", "issue-b"] });
+  });
+
+  it("BSL-PS-2: throws 400 NO_MATCHING_ISSUES when issueIds are provided but none match (e.g. cross-project)", async () => {
+    vi.mocked(prisma.cycle.findUnique).mockResolvedValue({
+      id: "cycle-1",
+      projectId: PROJECT.id,
+    } as any);
+
+    const tx = makeTxMock();
+    // None of the provided issueIds belong to this cycle's project
+    vi.mocked(tx.issueSchedule.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => cb(tx));
+
+    await expect(
+      setBaseline({ cycleId: "cycle-1", issueIds: ["foreign-id"], authorId: "member-1" }),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      code: "NO_MATCHING_ISSUES",
+    });
+
+    // No update or audit written
+    expect(tx.issueSchedule.update).not.toHaveBeenCalled();
+    expect(tx.activityLog.create).not.toHaveBeenCalled();
+  });
+});
+
+// ── Fix 5: createCycle Path B snapshot assertion ──────────────────────────────
+
+describe("createCycle() — Path B baseline snapshot when state=active (Fix 5)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.project.findUnique).mockResolvedValue(PROJECT as any);
+  });
+
+  it("BSL-PB-1: snapshots baseline for an attached issue with dueDate inside the createCycle-active tx", async () => {
+    vi.mocked(prisma.issue.findMany).mockResolvedValue([
+      { key: "ENG-1", projectId: PROJECT.id },
+    ] as any);
+
+    const tx = makeTxMock({
+      cycleCreateResult: {
+        id: "cycle-new",
+        name: "Sprint",
+        state: "active",
+        projectId: PROJECT.id,
+        startDate: new Date("2026-04-20"),
+        endDate: new Date("2026-05-04"),
+      },
+    });
+
+    // The attached issue has a dueDate → eligible for baseline
+    vi.mocked(tx.issueSchedule.findMany).mockResolvedValue([
+      {
+        issueId: "i1",
+        startDate: new Date("2026-04-20"),
+        dueDate: new Date("2026-04-25"),
+        baselineSetAt: null,
+      },
+    ] as any);
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => cb(tx));
+
+    await createCycle(
+      PROJECT.id,
+      {
+        name: "Sprint",
+        startDate: new Date("2026-04-20"),
+        endDate: new Date("2026-05-04"),
+        state: "active",
+        attachIssueKeys: ["ENG-1"],
+      },
+      "author-1",
+    );
+
+    // Baseline snapshot was triggered inside the tx
+    expect(tx.issueSchedule.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          issue: { cycleId: "cycle-new" },
+          baselineSetAt: null,
+          dueDate: { not: null },
+        }),
+      }),
+    );
+    expect(tx.issueSchedule.update).toHaveBeenCalledOnce();
+    expect(tx.issueSchedule.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { issueId: "i1" },
+        data: expect.objectContaining({
+          baselineEnd: new Date("2026-04-25"),
+          baselineSetAt: expect.any(Date),
+        }),
+      }),
+    );
+  });
+});
+
+describe("setBaseline() — explicit re-baseline admin op (ADR-0008 #3)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("BSL-4: overwrites an existing baseline AND writes an audit record with previous values", async () => {
+    vi.mocked(prisma.cycle.findUnique).mockResolvedValue({
+      id: "cycle-1",
+      projectId: PROJECT.id,
+    } as any);
+
+    const tx = makeTxMock();
+    // Schedule already has a baseline set — setBaseline overwrites it.
+    vi.mocked(tx.issueSchedule.findMany).mockResolvedValue([
+      {
+        issueId: "i1",
+        startDate: new Date("2026-04-22"),
+        dueDate: new Date("2026-04-27"),
+        baselineStart: new Date("2026-04-20"),
+        baselineEnd: new Date("2026-04-25"),
+        baselineSetAt: new Date("2026-04-19"),
+      },
+    ] as any);
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => cb(tx));
+
+    await setBaseline({ cycleId: "cycle-1", authorId: "member-1" });
+
+    // Overwrites with current plan dates even though a baseline already existed
+    expect(tx.issueSchedule.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { issueId: "i1" },
+        data: expect.objectContaining({
+          baselineStart: new Date("2026-04-22"),
+          baselineEnd: new Date("2026-04-27"),
+          baselineSetAt: expect.any(Date),
+        }),
+      }),
+    );
+
+    // Audit record captures who + previous baseline values
+    expect(tx.activityLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          issueId: "i1",
+          memberId: "member-1",
+          action: "baseline_set",
+          details: expect.objectContaining({
+            previousBaselineStart: "2026-04-20T00:00:00.000Z",
+            previousBaselineEnd: "2026-04-25T00:00:00.000Z",
+          }),
+        }),
+      }),
+    );
   });
 });

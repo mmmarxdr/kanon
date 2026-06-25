@@ -61,6 +61,7 @@ enum ActivityAction {
   edited
   engram_synced
   document_added
+  baseline_set
 }
 
 enum DocumentKind {
