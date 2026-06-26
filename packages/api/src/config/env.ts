@@ -125,6 +125,11 @@ export const envSchema = z.object({
   // Observability slice 1: bearer token for GET /metrics scrape endpoint.
   // Required in production (enforced by superRefine below), optional in dev/test.
   METRICS_TOKEN: z.string().optional(),
+  // Integrations (ADR-0012): base64-encoded 32-byte key for AES-256-GCM
+  // encryption of per-user provider API keys at rest. Optional in dev/test;
+  // required and validated as exactly 32 decoded bytes in production via
+  // superRefine below. Generate with: `openssl rand -base64 32`.
+  INTEGRATION_ENCRYPTION_KEY: z.string().optional(),
   CORS_ORIGIN: z
     .string()
     .optional()
@@ -219,6 +224,31 @@ export const envSchemaWithProductionChecks = envSchema.superRefine((data, ctx) =
       path: ["METRICS_TOKEN"],
       message: "METRICS_TOKEN is required in production",
     });
+  }
+
+  // ADR-0012: integration credential encryption key. Required in production and
+  // must decode to exactly 32 bytes (AES-256). Validated here so a misconfigured
+  // key fails fast at boot rather than at first encrypt/decrypt.
+  if (!data.INTEGRATION_ENCRYPTION_KEY) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["INTEGRATION_ENCRYPTION_KEY"],
+      message: "INTEGRATION_ENCRYPTION_KEY is required in production",
+    });
+  } else {
+    // Buffer.from(_, "base64") never throws and silently drops out-of-alphabet
+    // characters, so validate the canonical 32-byte base64 shape (43 chars + one
+    // `=` pad) directly — this rejects stray characters that would otherwise
+    // decode to a different key than the operator configured.
+    const canonical32ByteBase64 = /^[A-Za-z0-9+/]{43}=$/;
+    if (!canonical32ByteBase64.test(data.INTEGRATION_ENCRYPTION_KEY)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["INTEGRATION_ENCRYPTION_KEY"],
+        message:
+          "INTEGRATION_ENCRYPTION_KEY must be a base64-encoded 32-byte key (e.g. `openssl rand -base64 32`)",
+      });
+    }
   }
 });
 
