@@ -473,9 +473,13 @@ export async function createCycle(
   // that don't need atomicity don't pay the tx overhead.
   if (!shouldAttach) {
     if (input.state === "active") {
+      // KAN-168: demote a prior active cycle to `upcoming`, NOT `done`. A direct
+      // →done here would strand it with closedAt=null/velocity=null and skip the
+      // close disposition. Returning it to upcoming keeps `done` reserved for the
+      // explicit close_cycle flow (which always sets closedAt).
       await prisma.cycle.updateMany({
         where: { projectId: project.id, state: "active" },
-        data: { state: "done" },
+        data: { state: "upcoming" },
       });
     }
     return prisma.cycle.create({
@@ -513,10 +517,11 @@ export async function createCycle(
 
   const cycle = await prisma.$transaction(async (tx) => {
     // Demote inside the tx so a later failure also rolls back the demotion.
+    // KAN-168: demote to `upcoming`, not `done` (see Path A note above).
     if (input.state === "active") {
       await tx.cycle.updateMany({
         where: { projectId: project.id, state: "active" },
-        data: { state: "done" },
+        data: { state: "upcoming" },
       });
     }
 
@@ -669,9 +674,13 @@ export async function activateCycle(cycleId: string, authorId?: string) {
 
   const updated = await prisma.$transaction(async (tx) => {
     // Single-active-cycle invariant: demote any other active cycle in the project.
+    // KAN-168: demote to `upcoming`, NOT `done`. Forcing a live active cycle
+    // straight to `done` left it with closedAt=null/velocity=null and incomplete
+    // issues stranded with no disposition — inconsistent with close_cycle. A
+    // `done` cycle must always have closedAt set, so demotion routes to upcoming.
     await tx.cycle.updateMany({
       where: { projectId: cycle.projectId, state: "active", id: { not: cycleId } },
-      data: { state: "done" },
+      data: { state: "upcoming" },
     });
 
     const result = await tx.cycle.update({

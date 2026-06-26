@@ -697,7 +697,7 @@ describe("computeForecast — critical path, float, slipDays, worstSlipDays", ()
     });
     const result = computeForecast(
       { nodes: [n], edges: [], milestones: [] },
-      { hoursPerDay: HOURS_PER_DAY }
+      { hoursPerDay: HOURS_PER_DAY, now: new Date("2026-05-01T00:00:00.000Z") }
     );
     const f = result.forecasts.get("A");
     expect(f!.slipDays).toBe(0);
@@ -705,23 +705,23 @@ describe("computeForecast — critical path, float, slipDays, worstSlipDays", ()
 
   it("worstSlipDays = max positive slip across all issues", () => {
     const start = new Date("2026-06-01T00:00:00.000Z");
-    // A slips 1 day (16h est, 1-day window → 2 day forecast, 1 slip)
+    // A slips 1 day (24h est → exclusive June 4, inclusive June 3 − due June 2 = 1)
     const nodeA = node({
       issueId: "A",
       startDate: start,
       dueDate: new Date("2026-06-02T00:00:00.000Z"),
-      estimateHours: 16,
+      estimateHours: 24,
     });
-    // B slips 3 days (32h est, 1-day window → 4 day forecast, 3 slip)
+    // B slips 3 days (40h est → exclusive June 6, inclusive June 5 − due June 2 = 3)
     const nodeB = node({
       issueId: "B",
       startDate: start,
       dueDate: new Date("2026-06-02T00:00:00.000Z"),
-      estimateHours: 32,
+      estimateHours: 40,
     });
     const result = computeForecast(
       { nodes: [nodeA, nodeB], edges: [], milestones: [] },
-      { hoursPerDay: HOURS_PER_DAY }
+      { hoursPerDay: HOURS_PER_DAY, now: new Date("2026-05-01T00:00:00.000Z") }
     );
     // worstSlipDays = max(1, 3) = 3
     expect(result.stats.worstSlipDays).toBe(3);
@@ -743,7 +743,7 @@ describe("computeForecast — critical path, float, slipDays, worstSlipDays", ()
     });
     const result = computeForecast(
       { nodes: [nodeA, nodeB], edges: [], milestones: [] },
-      { hoursPerDay: HOURS_PER_DAY }
+      { hoursPerDay: HOURS_PER_DAY, now: new Date("2026-05-01T00:00:00.000Z") }
     );
     expect(result.stats.worstSlipDays).toBe(0);
   });
@@ -840,14 +840,14 @@ describe("computeForecast — critical path, float, slipDays, worstSlipDays", ()
       ],
       milestones: [],
     };
-    const result = computeForecast(input, { hoursPerDay: HOURS_PER_DAY });
+    const result = computeForecast(input, { hoursPerDay: HOURS_PER_DAY, now: new Date("2026-05-01T00:00:00.000Z") });
 
     // Both cycle nodes must appear in forecasts (base entry from Step 1)
     expect(result.forecasts.has("A")).toBe(true);
     expect(result.forecasts.has("B")).toBe(true);
 
-    // Their forecastEnd must equal forecastEndFor(node, 8) = start + 1 day (no edge applied)
-    const expectedEnd = addDays(start, 1); // June 2
+    // KAN-166: forecastEnd is inclusive. 1-day task starting June1 → exclusive June2, inclusive June1.
+    const expectedEnd = new Date(start); // June 1 (inclusive end for 1-day task)
     expect(result.forecasts.get("A")!.forecastEnd!.toISOString()).toBe(expectedEnd.toISOString());
     expect(result.forecasts.get("B")!.forecastEnd!.toISOString()).toBe(expectedEnd.toISOString());
 
@@ -887,16 +887,16 @@ describe("computeForecast — milestoneRollups", () => {
     expect(r.computedStatus).toBe("at_risk");
   });
 
-  it("upcoming when far from target: forecastEnd (June 2) < target (June 20) − 3 days (June 17)", () => {
+  it("upcoming when far from target: forecastEnd (June 1) < target (June 20) − 3 days (June 17)", () => {
     // riskThreshold = June 20 - 3 = June 17
-    // forecastEnd = June 2 < June 17 → upcoming
+    // KAN-166: forecastEnd inclusive = June 1 (start) < June 17 → upcoming
     const target = new Date("2026-06-20T00:00:00.000Z");
     const input: ForecastGraphInput = {
       nodes: [nodeA],
       edges: [],
       milestones: [{ id: "m1", target, status: "upcoming", deliverableIssueIds: ["A"] }],
     };
-    const result = computeForecast(input, { hoursPerDay: HOURS_PER_DAY });
+    const result = computeForecast(input, { hoursPerDay: HOURS_PER_DAY, now: new Date("2026-05-01T00:00:00.000Z") });
     expect(result.milestoneRollups).toHaveLength(1);
     const r = result.milestoneRollups[0]!;
     expect(r.computedStatus).toBe("upcoming");
@@ -1120,15 +1120,15 @@ describe("forecastEndFor — interruptedDays (KAN-103 PR3)", () => {
       edges: [{ source: "pred", target: "succ", type: "FS", lagDays: 0 }],
       milestones: [],
     };
-    const result = computeForecast(input, { hoursPerDay: HOURS_PER_DAY });
+    const result = computeForecast(input, { hoursPerDay: HOURS_PER_DAY, now: new Date("2026-05-01T00:00:00.000Z") });
     const fPred = result.forecasts.get("pred");
     const fSucc = result.forecasts.get("succ");
     expect(fPred).toBeDefined();
     expect(fSucc).toBeDefined();
-    // pred forecastEnd = June 1 + 1 day estimate + 2 interrupted = June 4
-    expect(fPred!.forecastEnd?.toISOString()).toBe(addDays(start, 3).toISOString());
-    // succ forecastEnd = pred.forecastEnd (June 4) + 1 day = June 5
-    expect(fSucc!.forecastEnd?.toISOString()).toBe(addDays(start, 4).toISOString());
+    // pred: 1 day estimate + 2 interruptedDays = 3wd span → exclusive June 4, inclusive June 3
+    expect(fPred!.forecastEnd?.toISOString()).toBe(addDays(start, 2).toISOString());
+    // succ: starts at pred exclusive end (June 4), 1 day → exclusive June 5, inclusive June 4
+    expect(fSucc!.forecastEnd?.toISOString()).toBe(addDays(start, 3).toISOString());
   });
 });
 
@@ -1659,14 +1659,14 @@ describe("computeForecast — null-start and unschedulable node hardening", () =
       issueId: "A",
       startDate: start,
       dueDate: due,
-      estimateHours: 24, // 3 days → slip 2 days
+      estimateHours: 24, // 3 days → exclusive June 4, inclusive June 3 → slip 1 day
     });
     const result = computeForecast(
       { nodes: [n], edges: [], milestones: [] },
-      { hoursPerDay: HOURS_PER_DAY }
+      { hoursPerDay: HOURS_PER_DAY, now: new Date("2026-05-01T00:00:00.000Z") }
     );
     const f = result.forecasts.get("A");
-    expect(f!.slipDays).toBe(2);
+    expect(f!.slipDays).toBe(1);
   });
 
   it("scheduled node without dueDate: slipDays = 0 regardless of forecastEnd", () => {
@@ -1713,11 +1713,11 @@ describe("computeForecast — slips array hardening", () => {
       issueId: "slipping",
       startDate: start,
       dueDate: due,
-      estimateHours: 16, // 2 days → slip 1 day
+      estimateHours: 24, // 3 days → exclusive June 4, inclusive June 3 → slip 1 day
     });
     const result = computeForecast(
       { nodes: [n], edges: [], milestones: [] },
-      { hoursPerDay: HOURS_PER_DAY }
+      { hoursPerDay: HOURS_PER_DAY, now: new Date("2026-05-01T00:00:00.000Z") }
     );
     expect(result.slips).toHaveLength(1);
     const s = result.slips[0]!;
@@ -1733,7 +1733,7 @@ describe("computeForecast — slips array hardening", () => {
     const n = node({ issueId: "ontime", startDate: start, dueDate: due, estimateHours: 8 });
     const result = computeForecast(
       { nodes: [n], edges: [], milestones: [] },
-      { hoursPerDay: HOURS_PER_DAY }
+      { hoursPerDay: HOURS_PER_DAY, now: new Date("2026-05-01T00:00:00.000Z") }
     );
     expect(result.slips).toHaveLength(0);
   });
@@ -1752,11 +1752,11 @@ describe("computeForecast — slips array hardening", () => {
       issueId: "late",
       startDate: start,
       dueDate: new Date("2026-06-02T00:00:00.000Z"),
-      estimateHours: 16,
+      estimateHours: 24, // 3 days → inclusive June 3 > due June 2 → slip > 0
     });
     const result = computeForecast(
       { nodes: [nOnTime, nLate], edges: [], milestones: [] },
-      { hoursPerDay: HOURS_PER_DAY }
+      { hoursPerDay: HOURS_PER_DAY, now: new Date("2026-05-01T00:00:00.000Z") }
     );
     expect(result.slips).toHaveLength(1);
     expect(result.slips[0]!.issueId).toBe("late");
@@ -1765,30 +1765,32 @@ describe("computeForecast — slips array hardening", () => {
   it("worstSlipDays: when two issues slip, max is taken (not just the last update)", () => {
     // Kills mutants on line 372: `if (true)` would always overwrite worstSlipDays → last one wins.
     // `>= 0` would set worstSlipDays to 0-slip issues.
+    // Inclusive slip: n1(24h→June3,slip=1), n2(40h→June5,slip=3), n3(24h→June3,slip=1).
+    // "last wins" mutant: n3 is last → worst=1, not 3. ✓ kills mutant.
     const start = new Date("2026-06-01T00:00:00.000Z");
     const n1 = node({
       issueId: "n1",
       startDate: start,
       dueDate: new Date("2026-06-02T00:00:00.000Z"),
-      estimateHours: 16,
-    }); // slip=1
+      estimateHours: 24,
+    }); // slip=1 (inclusive June 3 − due June 2 = 1)
     const n2 = node({
       issueId: "n2",
       startDate: start,
       dueDate: new Date("2026-06-02T00:00:00.000Z"),
       estimateHours: 40,
-    }); // slip=4
+    }); // slip=3 (inclusive June 5 − due June 2 = 3)
     const n3 = node({
       issueId: "n3",
       startDate: start,
       dueDate: new Date("2026-06-02T00:00:00.000Z"),
       estimateHours: 24,
-    }); // slip=2
+    }); // slip=1 (inclusive June 3 − due June 2 = 1)
     const result = computeForecast(
       { nodes: [n1, n2, n3], edges: [], milestones: [] },
-      { hoursPerDay: HOURS_PER_DAY }
+      { hoursPerDay: HOURS_PER_DAY, now: new Date("2026-05-01T00:00:00.000Z") }
     );
-    expect(result.stats.worstSlipDays).toBe(4);
+    expect(result.stats.worstSlipDays).toBe(3);
   });
 
   it("criticalCount: only critical issues count (not all issues)", () => {
@@ -1831,14 +1833,15 @@ describe("computeForecast — opts handling", () => {
   it("hoursPerDay default=8 when opts is undefined", () => {
     // OptionalChaining mutant: opts.hoursPerDay ?? 8 → throws if opts is undefined.
     // LogicalOperator mutant: opts?.hoursPerDay && 8 → 0 when hoursPerDay=0 (but we pass undefined).
-    const start = new Date("2026-06-01T00:00:00.000Z");
+    // Use a future start so no anchoring side-effect if now ever defaults internally.
+    const start = new Date("2027-06-01T00:00:00.000Z");
     const n = node({ issueId: "A", startDate: start, estimateHours: 8 });
     // Pass no opts at all
     const result = computeForecast({ nodes: [n], edges: [], milestones: [] });
     const f = result.forecasts.get("A");
     expect(f).toBeDefined();
-    // With default 8h/day, 8h estimate = 1 day
-    expect(f!.forecastEnd?.toISOString()).toBe(addDays(start, 1).toISOString());
+    // With default 8h/day, 8h estimate = 1 day → inclusive forecastEnd = start itself (single day).
+    expect(f!.forecastEnd?.toISOString()).toBe(start.toISOString());
   });
 
   it("atRiskBufferDays default=3 when opts is undefined (null-target milestone)", () => {
@@ -1857,11 +1860,15 @@ describe("computeForecast — opts handling", () => {
     // This kills the LogicalOperator mutant for hoursPerDay: opts?.hoursPerDay && 8
     // When opts.hoursPerDay=4: && 8 → 4 && 8 = 8 (truthy → 8), but correct is 4.
     // 8h/4hpd = 2 days; with mutant (hpd=8): 8h/8 = 1 day ← DIFFERENT
+    // Inclusive forecastEnd: exclusive = June3, inclusive = June2 = addDays(start,1).
     const start = new Date("2026-06-01T00:00:00.000Z");
     const n = node({ issueId: "A", startDate: start, estimateHours: 8 });
-    const result = computeForecast({ nodes: [n], edges: [], milestones: [] }, { hoursPerDay: 4 });
+    const result = computeForecast(
+      { nodes: [n], edges: [], milestones: [] },
+      { hoursPerDay: 4, now: new Date("2026-05-01T00:00:00.000Z") }
+    );
     const f = result.forecasts.get("A");
-    expect(f!.forecastEnd?.toISOString()).toBe(addDays(start, 2).toISOString());
+    expect(f!.forecastEnd?.toISOString()).toBe(addDays(start, 1).toISOString());
   });
 
   it("custom atRiskBufferDays: buffer=1 → tighter risk window", () => {
@@ -1871,27 +1878,30 @@ describe("computeForecast — opts handling", () => {
     // Mutant opts.atRiskBufferDays ?? 3 → throws on undefined opts. But here opts is defined.
     // The real kill is opts?.atRiskBufferDays vs opts.atRiskBufferDays (optional chaining).
     // When opts is provided but atRiskBufferDays is undefined → defaults to 3.
+    // Inclusive forecastEnd for A (8h/8hpd=1day): exclusive June2, inclusive June1 = nodeStart2.
+    // target June3. atRiskBufferDays=0: threshold=June3; June1 < June3 → upcoming.
+    // atRiskBufferDays=2: threshold=June1; June1 >= June1 → at_risk.
     const nodeStart2 = new Date("2026-06-01T00:00:00.000Z");
-    const n = node({ issueId: "A", startDate: nodeStart2, estimateHours: 8 }); // end = June 2
+    const n = node({ issueId: "A", startDate: nodeStart2, estimateHours: 8 }); // inclusive end = June1
     const target = new Date("2026-06-03T00:00:00.000Z");
-    // atRiskBufferDays=0: threshold = June3; June2 < June3 → upcoming
+    // atRiskBufferDays=0: threshold = June3; inclusive June1 < June3 → upcoming
     const resultNoBuffer = computeForecast(
       {
         nodes: [n],
         edges: [],
         milestones: [{ id: "m1", target, status: "upcoming", deliverableIssueIds: ["A"] }],
       },
-      { hoursPerDay: HOURS_PER_DAY, atRiskBufferDays: 0 }
+      { hoursPerDay: HOURS_PER_DAY, atRiskBufferDays: 0, now: new Date("2026-05-01T00:00:00.000Z") }
     );
     expect(resultNoBuffer.milestoneRollups[0]!.computedStatus).toBe("upcoming");
-    // atRiskBufferDays=2: threshold=June1; June2 >= June1 → at_risk
+    // atRiskBufferDays=2: threshold=June1; inclusive June1 >= June1 → at_risk
     const resultBuffer2 = computeForecast(
       {
         nodes: [n],
         edges: [],
         milestones: [{ id: "m1", target, status: "upcoming", deliverableIssueIds: ["A"] }],
       },
-      { hoursPerDay: HOURS_PER_DAY, atRiskBufferDays: 2 }
+      { hoursPerDay: HOURS_PER_DAY, atRiskBufferDays: 2, now: new Date("2026-05-01T00:00:00.000Z") }
     );
     expect(resultBuffer2.milestoneRollups[0]!.computedStatus).toBe("at_risk");
   });
@@ -1984,9 +1994,10 @@ describe("applyEdge + computeForecast — blocks treated as non-structural harde
     // If blocks filter is removed (mutant: structuralEdges = edges), then
     // blocks A→B would act as an FS dependency → B.forecastStart pushed to A.forecastEnd.
     // Correct: blocks is ignored → B keeps its own startDate (June1).
+    // Inclusive B forecastEnd: 8h/8hpd=1day, exclusive June2, inclusive June1 = start.
     const start = new Date("2026-06-01T00:00:00.000Z");
-    const nA = node({ issueId: "A", startDate: start, estimateHours: 40 }); // 5 days → end June6
-    const nB = node({ issueId: "B", startDate: start, estimateHours: 8 }); // 1 day → end June2
+    const nA = node({ issueId: "A", startDate: start, estimateHours: 40 }); // 5 days
+    const nB = node({ issueId: "B", startDate: start, estimateHours: 8 }); // 1 day → inclusive June1
 
     const result = computeForecast(
       {
@@ -1994,13 +2005,13 @@ describe("applyEdge + computeForecast — blocks treated as non-structural harde
         edges: [{ source: "A", target: "B", type: "blocks", lagDays: 0 }],
         milestones: [],
       },
-      { hoursPerDay: HOURS_PER_DAY }
+      { hoursPerDay: HOURS_PER_DAY, now: new Date("2026-05-01T00:00:00.000Z") }
     );
 
     const fB = result.forecasts.get("B");
-    // Correct: blocks ignored → B forecastStart = June1, forecastEnd = June2
+    // Correct: blocks ignored → B forecastStart = June1, forecastEnd (inclusive) = June1
     expect(fB!.forecastStart!.toISOString()).toBe(start.toISOString());
-    expect(fB!.forecastEnd!.toISOString()).toBe(addDays(start, 1).toISOString());
+    expect(fB!.forecastEnd!.toISOString()).toBe(start.toISOString());
   });
 
   it("backwardPass: blocks A→B does NOT affect lateFinish propagation (treated as non-edge)", () => {
@@ -2402,9 +2413,11 @@ describe("effectiveStartFor (KAN-145)", () => {
     expect(effectiveStartFor(n, now)!.toISOString()).toBe(future.toISOString());
   });
 
-  it("non-in_progress (backlog) with past plan start → NOT anchored", () => {
+  it("non-in_progress (backlog) with past plan start → anchored (KAN-167: all non-terminal states)", () => {
+    // KAN-167: anchoring now applies to ALL non-terminal states (not just in_progress).
+    // backlog is non-terminal → past start gets anchored to now.
     const n = node({ issueId: "A", startDate: past, state: "backlog" });
-    expect(effectiveStartFor(n, now)!.toISOString()).toBe(past.toISOString());
+    expect(effectiveStartFor(n, now)!.toISOString()).toBe(now.toISOString());
   });
 
   it("no now provided → keeps plan start (backward compatible)", () => {
@@ -2452,7 +2465,9 @@ describe("forecastEndFor — in_progress anchoring (KAN-145)", () => {
     );
   });
 
-  it("backlog node ignores now (plan-start based even if overdue)", () => {
+  it("backlog node with past start anchors to now (KAN-167)", () => {
+    // KAN-167: backlog is non-terminal → effectiveStart = now when startDate < now.
+    // forecastEndFor anchors: effective start = now (June10), 16h/8hpd = 2 days → June12.
     const start = new Date("2026-06-01T00:00:00.000Z");
     const n = node({
       issueId: "A",
@@ -2461,7 +2476,7 @@ describe("forecastEndFor — in_progress anchoring (KAN-145)", () => {
       state: "backlog",
     });
     expect(forecastEndFor(n, HOURS_PER_DAY, now)!.toISOString()).toBe(
-      addDays(start, 2).toISOString(),
+      addDays(now, 2).toISOString(),
     );
   });
 });
@@ -2487,8 +2502,8 @@ describe("computeForecast — overdue in_progress shows positive slip (KAN-145)"
     const f = anchored.forecasts.get("A")!;
     // forecastStart anchored to now (not the past plan start June 1)
     expect(f.forecastStart!.toISOString()).toBe(now.toISOString());
-    // forecastEnd is now + 2 days = June 12 > due June 4 → positive slip
-    expect(f.forecastEnd!.toISOString()).toBe(addDays(now, 2).toISOString());
+    // forecastEnd (inclusive): exclusive = now+2 = June12, inclusive = now+1 = June11 > due June4 → positive slip
+    expect(f.forecastEnd!.toISOString()).toBe(addDays(now, 1).toISOString());
     expect(f.slipDays).toBeGreaterThan(0);
     // forecastEnd is in the future of now, never in the past
     expect(f.forecastEnd!.getTime()).toBeGreaterThan(now.getTime());
@@ -2548,9 +2563,12 @@ describe("forecastEndFor — progress reduces remaining (KAN-146)", () => {
 
 describe("computeForecast — progress-reduced span survives edge propagation", () => {
   it("FS successor that is 75% done keeps its reduced duration when pushed", () => {
+    // B pushed to start after A (June2). B: 80h/75%=20h remaining → 3 working days exclusive.
+    // forecastEnd exclusive = June5, inclusive = June4. span = (June4-June2)/day = 2.
+    // With now=May1: June1 > May1 → no anchoring for B. B starts at June1 initially, pushed to June2.
     const start = new Date("2026-06-01T00:00:00.000Z");
-    const a = node({ issueId: "A", startDate: start, estimateHours: 8 }); // 1 day → ends June 2
-    // B: 80h estimate but 75% done, no logged hours → remaining 20h → span ceil(20/8)=3 days.
+    const a = node({ issueId: "A", startDate: start, estimateHours: 8 }); // 1 day → exclusive June2
+    // B: 80h estimate but 75% done, no logged hours → remaining 20h → ceil(20/8)=3 days.
     const b = node({
       issueId: "B",
       startDate: start,
@@ -2564,14 +2582,14 @@ describe("computeForecast — progress-reduced span survives edge propagation", 
         edges: [{ source: "A", target: "B", type: "FS", lagDays: 0 }],
         milestones: [],
       },
-      { hoursPerDay: HOURS_PER_DAY },
+      { hoursPerDay: HOURS_PER_DAY, now: new Date("2026-05-01T00:00:00.000Z") },
     );
     const fb = result.forecasts.get("B")!;
     const spanDays = Math.round(
       (fb.forecastEnd!.getTime() - fb.forecastStart!.getTime()) / 86_400_000,
     );
-    // Pushed to start after A (June 2), span stays 3 days (reduced), NOT 10 (full estimate).
-    expect(spanDays).toBe(3);
+    // Pushed to start June2, inclusive end June4 → span (June4-June2)/day = 2 (reduced, NOT 10 full).
+    expect(spanDays).toBe(2);
   });
 });
 

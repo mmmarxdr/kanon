@@ -188,19 +188,46 @@ export async function reconcileIssueTime(
       });
     }
 
-    // Step 4: stamp timeConfirmedAt
-    await tx.issue.update({
-      where: { id: issueId },
-      data: { timeConfirmedAt: now },
-    });
-
-    // Step 5: read final TimeEntry set inside the transaction for consistency
+    // Step 4: read the final TimeEntry set inside the transaction for
+    // consistency. createdAt is selected so Step 5 can stamp timeConfirmedAt
+    // strictly AFTER the newest entry.
     const entries = await tx.timeEntry.findMany({
       where: { issueId },
-      select: { id: true, hours: true, status: true, sourceWorkLogId: true },
+      select: {
+        id: true,
+        hours: true,
+        status: true,
+        sourceWorkLogId: true,
+        createdAt: true,
+      },
     });
 
-    return { finalEntries: entries, confirmedAt: now };
+    // Step 5: stamp timeConfirmedAt STRICTLY AFTER every entry's createdAt.
+    // KAN-165: the promoted/manual entries created above get their createdAt from
+    // the DB clock DURING this tx, i.e. AFTER the JS `now` captured before the tx
+    // opened. checkReconciliation flags an entry stale when
+    // `createdAt >= timeConfirmedAt` (the `>=` is intentional so a brand-new entry
+    // from a LATER reconcile counts as stale). Stamping timeConfirmedAt = now
+    // would therefore mark THIS reconcile's own just-created entries stale and
+    // re-block the review→done gate, forcing a second no-op reconcile. Stamp it
+    // 1ms past the newest entry so every entry created in this reconcile is
+    // strictly older (not stale), while a genuinely later entry stays > and stale.
+    // Bound: holds at millisecond resolution; the +1ms guard cannot distinguish a
+    // concurrent entry created within the same JS millisecond (Postgres timestamptz
+    // is microsecond, JS Date truncates to ms) — acceptable given reconcile is a
+    // deliberate single-user confirm action.
+    const latestMs = entries.reduce(
+      (max, e) => Math.max(max, e.createdAt.getTime()),
+      now.getTime(),
+    );
+    const confirmedAt = new Date(latestMs + 1);
+
+    await tx.issue.update({
+      where: { id: issueId },
+      data: { timeConfirmedAt: confirmedAt },
+    });
+
+    return { finalEntries: entries, confirmedAt };
   });
 
   const totalHours = finalEntries.reduce(

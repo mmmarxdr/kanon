@@ -281,6 +281,47 @@ describe("createCycle() — Batch B4 (atomic attachIssueKeys)", () => {
     // Demotion must run on the tx — not the global prisma — for atomicity
     expect(tx.cycle.updateMany).toHaveBeenCalledOnce();
     expect(prisma.cycle.updateMany).not.toHaveBeenCalled();
+    // KAN-168: demote state must be "upcoming", never "done"
+    const demoteCall = vi.mocked(tx.cycle.updateMany).mock.calls[0]![0] as any;
+    expect(demoteCall.data.state).toBe("upcoming");
+  });
+
+  it("B4.8 — state=active WITHOUT attachIssueKeys demotes other active cycle on prisma directly (KAN-168)", async () => {
+    // Path A: no attachIssueKeys → no transaction → demotion goes directly through
+    // prisma (not tx). If production code wrote state: "done" here the last
+    // assertion would fail, catching a regression of the KAN-168 fix.
+    vi.mocked(prisma.cycle.create).mockResolvedValue({
+      id: "cycle-new",
+      name: "Sprint",
+      state: "active",
+      projectId: PROJECT.id,
+      startDate: new Date("2026-04-20"),
+      endDate: new Date("2026-05-04"),
+    } as any);
+
+    await createCycle(
+      "ENG",
+      {
+        name: "Sprint",
+        state: "active",
+        startDate: new Date("2026-04-20"),
+        endDate: new Date("2026-05-04"),
+        // No attachIssueKeys → Path A branch runs (no tx)
+      } as any,
+      "member-1",
+    );
+
+    // Path A: no transaction opened
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    // Demotion goes directly through prisma with state: "upcoming" (KAN-168)
+    expect(prisma.cycle.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { state: "upcoming" },
+      }),
+    );
+    // Explicit value guard: test fails if production writes state: "done"
+    const demoteCallA = vi.mocked(prisma.cycle.updateMany).mock.calls[0]![0] as any;
+    expect(demoteCallA.data.state).toBe("upcoming");
   });
 });
 
@@ -570,6 +611,46 @@ describe("activateCycle() — baseline snapshot", () => {
     expect(call.where.dueDate).toEqual({ not: null });
     expect(call.where.OR).toBeUndefined();
     expect(tx.issueSchedule.update).not.toHaveBeenCalled();
+  });
+});
+
+// ── KAN-168: demote prior active cycle to `upcoming`, never `done` ───────────
+
+describe("activateCycle() — demotes prior active to upcoming (KAN-168)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("demotes the other active cycle with state:'upcoming' (NOT 'done'/closedAt:null)", async () => {
+    vi.mocked(prisma.cycle.findUnique).mockResolvedValue({
+      id: "cycle-b",
+      state: "upcoming",
+      projectId: PROJECT.id,
+      project: { workspaceId: PROJECT.workspaceId },
+    } as any);
+
+    const tx = makeTxMock();
+    vi.mocked(tx.issueSchedule.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => cb(tx));
+
+    await activateCycle("cycle-b");
+
+    // The single-active-cycle demotion must route the prior active cycle to
+    // `upcoming` — forcing it to `done` would leave closedAt/velocity null and
+    // strand its incomplete issues with no close disposition.
+    expect(tx.cycle.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          projectId: PROJECT.id,
+          state: "active",
+          id: { not: "cycle-b" },
+        }),
+        data: { state: "upcoming" },
+      }),
+    );
+    // Guard: the demotion must never write a terminal `done` (which requires closedAt).
+    const demoteCall = vi.mocked(tx.cycle.updateMany).mock.calls[0]![0] as any;
+    expect(demoteCall.data.state).not.toBe("done");
   });
 });
 

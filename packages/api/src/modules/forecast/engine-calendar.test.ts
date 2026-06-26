@@ -216,8 +216,8 @@ describe("computeForecast — working calendar", () => {
 
   it("a dependency chain with SATURDAY start produces correct concrete dates, floatDays, and critical", () => {
     // Node A starts Saturday 2026-06-27 (should snap to Mon 2026-06-29).
-    // A: 8h = 1 working day → forecastStart Mon 06-29, forecastEnd Tue 06-30.
-    // B depends on A via FS lag=0: starts Tue 06-30, 8h = 1 day → ends Wed 07-01.
+    // A: 8h = 1 working day → forecastStart Mon 06-29, exclusive Tue 06-30, inclusive Mon 06-29.
+    // B depends on A via FS lag=0: starts Tue 06-30 (A exclusive), 8h = 1 day → exclusive Wed 07-01, inclusive Tue 06-30.
     // Both are on the critical path → floatDays=0, critical=true.
     const nodes: ForecastNode[] = [
       node({ issueId: "a", startDate: utc("2026-06-27"), estimateHours: 8, state: "todo" }),
@@ -232,13 +232,13 @@ describe("computeForecast — working calendar", () => {
     const a = res.forecasts.get("a")!;
     const b = res.forecasts.get("b")!;
 
-    // A: snapped to Mon 06-29, 1 working day → Tue 06-30
+    // A: snapped to Mon 06-29, 1 working day → inclusive Mon 06-29
     expect(isoOf(a.forecastStart!)).toBe("2026-06-29");
-    expect(isoOf(a.forecastEnd!)).toBe("2026-06-30");
+    expect(isoOf(a.forecastEnd!)).toBe("2026-06-29");
 
-    // B: constrained by A → starts Tue 06-30, 1 working day → Wed 07-01
+    // B: starts Tue 06-30 (A exclusive), 1 working day → inclusive Tue 06-30
     expect(isoOf(b.forecastStart!)).toBe("2026-06-30");
-    expect(isoOf(b.forecastEnd!)).toBe("2026-07-01");
+    expect(isoOf(b.forecastEnd!)).toBe("2026-06-30");
 
     // Both on critical path
     expect(a.critical).toBe(true);
@@ -249,7 +249,7 @@ describe("computeForecast — working calendar", () => {
 
   it("a node with a HOLIDAY startDate has correct forecastStart and floatDays", () => {
     // Holiday Wednesday 2026-06-24 → snaps to Thu 06-25.
-    // 8h = 1 working day → forecastEnd Fri 06-26.
+    // 8h = 1 working day → exclusive Fri 06-26, inclusive Thu 06-25.
     const cal: WorkingCalendar = {
       workDays: [1, 2, 3, 4, 5],
       holidays: new Set(["2026-06-24"]),
@@ -263,15 +263,15 @@ describe("computeForecast — working calendar", () => {
     );
     const a = res.forecasts.get("a")!;
     expect(isoOf(a.forecastStart!)).toBe("2026-06-25"); // snapped off holiday
-    expect(isoOf(a.forecastEnd!)).toBe("2026-06-26"); // Thu + 1 wd = Fri
+    expect(isoOf(a.forecastEnd!)).toBe("2026-06-25"); // Thu + 1 wd exclusive=Fri, inclusive=Thu
     expect(a.floatDays).toBe(0);
     expect(a.critical).toBe(true);
   });
 
   it("a dependency chain across two weekends does not drift onto weekends (concrete dates)", () => {
-    // A: starts Thu 06-25, 5 days (40h/8) → ends Thu 07-02 (crosses weekend 1).
-    // B: starts Thu 07-02, 5 days → ends Thu 07-09 (crosses weekend 2).
-    // Both must land on working days; no weekend drift.
+    // A: starts Thu 06-25, 5 days (40h/8) → exclusive Thu 07-02, inclusive Wed 07-01 (crosses weekend 1).
+    // B: starts Thu 07-02 (A exclusive), 5 days → exclusive Thu 07-09, inclusive Wed 07-08 (crosses weekend 2).
+    // Both inclusive ends must land on working days; no weekend drift.
     const nodes: ForecastNode[] = [
       node({ issueId: "a", startDate: utc("2026-06-25"), estimateHours: 40, state: "todo" }),
       node({ issueId: "b", startDate: utc("2026-06-25"), estimateHours: 40, state: "todo" }),
@@ -284,13 +284,13 @@ describe("computeForecast — working calendar", () => {
     const a = res.forecasts.get("a")!;
     const b = res.forecasts.get("b")!;
 
-    // A: Thu 06-25 + 5 wd = Thu 07-02
+    // A: Thu 06-25 + 5 wd exclusive=Thu 07-02, inclusive=Wed 07-01
     expect(isoOf(a.forecastStart!)).toBe("2026-06-25");
-    expect(isoOf(a.forecastEnd!)).toBe("2026-07-02");
+    expect(isoOf(a.forecastEnd!)).toBe("2026-07-01");
 
-    // B: starts Thu 07-02, +5 wd = Thu 07-09
+    // B: starts Thu 07-02 (A exclusive), +5 wd exclusive=Thu 07-09, inclusive=Wed 07-08
     expect(isoOf(b.forecastStart!)).toBe("2026-07-02");
-    expect(isoOf(b.forecastEnd!)).toBe("2026-07-09");
+    expect(isoOf(b.forecastEnd!)).toBe("2026-07-08");
 
     for (const id of ["a", "b"]) {
       const e = res.forecasts.get(id)!;
@@ -301,7 +301,7 @@ describe("computeForecast — working calendar", () => {
 
   it("with no calendar, reproduces calendar-day behaviour (lands on a weekend)", () => {
     // No calendar → every day is a working day → addDays. A 2-day task from
-    // Friday lands on Sunday (calendar-day arithmetic preserved).
+    // Friday: exclusive Sunday 06-28, inclusive Saturday 06-27.
     const nodes: ForecastNode[] = [
       node({ issueId: "a", startDate: utc("2026-06-26"), estimateHours: 16, state: "todo" }),
     ];
@@ -310,7 +310,7 @@ describe("computeForecast — working calendar", () => {
       { hoursPerDay: 8, now: utc("2026-06-01") },
     );
     const entry = res.forecasts.get("a")!;
-    // Friday 06-26 + 2 calendar days = Sunday 06-28.
-    expect(isoOf(entry.forecastEnd!)).toBe("2026-06-28");
+    // Friday 06-26 + 2 calendar days exclusive = Sunday 06-28, inclusive = Saturday 06-27.
+    expect(isoOf(entry.forecastEnd!)).toBe("2026-06-27");
   });
 });
