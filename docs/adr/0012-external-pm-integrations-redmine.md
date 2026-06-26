@@ -78,11 +78,14 @@ out-of-band and will be rotated):
    `capabilities()`, discovery (`listProjects/listStatuses/listVersions/whoAmI`), and outbound
    writes (`ensureProject`, `ensureCycle`, `pushIssue`). Inbound is a separate port (decision 8).
 
-4. **Two-level connection + per-user credentials.** An `IntegrationConnection` is
-   instance-level (Kanon instance ↔ one Redmine instance: `baseUrl`, `provider`, `statusMap`,
-   optional `projectId` scope). Each member supplies **their own Redmine API key**, stored
-   **encrypted** in `MemberIntegrationCredential`. On connect we call Redmine `/my/account.json`
-   to resolve and persist the member's `externalUserId` — this binds KanonMember ↔ RedmineUser
+4. **Workspace-level connection + per-user credentials.** An `IntegrationConnection` is
+   **scoped to one workspace** (one Redmine per Kanon workspace — covers "one company, one
+   Redmine"; per-project connections are a later extension). It holds `baseUrl`, `provider`,
+   `serviceCredentialId` (the admin's credential, used for discovery + as the optional write
+   fallback), `discoveredStatuses` (cached `{id,name}` for the mapping UI), and the status maps
+   (decision 10). Each member supplies **their own Redmine API key**, stored **encrypted** in
+   `MemberIntegrationCredential`. On connect we call Redmine `/my/account.json` to resolve and
+   persist the member's `externalUserId`/`externalLogin` — this binds KanonMember ↔ RedmineUser
    **without admin access or email matching**, and makes every outbound write attributable to
    the real user.
 
@@ -138,6 +141,108 @@ out-of-band and will be rotated):
    attribution). An optional **workspace service token** on `IntegrationConnection` may be enabled
    later as a bot fallback; it is off by default to keep attribution honest and blast radius low.
 
+10. **Admin configuration + per-user connect (UI).** The integration is **opt-in per workspace**
+    and inert until configured — nothing breaks for a workspace without a connection. Setup is a
+    workspace-admin settings screen (`web`), backed by integration endpoints:
+    - **Connect**: admin enters `baseUrl` + their Redmine API key → Kanon validates
+      (`/my/account.json`) and runs **discovery** (`/issue_statuses`, `/projects`, `/trackers`).
+    - **Status mapping (mandatory)**: Kanon shows ALL discovered Redmine statuses; the admin maps
+      each → a Kanon `IssueState` (the **read** map, many→one), pre-filled with a name-based
+      best-guess the admin confirms. The **write** map (Kanon state → one Redmine status, used by
+      outbound) is **derived** from the read map (the entry status of each group) with optional
+      override — the admin never fills two grids. There is no universal default: every Redmine
+      workflow differs (theirs has 17 states), so an explicit confirmed map gates sync activation.
+    - **Per-user connect**: each member self-serves a "Connect my Redmine account" action (paste
+      token → validated → encrypted + `externalUserId` stored). No manual admin user-mapping.
+    Endpoints (sketch): `POST /integrations/connections`, `GET /integrations/connections/:id/discovery`,
+    `PUT /integrations/connections/:id/mapping`, `POST /integrations/credentials`.
+
+## Architecture diagrams
+
+### Component view (hexagonal)
+
+```mermaid
+flowchart LR
+  subgraph KanonAPI["Kanon API (packages/api)"]
+    EB[eventBus]
+    SL[sync-listener]
+    SE[sync engine]
+    subgraph Core["integrations/core"]
+      PORT[["PmProviderAdapter (port)"]]
+      INP[["InboundSource (port)"]]
+      CRY["crypto AES-256-GCM"]
+      MAP["mapping config<br/>statusMapRead / Write"]
+    end
+    RA["RedmineProviderAdapter"]
+    HC["RedmineHttpClient<br/>(fetch + AbortController + retry)"]
+    POLL["PollingInboundSource<br/>(stub — phase 2)"]
+    DB[("Prisma<br/>IntegrationConnection<br/>MemberIntegrationCredential<br/>ExternalRef")]
+  end
+  RM[("Redmine REST")]
+
+  EB --> SL --> SE
+  SE --> PORT
+  PORT -. implemented by .-> RA
+  RA --> HC --> RM
+  RA --> CRY
+  SE --> MAP
+  SE --> DB
+  INP -. implemented by .-> POLL
+  POLL -. phase 2 .-> RM
+```
+
+### Outbound sequence (Kanon → Redmine)
+
+```mermaid
+sequenceDiagram
+  actor Dev as Dev / AI agent
+  participant Kanon
+  participant Bus as eventBus
+  participant Sync as sync engine
+  participant Adapter as RedmineAdapter
+  participant Redmine
+
+  Dev->>Kanon: transition / update issue
+  Kanon->>Bus: emit issue.transitioned
+  Bus->>Sync: handle (fire-and-forget)
+  Sync->>Sync: resolve ExternalRef (create-or-update)
+  Sync->>Adapter: pushIssue(canonical, assignee credential)
+  Adapter->>Adapter: map fields + status (write map)
+  Adapter->>Redmine: PUT /issues/:id  (assignee API key)
+  alt role allows transition
+    Redmine-->>Adapter: 200 OK
+  else workflow rejects (role ceiling)
+    Redmine-->>Adapter: 4xx → cap at furthest allowed + log
+  end
+  Adapter-->>Sync: result
+  Sync->>Sync: update ExternalRef / async retry on failure
+```
+
+### Configuration + connect flow
+
+```mermaid
+sequenceDiagram
+  actor Admin
+  participant UI as Kanon Web
+  participant API as Kanon API
+  participant Redmine
+  actor Dev
+
+  Admin->>UI: baseUrl + admin API key
+  UI->>API: POST /integrations/connections
+  API->>Redmine: GET /my/account.json (validate)
+  API->>Redmine: GET /issue_statuses, /projects, /trackers
+  API-->>UI: discovered statuses (+ best-guess map)
+  Admin->>UI: confirm/adjust status map
+  UI->>API: PUT /integrations/connections/:id/mapping
+  Note over API: read map saved; write map derived → connection active
+
+  Dev->>UI: "Connect my Redmine account" + token
+  UI->>API: POST /integrations/credentials
+  API->>Redmine: GET /my/account.json
+  API->>API: store encrypted key + externalUserId (bind member)
+```
+
 ## Consequences
 
 - One core, many providers: Jira becomes an adapter + auth + maps (story points vs hours, Agile
@@ -164,3 +269,5 @@ out-of-band and will be rotated):
 | Webhook-first inbound | Redmine has no native webhooks; depends on the org installing a plugin on their server. Polling is the portable default; webhook is an optional adapter. |
 | Map Kanon `estimate` (story points) to Redmine | Redmine uses hours natively; Kanon's hours live on `IssueSchedule.estimateHours`. Story points would need a custom field we can't write as non-admin. |
 | Hardcode the Redmine status map | Every team has a different workflow (theirs has 17 states); the map must be per-connection config, not code. |
+| Project-level connection in MVP | A workspace-level connection covers "one company, one Redmine" and is simpler; per-project Redmines are an additive extension when a real multi-Redmine case appears. |
+| Admin maps each Redmine user → Kanon member manually | Needs admin Redmine perms (non-admin token gets 403 on /users) and is tedious. Per-user self-serve token auto-binds via /my/account.json. |
