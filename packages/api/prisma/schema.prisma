@@ -183,6 +183,8 @@ model Workspace {
   refreshTokens  RefreshToken[]
   mentions       Mention[]
   notifications  Notification[]
+  // External PM integrations (KAN-179 / ADR-0012)
+  integrationConnections IntegrationConnection[]
 
   @@map("workspaces")
 }
@@ -580,6 +582,8 @@ model Member {
   ownedMilestones             Milestone[]
   // PPM incidents (KAN-103 PR1)
   interruptions               Interruption[]
+  // External PM integrations (KAN-179 / ADR-0012)
+  integrationCredentials      MemberIntegrationCredential[]
 
   @@unique([userId, workspaceId])
   @@unique([workspaceId, username])
@@ -1078,4 +1082,81 @@ model NotificationPreference {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("notification_preferences")
+}
+
+// ─── External PM Integrations (KAN-179 / ADR-0012) ───────────────────────────
+
+// Workspace-level link to one external PM instance (Redmine first; Jira/MS later).
+// statusMapRead/Write are per-connection config (no universal default — every
+// workflow differs). discoveredStatuses caches {id,name} for the mapping UI.
+model IntegrationConnection {
+  id          String   @id @default(uuid()) @db.Uuid
+  provider    String // "redmine" | "jira" | "ms-project"
+  baseUrl     String   @map("base_url")
+  // Optional pointer to the admin credential used for discovery + as the
+  // outbound write fallback. Plain column (no FK): the target row may be removed
+  // independently and a dangling pointer is handled as "no service credential".
+  serviceCredentialId String? @map("service_credential_id") @db.Uuid
+  discoveredStatuses  Json?   @map("discovered_statuses")
+  statusMapRead       Json?   @map("status_map_read")
+  statusMapWrite      Json?   @map("status_map_write")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  workspaceId String    @map("workspace_id") @db.Uuid
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  credentials MemberIntegrationCredential[]
+  externalRefs ExternalRef[]
+
+  @@unique([workspaceId, provider])
+  @@index([workspaceId])
+  @@map("integration_connections")
+}
+
+// Per-user credential: each member supplies their own provider API key, stored
+// encrypted-at-rest (AES-256-GCM, see core/crypto.ts). externalUserId binds the
+// Kanon member to the provider user (resolved via /my/account.json on connect).
+model MemberIntegrationCredential {
+  id             String   @id @default(uuid()) @db.Uuid
+  encryptedKey   String   @map("encrypted_key")
+  externalUserId String?  @map("external_user_id")
+  externalLogin  String?  @map("external_login")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  memberId     String                @map("member_id") @db.Uuid
+  member       Member                @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  connectionId String                @map("connection_id") @db.Uuid
+  connection   IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([memberId, connectionId])
+  @@index([connectionId])
+  @@map("member_integration_credentials")
+}
+
+// Idempotency / link backbone: maps a Kanon entity (polymorphic by entityType)
+// to its external object. entityId is NOT a formal FK because it spans
+// issue/project/cycle tables.
+model ExternalRef {
+  id          String   @id @default(uuid()) @db.Uuid
+  entityType  String   @map("entity_type") // "issue" | "project" | "cycle"
+  // @db.Uuid: all referenceable Kanon entities (issue/project/cycle) use UUID PKs.
+  entityId    String   @map("entity_id") @db.Uuid
+  externalId  String   @map("external_id")
+  externalUrl String?  @map("external_url")
+  metadata    Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  connectionId String                @map("connection_id") @db.Uuid
+  connection   IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, entityType, entityId])
+  // entityType is part of the external-id uniqueness: providers (e.g. Redmine)
+  // use independent id sequences per type, so issue #42 and project #42 collide
+  // on externalId alone.
+  @@unique([connectionId, entityType, externalId])
+  @@index([entityType, entityId])
+  @@map("external_refs")
 }
