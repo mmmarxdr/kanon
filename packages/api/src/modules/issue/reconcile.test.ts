@@ -483,6 +483,78 @@ describe("KAN-157 parent auto-advance does not bypass reconciliation gate (fix 1
   });
 });
 
+// ── KAN-165: single reconcile clears the gate (no second no-op call) ─────────
+
+describe("KAN-165 single reconcile stamps timeConfirmedAt after its own entries", () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it("stamps timeConfirmedAt STRICTLY after the newest entry created in the same reconcile", async () => {
+    // Simulate the live race: the promoted/manual entries get their createdAt
+    // from the DB clock DURING the tx, i.e. AFTER the JS `now` captured before
+    // the tx opened. Use a future-relative createdAt so it is always > the
+    // internal `now = new Date()`.
+    const dbCreatedAt = new Date(Date.now() + 60_000);
+    const unpromoted = makeWorkLog({ timeEntry: null });
+    const promotedEntry = makeTimeEntry({
+      id: "te-new",
+      sourceWorkLogId: unpromoted.id,
+      status: "approved",
+      hours: "1",
+      createdAt: dbCreatedAt,
+    });
+
+    vi.mocked(prisma.issue.findUnique).mockResolvedValue(makeIssue());
+    vi.mocked(prisma.workLog.findMany).mockResolvedValue([unpromoted]);
+    vi.mocked(prisma.timeEntry.create).mockResolvedValue(promotedEntry);
+    vi.mocked(prisma.timeEntry.updateMany).mockResolvedValue({ count: 0 });
+    // Final read inside the tx returns the just-created entry with its DB createdAt.
+    vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([promotedEntry]);
+    vi.mocked(prisma.issue.update).mockResolvedValue(makeIssue() as any);
+
+    const result = await reconcileIssueTime(ISSUE_ID, MEMBER_ID, { addHours: "2" });
+
+    // The stamped timeConfirmedAt must be strictly greater than every entry's
+    // createdAt — otherwise checkReconciliation (`createdAt >= timeConfirmedAt`)
+    // would re-flag this reconcile's own entries as stale and re-block →done.
+    const stamped: Date = vi.mocked(prisma.issue.update).mock.calls[0]![0].data.timeConfirmedAt;
+    expect(stamped.getTime()).toBeGreaterThan(dbCreatedAt.getTime());
+    expect(result.confirmedAt.getTime()).toBeGreaterThan(dbCreatedAt.getTime());
+  });
+
+  it("a SINGLE reconcile then checkReconciliation → needed:false (gate clears, no second call)", async () => {
+    const { checkReconciliation } = await import("./reconcile.js");
+    const dbCreatedAt = new Date(Date.now() + 60_000);
+    const unpromoted = makeWorkLog({ timeEntry: null });
+    const promotedEntry = makeTimeEntry({
+      id: "te-new",
+      sourceWorkLogId: unpromoted.id,
+      status: "approved",
+      hours: "1",
+      createdAt: dbCreatedAt,
+    });
+
+    vi.mocked(prisma.issue.findUnique).mockResolvedValue(makeIssue());
+    vi.mocked(prisma.workLog.findMany).mockResolvedValue([unpromoted]);
+    vi.mocked(prisma.timeEntry.create).mockResolvedValue(promotedEntry);
+    vi.mocked(prisma.timeEntry.updateMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([promotedEntry]);
+    vi.mocked(prisma.issue.update).mockResolvedValue(makeIssue() as any);
+
+    const { confirmedAt } = await reconcileIssueTime(ISSUE_ID, MEMBER_ID, { addHours: "2" });
+
+    // Now the →done gate re-checks with the freshly stamped confirmedAt. The
+    // promoted worklog now has its linked entry; checkReconciliation sees the
+    // approved entry (createdAt = dbCreatedAt) plus the (linked) worklog.
+    vi.mocked(prisma.workLog.findMany).mockResolvedValue([
+      makeWorkLog({ createdAt: dbCreatedAt }),
+    ]);
+    vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([promotedEntry]);
+
+    const check = await checkReconciliation(ISSUE_ID, confirmedAt);
+    expect(check.needed).toBe(false);
+  });
+});
+
 // ── batchTransitionByKeys — (f) per-issue reconciliation surface ───────────
 
 describe("KAN-157 batchTransitionByKeys →done with unconfirmed issues", () => {

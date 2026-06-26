@@ -211,16 +211,18 @@ function spanDays(node: ForecastNode, hoursPerDay: number): number {
 // ─── Exported pure functions ──────────────────────────────────────────────────
 
 /**
- * The start date the forecast computes from. KAN-145: in_progress work whose
- * plan start is already in the past is anchored to `now`, so overdue work is
- * forecast to finish from today instead of in the past. Other states (and the
- * case where `now` is not supplied) keep the plan start unchanged.
+ * The start date the forecast computes from. KAN-145/KAN-167: any non-terminal
+ * work (state NOT in {done, cancelled}) whose plan start is already in the past
+ * is anchored to `now`, so overdue work is forecast to finish from today instead
+ * of in the past. Terminal states and the case where `now` is not supplied keep
+ * the plan start unchanged.
  */
 export function effectiveStartFor(node: ForecastNode, now?: Date): Date | null {
   if (node.startDate === null) return null;
   if (
     now !== undefined &&
-    node.state === "in_progress" &&
+    node.state !== "done" &&
+    node.state !== "cancelled" &&
     node.startDate.getTime() < now.getTime()
   ) {
     // Clone so callers can't mutate the shared `now` through the return value.
@@ -633,11 +635,17 @@ export function computeForecast(
       // null-start or unschedulable node
       const fEnd =
         n.startDate !== null ? forecastEndFor(n, hoursPerDay, now, calendar) : null;
+      // KAN-166: a node reaches this branch only when it has NO nodeState, i.e.
+      // forecastEndFor returned null (startDate null, or estimateHours null AND
+      // dueDate null). So fEnd is always null here. If it were ever non-null it
+      // would be the inclusive dueDate fallback — NOT an exclusive span — so no
+      // -1 conversion is applied.
+      const fEndInclusive = fEnd;
       const slipDays =
-        n.dueDate !== null && fEnd !== null
+        n.dueDate !== null && fEndInclusive !== null
           ? Math.max(
               0,
-              Math.round((fEnd.getTime() - n.dueDate.getTime()) / DAY_MS),
+              Math.round((fEndInclusive.getTime() - n.dueDate.getTime()) / DAY_MS),
             )
           : 0;
       forecasts.set(n.issueId, {
@@ -649,18 +657,48 @@ export function computeForecast(
         computedAt,
       });
     } else {
+      // KAN-166: the internal CPM uses an EXCLUSIVE end convention
+      // (forecastEnd = forecastStart + spanDays working days). The plan/baseline
+      // plane uses an INCLUSIVE end convention (dueDate = last working day).
+      // Convert to inclusive here — at the result-build seam only — so that
+      // slipDays and the stored forecastEnd align with dueDate/baselineEnd.
+      // The internal nodeStates remain exclusive so CPM math is unaffected.
+      //
+      // CRITICAL: only the SPAN-COMPUTED path is exclusive. forecastEndFor has
+      // two other paths that already return an inclusive/actual date and must
+      // NOT be shifted:
+      //   - done + completedAt → the real completion date (verbatim ONLY when the
+      //     node's forecastEnd was not overwritten by CPM applyEdge; for done+completedAt
+      //     nodes that ARE constrained dependency successors the stored end remains the
+      //     exclusive CPM value — known limitation, follow-up KAN-177)
+      //   - estimateHours === null → the plan dueDate (already inclusive)
+      // Applying -1 to those produced a spurious 1-day-early forecastEnd (e.g.
+      // a no-estimate issue's dueDate-fallback landing a working day before its
+      // own dueDate). Detect those paths and pass the end through unchanged.
+      const endIsActual =
+        (n.state === "done" && n.completedAt !== null) || n.estimateHours === null;
+      const rawInclusive = endIsActual
+        ? s.forecastEnd
+        : addWorkingDays(s.forecastEnd, -1, calendar);
+      // Guard: inclusive end must never be before forecastStart (e.g. a 0h task
+      // where exclusive end == start+1 → inclusive end == start, which is valid).
+      const forecastEndInclusive =
+        rawInclusive.getTime() >= s.forecastStart.getTime()
+          ? rawInclusive
+          : new Date(s.forecastStart);
+
       const slipDays =
         n.dueDate !== null
           ? Math.max(
               0,
               Math.round(
-                (s.forecastEnd.getTime() - n.dueDate.getTime()) / DAY_MS,
+                (forecastEndInclusive.getTime() - n.dueDate.getTime()) / DAY_MS,
               ),
             )
           : 0;
       forecasts.set(n.issueId, {
         forecastStart: s.forecastStart,
-        forecastEnd: s.forecastEnd,
+        forecastEnd: forecastEndInclusive,
         critical: s.critical ?? false,
         floatDays: s.floatDays ?? null,
         slipDays,

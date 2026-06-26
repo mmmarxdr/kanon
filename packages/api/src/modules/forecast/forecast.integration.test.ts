@@ -516,37 +516,24 @@ describe("Forecast Service — rebuildProjectForecast (integration)", () => {
     it("skips proposal for non-critical slip <= 2", async () => {
       const { projectId, ownerId } = await seedProjectContext();
 
-      // Two issues: A is predecessor (critical), B is successor (non-critical with float)
-      // We want B to have slip=1 but float>0 (non-critical)
-      // A: start June 1, due June 3, estimate 8h (1 day) → no slip → critical
-      // B: start June 2, due June 10, estimate 8h (1 day) → no slip → non-critical
-      // Just create B alone with slip=1: start June 1, due June 2, estimate 16h (2 days)
-      // But we need B to be non-critical — add a second issue so B has float.
-      // Simpler: seed an issue with slip=1 AND float > 0 means we need 2+ issues.
-      // Issue A (no slip, sole issue → critical), issue B alone → always critical.
-      // Use two issues: A=critical (no float), B=non-critical (has float).
-      // A: start June 1, est 8h (1 day), due June 2 = on time → no slip
-      // B: start June 1, est 8h (1 day), due June 3 = on time AND has float 1 day
-      //    THEN make B slip=1 by reducing its due to forecastEnd:
-      //    Wait — if B forecastEnd = June 2, due = June 1 → slipDays=1 but float>0
-      //    To have float > 0: B must finish before projectEnd (A + B both end June 2)
-      // Actually the simplest approach: two parallel issues, B has less estimate so it ends earlier
-      // B: start June 1, est 8h (1 day) → end June 2. due = June 1 → slip = 1 day
-      // A: start June 1, est 16h (2 days) → end June 3. A is the critical path.
-      // A ends June 3 = projectEnd. B ends June 2 → float = 1 day. B.slip = 1 day. → non-critical → SKIP proposal
-      // state "todo" keeps the forecast plan-date based: KAN-145 anchoring only
-      // applies to in_progress work, so these planned issues slip deterministically
-      // from their fixed dates regardless of the current date.
+      // Two parallel issues, future dates (2099) so rebuildProjectForecast's real `now`
+      // never anchors them (KAN-167: non-terminal states anchor when startDate < now).
+      // Dates must stay far in the future to avoid KAN-167 anchoring to the real current
+      // date, which would alter forecastEnd and break the slip assertions. Year 2099 is
+      // used so the test remains stable regardless of when it runs.
+      // A: start 2099-07-01, est 24h (3 days) → inclusive July3, due July10 → no slip → critical.
+      // B: start 2099-07-01, est 16h (2 days) → inclusive July2, due July1 → slip=1 ≤ 2.
+      //   B exclusive (July3) < A exclusive (July4) → float > 0 → non-critical. → SKIP proposal.
       const issueA = await seedScheduledIssue(projectId, `KFL-1`, 1, {
-        startDate: new Date("2026-06-01"),
-        dueDate: new Date("2026-06-04"),
-        estimateHours: 16, // 2 days → ends June 3
+        startDate: new Date("2099-07-01"),
+        dueDate: new Date("2099-07-10"),
+        estimateHours: 24, // 3 days → exclusive July4, inclusive July3
         state: "todo",
       });
       const issueB = await seedScheduledIssue(projectId, `KFL-2`, 2, {
-        startDate: new Date("2026-06-01"),
-        dueDate: new Date("2026-06-01"), // due June 1, forecast ends June 2 → slip = 1
-        estimateHours: 8, // 1 day → ends June 2
+        startDate: new Date("2099-07-01"),
+        dueDate: new Date("2099-07-01"), // due July1, inclusive July2 → slip=1
+        estimateHours: 16, // 2 days → exclusive July3, inclusive July2
         state: "todo",
       });
 
@@ -575,23 +562,24 @@ describe("Forecast Service — rebuildProjectForecast (integration)", () => {
     it("creates proposal for non-critical slip > 2", async () => {
       const { projectId, ownerId } = await seedProjectContext();
 
-      // Two parallel issues: A is critical (long), B is non-critical but has slip > 2.
-      // Constraint: startDate <= dueDate (issue_schedules_date_range_check).
-      // A: start June 1, est 24h (3 days) → ends June 4, due June 4 = no slip → critical
-      // B: start May 25, due May 28, est 48h (6 days) → forecastEnd May 31 → slip = 3 days
-      //    A ends June 4 = projectEnd; B ends May 31 → B has float → non-critical
-      // state "todo": KAN-145 anchoring only applies to in_progress work, so these
-      // planned issues slip deterministically from their fixed plan dates.
+      // Two parallel issues, future dates (2099) so rebuildProjectForecast's real `now`
+      // never anchors them (KAN-167: non-terminal states anchor when startDate < now).
+      // Dates must stay far in the future to avoid KAN-167 anchoring to the real current
+      // date, which would alter forecastEnd and break the slip assertions. Year 2099 is
+      // used so the test remains stable regardless of when it runs.
+      // A: start 2099-07-01, est 160h (20 days) → exclusive July21, inclusive July20 → critical.
+      // B: start 2099-07-01, est 48h (6 days) → exclusive July7, inclusive July6.
+      //   B.due=July1. slip = max(0,(July6-July1)/DAY) = 5 > 2. B exclusive(July7) < A exclusive(July21) → non-critical.
       const issueA = await seedScheduledIssue(projectId, `KFM-1`, 1, {
-        startDate: new Date("2026-06-01"),
-        dueDate: new Date("2026-06-04"),
-        estimateHours: 24, // 3 days → ends June 4
+        startDate: new Date("2099-07-01"),
+        dueDate: new Date("2099-08-10"),
+        estimateHours: 160, // 20 days → exclusive July21, inclusive July20 → critical
         state: "todo",
       });
       const issueB = await seedScheduledIssue(projectId, `KFM-2`, 2, {
-        startDate: new Date("2026-05-25"),
-        dueDate: new Date("2026-05-28"), // due May 28; forecast ends May 31 (6 days) → slip 3
-        estimateHours: 48, // 6 days → forecastEnd = May 25 + 6 = May 31
+        startDate: new Date("2099-07-01"),
+        dueDate: new Date("2099-07-01"), // due July1; inclusive July6 → slip=5 > 2
+        estimateHours: 48, // 6 days → exclusive July7, inclusive July6
         state: "todo",
       });
 
@@ -957,9 +945,14 @@ describe("KAN-103 PR3 — interruptions shift forecastEnd in rebuildProjectForec
   });
 
   it("changing the project calendar invalidates inputsHash and forces a rebuild", async () => {
+    // Use a future date (2027) so KAN-167 anchoring does not fire (startDate > now).
+    // Start 2027-06-21 (Monday), 3 days:
+    //   Without calendar (all-days): exclusive June24, inclusive June23.
+    //   With Mon-Fri + holiday 2027-06-23 (Wed): June21+3wd skipping June23 = June25 exclusive, inclusive June24.
+    //   June24 > June23 → forecastEnd increases → test passes.
     const issue = await seedScheduledIssue(projectId, "CAL-HASH-1", 51, {
-      startDate: new Date("2026-06-22T00:00:00.000Z"), // Monday
-      estimateHours: 24, // 3 working days
+      startDate: new Date("2027-06-21T00:00:00.000Z"), // Monday (future)
+      estimateHours: 24, // 3 days
       progress: 0,
       state: "todo",
     });
@@ -972,7 +965,7 @@ describe("KAN-103 PR3 — interruptions shift forecastEnd in rebuildProjectForec
     // Add a holiday inside the task's span. The output forecastEnd changes AND
     // the calendar fingerprint changes → inputsHash must differ → row rewritten.
     await prisma.projectScheduleConfig.create({
-      data: { projectId, workDays: [1, 2, 3, 4, 5], holidays: ["2026-06-24"] },
+      data: { projectId, workDays: [1, 2, 3, 4, 5], holidays: ["2027-06-23"] },
     });
     await rebuildProjectForecast(projectId);
     const after = await prisma.issueForecast.findUnique({ where: { issueId: issue.id } });
