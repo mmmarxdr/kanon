@@ -838,6 +838,25 @@ describe("KanonClient.reconcileTime (KAN-188)", () => {
     expect((err as KanonApiError).code).toBe("RECONCILE_NO_ANCHOR");
     expect((err as KanonApiError).details).toEqual({ issueKey: "KAN-1" });
   });
+
+  // Server enforces mutual exclusion between addHours and confirmedTotalHours
+  // (400 if both are set) — the client does not add its own guard, it only
+  // needs to propagate the server's rejection faithfully.
+  it("propagates a 400 as KanonApiError when both confirmedTotalHours and addHours are passed", async () => {
+    const fetchMock = mockFetch(
+      { code: "RECONCILE_MUTUALLY_EXCLUSIVE", message: "Provide either addHours or confirmedTotalHours, not both" },
+      400,
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const err = await client
+      .reconcileTime("KAN-1", { confirmedTotalHours: "5", addHours: "2" })
+      .catch((e) => e);
+
+    expect(err).toBeInstanceOf(KanonApiError);
+    expect((err as KanonApiError).statusCode).toBe(400);
+    expect((err as KanonApiError).code).toBe("RECONCILE_MUTUALLY_EXCLUSIVE");
+  });
 });
 
 // ─── KAN-188: KanonApiError.details plumbing ─────────────────────────────────
