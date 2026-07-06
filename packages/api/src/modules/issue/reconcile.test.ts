@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { Prisma } from "@prisma/client";
 
 /**
  * KAN-157 — reconcile gate tests (TDD, written BEFORE implementation)
@@ -552,6 +553,192 @@ describe("KAN-165 single reconcile stamps timeConfirmedAt after its own entries"
 
     const check = await checkReconciliation(ISSUE_ID, confirmedAt);
     expect(check.needed).toBe(false);
+  });
+});
+
+// ── KAN-188: confirmedTotalHours override ────────────────────────────────────
+
+describe("KAN-188 reconcileIssueTime() confirmedTotalHours override", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("corrects hours DOWNWARD: existing approved entry totals 6h, override to 4 writes a -2h adjustment via reconcile-override", async () => {
+    const existingApproved = makeTimeEntry({
+      id: "te-existing",
+      status: "approved",
+      hours: "6",
+      sourceWorkLogId: null,
+      createdAt: new Date("2026-06-24T09:00:00Z"),
+    });
+
+    const overrideEntry = makeTimeEntry({
+      id: "te-override",
+      status: "approved",
+      hours: "-2",
+      sourceWorkLogId: null,
+      via: "reconcile-override",
+      adjustsId: "te-existing",
+      createdAt: new Date("2026-06-24T09:05:00Z"),
+    });
+
+    vi.mocked(prisma.issue.findUnique).mockResolvedValue(makeIssue());
+    vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
+    // Step 2.5 (pre-override) read sees only the existing approved entry.
+    // Step 4 (final) read sees the existing entry PLUS the just-written
+    // override entry — mirrors what a real DB read would return.
+    vi.mocked(prisma.timeEntry.findMany)
+      .mockResolvedValueOnce([existingApproved])
+      .mockResolvedValueOnce([existingApproved, overrideEntry]);
+    vi.mocked(prisma.timeEntry.updateMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.timeEntry.create).mockResolvedValue(overrideEntry);
+    vi.mocked(prisma.issue.update).mockResolvedValue(
+      makeIssue({ timeConfirmedAt: new Date() }) as any,
+    );
+
+    const result = await reconcileIssueTime(ISSUE_ID, MEMBER_ID, {
+      confirmedTotalHours: "4",
+    });
+
+    // A corrective TimeEntry must be written with via: "reconcile-override"
+    // and a negative delta pointing back to an existing approved entry
+    // (DB CHECK: negative hours require adjustsId — ppm-engine §8 invariant #3).
+    expect(prisma.timeEntry.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          issueId: ISSUE_ID,
+          status: "approved",
+          via: "reconcile-override",
+          adjustsId: expect.any(String),
+        }),
+      }),
+    );
+    const createCall = vi.mocked(prisma.timeEntry.create).mock.calls[0]![0];
+    expect(new Prisma.Decimal(createCall.data.hours).toNumber()).toBe(-2);
+
+    expect(result.totalHours).toBe(4);
+    expect(result.confirmedAt).toBeInstanceOf(Date);
+  });
+
+  it("corrects hours UPWARD: existing approved entry totals 2h, override to 5 writes a +3h entry via reconcile-override", async () => {
+    const existingApproved = makeTimeEntry({
+      id: "te-existing",
+      status: "approved",
+      hours: "2",
+      sourceWorkLogId: null,
+      createdAt: new Date("2026-06-24T09:00:00Z"),
+    });
+
+    const overrideEntry = makeTimeEntry({
+      id: "te-override",
+      status: "approved",
+      hours: "3",
+      sourceWorkLogId: null,
+      via: "reconcile-override",
+      createdAt: new Date("2026-06-24T09:05:00Z"),
+    });
+
+    vi.mocked(prisma.issue.findUnique).mockResolvedValue(makeIssue());
+    vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.timeEntry.findMany)
+      .mockResolvedValueOnce([existingApproved])
+      .mockResolvedValueOnce([existingApproved, overrideEntry]);
+    vi.mocked(prisma.timeEntry.updateMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.timeEntry.create).mockResolvedValue(overrideEntry);
+    vi.mocked(prisma.issue.update).mockResolvedValue(
+      makeIssue({ timeConfirmedAt: new Date() }) as any,
+    );
+
+    const result = await reconcileIssueTime(ISSUE_ID, MEMBER_ID, {
+      confirmedTotalHours: "5",
+    });
+
+    expect(prisma.timeEntry.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          issueId: ISSUE_ID,
+          status: "approved",
+          via: "reconcile-override",
+        }),
+      }),
+    );
+    const createCall = vi.mocked(prisma.timeEntry.create).mock.calls[0]![0];
+    expect(new Prisma.Decimal(createCall.data.hours).toNumber()).toBe(3);
+
+    expect(result.totalHours).toBe(5);
+  });
+
+  it("no-op accept: override equals the current total → no adjusting entry is created, timeConfirmedAt is still stamped", async () => {
+    const existingApproved = makeTimeEntry({
+      id: "te-existing",
+      status: "approved",
+      hours: "3",
+      sourceWorkLogId: null,
+      createdAt: new Date("2026-06-24T09:00:00Z"),
+    });
+
+    vi.mocked(prisma.issue.findUnique).mockResolvedValue(makeIssue());
+    vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([existingApproved]);
+    vi.mocked(prisma.timeEntry.updateMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.issue.update).mockResolvedValue(
+      makeIssue({ timeConfirmedAt: new Date() }) as any,
+    );
+
+    const result = await reconcileIssueTime(ISSUE_ID, MEMBER_ID, {
+      confirmedTotalHours: "3",
+    });
+
+    expect(prisma.timeEntry.create).not.toHaveBeenCalled();
+    expect(prisma.issue.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: ISSUE_ID },
+        data: expect.objectContaining({ timeConfirmedAt: expect.any(Date) }),
+      }),
+    );
+    expect(result.totalHours).toBe(3);
+  });
+
+  it("does NOT invoke the addHours top-up branch when confirmedTotalHours is provided (mutual exclusion, defense-in-depth)", async () => {
+    const existingApproved = makeTimeEntry({
+      id: "te-existing",
+      status: "approved",
+      hours: "6",
+      sourceWorkLogId: null,
+      createdAt: new Date("2026-06-24T09:00:00Z"),
+    });
+
+    vi.mocked(prisma.issue.findUnique).mockResolvedValue(makeIssue());
+    vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([existingApproved]);
+    vi.mocked(prisma.timeEntry.updateMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.timeEntry.create).mockResolvedValue(
+      makeTimeEntry({
+        id: "te-override",
+        status: "approved",
+        hours: "-2",
+        via: "reconcile-override",
+        adjustsId: "te-existing",
+      }),
+    );
+    vi.mocked(prisma.issue.update).mockResolvedValue(
+      makeIssue({ timeConfirmedAt: new Date() }) as any,
+    );
+
+    // Both opts passed directly to the service function (bypassing the Zod
+    // schema layer) to prove the service itself never invokes the
+    // addHours/"reconcile-manual" branch when confirmedTotalHours is set —
+    // defense-in-depth behind the schema-level 400.
+    await reconcileIssueTime(ISSUE_ID, MEMBER_ID, {
+      addHours: "10",
+      confirmedTotalHours: "4",
+    } as any);
+
+    const createCalls = vi.mocked(prisma.timeEntry.create).mock.calls;
+    const manualTopUpCall = createCalls.find(
+      (call) => call[0]?.data?.via === "reconcile-manual",
+    );
+    expect(manualTopUpCall).toBeUndefined();
   });
 });
 
