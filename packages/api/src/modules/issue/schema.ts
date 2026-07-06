@@ -134,19 +134,39 @@ export type BatchTransitionByKeysBody = z.infer<typeof BatchTransitionByKeysBody
 /**
  * KAN-157: Reconcile-time request body.
  * addHours is an optional decimal string (e.g. "1.5") for manual top-up hours.
+ *
+ * KAN-188: confirmedTotalHours is an optional decimal string that sets the
+ * issue's confirmed total hours AUTHORITATIVELY (can correct up or down),
+ * as opposed to addHours which is purely additive.
+ *
+ * LOCKED RULE: addHours and confirmedTotalHours are MUTUALLY EXCLUSIVE. A
+ * request providing both MUST fail validation (400) before any reconcile
+ * side effect runs — there is no "override wins" precedence.
  */
 // Fix 5: addHours must be a non-negative decimal string with a maximum of 744 hours
 // (744 = 31 days × 24 h, a reasonable per-reconcile upper bound).
-export const ReconcileTimeBody = z.object({
-  addHours: z
+const decimalHoursString = (fieldName: string) =>
+  z
     .string()
-    .regex(/^\d+(\.\d+)?$/, "addHours must be a non-negative decimal string")
+    .regex(/^\d+(\.\d+)?$/, `${fieldName} must be a non-negative decimal string`)
     .refine(
       (v) => parseFloat(v) <= 744,
-      { message: "addHours must not exceed 744 hours per reconcile" },
+      { message: `${fieldName} must not exceed 744 hours per reconcile` },
     )
-    .optional(),
-});
+    .optional();
+
+export const ReconcileTimeBody = z
+  .object({
+    addHours: decimalHoursString("addHours"),
+    confirmedTotalHours: decimalHoursString("confirmedTotalHours"),
+  })
+  .refine(
+    (body) => !(body.addHours !== undefined && body.confirmedTotalHours !== undefined),
+    {
+      message: "addHours and confirmedTotalHours are mutually exclusive",
+      path: ["confirmedTotalHours"],
+    },
+  );
 export type ReconcileTimeBody = z.infer<typeof ReconcileTimeBody>;
 
 /**
