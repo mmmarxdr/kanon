@@ -48,7 +48,7 @@ describe("ReconcileModal", () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId("reconcile-confirm"));
+    fireEvent.click(screen.getByRole("button", { name: /confirm & move to done/i }));
 
     expect(onConfirm).toHaveBeenCalledWith(3);
   });
@@ -67,7 +67,7 @@ describe("ReconcileModal", () => {
 
     const input = screen.getByTestId("reconcile-hours-input");
     fireEvent.change(input, { target: { value: "2.5" } });
-    fireEvent.click(screen.getByTestId("reconcile-confirm"));
+    fireEvent.click(screen.getByRole("button", { name: /confirm & move to done/i }));
 
     expect(onConfirm).toHaveBeenCalledWith(2.5);
   });
@@ -87,8 +87,11 @@ describe("ReconcileModal", () => {
     const input = screen.getByTestId("reconcile-hours-input");
     fireEvent.change(input, { target: { value: "-1" } });
 
-    expect(screen.getByTestId("reconcile-confirm")).toBeDisabled();
-    fireEvent.click(screen.getByTestId("reconcile-confirm"));
+    const confirmButton = screen.getByRole("button", {
+      name: /confirm & move to done/i,
+    });
+    expect(confirmButton).toBeDisabled();
+    fireEvent.click(confirmButton);
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
@@ -107,7 +110,9 @@ describe("ReconcileModal", () => {
     const input = screen.getByTestId("reconcile-hours-input");
     fireEvent.change(input, { target: { value: "745" } });
 
-    expect(screen.getByTestId("reconcile-confirm")).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /confirm & move to done/i }),
+    ).toBeDisabled();
   });
 
   it("disables confirm when the adjusted value has more than 2 decimals", async () => {
@@ -125,7 +130,9 @@ describe("ReconcileModal", () => {
     const input = screen.getByTestId("reconcile-hours-input");
     fireEvent.change(input, { target: { value: "2.999" } });
 
-    expect(screen.getByTestId("reconcile-confirm")).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /confirm & move to done/i }),
+    ).toBeDisabled();
   });
 
   it("calls onClose on cancel without calling onConfirm", async () => {
@@ -141,7 +148,7 @@ describe("ReconcileModal", () => {
       />,
     );
 
-    fireEvent.click(screen.getByTestId("reconcile-cancel"));
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
 
     expect(onClose).toHaveBeenCalledOnce();
     expect(onConfirm).not.toHaveBeenCalled();

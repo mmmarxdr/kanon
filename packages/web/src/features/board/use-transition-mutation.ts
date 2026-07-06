@@ -27,7 +27,7 @@ export interface ReconcileState {
 
 /**
  * Mutation that transitions an issue to a new state via
- * POST /api/issues/:key/transition { toState }.
+ * POST /api/issues/:key/transition { to_state }.
  *
  * Implements TanStack Query optimistic updates:
  * - onMutate: snapshot cache, apply optimistic change
