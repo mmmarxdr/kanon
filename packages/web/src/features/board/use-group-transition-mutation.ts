@@ -5,6 +5,11 @@ import { issueKeys, cycleKeys } from "@/lib/query-keys";
 import { useToastStore } from "@/stores/toast-store";
 import type { GroupSummary } from "@/types/issue";
 import type { IssueState } from "@/stores/board-store";
+import {
+  RECONCILIATION_ERROR_CODE,
+  reconcileTime,
+  toFiniteHours,
+} from "./reconcile-api";
 
 interface GroupTransitionVars {
   groupKey: string;
@@ -17,11 +22,6 @@ export interface BlockedIssue {
   totalHours: number;
 }
 
-function toFiniteHours(value: unknown): number | null {
-  const n = typeof value === "string" ? Number(value) : value;
-  return typeof n === "number" && Number.isFinite(n) ? n : null;
-}
-
 function parseBlockedIssues(details: Record<string, unknown> | undefined): BlockedIssue[] | null {
   const raw = details?.blockedIssues;
   if (!Array.isArray(raw)) return null;
@@ -29,24 +29,14 @@ function parseBlockedIssues(details: Record<string, unknown> | undefined): Block
   const parsed: BlockedIssue[] = [];
   for (const entry of raw) {
     if (typeof entry !== "object" || entry === null) continue;
-    const key = (entry as Record<string, unknown>).key;
-    const totalHours = toFiniteHours((entry as Record<string, unknown>).totalHours);
+    const obj = entry as Record<string, unknown>;
+    const key = obj.key;
+    const totalHours = toFiniteHours(obj.totalHours);
     if (typeof key === "string" && totalHours !== null) {
       parsed.push({ key, totalHours });
     }
   }
   return parsed.length > 0 ? parsed : null;
-}
-
-/** POST /api/issues/:key/reconcile-time { confirmedTotalHours } */
-function reconcileTime(issueKey: string, confirmedTotalHours: number) {
-  return fetchApi<void>(
-    `/api/issues/${encodeURIComponent(issueKey)}/reconcile-time`,
-    {
-      method: "POST",
-      body: JSON.stringify({ confirmedTotalHours: String(confirmedTotalHours) }),
-    },
-  );
 }
 
 /** POST /api/issues/:key/transition { to_state } — per-issue retry after reconcile. */
@@ -135,7 +125,7 @@ export function useGroupTransitionMutation(projectKey: string) {
 
       // 409 RECONCILIATION_REQUIRED: surface per-issue reconcile prompts
       // instead of the generic revert toast (KAN-188).
-      if (err instanceof ApiError && err.code === "RECONCILIATION_REQUIRED") {
+      if (err instanceof ApiError && err.code === RECONCILIATION_ERROR_CODE) {
         const parsed = parseBlockedIssues(err.details);
         if (parsed !== null) {
           setBlockedIssues(parsed);

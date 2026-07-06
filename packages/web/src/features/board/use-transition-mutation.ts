@@ -5,6 +5,11 @@ import { issueKeys, cycleKeys } from "@/lib/query-keys";
 import { useToastStore } from "@/stores/toast-store";
 import type { Issue } from "@/types/issue";
 import type { IssueState } from "@/stores/board-store";
+import {
+  RECONCILIATION_ERROR_CODE,
+  reconcileTime,
+  toFiniteHours,
+} from "./reconcile-api";
 
 interface TransitionVars {
   issueKey: string;
@@ -18,22 +23,6 @@ interface TransitionVars {
 export interface ReconcileState {
   issueKey: string;
   totalHours: number;
-}
-
-function toFiniteHours(value: unknown): number | null {
-  const n = typeof value === "string" ? Number(value) : value;
-  return typeof n === "number" && Number.isFinite(n) ? n : null;
-}
-
-/** POST /api/issues/:key/reconcile-time { confirmedTotalHours } */
-function reconcileTime(issueKey: string, confirmedTotalHours: number) {
-  return fetchApi<void>(
-    `/api/issues/${encodeURIComponent(issueKey)}/reconcile-time`,
-    {
-      method: "POST",
-      body: JSON.stringify({ confirmedTotalHours: String(confirmedTotalHours) }),
-    },
-  );
 }
 
 /**
@@ -97,7 +86,7 @@ export function useTransitionMutation(projectKey: string) {
       // 409 RECONCILIATION_REQUIRED: surface a reconcile prompt instead of the
       // generic revert toast — the transition can still succeed once the user
       // confirms captured hours (KAN-188).
-      if (err instanceof ApiError && err.code === "RECONCILIATION_REQUIRED") {
+      if (err instanceof ApiError && err.code === RECONCILIATION_ERROR_CODE) {
         const totalHours = toFiniteHours(err.details?.totalHours);
         if (totalHours !== null) {
           setReconcileState({ issueKey: vars.issueKey, totalHours });
