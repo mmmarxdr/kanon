@@ -162,13 +162,28 @@ export function useGroupTransitionMutation(projectKey: string) {
       const blocked = blockedIssues?.find((b) => b.key === issueKey);
       if (!blocked) return;
 
-      await reconcileTime(issueKey, confirmedTotalHours);
-      await transitionIssue(issueKey, "done");
+      try {
+        await reconcileTime(issueKey, confirmedTotalHours);
+        await transitionIssue(issueKey, "done");
 
-      setBlockedIssues((prev) =>
-        (prev ?? []).filter((b) => b.key !== issueKey),
-      );
-      invalidate();
+        setBlockedIssues((prev) =>
+          (prev ?? []).filter((b) => b.key !== issueKey),
+        );
+        invalidate();
+      } catch {
+        // Either the reconcile POST or the per-issue transition retry
+        // rejected (e.g. 409 RECONCILE_NO_ANCHOR). The per-issue retry runs
+        // outside useMutation, so this catch is the only place this
+        // rejection is observed. Surface feedback via the same toast
+        // mechanism and leave the issue in blockedIssues so it can be
+        // retried — never silently drop or half-transition it (KAN-188).
+        useToastStore
+          .getState()
+          .addToast(
+            `Failed to confirm captured time for ${issueKey}. Please try again.`,
+            "error",
+          );
+      }
     },
     [blockedIssues, invalidate],
   );

@@ -134,9 +134,26 @@ export function useTransitionMutation(projectKey: string) {
     async (confirmedTotalHours: number) => {
       if (!reconcileState) return;
       const { issueKey } = reconcileState;
-      await reconcileTime(issueKey, confirmedTotalHours);
-      setReconcileState(null);
-      await mutation.mutateAsync({ issueKey, toState: "done" });
+      try {
+        await reconcileTime(issueKey, confirmedTotalHours);
+        await mutation.mutateAsync({ issueKey, toState: "done" });
+        // Only clear the modal once BOTH the reconcile and the retried
+        // transition have succeeded — clearing earlier would strand the
+        // user with no way back into the flow if the retry then rejected.
+        setReconcileState(null);
+      } catch {
+        // Either the reconcile POST or the retried transition rejected
+        // (e.g. 409 RECONCILE_NO_ANCHOR for a downward correction with no
+        // approved anchor). Surface feedback via the same toast mechanism
+        // used elsewhere and keep the modal open/actionable — do NOT leave
+        // the user with a stuck modal and zero feedback (KAN-188).
+        useToastStore
+          .getState()
+          .addToast(
+            `Failed to confirm captured time for ${issueKey}. Please try again.`,
+            "error",
+          );
+      }
     },
     [reconcileState, mutation],
   );

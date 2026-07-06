@@ -173,6 +173,105 @@ describe("useTransitionMutation — reconcile intercept", () => {
     );
   });
 
+  it("surfaces an error toast and keeps the modal actionable when reconcileTime itself rejects (e.g. 409 RECONCILE_NO_ANCHOR)", async () => {
+    const { fetchApi } = await import("@/lib/api-client");
+    vi.mocked(fetchApi).mockImplementation((path: string) => {
+      if (path.endsWith("/transition")) {
+        return Promise.reject(
+          new ApiError(409, "RECONCILIATION_REQUIRED", "Reconcile required", {
+            totalHours: "5.00",
+            issueKey: ISSUE_KEY,
+          }),
+        );
+      }
+      if (path.includes("/reconcile-time")) {
+        return Promise.reject(
+          new ApiError(409, "RECONCILE_NO_ANCHOR", "No approved anchor found"),
+        );
+      }
+      return Promise.resolve(undefined);
+    });
+
+    const { queryClient, wrapper } = createWrapper();
+    queryClient.setQueryData(issueKeys.list(PROJECT_KEY), []);
+
+    const { useTransitionMutation } = await import("./use-transition-mutation");
+    const { result } = renderHook(() => useTransitionMutation(PROJECT_KEY), {
+      wrapper,
+    });
+
+    act(() => {
+      result.current.mutate({ issueKey: ISSUE_KEY, toState: "done" });
+    });
+
+    await waitFor(() => {
+      expect(result.current.reconcileState).not.toBeNull();
+    });
+
+    await act(async () => {
+      await result.current.confirmReconcile(5);
+    });
+
+    // Error must be surfaced via the same toast mechanism — no silent dead end.
+    expect(addToastMock).toHaveBeenCalledWith(
+      expect.stringContaining(ISSUE_KEY),
+      "error",
+    );
+    // The modal must stay actionable (not silently stuck with zero feedback) —
+    // reconcileState is kept so the user can retry or cancel from a known state.
+    expect(result.current.reconcileState).not.toBeNull();
+  });
+
+  it("surfaces an error toast when reconcile succeeds but the retried transition rejects", async () => {
+    const { fetchApi } = await import("@/lib/api-client");
+    vi.mocked(fetchApi).mockImplementation((path: string) => {
+      if (path.endsWith("/transition")) {
+        return Promise.reject(
+          new ApiError(409, "RECONCILIATION_REQUIRED", "Reconcile required", {
+            totalHours: "5.00",
+            issueKey: ISSUE_KEY,
+          }),
+        );
+      }
+      return Promise.resolve(undefined);
+    });
+
+    const { queryClient, wrapper } = createWrapper();
+    queryClient.setQueryData(issueKeys.list(PROJECT_KEY), []);
+
+    const { useTransitionMutation } = await import("./use-transition-mutation");
+    const { result } = renderHook(() => useTransitionMutation(PROJECT_KEY), {
+      wrapper,
+    });
+
+    act(() => {
+      result.current.mutate({ issueKey: ISSUE_KEY, toState: "done" });
+    });
+
+    await waitFor(() => {
+      expect(result.current.reconcileState).not.toBeNull();
+    });
+
+    // Second call: reconcile-time resolves, but retried transition rejects again
+    // (simulate a subsequent, unrelated transition failure).
+    vi.mocked(fetchApi).mockImplementation((path: string) => {
+      if (path.includes("/reconcile-time")) {
+        return Promise.resolve(undefined);
+      }
+      return Promise.reject(new Error("Server error"));
+    });
+
+    await act(async () => {
+      await result.current.confirmReconcile(5);
+    });
+
+    expect(addToastMock).toHaveBeenCalledWith(
+      expect.stringContaining(ISSUE_KEY),
+      "error",
+    );
+    expect(result.current.reconcileState).not.toBeNull();
+  });
+
   it("cancelReconcile clears the reconcile state without transitioning", async () => {
     const { fetchApi } = await import("@/lib/api-client");
     vi.mocked(fetchApi).mockRejectedValueOnce(

@@ -175,6 +175,109 @@ describe("useGroupTransitionMutation — reconcile intercept", () => {
     expect(perIssueTransitionCall).toBeDefined();
   });
 
+  it("surfaces an error toast and keeps the issue in blockedIssues when reconcileTime itself rejects (e.g. 409 RECONCILE_NO_ANCHOR)", async () => {
+    const { fetchApi } = await import("@/lib/api-client");
+    vi.mocked(fetchApi).mockImplementation((path: string) => {
+      if (path.includes("/groups/") && path.includes("/transition")) {
+        return Promise.reject(
+          new ApiError(409, "RECONCILIATION_REQUIRED", "Reconcile required", {
+            blockedIssues: [{ key: "TEST-1", totalHours: "5.00" }],
+          }),
+        );
+      }
+      if (path.includes("/reconcile-time")) {
+        return Promise.reject(
+          new ApiError(409, "RECONCILE_NO_ANCHOR", "No approved anchor found"),
+        );
+      }
+      return Promise.resolve(undefined);
+    });
+
+    const { queryClient, wrapper } = createWrapper();
+    queryClient.setQueryData(issueKeys.groups(PROJECT_KEY), []);
+
+    const { useGroupTransitionMutation } = await import(
+      "./use-group-transition-mutation"
+    );
+    const { result } = renderHook(
+      () => useGroupTransitionMutation(PROJECT_KEY),
+      { wrapper },
+    );
+
+    act(() => {
+      result.current.mutate({ groupKey: GROUP_KEY, toState: "done" });
+    });
+
+    await waitFor(() => {
+      expect(result.current.blockedIssues).not.toBeNull();
+    });
+
+    await act(async () => {
+      await result.current.confirmReconcile("TEST-1", 5);
+    });
+
+    // Error surfaced via the existing toast mechanism.
+    expect(addToastMock).toHaveBeenCalledWith(
+      expect.stringContaining("TEST-1"),
+      "error",
+    );
+    // The issue must NOT be silently dropped or half-transitioned — it stays
+    // in blockedIssues so it can be retried.
+    expect(result.current.blockedIssues).toEqual([
+      { key: "TEST-1", totalHours: 5 },
+    ]);
+  });
+
+  it("surfaces an error toast and keeps the issue in blockedIssues when the retried per-issue transition rejects", async () => {
+    const { fetchApi } = await import("@/lib/api-client");
+    vi.mocked(fetchApi).mockImplementation((path: string) => {
+      if (path.includes("/groups/") && path.includes("/transition")) {
+        return Promise.reject(
+          new ApiError(409, "RECONCILIATION_REQUIRED", "Reconcile required", {
+            blockedIssues: [{ key: "TEST-1", totalHours: "5.00" }],
+          }),
+        );
+      }
+      if (path.includes("/reconcile-time")) {
+        return Promise.resolve(undefined);
+      }
+      // The raw per-issue retry (transitionIssue) rejects — this is OUTSIDE
+      // useMutation today and must still be caught.
+      return Promise.reject(new Error("Server error"));
+    });
+
+    const { queryClient, wrapper } = createWrapper();
+    queryClient.setQueryData(issueKeys.groups(PROJECT_KEY), []);
+
+    const { useGroupTransitionMutation } = await import(
+      "./use-group-transition-mutation"
+    );
+    const { result } = renderHook(
+      () => useGroupTransitionMutation(PROJECT_KEY),
+      { wrapper },
+    );
+
+    act(() => {
+      result.current.mutate({ groupKey: GROUP_KEY, toState: "done" });
+    });
+
+    await waitFor(() => {
+      expect(result.current.blockedIssues).not.toBeNull();
+    });
+
+    await act(async () => {
+      await result.current.confirmReconcile("TEST-1", 5);
+    });
+
+    expect(addToastMock).toHaveBeenCalledWith(
+      expect.stringContaining("TEST-1"),
+      "error",
+    );
+    expect(result.current.blockedIssues).toEqual([
+      { key: "TEST-1", totalHours: 5 },
+    ]);
+  });
+
   it("cancelReconcile(key) removes only that issue from blockedIssues", async () => {
     const { fetchApi } = await import("@/lib/api-client");
     vi.mocked(fetchApi).mockRejectedValueOnce(
