@@ -49,6 +49,11 @@ _Spec req: "Reconcile gate clearance and audit trail preserved" — via literal 
 
 - [x] 1.6 Grep-confirm (already verified in this session — no code change expected): `TimeEntry.via` in `packages/api/prisma/schema.prisma` is `String?` (free-form), NOT a Prisma enum — no migration required. Confirm no separate TS/Zod union type declares `"reconcile"` / `"reconcile-manual"` as a closed set anywhere in `packages/api` or `packages/shared` (verified: none found). If Phase 1.4 introduced the `"reconcile-override"` literal as a raw string (matching the existing pattern), this task is a no-op confirmation only — do not add an enum/union that doesn't already exist.
 
+> **Post-1.4 review-fix pass (confirmed fixes, same branch, before Phase 2 continued):**
+> 1. **CRITICAL** — the negative-corrective-entry `adjustsId` anchor in `reconcile.ts` picked the entry with max `createdAt` ignoring `status`, risking linking to a draft/submitted/rejected or cross-member entry. Fixed: anchor is now selected ONLY among `status === "approved"` entries (latest by `createdAt`); added a `RECONCILE_NO_ANCHOR` (409) guard when no approved anchor exists for a downward correction, instead of writing `adjustsId: null` with negative hours (defense-in-depth for the DB CHECK `time_entries_hours_sign`). TDD: `reconcile.test.ts`.
+> 2. **WARNING** — `confirmedTotalHours`'s regex allowed more than 2 decimal places (e.g. `"4.999"`), which Postgres would silently truncate against `Decimal(8,2)`, diverging the stored total from the confirmed value. Fixed: tightened to `^\d+(\.\d{1,2})?$`; `addHours`'s regex is unchanged (out of scope). TDD: `__tests__/schema.test.ts`.
+> 3. Added integration coverage (`reconcile-override.integration.test.ts`) against the real Postgres test DB: downward override with an approved anchor succeeds with no CHECK violation, confirmed total matches exactly, and `timeConfirmedAt` clears the review→done gate; plus the `RECONCILE_NO_ANCHOR` 409 guard exercised end-to-end via HTTP.
+
 ---
 
 ## Phase 2: API — 409 payload plumbing for client surfaces
