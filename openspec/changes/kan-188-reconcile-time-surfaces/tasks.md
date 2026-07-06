@@ -115,6 +115,30 @@ _Spec req: "Web confirm-or-adjust modal on transition to done"_
 - [x] 4.8 **GREEN** — Implemented directly on each mutation hook (`confirmReconcile`/`cancelReconcile` on both `use-transition-mutation.ts` and `use-group-transition-mutation.ts`) rather than a separate `use-reconcile-transition.ts` — see design deviation note. `onSettled`/its shared `invalidate()` helper fires through the existing `issueKeys`/`cycleKeys` factories, no new invalidation path introduced.
 - [x] 4.9 **RED→GREEN** — Wired `KanbanBoard` (single transition) and `GroupedBoard` (group transition, one modal at a time keyed by `blockedIssues[0]`) to render `ReconcileModal` from each mutation's own state. Integration tests: `kanban-board.reconcile.test.tsx`, `grouped-board.reconcile.test.tsx` — assert the modal opens when the mutation surfaces reconcile state, confirm/cancel call through to the right hook methods with the right issue key + hours, and (via the unit-level mutation tests) the transition only completes after explicit confirm.
 
+> **Post-4.9 review-fix pass (confirmed fixes, same PR3 branch `feat/kan-188-web-reconcile`):**
+> 1. `confirmReconcile` in both hooks had no try/catch around the reconcile-time
+>    POST + retried transition, and both boards called it as
+>    `void confirmReconcile(...)` — a rejection (e.g. 409 RECONCILE_NO_ANCHOR
+>    on a downward correction with no approved anchor) became an unhandled
+>    promise rejection: no toast, stuck modal. Fixed in both hooks with
+>    try/catch/finally, surfacing errors via the existing toast mechanism and
+>    keeping the affected issue actionable/retryable (`reconcileState` only
+>    clears on full success; `blockedIssues` keeps the issue on failure).
+> 2. `ReconcileModal`'s `isSubmitting` prop was never passed by either board,
+>    so a rapid double-click could fire `confirmReconcile` twice. Added
+>    `isSubmitting` state to both hooks and wired it at both call sites.
+> 3. `toFiniteHours`, the `reconcileTime` POST helper, and the
+>    `"RECONCILIATION_REQUIRED"` literal were duplicated byte-for-byte across
+>    both hooks — extracted to `packages/web/src/features/board/reconcile-api.ts`
+>    (`RECONCILIATION_ERROR_CODE` constant) and imported by both. Also
+>    collapsed the double-cast in `parseBlockedIssues`.
+> 4. Added `grouped-board.reconcile-sequencing.test.tsx` pinning that
+>    `blockedIssues[0]`-driven sequencing surfaces each blocked issue's own
+>    hours in turn (no production change — already correct, now covered).
+> 5. Minor: fixed a stale docblock comment (claimed `{ toState }`, actual wire
+>    body is `{ to_state }`); switched `reconcile-modal.test.tsx` button
+>    interactions to `getByRole` where the visible label already supported it.
+
 ---
 
 ## Phase 5: Docs
