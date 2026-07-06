@@ -59,13 +59,15 @@ describe("Win B — SERVER_INSTRUCTIONS deferred tools block", () => {
 // ─── PM Persona — byte ceiling and firing pins ───────────────────────────────
 
 describe("PM Persona — byte ceiling and firing pins", () => {
-  it("P1: SERVER_INSTRUCTIONS byte length ≤ 1900", () => {
+  it("P1: SERVER_INSTRUCTIONS byte length ≤ 1950", () => {
     // ceiling re-anchored for 38-tool surface with 10 deferred (was 1,600 @ 8 deferred);
     // KAN-104 timesheet: +2 deferred names (~54 B) + 2 core tool lines (~105 B) → ~159 B added.
     // KAN-104 capture tools: +3 deferred names (report_incident, propose_estimate, apply_proposal)
     //   → ~72 B added; ceiling bumped to 1900 (CORE section unchanged, only DEFERRED list grows).
+    // KAN-188: +kanon_reconcile_time in CORE TOOLS + 1 short reconcile-gate hint line
+    //   → ~92 B added; ceiling bumped to 1950 (actual at landing: 1901 B, margin: 49 B).
     expect(Buffer.byteLength(SERVER_INSTRUCTIONS, "utf8")).toBeLessThanOrEqual(
-      1900,
+      1950,
     );
   });
 
@@ -121,6 +123,18 @@ describe("PR-4a firing pins — design records guidance", () => {
 });
 
 // ─── PR-4a review — document tools in DEFERRED_TOOLS ─────────────────────────
+
+// ─── KAN-188 — reconcile-time confirm-or-adjust flow discoverability ────────
+
+describe("KAN-188 — kanon_reconcile_time discoverability", () => {
+  it("R1: SERVER_INSTRUCTIONS mentions kanon_reconcile_time in CORE TOOLS", () => {
+    expect(SERVER_INSTRUCTIONS).toContain("kanon_reconcile_time");
+  });
+
+  it("R2: SERVER_INSTRUCTIONS documents the done-transition reconcile gate", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/reconcile/i);
+  });
+});
 
 describe("PR-4a review — document tools discoverability", () => {
   it("B2-doc: DEFERRED_TOOLS includes kanon_create_document", () => {
