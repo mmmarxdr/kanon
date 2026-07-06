@@ -473,7 +473,7 @@ describe("Schedule Timeline Routes (integration)", () => {
       expect(body.truncated).toBe(false);
     });
 
-    it("STL-11: ?from=&to= returns only issues whose plan or forecast span overlaps the window", async () => {
+    it("STL-11: ?from=&to= returns issues whose plan OR forecast span overlaps the window", async () => {
       const { member, project } = await seedProjectContext();
 
       // Issue whose plan span overlaps [2026-07-01, 2026-07-31]
@@ -496,7 +496,12 @@ describe("Schedule Timeline Routes (integration)", () => {
         },
       });
 
-      // Issue whose plan span is entirely before the window
+      // Issue whose PLAN span is entirely before the window, but it is an OPEN
+      // (todo) overdue issue. On read the endpoint lazily bootstraps its forecast
+      // (KAN-161), and an overdue non-terminal issue is anchored to today
+      // (KAN-145): its forecastStart/forecastEnd collapse to start-of-day today.
+      // Today is inside the July window, so it DOES overlap via its forecast span
+      // and is correctly returned. The window filter matches plan OR forecast.
       const outWindow = await prisma.issue.create({
         data: {
           key: `${project.key}-2`,
@@ -516,7 +521,8 @@ describe("Schedule Timeline Routes (integration)", () => {
         },
       });
 
-      // Issue with no plan dates (bare) — should NOT match a date window
+      // Issue with no plan dates (bare) — no forecast start either, so it never
+      // matches a date window and stays excluded.
       await prisma.issue.create({
         data: {
           key: `${project.key}-3`,
@@ -536,9 +542,21 @@ describe("Schedule Timeline Routes (integration)", () => {
 
       expect(res.statusCode).toBe(200);
       const body = res.json();
-      expect(body.rows).toHaveLength(1);
-      expect(body.rows[0].title).toBe("In window");
-      expect(body.total).toBe(1);
+      // Both the plan-overlap issue and the forecast-overlap (today-anchored,
+      // overdue open todo) issue are present; the bare issue is still excluded.
+      expect(body.rows).toHaveLength(2);
+      const titles = body.rows.map((r: { title: string }) => r.title).sort();
+      expect(titles).toEqual(["In window", "Out of window"]);
+      expect(body.total).toBe(2);
+
+      // Lock the today-anchoring deterministically (date-robust, not hardcoded):
+      // the overdue open todo's forecast span collapses to start-of-day today.
+      const startOfToday = new Date();
+      startOfToday.setUTCHours(0, 0, 0, 0);
+      const startOfTodayIso = startOfToday.toISOString();
+      const outRow = body.rows.find((r: { title: string }) => r.title === "Out of window");
+      expect(outRow.forecastStart).toBe(startOfTodayIso);
+      expect(outRow.forecastEnd).toBe(startOfTodayIso);
     });
 
     it("STL-12: from/to window matches forecast-only issue (no plan dates)", async () => {
@@ -960,9 +978,22 @@ describe("Schedule Timeline Routes (integration)", () => {
       await prisma.issueSchedule.create({
         data: { issueId: inWin.id, startDate: new Date("2026-07-10T00:00:00.000Z"), dueDate: new Date("2026-07-20T00:00:00.000Z"), progress: 0 },
       });
-      // B: scheduled OUTSIDE the window (hidden by scope, but has dates).
+      // B: scheduled OUTSIDE the window (hidden by scope, but has dates). B is
+      // "done" with a past completedAt, so it stays genuinely hidden: terminal
+      // states are exempt from today-anchoring (KAN-145), so B's forecast stays
+      // in May and never enters the July window. (An OPEN overdue todo would
+      // instead be forecast to today and surface — that behaviour is covered by
+      // STL-11 — which is not what this envelope hidden-count test is about.)
       const outWin = await prisma.issue.create({
-        data: { key: `${project.key}-2`, title: "Out of window", type: "task", state: "todo", projectId: project.id, sequenceNum: 2 },
+        data: {
+          key: `${project.key}-2`,
+          title: "Out of window",
+          type: "task",
+          state: "done",
+          completedAt: new Date("2026-05-15T00:00:00.000Z"),
+          projectId: project.id,
+          sequenceNum: 2,
+        },
       });
       await prisma.issueSchedule.create({
         data: { issueId: outWin.id, startDate: new Date("2026-05-01T00:00:00.000Z"), dueDate: new Date("2026-05-10T00:00:00.000Z"), progress: 0 },
