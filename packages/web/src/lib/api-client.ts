@@ -104,6 +104,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
       response.status,
       (body.code as string) ?? "UNKNOWN_ERROR",
       (body.message as string) ?? response.statusText,
+      body.details as Record<string, unknown> | undefined,
     );
   }
 
@@ -123,6 +124,7 @@ export class ApiError extends Error {
     public readonly status: number,
     public readonly code: string,
     message: string,
+    public readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "ApiError";
