@@ -14,6 +14,7 @@ vi.mock("focus-trap-react", () => ({
 
 const confirmReconcileMock = vi.fn();
 const cancelReconcileMock = vi.fn();
+let isSubmittingMock = false;
 
 vi.mock("./use-transition-mutation", () => ({
   useTransitionMutation: () => ({
@@ -21,6 +22,7 @@ vi.mock("./use-transition-mutation", () => ({
     reconcileState: { issueKey: "TEST-1", totalHours: 5 },
     confirmReconcile: confirmReconcileMock,
     cancelReconcile: cancelReconcileMock,
+    isSubmitting: isSubmittingMock,
   }),
 }));
 
@@ -42,6 +44,7 @@ function makeIssue(key: string, state: Issue["state"] = "review"): Issue {
 describe("KanbanBoard — reconcile modal wiring", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    isSubmittingMock = false;
   });
 
   it("renders ReconcileModal when the transition mutation surfaces reconcileState", async () => {
@@ -77,6 +80,20 @@ describe("KanbanBoard — reconcile modal wiring", () => {
     fireEvent.click(screen.getByTestId("reconcile-cancel"));
 
     expect(cancelReconcileMock).toHaveBeenCalledOnce();
+    expect(confirmReconcileMock).not.toHaveBeenCalled();
+  });
+
+  it("disables the confirm button while the transition mutation reports isSubmitting", async () => {
+    isSubmittingMock = true;
+    const { KanbanBoard } = await import("./kanban-board");
+    render(
+      <KanbanBoard issues={[makeIssue("TEST-1")]} projectKey="proj-1" />,
+    );
+
+    const confirmButton = screen.getByTestId("reconcile-confirm");
+    expect(confirmButton).toBeDisabled();
+
+    fireEvent.click(confirmButton);
     expect(confirmReconcileMock).not.toHaveBeenCalled();
   });
 });

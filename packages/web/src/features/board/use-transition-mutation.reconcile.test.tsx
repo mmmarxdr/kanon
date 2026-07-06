@@ -272,6 +272,62 @@ describe("useTransitionMutation — reconcile intercept", () => {
     expect(result.current.reconcileState).not.toBeNull();
   });
 
+  it("exposes isSubmitting=true while reconcile+retry is in flight, then false again", async () => {
+    const { fetchApi } = await import("@/lib/api-client");
+    let resolveReconcile!: () => void;
+
+    vi.mocked(fetchApi).mockImplementation((path: string) => {
+      if (path.endsWith("/transition") && vi.mocked(fetchApi).mock.calls.length === 1) {
+        return Promise.reject(
+          new ApiError(409, "RECONCILIATION_REQUIRED", "Reconcile required", {
+            totalHours: "5.00",
+            issueKey: ISSUE_KEY,
+          }),
+        );
+      }
+      if (path.includes("/reconcile-time")) {
+        return new Promise((resolve) => {
+          resolveReconcile = () => resolve(undefined);
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+
+    const { queryClient, wrapper } = createWrapper();
+    queryClient.setQueryData(issueKeys.list(PROJECT_KEY), []);
+
+    const { useTransitionMutation } = await import("./use-transition-mutation");
+    const { result } = renderHook(() => useTransitionMutation(PROJECT_KEY), {
+      wrapper,
+    });
+
+    act(() => {
+      result.current.mutate({ issueKey: ISSUE_KEY, toState: "done" });
+    });
+
+    await waitFor(() => {
+      expect(result.current.reconcileState).not.toBeNull();
+    });
+
+    expect(result.current.isSubmitting).toBe(false);
+
+    let confirmPromise!: Promise<void>;
+    act(() => {
+      confirmPromise = result.current.confirmReconcile(5);
+    });
+
+    await waitFor(() => {
+      expect(result.current.isSubmitting).toBe(true);
+    });
+
+    await act(async () => {
+      resolveReconcile();
+      await confirmPromise;
+    });
+
+    expect(result.current.isSubmitting).toBe(false);
+  });
+
   it("cancelReconcile clears the reconcile state without transitioning", async () => {
     const { fetchApi } = await import("@/lib/api-client");
     vi.mocked(fetchApi).mockRejectedValueOnce(

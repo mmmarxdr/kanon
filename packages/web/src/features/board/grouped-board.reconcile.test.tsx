@@ -13,6 +13,7 @@ vi.mock("focus-trap-react", () => ({
 
 const groupConfirmReconcileMock = vi.fn();
 const groupCancelReconcileMock = vi.fn();
+let groupIsSubmittingMock = false;
 
 vi.mock("./use-group-transition-mutation", () => ({
   useGroupTransitionMutation: () => ({
@@ -23,6 +24,7 @@ vi.mock("./use-group-transition-mutation", () => ({
     ],
     confirmReconcile: groupConfirmReconcileMock,
     cancelReconcile: groupCancelReconcileMock,
+    isSubmitting: groupIsSubmittingMock,
   }),
 }));
 
@@ -32,12 +34,14 @@ vi.mock("./use-transition-mutation", () => ({
     reconcileState: null,
     confirmReconcile: vi.fn(),
     cancelReconcile: vi.fn(),
+    isSubmitting: false,
   }),
 }));
 
 describe("GroupedBoard — reconcile modal wiring", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    groupIsSubmittingMock = false;
   });
 
   it("renders exactly one ReconcileModal, seeded with the first blocked issue's own hours", async () => {
@@ -66,5 +70,17 @@ describe("GroupedBoard — reconcile modal wiring", () => {
     fireEvent.click(screen.getByTestId("reconcile-cancel"));
 
     expect(groupCancelReconcileMock).toHaveBeenCalledWith("TEST-1");
+  });
+
+  it("disables the confirm button while the group transition mutation reports isSubmitting", async () => {
+    groupIsSubmittingMock = true;
+    const { GroupedBoard } = await import("./grouped-board");
+    render(<GroupedBoard groups={[]} issues={[]} projectKey="proj-1" />);
+
+    const confirmButton = screen.getByTestId("reconcile-confirm");
+    expect(confirmButton).toBeDisabled();
+
+    fireEvent.click(confirmButton);
+    expect(groupConfirmReconcileMock).not.toHaveBeenCalled();
   });
 });

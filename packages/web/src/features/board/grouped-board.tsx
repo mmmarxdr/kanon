@@ -409,6 +409,7 @@ export function GroupedBoard({
           totalHours={transitionMutation.reconcileState.totalHours}
           onConfirm={(hours) => void transitionMutation.confirmReconcile(hours)}
           onClose={transitionMutation.cancelReconcile}
+          isSubmitting={transitionMutation.isSubmitting}
         />
       )}
 
@@ -427,6 +428,7 @@ export function GroupedBoard({
           onClose={() =>
             groupTransition.cancelReconcile(groupTransition.blockedIssues![0].key)
           }
+          isSubmitting={groupTransition.isSubmitting}
         />
       )}
     </>

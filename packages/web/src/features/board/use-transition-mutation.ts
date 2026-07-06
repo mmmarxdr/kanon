@@ -50,6 +50,7 @@ export function useTransitionMutation(projectKey: string) {
   const [reconcileState, setReconcileState] = useState<ReconcileState | null>(
     null,
   );
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const mutation = useMutation({
     mutationFn: ({ issueKey, toState }: TransitionVars) =>
@@ -134,6 +135,7 @@ export function useTransitionMutation(projectKey: string) {
     async (confirmedTotalHours: number) => {
       if (!reconcileState) return;
       const { issueKey } = reconcileState;
+      setIsSubmitting(true);
       try {
         await reconcileTime(issueKey, confirmedTotalHours);
         await mutation.mutateAsync({ issueKey, toState: "done" });
@@ -153,6 +155,8 @@ export function useTransitionMutation(projectKey: string) {
             `Failed to confirm captured time for ${issueKey}. Please try again.`,
             "error",
           );
+      } finally {
+        setIsSubmitting(false);
       }
     },
     [reconcileState, mutation],
@@ -162,5 +166,11 @@ export function useTransitionMutation(projectKey: string) {
     setReconcileState(null);
   }, []);
 
-  return { ...mutation, reconcileState, confirmReconcile, cancelReconcile };
+  return {
+    ...mutation,
+    reconcileState,
+    confirmReconcile,
+    cancelReconcile,
+    isSubmitting,
+  };
 }

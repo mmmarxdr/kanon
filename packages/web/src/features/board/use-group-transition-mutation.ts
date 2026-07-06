@@ -68,6 +68,7 @@ export function useGroupTransitionMutation(projectKey: string) {
   const [blockedIssues, setBlockedIssues] = useState<BlockedIssue[] | null>(
     null,
   );
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const invalidate = useCallback(() => {
     // Only invalidate the groups query — the list view is not mounted when
@@ -162,6 +163,7 @@ export function useGroupTransitionMutation(projectKey: string) {
       const blocked = blockedIssues?.find((b) => b.key === issueKey);
       if (!blocked) return;
 
+      setIsSubmitting(true);
       try {
         await reconcileTime(issueKey, confirmedTotalHours);
         await transitionIssue(issueKey, "done");
@@ -183,6 +185,8 @@ export function useGroupTransitionMutation(projectKey: string) {
             `Failed to confirm captured time for ${issueKey}. Please try again.`,
             "error",
           );
+      } finally {
+        setIsSubmitting(false);
       }
     },
     [blockedIssues, invalidate],
@@ -194,5 +198,11 @@ export function useGroupTransitionMutation(projectKey: string) {
     );
   }, []);
 
-  return { ...mutation, blockedIssues, confirmReconcile, cancelReconcile };
+  return {
+    ...mutation,
+    blockedIssues,
+    confirmReconcile,
+    cancelReconcile,
+    isSubmitting,
+  };
 }

@@ -156,6 +156,7 @@ export function KanbanBoard({ issues, projectKey, onSelectIssue, onAddIssue }: K
           totalHours={transitionMutation.reconcileState.totalHours}
           onConfirm={(hours) => void transitionMutation.confirmReconcile(hours)}
           onClose={transitionMutation.cancelReconcile}
+          isSubmitting={transitionMutation.isSubmitting}
         />
       )}
     </DndContext>
