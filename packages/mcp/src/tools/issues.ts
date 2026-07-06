@@ -26,6 +26,18 @@ import { KanonApiError } from "../kanon-client.js";
 // the rest).
 const CreateIssueInputShape = { ...CreateIssueInput.shape, ...WriteFormatField };
 
+// KAN-188: `details.totalHours` on the 409 RECONCILIATION_REQUIRED payload is
+// untyped (Record<string, unknown>) — validate before interpolating it into a
+// user-facing message so a missing/absent field never renders as the literal
+// string "undefined". Accepts a finite number or a numeric string (e.g. "5.5").
+function toFiniteHours(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) {
+    return Number(value);
+  }
+  return null;
+}
+
 export function registerIssueTools(server: McpServer, client: KanonClient, binding: KanonBinding | InvalidBinding | null = null): void {
   server.tool(
     "kanon_list_issues",
@@ -159,16 +171,18 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
           err.code === "RECONCILIATION_REQUIRED" &&
           state === "done"
         ) {
-          const totalHours = err.details?.["totalHours"];
+          const rawTotalHours = err.details?.["totalHours"];
+          const totalHours = toFiniteHours(rawTotalHours);
+          const message =
+            totalHours !== null
+              ? `${totalHours} hours were reported on this ticket and need confirmation. ` +
+                `Call kanon_reconcile_time with issueKey "${issueKey}" and confirmedTotalHours ` +
+                `(accept ${totalHours}, or set a corrected value), then retry the transition to done.`
+              : `This ticket has unconfirmed reported time that must be confirmed before it can move to done. ` +
+                `Call kanon_reconcile_time with issueKey "${issueKey}" (optionally set confirmedTotalHours to ` +
+                `correct the total), then retry the transition to done.`;
           return errorResult(
-            new KanonApiError(
-              err.statusCode,
-              err.code,
-              `${totalHours} hours were reported on this ticket and need confirmation. ` +
-              `Call kanon_reconcile_time with issueKey "${issueKey}" and confirmedTotalHours ` +
-              `(accept ${totalHours}, or set a corrected value), then retry the transition to done.`,
-              err.details,
-            ),
+            new KanonApiError(err.statusCode, err.code, message, err.details),
           );
         }
         return errorResult(err);

@@ -392,6 +392,65 @@ describe("kanon_transition_issue — RECONCILIATION_REQUIRED surfacing (KAN-188)
     expect(result.isError).toBeUndefined();
     expect(mockClient.transitionIssue).toHaveBeenCalledTimes(1);
   });
+
+  it("surfaces the specific message with the numeric total when details.totalHours is present", async () => {
+    const mockClient = {
+      transitionIssue: vi.fn().mockRejectedValue(
+        new KanonApiError(
+          409,
+          "RECONCILIATION_REQUIRED",
+          "Unconfirmed captured time must be reconciled",
+          { totalHours: 5, issueKey: "ENG-1" },
+        ),
+      ),
+    };
+    const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
+    const handler = tools.get("kanon_transition_issue")!.handler;
+
+    const result = await handler({ issueKey: "ENG-1", state: "done" });
+
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed.error).toMatch(/5 hours were reported/);
+    expect(parsed.error).toMatch(/kanon_reconcile_time/);
+  });
+
+  it("falls back to a generic message with no interpolated hours when details is undefined", async () => {
+    const mockClient = {
+      transitionIssue: vi.fn().mockRejectedValue(
+        new KanonApiError(409, "RECONCILIATION_REQUIRED", "Unconfirmed captured time must be reconciled"),
+      ),
+    };
+    const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
+    const handler = tools.get("kanon_transition_issue")!.handler;
+
+    const result = await handler({ issueKey: "ENG-1", state: "done" });
+
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed.error).not.toMatch(/undefined/);
+    expect(parsed.error).toMatch(/unconfirmed reported time/i);
+    expect(parsed.error).toMatch(/kanon_reconcile_time/);
+  });
+
+  it("falls back to a generic message with no interpolated hours when totalHours is missing or non-numeric", async () => {
+    const mockClient = {
+      transitionIssue: vi.fn().mockRejectedValue(
+        new KanonApiError(
+          409,
+          "RECONCILIATION_REQUIRED",
+          "Unconfirmed captured time must be reconciled",
+          { issueKey: "ENG-1" },
+        ),
+      ),
+    };
+    const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
+    const handler = tools.get("kanon_transition_issue")!.handler;
+
+    const result = await handler({ issueKey: "ENG-1", state: "done" });
+
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed.error).not.toMatch(/undefined/);
+    expect(parsed.error).toMatch(/unconfirmed reported time/i);
+  });
 });
 
 // ─── KAN-188: kanon_reconcile_time tool ──────────────────────────────────────
