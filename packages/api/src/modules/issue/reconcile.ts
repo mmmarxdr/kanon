@@ -211,15 +211,40 @@ export async function reconcileIssueTime(
       const delta = confirmedTotalDecimal.minus(currentTotal);
 
       if (!delta.equals(0)) {
-        const adjustsId = delta.lessThan(0)
-          ? entriesSoFar.reduce<{ id: string; createdAt: Date } | null>(
+        let adjustsId: string | null = null;
+
+        if (delta.lessThan(0)) {
+          // Review fix (CRITICAL): the anchor MUST come from an APPROVED entry
+          // only. Picking the latest entry by createdAt regardless of status
+          // could link the negative corrective entry to a draft/submitted/
+          // rejected (or cross-member) entry, corrupting the adjustment audit
+          // trail. Among approved entries, pick the latest by createdAt
+          // (existing tie-break style preserved).
+          const approvedAnchor = entriesSoFar
+            .filter((e) => e.status === "approved")
+            .reduce<{ id: string; createdAt: Date } | null>(
               (latest, e) =>
                 !latest || e.createdAt > latest.createdAt
                   ? { id: e.id, createdAt: e.createdAt }
                   : latest,
               null,
-            )?.id ?? null
-          : null;
+            );
+
+          if (!approvedAnchor) {
+            // Defense-in-depth: the DB CHECK (hours >= 0 OR adjusts_id IS NOT
+            // NULL, migration 20260614204342_ppm_w1_pr3_timesheet) must never
+            // be violated at runtime, even if a future invariant change makes
+            // this path reachable. Throw instead of writing a negative entry
+            // with adjustsId: null.
+            throw new AppError(
+              409,
+              "RECONCILE_NO_ANCHOR",
+              "Cannot apply a downward time correction: no approved time entry exists to anchor the adjustment to.",
+            );
+          }
+
+          adjustsId = approvedAnchor.id;
+        }
 
         await tx.timeEntry.create({
           data: {

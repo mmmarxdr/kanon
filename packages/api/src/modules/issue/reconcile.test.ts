@@ -728,6 +728,79 @@ describe("KAN-188 reconcileIssueTime() confirmedTotalHours override", () => {
     expect(result.totalHours).toBe(3);
   });
 
+  // ── Review fix (CRITICAL): status-aware anchor selection ─────────────────
+  it("links the negative corrective entry to the latest APPROVED entry, not a later non-approved entry (mixed status)", async () => {
+    const approvedEntry = makeTimeEntry({
+      id: "te-approved",
+      status: "approved",
+      hours: "6",
+      sourceWorkLogId: null,
+      createdAt: new Date("2026-06-24T09:00:00Z"),
+    });
+    // Created AFTER the approved entry, but NOT approved — must be ignored
+    // as an anchor candidate even though it has the latest createdAt.
+    const laterDraftEntry = makeTimeEntry({
+      id: "te-draft-later",
+      status: "draft",
+      hours: "1",
+      sourceWorkLogId: null,
+      memberId: "member-uuid-2",
+      createdAt: new Date("2026-06-24T09:30:00Z"),
+    });
+
+    const overrideEntry = makeTimeEntry({
+      id: "te-override",
+      status: "approved",
+      hours: "-3",
+      sourceWorkLogId: null,
+      via: "reconcile-override",
+      adjustsId: "te-approved",
+      createdAt: new Date("2026-06-24T09:35:00Z"),
+    });
+
+    vi.mocked(prisma.issue.findUnique).mockResolvedValue(makeIssue());
+    vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.timeEntry.findMany)
+      .mockResolvedValueOnce([approvedEntry, laterDraftEntry])
+      .mockResolvedValueOnce([approvedEntry, laterDraftEntry, overrideEntry]);
+    vi.mocked(prisma.timeEntry.updateMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.timeEntry.create).mockResolvedValue(overrideEntry);
+    vi.mocked(prisma.issue.update).mockResolvedValue(
+      makeIssue({ timeConfirmedAt: new Date() }) as any,
+    );
+
+    // currentTotal (approved + draft) = 7; override to 4 → delta = -3
+    await reconcileIssueTime(ISSUE_ID, MEMBER_ID, { confirmedTotalHours: "4" });
+
+    const createCall = vi.mocked(prisma.timeEntry.create).mock.calls[0]![0];
+    expect(createCall.data.adjustsId).toBe("te-approved");
+  });
+
+  it("throws a domain error when delta < 0 and there is NO approved anchor (guard, defense-in-depth)", async () => {
+    // Only a draft entry exists — no approved entry to anchor the correction to.
+    const draftOnly = makeTimeEntry({
+      id: "te-draft-only",
+      status: "draft",
+      hours: "5",
+      sourceWorkLogId: null,
+      createdAt: new Date("2026-06-24T09:00:00Z"),
+    });
+
+    vi.mocked(prisma.issue.findUnique).mockResolvedValue(makeIssue());
+    vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([draftOnly]);
+    vi.mocked(prisma.timeEntry.updateMany).mockResolvedValue({ count: 0 });
+
+    await expect(
+      reconcileIssueTime(ISSUE_ID, MEMBER_ID, { confirmedTotalHours: "2" }),
+    ).rejects.toMatchObject({
+      code: "RECONCILE_NO_ANCHOR",
+    });
+
+    // Must NOT write a negative entry with adjustsId: null.
+    expect(prisma.timeEntry.create).not.toHaveBeenCalled();
+  });
+
   it("does NOT invoke the addHours top-up branch when confirmedTotalHours is provided (mutual exclusion, defense-in-depth)", async () => {
     const existingApproved = makeTimeEntry({
       id: "te-existing",
