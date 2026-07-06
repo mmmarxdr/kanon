@@ -15,6 +15,14 @@ import { AppError } from "../../shared/types.js";
 export interface ReconcileOpts {
   /** Decimal-string hours to top-up as a manual approved TimeEntry (e.g. "1.5"). Omit or "0" = no top-up. */
   addHours?: string;
+  /**
+   * KAN-188: decimal-string confirmed-total override (e.g. "4"). When present,
+   * sets the issue's confirmed total hours AUTHORITATIVELY (can correct up or
+   * down), instead of the purely additive addHours. Mutually exclusive with
+   * addHours — enforced at the schema layer (400 before this function runs)
+   * and defensively here (addHours is ignored when confirmedTotalHours is set).
+   */
+  confirmedTotalHours?: string;
 }
 
 export interface ReconcileSummary {
@@ -125,10 +133,18 @@ export async function reconcileIssueTime(
   const now = new Date();
 
   // Fix 5: parse addHours as Decimal upfront; guard with Decimal.gt to avoid float mixing.
-  const addHoursDecimal = opts?.addHours !== undefined
+  // KAN-188: confirmedTotalHours is mutually exclusive with addHours (enforced
+  // at the schema layer with a 400). Defense-in-depth: ignore addHours here
+  // whenever confirmedTotalHours is present, so the additive top-up branch
+  // (via: "reconcile-manual") can never fire alongside the override.
+  const hasOverride = opts?.confirmedTotalHours !== undefined;
+  const addHoursDecimal = opts?.addHours !== undefined && !hasOverride
     ? new Prisma.Decimal(opts.addHours)
     : new Prisma.Decimal(0);
   const shouldAddHours = addHoursDecimal.greaterThan(0);
+  const confirmedTotalDecimal = hasOverride
+    ? new Prisma.Decimal(opts!.confirmedTotalHours!)
+    : null;
 
   // Fix 3: wrap all writes in a single transaction so they are all-or-nothing.
   const { finalEntries, confirmedAt } = await prisma.$transaction(async (tx) => {
@@ -170,6 +186,82 @@ export async function reconcileIssueTime(
         via: "reconcile",
       },
     });
+
+    // Step 2.5 (KAN-188): confirmed-total override. Sets the issue's confirmed
+    // total AUTHORITATIVELY, correcting up or down, instead of adding to it.
+    // Reads the current total from the entries written by Steps 1-2 above,
+    // then writes a single corrective TimeEntry for the delta:
+    //   - delta > 0 → a positive approved entry (same shape as a manual top-up,
+    //     but tagged via: "reconcile-override" instead of "reconcile-manual").
+    //   - delta < 0 → a negative approved entry. ppm-engine §8 invariant #3
+    //     (enforced by a DB CHECK) requires adjustsId to be set whenever hours
+    //     are negative, so this points back at the most recently created
+    //     existing approved entry.
+    //   - delta === 0 → no-op accept; no entry is written (timeConfirmedAt is
+    //     still stamped in Step 5 below).
+    if (confirmedTotalDecimal !== null) {
+      const entriesSoFar = await tx.timeEntry.findMany({
+        where: { issueId },
+        select: { id: true, hours: true, status: true, createdAt: true },
+      });
+      const currentTotal = entriesSoFar.reduce(
+        (sum, e) => sum.plus(e.hours),
+        new Prisma.Decimal(0),
+      );
+      const delta = confirmedTotalDecimal.minus(currentTotal);
+
+      if (!delta.equals(0)) {
+        let adjustsId: string | null = null;
+
+        if (delta.lessThan(0)) {
+          // Review fix (CRITICAL): the anchor MUST come from an APPROVED entry
+          // only. Picking the latest entry by createdAt regardless of status
+          // could link the negative corrective entry to a draft/submitted/
+          // rejected (or cross-member) entry, corrupting the adjustment audit
+          // trail. Among approved entries, pick the latest by createdAt
+          // (existing tie-break style preserved).
+          const approvedAnchor = entriesSoFar
+            .filter((e) => e.status === "approved")
+            .reduce<{ id: string; createdAt: Date } | null>(
+              (latest, e) =>
+                !latest || e.createdAt > latest.createdAt
+                  ? { id: e.id, createdAt: e.createdAt }
+                  : latest,
+              null,
+            );
+
+          if (!approvedAnchor) {
+            // Defense-in-depth: the DB CHECK (hours >= 0 OR adjusts_id IS NOT
+            // NULL, migration 20260614204342_ppm_w1_pr3_timesheet) must never
+            // be violated at runtime, even if a future invariant change makes
+            // this path reachable. Throw instead of writing a negative entry
+            // with adjustsId: null.
+            throw new AppError(
+              409,
+              "RECONCILE_NO_ANCHOR",
+              "Cannot apply a downward time correction: no approved time entry exists to anchor the adjustment to.",
+            );
+          }
+
+          adjustsId = approvedAnchor.id;
+        }
+
+        await tx.timeEntry.create({
+          data: {
+            memberId,
+            issueId,
+            hours: delta,
+            workedOn: now,
+            status: "approved",
+            sourceWorkLogId: null,
+            adjustsId,
+            approvedById: memberId,
+            approvedAt: now,
+            via: "reconcile-override",
+          },
+        });
+      }
+    }
 
     // Step 3: optional manual top-up
     if (shouldAddHours) {
