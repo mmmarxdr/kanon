@@ -21,6 +21,7 @@ import { groupByColumn } from "./use-issues-query";
 import { useTransitionMutation } from "./use-transition-mutation";
 import { BoardColumn } from "./board-column";
 import { IssueCard } from "./issue-card";
+import { ReconcileModal } from "./reconcile-modal";
 
 interface KanbanBoardProps {
   issues: Issue[];
@@ -148,6 +149,15 @@ export function KanbanBoard({ issues, projectKey, onSelectIssue, onAddIssue }: K
           </div>
         ) : null}
       </DragOverlay>
+
+      {transitionMutation.reconcileState && (
+        <ReconcileModal
+          issueKey={transitionMutation.reconcileState.issueKey}
+          totalHours={transitionMutation.reconcileState.totalHours}
+          onConfirm={(hours) => void transitionMutation.confirmReconcile(hours)}
+          onClose={transitionMutation.cancelReconcile}
+        />
+      )}
     </DndContext>
   );
 }

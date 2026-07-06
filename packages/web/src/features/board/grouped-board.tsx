@@ -30,6 +30,7 @@ import { useTransitionMutation } from "./use-transition-mutation";
 import { GroupCard } from "./group-card";
 import { IssueCard } from "./issue-card";
 import { GroupDrillDown } from "./group-drill-down";
+import { ReconcileModal } from "./reconcile-modal";
 import { Icon } from "@/components/ui/icons";
 
 /** Status dot color per kanban column. */
@@ -398,6 +399,34 @@ export function GroupedBoard({
           groupKey={drillDownGroupKey}
           onClose={handleCloseDrillDown}
           onSelectIssue={onSelectIssue}
+        />
+      )}
+
+      {/* Single ungrouped-issue transition reconcile modal */}
+      {transitionMutation.reconcileState && (
+        <ReconcileModal
+          issueKey={transitionMutation.reconcileState.issueKey}
+          totalHours={transitionMutation.reconcileState.totalHours}
+          onConfirm={(hours) => void transitionMutation.confirmReconcile(hours)}
+          onClose={transitionMutation.cancelReconcile}
+        />
+      )}
+
+      {/* Group transition: one modal at a time, per blocked issue */}
+      {groupTransition.blockedIssues && groupTransition.blockedIssues.length > 0 && (
+        <ReconcileModal
+          key={groupTransition.blockedIssues[0].key}
+          issueKey={groupTransition.blockedIssues[0].key}
+          totalHours={groupTransition.blockedIssues[0].totalHours}
+          onConfirm={(hours) =>
+            void groupTransition.confirmReconcile(
+              groupTransition.blockedIssues![0].key,
+              hours,
+            )
+          }
+          onClose={() =>
+            groupTransition.cancelReconcile(groupTransition.blockedIssues![0].key)
+          }
         />
       )}
     </>
