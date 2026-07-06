@@ -389,6 +389,24 @@ export class KanonClient {
     );
   }
 
+  /**
+   * Reconcile captured time on an issue — clears the review→done gate by
+   * stamping `timeConfirmedAt`. Exactly one of `addHours` (additive top-up)
+   * or `confirmedTotalHours` (authoritative total, up or down) should be
+   * provided; the server enforces mutual exclusion (400 if both are set).
+   * Route: POST /api/issues/:key/reconcile-time
+   */
+  async reconcileTime(
+    issueKey: string,
+    opts: { addHours?: string; confirmedTotalHours?: string },
+  ): Promise<unknown> {
+    return this.request<unknown>(
+      "POST",
+      `/api/issues/${issueKey}/reconcile-time`,
+      opts,
+    );
+  }
+
   // ─── Groups ─────────────────────────────────────────────────────────────
 
   /**
