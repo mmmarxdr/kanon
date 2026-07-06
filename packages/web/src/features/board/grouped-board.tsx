@@ -413,24 +413,25 @@ export function GroupedBoard({
         />
       )}
 
-      {/* Group transition: one modal at a time, per blocked issue */}
-      {groupTransition.blockedIssues && groupTransition.blockedIssues.length > 0 && (
-        <ReconcileModal
-          key={groupTransition.blockedIssues[0].key}
-          issueKey={groupTransition.blockedIssues[0].key}
-          totalHours={groupTransition.blockedIssues[0].totalHours}
-          onConfirm={(hours) =>
-            void groupTransition.confirmReconcile(
-              groupTransition.blockedIssues![0].key,
-              hours,
-            )
-          }
-          onClose={() =>
-            groupTransition.cancelReconcile(groupTransition.blockedIssues![0].key)
-          }
-          isSubmitting={groupTransition.isSubmitting}
-        />
-      )}
+      {/* Group transition: one modal at a time, per blocked issue.
+          Bind the head element to a const so noUncheckedIndexedAccess narrows
+          it to defined — a `.length > 0` check does not narrow `[0]`. */}
+      {(() => {
+        const blocked = groupTransition.blockedIssues?.[0];
+        if (!blocked) return null;
+        return (
+          <ReconcileModal
+            key={blocked.key}
+            issueKey={blocked.key}
+            totalHours={blocked.totalHours}
+            onConfirm={(hours) =>
+              void groupTransition.confirmReconcile(blocked.key, hours)
+            }
+            onClose={() => groupTransition.cancelReconcile(blocked.key)}
+            isSubmitting={groupTransition.isSubmitting}
+          />
+        );
+      })()}
     </>
   );
 }
