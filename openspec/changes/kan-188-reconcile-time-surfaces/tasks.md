@@ -97,6 +97,22 @@ _Spec req: "MCP confirm-or-adjust flow on transition to done"_
 > `baseline.fixture.ts` and the updated test comments) — not a scope expansion, just
 > keeping the existing token-budget guardrails accurate for the new tool surface.
 
+> **Post-Phase-3 review-fix pass (confirmed fixes, mcp-only, before PR2 merge):**
+> 1. Guarded `details.totalHours` interpolation in the `kanon_transition_issue`→done 409
+>    handler — a missing `details` object or non-numeric `totalHours` previously rendered
+>    the literal string `"undefined hours were reported..."`. Added a `toFiniteHours()`
+>    validator; invalid/absent now falls back to a generic reconcile-prompt message with
+>    no interpolated value. 3 new tests in `issues.test.ts`.
+> 2. Pinned (test-only, no behavior change) `kanon_batch_transition`'s current contract:
+>    a `RECONCILIATION_REQUIRED` 409 from the underlying batch call surfaces via the
+>    existing `errorResult` path without crashing or reporting success. Added a
+>    `// KAN-188:` comment in `groups.ts` noting full batch reconcile-awareness is
+>    deferred and tracked separately.
+> 3. Added a contract test pinning `reconcileTime`'s mutual-exclusion propagation: passing
+>    both `confirmedTotalHours` and `addHours` propagates the server's 400 as a
+>    `KanonApiError` with the right statusCode/code — no client-side guard added, the
+>    server is authoritative per the existing doc comment.
+
 ---
 
 ## Phase 4: Web — 409 intercept + reconcile modal (both mutations)
