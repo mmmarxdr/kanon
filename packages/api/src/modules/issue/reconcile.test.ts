@@ -171,6 +171,35 @@ describe("KAN-157 reconciliation gate — transitionIssue →done", () => {
     });
   });
 
+  // ── KAN-188 Phase 2.1: characterization test ────────────────────────────
+  // Confirms (pre-existing behavior, not new) that the single-issue
+  // transitionIssue 409 AppError.details carries issueKey AND a concrete
+  // totalHours value alongside workLogs/timeEntries — the contract the MCP
+  // and web client surfaces depend on to display captured hours without a
+  // second round-trip.
+  it("(KAN-188) RECONCILIATION_REQUIRED details.totalHours reflects the real captured hours, and details.issueKey matches the transitioned issue", async () => {
+    vi.mocked(prisma.issue.findUnique).mockResolvedValue(
+      makeIssue({ timeConfirmedAt: null }),
+    );
+    vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([
+      makeTimeEntry({ hours: "5", sourceWorkLogId: null }),
+    ]);
+
+    let caughtError: any;
+    try {
+      await transitionIssue(ISSUE_KEY, "done", MEMBER_ID);
+    } catch (err) {
+      caughtError = err;
+    }
+
+    expect(caughtError).toBeDefined();
+    expect(caughtError.code).toBe("RECONCILIATION_REQUIRED");
+    expect(caughtError.statusCode).toBe(409);
+    expect(caughtError.details.issueKey).toBe(ISSUE_KEY);
+    expect(caughtError.details.totalHours).toBe(5);
+  });
+
   it("(a) throws RECONCILIATION_REQUIRED when TimeEntry exists and timeConfirmedAt is null (no WorkLog)", async () => {
     vi.mocked(prisma.issue.findUnique).mockResolvedValue(
       makeIssue({ timeConfirmedAt: null }),
@@ -795,5 +824,49 @@ describe("KAN-157 batchTransitionByKeys →done with unconfirmed issues", () => 
       code: "RECONCILIATION_REQUIRED",
       statusCode: 409,
     });
+  });
+
+  // ── KAN-188 Phase 2.1: characterization test (batch shape) ──────────────
+  // The batch/group 409 payload shape differs from the single-issue path:
+  // per-issue { key, totalHours } entries under details.blockedIssues,
+  // rather than a flat details.totalHours. Confirms pre-existing behavior.
+  it("(KAN-188) details.blockedIssues carries per-issue key + concrete totalHours", async () => {
+    const dirtyIssue = {
+      id: ISSUE_ID,
+      key: ISSUE_KEY,
+      state: "review",
+      projectId: PROJECT_ID,
+      parentId: null,
+      roadmapItemId: null,
+      timeConfirmedAt: null,
+    } as any;
+
+    vi.mocked(prisma.project.findUnique).mockResolvedValue({
+      id: PROJECT_ID,
+      key: "TEST",
+      workspaceId: "ws-1",
+    } as any);
+    vi.mocked(prisma.issue.findMany).mockResolvedValue([dirtyIssue]);
+    vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([
+      makeTimeEntry({ hours: "7", sourceWorkLogId: null }),
+    ]);
+
+    let caughtError: any;
+    try {
+      await batchTransitionByKeys(
+        PROJECT_ID,
+        { to_state: "done", keys: [ISSUE_KEY] },
+        MEMBER_ID,
+      );
+    } catch (err) {
+      caughtError = err;
+    }
+
+    expect(caughtError).toBeDefined();
+    expect(caughtError.code).toBe("RECONCILIATION_REQUIRED");
+    expect(caughtError.details.blockedIssues).toEqual([
+      { key: ISSUE_KEY, totalHours: 7 },
+    ]);
   });
 });
