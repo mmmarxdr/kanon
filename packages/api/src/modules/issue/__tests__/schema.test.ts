@@ -34,6 +34,24 @@ describe("ReconcileTimeBody — confirmedTotalHours override", () => {
     expect(result.success).toBe(false);
   });
 
+  // Review fix (WARNING): hours is Decimal(8,2) — Postgres truncates values
+  // with more than 2 decimal places, so the stored total would silently
+  // diverge from the confirmed value. Reject at schema validation instead.
+  it("rejects an override with more than 2 decimal places", () => {
+    const result = ReconcileTimeBody.safeParse({ confirmedTotalHours: "4.999" });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts an override with exactly 2 decimal places", () => {
+    const result = ReconcileTimeBody.safeParse({ confirmedTotalHours: "4.99" });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts an override with 1 decimal place", () => {
+    const result = ReconcileTimeBody.safeParse({ confirmedTotalHours: "4.9" });
+    expect(result.success).toBe(true);
+  });
+
   it("rejects a request providing BOTH addHours and confirmedTotalHours", () => {
     const result = ReconcileTimeBody.safeParse({
       addHours: "1",

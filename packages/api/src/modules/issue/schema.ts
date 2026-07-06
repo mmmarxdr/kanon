@@ -155,10 +155,24 @@ const decimalHoursString = (fieldName: string) =>
     )
     .optional();
 
+// Review fix (WARNING): TimeEntry.hours is Decimal(8,2) — Postgres silently
+// truncates values with more than 2 decimal places, so the stored total
+// would diverge from the confirmed value. Cap the override's decimals to 2
+// at schema validation (400) before any side effect runs. addHours keeps its
+// original, looser regex (out of scope for this fix).
+const confirmedTotalHoursString = z
+  .string()
+  .regex(/^\d+(\.\d{1,2})?$/, "confirmedTotalHours must be a non-negative decimal string with at most 2 decimal places")
+  .refine(
+    (v) => parseFloat(v) <= 744,
+    { message: "confirmedTotalHours must not exceed 744 hours per reconcile" },
+  )
+  .optional();
+
 export const ReconcileTimeBody = z
   .object({
     addHours: decimalHoursString("addHours"),
-    confirmedTotalHours: decimalHoursString("confirmedTotalHours"),
+    confirmedTotalHours: confirmedTotalHoursString,
   })
   .refine(
     (body) => !(body.addHours !== undefined && body.confirmedTotalHours !== undefined),
