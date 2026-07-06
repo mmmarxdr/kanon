@@ -9,6 +9,7 @@ import {
   CreateIssueInput,
   UpdateIssueInput,
   TransitionIssueInput,
+  ReconcileTimeInput,
   WriteFormatField,
 } from "../types.js";
 import { errorResult, dataResult } from "../errors.js";
@@ -17,12 +18,25 @@ import type { Format } from "../transforms.js";
 import { resolveProjectKey } from "../binding-resolver.js";
 import type { InvalidBinding } from "../binding-resolver.js";
 import type { KanonBinding } from "../kanon-binding.js";
+import { KanonApiError } from "../kanon-client.js";
 
 // Extend CreateIssueInput's shape with the new write-format field. The legacy
 // `format: FormatParam.optional()` (slim/full/compact) is overridden to the
 // ack-aware enum without breaking other write-tool schemas yet (Batch C wires
 // the rest).
 const CreateIssueInputShape = { ...CreateIssueInput.shape, ...WriteFormatField };
+
+// KAN-188: `details.totalHours` on the 409 RECONCILIATION_REQUIRED payload is
+// untyped (Record<string, unknown>) — validate before interpolating it into a
+// user-facing message so a missing/absent field never renders as the literal
+// string "undefined". Accepts a finite number or a numeric string (e.g. "5.5").
+function toFiniteHours(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) {
+    return Number(value);
+  }
+  return null;
+}
 
 export function registerIssueTools(server: McpServer, client: KanonClient, binding: KanonBinding | InvalidBinding | null = null): void {
   server.tool(
@@ -139,7 +153,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
 
   server.tool(
     "kanon_transition_issue",
-    "Transition issueKey to state (backlog,todo,in_progress,review,done). Returns ack {ok,id,key}; format:'full' for entity.",
+    "Transition issueKey to state (backlog,todo,in_progress,review,done). Returns ack {ok,id,key}; format:'full' for entity. Done with unconfirmed time is blocked — call kanon_reconcile_time then retry.",
     TransitionIssueInput.shape,
     async ({ issueKey, state, format }) => {
       try {
@@ -147,6 +161,46 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
         const fmt = format ?? "ack";
         if (fmt === "ack") return dataResult(formatAck(issue, "issue"));
         return dataResult(formatEntity(issue, "issue-write", fmt as Format));
+      } catch (err) {
+        // KAN-188: the review→done reconcile gate blocks with a 409 carrying
+        // the captured hours in `details.totalHours`. Surface it directly so
+        // the agent can act (accept-as-is or adjust) instead of hitting a
+        // dead-end error — do NOT auto-reconcile silently.
+        if (
+          err instanceof KanonApiError &&
+          err.code === "RECONCILIATION_REQUIRED" &&
+          state === "done"
+        ) {
+          const rawTotalHours = err.details?.["totalHours"];
+          const totalHours = toFiniteHours(rawTotalHours);
+          const message =
+            totalHours !== null
+              ? `${totalHours} hours were reported on this ticket and need confirmation. ` +
+                `Call kanon_reconcile_time with issueKey "${issueKey}" and confirmedTotalHours ` +
+                `(accept ${totalHours}, or set a corrected value), then retry the transition to done.`
+              : `This ticket has unconfirmed reported time that must be confirmed before it can move to done. ` +
+                `Call kanon_reconcile_time with issueKey "${issueKey}" (optionally set confirmedTotalHours to ` +
+                `correct the total), then retry the transition to done.`;
+          return errorResult(
+            new KanonApiError(err.statusCode, err.code, message, err.details),
+          );
+        }
+        return errorResult(err);
+      }
+    },
+  );
+
+  server.tool(
+    "kanon_reconcile_time",
+    "Reconcile captured time on issueKey — clears the review→done gate. confirmedTotalHours accepts reported hours as-is or corrects up/down, then retry kanon_transition_issue to done.",
+    ReconcileTimeInput.shape,
+    async ({ issueKey, confirmedTotalHours }) => {
+      try {
+        const body: Record<string, unknown> = {};
+        if (confirmedTotalHours !== undefined) body["confirmedTotalHours"] = confirmedTotalHours;
+
+        const summary = await client.reconcileTime(issueKey, body);
+        return dataResult(summary);
       } catch (err) {
         return errorResult(err);
       }

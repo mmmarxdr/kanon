@@ -22,12 +22,20 @@ export interface KanonCycleDeleteResult {
 export class KanonApiError extends Error {
   public readonly statusCode: number;
   public readonly code: string;
+  /**
+   * Parsed `details` object from the server's error response body, when present
+   * (e.g. `AppError.details` forwarded by the API's global error handler).
+   * KAN-188: the 409 RECONCILIATION_REQUIRED payload carries `totalHours` here
+   * so the reconcile confirm-or-adjust flow can surface it without a round-trip.
+   */
+  public readonly details?: Record<string, unknown>;
 
-  constructor(statusCode: number, code: string, message: string) {
+  constructor(statusCode: number, code: string, message: string, details?: Record<string, unknown>) {
     super(message);
     this.name = "KanonApiError";
     this.statusCode = statusCode;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -378,6 +386,24 @@ export class KanonClient {
       "POST",
       `/api/issues/${issueKey}/transition`,
       { to_state: toState },
+    );
+  }
+
+  /**
+   * Reconcile captured time on an issue — clears the review→done gate by
+   * stamping `timeConfirmedAt`. Exactly one of `addHours` (additive top-up)
+   * or `confirmedTotalHours` (authoritative total, up or down) should be
+   * provided; the server enforces mutual exclusion (400 if both are set).
+   * Route: POST /api/issues/:key/reconcile-time
+   */
+  async reconcileTime(
+    issueKey: string,
+    opts: { addHours?: string; confirmedTotalHours?: string },
+  ): Promise<unknown> {
+    return this.request<unknown>(
+      "POST",
+      `/api/issues/${issueKey}/reconcile-time`,
+      opts,
     );
   }
 
@@ -951,14 +977,16 @@ export class KanonClient {
       const text = await response.text().catch(() => "");
       let code = "API_ERROR";
       let message = `Kanon API returned HTTP ${response.status}: ${text}`;
+      let details: Record<string, unknown> | undefined;
       try {
-        const parsed = JSON.parse(text) as { code?: string; message?: string };
+        const parsed = JSON.parse(text) as { code?: string; message?: string; details?: Record<string, unknown> };
         if (parsed.code) code = parsed.code;
         if (parsed.message) message = parsed.message;
+        if (parsed.details) details = parsed.details;
       } catch {
         // use raw text
       }
-      throw new KanonApiError(response.status, code, message);
+      throw new KanonApiError(response.status, code, message, details);
     }
 
     if (response.status === 204) {

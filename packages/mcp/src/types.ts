@@ -171,6 +171,18 @@ export const TransitionIssueInput = z.object({
   ...WriteFormatField,
 });
 
+/** kanon_reconcile_time */
+export const ReconcileTimeInput = z.object({
+  issueKey: z.string().describe("Issue key (e.g. 'KAN-42')"),
+  confirmedTotalHours: z
+    .string()
+    .optional()
+    .describe(
+      "Confirmed total hours as a decimal string (e.g. '5' or '4.5'). " +
+      "Pass the reported total to accept as-is, or a corrected value to adjust up or down.",
+    ),
+});
+
 /** kanon_batch_transition (raw shape — used for MCP server.tool registration) */
 export const BatchTransitionInputShape = z.object({
   projectKey: z.string().optional().describe("Project key. Resolved from .kanon if omitted."),

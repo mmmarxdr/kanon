@@ -77,13 +77,41 @@ _Spec req: "409 payload carries captured hours for the agent to surface" (MCP) a
 
 _Spec req: "MCP confirm-or-adjust flow on transition to done"_
 
-- [ ] 3.1 **RED** — `packages/mcp/src/__tests__/kanon-client.test.ts`: write a test for a new `reconcileTime(issueKey, opts)` method asserting it POSTs to `/api/issues/:key/reconcile-time` with the given body (`addHours` or `confirmedTotalHours`) and auths the same way as other client methods. Run — expect failure (method does not exist).
-- [ ] 3.2 **GREEN** — Add `reconcileTime(issueKey: string, opts: { addHours?: string; confirmedTotalHours?: string }): Promise<...>` to the `KanonClient` class in `packages/mcp/src/kanon-client.ts`, following the existing method pattern (see `transitionIssue`, `createIssue`) — reuse `this.request()`.
-- [ ] 3.3 **RED** — `packages/mcp/src/tools/__tests__/issues.test.ts` (create if absent, or extend): write a test for `kanon_transition_issue` targeting `done`: mock `client.transitionIssue` to throw a `KanonApiError` with `statusCode: 409`, `code: "RECONCILIATION_REQUIRED"`, `details: { totalHours: 5, issueKey: "ENG-1" }` on first call; assert the tool result surfaces the reported hours (e.g. in the `errorResult`/response text: "5 hours were reported..."), is NOT a hard failure the agent can't act on, and does not silently retry.
-- [ ] 3.4 **GREEN** — In `packages/mcp/src/tools/issues.ts`, wrap the `client.transitionIssue` call in `kanon_transition_issue`: on `KanonApiError` with `code === "RECONCILIATION_REQUIRED"` and `state === "done"`, return a structured result surfacing `details.totalHours` and instructing the agent it may retry with an explicit reconcile step (accept-as-is or adjusted total) — do NOT auto-reconcile silently.
-- [ ] 3.5 **RED** — Add a test for a new `kanon_reconcile_time` tool (or an extended `kanon_transition_issue` input accepting an optional reconcile decision — pick ONE shape and hold it consistently) asserting: given `confirm: true` (accept-as-is), it calls `client.reconcileTime(issueKey, { confirmedTotalHours: <reported total> })` then `client.transitionIssue(issueKey, "done")`, and returns success.
-- [ ] 3.6 **GREEN** — Implement the chosen shape in `packages/mcp/src/tools/issues.ts`: either (a) a new `kanon_reconcile_time` tool taking `issueKey` and an optional `confirmedTotalHours` (omitted = accept reported total), called by the agent after seeing the 409 surfaced hours, then followed by a normal `kanon_transition_issue` retry; or (b) extend `kanon_transition_issue`'s input schema with an optional reconcile decision consumed only when a prior 409 was surfaced. Prefer (a) — matches the existing one-tool-per-action pattern (`kanon_start_work`/`kanon_stop_work` are separate tools, not flags on other tools).
-- [ ] 3.7 **RED→GREEN** — Test + confirm: zero captured hours (`checkReconciliation` returns `needed: false`) never surfaces a reconcile prompt — `kanon_transition_issue` to `done` succeeds directly with a single call, no 409 round-trip introduced by this change.
+- [x] 3.1 **RED** — `packages/mcp/src/__tests__/kanon-client.test.ts`: write a test for a new `reconcileTime(issueKey, opts)` method asserting it POSTs to `/api/issues/:key/reconcile-time` with the given body (`addHours` or `confirmedTotalHours`) and auths the same way as other client methods. Run — expect failure (method does not exist).
+  > Implemented in `packages/mcp/src/kanon-client.test.ts` (co-located, not a separate `__tests__/` dir — matches this package's existing convention). 4 tests: confirmedTotalHours body, addHours body, Bearer auth, 409 details passthrough.
+- [x] 3.2 **GREEN** — Add `reconcileTime(issueKey: string, opts: { addHours?: string; confirmedTotalHours?: string }): Promise<...>` to the `KanonClient` class in `packages/mcp/src/kanon-client.ts`, following the existing method pattern (see `transitionIssue`, `createIssue`) — reuse `this.request()`.
+- [x] 3.3 **RED** — `packages/mcp/src/tools/__tests__/issues.test.ts` (create if absent, or extend): write a test for `kanon_transition_issue` targeting `done`: mock `client.transitionIssue` to throw a `KanonApiError` with `statusCode: 409`, `code: "RECONCILIATION_REQUIRED"`, `details: { totalHours: 5, issueKey: "ENG-1" }` on first call; assert the tool result surfaces the reported hours (e.g. in the `errorResult`/response text: "5 hours were reported..."), is NOT a hard failure the agent can't act on, and does not silently retry.
+  > Implemented in `packages/mcp/src/tools/issues.test.ts` (co-located, existing convention). Also required a prerequisite: `KanonApiError` dropped `details` entirely — fixed first (constructor + `request()` error-parsing path now carry `details`), with its own RED/GREEN pair in `kanon-client.test.ts`.
+- [x] 3.4 **GREEN** — In `packages/mcp/src/tools/issues.ts`, wrap the `client.transitionIssue` call in `kanon_transition_issue`: on `KanonApiError` with `code === "RECONCILIATION_REQUIRED"` and `state === "done"`, return a structured result surfacing `details.totalHours` and instructing the agent it may retry with an explicit reconcile step (accept-as-is or adjusted total) — do NOT auto-reconcile silently.
+- [x] 3.5 **RED** — Add a test for a new `kanon_reconcile_time` tool (or an extended `kanon_transition_issue` input accepting an optional reconcile decision — pick ONE shape and hold it consistently) asserting: given `confirm: true` (accept-as-is), it calls `client.reconcileTime(issueKey, { confirmedTotalHours: <reported total> })` then `client.transitionIssue(issueKey, "done")`, and returns success.
+  > Shape chosen: (a) a separate `kanon_reconcile_time` tool (`issueKey`, optional `confirmedTotalHours`). The agent passes the reported total explicitly to accept-as-is, or a corrected value to adjust — no boolean `confirm` flag (kept the input schema minimal since the accept/adjust decision is just the value itself). Full regression test added: 409 → `kanon_reconcile_time` → retry `kanon_transition_issue` → success.
+- [x] 3.6 **GREEN** — Implement the chosen shape in `packages/mcp/src/tools/issues.ts`: either (a) a new `kanon_reconcile_time` tool taking `issueKey` and an optional `confirmedTotalHours` (omitted = accept reported total), called by the agent after seeing the 409 surfaced hours, then followed by a normal `kanon_transition_issue` retry; or (b) extend `kanon_transition_issue`'s input schema with an optional reconcile decision consumed only when a prior 409 was surfaced. Prefer (a) — matches the existing one-tool-per-action pattern (`kanon_start_work`/`kanon_stop_work` are separate tools, not flags on other tools).
+- [x] 3.7 **RED→GREEN** — Test + confirm: zero captured hours (`checkReconciliation` returns `needed: false`) never surfaces a reconcile prompt — `kanon_transition_issue` to `done` succeeds directly with a single call, no 409 round-trip introduced by this change.
+  > Covered by "zero captured hours transitions to done directly with a single call (no reconcile prompt)" in `issues.test.ts` — `client.transitionIssue` mocked to resolve normally, asserts `isError` undefined and exactly 1 call.
+
+> **Byte-budget re-anchors (required by house tests, not spec-mandated):** adding the 44th
+> tool (`kanon_reconcile_time`) and extending `kanon_transition_issue`'s description pushed
+> two pre-existing byte-ceiling tests over budget: `descriptions.test.ts` (topline tool-
+> description sum) and `instructions.test.ts` P1 (`SERVER_INSTRUCTIONS` byte ceiling).
+> Re-anchored both following the exact precedent set by KAN-104/119/120 (see
+> `baseline.fixture.ts` and the updated test comments) — not a scope expansion, just
+> keeping the existing token-budget guardrails accurate for the new tool surface.
+
+> **Post-Phase-3 review-fix pass (confirmed fixes, mcp-only, before PR2 merge):**
+> 1. Guarded `details.totalHours` interpolation in the `kanon_transition_issue`→done 409
+>    handler — a missing `details` object or non-numeric `totalHours` previously rendered
+>    the literal string `"undefined hours were reported..."`. Added a `toFiniteHours()`
+>    validator; invalid/absent now falls back to a generic reconcile-prompt message with
+>    no interpolated value. 3 new tests in `issues.test.ts`.
+> 2. Pinned (test-only, no behavior change) `kanon_batch_transition`'s current contract:
+>    a `RECONCILIATION_REQUIRED` 409 from the underlying batch call surfaces via the
+>    existing `errorResult` path without crashing or reporting success. Added a
+>    `// KAN-188:` comment in `groups.ts` noting full batch reconcile-awareness is
+>    deferred and tracked separately.
+> 3. Added a contract test pinning `reconcileTime`'s mutual-exclusion propagation: passing
+>    both `confirmedTotalHours` and `addHours` propagates the server's 400 as a
+>    `KanonApiError` with the right statusCode/code — no client-side guard added, the
+>    server is authoritative per the existing doc comment.
 
 ---
 
@@ -107,7 +135,8 @@ _Spec req: "Web confirm-or-adjust modal on transition to done"_
 
 _No spec req directly, but required by house rules when the MCP toolset changes._
 
-- [ ] 5.1 Update `packages/mcp/src/instructions.ts` (or wherever the MCP tool list / capability doc lives) to document the new reconcile tool/flow: when `kanon_transition_issue` to `done` is blocked by `RECONCILIATION_REQUIRED`, the agent should surface reported hours and call the reconcile tool (accept-as-is or adjusted) before retrying.
+- [x] 5.1 Update `packages/mcp/src/instructions.ts` (or wherever the MCP tool list / capability doc lives) to document the new reconcile tool/flow: when `kanon_transition_issue` to `done` is blocked by `RECONCILIATION_REQUIRED`, the agent should surface reported hours and call the reconcile tool (accept-as-is or adjusted) before retrying.
+  > `kanon_reconcile_time` added to CORE TOOLS list; one concise hint line added ("Done blocked by unconfirmed time -> kanon_reconcile_time, then retry"). Instructions byte ceiling re-anchored 1900→1950 (actual: 1901 B).
 
 ---
 

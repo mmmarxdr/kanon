@@ -785,6 +785,119 @@ describe("KanonClient logging hygiene (W2)", () => {
   });
 });
 
+// ─── KAN-188: reconcileTime client method ───────────────────────────────────
+
+describe("KanonClient.reconcileTime (KAN-188)", () => {
+  it("calls POST /api/issues/:key/reconcile-time with confirmedTotalHours", async () => {
+    const summary = { issueKey: "KAN-1", confirmedTotalHours: "5.00", timeConfirmedAt: "2026-07-06T00:00:00.000Z" };
+    const fetchMock = mockFetch(summary);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await client.reconcileTime("KAN-1", { confirmedTotalHours: "5" });
+
+    expect(result).toEqual(summary);
+    const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/api/issues/KAN-1/reconcile-time`);
+    expect(opts.method).toBe("POST");
+    expect(JSON.parse(opts.body as string)).toEqual({ confirmedTotalHours: "5" });
+  });
+
+  it("calls POST /api/issues/:key/reconcile-time with addHours", async () => {
+    const summary = { issueKey: "KAN-1", confirmedTotalHours: "8.00", timeConfirmedAt: "2026-07-06T00:00:00.000Z" };
+    const fetchMock = mockFetch(summary);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await client.reconcileTime("KAN-1", { addHours: "3" });
+
+    expect(result).toEqual(summary);
+    const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/api/issues/KAN-1/reconcile-time`);
+    expect(JSON.parse(opts.body as string)).toEqual({ addHours: "3" });
+  });
+
+  it("authenticates with the same Bearer header as other client methods", async () => {
+    const fetchMock = mockFetch({ issueKey: "KAN-1", confirmedTotalHours: "5.00" });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await client.reconcileTime("KAN-1", { confirmedTotalHours: "5" });
+
+    const [, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = opts.headers as Record<string, string>;
+    expect(headers["Authorization"]).toBe(`Bearer ${API_KEY}`);
+  });
+
+  it("throws KanonApiError with details on a 409 conflict", async () => {
+    const fetchMock = mockFetch(
+      { code: "RECONCILE_NO_ANCHOR", message: "No approved anchor entry", details: { issueKey: "KAN-1" } },
+      409,
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const err = await client.reconcileTime("KAN-1", { confirmedTotalHours: "0" }).catch((e) => e);
+    expect(err).toBeInstanceOf(KanonApiError);
+    expect((err as KanonApiError).code).toBe("RECONCILE_NO_ANCHOR");
+    expect((err as KanonApiError).details).toEqual({ issueKey: "KAN-1" });
+  });
+
+  // Server enforces mutual exclusion between addHours and confirmedTotalHours
+  // (400 if both are set) — the client does not add its own guard, it only
+  // needs to propagate the server's rejection faithfully.
+  it("propagates a 400 as KanonApiError when both confirmedTotalHours and addHours are passed", async () => {
+    const fetchMock = mockFetch(
+      { code: "RECONCILE_MUTUALLY_EXCLUSIVE", message: "Provide either addHours or confirmedTotalHours, not both" },
+      400,
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const err = await client
+      .reconcileTime("KAN-1", { confirmedTotalHours: "5", addHours: "2" })
+      .catch((e) => e);
+
+    expect(err).toBeInstanceOf(KanonApiError);
+    expect((err as KanonApiError).statusCode).toBe(400);
+    expect((err as KanonApiError).code).toBe("RECONCILE_MUTUALLY_EXCLUSIVE");
+  });
+});
+
+// ─── KAN-188: KanonApiError.details plumbing ─────────────────────────────────
+//
+// The 409 RECONCILIATION_REQUIRED payload carries `details.totalHours` (and
+// other fields) that the reconcile-time confirm-or-adjust flow needs. Before
+// this, KanonApiError dropped the parsed response body's `details` entirely.
+
+describe("KanonApiError — details plumbing (KAN-188)", () => {
+  it("surfaces details.totalHours from a 409 response body on the thrown KanonApiError", async () => {
+    const fetchMock = mockFetch(
+      {
+        code: "RECONCILIATION_REQUIRED",
+        message: "Unconfirmed captured time must be reconciled before this issue can be marked done",
+        details: { totalHours: 5, issueKey: "KAN-1" },
+      },
+      409,
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await client.transitionIssue("KAN-1", "done");
+      expect.unreachable("Should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(KanonApiError);
+      expect((err as KanonApiError).statusCode).toBe(409);
+      expect((err as KanonApiError).code).toBe("RECONCILIATION_REQUIRED");
+      expect((err as KanonApiError).details).toEqual({ totalHours: 5, issueKey: "KAN-1" });
+    }
+  });
+
+  it("leaves details undefined when the response body has no details field", async () => {
+    const fetchMock = mockFetch({ code: "FORBIDDEN", message: "No access" }, 403);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const err = await client.listWorkspaces().catch((e) => e);
+    expect(err).toBeInstanceOf(KanonApiError);
+    expect((err as KanonApiError).details).toBeUndefined();
+  });
+});
+
 // ─── S1: X-Kanon-Client header injection (KAN-30) ───────────────────────────
 
 describe("KanonClient — X-Kanon-Client header injection (S1)", () => {

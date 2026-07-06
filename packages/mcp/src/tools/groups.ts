@@ -42,6 +42,11 @@ export function registerGroupTools(server: McpServer, client: KanonClient, bindi
         if (!resolvedKey.ok) return errorResult(new Error(resolvedKey.error));
         const projectKey = resolvedKey.projectKey;
 
+        // KAN-188: batch transitions are not yet reconcile-aware — a
+        // RECONCILIATION_REQUIRED 409 from either call below surfaces as-is
+        // via the catch block's errorResult(err), same as any other error.
+        // Full batch reconcile-awareness (e.g. per-issue blockedIssues
+        // detail) is deferred and tracked separately.
         let result: unknown;
         if (keys && keys.length > 0) {
           result = await client.batchTransitionByKeys(projectKey, keys, state);

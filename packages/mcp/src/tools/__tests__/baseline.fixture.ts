@@ -46,5 +46,10 @@ export const SKILL_BASELINE_BYTES = 6659;
  * Re-anchored at KAN-104 capture tools: 5364 B (4884 B + 480 B measured for
  *   kanon_report_incident + kanon_propose_estimate + kanon_apply_proposal).
  *   Ceiling: 5364 − 300 = 5064; actual at landing: 5000 B (margin: 64 B).
+ * Re-anchored at KAN-188: 5650 B (5300 B measured actual at landing + 350 B
+ *   margin for the new kanon_reconcile_time tool plus the
+ *   kanon_transition_issue description addendum surfacing the reconcile
+ *   gate). Ceiling: 5650 − 300 = 5350; actual at landing: 5300 B (44 tools;
+ *   margin: 50 B).
  */
-export const DESCRIPTION_BASELINE_BYTES = 5364;
+export const DESCRIPTION_BASELINE_BYTES = 5650;

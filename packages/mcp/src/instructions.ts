@@ -66,6 +66,7 @@ Before kanon_create_issue: kanon_list_groups(projectKey) -> assign groupKey.
 Before kanon_update_issue: kanon_get_issue first — never overwrite blindly.
 Lists: format: compact, limit: 10. Writes: format: ack.
 Deferred work (later/someday) -> roadmap, not backlog.
+Done blocked by unconfirmed time -> kanon_reconcile_time, then retry.
 
 ## DEFERRED TOOLS (use ToolSearch when needed)
 
@@ -85,5 +86,5 @@ kanon_promote_roadmap_item,
 kanon_list_cycles, kanon_get_cycle,
 kanon_create_cycle, kanon_attach_issues_to_cycle, kanon_close_cycle,
 kanon_list_my_worklogs, kanon_promote_worklog, kanon_update_time_entry,
-kanon_submit_time_entry
+kanon_submit_time_entry, kanon_reconcile_time
 `.trim();
