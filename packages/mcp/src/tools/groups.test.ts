@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerGroupTools } from "./groups.js";
+import { KanonApiError } from "../kanon-client.js";
 import type { KanonClient } from "../kanon-client.js";
 
 // ─── Harness ────────────────────────────────────────────────────────────────
@@ -149,5 +150,43 @@ describe("kanon_batch_transition — format tier", () => {
     const parsed = JSON.parse(result.content[0]!.text);
     // full returns raw result (array or object)
     expect(parsed).not.toHaveProperty("ok");
+  });
+});
+
+// ─── KAN-188 regression pin: batch reconcile-gate is not made worse ──────────
+//
+// kanon_batch_transition does not yet have reconcile-aware 409 handling
+// (full batch reconcile-awareness is deferred, tracked separately). This
+// test pins the current "no worse than before" contract: when the
+// underlying batch call rejects with RECONCILIATION_REQUIRED, the tool
+// surfaces it via the existing errorResult path — it must not crash and
+// must not report the transition as having succeeded.
+
+describe("kanon_batch_transition — RECONCILIATION_REQUIRED regression pin (KAN-188)", () => {
+  it("surfaces a RECONCILIATION_REQUIRED 409 via errorResult without crashing or reporting success", async () => {
+    const mockClient = {
+      batchTransition: vi.fn().mockRejectedValue(
+        new KanonApiError(
+          409,
+          "RECONCILIATION_REQUIRED",
+          "Unconfirmed captured time must be reconciled",
+          { blockedIssues: [{ issueKey: "KAN-1", totalHours: 5 }] },
+        ),
+      ),
+    };
+    const tools = captureTools(registerGroupTools, mockClient as unknown as KanonClient);
+    const tool = tools.get("kanon_batch_transition");
+    if (!tool) throw new Error("kanon_batch_transition not registered");
+
+    const result = await tool.handler({
+      projectKey: "KAN",
+      groupKey: "backlog",
+      state: "done",
+    });
+
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed.code).toBe("RECONCILIATION_REQUIRED");
+    expect(parsed).not.toHaveProperty("ok", true);
   });
 });
