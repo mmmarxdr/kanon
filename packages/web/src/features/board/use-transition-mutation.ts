@@ -1,5 +1,6 @@
+import { useCallback, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchApi } from "@/lib/api-client";
+import { ApiError, fetchApi } from "@/lib/api-client";
 import { issueKeys, cycleKeys } from "@/lib/query-keys";
 import { useToastStore } from "@/stores/toast-store";
 import type { Issue } from "@/types/issue";
@@ -8,6 +9,31 @@ import type { IssueState } from "@/stores/board-store";
 interface TransitionVars {
   issueKey: string;
   toState: IssueState;
+}
+
+/**
+ * State surfaced when a transition to "done" is blocked by
+ * 409 RECONCILIATION_REQUIRED — the caller renders <ReconcileModal> from this.
+ */
+export interface ReconcileState {
+  issueKey: string;
+  totalHours: number;
+}
+
+function toFiniteHours(value: unknown): number | null {
+  const n = typeof value === "string" ? Number(value) : value;
+  return typeof n === "number" && Number.isFinite(n) ? n : null;
+}
+
+/** POST /api/issues/:key/reconcile-time { confirmedTotalHours } */
+function reconcileTime(issueKey: string, confirmedTotalHours: number) {
+  return fetchApi<void>(
+    `/api/issues/${encodeURIComponent(issueKey)}/reconcile-time`,
+    {
+      method: "POST",
+      body: JSON.stringify({ confirmedTotalHours: String(confirmedTotalHours) }),
+    },
+  );
 }
 
 /**
@@ -21,8 +47,11 @@ interface TransitionVars {
  */
 export function useTransitionMutation(projectKey: string) {
   const queryClient = useQueryClient();
+  const [reconcileState, setReconcileState] = useState<ReconcileState | null>(
+    null,
+  );
 
-  return useMutation({
+  const mutation = useMutation({
     mutationFn: ({ issueKey, toState }: TransitionVars) =>
       fetchApi<void>(
         `/api/issues/${encodeURIComponent(issueKey)}/transition`,
@@ -55,13 +84,26 @@ export function useTransitionMutation(projectKey: string) {
       return { previousIssues };
     },
 
-    onError: (_err, vars, context) => {
-      // Rollback to the snapshot on error
+    onError: (err, vars, context) => {
+      // Rollback to the snapshot on error (unconditional — reconcile or not)
       if (context?.previousIssues) {
         queryClient.setQueryData(
           issueKeys.list(projectKey),
           context.previousIssues,
         );
+      }
+
+      // 409 RECONCILIATION_REQUIRED: surface a reconcile prompt instead of the
+      // generic revert toast — the transition can still succeed once the user
+      // confirms captured hours (KAN-188).
+      if (err instanceof ApiError && err.code === "RECONCILIATION_REQUIRED") {
+        const totalHours = toFiniteHours(err.details?.totalHours);
+        if (totalHours !== null) {
+          setReconcileState({ issueKey: vars.issueKey, totalHours });
+          return;
+        }
+        // Malformed 409 payload (no usable hours) — fall through to the
+        // generic toast rather than silently dropping the error.
       }
 
       // Show error toast (R-WEB-10)
@@ -87,4 +129,21 @@ export function useTransitionMutation(projectKey: string) {
       }
     },
   });
+
+  const confirmReconcile = useCallback(
+    async (confirmedTotalHours: number) => {
+      if (!reconcileState) return;
+      const { issueKey } = reconcileState;
+      await reconcileTime(issueKey, confirmedTotalHours);
+      setReconcileState(null);
+      await mutation.mutateAsync({ issueKey, toState: "done" });
+    },
+    [reconcileState, mutation],
+  );
+
+  const cancelReconcile = useCallback(() => {
+    setReconcileState(null);
+  }, []);
+
+  return { ...mutation, reconcileState, confirmReconcile, cancelReconcile };
 }
