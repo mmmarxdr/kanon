@@ -13,11 +13,7 @@ const API_BASE = `http://localhost:${process.env["API_PORT"] ?? "3001"}`;
  * Make a POST request directly to the API (bypassing the browser).
  * Useful for test data setup.
  */
-export async function apiPost<T>(
-  urlPath: string,
-  body: object,
-  token?: string,
-): Promise<T> {
+export async function apiPost<T>(urlPath: string, body: object, token?: string): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
@@ -33,9 +29,7 @@ export async function apiPost<T>(
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(
-      `API POST ${urlPath} failed (${response.status}): ${text}`,
-    );
+    throw new Error(`API POST ${urlPath} failed (${response.status}): ${text}`);
   }
 
   if (response.status === 204) {
@@ -60,9 +54,34 @@ export async function apiGet<T>(urlPath: string, token: string): Promise<T> {
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(
-      `API GET ${urlPath} failed (${response.status}): ${text}`,
-    );
+    throw new Error(`API GET ${urlPath} failed (${response.status}): ${text}`);
+  }
+
+  return response.json() as Promise<T>;
+}
+
+/**
+ * Make a DELETE request directly to the API (bypassing the browser).
+ * Useful for test data setup/teardown (e.g. stopping a work session).
+ */
+export async function apiDelete<T>(urlPath: string, token: string): Promise<T> {
+  // No Content-Type header: this is a bodyless DELETE, and Fastify's JSON
+  // body parser rejects a request that declares application/json with an
+  // empty body (FST_ERR_CTP_EMPTY_JSON_BODY).
+  const response = await fetch(`${API_BASE}${urlPath}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`API DELETE ${urlPath} failed (${response.status}): ${text}`);
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
   }
 
   return response.json() as Promise<T>;
@@ -72,20 +91,16 @@ export async function apiGet<T>(urlPath: string, token: string): Promise<T> {
  * Login via the API directly and return the access token.
  * Useful for API-level test helpers that need auth.
  */
-export async function getAuthToken(opts?: {
-  email?: string;
-  password?: string;
-}): Promise<string> {
+export async function getAuthToken(opts?: { email?: string; password?: string }): Promise<string> {
   dotenv.config({ path: path.resolve(__dirname, "../.env.test") });
 
   const email = opts?.email ?? process.env["SEED_USER_EMAIL"] ?? "dev@kanon.io";
-  const password =
-    opts?.password ?? process.env["SEED_USER_PASSWORD"] ?? "Password123!";
+  const password = opts?.password ?? process.env["SEED_USER_PASSWORD"] ?? "Password123!";
 
-  const result = await apiPost<{ accessToken: string; refreshToken: string }>(
-    "/api/auth/login",
-    { email, password },
-  );
+  const result = await apiPost<{ accessToken: string; refreshToken: string }>("/api/auth/login", {
+    email,
+    password,
+  });
 
   return result.accessToken;
 }

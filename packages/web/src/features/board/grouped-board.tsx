@@ -30,6 +30,7 @@ import { useTransitionMutation } from "./use-transition-mutation";
 import { GroupCard } from "./group-card";
 import { IssueCard } from "./issue-card";
 import { GroupDrillDown } from "./group-drill-down";
+import { ReconcileModal } from "./reconcile-modal";
 import { Icon } from "@/components/ui/icons";
 
 /** Status dot color per kanban column. */
@@ -400,6 +401,37 @@ export function GroupedBoard({
           onSelectIssue={onSelectIssue}
         />
       )}
+
+      {/* Single ungrouped-issue transition reconcile modal */}
+      {transitionMutation.reconcileState && (
+        <ReconcileModal
+          issueKey={transitionMutation.reconcileState.issueKey}
+          totalHours={transitionMutation.reconcileState.totalHours}
+          onConfirm={(hours) => void transitionMutation.confirmReconcile(hours)}
+          onClose={transitionMutation.cancelReconcile}
+          isSubmitting={transitionMutation.isSubmitting}
+        />
+      )}
+
+      {/* Group transition: one modal at a time, per blocked issue.
+          Bind the head element to a const so noUncheckedIndexedAccess narrows
+          it to defined — a `.length > 0` check does not narrow `[0]`. */}
+      {(() => {
+        const blocked = groupTransition.blockedIssues?.[0];
+        if (!blocked) return null;
+        return (
+          <ReconcileModal
+            key={blocked.key}
+            issueKey={blocked.key}
+            totalHours={blocked.totalHours}
+            onConfirm={(hours) =>
+              void groupTransition.confirmReconcile(blocked.key, hours)
+            }
+            onClose={() => groupTransition.cancelReconcile(blocked.key)}
+            isSubmitting={groupTransition.isSubmitting}
+          />
+        );
+      })()}
     </>
   );
 }

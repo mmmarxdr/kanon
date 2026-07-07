@@ -16,9 +16,15 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { issueKeys, cycleKeys } from "@/lib/query-keys";
 
-vi.mock("@/lib/api-client", () => ({
-  fetchApi: vi.fn(),
-}));
+vi.mock("@/lib/api-client", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api-client")>(
+    "@/lib/api-client",
+  );
+  return {
+    ...actual,
+    fetchApi: vi.fn(),
+  };
+});
 
 vi.mock("@/stores/toast-store", () => ({
   useToastStore: {

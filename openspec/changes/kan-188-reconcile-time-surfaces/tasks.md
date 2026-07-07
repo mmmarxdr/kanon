@@ -62,8 +62,8 @@ _Spec req: "409 payload carries captured hours for the agent to surface" (MCP) a
 
 - [x] 2.1 **RED** — `packages/api/src/modules/issue/__tests__/service.test.ts` (or existing transition test file): confirm (existing behavior, add assertion if missing) that the single-issue `transitionIssue` 409 `AppError` `details` includes `totalHours` alongside `issueKey`, `workLogs`, `timeEntries` (already true per current code at `service.ts:672-688` — this is a characterization test, not new behavior). Run — expect pass (documents the contract before client work depends on it).
   > Implemented in `packages/api/src/modules/issue/reconcile.test.ts` (the package's existing home for `transitionIssue`/`batchTransitionByKeys` reconciliation-gate tests) rather than `__tests__/service.test.ts`, whose existing mock harness only covers `createIssue`/`updateIssue`. Added two characterization tests: single-issue `details.totalHours`/`details.issueKey` (concrete values), and batch `details.blockedIssues[].totalHours` (the shape difference the tasks note explicitly). Both passed immediately — confirms Verified Fact #4 for all 3 throw sites; no service.ts changes needed.
-- [ ] 2.2 **RED** — `packages/web/src/lib/__tests__/api-client.test.ts` (create if absent): write a test asserting `ApiError` thrown by `handleResponse` exposes the parsed response body's `details` (e.g. `totalHours`, `issueKey`) as a public property, not just `status`/`code`/`message`. Run `pnpm --filter @kanon/web test` — expect failure (property does not exist).
-- [ ] 2.3 **GREEN** — In `packages/web/src/lib/api-client.ts`, extend the `ApiError` class with a `public readonly details?: Record<string, unknown>` field, and populate it from the parsed error body in `handleResponse` (`body.details` if present, matching the shape the API's global error handler forwards from `AppError.details`). Run test — expect pass.
+- [x] 2.2 **RED** — `packages/web/src/lib/__tests__/api-client.test.ts` (created): write a test asserting `ApiError` thrown by `handleResponse` exposes the parsed response body's `details` (e.g. `totalHours`, `issueKey`) as a public property, not just `status`/`code`/`message`. Run `pnpm --filter @kanon/web test` — expect failure (property does not exist).
+- [x] 2.3 **GREEN** — In `packages/web/src/lib/api-client.ts`, extend the `ApiError` class with a `public readonly details?: Record<string, unknown>` field, and populate it from the parsed error body in `handleResponse` (`body.details` if present, matching the shape the API's global error handler forwards from `AppError.details`). Run test — expect pass.
 - [ ] 2.4 **RED** — `packages/mcp/src/__tests__/kanon-client.test.ts` (create if absent, or extend): write a test asserting `KanonApiError` exposes `details` (e.g. `totalHours`) from the parsed error body, same contract as 2.2. Run `pnpm --filter @kanon/mcp test` — expect failure.
 - [ ] 2.5 **GREEN** — In `packages/mcp/src/kanon-client.ts`, extend `KanonApiError` with `public readonly details?: Record<string, unknown>`, populate it in the same `request()` error-parsing block that currently reads `code`/`message` from the response body. Run test — expect pass.
 
@@ -119,15 +119,53 @@ _Spec req: "MCP confirm-or-adjust flow on transition to done"_
 
 _Spec req: "Web confirm-or-adjust modal on transition to done"_
 
-- [ ] 4.1 **RED** — `packages/web/src/features/board/__tests__/use-transition-mutation.test.tsx` (create if absent): write a test where `fetchApi` rejects with `ApiError(409, "RECONCILIATION_REQUIRED", ..., details: { totalHours: 3 })`; assert the mutation surfaces this distinctly (e.g. via a returned/thrown typed error, or a callback) so a consuming component can detect the reconcile-required case and NOT treat it as a generic error toast (current `onError` unconditionally shows the "reverted" toast — this must be bypassed for the 409 case).
-- [ ] 4.2 **GREEN** — In `packages/web/src/features/board/use-transition-mutation.ts`, in `onError`, branch on `err instanceof ApiError && err.code === "RECONCILIATION_REQUIRED"`: skip the generic revert-toast path and instead surface the error (e.g. re-throw, or expose via a returned discriminated result) so the calling component can open the reconcile modal. Preserve the rollback (`setQueryData` to `previousIssues`) in all cases — only the toast/notification branch changes.
-- [ ] 4.3 **RED** — Same pattern for `packages/web/src/features/board/__tests__/use-group-transition-mutation.test.tsx` (create if absent): the group endpoint's 409 carries `blockedIssues: [{ key, totalHours }, ...]` (per-issue, not a single `totalHours`) — assert the mutation surfaces this list distinctly so the caller can open one modal per blocked issue.
-- [ ] 4.4 **GREEN** — Mirror the 4.2 branch in `use-group-transition-mutation.ts`, surfacing `err.details.blockedIssues` instead of a single `totalHours`.
-- [ ] 4.5 **RED** — `packages/web/src/features/board/__tests__/reconcile-modal.test.tsx` (new component, new test): write a `@testing-library/react` test for a `ReconcileModal` component: renders captured hours, allows an optional numeric adjustment input, has a confirm action that is disabled/absent until explicitly triggered (no one-click silent path), and on confirm calls an `onConfirm(confirmedTotalHours)` callback with either the unmodified reported value or the adjusted value.
-- [ ] 4.6 **GREEN** — Create `packages/web/src/features/board/reconcile-modal.tsx` following the `close-cycle-dialog.tsx` pattern (`useEscapeKey`, `useBackdropClose`, `FocusTrap`, local style constants) — a controlled modal taking `totalHours: number`, `onConfirm: (confirmedTotalHours: number) => void`, `onClose: () => void`.
-- [ ] 4.7 **RED** — `packages/web/src/features/board/__tests__/use-reconcile-transition.test.tsx` (new hook, new test): write a test for a small orchestration hook/function that, given a blocked issue key and a confirmed total, calls `POST /api/issues/:key/reconcile-time` with `confirmedTotalHours`, then calls the transition mutation again for `done`, and on success invalidates via the SAME `issueKeys`/`cycleKeys` factories already used in `onSettled` (reuse, do not duplicate invalidation logic).
-- [ ] 4.8 **GREEN** — Implement the orchestration hook (e.g. `use-reconcile-transition.ts`) wiring `ReconcileModal` → `POST /api/issues/:key/reconcile-time` (via `fetchApi`) → retry `useTransitionMutation`'s `mutate` for `done` → confirm `onSettled` invalidation fires through existing `issueKeys`/`cycleKeys` factories (no new invalidation path).
-- [ ] 4.9 **RED→GREEN** — Wire the board's transition call site(s) (wherever `useTransitionMutation`/`useGroupTransitionMutation` are consumed — locate via the existing board drag/drop or bulk-action component) to open `ReconcileModal` when the mutation surfaces `RECONCILIATION_REQUIRED`, and to open ONE modal per blocked issue for the group case (sequential or list-based UI — implementation detail, but each blocked issue MUST get its own confirm step per spec). Add/extend an integration test at the consuming component level asserting the modal opens on 409 and the transition completes only after confirm.
+> PR3 implementation note: Phase 2 (2.2–2.3, `ApiError.details`) was completed
+> as part of this PR's prerequisite work unit rather than a separate PR, since
+> it is a hard blocker for every task below. See `packages/web/src/lib/api-client.ts`
+> + `packages/web/src/lib/__tests__/api-client.test.ts`.
+>
+> Design deviation from the task list (documented, in-scope per "UI latitude"):
+> instead of a standalone `use-reconcile-transition.ts` orchestration hook,
+> `useTransitionMutation`/`useGroupTransitionMutation` each own their own
+> reconcile state and expose it directly (`reconcileState`/`blockedIssues` +
+> `confirmReconcile`/`cancelReconcile`). This avoids duplicating the mutation's
+> own `mutate`/`mutateAsync` plumbing in a second hook and keeps the 409
+> interception + retry co-located with the mutation that owns the cache
+> invalidation contract.
+
+- [x] 4.1 **RED** — `packages/web/src/features/board/use-transition-mutation.reconcile.test.tsx`: write a test where `fetchApi` rejects with `ApiError(409, "RECONCILIATION_REQUIRED", ..., details: { totalHours: 3 })`; assert the mutation surfaces this distinctly (e.g. via a returned/thrown typed error, or a callback) so a consuming component can detect the reconcile-required case and NOT treat it as a generic error toast (current `onError` unconditionally shows the "reverted" toast — this must be bypassed for the 409 case).
+- [x] 4.2 **GREEN** — In `packages/web/src/features/board/use-transition-mutation.ts`, in `onError`, branch on `err instanceof ApiError && err.code === "RECONCILIATION_REQUIRED"`: skip the generic revert-toast path and instead surface the error via a `reconcileState` returned by the hook. Preserve the rollback (`setQueryData` to `previousIssues`) in all cases — only the toast/notification branch changes.
+- [x] 4.3 **RED** — Same pattern for `packages/web/src/features/board/use-group-transition-mutation.reconcile.test.tsx`: the group endpoint's 409 carries `blockedIssues: [{ key, totalHours }, ...]` (per-issue, not a single `totalHours`) — assert the mutation surfaces this list distinctly so the caller can open one modal per blocked issue.
+- [x] 4.4 **GREEN** — Mirror the 4.2 branch in `use-group-transition-mutation.ts`, surfacing `err.details.blockedIssues` as `blockedIssues` instead of a single `totalHours`.
+- [x] 4.5 **RED** — `packages/web/src/features/board/reconcile-modal.test.tsx`: write a `@testing-library/react` test for a `ReconcileModal` component: renders captured hours, allows an optional numeric adjustment input, has a confirm action that is disabled/absent until explicitly triggered (no one-click silent path), and on confirm calls an `onConfirm(confirmedTotalHours)` callback with either the unmodified reported value or the adjusted value.
+- [x] 4.6 **GREEN** — Create `packages/web/src/features/board/reconcile-modal.tsx` following the `close-cycle-dialog.tsx` pattern (`useEscapeKey`, `useBackdropClose`, `FocusTrap`, local style constants) — a controlled modal taking `totalHours: number`, `onConfirm: (confirmedTotalHours: number) => void`, `onClose: () => void`. Client-side validation mirrors the server rule (non-negative, ≤2 decimals, ≤744).
+- [x] 4.7 **RED** — Covered by 4.1/4.3's `confirmReconcile` assertions (no separate orchestration hook — see design deviation note above): each mutation's own test asserts `confirmReconcile` calls `POST /api/issues/:key/reconcile-time` with `confirmedTotalHours`, then retries the transition, and that the SAME `issueKeys`/`cycleKeys` `onSettled` invalidation fires afterward.
+- [x] 4.8 **GREEN** — Implemented directly on each mutation hook (`confirmReconcile`/`cancelReconcile` on both `use-transition-mutation.ts` and `use-group-transition-mutation.ts`) rather than a separate `use-reconcile-transition.ts` — see design deviation note. `onSettled`/its shared `invalidate()` helper fires through the existing `issueKeys`/`cycleKeys` factories, no new invalidation path introduced.
+- [x] 4.9 **RED→GREEN** — Wired `KanbanBoard` (single transition) and `GroupedBoard` (group transition, one modal at a time keyed by `blockedIssues[0]`) to render `ReconcileModal` from each mutation's own state. Integration tests: `kanban-board.reconcile.test.tsx`, `grouped-board.reconcile.test.tsx` — assert the modal opens when the mutation surfaces reconcile state, confirm/cancel call through to the right hook methods with the right issue key + hours, and (via the unit-level mutation tests) the transition only completes after explicit confirm.
+
+> **Post-4.9 review-fix pass (confirmed fixes, same PR3 branch `feat/kan-188-web-reconcile`):**
+> 1. `confirmReconcile` in both hooks had no try/catch around the reconcile-time
+>    POST + retried transition, and both boards called it as
+>    `void confirmReconcile(...)` — a rejection (e.g. 409 RECONCILE_NO_ANCHOR
+>    on a downward correction with no approved anchor) became an unhandled
+>    promise rejection: no toast, stuck modal. Fixed in both hooks with
+>    try/catch/finally, surfacing errors via the existing toast mechanism and
+>    keeping the affected issue actionable/retryable (`reconcileState` only
+>    clears on full success; `blockedIssues` keeps the issue on failure).
+> 2. `ReconcileModal`'s `isSubmitting` prop was never passed by either board,
+>    so a rapid double-click could fire `confirmReconcile` twice. Added
+>    `isSubmitting` state to both hooks and wired it at both call sites.
+> 3. `toFiniteHours`, the `reconcileTime` POST helper, and the
+>    `"RECONCILIATION_REQUIRED"` literal were duplicated byte-for-byte across
+>    both hooks — extracted to `packages/web/src/features/board/reconcile-api.ts`
+>    (`RECONCILIATION_ERROR_CODE` constant) and imported by both. Also
+>    collapsed the double-cast in `parseBlockedIssues`.
+> 4. Added `grouped-board.reconcile-sequencing.test.tsx` pinning that
+>    `blockedIssues[0]`-driven sequencing surfaces each blocked issue's own
+>    hours in turn (no production change — already correct, now covered).
+> 5. Minor: fixed a stale docblock comment (claimed `{ toState }`, actual wire
+>    body is `{ to_state }`); switched `reconcile-modal.test.tsx` button
+>    interactions to `getByRole` where the visible label already supported it.
 
 ---
 
@@ -144,11 +182,9 @@ _No spec req directly, but required by house rules when the MCP toolset changes.
 
 _Spec req: "Regression gate for the full capture-to-done path"_
 
-- [ ] 6.1 **RED** — Write ONE end-to-end regression test proving `start_work → stop_work → transition→done` succeeds through a REAL client-facing surface — either:
-  - (a) an MCP integration test in `packages/mcp/src/tools/__tests__/` calling `kanon_start_work` → `kanon_stop_work` → `kanon_transition_issue` (409) → the new reconcile tool → `kanon_transition_issue` (success), with `client` methods hitting a mocked or real API layer (per existing MCP test conventions — check how other MCP integration tests are structured, e.g. do they mock `fetch` or spin up a test API instance); OR
-  - (b) a web integration test using `@testing-library/react` exercising `useStartWorkMutation` (if it exists) → `useStopWorkMutation` → `useTransitionMutation` (409) → `ReconcileModal` confirm → retry, asserting `done` is reached.
-  Pick ONE surface (MCP recommended — it is the primary agent-facing path per the proposal's "make it work again for the dev (MCP agent)" framing). The test MUST fail if any step is reachable only via a direct service-layer call (e.g. calling `reconcileIssueTime` or `transitionIssue` service functions directly bypasses this gate by design — the test must go through the tool/mutation layer).
-- [ ] 6.2 **GREEN** — Run the regression test and confirm it passes end-to-end once Phases 1–4 are implemented. This is the single highest-priority test in this change — it is the proposal's stated risk mitigation ("Backend-only ships again (unreachable)").
+- [x] 6.1 **RED** — Write ONE end-to-end regression test proving `start_work → stop_work → transition→done` succeeds through a REAL client-facing surface.
+  **Deviation from the (a)/(b) options originally sketched here (documented, in-scope)**: implemented as a Playwright e2e in `packages/e2e/tests/reconcile-time-to-done.spec.ts` instead — a strictly stronger form of the same requirement, since it drives a real running web app (real drag-and-drop, the only UI path that invokes `useTransitionMutation` — no button/select alternative exists) against a real running api (real HTTP `work-sessions`, `transition`, `reconcile-time` endpoints), with a real Postgres DB, rather than a mocked/unit-level integration test. `start_work`/`stop_work` go through `POST`/`DELETE /api/issues/:key/work-sessions`; the transition goes through a real UI drag onto the Done column; the reconcile confirmation is a real click on `ReconcileModal`'s "Confirm & move to done" button, which calls the real `POST /api/issues/:key/reconcile-time`. The anti-regression assertion is that `[data-testid="reconcile-modal"]` (role="dialog") MUST become visible — if the 409 were dead-ended or swallowed anywhere in the client, this assertion (not a generic "did not throw") fails the test.
+- [x] 6.2 **GREEN** — Regression test EXECUTED and PASSED 3x consecutively (not flaky) against the full running stack (api + web + `kanon_e2e` Postgres). Request log confirms the real gate fired: `POST /transition` → 409 RECONCILIATION_REQUIRED, `POST /reconcile-time` → 200, `POST /transition` (retry) → 200, issue lands in Done. See sdd/kan-188-reconcile-time-surfaces/apply-progress for the exact run command and two bugs caught/fixed along the way (a `MIN_WORKLOG_DURATION_S` floor false-pass risk in the test's own timing, and a `Content-Type` bug in a new `apiDelete` e2e helper).
 
 ---
 

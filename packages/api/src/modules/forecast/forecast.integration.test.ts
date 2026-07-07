@@ -28,6 +28,23 @@ import { workingDaysBetween, isWorkingDay, type WorkingCalendar } from "./engine
 // asserted as working-day diffs (a 1-working-day shift may cross a weekend).
 const MON_FRI_CAL: WorkingCalendar = { workDays: [1, 2, 3, 4, 5], holidays: new Set() };
 
+// ── Date-robust seeding (pre-existing time-bomb fix) ──────────────────────────
+// Milestone rollup status derives from `forecastEnd` vs `target - atRiskBufferDays`
+// (engine.ts). Because the engine anchors overdue, non-terminal work to `now`
+// (KAN-145, effectiveStartFor → startOfDay(new Date())), a milestone target
+// hard-coded near the real calendar date drifts into/out of that buffer window as
+// real time advances — the rollup flips even though the deliverables never change.
+// Seed targets RELATIVE to today so "within buffer → at_risk" and "beyond buffer →
+// upcoming" stay true on ANY run date. UTC midnight matches the engine's `now`.
+const MS_PER_DAY = 86_400_000;
+function todayUtcMidnight(): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+function daysFromToday(days: number): Date {
+  return new Date(todayUtcMidnight().getTime() + days * MS_PER_DAY);
+}
+
 // ── Test-local DB helpers ─────────────────────────────────────────────────────
 
 /**
@@ -371,20 +388,18 @@ describe("Forecast Service — rebuildProjectForecast (integration)", () => {
     it("flips upcoming → at_risk when a deliverable forecastEnd is within buffer of target", async () => {
       const { projectId, ownerId } = await seedProjectContext();
 
-      // Issue: starts June 1, due June 10, estimate 8h (1 day) → forecastEnd ≈ June 2
-      // But we set the target as June 3, within 3-day buffer of June 2 → at_risk
-      // Actually to trigger at_risk: forecastEnd >= target - 3 days
-      // Set target far enough that issue forecast end is within buffer:
-      // issue forecastEnd ≈ June 2 (1 day after start with 8h)
-      // target = June 4 → target - 3 = June 1 → forecastEnd(June 2) >= June 1 → at_risk ✓
+      // Date-robust: the issue's plan start is in the past, so the engine anchors
+      // it to `now` (KAN-145) → forecastEnd ≈ today + 1 working day. Target 3 days
+      // out → riskThreshold = target - 3 = today. forecastEnd (≥ today) >= today →
+      // at_risk. This holds on ANY run date because both dates track `now`.
       const issue = await seedScheduledIssue(projectId, `KFF-1`, 1, {
-        startDate: new Date("2026-06-01"),
-        dueDate: new Date("2026-06-10"),
+        startDate: daysFromToday(-30),
+        dueDate: daysFromToday(-20),
         estimateHours: 8, // 1 day
       });
 
-      // Target = June 4: forecastEnd (June 2) >= target(June 4) - 3 days(June 1) → at_risk
-      const target = new Date("2026-06-04");
+      // Target = today + 3: riskThreshold = today; anchored forecastEnd within buffer → at_risk
+      const target = daysFromToday(3);
       const milestone = await seedMilestone(projectId, ownerId, target, "upcoming", [issue.id]);
 
       await rebuildProjectForecast(projectId);
@@ -396,16 +411,20 @@ describe("Forecast Service — rebuildProjectForecast (integration)", () => {
     it("resets at_risk → upcoming when ALL deliverables are back within buffer", async () => {
       const { projectId, ownerId } = await seedProjectContext();
 
-      // Issue: starts June 1, due June 10, estimate 8h (1 day) → forecastEnd ≈ June 2
-      // Target = July 10: way beyond buffer (forecastEnd June 2 < target July 10 - 3) → upcoming
+      // Date-robust: overdue issue anchored to `now` (KAN-145) → forecastEnd ≈
+      // today + 1 working day. Target 60 days out → riskThreshold = target - 3 =
+      // today + 57, far beyond forecastEnd → upcoming. A hard-coded target near
+      // today (the pre-existing time-bomb this fixes) drifts into the buffer window
+      // as real time advances; relative dates keep "beyond buffer → upcoming" true
+      // on ANY run date.
       const issue = await seedScheduledIssue(projectId, `KFG-1`, 1, {
-        startDate: new Date("2026-06-01"),
-        dueDate: new Date("2026-06-10"),
+        startDate: daysFromToday(-30),
+        dueDate: daysFromToday(-20),
         estimateHours: 8, // 1 day
       });
 
       // Current status = at_risk, but forecast says all is well → reset to upcoming
-      const target = new Date("2026-07-10");
+      const target = daysFromToday(60);
       const milestone = await seedMilestone(projectId, ownerId, target, "at_risk", [issue.id]);
 
       await rebuildProjectForecast(projectId);
