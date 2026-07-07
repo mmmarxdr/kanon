@@ -5,13 +5,13 @@ One command installs the Kanon MCP server, verifies its integrity, and configure
 ## Quick install
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.8.0/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.9.0/install.sh)"
 ```
 
 **Always use the pinned, tagged installer** — the only form that works:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.8.0/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.9.0/install.sh)"
 ```
 
 > The `main` branch ships with `EXPECTED_SHA256=""` and intentionally **aborts**
@@ -25,14 +25,14 @@ When prompted, paste your `kanon://` onboarding link. Press Enter to skip and ru
 
 | Step | Action |
 |------|--------|
-| 1. Download | Fetches `kanon-mcp-0.6.3.tar.gz` from the pinned GitHub Release |
+| 1. Download | Fetches `kanon-mcp-0.9.0.tar.gz` from the pinned GitHub Release |
 | 2. Verify | Checks sha256 **before** extracting — aborts on mismatch, nothing written |
 | 3. Install | Extracts to `~/.kanon/mcp`; writes a version marker for idempotency |
 | 4. Configure | Invokes `node setup` to write MCP config for your detected tools |
 
 ## Pinned version + tamper-resistance
 
-The installer always fetches an exact version (`0.6.3`) — never `latest`.
+The installer always fetches an exact version (`0.9.0`) — never `latest`.
 
 **How tamper-resistance works (hash-in-tag):**
 
@@ -45,7 +45,7 @@ At release time, the CI workflow:
 When you fetch the script via the tag URL:
 
 ```
-https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.8.0/install.sh
+https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.9.0/install.sh
 ```
 
 The hash is embedded in the script itself — not downloaded from a separate file. A compromised CDN or release server **cannot** substitute a matching tarball+checksum pair, because the expected hash is not fetched from the network.
@@ -56,14 +56,14 @@ which a compromised origin can serve alongside a malicious tarball, making the
 check worthless. To prevent false security guarantees, the installer **aborts**
 when run from `main` over the network (KAN-52).
 
-> **Summary:** always use the tagged installer (`mcp-v0.8.0`). `main` will not
+> **Summary:** always use the tagged installer (`mcp-v0.9.0`). `main` will not
 > run over the network by design.
 
 **Version scheme:** The release tag and tarball version track the MCP server version (`@kanon/mcp`). The setup package version is internal and not reflected in the artifact name.
 
 | Artifact | Naming |
 |----------|--------|
-| Tag | `mcp-v<version>` (e.g. `mcp-v0.8.0`) |
+| Tag | `mcp-v<version>` (e.g. `mcp-v0.9.0`) |
 | Tarball | `kanon-mcp-<version>.tar.gz` |
 | Checksum | `kanon-mcp-<version>.tar.gz.sha256` |
 
@@ -83,7 +83,7 @@ You can also pass the link non-interactively:
 
 ```bash
 # Via environment variable (highest priority — read by the setup binary)
-KANON_ONBOARD_LINK="kanon://your-link" bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.8.0/install.sh)"
+KANON_ONBOARD_LINK="kanon://your-link" bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.9.0/install.sh)"
 
 # Via piped stdin
 echo "kanon://your-link" | bash install.sh
@@ -95,9 +95,9 @@ Passing a `kanon://` link as a positional argument (`node setup kanon://...`) is
 
 If you cannot use curl:
 
-1. Download `kanon-mcp-0.6.3.tar.gz` and `kanon-mcp-0.6.3.tar.gz.sha256` from the [GitHub Release](https://github.com/mmmarxdr/kanon/releases/tag/mcp-v0.8.0).
-2. Verify: `sha256sum -c kanon-mcp-0.6.3.tar.gz.sha256` (Linux) or `shasum -a 256 -c kanon-mcp-0.6.3.tar.gz.sha256` (macOS).
-3. Extract: `mkdir -p ~/.kanon/mcp && tar -xzf kanon-mcp-0.6.3.tar.gz -C ~/.kanon/mcp --strip-components=1`
+1. Download `kanon-mcp-0.9.0.tar.gz` and `kanon-mcp-0.9.0.tar.gz.sha256` from the [GitHub Release](https://github.com/mmmarxdr/kanon/releases/tag/mcp-v0.9.0).
+2. Verify: `sha256sum -c kanon-mcp-0.9.0.tar.gz.sha256` (Linux) or `shasum -a 256 -c kanon-mcp-0.9.0.tar.gz.sha256` (macOS).
+3. Extract: `mkdir -p ~/.kanon/mcp && tar -xzf kanon-mcp-0.9.0.tar.gz -C ~/.kanon/mcp --strip-components=1`
 4. Configure: `node ~/.kanon/mcp/setup/dist/index.js`
 
 ## Advanced / CI overrides
