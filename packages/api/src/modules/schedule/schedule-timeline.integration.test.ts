@@ -24,6 +24,7 @@ import {
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import { rebuildProjectForecast } from "../forecast/service.js";
+import { addWorkingDays } from "../forecast/engine.js";
 
 describe("Schedule Timeline Routes (integration)", () => {
   let app: FastifyInstance;
@@ -549,14 +550,21 @@ describe("Schedule Timeline Routes (integration)", () => {
       expect(titles).toEqual(["In window", "Out of window"]);
       expect(body.total).toBe(2);
 
-      // Lock the today-anchoring deterministically (date-robust, not hardcoded):
-      // the overdue open todo's forecast span collapses to start-of-day today.
+      // Lock the today-anchoring deterministically AND weekend-robustly: the
+      // overdue open todo's forecast span collapses to the start of the next
+      // WORKING day (default Mon–Fri calendar, KAN-147/ADR-0007). On a weekday
+      // that is start-of-day today; on a weekend it rolls forward to Monday.
+      // Mirror the engine's own anchor so the assert never depends on which
+      // weekday CI happens to run (previously flaked every Sat/Sun).
       const startOfToday = new Date();
       startOfToday.setUTCHours(0, 0, 0, 0);
-      const startOfTodayIso = startOfToday.toISOString();
+      const anchorIso = addWorkingDays(startOfToday, 0, {
+        workDays: [1, 2, 3, 4, 5],
+        holidays: new Set<string>(),
+      }).toISOString();
       const outRow = body.rows.find((r: { title: string }) => r.title === "Out of window");
-      expect(outRow.forecastStart).toBe(startOfTodayIso);
-      expect(outRow.forecastEnd).toBe(startOfTodayIso);
+      expect(outRow.forecastStart).toBe(anchorIso);
+      expect(outRow.forecastEnd).toBe(anchorIso);
     });
 
     it("STL-12: from/to window matches forecast-only issue (no plan dates)", async () => {
