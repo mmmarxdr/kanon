@@ -8,7 +8,7 @@
 #
 # Same-origin (web + /api behind one host) → first-party SameSite=Lax cookies, no CORS.
 # Run from this directory:
-#   cp .env.example .env   # then fill secrets + SITE_ADDRESS
+#   cp env.template .env   # then fill secrets + SITE_ADDRESS
 #   docker compose up -d --build
 #
 # Requires Docker Compose v2.20+ (build context is the repo root, two levels up).
