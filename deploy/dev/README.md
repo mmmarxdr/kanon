@@ -51,6 +51,9 @@ Edit `.env`:
 - Generate `JWT_SECRET`, `JWT_REFRESH_SECRET`, `COOKIE_SECRET`, and a DB
   password with `openssl rand -hex 32` (the `DATABASE_URL` password must match
   `POSTGRES_PASSWORD`).
+- Generate `METRICS_TOKEN` (`openssl rand -hex 32`) and
+  `INTEGRATION_ENCRYPTION_KEY` (`openssl rand -base64 32`) — both are REQUIRED
+  in production; the API refuses to start without them.
 - `RESEND_API_KEY` blank → emails are logged to the console (not sent); set it
   to deliver invite/verify/reset emails for real.
 
