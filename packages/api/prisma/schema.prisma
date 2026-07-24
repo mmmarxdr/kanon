@@ -47,6 +47,14 @@ enum CycleState {
   done
 }
 
+enum IntegrationLifecycle {
+  draft
+  active
+  pausing
+  paused
+  disabled
+}
+
 enum CycleScopeEventKind {
   add
   remove
@@ -244,6 +252,7 @@ model Project {
   milestones     Milestone[]
   // PPM working-day calendar (KAN-147, ADR-0007)
   scheduleConfig ProjectScheduleConfig?
+  integrationProjectBindings IntegrationProjectBinding[]
 
   @@unique([workspaceId, key])
   @@index([workspaceId])
@@ -1093,6 +1102,9 @@ model IntegrationConnection {
   id          String   @id @default(uuid()) @db.Uuid
   provider    String // "redmine" | "jira" | "ms-project"
   baseUrl     String   @map("base_url")
+  lifecycle              IntegrationLifecycle @default(draft)
+  lifecycleEpoch         Int                  @default(0) @map("lifecycle_epoch")
+  serviceFallbackEnabled Boolean              @default(false) @map("service_fallback_enabled")
   // Optional pointer to the admin credential used for discovery + as the
   // outbound write fallback. Plain column (no FK): the target row may be removed
   // independently and a dangling pointer is handled as "no service credential".
@@ -1108,10 +1120,40 @@ model IntegrationConnection {
 
   credentials MemberIntegrationCredential[]
   externalRefs ExternalRef[]
+  bindings IntegrationProjectBinding[]
 
   @@unique([workspaceId, provider])
   @@index([workspaceId])
   @@map("integration_connections")
+}
+
+model IntegrationProjectBinding {
+  id              String               @id @default(uuid()) @db.Uuid
+  remoteProjectId String               @map("remote_project_id")
+  readMap         Json                 @map("read_map")
+  writeMap        Json                 @map("write_map")
+  lifecycle       IntegrationLifecycle @default(draft)
+  lifecycleEpoch  Int                  @default(0) @map("lifecycle_epoch")
+  cursorUpdatedAt DateTime?            @map("cursor_updated_at")
+  cursorRemoteId  String?              @map("cursor_remote_id")
+  pageToken       String?              @map("page_token")
+  pollLeaseToken  String?              @map("poll_lease_token")
+  pollLeaseUntil  DateTime?            @map("poll_lease_until")
+  pollFence       Int                  @default(0) @map("poll_fence")
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
+
+  connectionId String                @map("connection_id") @db.Uuid
+  connection   IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  projectId    String                @map("project_id") @db.Uuid
+  project      Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  externalRefs ExternalRef[]
+
+  @@unique([connectionId, projectId])
+  @@unique([connectionId, remoteProjectId])
+  @@index([lifecycle, pollLeaseUntil])
+  @@index([projectId])
+  @@map("integration_project_bindings")
 }
 
 // Per-user credential: each member supplies their own provider API key, stored
@@ -1146,6 +1188,11 @@ model ExternalRef {
   externalId  String   @map("external_id")
   externalUrl String?  @map("external_url")
   metadata    Json?
+  bindingId   String?  @map("binding_id") @db.Uuid
+  binding     IntegrationProjectBinding? @relation(fields: [bindingId], references: [id], onDelete: SetNull)
+  remoteUpdatedAt DateTime? @map("remote_updated_at")
+  localVersion BigInt @default(0) @map("local_version")
+  lastCorrelationId String? @map("last_correlation_id")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
@@ -1158,5 +1205,6 @@ model ExternalRef {
   // on externalId alone.
   @@unique([connectionId, entityType, externalId])
   @@index([entityType, entityId])
+  @@index([bindingId])
   @@map("external_refs")
 }
