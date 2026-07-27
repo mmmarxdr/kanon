@@ -92,6 +92,18 @@ enum ActorKind {
   remote
 }
 
+enum InboundApplicationState {
+  claimed
+  applied
+  conflict
+  skipped
+}
+
+enum ConflictState {
+  open
+  resolved
+}
+
 enum CycleScopeEventKind {
   add
   remove
@@ -1188,6 +1200,8 @@ model IntegrationProjectBinding {
   externalRefs      ExternalRef[]
   externalIdentities IntegrationExternalIdentity[]
   works             IntegrationSyncWork[]
+  applications      IntegrationInboundApplication[]
+  conflicts         IntegrationConflict[]
 
   @@unique([connectionId, projectId])
   @@unique([connectionId, remoteProjectId])
@@ -1254,6 +1268,8 @@ model ExternalRef {
   bindingId   String?  @map("binding_id") @db.Uuid
   binding     IntegrationProjectBinding? @relation(fields: [bindingId], references: [id], onDelete: SetNull)
   works       IntegrationSyncWork[]
+  applications IntegrationInboundApplication[]
+  conflicts   IntegrationConflict[]
   remoteUpdatedAt DateTime? @map("remote_updated_at")
   localVersion BigInt @default(0) @map("local_version")
   lastCorrelationId String? @map("last_correlation_id")
@@ -1306,8 +1322,59 @@ model IntegrationSyncWork {
   bindingId      String                       @map("binding_id") @db.Uuid
   authCredential MemberIntegrationCredential? @relation(fields: [authCredentialId], references: [id], onDelete: SetNull)
   ref            ExternalRef?                @relation(fields: [refId], references: [id], onDelete: SetNull)
+  applications   IntegrationInboundApplication[]
+  conflicts      IntegrationConflict[]
 
   @@index([bindingId, laneKey, sequence])
   @@index([state, availableAt])
   @@map("integration_sync_work")
+}
+
+model IntegrationInboundApplication {
+  id               String                  @id @default(uuid()) @db.Uuid
+  remoteEntityType String                  @map("remote_entity_type")
+  remoteId         String                  @map("remote_id")
+  remoteUpdatedAt  DateTime                @map("remote_updated_at")
+  applicationKey   String                  @unique @map("application_key")
+  correlationId    String                  @map("correlation_id")
+  state            InboundApplicationState @default(claimed)
+  leaseToken       String?                 @map("lease_token")
+  leaseUntil       DateTime?               @map("lease_until")
+  fence            Int                     @default(0)
+  refId            String?                 @map("ref_id") @db.Uuid
+  workId           String?                 @map("work_id") @db.Uuid
+  outcome          Json?
+  createdAt        DateTime                @default(now()) @map("created_at")
+  updatedAt        DateTime                @updatedAt @map("updated_at")
+
+  binding          IntegrationProjectBinding @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+  bindingId        String                    @map("binding_id") @db.Uuid
+  ref              ExternalRef?              @relation(fields: [refId], references: [id], onDelete: SetNull)
+  work             IntegrationSyncWork?      @relation(fields: [workId], references: [id], onDelete: SetNull)
+  conflicts        IntegrationConflict[]
+
+  @@unique([bindingId, remoteEntityType, remoteId, remoteUpdatedAt])
+  @@map("integration_inbound_applications")
+}
+
+model IntegrationConflict {
+  id             String          @id @default(uuid()) @db.Uuid
+  kind           String
+  state          ConflictState   @default(open)
+  localEvidence  Json            @map("local_evidence")
+  remoteEvidence Json            @map("remote_evidence")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+
+  bindingId     String                       @map("binding_id") @db.Uuid
+  binding       IntegrationProjectBinding    @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+  workId        String?                      @map("work_id") @db.Uuid
+  work          IntegrationSyncWork?         @relation(fields: [workId], references: [id], onDelete: SetNull)
+  refId         String?                      @map("ref_id") @db.Uuid
+  ref           ExternalRef?                 @relation(fields: [refId], references: [id], onDelete: SetNull)
+  applicationId String?                      @map("application_id") @db.Uuid
+  application   IntegrationInboundApplication? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+
+  @@index([bindingId, state])
+  @@map("integration_conflicts")
 }

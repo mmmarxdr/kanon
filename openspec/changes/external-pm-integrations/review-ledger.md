@@ -144,3 +144,44 @@
 - **Runtime evidence:** Work 6/6 and the permanent upgrade regression passed independently; diff checks and cleanup passed; worktree state remained unchanged.
 - **Commit boundary:** Include only A1.4 schema, migration, work test, tasks, apply progress, and review ledger. Exclude copied proposal/design/spec artifacts and all A1.5+ work.
 - **Next action:** Await explicit maintainer authorization before creating the local A1.4 commit.
+
+## Judgment Day Round 1 — A1.5 inbound application and conflicts
+
+- **Target:** `feat/pm-182-app`
+- **Result:** `JUDGMENT: APPROVED`
+- **Reason:** The maintainer-authorized wording correction was independently verified by both blind judges. Judge B's historical WARNING/info rows remain unchanged and non-blocking.
+
+| id | lens | location | severity | status | evidence | assessment |
+| --- | --- | --- | --- | --- | --- | --- |
+| JD-A-401 | judgment-day | `openspec/changes/external-pm-integrations/apply-progress.md:180` | CRITICAL | verified | The corrected cumulative statement documents application-row persistence/verification and preservation of prior credential/identity/reference/work rows; conflict persistence is separately attributed to a fresh-schema database test. Both blind judges verified the wording. | real |
+| JD-B-401 | reliability | `packages/api/prisma/application.test.ts:477-521` | WARNING | info | Binding Cascade is not exercised while an application still exists because the test deletes the application before deleting its binding. | theoretical |
+| JD-B-402 | judgment-day | `openspec/changes/external-pm-integrations/apply-progress.md:180` | WARNING | info | Conflict persistence is covered separately, but the upgrade helper persists only an application while progress says it persists both. | real |
+
+- Verified BLOCKER/CRITICAL: **1** (`JD-A-401`)
+- Open BLOCKER/CRITICAL: **0**
+- INFO findings: **2**
+- Fix rounds used: **1/2**
+- Next action: run the required A1.5 pre-commit review; keep `JD-B-401` and `JD-B-402` as WARNING/info rows.
+
+## A1.5 coordination incident — unintended KAN-182 comment
+
+| id | lens | location | severity | status | evidence |
+| --- | --- | --- | --- | --- | --- |
+| R4-002 | resilience | `openspec/changes/external-pm-integrations/review-ledger.md:148-164` | WARNING | info | A fix actor posted an unintended KAN-182 status comment without returning its ID/body. Repository integrity is intact, but the external comment remains unaudited because current tools cannot list or delete comments. |
+
+- **Recovery:** Inspect KAN-182 activity in the UI and remove the unintended comment if possible; otherwise post a transparent correction before publishing further automated status updates.
+- **Review isolation:** Scoped blind re-judgment may proceed using only the worktree diff and canonical ledger. Do not consume or publish Kanon comments during that pass.
+
+## Pre-commit reliability review — A1.5
+
+- **Result:** `PASS WITH WARNINGS`
+- **Refuter required:** No BLOCKER/CRITICAL candidates.
+
+| id | lens | location | severity | status | evidence |
+| --- | --- | --- | --- | --- | --- |
+| R3-006 | reliability | `openspec/changes/external-pm-integrations/apply-progress.md:182` | WARNING | info | Apply progress reports the pre-ledger 741-line boundary; the intended six-file boundary before this review record is 768/800. |
+| R3-007 | reliability | `openspec/changes/external-pm-integrations/apply-progress.md:185-191` | WARNING | info | The A1.5 file list omits `review-ledger.md`, although its Judgment Day and R4-002 incident sections belong to the intended commit. |
+
+- **Runtime evidence:** Application 5/5 passed independently; 53 migrations are current; validation, formatting, diff checks, and cleanup probes passed without changing worktree state.
+- **Commit boundary:** Include only A1.5 schema, migration, application test, tasks, apply progress, and review ledger. Exclude copied proposal/design/spec artifacts, A1.6+, and Kanon comments.
+- **Next action:** Await explicit maintainer authorization before creating the local A1.5 commit.

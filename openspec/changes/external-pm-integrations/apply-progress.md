@@ -2,16 +2,16 @@
 
 ## Status
 
-- Current work unit: **A1.4 — durable integration work/outbox persistence**
+- Current work unit: **A1.5 — inbound application/conflict persistence**
 - State: **implemented and focused evidence green; pending verification**
-- Branch: `feat/pm-182-work`
-- Worktree: `/srv/workspace/projects/kanon/.claude/worktrees/pm-182-work`
-- Base: `feat/pm-182-id` at `16c0ab9`
-- Intended PR target: `feat/pm-182-id`
+- Branch: `feat/pm-182-app`
+- Worktree: `/srv/workspace/projects/kanon/.claude/worktrees/pm-182-app`
+- Base: `feat/pm-182-work` at `345d9a7`
+- Intended PR target: `feat/pm-182-work`
 - Delivery: feature-branch chain
 - Mode: strict TDD
-- Review budget: 800 changed lines; A1.4 forecast 290; no size exception
-- Maintainer-approved migration correction: A1.3 uses `20260721_pm_identity_health`; A1.2 remains unchanged; A1.4 uses `20260722_pm_work_outbox`.
+- Review budget: 800 changed lines; A1.5 forecast 270; no size exception
+- Maintainer-approved migration correction: A1.3 uses `20260721_pm_identity_health`; A1.2 remains unchanged; A1.4 uses `20260722_pm_work_outbox`; A1.5 uses `20260723_pm_inbound_application_conflict`.
 
 ## Completed Tasks
 
@@ -19,6 +19,7 @@
 - [x] A1.2 — Lifecycle, project binding, staged ExternalRef metadata, and additive migration
 - [x] A1.3 — External identity mappings, credential health fields, and additive migration
 - [x] A1.4 — Durable integration sync work/outbox persistence and additive migration
+- [x] A1.5 — Inbound application/conflict persistence and additive migration
 
 ## A1.2 Implementation
 
@@ -147,14 +148,62 @@
 - None — implementation follows the approved deterministic persistence contract and migration path.
 - No A1.5 inbound application/conflict persistence, outbox writers, listeners, workers, provider/Redmine behavior, routes, polling, UI, or real-instance connection was added.
 
+## A1.5 Implementation
+
+- Added `InboundApplicationState(claimed, applied, conflict, skipped)` and `ConflictState(open, resolved)`.
+- Added `IntegrationInboundApplication` with the approved remote tuple, durable application key/correlation, replay lease/fence state, optional reference/work links, outcome payload, tuple uniqueness, and binding/ref/work delete actions.
+- Added `IntegrationConflict` with open/resolved state, local/remote evidence, optional application/work/reference links, binding Cascade, nullable-link SetNull actions, and the approved binding/state index.
+- Added additive migration `20260723_pm_inbound_application_conflict`; all earlier migrations remain unchanged and `20260722_pm_work_outbox` remains immediately adjacent before it.
+
+## A1.5 TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| A1.5 | `packages/api/prisma/application.test.ts` | Prisma DMMF + PostgreSQL integration | ✅ work 6/6, identity 5/5, lifecycle 6/6 | ✅ New five-test suite failed before the enums/models/migration; missing DMMF contract, client delegates, indexes, and migration adjacency were observed | ✅ Prisma generation, exact migration deploy, and focused application suite passed 5/5 | ✅ Duplicate tuple, duplicate application key, changed remote timestamp, conflict state/evidence, optional SetNull links, binding Cascade, and adjacent upgrade path | ✅ Prettier cleanup plus schema restoration/reapplication removed formatter-only unrelated changes; focused suite remained 5/5 |
+
+### A1.5 Test Summary
+
+- A1.5 tests written: **5**; focused application suite: **5/5 passed**.
+- Regression evidence: A1.4 work **6/6**, A1.3 identity **5/5**, and A1.2 lifecycle **6/6** passed before and after the additive schema change.
+- Layers used: Prisma DMMF contract assertions, PostgreSQL persistence/constraint/index tests, and isolated migration-upgrade evidence.
+- Approval tests: None — A1.5 adds a new persistence contract.
+- Pure functions created: None.
+
+## A1.5 Verification
+
+- Authorized PostgreSQL container `kanon-pm182-id-postgres-test-1` was healthy on `127.0.0.1:5433`; no ordinary PostgreSQL service or unidentified container was used.
+- Target worktree dependencies were installed with the existing frozen lockfile; no tracked lockfile changes were made.
+- `pnpm --filter @kanon/api run db:generate` passed after the A1.5 schema change.
+- Exact `DATABASE_URL=postgresql://kanon:kanon@127.0.0.1:5433/kanon_e2e?schema=public` migration deployment applied `20260723_pm_inbound_application_conflict` after A1.4.
+- Repeat migration deployment reported no pending migrations; `prisma validate`, API type tests, and direct no-emit type-checking for the application/work/identity/lifecycle tests passed.
+- Final focused suites: application **5/5**, work **6/6**, identity **5/5**, and lifecycle **6/6** passed.
+- The permanent isolated pre-A1.5 → A1.5 regression deploys all migrations through A1.4, seeds credential/identity/reference/work rows, applies the exact checked-in A1.5 SQL, verifies preservation of those prior rows, then persists and verifies an application row; conflict persistence is covered by a separate fresh-schema database test. It passed in the focused suite.
+- Migration diff reports only pre-existing unrelated drift in `milestone_deliverables`, `milestones`, and `time_entries`; no A1.5 drift was reported. Prettier and `git diff --check` passed.
+- Review boundary: **741 changed lines** including implementation, test, and tracked progress artifacts; under the 800-line budget with no size exception.
+- Temporary upgrade schemas/fixtures were cleaned; the authorized PostgreSQL service remains running.
+
+## A1.5 Files in This Work Unit
+
+- `packages/api/prisma/schema.prisma`
+- `packages/api/prisma/migrations/20260723_pm_inbound_application_conflict/migration.sql`
+- `packages/api/prisma/application.test.ts`
+- `openspec/changes/external-pm-integrations/tasks.md`
+- `openspec/changes/external-pm-integrations/apply-progress.md`
+
+## A1.5 Deviations
+
+- None — implementation follows the approved persistence-only contract and additive migration path.
+- No A1.6 backfill, A1.7 outbox code, issue writers, provider/Redmine client, routes, listeners/workers, polling, UI, or live connection was added.
+
 ## Cumulative Scope Boundary
 
-- A1.1, A1.2, A1.3, and A1.4 are complete; A1.5 and later tasks remain untouched.
-- A1.4 adds persistence only; no provider/Redmine behavior, credentials service, outbox writers, polling, routes, workers, or UI were added.
+- A1.1, A1.2, A1.3, A1.4, and A1.5 are complete; A1.6 and later tasks remain untouched.
+- A1.5 adds inbound application/conflict persistence only; no A1.6 backfill, A1.7 outbox writers, provider/Redmine behavior, credentials service, polling, routes, workers, or UI were added.
+- A1.5 rollback is limited to the additive inbound-application/conflict migration, schema, focused test, and task/progress evidence; committed A1.2/A1.3/A1.4 migrations remain unchanged.
 - A1.4 rollback is limited to the additive work-outbox migration, schema, focused test, and task/progress evidence; committed A1.2/A1.3 migrations remain unchanged.
 - A1.3 rollback is limited to the additive identity-health migration, schema, focused test, and task/progress evidence; committed A1.2 files remain unchanged.
-- Copied proposal/design/spec planning dependencies remain untracked and outside the A1.4 work-unit boundary.
+- Copied proposal/design/spec planning dependencies remain untracked and outside the A1.5 work-unit boundary.
 
 ## Next Action
 
-A1.4 focused evidence is green; run the narrow verification/pre-commit review for this child slice. Do not commit, push, or open a PR in this phase.
+A1.5 focused evidence is green; run the narrow verification/pre-commit review for this child slice. Do not commit, push, or open a PR in this phase.
