@@ -1,0 +1,39 @@
+---
+title: "MCP server"
+description: "Agent-facing architecture in @kanon/mcp"
+icon: "robot"
+---
+
+`@kanon/mcp` exposes Kanon as Model Context Protocol tools for coding agents. The process uses stdio for the host-tool connection and REST for all communication with the Kanon API.
+
+## Startup
+
+The entry point validates `KANON_API_URL` and `KANON_API_KEY`, resolves the optional client identity, finds the nearest `.kanon` binding, creates a typed API client, registers tool families, connects the stdio transport, and optionally starts an SSE client for workspace events.
+
+## Tool families
+
+- Projects and issue groups
+- Issues and transitions
+- Roadmap planning
+- Cycles
+- Work sessions and time capture
+- Timesheets
+- Documents and comments
+- Members
+- Capture-oriented helper operations
+
+## Repository binding
+
+A `.kanon` file binds a local repository to a Kanon workspace and project. Resolution starts from the process working directory and walks toward the Git root; the nearest valid binding wins. This lets one global MCP installation operate against different projects based on the directory where the coding agent starts.
+
+## REST adapter
+
+`KanonClient` owns transport concerns such as URL normalization, timeouts, bearer authentication, refresh-token exchange, provenance headers, typed API errors and endpoint-specific response shapes. MCP tool handlers should remain thin adapters around this client.
+
+## Activity and live context
+
+Every registered tool handler is wrapped so genuine tool use updates heartbeat activity. The background SSE client can consume workspace events, while graceful shutdown stops SSE and all heartbeat workers.
+
+<Warning>
+The MCP package must never bypass the API and access Prisma or PostgreSQL directly. Doing so would duplicate authorization and domain invariants.
+</Warning>
