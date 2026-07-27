@@ -185,3 +185,38 @@
 - **Runtime evidence:** Application 5/5 passed independently; 53 migrations are current; validation, formatting, diff checks, and cleanup probes passed without changing worktree state.
 - **Commit boundary:** Include only A1.5 schema, migration, application test, tasks, apply progress, and review ledger. Exclude copied proposal/design/spec artifacts, A1.6+, and Kanon comments.
 - **Next action:** Await explicit maintainer authorization before creating the local A1.5 commit.
+
+## A1.6 split boundary — core slice
+
+- **Target:** `feat/pm-182-backfill-core -> feat/pm-182-app`
+- **Result:** `SPLIT BOUNDARY RECORDED — no A1.6 final review verdict`
+- **Scope:** The core child contains only deterministic tenant-safe ExternalRef ownership resolution, diagnostics, idempotent null-only binding updates, transaction rollback, and a transaction-snapshot result.
+- **Follow-up:** `feat/pm-182-backfill -> feat/pm-182-backfill-core` owns the omitted advisory/writer gate, cooperating-writer postconditions, concurrency evidence, and final immutable proof required to complete A1.6.
+- **Boundary note:** This neutral entry does not carry forward the preserved full-WIP A1.6 findings or final status as evidence for the core child.
+
+## Judgment Day Round 1 — A1.6a core
+
+- **Target:** `feat/pm-182-backfill-core`
+- **Result:** `JUDGMENT: APPROVED`
+- **Judge A ledger:** `[]`
+
+| id | lens | location | severity | status | evidence |
+| --- | --- | --- | --- | --- | --- |
+| JD-B-601 | reliability | `openspec/changes/external-pm-integrations/apply-progress.md:211` | WARNING | info | The TDD row says GREEN 6/6 while the same artifact and independently rerun core suite establish 7/7. |
+
+- **Evidence:** Both judges verified deterministic tenant-safe ownership resolution, diagnostics, idempotency, rollback, truthful snapshot-only semantics, no gate/runtime scope, and the 799-line implementation boundary.
+- **Overall A1.6 status:** Incomplete; A1.6b remains mandatory.
+- **Next action:** Run the A1.6a pre-commit review.
+
+## Pre-commit risk review — A1.6a
+
+- **Result:** `PASS WITH WARNINGS`
+- **Refuter required:** No BLOCKER/CRITICAL candidates.
+
+| id | lens | location | severity | status | evidence |
+| --- | --- | --- | --- | --- | --- |
+| R1-001 | risk | `openspec/changes/external-pm-integrations/apply-progress.md:222` | WARNING | info | A1.6a evidence includes the loopback test PostgreSQL URL with default `kanon/kanon` credentials. It is test-scoped but reusable on shared hosts. |
+
+- **Evidence:** Core 7/7 passed independently; tenant isolation, redacted diagnostics, guarded updates, deterministic ordering, rollback/idempotency, unwired snapshot semantics, and the 813-line approved boundary were verified.
+- **Commit boundary:** Include only core backfill source/test, split tasks, A1.6a progress, and review ledger. Exclude planning copies, preserved WIP, A1.6b, and later work.
+- **Next action:** Await explicit maintainer authorization for the local A1.6a commit.

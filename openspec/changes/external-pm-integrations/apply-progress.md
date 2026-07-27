@@ -2,15 +2,15 @@
 
 ## Status
 
-- Current work unit: **A1.5 — inbound application/conflict persistence**
-- State: **implemented and focused evidence green; pending verification**
-- Branch: `feat/pm-182-app`
-- Worktree: `/srv/workspace/projects/kanon/.claude/worktrees/pm-182-app`
-- Base: `feat/pm-182-work` at `345d9a7`
-- Intended PR target: `feat/pm-182-work`
+- Current work unit: **A1.6a — deterministic tenant-safe ExternalRef binding backfill core**
+- State: **A1.6a core complete; A1.6 overall incomplete; final immutable proof intentionally not claimed**
+- Branch: `feat/pm-182-backfill-core`
+- Worktree: `/srv/workspace/projects/kanon/.claude/worktrees/pm-182-backfill-core`
+- Base: `feat/pm-182-app` at `f291e2b`
+- Intended PR target: `feat/pm-182-app`
 - Delivery: feature-branch chain
 - Mode: strict TDD
-- Review budget: 800 changed lines; A1.5 forecast 270; no size exception
+- Review budget: 800 changed lines; forced feature-branch chain; no size exception
 - Maintainer-approved migration correction: A1.3 uses `20260721_pm_identity_health`; A1.2 remains unchanged; A1.4 uses `20260722_pm_work_outbox`; A1.5 uses `20260723_pm_inbound_application_conflict`.
 
 ## Completed Tasks
@@ -195,15 +195,51 @@
 - None — implementation follows the approved persistence-only contract and additive migration path.
 - No A1.6 backfill, A1.7 outbox code, issue writers, provider/Redmine client, routes, listeners/workers, polling, UI, or live connection was added.
 
+## A1.6a Core Implementation
+
+- Added an unwired `backfillExternalRefBindings` operation and transaction-scoped companion in `packages/api/src/modules/integrations/backfill.ts`.
+- Scans only `ExternalRef` rows with `bindingId IS NULL`; project references resolve to themselves, while issue and cycle references resolve through their owning project.
+- Validates the reference connection, resolved entity/project, binding connection, and binding project against one workspace before assignment. Cross-workspace candidates produce tenant-safe diagnostics with no candidate IDs.
+- Uses stable source ordering, sorted diagnostics/candidate IDs, deterministic no-match and ambiguity classification, null-only idempotent updates, and transaction rollback when any source is unresolved.
+- Returns a frozen transaction-snapshot result. `snapshot.zeroUnresolved` describes the observed snapshot only; this slice does not provide an immutable concurrency-safe proof.
+- Deliberately excludes advisory-lock constants/helpers, `withExternalRefBackfillWriteGate`, cooperating-writer postconditions, multi-client concurrency tests, runtime wiring, schema/migration changes, and A1.7+.
+
+## A1.6a TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| A1.6a | `packages/api/src/modules/integrations/backfill.test.ts` | PostgreSQL integration + pure unit | N/A (new files) | ✅ Test suite written first; missing production module failed collection | ✅ Focused suite 6/6 after minimum core implementation | ✅ 7/7: project/issue/cycle ownership, rerun/already-bound, tenant mismatch with/without candidate, rollback/no-match/unsupported/missing, and candidate ambiguity | ✅ Extracted candidate loading, ownership loading, stable result/diagnostic construction; focused suite remained 7/7 |
+
+### A1.6a Test Summary
+
+- Core tests written: **7**; focused backfill suite: **7/7 passed**.
+- Layers used: PostgreSQL transaction integration fixtures and a pure deterministic candidate-resolution unit.
+- Approval tests: None — A1.6a adds a new unwired backfill behavior.
+- Pure functions created: `resolveBindingCandidates`, diagnostic/result normalization helpers.
+
+### A1.6a Verification
+
+- Authorized PostgreSQL target: `postgresql://kanon:kanon@127.0.0.1:5433/kanon_e2e`; fixtures delete their created workspaces after every test.
+- Prisma client generated from the unchanged base schema; `db:migrate` reported no pending migrations; no schema or migration files changed.
+- Focused core suite: **7/7 passed**; direct A1.2–A1.5 regression suites: **22/22 passed**; combined run: **29/29 passed**.
+- API `test:types`, direct no-emit type-check for `backfill.ts` and `backfill.test.ts`, Prisma validation, Prettier checks, and diff checks passed.
+- Review boundary: **799 changed lines** including core code, tests, and tracked split/progress evidence; under the 800-line budget with no exception.
+
+## A1.6 Split Boundary
+
+- Core branch: `feat/pm-182-backfill-core -> feat/pm-182-app`; this slice contains deterministic tenant-safe backfill and snapshot-only evidence.
+- Final gate branch: `feat/pm-182-backfill -> feat/pm-182-backfill-core`; it owns advisory/writer coordination and the final immutable proof, and is the only slice that completes A1.6.
+- A1.6 remains unchecked until the final gate branch lands. This artifact does not copy the preserved full-WIP A1.6 findings or final status.
+
 ## Cumulative Scope Boundary
 
-- A1.1, A1.2, A1.3, A1.4, and A1.5 are complete; A1.6 and later tasks remain untouched.
-- A1.5 adds inbound application/conflict persistence only; no A1.6 backfill, A1.7 outbox writers, provider/Redmine behavior, credentials service, polling, routes, workers, or UI were added.
+- A1.1, A1.2, A1.3, A1.4, A1.5, and A1.6a core are complete; A1.6 overall and later tasks remain incomplete.
+- A1.6a adds deterministic ExternalRef backfill only; no final gate, A1.7 outbox writers, provider/Redmine behavior, credentials service, polling, routes, workers, or UI was added.
 - A1.5 rollback is limited to the additive inbound-application/conflict migration, schema, focused test, and task/progress evidence; committed A1.2/A1.3/A1.4 migrations remain unchanged.
 - A1.4 rollback is limited to the additive work-outbox migration, schema, focused test, and task/progress evidence; committed A1.2/A1.3 migrations remain unchanged.
 - A1.3 rollback is limited to the additive identity-health migration, schema, focused test, and task/progress evidence; committed A1.2 files remain unchanged.
-- Copied proposal/design/spec planning dependencies remain untracked and outside the A1.5 work-unit boundary.
+- Copied proposal/design/spec planning dependencies remain untracked and outside the A1.6a work-unit boundary.
 
 ## Next Action
 
-A1.5 focused evidence is green; run the narrow verification/pre-commit review for this child slice. Do not commit, push, or open a PR in this phase.
+A1.6a focused evidence is green; run the narrow verification/pre-commit review for this core child slice, then apply the final gate branch. Do not claim A1.6 complete or an immutable zero-unresolved proof from this slice.
