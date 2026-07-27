@@ -1,0 +1,37 @@
+---
+title: "API modules"
+description: "Feature modules and services inside @kanon/api"
+icon: "server"
+---
+
+`@kanon/api` is the authoritative application boundary. Each feature generally follows a route/schema/service organization and accesses PostgreSQL through Prisma.
+
+## Feature modules
+
+| Module | Responsibility |
+| --- | --- |
+| `auth` | Login, registration, refresh, password reset, verification, magic links |
+| `instance` | First-run claim, instance administration, admin invitations |
+| `workspace` / `member` / `invite` | Tenant lifecycle, roles, membership, onboarding |
+| `project` | Project CRUD, project membership and scope |
+| `issue` | Issue CRUD, transitions, hierarchy, grouping, reconciliation |
+| `issue-dependency` | Dependency graph and scheduling relations |
+| `comment` / `document` / `activity` | Collaboration, design records and audit history |
+| `cycle` | Iteration lifecycle, scope changes, burnup and velocity |
+| `roadmap` | Horizon planning, ordering, dependencies and promotion |
+| `schedule` | Issue planning data, estimates, baselines and timeline reads |
+| `forecast` | Derived scheduling and critical-path projections |
+| `work-session` / `timesheet` | Active work capture, logs and approval workflow |
+| `milestone` | Project milestones and deliverable attachment |
+| `notification` / `issue-subscription` | Inbox, preferences, subscriptions and delivery |
+| `mcp-proposal` | Agent-generated proposals and approval actions |
+| `dashboard` | Workspace-level aggregated read model |
+| `events` | Authenticated workspace SSE stream |
+
+## Internal services
+
+The API also contains infrastructure-oriented services for the event bus, notifications, email delivery and other cross-module behaviors. These are wired from the application composition root rather than imported into every route.
+
+## Module rule
+
+Business invariants belong in module services and transactions. Route handlers should parse input, establish actor and tenant context, call the service, and serialize the result. Clients must not reproduce canonical transition, authorization, scheduling, or reconciliation rules.
