@@ -1,0 +1,36 @@
+---
+title: "Cross-cutting concerns"
+description: "Security, validation, observability, events, and resilience"
+icon: "shield-halved"
+---
+
+## Authentication and authorization
+
+The web application uses signed access and refresh cookies. MCP and external clients use bearer tokens. The Fastify authentication plugin resolves the current user before protected routes run, while module pre-handlers enforce workspace membership, project scope, and role requirements.
+
+Mutation requests from the browser use double-submit CSRF protection. Public routes are deliberately enumerated; health checks, setup bootstrap, selected invite reads, auth endpoints, and the independently protected metrics endpoint are exceptions.
+
+## Security hardening
+
+- Helmet applies a restrictive API-only content security policy.
+- CORS is configured before route plugins and allows credentials.
+- Global and route-specific rate limits protect the API and authentication paths.
+- Reverse-proxy trust is configurable so rate limiting and logs use the real client IP.
+- Structured logs redact authorization headers, cookies, and passwords.
+- Setup and onboarding tokens are time-boxed and sensitive raw tokens avoid structured logging.
+
+## Runtime contracts
+
+Fastify request and response schemas use Zod. The shared package publishes portable schemas used by clients to detect structural drift at runtime, not only at TypeScript compile time.
+
+## Events and real-time updates
+
+The event bus assigns monotonic IDs and retains a bounded replay buffer for SSE reconnects. Subscribers can listen globally or by workspace. Synchronous exceptions and rejected promises are isolated per subscriber and counted for observability.
+
+## Observability
+
+The API exposes health and Prometheus metrics endpoints, emits structured Pino logs, and reports route behavior without logging secrets. Development startup also writes best-effort service metadata under `.dev-info` so local orchestration can discover the actual bound port.
+
+## Resilience boundaries
+
+Forecast, notification, and work-session listeners are fire-and-forget relative to the initiating mutation. Cleanup jobs self-reschedule rather than overlap, and application shutdown closes Fastify, unsubscribes listeners, removes development metadata, and disconnects Prisma.
