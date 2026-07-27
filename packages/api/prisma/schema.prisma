@@ -55,6 +55,13 @@ enum IntegrationLifecycle {
   disabled
 }
 
+enum CredentialAuthStatus {
+  unknown
+  valid
+  invalid
+  revoked
+}
+
 enum CycleScopeEventKind {
   add
   remove
@@ -592,7 +599,8 @@ model Member {
   // PPM incidents (KAN-103 PR1)
   interruptions               Interruption[]
   // External PM integrations (KAN-179 / ADR-0012)
-  integrationCredentials      MemberIntegrationCredential[]
+  integrationCredentials       MemberIntegrationCredential[]
+  integrationExternalIdentities IntegrationExternalIdentity[]
 
   @@unique([userId, workspaceId])
   @@unique([workspaceId, username])
@@ -1147,13 +1155,33 @@ model IntegrationProjectBinding {
   connection   IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
   projectId    String                @map("project_id") @db.Uuid
   project      Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  externalRefs ExternalRef[]
+  externalRefs      ExternalRef[]
+  externalIdentities IntegrationExternalIdentity[]
 
   @@unique([connectionId, projectId])
   @@unique([connectionId, remoteProjectId])
   @@index([lifecycle, pollLeaseUntil])
   @@index([projectId])
   @@map("integration_project_bindings")
+}
+
+// Provider identity mapping is scoped to a project binding. Credentials remain
+// authentication material only; this model maps a Kanon member to a remote user.
+model IntegrationExternalIdentity {
+  id            String   @id @default(uuid()) @db.Uuid
+  remoteUserId  String   @map("remote_user_id")
+  remoteLogin   String?  @map("remote_login")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  bindingId String                    @map("binding_id") @db.Uuid
+  binding   IntegrationProjectBinding @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+  memberId  String                    @map("member_id") @db.Uuid
+  member    Member                    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([bindingId, memberId])
+  @@unique([bindingId, remoteUserId])
+  @@map("integration_external_identities")
 }
 
 // Per-user credential: each member supplies their own provider API key, stored
@@ -1164,6 +1192,9 @@ model MemberIntegrationCredential {
   encryptedKey   String   @map("encrypted_key")
   externalUserId String?  @map("external_user_id")
   externalLogin  String?  @map("external_login")
+  lastValidatedAt DateTime?            @map("last_validated_at")
+  lastAuthStatus  CredentialAuthStatus @default(unknown) @map("last_auth_status")
+  revokedAt       DateTime?            @map("revoked_at")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
