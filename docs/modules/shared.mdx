@@ -1,0 +1,34 @@
+---
+title: "Shared contracts"
+description: "Portable Zod schemas and domain types in @kanon/shared"
+icon: "code-branch"
+---
+
+`@kanon/shared` is the lowest-level reusable package. It publishes Zod schemas, inferred TypeScript types, URL normalization, `.kanon` binding utilities, and portable domain definitions consumed across runtime boundaries.
+
+## Contract groups
+
+- Dashboard and notification response schemas
+- Issue, issue-detail, group and dependency schemas
+- Work logs and subscription state
+- Schedules, estimates and schedule timeline rows
+- Timesheet entries and approval states
+- Password policy constants
+- SDD and Kanon domain types
+- Canonical API URL and repository binding helpers
+
+## Why runtime schemas matter
+
+TypeScript types disappear at runtime. Shared Zod schemas let the web application parse server responses and fail explicitly when the API shape drifts. This turns accidental contract mismatches into a visible boundary error rather than corrupted UI state.
+
+## Dependency rule
+
+The shared package must stay infrastructure-light and independent of Fastify, React, Prisma and MCP. It can describe data crossing package boundaries, but it should not contain persistence services, request objects, components or protocol handlers.
+
+## Adding a contract
+
+1. Define the Zod schema in a focused file.
+2. Export the inferred type beside the schema.
+3. Re-export both from `src/index.ts`.
+4. Use the schema at the API/client boundary.
+5. Add unit tests for valid, invalid and compatibility-sensitive payloads.
