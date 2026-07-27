@@ -20,11 +20,7 @@
     "groups": [
       {
         "group": "Overview",
-        "pages": [
-          "docs/index",
-          "docs/getting-started",
-          "docs/architecture/overview"
-        ]
+        "pages": ["docs/index", "docs/getting-started", "docs/architecture/overview"]
       },
       {
         "group": "Architecture",
