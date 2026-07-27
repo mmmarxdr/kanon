@@ -268,3 +268,57 @@
 - **Runtime evidence:** Backfill 15/15 and regressions 22/22 passed independently; tenant invariants, owned transactions, postconditions, rollback/lock release, public API, deterministic concurrency, and diff checks passed.
 - **Commit boundary:** Include only A1.6b source/test, final task/progress updates, and review ledger. Exclude planning copies, preserved WIP, A1.7+, and comments.
 - **Next action:** Await explicit maintainer authorization for the local A1.6b commit.
+
+## Judgment Day Round 1 — A1.7 transactional outbox capture
+
+- **Target:** `feat/pm-182-outbox -> feat/pm-182-backfill`
+- **Result:** `JUDGMENT: APPROVED`
+- **Reason:** Both fresh blind judges independently verified both Round 1 fixes using only the persisted ledger and the scoped fix patch; Judge A reran the focused gates and Judge B recommended approval.
+- **Review boundary:** 778 changed lines, within the maintainer-approved 800-line budget.
+- **Skill resolution:** `paths-injected` for both judges.
+
+| id | lens | location | severity | status | evidence | assessment |
+| --- | --- | --- | --- | --- | --- | --- |
+| JD-A-801 | judgment-day | `packages/api/src/modules/integrations/outbox.ts:98-140` | CRITICAL | verified | Round 1 validates authoritative binding, entity, ExternalRef, and credential ownership before the transaction-scoped upsert; both fresh blind judges verified the fix. | real |
+| JD-A-802 | judgment-day | `packages/api/src/modules/integrations/outbox.ts:23,98-101,118-131` | CRITICAL | verified | Round 1 derives epoch from the binding and rejects any supplied stale or future value before persistence; both fresh blind judges verified the fix. | real |
+| JD-A-803 | judgment-day | `packages/api/src/modules/integrations/outbox.ts:27-31,49-55` | WARNING | info | Supplying conflicting `correlationId` and `localMutationCorrelationId` values silently selects one alias, making capture identity ambiguous and allowing retries/call-site spreads to dedupe or split work unexpectedly. Both judges independently reported the ambiguity. | real |
+| JD-B-804 | judgment-day | `packages/api/src/modules/integrations/outbox.ts:160-165` | WARNING | info | One judge observed that an empty `bindingId` is treated as no filter because scan filtering uses truthiness, potentially widening an invalid scoped scan to every binding. | real |
+| JD-B-805 | judgment-day | `packages/api/src/modules/integrations/outbox.ts:43-60` | WARNING | info | One judge observed that raw textual UUID casing feeds the hashes even though PostgreSQL UUID equality is case-insensitive, so casing variants could produce different dedupe/lane keys for the same identifiers. | theoretical |
+
+- Confirmed BLOCKER/CRITICAL: **2** (`JD-A-801`, `JD-A-802`)
+- Open BLOCKER/CRITICAL: **0**
+- Verified BLOCKER/CRITICAL: **2** (`JD-A-801`, `JD-A-802`)
+- INFO findings: **3**
+- Fix rounds used: **1/2**
+- Adversarial verification: satisfied by two-judge convergence; no refuter fan-out applies to Judgment Day.
+- Evidence: focused A1.7 suite passed **6/6** and the targeted regression set passed **27/27**, including the new invalid-ownership and stale/future-epoch contracts.
+- Scoped re-judgment: both fresh blind judges independently verified both fixed findings using only the persisted ledger and `/tmp/opencode/kanon-a1-7-round1-fix.patch`; Judge A independently ran A1.7 **6/6** and the focused outbox/backfill/work set **27/27**, and Judge B recommended approval.
+- Judge-output normalization: the second judge returned the wrong `JD-A` prefix; its independently matching evidence was used for convergence, and its unique INFO rows were persisted with `JD-B` identifiers.
+- Next action: run the required A1.7 pre-commit review gate; no commit, push, PR, or public comment is allowed before that gate.
+
+### Round 1 remediation — JD-A-801 / JD-A-802
+
+- `outbox.ts` now resolves binding/project/connection ownership, local entity ownership, exact ExternalRef identity, and credential connection/tenant membership inside the caller transaction; invalid combinations reject before `upsert`.
+- Caller epochs must equal the authoritative binding epoch; omitted epochs derive from that binding value.
+- `outbox.int.test.ts` covers cross-project/binding/connection/tenant identifiers, no-row rejection, rollback, and stale/future epochs. Focused **6/6** and regression **27/27** passed.
+- No schema, migration, writer, worker, scheduler, provider, route, UI, commit, push, PR, or public comment was added.
+
+## Pre-commit risk review — A1.7
+- **Event:** `pre-commit`; **Lens:** `review-risk`; **Result:** `PASS`
+- **Ledger:** `[]`
+- **Evidence:** One exhaustive sweep reviewed the complete intended five-file A1.7 boundary against exact base `5bf6d31`, including the two untracked new source/test files, and found no concrete security, tenant-isolation, credential/reference-linkage, data-loss, transaction-integrity, scanner-scope, or artifact-truthfulness defect. Read-only; no fix/refuter required.
+- **Commit boundary:** Final **786/800**; exact five-file scope: `packages/api/src/modules/integrations/outbox.ts`, `packages/api/src/modules/integrations/outbox.int.test.ts`, `openspec/changes/external-pm-integrations/tasks.md`, `openspec/changes/external-pm-integrations/apply-progress.md`, `openspec/changes/external-pm-integrations/review-ledger.md`.
+- **Exclusions:** Copied planning artifacts `design.md`, `proposal.md`, and `specs/**` are excluded.
+- **Next action:** Await explicit maintainer authorization for the local commit.
+
+## Pre-push risk review — A1.7
+- **Event:** `pre-push`; **Lens:** exactly one `review-risk` sweep; **Result:** `PASS WITH WARNINGS`
+
+| id | lens | location | severity | status | evidence |
+| --- | --- | --- | --- | --- | --- |
+| R1-004 | review-risk | `packages/api/src/modules/integrations/outbox.ts` | CRITICAL | refuted | An unlocked binding read/write interleaving is possible, but A1.7 performs no claim or provider I/O; the later worker must recheck active state and matching epoch immediately before I/O, owned by A4.2/A4.3. A stale queued row remains audit/history, not stale dispatch or lost work. |
+| R1-005 | review-risk | `openspec/changes/external-pm-integrations/apply-progress.md` | WARNING | info | Staged apply-progress still described pre-commit as next while the ledger already recorded it as passed; retain canonical WARNING/info and do not treat it as a fix cycle. |
+
+- **Refutation:** Exactly one general refuter returned `refuted` for R1-004; no BLOCKER/CRITICAL remains open and no fix round is required.
+- **Boundary:** Final **798/800**.
+- **Next action:** Create the already-authorized local commit and push the branch to origin; no PR/comment.

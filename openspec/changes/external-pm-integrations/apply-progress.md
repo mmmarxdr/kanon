@@ -2,12 +2,12 @@
 
 ## Status
 
-- Current work unit: **A1.6b — transaction-scoped ExternalRef backfill gate and final proof**
-- State: **A1.6 implementation complete; Judgment Day remains escalated pending blind re-judgment; immutable proof is bounded to cooperating writers using the gate**
-- Branch: `feat/pm-182-backfill`
-- Worktree: `/srv/workspace/projects/kanon/.claude/worktrees/pm-182-backfill-gate`
-- Base: `feat/pm-182-backfill-core` at `c770e7d`
-- Intended PR target: `feat/pm-182-backfill-core`
+- Current work unit: **A1.7 — transactional outbox capture and read-only scanner**
+- State: **A1.7 Round 1 scoped re-judgment approved; focused/regression gates are green; pre-commit and pre-push review gates passed; authorized local commit/push is next**
+- Branch: `feat/pm-182-outbox`
+- Worktree: `/srv/workspace/projects/kanon/.claude/worktrees/pm-182-outbox`
+- Base: `feat/pm-182-backfill` at `5bf6d31d70117523081c21565bf4368aba8aa78e`
+- Intended PR target: `feat/pm-182-backfill`
 - Delivery: feature-branch chain
 - Mode: strict TDD
 - Review budget: 800 changed lines; forced feature-branch chain; no size exception
@@ -20,6 +20,9 @@
 - [x] A1.3 — External identity mappings, credential health fields, and additive migration
 - [x] A1.4 — Durable integration sync work/outbox persistence and additive migration
 - [x] A1.5 — Inbound application/conflict persistence and additive migration
+- [x] A1.6a — Deterministic tenant-safe ExternalRef binding backfill core
+- [x] A1.6b — Transaction-scoped ExternalRef writer gate and final invariant proof (Judgment Day re-judgment pending)
+- [x] A1.7 — Transactional integration-work capture, idempotent lane keys, rollback evidence, and read-only due-work scanner
 
 ## A1.2 Implementation
 
@@ -277,7 +280,7 @@
 - Final gate branch: `feat/pm-182-backfill -> feat/pm-182-backfill-core`; it owns advisory/writer coordination and the final immutable proof, and is the only slice that completes A1.6.
 - A1.6 implementation is complete on this final gate slice; Judgment Day remains escalated pending blind re-judgment. The proof remains strictly bounded to writers that participate through the gate; this artifact does not copy the preserved full-WIP findings or review status.
 
-## Cumulative Scope Boundary
+## A1.6 Cumulative Scope Boundary (historical)
 
 - A1.1, A1.2, A1.3, A1.4, A1.5, A1.6a core, and A1.6b final gate are complete; A1.7+ and later tasks remain incomplete.
 - A1.6 adds deterministic ExternalRef backfill plus a cooperating-writer gate and final validator proof; no A1.7 outbox writers, provider/Redmine behavior, credentials service, polling, routes, workers, or UI was added.
@@ -287,6 +290,70 @@
 - A1.3 rollback is limited to the additive identity-health migration, schema, focused test, and task/progress evidence; committed A1.2 files remain unchanged.
 - Copied proposal/design/spec planning dependencies remain untracked and outside the A1.6 work-unit boundary.
 
-## Next Action
+## A1.6 Historical Next Action
 
 A1.6b remediation evidence is green; run the scoped blind re-judgment before verification or commit. Do not apply A1.7+ in this boundary, and do not extend the immutable proof to non-cooperating writers.
+
+## A1.7 Implementation
+
+- Added `packages/api/src/modules/integrations/outbox.ts` with `captureIntegrationWorkTx`, deterministic SHA-256 dedupe/lane key builders, authoritative binding/entity/link validation, binding-epoch capture, idempotent `upsert`, and a read-only `scanIntegrationWork`/`scanIntegrationOutbox` repair scan.
+- Capture uses the caller's `Prisma.TransactionClient`, so the domain mutation and durable outbox row commit or roll back together. Repeated correlation capture returns the existing row without rewriting its state or payload.
+- Round 1 rejects cross-project/binding/connection/tenant identifiers and stale/future caller epochs before persistence; valid inputs retain idempotent lane behavior.
+- The scanner only reads due `queued`/`retry` rows in sequence order and never claims, leases, or changes work; provider I/O and worker claims remain out of scope.
+- Added `outbox.int.test.ts` with PostgreSQL fixtures covering durable payload/epoch/link capture, duplicate correlation/lane sequencing, local-correlation compatibility, unknown-binding rejection, enclosing-transaction rollback, due-state filtering, and non-mutating scan behavior.
+
+## A1.7 TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| A1.7 | `packages/api/src/modules/integrations/outbox.int.test.ts` | PostgreSQL integration / Prisma transaction | ✅ baseline regression 25/25 | ✅ New ownership/epoch assertions failed against the pre-fix implementation | ✅ focused 6/6; regression 27/27 | ✅ idempotency/rollback, cross-project/binding/connection/tenant rejection, and stale/future epoch paths | ✅ test:types and Prettier checks remain green |
+
+### A1.7 Test Summary
+
+- A1.7 tests written: **6**; focused suite: **6/6 passed**.
+- Regression evidence: A1.6 backfill **15/15**, A1.4 work persistence **6/6**; combined targeted run **27/27 passed**.
+- Layers used: PostgreSQL persistence, Prisma transaction rollback, durable unique-key behavior, and read-only scanner filtering.
+- Approval tests: None — A1.7 adds new outbox behavior.
+- Pure functions created: Two deterministic SHA-256 key builders.
+
+## A1.7 Verification
+
+- `pnpm install --frozen-lockfile` — passed in the isolated child worktree; no lockfile changes.
+- `pnpm --filter @kanon/api run db:generate` — passed to restore the generated Prisma client required by the fresh worktree.
+- `DATABASE_URL=<isolated PostgreSQL test URL; credentials redacted> pnpm --filter @kanon/api exec vitest run src/modules/integrations/outbox.int.test.ts` — **6/6 passed** after the Round 1 RED gate.
+- The required regression command ran the A1.7 suite plus `backfill.test.ts` and `prisma/work.test.ts`: **27/27 passed**. `work.test.ts` prints the expected Prisma unique-constraint error from its rejection assertion; the suite passed.
+- `pnpm --filter @kanon/api run test:types` — passed.
+- Direct strict no-emit type-check of `outbox.ts` and `outbox.int.test.ts` — passed.
+- Prettier checks for both A1.7 files and `git diff --check` — passed.
+- Repository-wide API `tsc --noEmit -p tsconfig.json` was attempted but remains blocked by pre-existing `@kanon/shared` resolution and auth/issue typing errors; no A1.7 source error was reported.
+- No Prisma schema, migration, runtime registration, provider/Redmine behavior, issue writer, scheduler, worker, UI, `.atl/`, or `.codegraph/` file was changed.
+
+## A1.7 Files in This Work Unit
+
+- `packages/api/src/modules/integrations/outbox.ts`
+- `packages/api/src/modules/integrations/outbox.int.test.ts`
+- `openspec/changes/external-pm-integrations/tasks.md`
+- `openspec/changes/external-pm-integrations/apply-progress.md`
+
+## A1.7 Deviations
+
+- None from the assigned A1.7 boundary. The scanner is intentionally read-only; claim/lease, writer integration, worker scheduling, and provider behavior remain later tasks.
+- The copied proposal/design/spec files remain untracked local planning context and are not part of the review slice.
+
+## A1.7 Review / Rollback Boundary
+
+- Current work unit starts at exact committed `feat/pm-182-backfill` commit `5bf6d31d70117523081c21565bf4368aba8aa78e` and targets `feat/pm-182-backfill` from child branch `feat/pm-182-outbox`.
+- Rollback is limited to `outbox.ts`, its focused integration test, and the A1.7 task/progress/review evidence; no schema or migration rollback is required.
+- Review footprint is **798/800 changed lines** across the intended A1.7 files/evidence; copied planning artifacts are excluded and no `size:exception` is needed.
+- Round 1 scoped re-judgment: **APPROVED**. Both fresh blind judges independently verified JD-A-801 and JD-A-802 using only the persisted ledger and `/tmp/opencode/kanon-a1-7-round1-fix.patch`; focused A1.7 suite **6/6**, focused regressions **27/27**, boundary **778/800**.
+- Judgment Day result: verified BLOCKER/CRITICAL **2**, open BLOCKER/CRITICAL **0**, INFO **3**, fix rounds **1/2**. JD-A-803, JD-B-804, and JD-B-805 remain WARNING/info.
+- No commit, push, PR, or Kanon/GitHub comment was created.
+
+## Cumulative Scope Boundary
+
+- A1.1 through A1.6b and A1.7 are complete in this cumulative artifact; A1.8+ and all later tasks remain incomplete.
+- A1.7 adds only transactional outbox capture and due-work scanning. It does not wire issue/cycle writers, provider/Redmine behavior, listener/worker/scheduler registration, routes, polling, UI, or schema changes.
+
+## Next Action
+
+A1.7 pre-commit and pre-push review gates passed. Create the already-authorized local commit and push the branch to origin; no PR/comment. Do not run global `sdd-verify` because 21 later tasks remain pending. Do not apply A1.8+ in this child slice.

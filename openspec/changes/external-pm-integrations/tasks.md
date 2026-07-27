@@ -19,7 +19,7 @@ Migration naming correction (maintainer-approved, forward-only): A1.3–A1.5 and
 - [x] A1.6 📍`feat/pm-182-backfill -> feat/pm-182-app` K182 R:DT(backfill.test.ts){zero} G:C/backfill.ts V:DT(backfill.test.ts) F:C/backfill.ts H:Hdb RB:fix-forward; e=70/90/20=180.
   - [x] A1.6a core slice — `feat/pm-182-backfill-core -> feat/pm-182-app`: deterministic tenant-safe backfill only; snapshot result, not an immutable zero-unresolved proof.
   - [x] Final gate slice — `feat/pm-182-backfill -> feat/pm-182-backfill-core`: advisory/writer coordination and the final proof; this completes A1.6.
-- [ ] A1.7 📍`feat/pm-182-outbox -> feat/pm-182-backfill` K182 R:DT(outbox.int.test.ts){atomic} G:C/outbox.ts captureIntegrationWorkTx/scanner V:DT(outbox.int.test.ts) F:C/outbox.ts H:Hdb RB:C/outbox.ts; e=130/190/10=330.
+- [x] A1.7 📍`feat/pm-182-outbox -> feat/pm-182-backfill` K182 R:DT(outbox.int.test.ts){atomic} G:C/outbox.ts captureIntegrationWorkTx/scanner V:DT(outbox.int.test.ts) F:C/outbox.ts H:Hdb RB:C/outbox.ts; e=130/190/10=330.
 - [ ] A1.8 📍`feat/pm-182-tx -> feat/pm-182-outbox` K182 R:DT(issue-tx.test.ts){tx} G:C/issue-tx.ts V:DT(issue-tx.test.ts) F:C/issue-tx.ts H:Hdb RB:C/issue-tx.ts; e=100/140/10=250.
 - [ ] A1.9 📍`feat/pm-182-issue -> feat/pm-182-tx` K182 R:DT(issue-writers.test.ts){create} G:I/service.ts V:DT(issue-writers.test.ts) F:extract(I/service.ts)+V H:Hdb RB:I/service.ts/revert-tx-capture; e=90/140/10=240.
 - [ ] A1.10 📍`feat/pm-182-group -> feat/pm-182-issue` K182 R:DT(group.test.ts){batch} G:I/service.ts V:DT(group.test.ts) F:dedupe(I/service.ts)+V H:Hdb RB:I/service.ts/revert-group-capture; e=80/130/10=220.
