@@ -62,6 +62,36 @@ enum CredentialAuthStatus {
   revoked
 }
 
+enum SyncDirection {
+  outbound
+  inbound
+}
+
+enum SyncOperation {
+  create
+  update
+  delete
+  close
+}
+
+enum SyncWorkState {
+  queued
+  leased
+  retry
+  superseded
+  ambiguous
+  dead
+  done
+  skipped
+}
+
+enum ActorKind {
+  user
+  system
+  ai
+  remote
+}
+
 enum CycleScopeEventKind {
   add
   remove
@@ -1157,6 +1187,7 @@ model IntegrationProjectBinding {
   project      Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
   externalRefs      ExternalRef[]
   externalIdentities IntegrationExternalIdentity[]
+  works             IntegrationSyncWork[]
 
   @@unique([connectionId, projectId])
   @@unique([connectionId, remoteProjectId])
@@ -1202,6 +1233,7 @@ model MemberIntegrationCredential {
   member       Member                @relation(fields: [memberId], references: [id], onDelete: Cascade)
   connectionId String                @map("connection_id") @db.Uuid
   connection   IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  works        IntegrationSyncWork[]
 
   @@unique([memberId, connectionId])
   @@index([connectionId])
@@ -1221,6 +1253,7 @@ model ExternalRef {
   metadata    Json?
   bindingId   String?  @map("binding_id") @db.Uuid
   binding     IntegrationProjectBinding? @relation(fields: [bindingId], references: [id], onDelete: SetNull)
+  works       IntegrationSyncWork[]
   remoteUpdatedAt DateTime? @map("remote_updated_at")
   localVersion BigInt @default(0) @map("local_version")
   lastCorrelationId String? @map("last_correlation_id")
@@ -1238,4 +1271,43 @@ model ExternalRef {
   @@index([entityType, entityId])
   @@index([bindingId])
   @@map("external_refs")
+}
+
+model IntegrationSyncWork {
+  id              String        @id @default(uuid()) @db.Uuid
+  entityType      String        @map("entity_type")
+  entityId        String        @map("entity_id") @db.Uuid
+  direction       SyncDirection
+  operation       SyncOperation
+  sequence        BigInt        @default(autoincrement()) @unique
+  dedupeKey       String        @unique @map("dedupe_key")
+  laneKey         String        @map("lane_key")
+  actorKey        String        @map("actor_key")
+  actorKind       ActorKind     @map("actor_kind")
+  payload         Json
+  correlationId   String        @map("correlation_id")
+  state           SyncWorkState @default(queued)
+  attempts        Int           @default(0)
+  availableAt     DateTime      @default(now()) @map("available_at")
+  leaseToken      String?       @map("lease_token")
+  leaseUntil      DateTime?     @map("lease_until")
+  fence           Int           @default(0)
+  epoch           Int
+  authCredentialId String?      @map("auth_credential_id") @db.Uuid
+  refId           String?       @map("ref_id") @db.Uuid
+  marker          String?
+  skippedReason   String?       @map("skipped_reason")
+  requestedStatus String?       @map("requested_status")
+  actualStatus    String?       @map("actual_status")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  binding        IntegrationProjectBinding    @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+  bindingId      String                       @map("binding_id") @db.Uuid
+  authCredential MemberIntegrationCredential? @relation(fields: [authCredentialId], references: [id], onDelete: SetNull)
+  ref            ExternalRef?                @relation(fields: [refId], references: [id], onDelete: SetNull)
+
+  @@index([bindingId, laneKey, sequence])
+  @@index([state, availableAt])
+  @@map("integration_sync_work")
 }

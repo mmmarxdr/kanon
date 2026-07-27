@@ -116,3 +116,31 @@
 - **Runtime evidence:** Identity 5/5 and lifecycle 6/6 passed independently; 51 migrations are current; Prisma validation, API/direct type checks, formatting, diff checks, and post-test cleanup checks passed.
 - **Commit boundary:** Include only A1.3 schema, migration, identity test, tasks, apply progress, and review ledger. Exclude copied proposal/design/spec artifacts and all A1.4+ work.
 - **Next action:** Await explicit maintainer authorization before creating the local A1.3 commit.
+
+## Judgment Day Round 1 — A1.4 durable integration work
+
+- **Target:** `feat/pm-182-work`
+- **Result:** `JUDGMENT: APPROVED`
+- **Judge A ledger:** `[]`
+- **Judge B ledger:** `[]`
+- **Evidence:** Both blind judges independently verified the additive migration order, schema/SQL agreement, lane and lease persistence, dedupe constraints, FK actions, index coverage, permanent pre-A1.4 upgrade regression, truthful 791-line boundary, and absence of A1.5+ runtime behavior.
+
+- Confirmed BLOCKER/CRITICAL: **0**
+- Suspect findings: **0**
+- INFO findings: **0**
+- Fix rounds used: **0/2**
+- Next action: run the required A1.4 pre-commit review.
+
+## Pre-commit reliability review — A1.4
+
+- **Result:** `PASS WITH WARNINGS`
+- **Refuter required:** No BLOCKER/CRITICAL candidates.
+
+| id | lens | location | severity | status | evidence |
+| --- | --- | --- | --- | --- | --- |
+| R3-004 | reliability | `openspec/changes/external-pm-integrations/apply-progress.md:13` | WARNING | info | Apply progress retains the original no-exception/791-line claim, while the maintainer approved an A1.4-only 805-line boundary after mandatory Judgment Day persistence. |
+| R3-005 | reliability | `openspec/changes/external-pm-integrations/apply-progress.md:137-143` | WARNING | info | The persisted A1.4 file list omits `review-ledger.md`, although review evidence makes it part of the approved six-file commit boundary. |
+
+- **Runtime evidence:** Work 6/6 and the permanent upgrade regression passed independently; diff checks and cleanup passed; worktree state remained unchanged.
+- **Commit boundary:** Include only A1.4 schema, migration, work test, tasks, apply progress, and review ledger. Exclude copied proposal/design/spec artifacts and all A1.5+ work.
+- **Next action:** Await explicit maintainer authorization before creating the local A1.4 commit.

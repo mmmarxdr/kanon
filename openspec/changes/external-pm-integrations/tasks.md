@@ -14,7 +14,7 @@ Migration naming correction (maintainer-approved, forward-only): A1.3–A1.5 and
 - [x] A1.1 📍`feat/pm-182-types -> feat/external-pm-integrations` K182 R:AT(core/types.test.ts){omit} G:C/core/types.ts V:AT(core/types.test.ts) F:C/core/types.ts H:N/A-pure RB:C/core/types.ts; e=80/130/10=220.
 - [x] A1.2 📍`feat/pm-182-life -> feat/pm-182-types` K182 R:DT(lifecycle.test.ts){draft} G:P+M1l V:DT(lifecycle.test.ts) F:M1l H:Hdb RB:additive-M1l; e=120/140/10=270.
 - [x] A1.3 📍`feat/pm-182-id -> feat/pm-182-life` K182 R:DT(identity.test.ts){fresh} G:P+M1i V:DT(identity.test.ts) F:M1i H:Hdb RB:additive-M1i; e=90/130/10=230.
-- [ ] A1.4 📍`feat/pm-182-work -> feat/pm-182-id` K182 R:DT(work.test.ts){lane} G:P+M1w V:DT(work.test.ts) F:M1w H:Hdb RB:additive-M1w; e=120/160/10=290.
+- [x] A1.4 📍`feat/pm-182-work -> feat/pm-182-id` K182 R:DT(work.test.ts){lane} G:P+M1w V:DT(work.test.ts) F:M1w H:Hdb RB:additive-M1w; e=120/160/10=290.
 - [ ] A1.5 📍`feat/pm-182-app -> feat/pm-182-work` K182 R:DT(application.test.ts){tuple} G:P+M1a V:DT(application.test.ts) F:M1a H:Hdb RB:additive-M1a; e=110/150/10=270.
 - [ ] A1.6 📍`feat/pm-182-backfill -> feat/pm-182-app` K182 R:DT(backfill.test.ts){zero} G:C/backfill.ts V:DT(backfill.test.ts) F:C/backfill.ts H:Hdb RB:fix-forward; e=70/90/20=180.
 - [ ] A1.7 📍`feat/pm-182-outbox -> feat/pm-182-backfill` K182 R:DT(outbox.int.test.ts){atomic} G:C/outbox.ts captureIntegrationWorkTx/scanner V:DT(outbox.int.test.ts) F:C/outbox.ts H:Hdb RB:C/outbox.ts; e=130/190/10=330.
