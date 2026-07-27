@@ -1,0 +1,52 @@
+---
+title: "Runtime flows"
+description: "How browser and agent operations move through Kanon"
+icon: "arrows-rotate"
+---
+
+## Browser mutation
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant W as React web
+  participant A as Fastify API
+  participant D as PostgreSQL
+  participant E as EventBus
+
+  U->>W: Move or edit issue
+  W->>A: Cookie-authenticated request + CSRF token
+  A->>A: Validate Zod schema and membership/role
+  A->>D: Execute Prisma transaction
+  D-->>A: Persisted result
+  A->>E: Emit domain event
+  A-->>W: JSON response
+  E-->>W: SSE update for other clients
+```
+
+The web client uses a central fetch wrapper. Cookies carry authentication, mutation requests include the double-submit CSRF token, failed access tokens trigger a refresh attempt, and shared Zod schemas can validate successful responses at runtime.
+
+## Agent operation
+
+```mermaid
+sequenceDiagram
+  participant G as Coding agent
+  participant M as Kanon MCP
+  participant A as Fastify API
+  participant D as PostgreSQL
+
+  G->>M: Invoke kanon_* tool
+  M->>M: Resolve .kanon binding and tool input
+  M->>A: Bearer-authenticated REST request
+  A->>A: Authorize workspace/project scope
+  A->>D: Execute domain operation
+  D-->>A: Result
+  A-->>M: JSON response
+  M-->>G: MCP content result
+```
+
+The MCP process communicates over stdio with the host agent and over HTTP with Kanon. It attaches client identity for provenance, can consume workspace SSE events, and wraps tool activity with heartbeat tracking.
+
+## Event-driven side effects
+
+Mutations publish typed domain events after their primary operation. Subscribers are isolated: a subscriber failure is logged but does not abort later subscribers or the original mutation. Current consumers include notifications, forecast rebuilds, work-session transitions, and workspace SSE streams.

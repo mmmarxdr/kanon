@@ -1,0 +1,31 @@
+---
+title: "Setup, CLI, and testing"
+description: "Supporting packages around the Kanon runtime"
+icon: "toolbox"
+---
+
+## Setup package
+
+`@kanon-pm/setup` installs Kanon integrations into supported AI tools. It detects the host platform and installed clients, resolves onboarding credentials, writes MCP configuration, and installs tool-specific skills, templates, workflows, agents, or commands.
+
+The setup flow supports interactive selection, explicit tool flags, removal mode, reusable wrapper credentials, and non-interactive onboarding through `KANON_ONBOARD_LINK` or piped stdin. Credential storage is abstracted so platform-specific storage can evolve without changing the installer flow.
+
+## CLI package
+
+`@kanon/cli` is intentionally small. Commander defines the command surface and delegates operations such as `status` to focused command modules. It should remain an operator convenience client of the API, not become a second domain implementation.
+
+## E2E package
+
+`@kanon/e2e` uses Playwright against a running development stack. End-to-end tests cover browser-visible workflows and integration boundaries that unit tests cannot validate: authentication, routing, API persistence, board interactions, and multi-service startup assumptions.
+
+## Test strategy
+
+| Level | Tools | Purpose |
+| --- | --- | --- |
+| Unit | Vitest | Pure rules, schemas, stores, helpers, MCP adapters |
+| Integration | Vitest + test database | Fastify routes, Prisma transactions, auth and event wiring |
+| Property-based | fast-check | Broad invariant coverage for selected web/domain logic |
+| Mutation | Stryker | Strength of critical API and MCP tests |
+| End-to-end | Playwright | Complete user workflows across web, API and database |
+
+The root `pnpm test:all` command runs package test suites followed by Playwright. Changes to domain behavior should normally include service-level tests and, when the user workflow changes, an E2E scenario.

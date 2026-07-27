@@ -1,0 +1,45 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Kanon",
+  "description": "Architecture and module documentation for Kanon",
+  "colors": {
+    "primary": "#5B5BD6",
+    "light": "#7C7CF0",
+    "dark": "#4545B8"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/mmmarxdr/kanon"
+      }
+    ]
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Overview",
+        "pages": ["docs/index", "docs/getting-started", "docs/architecture/overview"]
+      },
+      {
+        "group": "Architecture",
+        "pages": [
+          "docs/architecture/runtime-flows",
+          "docs/architecture/domain-model",
+          "docs/architecture/cross-cutting-concerns"
+        ]
+      },
+      {
+        "group": "Modules",
+        "pages": [
+          "docs/modules/api",
+          "docs/modules/web",
+          "docs/modules/mcp",
+          "docs/modules/shared",
+          "docs/modules/setup-cli-testing"
+        ]
+      }
+    ]
+  }
+}

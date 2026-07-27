@@ -1,0 +1,34 @@
+---
+title: "Web application"
+description: "React SPA architecture in @kanon/web"
+icon: "display"
+---
+
+`@kanon/web` is the human-facing React 19 single-page application. Vite builds the client, TanStack Router defines navigation, TanStack Query manages server state, and Zustand stores focused client state such as authentication and theme preferences.
+
+## Main layers
+
+| Layer | Role |
+| --- | --- |
+| `routes` | Public and authenticated pages, URL parsing and page-level data orchestration |
+| `components` | Reusable visual and domain components |
+| `lib/api-client` | Cookie transport, CSRF headers, token refresh, structured errors |
+| `lib/sse-client` | Workspace event stream and reconnect behavior |
+| `stores` | Local persistent or cross-route UI state |
+| shared schemas | Runtime validation for selected API responses |
+
+## Route surface
+
+Public routes cover authentication, invitations, email verification, password recovery, magic links and first-run setup. Authenticated routes cover workspace/project selection, inbox, board, issues and documents, dependencies, cycles, roadmap, schedule timeline, profile, project settings and instance administration.
+
+## State model
+
+TanStack Query should own remote server state and invalidation. Zustand should remain limited to state that is truly local to the browser or spans components without being canonical server data.
+
+## API boundary
+
+All requests should pass through the central API client. It includes credentials, attaches `X-CSRF-Token` to mutations, retries once after a successful refresh, converts non-2xx responses into `ApiError`, and optionally parses successful payloads using shared Zod schemas.
+
+## Real-time behavior
+
+The SSE client receives workspace-scoped domain events. Query caches can then be invalidated or updated so actions performed by another browser or an AI agent become visible without polling.
