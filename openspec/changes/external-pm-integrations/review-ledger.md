@@ -220,3 +220,51 @@
 - **Evidence:** Core 7/7 passed independently; tenant isolation, redacted diagnostics, guarded updates, deterministic ordering, rollback/idempotency, unwired snapshot semantics, and the 813-line approved boundary were verified.
 - **Commit boundary:** Include only core backfill source/test, split tasks, A1.6a progress, and review ledger. Exclude planning copies, preserved WIP, A1.6b, and later work.
 - **Next action:** Await explicit maintainer authorization for the local A1.6a commit.
+
+## Judgment Day Round 1 — A1.6b final gate
+
+- **Target:** `feat/pm-182-backfill`
+- **Result:** `JUDGMENT: APPROVED`
+- **Reason:** The maintainer-authorized encapsulation removed the caller-owned proof bypass, and both blind judges independently verified JD-A-701.
+
+| id | lens | location | severity | status | evidence | assessment |
+| --- | --- | --- | --- | --- | --- | --- |
+| JD-A-701 | judgment-day | `packages/api/src/modules/integrations/backfill.ts:216-256` | CRITICAL | verified | The caller-owned helper is no longer exported; the executor is module-internal, and only transaction-owning APIs return after final validation and their owned commit. Both blind judges verified the public-contract and rollback/concurrency evidence. | real |
+
+- Judge B ledger: `[]`
+- Confirmed BLOCKER/CRITICAL: **0**
+- Suspect CRITICAL: **0**
+- Verified BLOCKER/CRITICAL: **1** (`JD-A-701`)
+- INFO findings: **0**
+- Fix rounds used: **1/2**
+- Next action: run the required A1.6b pre-commit review.
+
+### Round 1 remediation — JD-A-701
+
+- **Status:** `verified`.
+- **Fix:** Removed the public `backfillExternalRefBindingsInTransaction` escape path and kept the transaction-scoped implementation module-internal.
+- **Evidence:** Rollback/composition and two-client concurrency tests now use only the owned APIs; the public module-contract test asserts that the unsafe helper is absent.
+- **Focused result:** Backfill suite passed **15/15** after the required RED failure.
+- **Next action:** pre-commit review.
+
+## A1.6b apply boundary
+
+- **Target:** `feat/pm-182-backfill -> feat/pm-182-backfill-core`
+- **Result:** `APPLY SLICE COMPLETE — no review verdict`
+- **Scope:** Stable transaction-scoped PostgreSQL advisory gate, owned writer transaction, shared ExternalRef invariant validator, backfill final proof, deterministic cooperating multi-client tests, and the A1.7+ caller obligation until B1 hardening.
+- **Out of scope:** Schema/migrations, A1.7+, provider/runtime/routes/UI/live Redmine, preserved WIP status, and pre-verified review findings.
+- **Next action:** Run the normal verification/review phase for this child slice.
+
+## Pre-commit risk review — A1.6b
+
+- **Result:** `PASS WITH WARNINGS`
+- **Refuter required:** No BLOCKER/CRITICAL candidates.
+
+| id | lens | location | severity | status | evidence |
+| --- | --- | --- | --- | --- | --- |
+| R1-002 | risk | `openspec/changes/external-pm-integrations/apply-progress.md:6` | WARNING | info | Apply progress still says Judgment Day is pending although the ledger records approval and JD-A-701 verified. |
+| R1-003 | risk | `openspec/changes/external-pm-integrations/apply-progress.md:256` | WARNING | info | Apply progress records the pre-remediation 607-line boundary; the final five-file boundary before this review record is 657/800. |
+
+- **Runtime evidence:** Backfill 15/15 and regressions 22/22 passed independently; tenant invariants, owned transactions, postconditions, rollback/lock release, public API, deterministic concurrency, and diff checks passed.
+- **Commit boundary:** Include only A1.6b source/test, final task/progress updates, and review ledger. Exclude planning copies, preserved WIP, A1.7+, and comments.
+- **Next action:** Await explicit maintainer authorization for the local A1.6b commit.

@@ -2,6 +2,9 @@ import { Prisma, PrismaClient } from "@prisma/client";
 
 const SUPPORTED_ENTITY_TYPES = new Set(["issue", "project", "cycle"]);
 
+/** Stable PostgreSQL transaction-level advisory-lock key for cooperating writers. */
+export const EXTERNAL_REF_BACKFILL_LOCK_KEY = 0x4b414e4f4e5f4136n;
+
 export type ExternalRefBackfillReason =
   | "unsupported-entity-type"
   | "local-entity-not-found"
@@ -30,6 +33,23 @@ export interface ExternalRefBackfillResult {
   readonly updated: number;
   readonly unresolved: readonly ExternalRefBackfillDiagnostic[];
   readonly snapshot: ExternalRefBackfillSnapshot;
+}
+
+export type ExternalRefBackfillInvariantReason =
+  | "unbound-reference"
+  | "unsupported-entity-type"
+  | "local-entity-not-found"
+  | "binding-not-found"
+  | "binding-mismatch"
+  | "tenant-mismatch";
+
+export interface ExternalRefBackfillInvariantViolation {
+  readonly externalRefId: string;
+  readonly connectionId: string;
+  readonly entityType: string;
+  readonly entityId: string;
+  readonly projectId: string | null;
+  readonly reason: ExternalRefBackfillInvariantReason;
 }
 
 export interface BindingCandidate {
@@ -70,6 +90,16 @@ export class ExternalRefBackfillError extends Error {
   }
 }
 
+export class ExternalRefBackfillInvariantError extends Error {
+  readonly violations: readonly ExternalRefBackfillInvariantViolation[];
+
+  constructor(violations: readonly ExternalRefBackfillInvariantViolation[]) {
+    super(`External reference binding invariant failed for ${violations.length} row(s)`);
+    this.name = "ExternalRefBackfillInvariantError";
+    this.violations = violations;
+  }
+}
+
 export function resolveBindingCandidates(
   connectionId: string,
   projectId: string,
@@ -100,15 +130,128 @@ export function resolveBindingCandidates(
   };
 }
 
-export async function backfillExternalRefBindings(
-  database: PrismaClient,
-): Promise<ExternalRefBackfillResult> {
-  return database.$transaction((transaction) =>
-    backfillExternalRefBindingsInTransaction(transaction),
+async function acquireExternalRefBackfillWriteGate(
+  transaction: Prisma.TransactionClient,
+): Promise<void> {
+  await transaction.$executeRaw(
+    Prisma.sql`
+      SELECT pg_advisory_xact_lock(${EXTERNAL_REF_BACKFILL_LOCK_KEY}::bigint)
+    `,
   );
 }
 
-export async function backfillExternalRefBindingsInTransaction(
+async function validateExternalRefBackfillInvariants(
+  transaction: Prisma.TransactionClient,
+): Promise<readonly ExternalRefBackfillInvariantViolation[]> {
+  const refs = await transaction.externalRef.findMany({
+    orderBy: { id: "asc" },
+    select: {
+      id: true,
+      entityType: true,
+      entityId: true,
+      connectionId: true,
+      bindingId: true,
+      connection: { select: { workspaceId: true } },
+      binding: {
+        select: {
+          connectionId: true,
+          projectId: true,
+          connection: { select: { workspaceId: true } },
+          project: { select: { workspaceId: true } },
+        },
+      },
+    },
+  });
+
+  const entityOwnership = await loadEntityOwnership(transaction, refs);
+  const violations: ExternalRefBackfillInvariantViolation[] = [];
+
+  for (const ref of refs) {
+    const ownership = entityOwnership.get(`${ref.entityType}:${ref.entityId}`);
+    const base = {
+      externalRefId: ref.id,
+      connectionId: ref.connectionId,
+      entityType: ref.entityType,
+      entityId: ref.entityId,
+      projectId: ownership?.projectId ?? null,
+    };
+
+    if (!SUPPORTED_ENTITY_TYPES.has(ref.entityType)) {
+      violations.push({ ...base, reason: "unsupported-entity-type" });
+      continue;
+    }
+    if (!ownership) {
+      violations.push({ ...base, reason: "local-entity-not-found" });
+      continue;
+    }
+    if (ref.bindingId === null) {
+      violations.push({ ...base, reason: "unbound-reference" });
+      continue;
+    }
+    if (!ref.binding) {
+      violations.push({ ...base, reason: "binding-not-found" });
+      continue;
+    }
+    if (
+      ref.connection.workspaceId !== ownership.workspaceId ||
+      ref.binding.connection.workspaceId !== ownership.workspaceId ||
+      ref.binding.project.workspaceId !== ownership.workspaceId
+    ) {
+      violations.push({ ...base, reason: "tenant-mismatch" });
+      continue;
+    }
+    if (
+      ref.binding.connectionId !== ref.connectionId ||
+      ref.binding.projectId !== ownership.projectId
+    ) {
+      violations.push({ ...base, reason: "binding-mismatch" });
+    }
+  }
+
+  return violations.sort((left, right) =>
+    left.externalRefId.localeCompare(right.externalRefId),
+  );
+}
+
+async function runWithExternalRefBackfillWriteGate<T>(
+  transaction: Prisma.TransactionClient,
+  callback: (transaction: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  await acquireExternalRefBackfillWriteGate(transaction);
+  const result = await callback(transaction);
+  await assertExternalRefBackfillInvariant(transaction);
+  return result;
+}
+
+async function assertExternalRefBackfillInvariant(
+  transaction: Prisma.TransactionClient,
+): Promise<void> {
+  const violations = await validateExternalRefBackfillInvariants(transaction);
+  if (violations.length > 0) {
+    throw new ExternalRefBackfillInvariantError(violations);
+  }
+}
+
+/**
+ * Runs a cooperating ExternalRef/binding writer in an owned transaction.
+ * A1.7+ writers MUST use this gate until binding hardening makes the invariant structural.
+ */
+export async function withExternalRefBackfillWriteGate<T>(
+  database: PrismaClient,
+  callback: (transaction: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return database.$transaction((transaction) =>
+    runWithExternalRefBackfillWriteGate(transaction, callback),
+  );
+}
+
+export async function backfillExternalRefBindings(
+  database: PrismaClient,
+): Promise<ExternalRefBackfillResult> {
+  return withExternalRefBackfillWriteGate(database, executeExternalRefBindingBackfill);
+}
+
+async function executeExternalRefBindingBackfill(
   transaction: Prisma.TransactionClient,
 ): Promise<ExternalRefBackfillResult> {
   const refs = await transaction.externalRef.findMany({

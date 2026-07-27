@@ -2,12 +2,12 @@
 
 ## Status
 
-- Current work unit: **A1.6a — deterministic tenant-safe ExternalRef binding backfill core**
-- State: **A1.6a core complete; A1.6 overall incomplete; final immutable proof intentionally not claimed**
-- Branch: `feat/pm-182-backfill-core`
-- Worktree: `/srv/workspace/projects/kanon/.claude/worktrees/pm-182-backfill-core`
-- Base: `feat/pm-182-app` at `f291e2b`
-- Intended PR target: `feat/pm-182-app`
+- Current work unit: **A1.6b — transaction-scoped ExternalRef backfill gate and final proof**
+- State: **A1.6 implementation complete; Judgment Day remains escalated pending blind re-judgment; immutable proof is bounded to cooperating writers using the gate**
+- Branch: `feat/pm-182-backfill`
+- Worktree: `/srv/workspace/projects/kanon/.claude/worktrees/pm-182-backfill-gate`
+- Base: `feat/pm-182-backfill-core` at `c770e7d`
+- Intended PR target: `feat/pm-182-backfill-core`
 - Delivery: feature-branch chain
 - Mode: strict TDD
 - Review budget: 800 changed lines; forced feature-branch chain; no size exception
@@ -225,21 +225,68 @@
 - API `test:types`, direct no-emit type-check for `backfill.ts` and `backfill.test.ts`, Prisma validation, Prettier checks, and diff checks passed.
 - Review boundary: **799 changed lines** including core code, tests, and tracked split/progress evidence; under the 800-line budget with no exception.
 
+## A1.6b Final Gate Implementation
+
+- Added stable PostgreSQL transaction-level advisory key `EXTERNAL_REF_BACKFILL_LOCK_KEY` and `withExternalRefBackfillWriteGate(database, callback)`, which owns the transaction, acquires the gate before the callback, validates before commit, and rolls back invalid writes.
+- The shared validator checks every `ExternalRef` for supported entity type, local entity ownership, non-null/existing binding, same-workspace connection and project ownership, and connection/project consistency.
+- `backfillExternalRefBindings` uses the owned gate and validator for the final zero-unresolved proof while preserving the A1.6a snapshot result contract; no caller-owned transaction helper is public.
+- **Caller obligation:** A1.7+ writers that create or mutate `ExternalRef`, `IntegrationProjectBinding`, or their ownership sources MUST use the gate until B1 hardening makes the invariant structural. Direct/uncoordinated writes are outside this proof.
+- No schema, migration, runtime wiring, provider, route, UI, or A1.7+ implementation was added.
+
+## A1.6b TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| A1.6b | `packages/api/src/modules/integrations/backfill.test.ts` | PostgreSQL integration with two Prisma clients | ✅ A1.6a core 7/7 | ✅ First gated-writer test failed before the API existed | ✅ Focused suite 14/14 | ✅ Valid commit, null-bound rollback, binding/tenant rollback, final proof, lock release, and deterministic insert/source-mutation exclusion | ✅ Shared final assertion extracted; focused suite remained 14/14 |
+
+### A1.6b Test Summary
+
+- New gate tests: **7**; focused backfill suite: **14/14 passed**.
+- Regression evidence: A1.2 lifecycle **6/6**, A1.3 identity **5/5**, A1.4 work **6/6**, and A1.5 application **5/5**; combined final run **36/36 passed**.
+- Layers used: PostgreSQL transaction integration, two-client advisory-lock coordination, and deterministic deferred barriers; no arbitrary sleeps.
+- Approval tests: None — A1.6b adds the final gate contract.
+- Pure functions created: None.
+
+### A1.6b Verification
+
+- Authorized PostgreSQL target `127.0.0.1:5433/kanon_e2e` remained healthy; the service was left running.
+- `pnpm --filter @kanon/api run test:types` passed; strict no-emit type-check of `backfill.ts` passed.
+- Prisma validation, Prettier checks, and `git diff --check` passed; no schema or migration files changed.
+- Cleanup check found **0** `backfill-%` workspaces; fixtures and coordination transactions self-cleaned.
+- Review boundary: **607 changed lines** across the five tracked A1.6b files; under the 800-line budget with no exception.
+- Repository-wide API `tsc --noEmit -p tsconfig.json` was attempted but remains blocked by pre-existing unrelated `@kanon/shared` resolution and auth/issue typing errors; the changed source and configured API type gate pass.
+
+## A1.6b Judgment Day Round 1 remediation — JD-A-701
+
+- Maintainer-authorized fix: removed the exported caller-owned in-transaction backfill helper. The in-transaction implementation remains module-internal, and only `backfillExternalRefBindings(database)` and `withExternalRefBackfillWriteGate(database, callback)` own the transaction through gate acquisition, final invariant validation, and commit.
+- Updated rollback/composition and two-client concurrency evidence to use the owned APIs; no A1.7+ behavior or schema/migration scope was added.
+- Added a durable public-contract assertion proving `backfillExternalRefBindingsInTransaction` is absent from the module namespace.
+
+### JD-A-701 TDD remediation evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| JD-A-701 | `packages/api/src/modules/integrations/backfill.test.ts` | PostgreSQL integration + public module contract | ✅ Backfill 14/14 | ✅ Public-contract assertion failed while the unsafe export existed | ✅ Focused suite 15/15 after removing the export and replacing unsafe composition | ➖ Structural public-contract behavior has one required outcome; existing 14 behavioral cases remain green | ✅ Private implementation and owned-API test boundary preserved |
+
+- JD-A-701 status: **fixed; not verified**.
+- Overall A1.6b Judgment Day status remains **ESCALATED** pending scoped blind re-judgment.
+
 ## A1.6 Split Boundary
 
 - Core branch: `feat/pm-182-backfill-core -> feat/pm-182-app`; this slice contains deterministic tenant-safe backfill and snapshot-only evidence.
 - Final gate branch: `feat/pm-182-backfill -> feat/pm-182-backfill-core`; it owns advisory/writer coordination and the final immutable proof, and is the only slice that completes A1.6.
-- A1.6 remains unchecked until the final gate branch lands. This artifact does not copy the preserved full-WIP A1.6 findings or final status.
+- A1.6 implementation is complete on this final gate slice; Judgment Day remains escalated pending blind re-judgment. The proof remains strictly bounded to writers that participate through the gate; this artifact does not copy the preserved full-WIP findings or review status.
 
 ## Cumulative Scope Boundary
 
-- A1.1, A1.2, A1.3, A1.4, A1.5, and A1.6a core are complete; A1.6 overall and later tasks remain incomplete.
-- A1.6a adds deterministic ExternalRef backfill only; no final gate, A1.7 outbox writers, provider/Redmine behavior, credentials service, polling, routes, workers, or UI was added.
+- A1.1, A1.2, A1.3, A1.4, A1.5, A1.6a core, and A1.6b final gate are complete; A1.7+ and later tasks remain incomplete.
+- A1.6 adds deterministic ExternalRef backfill plus a cooperating-writer gate and final validator proof; no A1.7 outbox writers, provider/Redmine behavior, credentials service, polling, routes, workers, or UI was added.
+- A1.6's immutable zero-unresolved claim applies only to transactions that acquire the stable gate and pass the shared validator. A1.7+ callers must honor the gate obligation until B1 hardening.
 - A1.5 rollback is limited to the additive inbound-application/conflict migration, schema, focused test, and task/progress evidence; committed A1.2/A1.3/A1.4 migrations remain unchanged.
 - A1.4 rollback is limited to the additive work-outbox migration, schema, focused test, and task/progress evidence; committed A1.2/A1.3 migrations remain unchanged.
 - A1.3 rollback is limited to the additive identity-health migration, schema, focused test, and task/progress evidence; committed A1.2 files remain unchanged.
-- Copied proposal/design/spec planning dependencies remain untracked and outside the A1.6a work-unit boundary.
+- Copied proposal/design/spec planning dependencies remain untracked and outside the A1.6 work-unit boundary.
 
 ## Next Action
 
-A1.6a focused evidence is green; run the narrow verification/pre-commit review for this core child slice, then apply the final gate branch. Do not claim A1.6 complete or an immutable zero-unresolved proof from this slice.
+A1.6b remediation evidence is green; run the scoped blind re-judgment before verification or commit. Do not apply A1.7+ in this boundary, and do not extend the immutable proof to non-cooperating writers.
