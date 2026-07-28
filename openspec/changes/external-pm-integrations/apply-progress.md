@@ -2,12 +2,12 @@
 
 ## Status
 
-- Current work unit: **A1.7 — transactional outbox capture and read-only scanner**
-- State: **A1.7 Round 1 scoped re-judgment approved; focused/regression gates are green; pre-commit and pre-push review gates passed; authorized local commit/push is next**
-- Branch: `feat/pm-182-outbox`
-- Worktree: `/srv/workspace/projects/kanon/.claude/worktrees/pm-182-outbox`
-- Base: `feat/pm-182-backfill` at `5bf6d31d70117523081c21565bf4368aba8aa78e`
-- Intended PR target: `feat/pm-182-backfill`
+- Current work unit: **A1.8 — issue transaction composition seam**
+- State: **blocked/escalated** — A1.8 terminal pre-commit scoped re-review failed after fix round 2/2; R3-008/R3-009 remain CRITICAL/open; Prettier fails on both A1.8 source/test files
+- Branch: `feat/pm-182-tx`
+- Worktree: `/srv/workspace/projects/kanon/.claude/worktrees/pm-182-tx`
+- Base: `feat/pm-182-outbox` at `de988c638acef374cebb86caac1c7996196f5eec`
+- Intended PR target: `feat/pm-182-outbox`
 - Delivery: feature-branch chain
 - Mode: strict TDD
 - Review budget: 800 changed lines; forced feature-branch chain; no size exception
@@ -23,6 +23,7 @@
 - [x] A1.6a — Deterministic tenant-safe ExternalRef binding backfill core
 - [x] A1.6b — Transaction-scoped ExternalRef writer gate and final invariant proof (Judgment Day re-judgment pending)
 - [x] A1.7 — Transactional integration-work capture, idempotent lane keys, rollback evidence, and read-only due-work scanner
+- [x] A1.8 — Issue mutation transaction composition seam with atomic outbox capture
 
 ## A1.2 Implementation
 
@@ -354,6 +355,83 @@ A1.6b remediation evidence is green; run the scoped blind re-judgment before ver
 - A1.1 through A1.6b and A1.7 are complete in this cumulative artifact; A1.8+ and all later tasks remain incomplete.
 - A1.7 adds only transactional outbox capture and due-work scanning. It does not wire issue/cycle writers, provider/Redmine behavior, listener/worker/scheduler registration, routes, polling, UI, or schema changes.
 
+## A1.7 Historical Next Action
+
+A1.7 pre-commit and pre-push review gates passed; its authorized commit and push were subsequently completed at `de988c6`. The following A1.8 section is the current cumulative apply result.
+
+## A1.8 Implementation
+
+- Added `packages/api/src/modules/integrations/issue-tx.ts` with `withIssueMutationTx(issueId, operation)`, a transaction-owning composition seam for issue writers.
+- The seam exposes only the caller-owned Prisma transaction client. Each operation must return its useful `result` together with mandatory capture material; the helper invokes and awaits A1.7 `captureIntegrationWorkTx` before the owned transaction can commit.
+- The seam injects `entityType: "issue"` and the authoritative `issueId` into the capture passed to A1.7, so callback input cannot redirect capture identity. A1.7 ownership, epoch, idempotency, and rollback guarantees remain delegated to its existing implementation.
+- No existing issue writer/service was modified; A1.9 remains responsible for wiring `createIssue`, `updateIssue`, and transition writers.
+- Added `packages/api/src/modules/integrations/issue-tx.test.ts` with PostgreSQL integration coverage for mandatory capture rollback, authoritative identity, awaited capture, commit, callback-error rollback, invalid-reference rollback, and non-zero binding-epoch capture.
+
+## A1.8 TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| A1.8 | `packages/api/src/modules/integrations/issue-tx.test.ts` | PostgreSQL integration / Prisma transaction | ✅ Existing A1.8 baseline 7/7 | ✅ Round 1 mandatory-capture/identity tests were written first; this fix round added three tests before production edits and the pre-fix run was 7/10 passed, 3/10 failed | ✅ Focused suite 10/10 passed | ✅ Commit, awaited capture, callback-error rollback, invalid reference rollback, lifecycle epoch, missing capture rollback, identity redirection, nested object/array thenables, and malformed Map payload | ✅ Added recursive non-invoking thenable detection and strict recursive JSON validation; direct type/format checks remained green |
+
+### A1.8 Test Summary
+
+- A1.8 tests written: **10**; focused suite: **10/10 passed**.
+- Regression safety net: A1.7 outbox **6/6** plus A1.6 backfill **15/15**; combined regressions **21/21 passed**.
+- Combined A1.8 plus A1.7/A1.6 run: **31/31 passed**.
+- Layers used: PostgreSQL persistence, Prisma transaction rollback, A1.7 outbox validation, and lifecycle-epoch delegation.
+- Approval tests: None — A1.8 adds a new composition seam.
+- Pure functions created: None; the seam deliberately preserves the transaction boundary rather than duplicating outbox logic.
+
+## A1.8 Verification
+
+- `pnpm install --frozen-lockfile` — passed; no lockfile changes.
+- `pnpm --filter @kanon/api run db:generate` — passed; generated Prisma client required by the fresh child worktree.
+- Isolated PostgreSQL migration deploy on the authorized test service — no pending migrations.
+- Focused command `DATABASE_URL=<isolated PostgreSQL test URL; credentials redacted> pnpm --filter @kanon/api exec vitest run src/modules/integrations/issue-tx.test.ts` — **10/10 passed**, including nested deferred transaction promises and malformed `Map` payload rollback.
+- Regression command for `outbox.int.test.ts` and `backfill.test.ts` — **21/21 passed**.
+- Combined focused/regression command — **31/31 passed**.
+- `pnpm --filter @kanon/api run test:types` — passed.
+- Direct strict no-emit type-check for `issue-tx.ts` and `issue-tx.test.ts` — passed.
+- Prettier checks for both A1.8 files and `git diff --check` — passed.
+- The first post-install test attempt was blocked by a missing generated Prisma client; `db:generate` restored the expected generated dependency before the genuine RED run. No application code was changed for that setup issue.
+- No Prisma schema/migration, issue writer, cycle/group writer, provider/Redmine, listener/worker/scheduler, route, polling, UI, `.atl/`, or `.codegraph/` file was changed.
+
+## A1.8 Pre-commit reliability fix round 1/2
+
+- R3-008 and R3-009 are **fixed, not verified**; the pre-commit result remains pending scoped re-review.
+- R3-008 uses both a compile-time `IssueMutationTxResult<T>` contract and a runtime recursive guard. The guard never invokes a discovered thenable, so a transaction-bound Prisma promise cannot escape and reject after commit.
+- R3-009 validates capture payloads inside the owned transaction before A1.7 capture. It accepts JSON-compatible nested objects/arrays/scalars and rejects unsupported prototypes, `Map`, `Set`, promises, functions, symbols, bigint, undefined members, non-finite numbers, and cycles.
+- RED evidence: the three new behavior-first tests failed against the pre-fix seam while the seven existing A1.8 tests passed (**7/10**).
+- GREEN evidence: A1.8 **10/10**, A1.7/A1.6 **21/21**, combined **31/31**; API type gate, direct seam type-check, Prettier, and `git diff --check` passed.
+- Fix patch: `/tmp/opencode/kanon-a1-8-precommit-r1-fix.patch`.
+
+## A1.8 Files in This Work Unit
+
+- `packages/api/src/modules/integrations/issue-tx.ts`
+- `packages/api/src/modules/integrations/issue-tx.test.ts`
+- `openspec/changes/external-pm-integrations/tasks.md`
+- `openspec/changes/external-pm-integrations/apply-progress.md`
+- `openspec/changes/external-pm-integrations/review-ledger.md`
+
+## A1.8 Deviations
+
+- None from the assigned A1.8 boundary. The helper is intentionally unwired; actual issue writer integration remains A1.9.
+- The exact child worktree had no `.codegraph/` index, so implementation exploration used targeted reads/searches without initializing or modifying CodeGraph.
+
+## A1.8 Review / Rollback Boundary
+
+- Current work unit starts at exact committed `feat/pm-182-outbox` commit `de988c638acef374cebb86caac1c7996196f5eec` and targets `feat/pm-182-outbox` from child branch `feat/pm-182-tx`.
+- Rollback is limited to `issue-tx.ts`, `issue-tx.test.ts`, and the A1.8 task/progress/review evidence; no schema or migration rollback is required.
+- Forecast was **250 changed lines**, below the 800-line session budget; no `size:exception` was used.
+- Initial pre-review-persistence boundary was **302 changed lines**: 38 source, 182 test, and 80 tracked task/progress artifact lines; copied untracked planning artifacts are excluded. Before final persistence, the reported Round 1 boundary was **462/800 changed lines**: 346 source/test, 82 apply-progress, 32 review-ledger, and 2 task lines. The final post-persistence Round 1 boundary was **464/800**; the final post-round-2 boundary is **798/800** (65 changed lines: 31 source additions, 3 source deletions, 19 test additions, and 12 artifact line changes), with copied planning artifacts excluded and no size exception.
+- Round 1 scoped re-judgment: **APPROVED**. Both fresh blind judges independently verified JD-A-901 and JD-A-902; Judge A ran A1.8 **7/7**, A1.7 **6/6**, and A1.6 **15/15**. The post-fix focused A1.8 run was **10/10**, inherited regressions were **21/21**, and combined coverage was **31/31**.
+- No commit, push, PR, or Kanon/GitHub comment was created.
+
+## Cumulative Scope Boundary
+
+- A1.1 through A1.8 implementation and verification gates are complete in this cumulative artifact; A1.9+ and all later tasks remain incomplete. A1.8 Judgment Day Round 1 scoped re-review is approved.
+- A1.8 adds only the transaction composition seam and its integration proof. It does not wire issue writers or add any provider/runtime/routes/UI behavior.
+
 ## Next Action
 
-A1.7 pre-commit and pre-push review gates passed. Create the already-authorized local commit and push the branch to origin; no PR/comment. Do not run global `sdd-verify` because 21 later tasks remain pending. Do not apply A1.8+ in this child slice.
+Terminal A1.8 state: **BLOCKED / ESCALATED** after the failed final scoped pre-commit re-review; **R3-008** and **R3-009** remain the two open CRITICAL findings. R3-008 covers custom-prototype arrays hiding inherited transaction thenables/accessors while the validated result remains mutable during awaited capture; R3-009 covers mutable capture replacement during spread and `structuredClone` accepting non-JSON structures. A1.8 **12/12**, inherited **21/21**, and combined **33/33** behavioral gates remain green; type and diff checks pass but do not override the findings. Prettier fails on both A1.8 source/test files. Fix convergence is exhausted at **2/2**; no third round. Current boundary: **798/800**. Maintainer re-scope/manual decision is required; no commit, push, or A1.9 until a new maintainer-approved plan.

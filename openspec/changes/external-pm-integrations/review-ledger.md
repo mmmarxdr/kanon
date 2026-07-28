@@ -322,3 +322,97 @@
 - **Refutation:** Exactly one general refuter returned `refuted` for R1-004; no BLOCKER/CRITICAL remains open and no fix round is required.
 - **Boundary:** Final **798/800**.
 - **Next action:** Create the already-authorized local commit and push the branch to origin; no PR/comment.
+
+## Judgment Day Round 1 — A1.8 issue transaction composition
+
+- **Target:** `feat/pm-182-tx -> feat/pm-182-outbox`
+- **Result:** `JUDGMENT: APPROVED`
+- **Reason:** Both fresh blind judges independently verified the two Round 1 fixes: mandatory capture is owned and awaited before commit, and capture identity is bound to the authoritative issue.
+- **Initial review boundary:** 302 changed lines, within the maintainer-approved 800-line budget.
+- **Skill resolution:** `paths-injected` for both judges.
+
+| id | lens | location | severity | status | evidence | assessment |
+| --- | --- | --- | --- | --- | --- | --- |
+| JD-A-901 | judgment-day | `packages/api/src/modules/integrations/issue-tx.ts:19-86` | CRITICAL | verified | The owned helper now requires callback capture material, invokes A1.7 capture itself, awaits it, and returns only after mandatory capture; omitted material is runtime-rejected and rolls back the local mutation. | real |
+| JD-A-902 | judgment-day | `packages/api/src/modules/integrations/issue-tx.ts:8,66-83` | CRITICAL | verified | The helper now accepts authoritative issue identity, omits entity identity from capture material, and injects `entityType: "issue"`/`entityId: issueId`; runtime redirection captures the authoritative issue. | real |
+
+- Confirmed BLOCKER/CRITICAL: **2** (`JD-A-901`, `JD-A-902`)
+- Open BLOCKER/CRITICAL: **0**
+- Verified BLOCKER/CRITICAL: **2** (`JD-A-901`, `JD-A-902`)
+- INFO findings: **0**
+- Fix rounds used: **1/2**
+- Adversarial verification: satisfied by two-judge convergence; no refuter fan-out applies to Judgment Day.
+- Evidence before the fix was A1.8 focused **4/4**, inherited regressions **21/21**, and combined **25/25**; the pre-fix suite did not enforce mandatory capture or bind mutation identity to capture identity. Round 1 focused **7/7**, inherited regressions **21/21**, and combined **28/28** now pass.
+- Judge-output normalization: the second judge again returned the wrong `JD-A` identity; its independently matching evidence was used for convergence.
+- Scoped re-judgment: both fresh blind judges independently verified `JD-A-901` and `JD-A-902`; Judge A independently ran A1.8 **7/7**, A1.7 **6/6**, and A1.6 **15/15**, for inherited regressions **21/21** and combined **28/28**. Valid commit/result, callback rollback, capture rollback, idempotency, and lifecycle epoch behavior remain covered; no A1.9 writer wiring leaked.
+- Next action: run the required A1.8 pre-commit review gate; do not run global verify or begin A1.9 implementation yet.
+
+### Round 1 remediation — JD-A-901 / JD-A-902
+
+- **Status:** `verified` — the overall Judgment Day result is `JUDGMENT: APPROVED` after the scoped Round 1 re-judgment.
+
+## Pre-commit reliability review — A1.8
+
+- **Event:** `pre-commit`; **Lens:** `review-reliability`; **Initial result:** `FAIL`; **Terminal pre-commit result:** `ESCALATED` after the failed scoped re-review for fix round 2/2
+- **Initial review boundary:** 464/800 changed lines.
+
+| id | lens | location | severity | status | evidence |
+| --- | --- | --- | --- | --- | --- |
+| R3-008 | reliability | `packages/api/src/modules/integrations/issue-tx.ts:70-80` | CRITICAL | open | Final scoped re-review **FAIL/ESCALATE**: arrays with custom prototypes can hide inherited transaction thenables/accessors outside own-descriptor inspection; the validated result remains mutable while capture is awaited and is cloned only afterward, allowing post-validation mutation/escape. |
+| R3-009 | reliability | `packages/api/src/modules/integrations/issue-tx.ts:28-44` | CRITICAL | open | Final scoped re-review **FAIL/ESCALATE**: the capture payload is validated once but read again from the mutable capture object during spread; accessors can replace it, and `structuredClone` accepts non-JSON structures, leaving a validation/use gap. |
+
+- **Adversarial verification:** The single required general refuter returned `stands` for both R3-008 and R3-009.
+- **Initial open BLOCKER/CRITICAL:** **2**
+- **Current fix state:** **2 CRITICAL findings open** after the failed scoped re-review; terminal escalation.
+- **Fix rounds used:** **2/2 exhausted; no third round.**
+- **Next action:** Maintainer re-scope/manual decision; no commit, push, or A1.9.
+- **Fix:** `withIssueMutationTx` now owns the full sequence: it runs the local operation, validates the runtime `{ result, capture }` outcome, injects the authoritative issue identity, awaits A1.7 `captureIntegrationWorkTx`, and only then returns the useful result for transaction commit.
+- **RED:** The three new contract tests were written before the production edit; the pre-fix focused run failed **7/7** against the old optional-capture callback API, including the mandatory-capture rollback and identity-redirection cases.
+- **GREEN/TRIANGULATE:** Focused A1.8 **7/7**, A1.7/A1.6 regressions **21/21**, and combined **28/28** passed. Coverage retains successful commit, callback-error rollback, invalid-reference rollback, lifecycle epoch, mandatory await, malformed/missing capture rollback, and authoritative identity behavior.
+- **Checks:** API type gate, direct no-emit type-check for both seam files, Prettier, and `git diff --check` passed. No schema, migration, writer, worker, scheduler, provider, route, UI, commit, push, PR, or public comment changed.
+- **Scoped re-review input:** `/tmp/opencode/kanon-a1-8-round1-fix.patch` plus this persisted ledger only; the original A1.8 full diff is excluded.
+
+### Scoped pre-commit fix round 1/2 — R3-008 / R3-009
+
+- **Status:** `fixed` — not verified; the pre-commit result remains **pending scoped re-review**.
+- **R3-008:** `withIssueMutationTx` recursively inspects supported object/array result structures for thenables without invoking them, rejects before A1.7 capture, and preserves settled Prisma results including `Date` values. `IssueMutationTxResult<T>` rejects nested `PromiseLike` values at compile time where practical.
+- **R3-009:** capture payload validation accepts nested JSON objects/arrays/scalars and rejects `Map`, `Set`, promises, functions, symbols, bigint, undefined members, non-finite numbers, cycles, and unsupported prototypes before A1.7 capture.
+- **RED:** Three behavior-first tests were added before the production edit; the pre-fix focused run was **7/10 passed, 3/10 failed** because the old seam resolved nested transaction promises and a `Map` payload instead of rejecting.
+- **GREEN/TRIANGULATE:** Focused A1.8 **10/10**, A1.7/A1.6 regressions **21/21**, and combined **31/31** passed. The new coverage exercises nested object and array thenables, rollback of the issue mutation/outbox row, malformed `Map` rollback, and existing successful Prisma issue results with dates.
+- **Checks:** API type gate, direct no-emit type check for both seam files, Prettier, and `git diff --check` passed. No schema, migration, writer, worker, scheduler, provider, route, UI, commit, push, PR, or public comment changed.
+- **Fix-round boundary:** **798/800** changed lines: the persisted Round 1 boundary was 464/800; round 2 adds 65 changed lines with no size exception.
+- **Round 2/2 evidence:** RED **10/12**; GREEN A1.8 **12/12**, A1.7/A1.6 **21/21**, combined **33/33**; type gate and diff checks passed; the final scoped re-review **FAIL/ESCALATE** result leaves R3-008/R3-009 **open**. Prettier **failed** on both A1.8 source/test files. Current boundary: **798/800**. Convergence is exhausted; no third round, commit, push, or A1.9. Patches: `/tmp/opencode/kanon-a1-8-precommit-r1-fix.patch`, `/tmp/opencode/kanon-a1-8-precommit-r2-fix.patch`.
+
+## Corrective design Judgment Day — A1.8 split
+
+- **Target:** 42-line amendment splitting A1.8 into contract and transaction-seam slices.
+- **Result:** `JUDGMENT: APPROVED` after scoped fix round **1/2**.
+- **Confirmed CRITICAL:** Both judges verified that the canonical returned Issue row is now the sole capture-identity source for create, update, and transition.
+
+| id | lens | location | severity | status | evidence | assessment |
+| --- | --- | --- | --- | --- | --- | --- |
+| JD-A-1001 | judgment-day | `openspec/changes/external-pm-integrations/design.md:42,46` | CRITICAL | verified | A1.8b no longer accepts an independent `issueId`; both judges verified that capture derives only from the canonical returned row's `result.id`. | confirmed |
+| JD-B-1001 | judgment-day | `openspec/changes/external-pm-integrations/design.md:42,46,57` | CRITICAL | verified | Both judges verified create-time identity propagation through the canonical persisted Issue row. | confirmed |
+| JD-A-1002 | judgment-day | `openspec/changes/external-pm-integrations/design.md:38,52-57` | CRITICAL | verified | Both judges verified the explicit no-apply gate until `sdd-tasks` replaces obsolete branch/dependency rows. | suspect |
+| JD-A-1003 | judgment-day | `openspec/changes/external-pm-integrations/design.md:52-55` | CRITICAL | verified | Both judges verified credible 340/360-line forecasts below the 400-line chained-review threshold. | suspect |
+| JD-B-1002 | judgment-day | `openspec/changes/external-pm-integrations/design.md:42` | CRITICAL | verified | Both judges verified `estimate` in the narrow detached capture projection and strict-TDD matrix. | suspect |
+| JD-B-1003 | judgment-day | `openspec/changes/external-pm-integrations/design.md:38,50-57` | WARNING | info | Tasks still reference the failed single-slice chain; synchronize them in the planned `sdd-tasks` phase. | real |
+| JD-B-1004 | judgment-day | `openspec/changes/external-pm-integrations/design.md:50-55` | WARNING | info | Per-slice forecasts exceed 400 despite no recorded size exception. | real |
+
+- Verified BLOCKER/CRITICAL: **1 merged confirmed issue** (`JD-A-1001`/`JD-B-1001`).
+- Verified maintainer-authorized suspect corrections: **3** (`JD-A-1002`, `JD-A-1003`, `JD-B-1002`); suspect provenance is preserved.
+- INFO findings: **2** (`JD-B-1003`, `JD-B-1004`) — canonical WARNING/info, unchanged and not re-reviewed.
+- Fix rounds used: **1/2**.
+- Resolved by the amendment: mandatory awaited capture, detached one-time canonical payload forwarding, non-generic settled Issue-row result, authoritative result-derived identity for create/update/transition, estimate projection coverage, and separation of pure contract from DB transaction orchestration.
+- Both fresh blind judges verified all five authorized rows from only the persisted ledger and design fix patch; overall design judgment is **`JUDGMENT: APPROVED`**.
+
+### Scoped design fix round 1/2 — maintainer-authorized corrections
+
+- **Status:** The five authorized CRITICAL rows above are `verified`. No implementation or task artifact was changed.
+- **Identity:** A1.8b no longer accepts caller-supplied `issueId`; the awaited operation returns the canonical persisted Issue row, and `result.id` is the sole source used to construct/inject `entityType: "issue"` and `entityId`. Create-generated, update, and transition identities therefore use the same returned-row contract without an independent equality check.
+- **Capture completeness:** `estimate` is now an explicit supported field/value projection member and remains in the exact detached canonical Issue payload; the projection remains narrow and rejects an arbitrary JSON graph.
+- **Payload/result safety:** The non-generic settled Issue-row contract, one-time detached canonical payload derivation, exact-once forwarding, never-re-read caller-owned data rule, and mandatory awaited A1.7 capture are preserved.
+- **Delivery:** Forecasts are reduced to **340** lines for A1.8a and **360** for A1.8b, each below the 400-line threshold with no size exception. The chain remains `feat/pm-182-issue-contract` from `feat/pm-182-outbox`, followed by `feat/pm-182-issue-tx-seam` from the contract branch.
+- **Task gate:** The current `tasks.md` remains intentionally non-authoritative until the next `sdd-tasks` phase replaces the old A1.8/A1.9 branch and dependency rows. No apply may start before that synchronization.
+- **Warnings:** `JD-B-1003` and `JD-B-1004` remain canonical WARNING/info and are never marked fixed or re-reviewed.
+- **Next action:** Run `sdd-tasks` to synchronize A1.8a/A1.8b branch boundaries and make A1.9 depend on A1.8b before any apply work.
