@@ -2,15 +2,15 @@
 
 ## Status
 
-- Current work unit: **A1.8 — issue transaction composition seam**
-- State: **blocked/escalated** — A1.8 terminal pre-commit scoped re-review failed after fix round 2/2; R3-008/R3-009 remain CRITICAL/open; Prettier fails on both A1.8 source/test files
-- Branch: `feat/pm-182-tx`
-- Worktree: `/srv/workspace/projects/kanon/.claude/worktrees/pm-182-tx`
-- Base: `feat/pm-182-outbox` at `de988c638acef374cebb86caac1c7996196f5eec`
-- Intended PR target: `feat/pm-182-outbox`
+- Current work unit: **A1.8a — Issue mutation contract**
+- State: **accepted for commit under maintainer `size:exception`; Judgment Day terminal state: `ESCALATED — maintainer exception`** — historical failed A1.8 evidence remains preserved below
+- Branch: `feat/pm-182-issue-contract`
+- Worktree: `/srv/workspace/projects/kanon/.claude/worktrees/pm-182-issue-contract`
+- Base: `docs/pm-182-a1-8-rescope` at `6feeec1b10c6b49560583fc18d14c31c255d02df` (functional ancestor `de988c638acef374cebb86caac1c7996196f5eec`)
+- Intended PR target: `docs/pm-182-a1-8-rescope`
 - Delivery: feature-branch chain
 - Mode: strict TDD
-- Review budget: 800 changed lines; forced feature-branch chain; no size exception
+- Review budget: 400 changed lines; feature-branch chain; final A1.8a result has a maintainer-approved `size:exception`
 - Maintainer-approved migration correction: A1.3 uses `20260721_pm_identity_health`; A1.2 remains unchanged; A1.4 uses `20260722_pm_work_outbox`; A1.5 uses `20260723_pm_inbound_application_conflict`.
 
 ## Completed Tasks
@@ -23,7 +23,7 @@
 - [x] A1.6a — Deterministic tenant-safe ExternalRef binding backfill core
 - [x] A1.6b — Transaction-scoped ExternalRef writer gate and final invariant proof (Judgment Day re-judgment pending)
 - [x] A1.7 — Transactional integration-work capture, idempotent lane keys, rollback evidence, and read-only due-work scanner
-- [x] A1.8 — Issue mutation transaction composition seam with atomic outbox capture
+- [x] A1.8a — Pure Issue-row/canonical-payload contract; final `size:exception` is recorded below
 
 ## A1.2 Implementation
 
@@ -359,7 +359,9 @@ A1.6b remediation evidence is green; run the scoped blind re-judgment before ver
 
 A1.7 pre-commit and pre-push review gates passed; its authorized commit and push were subsequently completed at `de988c6`. The following A1.8 section is the current cumulative apply result.
 
-## A1.8 Implementation
+## Historical failed A1.8 implementation
+
+> The following failed transaction-composition record is preserved historical evidence only; it is not the current A1.8a state.
 
 - Added `packages/api/src/modules/integrations/issue-tx.ts` with `withIssueMutationTx(issueId, operation)`, a transaction-owning composition seam for issue writers.
 - The seam exposes only the caller-owned Prisma transaction client. Each operation must return its useful `result` together with mandatory capture material; the helper invokes and awaits A1.7 `captureIntegrationWorkTx` before the owned transaction can commit.
@@ -418,7 +420,7 @@ A1.7 pre-commit and pre-push review gates passed; its authorized commit and push
 - None from the assigned A1.8 boundary. The helper is intentionally unwired; actual issue writer integration remains A1.9.
 - The exact child worktree had no `.codegraph/` index, so implementation exploration used targeted reads/searches without initializing or modifying CodeGraph.
 
-## A1.8 Review / Rollback Boundary
+## Historical A1.8 Review / Rollback Boundary
 
 - Current work unit starts at exact committed `feat/pm-182-outbox` commit `de988c638acef374cebb86caac1c7996196f5eec` and targets `feat/pm-182-outbox` from child branch `feat/pm-182-tx`.
 - Rollback is limited to `issue-tx.ts`, `issue-tx.test.ts`, and the A1.8 task/progress/review evidence; no schema or migration rollback is required.
@@ -429,9 +431,17 @@ A1.7 pre-commit and pre-push review gates passed; its authorized commit and push
 
 ## Cumulative Scope Boundary
 
-- A1.1 through A1.8 implementation and verification gates are complete in this cumulative artifact; A1.9+ and all later tasks remain incomplete. A1.8 Judgment Day Round 1 scoped re-review is approved.
-- A1.8 adds only the transaction composition seam and its integration proof. It does not wire issue writers or add any provider/runtime/routes/UI behavior.
+- A1.1 through A1.7 and A1.8a are complete in this cumulative artifact; failed A1.8 remains preserved historical evidence, while A1.8b, A1.9+, and all later tasks remain incomplete.
+- A1.8a adds only the pure Issue-row/canonical-payload contract and its unit proof. It does not add transaction, issue-writer, provider/runtime/routes/UI behavior.
 
-## Next Action
+## Historical failed A1.8 next action
 
-Terminal A1.8 state: **BLOCKED / ESCALATED** after the failed final scoped pre-commit re-review; **R3-008** and **R3-009** remain the two open CRITICAL findings. R3-008 covers custom-prototype arrays hiding inherited transaction thenables/accessors while the validated result remains mutable during awaited capture; R3-009 covers mutable capture replacement during spread and `structuredClone` accepting non-JSON structures. A1.8 **12/12**, inherited **21/21**, and combined **33/33** behavioral gates remain green; type and diff checks pass but do not override the findings. Prettier fails on both A1.8 source/test files. Fix convergence is exhausted at **2/2**; no third round. Current boundary: **798/800**. Maintainer re-scope/manual decision is required; no commit, push, or A1.9 until a new maintainer-approved plan.
+Terminal A1.8 state: **BLOCKED / ESCALATED** after the failed final scoped pre-commit re-review; **R3-008** and **R3-009** remain the two open CRITICAL findings. R3-008 covers custom-prototype arrays hiding inherited transaction thenables/accessors while the validated result remains mutable during awaited capture; R3-009 covers mutable capture replacement during spread and `structuredClone` accepting non-JSON structures. A1.8 **12/12**, inherited **21/21**, and combined **33/33** behavioral gates remain green; type and diff checks pass but do not override the findings. Prettier fails on both A1.8 source/test files. Fix convergence is exhausted at **2/2**; no third round. Historical boundary: **798/800**. Maintainer re-scope/manual decision is required; no commit, push, or A1.9 until a new maintainer-approved plan.
+
+## A1.8a — authoritative current reconciliation
+
+- **State:** Accepted for commit under the maintainer-approved `size:exception`; Judgment Day terminal state remains **`ESCALATED — maintainer exception`**. A1.8b is not started.
+- **Current proof:** Focused contract **2/2** and core/types **5/5**. Historical **20/20** is the pre-cancel oracle, not current proof; its reduction is accepted coverage debt.
+- **Current gates:** Direct target TypeScript **PASS**, forced Prettier with `--ignore-path /dev/null` **PASS**, and `git diff --check` **PASS**. The configured type gate is supplementary.
+- **Judgment rows:** JD-A-1101/JD-B-1101/JD-A-1103 remain **fixed, not verified**; warnings remain unchanged.
+- **Scope:** A1.8a pure contract only; final boundary **452 changed lines = 436 additions + 16 deletions**, covered by the maintainer `size:exception`; no A1.8b transaction seam or runtime behavior has started.

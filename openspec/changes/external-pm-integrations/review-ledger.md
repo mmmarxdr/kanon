@@ -416,3 +416,45 @@
 - **Task gate:** The current `tasks.md` remains intentionally non-authoritative until the next `sdd-tasks` phase replaces the old A1.8/A1.9 branch and dependency rows. No apply may start before that synchronization.
 - **Warnings:** `JD-B-1003` and `JD-B-1004` remain canonical WARNING/info and are never marked fixed or re-reviewed.
 - **Next action:** Run `sdd-tasks` to synchronize A1.8a/A1.8b branch boundaries and make A1.9 depend on A1.8b before any apply work.
+
+## A1.8a apply slice — historical pre-cancel record
+
+- **Target:** `feat/pm-182-issue-contract -> docs/pm-182-a1-8-rescope` from exact `6feeec1b10c6b49560583fc18d14c31c255d02df`
+- **Result:** `APPLY SLICE COMPLETE — historical pre-cancel record`
+- **Scope:** Pure Issue-row/canonical-payload boundary only; no transaction, database, writer, provider, worker, route, UI, schema, or migration behavior.
+- **Evidence:** Historical pre-cancel contract oracle **20/20** and inherited core/types **5/5**; the 20/20 result is not current proof. Copied planning context is untracked and excluded.
+- **Boundary:** Historical pre-cancel boundary **327/400**; the final reconciled boundary and maintainer exception are recorded below.
+- **Next action:** Superseded by the current maintainer-exception reconciliation. A1.8b remains unchecked and must not start from this apply result alone.
+
+## Judgment Day Round 1 — A1.8a correction
+
+- **Target:** `feat/pm-182-issue-contract -> docs/pm-182-a1-8-rescope`; initial boundary **327/400**; terminal result remains **`ESCALATED — maintainer exception`**.
+
+| id | lens | location | severity | status | evidence | assessment |
+| --- | --- | --- | --- | --- | --- | --- |
+| JD-A-1101 | judgment-day | target source/test | BLOCKER | fixed | Initial direct no-emit failed TS2532/TS4111; target gate now passes. | confirmed |
+| JD-B-1101 | judgment-day | target source/test | CRITICAL | fixed | Judge B independently confirmed the same compile-gate defect. | confirmed |
+| JD-A-1103 | judgment-day | target source/test | CRITICAL | fixed | Initial forced Prettier failed; explicit no-ignore formatting now passes, with the final boundary covered by the accepted exception. | suspect |
+| JD-A-1102 | judgment-day | target source | WARNING | info | Callable/accessor `Date.prototype.then` remains theoretical. | theoretical |
+| JD-A-1104 | judgment-day | target test | WARNING | info | Invalid-Date and negative type assertions remain out of scope. | real |
+| JD-B-1102 | judgment-day | target source | WARNING | info | Frozen Date internal slots remain mutable. | real |
+| JD-B-1103 | judgment-day | target source | WARNING | info | `exactOptionalPropertyTypes` remains disabled; runtime rejects undefined. | real |
+
+### Scoped correction evidence — round 1/2
+
+- **Status:** JD-A-1101/JD-B-1101 and authorized JD-A-1103 remain **fixed, not verified**; warnings unchanged; overall terminal state remains **`ESCALATED — maintainer exception`**, round **1/2**.
+- **RED:** direct repository-option no-emit reported TS2532/TS4111; forced `prettier --check --ignore-path /dev/null` reported both files unformatted; configured `test:types` excludes them.
+- **GREEN/proof:** Current contract **2/2**, core/types **5/5**, direct target no-emit, forced Prettier, and `git diff --check` passed; the configured `test:types` result is supplementary. Target test assigns `ReturnType<typeof canonicalizeIssueMutationDraft>`.
+- **Boundary/next:** final additions/deletions and the accepted `size:exception` are recorded in the current reconciliation below; copied planning files excluded, with no commit/push/PR/comment/Kanon tracking/A1.8b.
+
+## A1.8a resilience incident — maintainer exception reconciliation
+
+| id | lens | severity | status | refuter | evidence |
+| --- | --- | --- | --- | --- | --- |
+| R4-003 | resilience | CRITICAL | wont-fix | stands | Final boundary exceeds the hard 400-line target; the maintainer accepted the measured A1.8a `size:exception` for commit. |
+| R4-004 | resilience | CRITICAL | wont-fix | stands | Current focused coverage is reduced to **2/2**; the maintainer accepted the historical **20/20** coverage gap as follow-up debt. |
+| R4-005 | resilience | WARNING | info | — | Current recursion has no depth bound; unchanged and non-blocking. |
+| R4-006 | resilience | CRITICAL | fixed | stands | Conflicting current completion, test, and budget claims are reconciled by this section; not independently re-reviewed. |
+
+- **Current gates:** contract **2/2**, core/types **5/5**, direct target TypeScript **PASS**, forced Prettier with `--ignore-path /dev/null` **PASS**, and `git diff --check` **PASS**.
+- **Judgment Day:** terminal state remains **`ESCALATED — maintainer exception`**; fixed rows remain unverified. A1.8b remains not started.
