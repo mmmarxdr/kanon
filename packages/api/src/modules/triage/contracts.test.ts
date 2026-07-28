@@ -3,6 +3,7 @@ import {
   ConfidenceBandSchema,
   IssueSearchInputSchema,
   IssueSearchRowSchema,
+  IssueSearchResponseSchema,
   PreviewEnvelopeSchema,
   ProposalEnvelopeSchema,
   SemanticErrorSchema,
@@ -22,12 +23,10 @@ describe("strict triage v1 contracts", () => {
     expect(IssueSearchInputSchema.safeParse({ q: Array.from({ length: 13 }, (_, i) => `t${i}`).join(" ") }).success).toBe(false);
     expect(IssueSearchRowSchema.safeParse({ issueId: "i", issueKey: "K-1", projectId: "p", projectKey: "P", title: "t", state: "todo", type: null, priority: null, labels: [], groupKey: null, assigneeId: null, cycleId: null, createdAt: "2025-01-01T00:00:00.000Z", updatedAt: "2025-01-01T00:00:00.000Z", rank: 1, sourceVersion: "isv1", sourceHash: "a".repeat(64) }).success).toBe(true);
   });
-
   it("accepts explained confidence bands but no numeric probability", () => {
     expect(ConfidenceBandSchema.safeParse("high").success).toBe(true);
     expect(ConfidenceBandSchema.safeParse(0.99).success).toBe(false);
   });
-
   it("validates a complete preview envelope with strict nested objects", () => {
     const result = PreviewEnvelopeSchema.safeParse({
       contractVersion: "triage-preview.v1",
@@ -62,6 +61,12 @@ describe("strict triage v1 contracts", () => {
     expect(ProposalEnvelopeSchema.safeParse({ ...valid, generator: { kind: "host_ai_hybrid", id: "host", version: "1" } }).success).toBe(false);
   });
 
+  it("rejects contradictory search pagination metadata", () => {
+    const response = { contractVersion: "issue-search.v1", orderingVersion: "issue-search.v1", limit: 1, effectiveScope: { kind: "project", workspaceId: "w", projectId: "p" }, correlationId: "trace", degradation: [], rows: [] };
+    expect(IssueSearchResponseSchema.safeParse({ ...response, completeness: "complete", returnedCount: 0, nextCursor: "c" }).success).toBe(false);
+    expect(IssueSearchResponseSchema.safeParse({ ...response, completeness: "bounded", returnedCount: 0 }).success).toBe(false);
+    expect(IssueSearchResponseSchema.safeParse({ ...response, completeness: "complete", returnedCount: 1 }).success).toBe(false);
+  });
   it("keeps seal authenticity, freshness, and binding validation separate from identity", () => {
     const valid = validatePreviewSeal({ authenticated: true, expiresAt: "2030-01-01T00:00:00.000Z", now: new Date("2029-01-01T00:00:00.000Z"), actualBinding: { source: "a" }, expectedBinding: { source: "a" } });
     expect(valid).toEqual({ valid: true, authenticated: true, fresh: true, bound: true });

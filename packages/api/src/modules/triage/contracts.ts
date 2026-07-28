@@ -41,13 +41,16 @@ export const IssueSearchRowSchema = z.object({
   title: z.string().max(500), state: z.string(), type: z.string().nullable(), priority: z.string().nullable(),
   labels: z.array(z.string()).max(8), groupKey: IdSchema.nullable(), assigneeId: IdSchema.nullable(), cycleId: IdSchema.nullable(), createdAt: IsoDateTimeSchema, updatedAt: IsoDateTimeSchema, rank: z.number().int().positive(), sourceVersion: IdSchema, sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict();
-
 export const IssueSearchResponseSchema = z.object({
   contractVersion: z.literal("issue-search.v1"), orderingVersion: z.literal("issue-search.v1"),
   completeness: CompletenessSchema, limit: z.number().int().min(1).max(10), returnedCount: z.number().int().nonnegative(),
   effectiveScope: EffectiveScopeSchema, correlationId: IdSchema, degradation: z.array(z.string()).max(8),
   rows: z.array(IssueSearchRowSchema).max(10), nextCursor: z.string().max(2048).optional(),
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (value.returnedCount !== value.rows.length) context.addIssue({ code: z.ZodIssueCode.custom, path: ["returnedCount"], message: "returnedCount must equal rows.length" });
+  if (value.completeness === "complete" && value.nextCursor !== undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ["nextCursor"], message: "complete responses cannot include nextCursor" });
+  if (value.completeness === "bounded" && value.nextCursor === undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ["nextCursor"], message: "bounded responses require nextCursor" });
+});
 export const ProvenanceSchema = z.object({
   authorizationPolicyVersion: IdSchema.optional(), sourceVersion: IdSchema.optional(), sourceHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   policyId: IdSchema.optional(), policyVersion: IdSchema.optional(), traceId: IdSchema.optional(),
@@ -116,7 +119,6 @@ export const ProposalEnvelopeSchema = z.object({
 }).strict();
 export type ConfidenceBand = z.infer<typeof ConfidenceBandSchema>;
 export type PreviewEnvelope = z.infer<typeof PreviewEnvelopeSchema>;
-
 export interface PreviewSealValidationInput {
   readonly authenticated: boolean;
   readonly expiresAt: Date | string;
@@ -124,7 +126,6 @@ export interface PreviewSealValidationInput {
   readonly expectedBinding: unknown;
   readonly now?: Date;
 }
-
 export interface PreviewSealValidation {
   readonly valid: boolean;
   readonly authenticated: boolean;
@@ -132,7 +133,6 @@ export interface PreviewSealValidation {
   readonly bound: boolean;
   readonly reason?: "unauthenticated" | "expired" | "binding_mismatch";
 }
-
 export function validatePreviewSeal(input: PreviewSealValidationInput): PreviewSealValidation {
   const authenticated = input.authenticated;
   const fresh = new Date(input.expiresAt).getTime() > (input.now ?? new Date()).getTime();
