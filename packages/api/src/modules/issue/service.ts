@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 
@@ -29,6 +30,64 @@ import {
 import { parseAndUpsertMentions, emitMentionEvents } from "../mentions/service.js";
 import { checkReconciliation } from "./reconcile.js";
 import { autoSubscribe, getStatus as getSubscriptionStatus } from "../issue-subscription/service.js";
+import type {
+  IssueCaptureFields,
+  IssueCaptureIntent,
+  IssueMutationRow,
+} from "../integrations/issue-mutation-contract.js";
+import { withIssueMutationTx } from "../integrations/issue-tx.js";
+
+type IssueDatabase = Pick<Prisma.TransactionClient, "issue">;
+
+async function mutateIssueWithCapture(
+  projectId: string,
+  memberId: string,
+  operation: IssueCaptureIntent["operation"],
+  fields: (result: IssueMutationRow) => IssueCaptureFields,
+  mutate: (database: IssueDatabase) => Promise<IssueMutationRow>,
+): Promise<IssueMutationRow> {
+  // ponytail: PM-182 supports one workspace PM connection; fan out when multi-provider ships.
+  const binding = await prisma.integrationProjectBinding.findFirst({
+    where: { projectId },
+    orderBy: { id: "asc" },
+    select: {
+      id: true,
+      connection: {
+        select: {
+          credentials: {
+            where: { memberId },
+            select: { id: true },
+            take: 1,
+          },
+        },
+      },
+    },
+  });
+  if (!binding) return mutate(prisma);
+
+  const actor = await prisma.member.findUnique({
+    where: { id: memberId },
+    select: { isAgent: true },
+  });
+  const credentialId = actor?.isAgent ? undefined : binding.connection.credentials[0]?.id;
+
+  return withIssueMutationTx(async (transaction) => {
+    const result = await mutate(transaction);
+    return {
+      result,
+      capture: {
+        bindingId: binding.id,
+        direction: "outbound",
+        operation,
+        actorKey: `member:${memberId}`,
+        actorKind: actor?.isAgent ? "ai" : "user",
+        correlationId: randomUUID(),
+        fields: fields(result),
+        ...(credentialId ? { authCredentialId: credentialId } : {}),
+      },
+    };
+  });
+}
 
 /**
  * Generate the next issue key for a project using an atomic counter increment.
@@ -123,23 +182,37 @@ export async function createIssue(
 
   const { key, sequenceNum } = await nextIssueKey(project.id, project.key);
 
-  const issue = await prisma.issue.create({
-    data: {
-      key,
-      sequenceNum,
-      title: body.title,
-      description: resolvedDescription,
-      type: resolvedType,
-      priority: resolvedPriority,
-      state: body.state,
-      labels: resolvedLabels,
-      groupKey: body.groupKey,
-      projectId: project.id,
-      assigneeId: body.assigneeId,
-      cycleId: body.cycleId,
-      parentId: body.parentId,
-    },
-  });
+  const issue = await mutateIssueWithCapture(
+    project.id,
+    memberId,
+    "create",
+    (result) => ({
+      title: result.title,
+      description: result.description,
+      state: result.state,
+      assigneeId: result.assigneeId,
+      cycleId: result.cycleId,
+      estimate: result.estimate,
+    }),
+    (database) =>
+      database.issue.create({
+        data: {
+          key,
+          sequenceNum,
+          title: body.title,
+          description: resolvedDescription,
+          type: resolvedType,
+          priority: resolvedPriority,
+          state: body.state,
+          labels: resolvedLabels,
+          groupKey: body.groupKey,
+          projectId: project.id,
+          assigneeId: body.assigneeId,
+          cycleId: body.cycleId,
+          parentId: body.parentId,
+        },
+      }),
+  );
 
   // Auto-create activity log for issue creation
   await createActivityLog({
@@ -534,10 +607,18 @@ export async function updateIssue(
     }
   }
 
-  const updated = await prisma.issue.update({
-    where: { key },
-    data,
-  });
+  const updated = await mutateIssueWithCapture(
+    issue.projectId,
+    memberId,
+    "update",
+    (result) => ({
+      ...(body.title !== undefined ? { title: result.title } : {}),
+      ...(body.description !== undefined ? { description: result.description } : {}),
+      ...(body.assigneeId !== undefined ? { assigneeId: result.assigneeId } : {}),
+      ...(body.cycleId !== undefined ? { cycleId: result.cycleId } : {}),
+    }),
+    (database) => database.issue.update({ where: { key }, data }),
+  );
 
   // Auto-subscribe new assignee AFTER successful update (Fix 5 / KAN-28).
   // Placement here ensures a failed update leaves no phantom subscription row,
@@ -688,13 +769,20 @@ export async function transitionIssue(
   }
 
   // KAN-35 completion-timestamp contract: set completedAt when entering done, clear on any other transition.
-  const updated = await prisma.issue.update({
-    where: { key },
-    data: {
-      state: toState as any,
-      completedAt: toState === "done" ? new Date() : null,
-    },
-  });
+  const updated = await mutateIssueWithCapture(
+    issue.projectId,
+    memberId,
+    "update",
+    (result) => ({ state: result.state }),
+    (database) =>
+      database.issue.update({
+        where: { key },
+        data: {
+          state: toState as any,
+          completedAt: toState === "done" ? new Date() : null,
+        },
+      }),
+  );
 
   // Create activity log for state change
   await createActivityLog({
@@ -1181,4 +1269,3 @@ export async function batchTransitionByKeys(
     state: targetState,
   };
 }
-

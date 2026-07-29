@@ -470,3 +470,14 @@
 | R3-012 | reliability | `issue-tx.int.test.ts` mutation case | WARNING | verified | A transaction proxy mutates the caller draft deterministically at A1.7's first binding read; detached return and payload remain unchanged. |
 
 - Post-fix focused suite **3/3**, direct source/test TypeScript, Prettier, and diff checks passed. No second review cycle was run.
+
+## Bounded reliability review — A1.9
+
+- **Result:** `PASS WITH WARNINGS`; no BLOCKER/CRITICAL/HIGH, fix pass, refuter, or second review cycle.
+
+| id | lens | location | severity | status | evidence |
+| --- | --- | --- | --- | --- | --- |
+| R3-013 | reliability | `issue-writers.test.ts` actor coverage | WARNING | info | Human same-connection credential is proven; AI, missing-credential, and competing-credential cases remain unexpanded test coverage. |
+| R3-014 | reliability | `issue-writers.test.ts` nullable update coverage | WARNING | info | Title update is proven; explicit nullable-field clears remain unexpanded test coverage. |
+
+- Focused A1.9 **2/2**, issue service regressions **49/49**, inherited PM integration database suites **24/24**, API type/build, changed-file Prettier, and diff checks passed.

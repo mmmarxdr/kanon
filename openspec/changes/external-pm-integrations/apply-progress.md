@@ -431,7 +431,7 @@ A1.7 pre-commit and pre-push review gates passed; its authorized commit and push
 
 ## Cumulative Scope Boundary
 
-- A1.1 through A1.7 and A1.8a are complete in this cumulative artifact; failed A1.8 remains preserved historical evidence, while A1.8b, A1.9+, and all later tasks remain incomplete.
+- A1.1 through A1.9 are complete locally in this cumulative artifact; failed A1.8 remains preserved historical evidence, while A1.10+ remain incomplete.
 - A1.8a adds only the pure Issue-row/canonical-payload contract and its unit proof. It does not add transaction, issue-writer, provider/runtime/routes/UI behavior.
 
 ## Historical failed A1.8 next action
@@ -454,3 +454,12 @@ Terminal A1.8 state: **BLOCKED / ESCALATED** after the failed final scoped pre-c
 - Safety net: A1.8b + A1.8a contract + A1.7 outbox + A1.6 backfill **26/26**; shared/API builds, API type gate, direct source/test TypeScript, Prettier, and `git diff --check` passed.
 - One reliability review found no BLOCKER/CRITICAL and three test-only warnings; one fix pass made update/transition identities distinct, asserted forwarded operation/actor metadata, and replaced timer racing with deterministic mutation at A1.7's first binding read.
 - Scope remains unwired and limited to `issue-tx.ts`, `issue-tx.int.test.ts`, and this task/review evidence. A1.9 owns writer integration.
+
+## A1.9 — issue writer integration
+
+- **State:** Apply and one bounded reliability review complete locally; not committed or pushed.
+- Added one `mutateIssueWithCapture` composition in `issue/service.ts`; bound `createIssue`, `updateIssue`, and `transitionIssue` now atomically persist the Issue row and A1.8b/A1.7 capture, while unbound projects keep the existing direct mutation path.
+- Capture uses the persisted Issue row, initiating `member:<id>`, human/AI actor kind, the human actor's same-connection credential when present, and only mapped fields changed by update/transition.
+- RED failed **2/2** for absent work/rollback; GREEN focused PostgreSQL suite passed **2/2**. Existing issue service tests passed **49/49** and inherited A1.8b/A1.7/A1.6 suites passed **24/24**.
+- API type gate/build, changed-file Prettier, and `git diff --check` passed. Final pre-artifact implementation boundary was **274 changed lines** including the new test and three 3-line mock updates, below 400.
+- One bounded reliability review found no severe issue and two test-coverage warnings; no fix or second review cycle was warranted.

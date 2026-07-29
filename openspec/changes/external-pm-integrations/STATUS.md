@@ -11,9 +11,9 @@
 | --- | --- |
 | Canonical remote branch | `origin/feat/external-pm-integrations` |
 | Published commit | `730229af93e62f1a8e9b0fbb28ac18bf213eac27` |
-| OpenSpec progress | 11/31 complete; 20 pending |
+| OpenSpec progress | 12/31 complete locally; 19 pending |
 | Dispatcher recommendation | `apply` |
-| Next task | A1.9 — wire issue create/update/transition writers |
+| Next task | Publish A1.9, then A1.10 — wire batch/group operations |
 | Merged into `main` | No |
 | End-to-end Kanon → Redmine | Not operational yet |
 | Proposal success criteria | 0/8 proven end-to-end |
@@ -35,6 +35,9 @@ A1.8b:
 | A1.8a | Settled Issue mutation contract and canonical capture payload |
 | A1.8b | Owned issue mutation transaction and mandatory awaited outbox capture |
 
+A1.9 is complete and verified in local branch `feat/pm-182-issue`, but is not
+yet committed or published to the canonical branch.
+
 The complete SDD artifacts are also present:
 
 - `proposal.md`
@@ -55,7 +58,7 @@ contract foundations exist, but the following runtime pieces do not:
 
 - Redmine HTTP client and provider adapter
 - Connection and credential API/service
-- Issue/cycle writer integration
+- Batch/group and cycle writer integration
 - Event listener and enqueue wiring
 - Claim/lease worker
 - Retry and dead-letter processing
@@ -63,11 +66,11 @@ contract foundations exist, but the following runtime pieces do not:
 
 ## Remaining work for Kanon → Redmine
 
-The approved plan has 13 remaining tasks on the outbound critical path.
+The approved plan has 12 remaining tasks on the outbound critical path after local A1.9.
 
 ### Wire local mutation capture
 
-- [ ] **A1.9** — wire issue create/update/transition writers
+- [x] **A1.9** — wire issue create/update/transition writers (local; pending publish)
 - [ ] **A1.10** — wire batch/group operations
 - [ ] **A1.11** — wire cycle and delete operations
 - [ ] **A1.12** — extract/register the scheduler

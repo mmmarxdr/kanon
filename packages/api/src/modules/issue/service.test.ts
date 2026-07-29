@@ -71,6 +71,9 @@ vi.mock("../../config/prisma.js", () => ({
       create: vi.fn(),
       createMany: vi.fn(),
     },
+    integrationProjectBinding: {
+      findFirst: vi.fn(),
+    },
     // KAN-157: reconciliation gate reads workLog + timeEntry before →done.
     workLog: {
       findMany: vi.fn(),
