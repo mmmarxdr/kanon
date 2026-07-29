@@ -32,8 +32,9 @@ out-of-band and will be rotated):
 - **Estimation = native `estimated_hours`** (Decimal hours, identical to Kanon's
   `IssueSchedule.estimateHours`). `done_ratio` (0–100) ↔ Kanon `progress`. `assigned_to`,
   `start_date`, `due_date` are native. **No custom fields required** for the MVP.
-- **No native webhooks** (any Redmine version). Atom feeds exist. Inbound push requires a
-  third-party plugin installed on their server — outside Kanon's control.
+- The current Redmine **6.0.2 has no native webhooks**, so inbound requires polling (or a
+  third-party plugin). Redmine 7.0.0 adds native webhooks without removing the REST resources
+  used by the outbound adapter.
 
 ### Kanon-side facts (from the codebase)
 
@@ -131,10 +132,11 @@ out-of-band and will be rotated):
 8. **Inbound designed as a pluggable source, NOT built in MVP.** An `InboundSource` port has two
    implementations: `PollingInboundSource` (default — reuses the existing self-rescheduling
    `setTimeout`, queries `issues.json?updated_on>=lastSync`, works on any Redmine with no server
-   change) and `WebhookInboundSource` (a `POST /api/integrations/:provider/webhook` receiver,
-   usable **only if** the org installs a Redmine webhook plugin). Both normalize to the same
-   canonical change event feeding the sync engine. This covers the **PM-closes → Kanon `done`**
-   flow. The MVP ships the port + an empty Polling stub so phase 2 plugs in without refactor.
+   change) and `WebhookInboundSource` (a `POST /api/integrations/:provider/webhook` receiver).
+   Redmine 6.0.2 needs polling or a plugin; Redmine 7.0.0 can use its native webhook as a wake-up
+   signal. Both normalize to the same canonical change event, durably refetch through REST, and
+   retain overlapping polling because webhook delivery has no durable ordering/retry contract.
+   This covers the **PM-closes → Kanon `done`** flow without tying the core to one Redmine version.
 
 9. **Assignee-without-credential fallback (default: skip + warn).** If the issue's assignee has
    no connected Redmine credential, the push is **skipped and logged** (strict per-user
@@ -266,7 +268,7 @@ sequenceDiagram
 | Separate `packages/integrations` package | Forces re-exporting Prisma + event bus across package boundaries; no architectural gain at MVP scale. |
 | Single admin/service token for the whole instance | Loses per-user attribution (audit), concentrates blast radius, and needs admin we may not get. Kept only as an optional fallback. |
 | Bidirectional sync in the MVP | Opens source-of-truth/field-ownership and conflict resolution; doubles scope. Designed (inbound port) but deferred to phase 2. |
-| Webhook-first inbound | Redmine has no native webhooks; depends on the org installing a plugin on their server. Polling is the portable default; webhook is an optional adapter. |
+| Webhook-only inbound | Redmine 6.0.2 has no native webhooks, while 7.0.0 webhooks are asynchronous signals without a durable delivery/order contract. Polling and reconciliation remain the portable baseline; native/plugin webhooks are optional wake-up adapters. |
 | Map Kanon `estimate` (story points) to Redmine | Redmine uses hours natively; Kanon's hours live on `IssueSchedule.estimateHours`. Story points would need a custom field we can't write as non-admin. |
 | Hardcode the Redmine status map | Every team has a different workflow (theirs has 17 states); the map must be per-connection config, not code. |
 | Project-level connection in MVP | A workspace-level connection covers "one company, one Redmine" and is simpler; per-project Redmines are an additive extension when a real multi-Redmine case appears. |

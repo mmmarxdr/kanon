@@ -15,7 +15,9 @@ Developers work in Kanon; PMs run their process in Redmine. Today the two drift 
 - Admin config UI + per-user connect + **sync-coverage visibility** ("X of Y assignees connected/syncing") — KAN-186 (G8).
 
 ### Out of Scope / Non-Goals
-- Webhook inbound (`WebhookInboundSource`) — phase 2; Redmine has no native webhooks.
+- Webhook inbound (`WebhookInboundSource`) — phase 2. The current Redmine 6.0.2 has no native
+  webhooks; Redmine 7.0.0 can later add native webhook wake-ups without replacing durable polling
+  and REST reconciliation.
 - Jira / MS Project / Planner adapters — later adapters, core stays untouched.
 - Custom Redmine fields, story-point mapping, per-project (multi-Redmine) connections.
 - Redesigning the ADR-0012 canonical model / adapter architecture — kept as-is.
