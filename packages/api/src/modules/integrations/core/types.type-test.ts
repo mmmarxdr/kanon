@@ -13,6 +13,21 @@ const issueEntity: "issue" = issueChange.entityType;
 
 // @ts-expect-error An explicit field operation is required; undefined is not no-change.
 const undefinedField: CanonicalIssuePatch = { ...noChangePatch, title: undefined };
+const clearedTitle: CanonicalIssuePatch = {
+  ...noChangePatch,
+  // @ts-expect-error Required issue titles cannot be cleared.
+  title: { kind: "clear", value: null },
+};
+const clearedStatus: CanonicalIssuePatch = {
+  ...noChangePatch,
+  // @ts-expect-error Required issue states cannot be cleared.
+  status: { kind: "clear", value: null },
+};
+const clearedProgress: CanonicalIssuePatch = {
+  ...noChangePatch,
+  // @ts-expect-error Required issue progress cannot be cleared.
+  progress: { kind: "clear", value: null },
+};
 // @ts-expect-error No-change must be expressed by an explicit all-omit patch.
 adapter.pushIssue(issue);
 // @ts-expect-error The entity tag must agree with the payload type.

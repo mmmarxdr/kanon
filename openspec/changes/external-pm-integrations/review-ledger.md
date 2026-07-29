@@ -533,3 +533,24 @@
 
 - Final evidence: A2.3 **4/4**, inherited A2.2/A2.1 **27/27**, API build/type gates, direct source/test TypeScript, formatting, and diff checks passed.
 - Scope remains provider-only; persistence and lifecycle wiring begin at A3.1.
+
+## Public PR review — cumulative A1.1–A2.3
+
+- **Result:** Six confirmed findings fixed locally; five findings rejected after direct validation. Remote CI and re-review remain pending.
+
+| id | location | status | evidence |
+| --- | --- | --- | --- |
+| CR-001 | lifecycle migration | not actionable | The warning assumes a heavily populated `external_refs` table, but no shipped runtime producer writes these new integration rows. Rewriting the generated migration for a speculative zero-downtime rollout is not justified. |
+| CR-002 | backfill write gate | not actionable | The only production caller is the one-time backfill itself; no normal writer performs the claimed full-table scan. Scope the check when a runtime caller actually adopts this temporary gate. |
+| CR-003 | canonical issue patch types | fixed | Required `title`, `status`, and `progress` now exclude `clear`; three compile-time regressions enforce the contract. |
+| CR-004 | settled Issue row key list | not actionable | The current list exactly matches the Prisma scalar payload. The finding describes a possible future schema edit, not a current truncation bug. |
+| CR-005 | JSON canonicalization | fixed | JSON recursion is capped at 100 levels and a 101-level graph now rejects before stack exhaustion. |
+| CR-006 | outbox lifecycle epoch | fixed | Capture locks the binding row with parameterized `FOR SHARE` before deriving/stamping the epoch; a concurrent lifecycle update is proven blocked until commit. |
+| CR-007 | outbox duplicate capture | fixed | Empty-update Prisma upsert was replaced by `createMany({ skipDuplicates: true })` plus authoritative lookup; concurrent duplicate transactions retain one row. |
+| CR-008 | Redmine status write map | fixed | A requested unmapped status now fails before provider I/O instead of returning a false success. |
+| CR-009 | Redmine 422 fallback | not actionable | The retry removes only `status_id`; every other field remains, so an assignee/version/custom-field error still fails on the second request rather than being swallowed. |
+| CR-010 | writer correlation IDs | not actionable | Each service invocation is a new local mutation and the API exposes no caller idempotency key. Reusing a deterministic key would suppress legitimate repeated mutations. |
+| CR-011 | batch no-op response | fixed | Both zero-transition paths now return `keys: []`, matching the actually transitioned subset convention. |
+
+- RED evidence: required-field `@ts-expect-error` directives were unused; three unit regressions failed; and the PostgreSQL lifecycle update completed before capture commit.
+- GREEN evidence: API build, configured type gate, tracked-tree formatting, and full API coverage passed; focused core/contract/outbox/adapter/issue suites passed **50/50**. Remote full CI and re-review remain pending.

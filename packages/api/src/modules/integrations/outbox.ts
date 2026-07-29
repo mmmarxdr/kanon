@@ -214,9 +214,20 @@ export async function captureIntegrationWorkTx(
     }
   }
 
-  if (capture.epoch !== undefined && capture.epoch !== binding.lifecycleEpoch) {
+  const [lockedBinding] = await transaction.$queryRaw<Array<{ lifecycleEpoch: number }>>(
+    Prisma.sql`
+      SELECT "lifecycle_epoch" AS "lifecycleEpoch"
+      FROM "integration_project_bindings"
+      WHERE "id" = ${capture.bindingId}::uuid
+      FOR SHARE
+    `,
+  );
+  if (!lockedBinding) {
+    throw new Error(`Integration project binding ${capture.bindingId} was not found`);
+  }
+  if (capture.epoch !== undefined && capture.epoch !== lockedBinding.lifecycleEpoch) {
     throw new Error(
-      `Integration work epoch ${capture.epoch} does not match binding epoch ${binding.lifecycleEpoch}`,
+      `Integration work epoch ${capture.epoch} does not match binding epoch ${lockedBinding.lifecycleEpoch}`,
     );
   }
 
@@ -244,18 +255,18 @@ export async function captureIntegrationWorkTx(
     payload: capture.payload,
     correlationId,
     availableAt: capture.availableAt,
-    epoch: binding.lifecycleEpoch,
+    epoch: lockedBinding.lifecycleEpoch,
     authCredentialId: capture.authCredentialId ?? null,
     refId: capture.refId ?? null,
     marker: capture.marker ?? null,
     bindingId: capture.bindingId,
   };
 
-  return transaction.integrationSyncWork.upsert({
-    where: { dedupeKey },
-    create: data,
-    update: {},
+  await transaction.integrationSyncWork.createMany({
+    data,
+    skipDuplicates: true,
   });
+  return transaction.integrationSyncWork.findUniqueOrThrow({ where: { dedupeKey } });
 }
 
 /**

@@ -641,7 +641,7 @@ describe("batchTransitionByKeys()", () => {
       "member-1",
     );
 
-    expect(res).toMatchObject({ count: 0, state: "done" });
+    expect(res).toEqual({ count: 0, keys: [], state: "done" });
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });

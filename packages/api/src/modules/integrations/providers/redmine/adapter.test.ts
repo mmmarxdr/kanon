@@ -188,4 +188,18 @@ describe("RedmineProviderAdapter", () => {
     });
     expect(http.put).toHaveBeenCalledOnce();
   });
+
+  it("rejects a requested status without a Redmine mapping", async () => {
+    const http = client();
+    const adapter = new RedmineProviderAdapter(http, {
+      writeMap: {},
+      resolveExternalId: async (type) => (type === "issue" ? "99" : null),
+    });
+    const statusPatch = { ...noChange, status: { kind: "set", value: "done" } } as const;
+
+    await expect(adapter.pushIssue({ ...issue, status: "done" }, statusPatch)).rejects.toThrow(
+      "Missing Redmine status mapping for done",
+    );
+    expect(http.put).not.toHaveBeenCalled();
+  });
 });

@@ -200,7 +200,11 @@ export class RedmineProviderAdapter implements PmProviderAdapter {
     const description = value(patch.description, issue.description);
     if (description !== undefined) payload["description"] = issueDescription(description, issue.id);
     const status = value(patch.status, issue.status);
-    if (status) assign("status_id", this.options.writeMap[status]);
+    if (status) {
+      const mappedStatus = this.options.writeMap[status];
+      if (mappedStatus === undefined) throw new Error(`Missing Redmine status mapping for ${status}`);
+      assign("status_id", mappedStatus);
+    }
     assign("estimated_hours", value(patch.estimateHours, issue.estimateHours));
     const startDate = value(patch.startDate, issue.startDate);
     if (startDate !== undefined) payload["start_date"] = dateOnly(startDate);

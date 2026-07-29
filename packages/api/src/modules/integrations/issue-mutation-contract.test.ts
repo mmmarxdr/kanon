@@ -124,5 +124,11 @@ describe("canonicalizeIssueMutationDraft", () => {
     rejected(() =>
       canonicalizeIssueMutationDraft(draft(issue({ engramContext: cyclic as never })))
     );
+
+    let deeplyNested: Record<string, unknown> = {};
+    for (let depth = 0; depth < 101; depth += 1) deeplyNested = { nested: deeplyNested };
+    rejected(() =>
+      canonicalizeIssueMutationDraft(draft(issue({ specArtifacts: deeplyNested as never })))
+    );
   });
 });

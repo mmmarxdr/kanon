@@ -1178,7 +1178,7 @@ export async function batchTransitionByKeys(
   if (issuesToTransition.length === 0) {
     return {
       count: 0,
-      keys: body.keys,
+      keys: [],
       state: targetState,
     };
   }

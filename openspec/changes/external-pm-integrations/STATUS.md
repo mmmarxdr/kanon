@@ -10,7 +10,7 @@
 | Item | Current state |
 | --- | --- |
 | Canonical remote branch | `origin/feat/external-pm-integrations` |
-| Published commit | `09d50fb9c0e42a0afae1b51f2af46f1296180390` |
+| Published commit | PR #223 branch through A2.3 |
 | OpenSpec progress | 18/31 complete locally; 13 pending |
 | Dispatcher recommendation | `apply` |
 | Next task | A3.1 — connection lifecycle and endpoints |
@@ -21,7 +21,7 @@
 ## Published on the canonical branch
 
 The branch contains the accumulated implementation and SDD history through
-A1.8b:
+A2.3:
 
 | Task | Delivered capability |
 | --- | --- |
@@ -34,10 +34,17 @@ A1.8b:
 | A1.7 | Transactional outbox capture and read-only due-work scanner |
 | A1.8a | Settled Issue mutation contract and canonical capture payload |
 | A1.8b | Owned issue mutation transaction and mandatory awaited outbox capture |
+| A1.9 | Issue create/update/transition capture |
+| A1.10 | Batch and group transition capture |
+| A1.11 | Cycle create/close/delete capture |
+| A1.12 | Non-overlapping integration scanner scheduling |
+| A2.1 | SSRF and DNS-rebinding guard |
+| A2.2 | Redmine HTTP transport |
+| A2.3 | Redmine provider adapter |
 
-A1.10 is published with green draft-PR CI. A1.11 is committed locally as
-`fa6b176`, A1.12 as `18ce8bf`, A2.1 as `dbfb61d`, A2.2 as `210e328`, and A2.3
-is complete and verified locally in `feat/pm-183-adapter`. None is published.
+PR #223 is published through A2.3 and its cumulative full CI passed before the
+public review fix pass. The six confirmed review fixes and five rejected
+findings are recorded in `review-ledger.md`; A3.1 remains next.
 
 The complete SDD artifacts are also present:
 
@@ -70,15 +77,15 @@ The approved plan has 6 remaining tasks on the outbound critical path after loca
 ### Wire local mutation capture
 
 - [x] **A1.9** — wire issue create/update/transition writers (published)
-- [x] **A1.10** — wire batch/group operations (published; CI green)
-- [x] **A1.11** — wire cycle and delete operations (local commit; pending publish)
-- [x] **A1.12** — extract/register the scheduler (local; pending publish)
+- [x] **A1.10** — wire batch/group operations (published)
+- [x] **A1.11** — wire cycle and delete operations (published)
+- [x] **A1.12** — extract/register the scheduler (published)
 
 ### Build the Redmine integration
 
-- [x] **A2.1** — SSRF and DNS-rebinding protection (local; pending publish)
-- [x] **A2.2** — `RedmineHttpClient` (local; pending publish)
-- [x] **A2.3** — `RedmineProviderAdapter` (local; pending publish)
+- [x] **A2.1** — SSRF and DNS-rebinding protection (published)
+- [x] **A2.2** — `RedmineHttpClient` (published)
+- [x] **A2.3** — `RedmineProviderAdapter` (published)
 
 ### Add connection and credential lifecycle
 

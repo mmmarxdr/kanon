@@ -54,6 +54,7 @@ const NULLABLE_STRINGS = "description groupKey assigneeId cycleId parentId roadm
   " "
 );
 const JSON_FIELDS = ["engramContext", "specArtifacts"];
+const MAX_JSON_DEPTH = 100;
 const CAPTURE_CHOICES: Record<string, string[]> = {
   direction: ["outbound", "inbound"],
   operation: ["create", "update", "delete", "close"],
@@ -145,7 +146,8 @@ function scalar(
 }
 const nullable = (value: unknown, kind: "string" | "required"): unknown =>
   value === null ? null : scalar(value, kind);
-function jsonValue(value: unknown, seen: WeakSet<object>): JsonValue {
+function jsonValue(value: unknown, seen: WeakSet<object>, depth = 0): JsonValue {
+  if (depth > MAX_JSON_DEPTH) bad("exceeds maximum JSON depth");
   if (value === null || typeof value === "string" || typeof value === "boolean") return value;
   if (typeof value === "number") {
     if (!Number.isFinite(value)) bad("contains a non-finite number");
@@ -158,8 +160,10 @@ function jsonValue(value: unknown, seen: WeakSet<object>): JsonValue {
   const descriptors = properties(value, arrayValue);
   const keys = Object.keys(descriptors).filter((key) => !arrayValue || key !== "length");
   const result = arrayValue
-    ? keys.map((key) => jsonValue(read(descriptors, key), seen))
-    : Object.fromEntries(keys.map((key) => [key, jsonValue(read(descriptors, key), seen)]));
+    ? keys.map((key) => jsonValue(read(descriptors, key), seen, depth + 1))
+    : Object.fromEntries(
+        keys.map((key) => [key, jsonValue(read(descriptors, key), seen, depth + 1)])
+      );
   seen.delete(value);
   return Object.freeze(result) as JsonValue;
 }

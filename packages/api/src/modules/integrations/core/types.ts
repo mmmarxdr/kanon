@@ -9,10 +9,10 @@ export type CanonicalChangeOperation = (typeof CANONICAL_CHANGE_OPERATIONS)[numb
 export const FIELD_VALUE_KINDS = ["omit", "set", "clear"] as const;
 export type FieldValueKind = (typeof FIELD_VALUE_KINDS)[number];
 
-export type FieldValue<T> =
+export type SettableFieldValue<T> =
   | { readonly kind: "omit" }
-  | { readonly kind: "set"; readonly value: T }
-  | { readonly kind: "clear"; readonly value: null };
+  | { readonly kind: "set"; readonly value: T };
+export type FieldValue<T> = SettableFieldValue<T> | { readonly kind: "clear"; readonly value: null };
 export type CanonicalIssueState = IssueState;
 
 export interface CanonicalUser {
@@ -52,14 +52,14 @@ export interface CanonicalIssue {
 }
 
 export interface CanonicalIssuePatch {
-  readonly title: FieldValue<string>;
+  readonly title: SettableFieldValue<string>;
   readonly description: FieldValue<string>;
-  readonly status: FieldValue<CanonicalIssueState>;
+  readonly status: SettableFieldValue<CanonicalIssueState>;
   readonly assignee: FieldValue<CanonicalUser>;
   readonly estimateHours: FieldValue<number>;
   readonly startDate: FieldValue<Date>;
   readonly dueDate: FieldValue<Date>;
-  readonly progress: FieldValue<number>;
+  readonly progress: SettableFieldValue<number>;
   readonly cycleId: FieldValue<string>;
 }
 

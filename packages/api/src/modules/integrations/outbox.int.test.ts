@@ -173,12 +173,12 @@ describe("integration outbox capture and scanner", () => {
     const credential = await createCredential(fixture.workspace.id, fixture.connection.id);
     const capture = captureFor(fixture, { authCredentialId: credential.id });
 
-    const first = await prisma.$transaction((transaction) =>
-      captureIntegrationWorkTx(transaction, capture),
-    );
-    const duplicate = await concurrentPrisma.$transaction((transaction) =>
-      captureIntegrationWorkTx(transaction, capture),
-    );
+    const [first, duplicate] = await Promise.all([
+      prisma.$transaction((transaction) => captureIntegrationWorkTx(transaction, capture)),
+      concurrentPrisma.$transaction((transaction) =>
+        captureIntegrationWorkTx(transaction, capture),
+      ),
+    ]);
     const next = await prisma.$transaction((transaction) =>
       captureIntegrationWorkTx(
         transaction,
@@ -304,6 +304,53 @@ describe("integration outbox capture and scanner", () => {
 
     const derived = await captureInTransaction(fixture, { correlationId: "derived-epoch" });
     expect(derived.epoch).toBe(binding.lifecycleEpoch);
+  });
+
+  it("holds the binding epoch stable until the capture transaction commits", async () => {
+    const fixture = await createFixture();
+    let releaseCapture!: () => void;
+    let markCaptured!: () => void;
+    const holdCapture = new Promise<void>((resolve) => {
+      releaseCapture = resolve;
+    });
+    const captureStarted = new Promise<void>((resolve) => {
+      markCaptured = resolve;
+    });
+    const capturePromise = prisma.$transaction(async (transaction) => {
+      const work = await captureIntegrationWorkTx(
+        transaction,
+        captureFor(fixture, { correlationId: "stable-epoch" }),
+      );
+      markCaptured();
+      await holdCapture;
+      return work;
+    });
+    await captureStarted;
+
+    let blockedError: unknown;
+    try {
+      await concurrentPrisma.$transaction(async (transaction) => {
+        await transaction.$executeRaw`SET LOCAL lock_timeout = '100ms'`;
+        await transaction.integrationProjectBinding.update({
+          where: { id: fixture.binding.id },
+          data: { lifecycleEpoch: fixture.binding.lifecycleEpoch + 1 },
+        });
+      });
+    } catch (error) {
+      blockedError = error;
+    } finally {
+      releaseCapture();
+    }
+
+    const captured = await capturePromise;
+    expect(String(blockedError)).toContain("lock timeout");
+    expect(captured.epoch).toBe(fixture.binding.lifecycleEpoch);
+    await expect(
+      concurrentPrisma.integrationProjectBinding.update({
+        where: { id: fixture.binding.id },
+        data: { lifecycleEpoch: fixture.binding.lifecycleEpoch + 1 },
+      }),
+    ).resolves.toMatchObject({ lifecycleEpoch: fixture.binding.lifecycleEpoch + 1 });
   });
 
   it("scans due queued and retry work in sequence without claiming or mutating it", async () => {

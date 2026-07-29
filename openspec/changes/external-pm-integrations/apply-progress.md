@@ -511,3 +511,10 @@ Terminal A1.8 state: **BLOCKED / ESCALATED** after the failed final scoped pre-c
 - RED failed because `adapter.ts` was absent. Final A2.3 passed **4/4**; inherited Redmine client/guard passed **27/27**, for **31/31** total. API build, configured type gate, direct source/test TypeScript, Prettier, and diff checks passed.
 - Direct review fixed broad 4xx fallback to 422-only. Accepted warnings: project discovery is one 100-row page for the known 46-project instance, and malformed remote response shapes fail closed without dedicated runtime schemas.
 - No persistence, connection routes, credential service, worker, listener, or UI behavior was added.
+
+## Public PR review fix pass
+
+- Directly triaged all 11 cumulative CodeRabbit findings before merge: six were confirmed and fixed; five were rejected as unsupported by current callers/contracts.
+- Narrowed required canonical patch fields, bounded canonical JSON depth, locked the binding epoch through capture commit, made duplicate outbox insertion atomic, rejected missing Redmine status mappings, and unified zero-transition responses.
+- RED reproduced the type, JSON, status, no-op, and lifecycle race failures. GREEN passed the API build, configured type gate, and focused core/contract/outbox/adapter/issue suites **50/50**.
+- The generated migration, one-time backfill scan, current exact Issue scalar list, localized 422 fallback, and per-invocation correlation IDs remain unchanged for the reasons recorded in `review-ledger.md`.
