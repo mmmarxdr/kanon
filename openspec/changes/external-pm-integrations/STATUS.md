@@ -11,9 +11,9 @@
 | --- | --- |
 | Canonical remote branch | `origin/feat/external-pm-integrations` |
 | Published commit | `09d50fb9c0e42a0afae1b51f2af46f1296180390` |
-| OpenSpec progress | 15/31 complete locally; 16 pending |
+| OpenSpec progress | 16/31 complete locally; 15 pending |
 | Dispatcher recommendation | `apply` |
-| Next task | A2.1 — SSRF and DNS-rebinding protection |
+| Next task | A2.2 — Redmine HTTP client |
 | Merged into `main` | No |
 | End-to-end Kanon → Redmine | Not operational yet |
 | Proposal success criteria | 0/8 proven end-to-end |
@@ -36,8 +36,8 @@ A1.8b:
 | A1.8b | Owned issue mutation transaction and mandatory awaited outbox capture |
 
 A1.10 is published with green draft-PR CI. A1.11 is committed locally as
-`fa6b176`; A1.12 is complete and verified locally in `feat/pm-182-auto`.
-Neither local slice is published.
+`fa6b176`, A1.12 as `18ce8bf`, and A2.1 is complete and verified locally in
+`feat/pm-183-ssrf`. None of these local slices is published.
 
 The complete SDD artifacts are also present:
 
@@ -66,7 +66,7 @@ contract foundations exist, but the following runtime pieces do not:
 
 ## Remaining work for Kanon → Redmine
 
-The approved plan has 9 remaining tasks on the outbound critical path after local A1.12.
+The approved plan has 8 remaining tasks on the outbound critical path after local A2.1.
 
 ### Wire local mutation capture
 
@@ -77,7 +77,7 @@ The approved plan has 9 remaining tasks on the outbound critical path after loca
 
 ### Build the Redmine integration
 
-- [ ] **A2.1** — SSRF and DNS-rebinding protection
+- [x] **A2.1** — SSRF and DNS-rebinding protection (local; pending publish)
 - [ ] **A2.2** — `RedmineHttpClient`
 - [ ] **A2.3** — `RedmineProviderAdapter`
 

@@ -480,3 +480,13 @@ Terminal A1.8 state: **BLOCKED / ESCALATED** after the failed final scoped pre-c
 - Focused A1.12 **4/4**, outbox regression **6/6**, app cleanup lifecycle **4/4**, API build/type checks, formatting, and diff checks passed.
 - One bounded review found a lifecycle-wiring coverage BLOCKER; the fix added executable `buildApp()` start/stop coverage. A throwing `onError` callback is also covered without breaking rearming or shutdown.
 - Scope remains read-only scheduling. Claim/lease, provider dispatch, retries, and Redmine I/O remain A4 work.
+
+## A2.1 — SSRF and DNS-rebinding protection
+
+- **State:** Apply and one bounded risk review complete locally; not published.
+- Added HTTPS-by-default endpoint validation with explicit public-HTTP opt-in, URL-credential rejection, and native IPv4/IPv6 non-public range blocking.
+- Every call resolves all DNS answers and rejects the hostname if any answer is unsafe. The returned lookup is pinned to one vetted address and refuses hostname substitution, preventing a second resolver lookup at connect time.
+- RED failed because the guard module was absent; GREEN passed **19/19**. The risk fix added a failing `fec0::/10` site-local case, then the final suite passed **20/20**.
+- API build, configured type gate, direct source/test TypeScript, Prettier, and `git diff --check` passed after generating the fresh worktree's Prisma client and building `@kanon/shared`.
+- One bounded risk review found `R1-001` CRITICAL for omitted legacy IPv6 site-local addresses; `fec0::/10` is now blocked and covered. No second review loop was run.
+- No dependency, request/retry/auth/redirect behavior, persistence, provider adapter, route, worker, or UI was added; A2.2 owns the actual HTTP client.

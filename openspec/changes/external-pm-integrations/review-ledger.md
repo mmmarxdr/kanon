@@ -497,3 +497,14 @@
 - `R3-001` BLOCKER fixed: executable `buildApp()` lifecycle coverage proves `onReady` starts scanning and `onClose` cancels the pending timer.
 - The scheduler also proves no overlapping scans, continued scheduling after scan or `onError` failure, `unref()`, and idempotent stop behavior.
 - Post-fix A1.12 **4/4**, outbox regression **6/6**, app cleanup lifecycle **4/4**, API build/type checks, formatting, and diff checks passed; no second review loop.
+
+## Bounded risk review — A2.1
+
+- **Result:** `PASS AFTER ONE FIX`; one CRITICAL finding, no BLOCKER, no refuter, and no second review loop.
+
+| id | lens | location | severity | status | evidence |
+| --- | --- | --- | --- | --- | --- |
+| R1-001 | risk | `packages/api/src/modules/integrations/providers/redmine/http-client.ts` IPv6 blocklist | CRITICAL | verified | The initial guard omitted deprecated site-local `fec0::/10`. A new test failed **19/20**, the range was blocked, and the final suite passed **20/20**. |
+
+- The final guard rejects URL credentials, non-HTTPS without opt-in, IPv4/IPv6 loopback/private/link-local/unspecified/reserved/metadata-capable targets, unsafe mixed DNS answers, rebinding, and hostname substitution after pinning.
+- API build/type gates, direct source/test TypeScript, formatting, and diff checks passed. Actual requests, disabled redirects, retries, authentication, and dispatcher wiring remain A2.2 scope.
