@@ -444,4 +444,13 @@ Terminal A1.8 state: **BLOCKED / ESCALATED** after the failed final scoped pre-c
 - **Current proof:** Focused contract **2/2** and core/types **5/5**. Historical **20/20** is the pre-cancel oracle, not current proof; its reduction is accepted coverage debt.
 - **Current gates:** Direct target TypeScript **PASS**, forced Prettier with `--ignore-path /dev/null` **PASS**, and `git diff --check` **PASS**. The configured type gate is supplementary.
 - **Judgment rows:** JD-A-1101/JD-B-1101/JD-A-1103 remain **fixed, not verified**; warnings remain unchanged.
-- **Scope:** A1.8a pure contract only; final boundary **452 changed lines = 436 additions + 16 deletions**, covered by the maintainer `size:exception`; no A1.8b transaction seam or runtime behavior has started.
+- **Scope at A1.8a close:** Pure contract only; final boundary **452 changed lines = 436 additions + 16 deletions**, covered by the maintainer `size:exception`; A1.8b had not started yet.
+
+## A1.8b — owned issue mutation transaction seam
+
+- **State:** Apply and one bounded reliability review complete locally; not committed, pushed, or wired into issue writers.
+- Added `withIssueMutationTx(operation, database=prisma)`: owned transaction, awaited operation, one-time A1.8a canonicalization, explicit capture copy, `entityId=result.id`, mandatory awaited A1.7 capture, then detached Issue return.
+- RED: focused test failed because `issue-tx.ts` did not exist. GREEN: focused PostgreSQL suite **3/3**.
+- Safety net: A1.8b + A1.8a contract + A1.7 outbox + A1.6 backfill **26/26**; shared/API builds, API type gate, direct source/test TypeScript, Prettier, and `git diff --check` passed.
+- One reliability review found no BLOCKER/CRITICAL and three test-only warnings; one fix pass made update/transition identities distinct, asserted forwarded operation/actor metadata, and replaced timer racing with deterministic mutation at A1.7's first binding read.
+- Scope remains unwired and limited to `issue-tx.ts`, `issue-tx.int.test.ts`, and this task/review evidence. A1.9 owns writer integration.

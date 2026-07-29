@@ -457,4 +457,16 @@
 | R4-006 | resilience | CRITICAL | fixed | stands | Conflicting current completion, test, and budget claims are reconciled by this section; not independently re-reviewed. |
 
 - **Current gates:** contract **2/2**, core/types **5/5**, direct target TypeScript **PASS**, forced Prettier with `--ignore-path /dev/null` **PASS**, and `git diff --check` **PASS**.
-- **Judgment Day:** terminal state remains **`ESCALATED — maintainer exception`**; fixed rows remain unverified. A1.8b remains not started.
+- **Judgment Day at A1.8a close:** terminal state remains **`ESCALATED — maintainer exception`**; fixed rows remain unverified. A1.8b had not started yet.
+
+## Bounded reliability review — A1.8b
+
+- **Result:** `PASS WITH WARNINGS`, then one fix pass; no BLOCKER/CRITICAL and no refuter required.
+
+| id | lens | location | severity | status | evidence |
+| --- | --- | --- | --- | --- | --- |
+| R3-010 | reliability | `issue-tx.int.test.ts` success case | WARNING | verified | Capture assertions now cover direction, operation, actor key, and actor kind. |
+| R3-011 | reliability | `issue-tx.int.test.ts` success case | WARNING | verified | Create, update, and transition now target three distinct Issue IDs. |
+| R3-012 | reliability | `issue-tx.int.test.ts` mutation case | WARNING | verified | A transaction proxy mutates the caller draft deterministically at A1.7's first binding read; detached return and payload remain unchanged. |
+
+- Post-fix focused suite **3/3**, direct source/test TypeScript, Prettier, and diff checks passed. No second review cycle was run.
