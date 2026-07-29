@@ -486,3 +486,8 @@
 
 - `R3-001` BLOCKER fixed: expected-state CAS now excludes concurrent no-ops from mutation, audit, capture, events, and returned keys.
 - Post-fix A1.10 **2/2**, unit **59/59**, inherited integration **28/28**, event **13/13**, API type/build, formatting, and diff checks passed; no second review loop.
+
+## Bounded reliability review — A1.11
+
+- `R3-001..003` BLOCKERs fixed: close(done) is a true no-op; all create/close paths transact before resolving binding; Path B, rollback, payload, attribution, `refId`, and binding-race cases are executable.
+- Post-fix A1.11 **2/2**, Cycle unit **42/42**, inherited integration **31/31**, API type/build, formatting, and diff checks passed; no second review loop.

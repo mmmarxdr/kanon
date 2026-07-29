@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 import { eventBus } from "../../services/event-bus/index.js";
+import { captureCycleMutationTx } from "../integrations/cycle-tx.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -140,6 +141,8 @@ export async function deleteCycle(
         where: { cycleId: cycle.id },
         data: { cycleId: null },
       });
+
+      await captureCycleMutationTx(tx, cycle, authorId, "delete");
 
       // 8. Hard delete — CycleScopeEvent rows cascade via DB onDelete: Cascade
       await tx.cycle.delete({ where: { id: cycle.id } });
