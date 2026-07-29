@@ -11,9 +11,9 @@
 | --- | --- |
 | Canonical remote branch | `origin/feat/external-pm-integrations` |
 | Published commit | `09d50fb9c0e42a0afae1b51f2af46f1296180390` |
-| OpenSpec progress | 16/31 complete locally; 15 pending |
+| OpenSpec progress | 17/31 complete locally; 14 pending |
 | Dispatcher recommendation | `apply` |
-| Next task | A2.2 — Redmine HTTP client |
+| Next task | A2.3 — Redmine provider adapter |
 | Merged into `main` | No |
 | End-to-end Kanon → Redmine | Not operational yet |
 | Proposal success criteria | 0/8 proven end-to-end |
@@ -36,8 +36,8 @@ A1.8b:
 | A1.8b | Owned issue mutation transaction and mandatory awaited outbox capture |
 
 A1.10 is published with green draft-PR CI. A1.11 is committed locally as
-`fa6b176`, A1.12 as `18ce8bf`, and A2.1 is complete and verified locally in
-`feat/pm-183-ssrf`. None of these local slices is published.
+`fa6b176`, A1.12 as `18ce8bf`, A2.1 as `dbfb61d`, and A2.2 is complete and
+verified locally in `feat/pm-183-http`. None of these local slices is published.
 
 The complete SDD artifacts are also present:
 
@@ -57,7 +57,7 @@ The complete SDD artifacts are also present:
 Kanon does **not** send changes to Redmine yet. The persistence, outbox, and
 contract foundations exist, but the following runtime pieces do not:
 
-- Redmine HTTP client and provider adapter
+- Redmine provider adapter
 - Connection and credential API/service
 - Event listener and enqueue wiring
 - Claim/lease worker
@@ -66,7 +66,7 @@ contract foundations exist, but the following runtime pieces do not:
 
 ## Remaining work for Kanon → Redmine
 
-The approved plan has 8 remaining tasks on the outbound critical path after local A2.1.
+The approved plan has 7 remaining tasks on the outbound critical path after local A2.2.
 
 ### Wire local mutation capture
 
@@ -78,7 +78,7 @@ The approved plan has 8 remaining tasks on the outbound critical path after loca
 ### Build the Redmine integration
 
 - [x] **A2.1** — SSRF and DNS-rebinding protection (local; pending publish)
-- [ ] **A2.2** — `RedmineHttpClient`
+- [x] **A2.2** — `RedmineHttpClient` (local; pending publish)
 - [ ] **A2.3** — `RedmineProviderAdapter`
 
 ### Add connection and credential lifecycle

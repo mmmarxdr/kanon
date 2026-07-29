@@ -1,6 +1,7 @@
 import type { LookupAddress } from "node:dns";
 import { lookup } from "node:dns/promises";
 import { BlockList, isIP, type LookupFunction } from "node:net";
+import { Agent, request as undiciRequest, type Dispatcher } from "undici";
 
 const blockedAddresses = new BlockList();
 
@@ -131,4 +132,164 @@ export function createPinnedLookup(endpoint: SafeEndpoint): LookupFunction {
     }
     callback(null, vetted.address, vetted.family);
   };
+}
+
+interface TransportOptions {
+  method: Dispatcher.HttpMethod;
+  headers: Record<string, string>;
+  body?: string;
+  signal: AbortSignal;
+  dispatcher: Dispatcher;
+  maxRedirections: number;
+  headersTimeout: number;
+  bodyTimeout: number;
+}
+
+type Transport = (
+  url: string,
+  options: TransportOptions,
+) => Promise<{ statusCode: number; body: { text(): Promise<string> } }>;
+
+interface RedmineHttpClientOptions {
+  allowHttp?: boolean;
+  timeoutMs?: number;
+  maxAttempts?: number;
+  resolve?: ResolveHostname;
+  transport?: Transport;
+  sleep?: (milliseconds: number) => Promise<unknown> | unknown;
+}
+
+const defaultTransport: Transport = (url, options) => undiciRequest(url, options);
+const defaultSleep = (milliseconds: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+
+function withAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(new Error("Redmine request timed out"));
+    signal.addEventListener("abort", abort, { once: true });
+    operation.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", abort);
+        reject(error);
+      },
+    );
+  });
+}
+
+export class RedmineHttpError extends Error {
+  constructor(readonly statusCode: number) {
+    super(`Redmine request failed with status ${statusCode}`);
+    this.name = "RedmineHttpError";
+  }
+}
+
+export class RedmineHttpClient {
+  private readonly baseUrl: URL;
+  private readonly timeoutMs: number;
+  private readonly maxAttempts: number;
+  private readonly transport: Transport;
+  private readonly sleep: NonNullable<RedmineHttpClientOptions["sleep"]>;
+
+  constructor(
+    baseUrl: string,
+    private readonly apiKey: string,
+    private readonly options: RedmineHttpClientOptions = {},
+  ) {
+    if (!apiKey) throw new Error("Redmine API key is required");
+    this.timeoutMs = options.timeoutMs ?? 10_000;
+    this.maxAttempts = options.maxAttempts ?? 3;
+    if (this.timeoutMs <= 0) throw new Error("Redmine timeout must be positive");
+    if (!Number.isInteger(this.maxAttempts) || this.maxAttempts < 1) {
+      throw new Error("Redmine max attempts must be a positive integer");
+    }
+
+    this.baseUrl = new URL(baseUrl);
+    this.baseUrl.hash = "";
+    this.baseUrl.search = "";
+    if (!this.baseUrl.pathname.endsWith("/")) this.baseUrl.pathname += "/";
+    this.transport = options.transport ?? defaultTransport;
+    this.sleep = options.sleep ?? defaultSleep;
+  }
+
+  get<T>(path: string): Promise<T> {
+    return this.send<T>("GET", path);
+  }
+
+  post<T>(path: string, body: unknown): Promise<T> {
+    return this.send<T>("POST", path, body);
+  }
+
+  put<T>(path: string, body: unknown): Promise<T> {
+    return this.send<T>("PUT", path, body);
+  }
+
+  delete<T>(path: string): Promise<T> {
+    return this.send<T>("DELETE", path);
+  }
+
+  private async send<T>(method: Dispatcher.HttpMethod, path: string, value?: unknown): Promise<T> {
+    const target = new URL(path.replace(/^\/+/, ""), this.baseUrl);
+    if (target.origin !== this.baseUrl.origin) throw unsafe("request path changed origin");
+
+    const body = value === undefined ? undefined : JSON.stringify(value);
+    const headers: Record<string, string> = {
+      accept: "application/json",
+      "X-Redmine-API-Key": this.apiKey,
+    };
+    if (body !== undefined) headers["content-type"] = "application/json";
+    const attempts = method === "POST" ? 1 : this.maxAttempts;
+
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+      timeout.unref?.();
+
+      let statusCode: number;
+      let text: string;
+      let dispatcher: Agent | undefined;
+      try {
+        const endpoint = await withAbort(
+          resolveSafeEndpoint(target, {
+            allowHttp: this.options.allowHttp,
+            resolve: this.options.resolve,
+          }),
+          controller.signal,
+        );
+        dispatcher = new Agent({
+          connect: { lookup: createPinnedLookup(endpoint) },
+          maxRedirections: 0,
+        });
+        const response = await this.transport(endpoint.url, {
+          method,
+          headers,
+          body,
+          signal: controller.signal,
+          dispatcher,
+          maxRedirections: 0,
+          headersTimeout: this.timeoutMs,
+          bodyTimeout: this.timeoutMs,
+        });
+        statusCode = response.statusCode;
+        text = await response.body.text();
+      } finally {
+        clearTimeout(timeout);
+        await dispatcher?.destroy();
+      }
+
+      if (statusCode >= 200 && statusCode < 300) {
+        return (text ? JSON.parse(text) : undefined) as T;
+      }
+      if ((statusCode === 429 || (statusCode >= 500 && statusCode <= 599)) && attempt + 1 < attempts) {
+        await this.sleep(100 * 2 ** attempt);
+        continue;
+      }
+      throw new RedmineHttpError(statusCode);
+    }
+
+    throw new Error("Redmine request attempts exhausted");
+  }
 }

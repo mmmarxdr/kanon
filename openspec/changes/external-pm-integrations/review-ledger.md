@@ -508,3 +508,15 @@
 
 - The final guard rejects URL credentials, non-HTTPS without opt-in, IPv4/IPv6 loopback/private/link-local/unspecified/reserved/metadata-capable targets, unsafe mixed DNS answers, rebinding, and hostname substitution after pinning.
 - API build/type gates, direct source/test TypeScript, formatting, and diff checks passed. Actual requests, disabled redirects, retries, authentication, and dispatcher wiring remain A2.2 scope.
+
+## Direct bounded resilience review — A2.2
+
+- **Result:** `PASS AFTER ONE FIX`; no usable subagent result and no second review loop.
+
+| id | lens | location | severity | status | evidence |
+| --- | --- | --- | --- | --- | --- |
+| R4-001 | resilience | `packages/api/src/modules/integrations/providers/redmine/http-client.ts` request timeout boundary | CRITICAL | verified | The initial timeout started after DNS resolution, allowing a hung resolver to block indefinitely. The timer now starts before resolution; a fake-clock hanging-DNS test proves timeout rejection and zero credential-bearing transport calls. Final A2.2 **7/7**, inherited A2.1 **20/20**. |
+
+- The review confirms per-attempt DNS validation and pinning, fresh dispatcher cleanup, disabled redirects, bounded idempotent retries, no blind POST retry, redacted status errors, and full DNS/connect/body timeout coverage.
+- A delegated resilience review was cancelled after an excessive wait without returning findings. No subagent remained active; direct review replaced it.
+- API build/type gates, direct source/test TypeScript, formatting, dependency checks, and diff checks passed. Provider behavior remains A2.3 scope.

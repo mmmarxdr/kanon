@@ -490,3 +490,13 @@ Terminal A1.8 state: **BLOCKED / ESCALATED** after the failed final scoped pre-c
 - API build, configured type gate, direct source/test TypeScript, Prettier, and `git diff --check` passed after generating the fresh worktree's Prisma client and building `@kanon/shared`.
 - One bounded risk review found `R1-001` CRITICAL for omitted legacy IPv6 site-local addresses; `fec0::/10` is now blocked and covered. No second review loop was run.
 - No dependency, request/retry/auth/redirect behavior, persistence, provider adapter, route, worker, or UI was added; A2.2 owns the actual HTTP client.
+
+## A2.2 — Redmine HTTP client
+
+- **State:** Apply and one direct bounded resilience review complete locally; not published.
+- Added `undici ^6` and a JSON `RedmineHttpClient` with API-key authentication, GET/POST/PUT/DELETE methods, a 10-second default per-attempt timeout covering DNS/connect/body, disabled redirects, and status-only redacted errors.
+- Every attempt re-resolves through A2.1 and creates a fresh Agent pinned to the vetted address. HTTP 429 and 500–599 responses retry idempotent methods with bounded exponential delays; POST creates never retry blindly.
+- RED failed **0/6** because the client did not exist; GREEN passed **6/6**. Direct review found that DNS resolution preceded the timeout; a new hanging-DNS case now proves credentials are never sent, and final A2.2 passed **7/7** with A2.1 **20/20**.
+- API build, configured type gate, direct source/test TypeScript, Prettier, dependency formatting, and `git diff --check` passed.
+- The delegated review produced no findings because it was cancelled after an excessive wait. It was not relaunched; the scoped review and fix were completed directly.
+- Provider mapping, discovery, role-ceiling behavior, persistence, routes, workers, and UI remain out of scope; A2.3 owns the adapter.
