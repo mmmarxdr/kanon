@@ -71,6 +71,9 @@ vi.mock("../../config/prisma.js", () => ({
       create: vi.fn(),
       createMany: vi.fn(),
     },
+    integrationProjectBinding: {
+      findFirst: vi.fn(),
+    },
     // KAN-157: reconciliation gate reads workLog + timeEntry before →done.
     workLog: {
       findMany: vi.fn(),
@@ -638,7 +641,7 @@ describe("batchTransitionByKeys()", () => {
       "member-1",
     );
 
-    expect(res).toMatchObject({ count: 0, state: "done" });
+    expect(res).toEqual({ count: 0, keys: [], state: "done" });
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });

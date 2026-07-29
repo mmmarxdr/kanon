@@ -3,8 +3,23 @@ import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import { isDoneTransition } from "../../shared/activity-log.js";
+import { captureCycleMutationTx } from "../integrations/cycle-tx.js";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+type CycleDatabase = Pick<Prisma.TransactionClient, "cycle">;
+
+async function mutateCycleWithCapture(
+  actorId: string | undefined,
+  operation: "create" | "close",
+  mutate: (database: CycleDatabase) => Promise<Prisma.CycleGetPayload<{}>>,
+) {
+  return prisma.$transaction(async (transaction) => {
+    const cycle = await mutate(transaction);
+    await captureCycleMutationTx(transaction, cycle, actorId, operation);
+    return cycle;
+  });
+}
 
 /**
  * 1-based day index inside a cycle (clamped to [1, totalDays]).
@@ -469,29 +484,30 @@ export async function createCycle(
   const attachKeys = input.attachIssueKeys ?? [];
   const shouldAttach = attachKeys.length > 0;
 
-  // ── Path A: no attach work — keep the legacy non-tx path so call sites
-  // that don't need atomicity don't pay the tx overhead.
+  // ── Path A: no attach work.
   if (!shouldAttach) {
-    if (input.state === "active") {
-      // KAN-168: demote a prior active cycle to `upcoming`, NOT `done`. A direct
-      // →done here would strand it with closedAt=null/velocity=null and skip the
-      // close disposition. Returning it to upcoming keeps `done` reserved for the
-      // explicit close_cycle flow (which always sets closedAt).
-      await prisma.cycle.updateMany({
-        where: { projectId: project.id, state: "active" },
-        data: { state: "upcoming" },
-      });
-    }
-    return prisma.cycle.create({
-      data: {
-        name: input.name,
-        goal: input.goal,
-        state: input.state ?? "upcoming",
-        startDate: input.startDate,
-        endDate: input.endDate,
-        projectId: project.id,
+    return mutateCycleWithCapture(
+      authorId,
+      "create",
+      async (database) => {
+        if (input.state === "active") {
+          await database.cycle.updateMany({
+            where: { projectId: project.id, state: "active" },
+            data: { state: "upcoming" },
+          });
+        }
+        return database.cycle.create({
+          data: {
+            name: input.name,
+            goal: input.goal,
+            state: input.state ?? "upcoming",
+            startDate: input.startDate,
+            endDate: input.endDate,
+            projectId: project.id,
+          },
+        });
       },
-    });
+    );
   }
 
   // ── Path B: attach issues atomically.
@@ -560,6 +576,8 @@ export async function createCycle(
     if (input.state === "active") {
       await snapshotBaselines(tx, created.id);
     }
+
+    await captureCycleMutationTx(tx, created, authorId, "create");
 
     return created;
   });
@@ -841,6 +859,18 @@ export async function closeCycle(
     },
   });
   if (!cycle) throw new AppError(404, "CYCLE_NOT_FOUND", "Cycle not found");
+  if (cycle.state === "done") {
+    const { issues, project, ...settled } = cycle;
+    void issues;
+    void project;
+    if (opts?.verbose) return settled;
+    return {
+      id: settled.id,
+      state: settled.state,
+      velocity: settled.velocity,
+      closedAt: settled.closedAt,
+    };
+  }
   const velocity = sumPoints(cycle.issues, (i) => i.state === "done");
 
   // Compute scope stats for email report
@@ -848,10 +878,15 @@ export async function closeCycle(
   const planned = cycle.issues.length;
 
   // KAN-35: set closedAt as its own dedicated column, distinct from updatedAt.
-  const updated = await prisma.cycle.update({
-    where: { id },
-    data: { state: "done", velocity, closedAt: new Date() },
-  });
+  const updated = await mutateCycleWithCapture(
+    opts?.actorMemberId,
+    "close",
+    (database) =>
+      database.cycle.update({
+        where: { id },
+        data: { state: "done", velocity, closedAt: new Date() },
+      }),
+  );
 
   // Emit cycle.closed event — fire-and-forget, handler isolation via NotificationService (D3)
   try {

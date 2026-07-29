@@ -51,6 +51,9 @@ vi.mock("../../config/prisma.js", () => ({
     adminAuditLog: {
       create: vi.fn(),
     },
+    integrationProjectBinding: {
+      findFirst: vi.fn(),
+    },
     $transaction: vi.fn(),
   },
 }));
@@ -66,9 +69,10 @@ describe("createCycle() — Batch B4 (atomic attachIssueKeys)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prisma.project.findUnique).mockResolvedValue(PROJECT as any);
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => cb(prisma));
   });
 
-  it("B4.1 — without attachIssueKeys, just creates cycle (no tx)", async () => {
+  it("B4.1 — without attachIssueKeys, creates cycle atomically", async () => {
     vi.mocked(prisma.cycle.create).mockResolvedValue({
       id: "cycle-1",
       name: "Sprint",
@@ -83,13 +87,12 @@ describe("createCycle() — Batch B4 (atomic attachIssueKeys)", () => {
     } as any);
 
     expect(prisma.cycle.create).toHaveBeenCalledOnce();
-    // No attach work required → no transaction needed
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledOnce();
     expect(prisma.issue.updateMany).not.toHaveBeenCalled();
     expect(prisma.cycleScopeEvent.createMany).not.toHaveBeenCalled();
   });
 
-  it("B4.2 — with empty attachIssueKeys, no tx, no attach work", async () => {
+  it("B4.2 — with empty attachIssueKeys, no attach work", async () => {
     vi.mocked(prisma.cycle.create).mockResolvedValue({
       id: "cycle-1",
       name: "Sprint",
@@ -104,7 +107,7 @@ describe("createCycle() — Batch B4 (atomic attachIssueKeys)", () => {
       attachIssueKeys: [],
     } as any);
 
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledOnce();
     expect(prisma.cycle.create).toHaveBeenCalledOnce();
   });
 
@@ -286,10 +289,7 @@ describe("createCycle() — Batch B4 (atomic attachIssueKeys)", () => {
     expect(demoteCall.data.state).toBe("upcoming");
   });
 
-  it("B4.8 — state=active WITHOUT attachIssueKeys demotes other active cycle on prisma directly (KAN-168)", async () => {
-    // Path A: no attachIssueKeys → no transaction → demotion goes directly through
-    // prisma (not tx). If production code wrote state: "done" here the last
-    // assertion would fail, catching a regression of the KAN-168 fix.
+  it("B4.8 — state=active WITHOUT attachIssueKeys demotes other active cycle (KAN-168)", async () => {
     vi.mocked(prisma.cycle.create).mockResolvedValue({
       id: "cycle-new",
       name: "Sprint",
@@ -306,14 +306,12 @@ describe("createCycle() — Batch B4 (atomic attachIssueKeys)", () => {
         state: "active",
         startDate: new Date("2026-04-20"),
         endDate: new Date("2026-05-04"),
-        // No attachIssueKeys → Path A branch runs (no tx)
+        // No attachIssueKeys → Path A branch runs
       } as any,
       "member-1",
     );
 
-    // Path A: no transaction opened
-    expect(prisma.$transaction).not.toHaveBeenCalled();
-    // Demotion goes directly through prisma with state: "upcoming" (KAN-168)
+    expect(prisma.$transaction).toHaveBeenCalledOnce();
     expect(prisma.cycle.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: { state: "upcoming" },
@@ -438,6 +436,7 @@ describe("getCycle() — Batch B6 (scopeEvents pagination)", () => {
 describe("closeCycle() — Batch B9 (minimal ack default)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => cb(prisma));
   });
 
   it("B9.1 — default returns minimal ack { id, state, velocity, closedAt } where closedAt is its own distinct column (KAN-35)", async () => {

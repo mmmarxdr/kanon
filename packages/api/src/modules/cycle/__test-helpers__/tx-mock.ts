@@ -57,6 +57,9 @@ export function makeTxMock(overrides?: {
     adminAuditLog: {
       create: vi.fn().mockResolvedValue(auditLogCreateResult),
     },
+    integrationProjectBinding: {
+      findFirst: vi.fn(),
+    },
   };
   return tx;
 }

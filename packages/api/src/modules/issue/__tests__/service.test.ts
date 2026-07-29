@@ -28,6 +28,9 @@ vi.mock("../../../config/prisma.js", () => ({
     activityLog: {
       create: vi.fn(),
     },
+    integrationProjectBinding: {
+      findFirst: vi.fn(),
+    },
     $transaction: vi.fn(),
   },
 }));

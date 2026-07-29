@@ -47,6 +47,63 @@ enum CycleState {
   done
 }
 
+enum IntegrationLifecycle {
+  draft
+  active
+  pausing
+  paused
+  disabled
+}
+
+enum CredentialAuthStatus {
+  unknown
+  valid
+  invalid
+  revoked
+}
+
+enum SyncDirection {
+  outbound
+  inbound
+}
+
+enum SyncOperation {
+  create
+  update
+  delete
+  close
+}
+
+enum SyncWorkState {
+  queued
+  leased
+  retry
+  superseded
+  ambiguous
+  dead
+  done
+  skipped
+}
+
+enum ActorKind {
+  user
+  system
+  ai
+  remote
+}
+
+enum InboundApplicationState {
+  claimed
+  applied
+  conflict
+  skipped
+}
+
+enum ConflictState {
+  open
+  resolved
+}
+
 enum CycleScopeEventKind {
   add
   remove
@@ -244,6 +301,7 @@ model Project {
   milestones     Milestone[]
   // PPM working-day calendar (KAN-147, ADR-0007)
   scheduleConfig ProjectScheduleConfig?
+  integrationProjectBindings IntegrationProjectBinding[]
 
   @@unique([workspaceId, key])
   @@index([workspaceId])
@@ -583,7 +641,8 @@ model Member {
   // PPM incidents (KAN-103 PR1)
   interruptions               Interruption[]
   // External PM integrations (KAN-179 / ADR-0012)
-  integrationCredentials      MemberIntegrationCredential[]
+  integrationCredentials       MemberIntegrationCredential[]
+  integrationExternalIdentities IntegrationExternalIdentity[]
 
   @@unique([userId, workspaceId])
   @@unique([workspaceId, username])
@@ -1093,6 +1152,9 @@ model IntegrationConnection {
   id          String   @id @default(uuid()) @db.Uuid
   provider    String // "redmine" | "jira" | "ms-project"
   baseUrl     String   @map("base_url")
+  lifecycle              IntegrationLifecycle @default(draft)
+  lifecycleEpoch         Int                  @default(0) @map("lifecycle_epoch")
+  serviceFallbackEnabled Boolean              @default(false) @map("service_fallback_enabled")
   // Optional pointer to the admin credential used for discovery + as the
   // outbound write fallback. Plain column (no FK): the target row may be removed
   // independently and a dangling pointer is handled as "no service credential".
@@ -1108,10 +1170,63 @@ model IntegrationConnection {
 
   credentials MemberIntegrationCredential[]
   externalRefs ExternalRef[]
+  bindings IntegrationProjectBinding[]
 
   @@unique([workspaceId, provider])
   @@index([workspaceId])
   @@map("integration_connections")
+}
+
+model IntegrationProjectBinding {
+  id              String               @id @default(uuid()) @db.Uuid
+  remoteProjectId String               @map("remote_project_id")
+  readMap         Json                 @map("read_map")
+  writeMap        Json                 @map("write_map")
+  lifecycle       IntegrationLifecycle @default(draft)
+  lifecycleEpoch  Int                  @default(0) @map("lifecycle_epoch")
+  cursorUpdatedAt DateTime?            @map("cursor_updated_at")
+  cursorRemoteId  String?              @map("cursor_remote_id")
+  pageToken       String?              @map("page_token")
+  pollLeaseToken  String?              @map("poll_lease_token")
+  pollLeaseUntil  DateTime?            @map("poll_lease_until")
+  pollFence       Int                  @default(0) @map("poll_fence")
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
+
+  connectionId String                @map("connection_id") @db.Uuid
+  connection   IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  projectId    String                @map("project_id") @db.Uuid
+  project      Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  externalRefs      ExternalRef[]
+  externalIdentities IntegrationExternalIdentity[]
+  works             IntegrationSyncWork[]
+  applications      IntegrationInboundApplication[]
+  conflicts         IntegrationConflict[]
+
+  @@unique([connectionId, projectId])
+  @@unique([connectionId, remoteProjectId])
+  @@index([lifecycle, pollLeaseUntil])
+  @@index([projectId])
+  @@map("integration_project_bindings")
+}
+
+// Provider identity mapping is scoped to a project binding. Credentials remain
+// authentication material only; this model maps a Kanon member to a remote user.
+model IntegrationExternalIdentity {
+  id            String   @id @default(uuid()) @db.Uuid
+  remoteUserId  String   @map("remote_user_id")
+  remoteLogin   String?  @map("remote_login")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  bindingId String                    @map("binding_id") @db.Uuid
+  binding   IntegrationProjectBinding @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+  memberId  String                    @map("member_id") @db.Uuid
+  member    Member                    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([bindingId, memberId])
+  @@unique([bindingId, remoteUserId])
+  @@map("integration_external_identities")
 }
 
 // Per-user credential: each member supplies their own provider API key, stored
@@ -1122,6 +1237,9 @@ model MemberIntegrationCredential {
   encryptedKey   String   @map("encrypted_key")
   externalUserId String?  @map("external_user_id")
   externalLogin  String?  @map("external_login")
+  lastValidatedAt DateTime?            @map("last_validated_at")
+  lastAuthStatus  CredentialAuthStatus @default(unknown) @map("last_auth_status")
+  revokedAt       DateTime?            @map("revoked_at")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
@@ -1129,6 +1247,7 @@ model MemberIntegrationCredential {
   member       Member                @relation(fields: [memberId], references: [id], onDelete: Cascade)
   connectionId String                @map("connection_id") @db.Uuid
   connection   IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  works        IntegrationSyncWork[]
 
   @@unique([memberId, connectionId])
   @@index([connectionId])
@@ -1146,6 +1265,14 @@ model ExternalRef {
   externalId  String   @map("external_id")
   externalUrl String?  @map("external_url")
   metadata    Json?
+  bindingId   String?  @map("binding_id") @db.Uuid
+  binding     IntegrationProjectBinding? @relation(fields: [bindingId], references: [id], onDelete: SetNull)
+  works       IntegrationSyncWork[]
+  applications IntegrationInboundApplication[]
+  conflicts   IntegrationConflict[]
+  remoteUpdatedAt DateTime? @map("remote_updated_at")
+  localVersion BigInt @default(0) @map("local_version")
+  lastCorrelationId String? @map("last_correlation_id")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
@@ -1158,5 +1285,96 @@ model ExternalRef {
   // on externalId alone.
   @@unique([connectionId, entityType, externalId])
   @@index([entityType, entityId])
+  @@index([bindingId])
   @@map("external_refs")
+}
+
+model IntegrationSyncWork {
+  id              String        @id @default(uuid()) @db.Uuid
+  entityType      String        @map("entity_type")
+  entityId        String        @map("entity_id") @db.Uuid
+  direction       SyncDirection
+  operation       SyncOperation
+  sequence        BigInt        @default(autoincrement()) @unique
+  dedupeKey       String        @unique @map("dedupe_key")
+  laneKey         String        @map("lane_key")
+  actorKey        String        @map("actor_key")
+  actorKind       ActorKind     @map("actor_kind")
+  payload         Json
+  correlationId   String        @map("correlation_id")
+  state           SyncWorkState @default(queued)
+  attempts        Int           @default(0)
+  availableAt     DateTime      @default(now()) @map("available_at")
+  leaseToken      String?       @map("lease_token")
+  leaseUntil      DateTime?     @map("lease_until")
+  fence           Int           @default(0)
+  epoch           Int
+  authCredentialId String?      @map("auth_credential_id") @db.Uuid
+  refId           String?       @map("ref_id") @db.Uuid
+  marker          String?
+  skippedReason   String?       @map("skipped_reason")
+  requestedStatus String?       @map("requested_status")
+  actualStatus    String?       @map("actual_status")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  binding        IntegrationProjectBinding    @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+  bindingId      String                       @map("binding_id") @db.Uuid
+  authCredential MemberIntegrationCredential? @relation(fields: [authCredentialId], references: [id], onDelete: SetNull)
+  ref            ExternalRef?                @relation(fields: [refId], references: [id], onDelete: SetNull)
+  applications   IntegrationInboundApplication[]
+  conflicts      IntegrationConflict[]
+
+  @@index([bindingId, laneKey, sequence])
+  @@index([state, availableAt])
+  @@map("integration_sync_work")
+}
+
+model IntegrationInboundApplication {
+  id               String                  @id @default(uuid()) @db.Uuid
+  remoteEntityType String                  @map("remote_entity_type")
+  remoteId         String                  @map("remote_id")
+  remoteUpdatedAt  DateTime                @map("remote_updated_at")
+  applicationKey   String                  @unique @map("application_key")
+  correlationId    String                  @map("correlation_id")
+  state            InboundApplicationState @default(claimed)
+  leaseToken       String?                 @map("lease_token")
+  leaseUntil       DateTime?               @map("lease_until")
+  fence            Int                     @default(0)
+  refId            String?                 @map("ref_id") @db.Uuid
+  workId           String?                 @map("work_id") @db.Uuid
+  outcome          Json?
+  createdAt        DateTime                @default(now()) @map("created_at")
+  updatedAt        DateTime                @updatedAt @map("updated_at")
+
+  binding          IntegrationProjectBinding @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+  bindingId        String                    @map("binding_id") @db.Uuid
+  ref              ExternalRef?              @relation(fields: [refId], references: [id], onDelete: SetNull)
+  work             IntegrationSyncWork?      @relation(fields: [workId], references: [id], onDelete: SetNull)
+  conflicts        IntegrationConflict[]
+
+  @@unique([bindingId, remoteEntityType, remoteId, remoteUpdatedAt])
+  @@map("integration_inbound_applications")
+}
+
+model IntegrationConflict {
+  id             String          @id @default(uuid()) @db.Uuid
+  kind           String
+  state          ConflictState   @default(open)
+  localEvidence  Json            @map("local_evidence")
+  remoteEvidence Json            @map("remote_evidence")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+
+  bindingId     String                       @map("binding_id") @db.Uuid
+  binding       IntegrationProjectBinding    @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+  workId        String?                      @map("work_id") @db.Uuid
+  work          IntegrationSyncWork?         @relation(fields: [workId], references: [id], onDelete: SetNull)
+  refId         String?                      @map("ref_id") @db.Uuid
+  ref           ExternalRef?                 @relation(fields: [refId], references: [id], onDelete: SetNull)
+  applicationId String?                      @map("application_id") @db.Uuid
+  application   IntegrationInboundApplication? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+
+  @@index([bindingId, state])
+  @@map("integration_conflicts")
 }
