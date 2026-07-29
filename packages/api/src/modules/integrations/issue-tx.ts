@@ -11,26 +11,32 @@ export function withIssueMutationTx(
   operation: (transaction: Prisma.TransactionClient) => Promise<IssueMutationDraft>,
   database: Pick<PrismaClient, "$transaction"> = prisma,
 ): Promise<IssueMutationRow> {
-  return database.$transaction(async (transaction) => {
-    const detached = canonicalizeIssueMutationDraft(await operation(transaction));
-    const { capture, payload, result } = detached;
+  return database.$transaction(async (transaction) =>
+    captureIssueMutationTx(transaction, await operation(transaction)),
+  );
+}
 
-    await captureIntegrationWorkTx(transaction, {
-      bindingId: capture.bindingId,
-      entityType: "issue",
-      entityId: result.id,
-      direction: capture.direction,
-      operation: capture.operation,
-      actorKey: capture.actorKey,
-      actorKind: capture.actorKind,
-      payload: payload as unknown as Prisma.InputJsonValue,
-      correlationId: capture.correlationId,
-      refId: capture.refId,
-      authCredentialId: capture.authCredentialId,
-      availableAt: capture.availableAt,
-      marker: capture.marker,
-    });
+export async function captureIssueMutationTx(
+  transaction: Prisma.TransactionClient,
+  mutation: IssueMutationDraft,
+): Promise<IssueMutationRow> {
+  const { capture, payload, result } = canonicalizeIssueMutationDraft(mutation);
 
-    return result;
+  await captureIntegrationWorkTx(transaction, {
+    bindingId: capture.bindingId,
+    entityType: "issue",
+    entityId: result.id,
+    direction: capture.direction,
+    operation: capture.operation,
+    actorKey: capture.actorKey,
+    actorKind: capture.actorKind,
+    payload: payload as unknown as Prisma.InputJsonValue,
+    correlationId: capture.correlationId,
+    refId: capture.refId,
+    authCredentialId: capture.authCredentialId,
+    availableAt: capture.availableAt,
+    marker: capture.marker,
   });
+
+  return result;
 }

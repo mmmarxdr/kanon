@@ -35,17 +35,21 @@ import type {
   IssueCaptureIntent,
   IssueMutationRow,
 } from "../integrations/issue-mutation-contract.js";
-import { withIssueMutationTx } from "../integrations/issue-tx.js";
+import {
+  captureIssueMutationTx,
+  withIssueMutationTx,
+} from "../integrations/issue-tx.js";
 
 type IssueDatabase = Pick<Prisma.TransactionClient, "issue">;
+type IssueCaptureContext = Omit<
+  IssueCaptureIntent,
+  "operation" | "correlationId" | "fields"
+>;
 
-async function mutateIssueWithCapture(
+async function issueCaptureContext(
   projectId: string,
   memberId: string,
-  operation: IssueCaptureIntent["operation"],
-  fields: (result: IssueMutationRow) => IssueCaptureFields,
-  mutate: (database: IssueDatabase) => Promise<IssueMutationRow>,
-): Promise<IssueMutationRow> {
+): Promise<IssueCaptureContext | null> {
   // ponytail: PM-182 supports one workspace PM connection; fan out when multi-provider ships.
   const binding = await prisma.integrationProjectBinding.findFirst({
     where: { projectId },
@@ -63,7 +67,7 @@ async function mutateIssueWithCapture(
       },
     },
   });
-  if (!binding) return mutate(prisma);
+  if (!binding) return null;
 
   const actor = await prisma.member.findUnique({
     where: { id: memberId },
@@ -71,20 +75,97 @@ async function mutateIssueWithCapture(
   });
   const credentialId = actor?.isAgent ? undefined : binding.connection.credentials[0]?.id;
 
+  return {
+    bindingId: binding.id,
+    direction: "outbound",
+    actorKey: `member:${memberId}`,
+    actorKind: actor?.isAgent ? "ai" : "user",
+    ...(credentialId ? { authCredentialId: credentialId } : {}),
+  };
+}
+
+async function mutateIssueWithCapture(
+  projectId: string,
+  memberId: string,
+  operation: IssueCaptureIntent["operation"],
+  fields: (result: IssueMutationRow) => IssueCaptureFields,
+  mutate: (database: IssueDatabase) => Promise<IssueMutationRow>,
+): Promise<IssueMutationRow> {
+  const capture = await issueCaptureContext(projectId, memberId);
+  if (!capture) return mutate(prisma);
+
   return withIssueMutationTx(async (transaction) => {
     const result = await mutate(transaction);
     return {
       result,
       capture: {
-        bindingId: binding.id,
-        direction: "outbound",
+        ...capture,
         operation,
-        actorKey: `member:${memberId}`,
-        actorKind: actor?.isAgent ? "ai" : "user",
         correlationId: randomUUID(),
         fields: fields(result),
-        ...(credentialId ? { authCredentialId: credentialId } : {}),
       },
+    };
+  });
+}
+
+async function transitionIssuesWithCapture(
+  projectId: string,
+  memberId: string,
+  issues: readonly { id: string; state: IssueState }[],
+  targetState: IssueState,
+  activityDetails: Readonly<Record<string, string>>,
+): Promise<{ count: number; issueIds: string[] }> {
+  const capture = await issueCaptureContext(projectId, memberId);
+
+  return prisma.$transaction(async (transaction) => {
+    const transitioned: Array<{ id: string; state: IssueState }> = [];
+    for (const issue of issues) {
+      // The expected-state predicate turns concurrent transitions into no-ops.
+      const update = await transaction.issue.updateMany({
+        where: { id: issue.id, state: issue.state },
+        data: {
+          state: targetState,
+          completedAt: targetState === "done" ? new Date() : null,
+        },
+      });
+      if (update.count === 0) continue;
+      transitioned.push(issue);
+
+      if (capture) {
+        const result = await transaction.issue.findUniqueOrThrow({
+          where: { id: issue.id },
+        });
+        await captureIssueMutationTx(transaction, {
+          result,
+          capture: {
+            ...capture,
+            operation: "update",
+            correlationId: randomUUID(),
+            fields: { state: result.state },
+          },
+        });
+      }
+    }
+
+    if (transitioned.length > 0) {
+      await transaction.activityLog.createMany({
+        data: transitioned.map((issue) => ({
+          issueId: issue.id,
+          memberId,
+          action: "state_changed" as const,
+          details: {
+            from: issue.state,
+            to: targetState,
+            batchTransition: true,
+            ...activityDetails,
+          },
+        })),
+      });
+    }
+
+    return {
+      count: transitioned.length,
+      issueIds: transitioned.map(({ id }) => id),
     };
   });
 }
@@ -938,41 +1019,21 @@ export async function transitionGroup(
     }
   }
 
-  // Execute batch update + activity logs in a single transaction
-  const result = await prisma.$transaction(async (tx) => {
-    // Batch update all issues in one query.
-    // KAN-35 completion-timestamp contract: set completedAt when entering done, clear on any other transition.
-    // Single updateMany is correct here — transitionGroup enforces one targetState for the whole batch.
-    const updateResult = await tx.issue.updateMany({
-      where: {
-        id: { in: issuesToTransition.map((i) => i.id) },
-      },
-      data: {
-        state: targetState,
-        completedAt: targetState === "done" ? new Date() : null,
-      },
-    });
-
-    // Create activity logs for each transitioned issue
-    await tx.activityLog.createMany({
-      data: issuesToTransition.map((issue) => ({
-        issueId: issue.id,
-        memberId,
-        action: "state_changed" as const,
-        details: {
-          from: issue.state,
-          to: targetState,
-          batchTransition: true,
-          groupKey,
-        },
-      })),
-    });
-
-    return updateResult;
-  });
+  const result = await transitionIssuesWithCapture(
+    project.id,
+    memberId,
+    issuesToTransition,
+    targetState,
+    { groupKey },
+  );
+  if (result.count === 0) return { count: 0, groupKey, state: targetState };
+  const transitionedIds = new Set(result.issueIds);
+  const transitionedIssues = issuesToTransition.filter(({ id }) =>
+    transitionedIds.has(id),
+  );
 
   // Auto-advance parents for any issues that had parent relationships
-  const issuesWithParents = issuesToTransition.filter((i) => i.parentId);
+  const issuesWithParents = transitionedIssues.filter((i) => i.parentId);
   const uniqueParentIds = [...new Set(issuesWithParents.map((i) => i.parentId!))];
   for (const _parentId of uniqueParentIds) {
     // Pass a representative issue to trigger parent check
@@ -983,14 +1044,14 @@ export async function transitionGroup(
   // Sync roadmap item status — deduplicate roadmapItemIds across the batch
   const uniqueRoadmapItemIds = [
     ...new Set(
-      issuesToTransition
+      transitionedIssues
         .map((i) => i.roadmapItemId)
         .filter((id): id is string => id !== null),
     ),
   ];
   for (const roadmapItemId of uniqueRoadmapItemIds) {
     // Pick a representative issue to pass to syncRoadmapItemStatus
-    const rep = issuesToTransition.find((i) => i.roadmapItemId === roadmapItemId)!;
+    const rep = transitionedIssues.find((i) => i.roadmapItemId === roadmapItemId)!;
     await syncRoadmapItemStatus(prisma, rep.id);
   }
 
@@ -1009,7 +1070,7 @@ export async function transitionGroup(
     console.error({ groupKey, err }, "transitionGroup: actor lookup failed");
   }
 
-  for (const issue of issuesToTransition) {
+  for (const issue of transitionedIssues) {
     try {
       const groupPayload: IssueTransitionedPayload = {
         issueKey: issue.key,
@@ -1142,37 +1203,23 @@ export async function batchTransitionByKeys(
     }
   }
 
-  // All-or-nothing transaction: bulk update + activity logs.
-  const result = await prisma.$transaction(async (tx) => {
-    // KAN-35 completion-timestamp contract: set completedAt when entering done, clear on any other transition.
-    // Single updateMany is correct here — batchTransitionByKeys enforces one targetState for the whole batch.
-    const updateResult = await tx.issue.updateMany({
-      where: { id: { in: issuesToTransition.map((i) => i.id) } },
-      data: {
-        state: targetState,
-        completedAt: targetState === "done" ? new Date() : null,
-      },
-    });
-
-    await tx.activityLog.createMany({
-      data: issuesToTransition.map((issue) => ({
-        issueId: issue.id,
-        memberId,
-        action: "state_changed" as const,
-        details: {
-          from: issue.state,
-          to: targetState,
-          batchTransition: true,
-          mode: "keys",
-        },
-      })),
-    });
-
-    return updateResult;
-  });
+  const result = await transitionIssuesWithCapture(
+    project.id,
+    memberId,
+    issuesToTransition,
+    targetState,
+    { mode: "keys" },
+  );
+  if (result.count === 0) {
+    return { count: 0, keys: [], state: targetState };
+  }
+  const transitionedIds = new Set(result.issueIds);
+  const transitionedIssues = issuesToTransition.filter(({ id }) =>
+    transitionedIds.has(id),
+  );
 
   // Auto-advance parents + sync roadmap items (mirrors transitionGroup).
-  const issuesWithParents = issuesToTransition.filter((i) => i.parentId);
+  const issuesWithParents = transitionedIssues.filter((i) => i.parentId);
   const uniqueParentIds = [
     ...new Set(issuesWithParents.map((i) => i.parentId!)),
   ];
@@ -1183,13 +1230,13 @@ export async function batchTransitionByKeys(
 
   const uniqueRoadmapItemIds = [
     ...new Set(
-      issuesToTransition
+      transitionedIssues
         .map((i) => i.roadmapItemId)
         .filter((id): id is string => id !== null),
     ),
   ];
   for (const roadmapItemId of uniqueRoadmapItemIds) {
-    const rep = issuesToTransition.find((i) => i.roadmapItemId === roadmapItemId)!;
+    const rep = transitionedIssues.find((i) => i.roadmapItemId === roadmapItemId)!;
     await syncRoadmapItemStatus(prisma, rep.id);
   }
 
@@ -1211,7 +1258,7 @@ export async function batchTransitionByKeys(
   // KAN-156 BUG-2/6: include actorMemberId/actorUserId so the transition-listener
   // can open/close sessions for batch transitions.
   try {
-    for (const issue of issuesToTransition) {
+    for (const issue of transitionedIssues) {
       const batchPayload: IssueTransitionedPayload & { _skipSubscribedActivity: boolean } = {
         issueKey: issue.key,
         issueId: issue.id,
@@ -1234,7 +1281,7 @@ export async function batchTransitionByKeys(
   } catch (err) {
     // Never let per-issue event emission break the mutation; swallowed failures are logged.
     console.error(
-      { issueIds: issuesToTransition.map((i) => i.id), err },
+      { issueIds: transitionedIssues.map((i) => i.id), err },
       "batchTransitionByKeys: per-issue event emission failed",
     );
   }
@@ -1251,21 +1298,21 @@ export async function batchTransitionByKeys(
       payload: {
         // Each entry carries both id (for DB lookup) and key (for notification payload),
         // so the handler never needs a second query to resolve issueKey per row (Fix / KAN-28).
-        issues: issuesToTransition.map((i) => ({ id: i.id, key: i.key })),
+        issues: transitionedIssues.map((i) => ({ id: i.id, key: i.key })),
         to: targetState,
       },
     });
   } catch (err) {
     // Never let batch event emission break the mutation; log so failures are observable.
     console.error(
-      { issueIds: issuesToTransition.map((i) => i.id), err },
+      { issueIds: transitionedIssues.map((i) => i.id), err },
       "batchTransitionByKeys: batch event emission failed",
     );
   }
 
   return {
     count: result.count,
-    keys: issuesToTransition.map((i) => i.key),
+    keys: transitionedIssues.map((i) => i.key),
     state: targetState,
   };
 }

@@ -481,3 +481,8 @@
 | R3-014 | reliability | `issue-writers.test.ts` nullable update coverage | WARNING | info | Title update is proven; explicit nullable-field clears remain unexpanded test coverage. |
 
 - Focused A1.9 **2/2**, issue service regressions **49/49**, inherited PM integration database suites **24/24**, API type/build, changed-file Prettier, and diff checks passed.
+
+## Bounded reliability review — A1.10
+
+- `R3-001` BLOCKER fixed: expected-state CAS now excludes concurrent no-ops from mutation, audit, capture, events, and returned keys.
+- Post-fix A1.10 **2/2**, unit **59/59**, inherited integration **28/28**, event **13/13**, API type/build, formatting, and diff checks passed; no second review loop.

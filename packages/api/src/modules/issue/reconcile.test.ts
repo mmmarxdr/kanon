@@ -26,6 +26,7 @@ vi.mock("../../config/prisma.js", () => {
   const project = { findUnique: vi.fn() };
   const activityLog = { create: vi.fn(), createMany: vi.fn() };
   const prisma: any = { issue, workLog, timeEntry, member, project, activityLog };
+  prisma.integrationProjectBinding = { findFirst: vi.fn() };
   prisma.$transaction = vi.fn((fn: (tx: any) => Promise<any>) => fn(prisma));
   return { prisma };
 });

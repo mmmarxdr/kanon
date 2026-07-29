@@ -431,7 +431,7 @@ A1.7 pre-commit and pre-push review gates passed; its authorized commit and push
 
 ## Cumulative Scope Boundary
 
-- A1.1 through A1.9 are complete locally in this cumulative artifact; failed A1.8 remains preserved historical evidence, while A1.10+ remain incomplete.
+- A1.1 through A1.10 are complete locally in this cumulative artifact; failed A1.8 remains preserved historical evidence, while A1.11+ remain incomplete.
 - A1.8a adds only the pure Issue-row/canonical-payload contract and its unit proof. It does not add transaction, issue-writer, provider/runtime/routes/UI behavior.
 
 ## Historical failed A1.8 next action
@@ -463,3 +463,7 @@ Terminal A1.8 state: **BLOCKED / ESCALATED** after the failed final scoped pre-c
 - RED failed **2/2** for absent work/rollback; GREEN focused PostgreSQL suite passed **2/2**. Existing issue service tests passed **49/49** and inherited A1.8b/A1.7/A1.6 suites passed **24/24**.
 - API type gate/build, changed-file Prettier, and `git diff --check` passed. Final pre-artifact implementation boundary was **274 changed lines** including the new test and three 3-line mock updates, below 400.
 - One bounded reliability review found no severe issue and two test-coverage warnings; no fix or second review cycle was warranted.
+
+## A1.10 — batch/group writer integration
+
+- **State:** Complete locally, not committed/pushed. Group and key-batch transitions atomically CAS each expected state, audit and capture every persisted Issue row; concurrent no-ops are excluded. RED/GREEN **2/2**; unit **59/59**, inherited integration **28/28**, event **13/13**, type/build/format/diff pass. One review BLOCKER for concurrent duplicate capture was fixed in one pass.
