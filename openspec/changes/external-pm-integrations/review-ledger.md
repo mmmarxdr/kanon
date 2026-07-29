@@ -491,3 +491,9 @@
 
 - `R3-001..003` BLOCKERs fixed: close(done) is a true no-op; all create/close paths transact before resolving binding; Path B, rollback, payload, attribution, `refId`, and binding-race cases are executable.
 - Post-fix A1.11 **2/2**, Cycle unit **42/42**, inherited integration **31/31**, API type/build, formatting, and diff checks passed; no second review loop.
+
+## Bounded reliability review — A1.12
+
+- `R3-001` BLOCKER fixed: executable `buildApp()` lifecycle coverage proves `onReady` starts scanning and `onClose` cancels the pending timer.
+- The scheduler also proves no overlapping scans, continued scheduling after scan or `onError` failure, `unref()`, and idempotent stop behavior.
+- Post-fix A1.12 **4/4**, outbox regression **6/6**, app cleanup lifecycle **4/4**, API build/type checks, formatting, and diff checks passed; no second review loop.

@@ -11,9 +11,9 @@
 | --- | --- |
 | Canonical remote branch | `origin/feat/external-pm-integrations` |
 | Published commit | `09d50fb9c0e42a0afae1b51f2af46f1296180390` |
-| OpenSpec progress | 14/31 complete locally; 17 pending |
+| OpenSpec progress | 15/31 complete locally; 16 pending |
 | Dispatcher recommendation | `apply` |
-| Next task | Publish A1.11, then A1.12 — register scheduler |
+| Next task | A2.1 — SSRF and DNS-rebinding protection |
 | Merged into `main` | No |
 | End-to-end Kanon → Redmine | Not operational yet |
 | Proposal success criteria | 0/8 proven end-to-end |
@@ -35,8 +35,9 @@ A1.8b:
 | A1.8a | Settled Issue mutation contract and canonical capture payload |
 | A1.8b | Owned issue mutation transaction and mandatory awaited outbox capture |
 
-A1.10 is published with green draft-PR CI; A1.11 is complete and verified
-locally in `feat/pm-182-cycle`, but is not yet committed or published.
+A1.10 is published with green draft-PR CI. A1.11 is committed locally as
+`fa6b176`; A1.12 is complete and verified locally in `feat/pm-182-auto`.
+Neither local slice is published.
 
 The complete SDD artifacts are also present:
 
@@ -58,7 +59,6 @@ contract foundations exist, but the following runtime pieces do not:
 
 - Redmine HTTP client and provider adapter
 - Connection and credential API/service
-- Batch/group and cycle writer integration
 - Event listener and enqueue wiring
 - Claim/lease worker
 - Retry and dead-letter processing
@@ -66,14 +66,14 @@ contract foundations exist, but the following runtime pieces do not:
 
 ## Remaining work for Kanon → Redmine
 
-The approved plan has 10 remaining tasks on the outbound critical path after local A1.11.
+The approved plan has 9 remaining tasks on the outbound critical path after local A1.12.
 
 ### Wire local mutation capture
 
 - [x] **A1.9** — wire issue create/update/transition writers (published)
 - [x] **A1.10** — wire batch/group operations (published; CI green)
-- [x] **A1.11** — wire cycle and delete operations (local; pending publish)
-- [ ] **A1.12** — extract/register the scheduler
+- [x] **A1.11** — wire cycle and delete operations (local commit; pending publish)
+- [x] **A1.12** — extract/register the scheduler (local; pending publish)
 
 ### Build the Redmine integration
 

@@ -49,10 +49,14 @@ import { createEmailProvider } from "./services/email/index.js";
 import type { EmailProvider } from "./services/email/types.js";
 import { registerForecastListener } from "./modules/forecast/index.js";
 import { registerTransitionListener } from "./modules/work-session/transition-listener.js";
+import { scanIntegrationWork } from "./modules/integrations/outbox.js";
+import { startIntegrationScheduler } from "./modules/integrations/scheduler.js";
 
 export interface BuildAppOptions {
   /** Optional override for the email provider (useful for testing with a spy). */
   emailProvider?: EmailProvider;
+  /** Optional durable-work scanner override for lifecycle tests. */
+  integrationScan?: () => Promise<unknown>;
   /**
    * Force-enable rate limiting even under NODE_ENV=test (KAN-77). Rate limiting
    * is normally off in test to avoid cross-test interference; integration tests
@@ -196,6 +200,20 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   const unsubscribeTransitionListener = registerTransitionListener(eventBus, app.log);
   app.addHook("onClose", async () => {
     unsubscribeTransitionListener();
+  });
+
+  // Durable outbox repair scan. Claiming and dispatch are added by later slices;
+  // this scheduler owns only non-overlapping scan cadence and shutdown.
+  let stopIntegrationScheduler: (() => void) | undefined;
+  app.addHook("onReady", async () => {
+    stopIntegrationScheduler = startIntegrationScheduler(
+      opts.integrationScan ?? (() => scanIntegrationWork(prisma)),
+      (err) => app.log.error({ err }, "Integration work scan failed"),
+    );
+  });
+  app.addHook("onClose", async () => {
+    stopIntegrationScheduler?.();
+    stopIntegrationScheduler = undefined;
   });
 
   // Health check with DB connectivity (always public, before auth)

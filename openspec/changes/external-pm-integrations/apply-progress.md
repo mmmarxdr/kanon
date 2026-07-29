@@ -471,3 +471,12 @@ Terminal A1.8 state: **BLOCKED / ESCALATED** after the failed final scoped pre-c
 ## A1.11 — cycle writer integration
 
 - **State:** Complete locally, not committed/pushed. Cycle create Path A/B, idempotent close, and pre-delete capture share atomic actor/ref-aware payload capture; binding races enter the transaction. RED/GREEN **2/2**; Cycle unit **42/42**, inherited integration **31/31**, type/build/format/diff pass. Three review BLOCKERs were fixed in one pass.
+
+## A1.12 — automatic scanner scheduling
+
+- **State:** Apply and one bounded reliability review complete locally; not published.
+- Added a non-overlapping, self-rearming timer around the existing read-only `scanIntegrationWork`, with isolated scan errors, `unref()`, and idempotent shutdown.
+- Registered the scheduler in Fastify `onReady` and stopped it in `onClose`; `BuildAppOptions.integrationScan` keeps lifecycle coverage deterministic without provider or worker behavior.
+- Focused A1.12 **4/4**, outbox regression **6/6**, app cleanup lifecycle **4/4**, API build/type checks, formatting, and diff checks passed.
+- One bounded review found a lifecycle-wiring coverage BLOCKER; the fix added executable `buildApp()` start/stop coverage. A throwing `onError` callback is also covered without breaking rearming or shutdown.
+- Scope remains read-only scheduling. Claim/lease, provider dispatch, retries, and Redmine I/O remain A4 work.
