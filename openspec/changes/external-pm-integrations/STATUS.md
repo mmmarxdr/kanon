@@ -1,20 +1,19 @@
 # External PM Integrations — Current Status
 
-> **Canonical continuation branch:** `feat/pm-182-issue-contract`
+> **Canonical continuation branch:** `feat/external-pm-integrations`
 >
-> Continue development from this branch. `feat/pm-182-outbox` and
-> `docs/pm-182-a1-8-rescope` are historical ancestors/evidence branches and are
-> not independent continuation points.
+> Continue development from this branch. Reviewed child branches remain as
+> work-unit history; each accepted child fast-forwards this cumulative branch.
 
 ## Snapshot
 
 | Item | Current state |
 | --- | --- |
-| Canonical remote branch | `origin/feat/pm-182-issue-contract` |
-| Published commit | `c934127889f9e5ef777aa418fe75e74754db2533` |
-| OpenSpec progress | 10/31 complete; 21 pending |
+| Canonical remote branch | `origin/feat/external-pm-integrations` |
+| Published commit | `730229af93e62f1a8e9b0fbb28ac18bf213eac27` |
+| OpenSpec progress | 11/31 complete; 20 pending |
 | Dispatcher recommendation | `apply` |
-| Next task | A1.8b — owned issue mutation transaction seam |
+| Next task | A1.9 — wire issue create/update/transition writers |
 | Merged into `main` | No |
 | End-to-end Kanon → Redmine | Not operational yet |
 | Proposal success criteria | 0/8 proven end-to-end |
@@ -22,7 +21,7 @@
 ## Published on the canonical branch
 
 The branch contains the accumulated implementation and SDD history through
-A1.8a:
+A1.8b:
 
 | Task | Delivered capability |
 | --- | --- |
@@ -34,6 +33,7 @@ A1.8a:
 | A1.6 | Tenant-safe binding backfill and transaction gate |
 | A1.7 | Transactional outbox capture and read-only due-work scanner |
 | A1.8a | Settled Issue mutation contract and canonical capture payload |
+| A1.8b | Owned issue mutation transaction and mandatory awaited outbox capture |
 
 The complete SDD artifacts are also present:
 
@@ -63,11 +63,10 @@ contract foundations exist, but the following runtime pieces do not:
 
 ## Remaining work for Kanon → Redmine
 
-The approved plan has 14 remaining tasks on the outbound critical path.
+The approved plan has 13 remaining tasks on the outbound critical path.
 
-### Complete local mutation capture
+### Wire local mutation capture
 
-- [ ] **A1.8b** — owned transaction: mutation + mandatory awaited outbox capture
 - [ ] **A1.9** — wire issue create/update/transition writers
 - [ ] **A1.10** — wire batch/group operations
 - [ ] **A1.11** — wire cycle and delete operations
@@ -121,7 +120,7 @@ A1.8a was published with an explicit maintainer exception:
 - Historical broader 20-case coverage was reduced and is recorded as follow-up
   debt in `review-ledger.md`
 
-This debt does not mean outbound synchronization is complete. A1.8b and all
+This debt does not mean outbound synchronization is complete. A1.9 and all
 runtime/provider work listed above remain mandatory.
 
 ## Source of truth
