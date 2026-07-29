@@ -520,3 +520,16 @@
 - The review confirms per-attempt DNS validation and pinning, fresh dispatcher cleanup, disabled redirects, bounded idempotent retries, no blind POST retry, redacted status errors, and full DNS/connect/body timeout coverage.
 - A delegated resilience review was cancelled after an excessive wait without returning findings. No subagent remained active; direct review replaced it.
 - API build/type gates, direct source/test TypeScript, formatting, dependency checks, and diff checks passed. Provider behavior remains A2.3 scope.
+
+## Direct bounded resilience review — A2.3
+
+- **Result:** `PASS WITH WARNINGS` after one fix; no subagent and no second review loop.
+
+| id | lens | location | severity | status | evidence |
+| --- | --- | --- | --- | --- | --- |
+| R4-002 | resilience | `packages/api/src/modules/integrations/providers/redmine/adapter.ts` workflow fallback | WARNING | verified | Initial fallback retried without status after any 4xx. It now applies only to Redmine's 422 validation response; a 401 regression proves one terminal attempt. |
+| R4-003 | resilience | `RedmineProviderAdapter.listProjects` | WARNING | info | Discovery reads one 100-row page. This covers the known 46-project instance; paginate when a deployment exceeds 100 visible projects. |
+| R4-004 | resilience | Redmine response mapping | WARNING | info | Typed response shapes are not runtime schemas. Malformed responses throw before returning a provider result; add schemas if real provider drift appears. |
+
+- Final evidence: A2.3 **4/4**, inherited A2.2/A2.1 **27/27**, API build/type gates, direct source/test TypeScript, formatting, and diff checks passed.
+- Scope remains provider-only; persistence and lifecycle wiring begin at A3.1.

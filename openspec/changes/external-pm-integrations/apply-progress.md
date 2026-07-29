@@ -500,3 +500,14 @@ Terminal A1.8 state: **BLOCKED / ESCALATED** after the failed final scoped pre-c
 - API build, configured type gate, direct source/test TypeScript, Prettier, dependency formatting, and `git diff --check` passed.
 - The delegated review produced no findings because it was cancelled after an excessive wait. It was not relaunched; the scoped review and fix were completed directly.
 - Provider mapping, discovery, role-ceiling behavior, persistence, routes, workers, and UI remain out of scope; A2.3 owns the adapter.
+
+## A2.3 — Redmine provider adapter
+
+- **State:** Apply and one direct bounded resilience review complete locally; not published.
+- Added a `PmProviderAdapter` implementation with project/status/version/user discovery plus tracker discovery, project creation from the normalized full name, and cycle creation as a Redmine Version. New projects default private.
+- External project/cycle/issue/user IDs and the status write-map are injected, keeping the adapter independent from Prisma and binding persistence.
+- Issue create/update maps subject, description, status, assignee, version, estimated hours, dates, and progress; create descriptions retain a stable Kanon marker for later reconciliation.
+- Every push re-reads the remote issue and reports requested versus achieved status. Redmine 422 workflow rejection retries once without status and logs the mismatch; auth and other 4xx errors remain terminal.
+- RED failed because `adapter.ts` was absent. Final A2.3 passed **4/4**; inherited Redmine client/guard passed **27/27**, for **31/31** total. API build, configured type gate, direct source/test TypeScript, Prettier, and diff checks passed.
+- Direct review fixed broad 4xx fallback to 422-only. Accepted warnings: project discovery is one 100-row page for the known 46-project instance, and malformed remote response shapes fail closed without dedicated runtime schemas.
+- No persistence, connection routes, credential service, worker, listener, or UI behavior was added.

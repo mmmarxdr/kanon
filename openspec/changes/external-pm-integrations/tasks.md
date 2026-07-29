@@ -30,7 +30,7 @@ A1.8 evidence gate (maintainer-approved, non-functional): commit only current Op
 - [x] A1.12 📍`feat/pm-182-auto -> feat/pm-182-cycle` K182 R:AT(auto.test.ts){shutdown} G:C/scheduler.ts+packages/api/src/app.ts V:AT(auto.test.ts) F:extract(C/scheduler.ts)+V H:clock-stop RB:C/scheduler.ts+packages/api/src/app.ts/revert-registration; e=80/120/10=210.
 - [x] A2.1 📍`feat/pm-183-ssrf -> feat/pm-182-auto` K183 R:AT(net-guard.test.ts){rebind} G:HC V:AT(net-guard.test.ts) F:extract(HC)+V H:Hc RB:HC/revert-connector; e=140/200/10=350.
 - [x] A2.2 📍`feat/pm-183-http -> feat/pm-183-ssrf` K183 R:AT(http.test.ts){timeout} G:HC+packages/api/package.json+pnpm-lock.yaml V:AT(http.test.ts) F:dedupe(HC)+V H:Hm RB:HC/revert-client; e=120/170/10=300.
-- [ ] A2.3 📍`feat/pm-183-adapter -> feat/pm-183-http` K183 R:AT(adapter.test.ts){marker} G:HA V:AT(adapter.test.ts) F:extract(HA)+V H:Hm RB:HA/revert-adapter; e=130/180/10=320.
+- [x] A2.3 📍`feat/pm-183-adapter -> feat/pm-183-http` K183 R:AT(adapter.test.ts){marker} G:HA V:AT(adapter.test.ts) F:extract(HA)+V H:Hm RB:HA/revert-adapter; e=130/180/10=320.
 - [ ] A3.1 📍`feat/pm-184-life -> feat/pm-183-adapter` K184 R:DT(lifecycle.test.ts){owner} G:HR+HS V:DT(lifecycle.test.ts) F:extract(HR)+V H:Hdb RB:HR/revert-registration; e=110/170/10=290.
 - [ ] A3.2 📍`feat/pm-184-creds -> feat/pm-184-life` K184 R:DT(credentials.test.ts){reverse} G:HS+RO V:DT(credentials.test.ts) F:dedupe(HS)+V H:Hdb RB:old/new-keys; e=120/190/20=330.
 - [ ] A4.1 📍`feat/pm-185-enqueue -> feat/pm-184-creds` K185 R:DT(listener.test.ts){actor-http} G:HL+packages/api/src/app.ts V:DT(listener.test.ts) F:extract(HL)+V H:clock RB:HL/revert-registration; e=110/180/10=300.
