@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { useEscapeKey } from "@/hooks/use-escape-key";
 import { useBackdropClose } from "@/hooks/use-backdrop-close";
 import { FocusTrap } from "focus-trap-react";
@@ -45,6 +46,8 @@ export function ReconcileModal({
   onClose,
   isSubmitting = false,
 }: ReconcileModalProps) {
+  const { t } = useTranslation("board");
+  const { t: tCommon } = useTranslation("common");
   const [rawValue, setRawValue] = useState(String(totalHours));
 
   useEscapeKey(onClose, !isSubmitting);
@@ -120,7 +123,7 @@ export function ReconcileModal({
                 color: "var(--ink-4)",
               }}
             >
-              Confirm captured time
+              {t("reconcileTitle")}
             </span>
             <span style={{ fontSize: 12, color: "var(--ink-2)", marginLeft: 4 }}>
               {issueKey}
@@ -146,11 +149,15 @@ export function ReconcileModal({
                 color: "var(--ink-2)",
               }}
             >
-              <strong data-testid="reconcile-reported-hours">
-                {totalHours}
-              </strong>{" "}
-              hours were reported on this ticket. Confirm to move it to{" "}
-              <strong>done</strong>, or adjust the total below.
+              <Trans
+                i18nKey="reconcileBody"
+                ns="board"
+                values={{ hours: totalHours }}
+                components={{
+                  hours: <strong data-testid="reconcile-reported-hours" />,
+                  done: <strong />,
+                }}
+              />
             </div>
 
             <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -163,7 +170,7 @@ export function ReconcileModal({
                   fontFamily: "JetBrains Mono, monospace",
                 }}
               >
-                Confirmed total hours
+                {t("reconcileHoursLabel")}
               </span>
               <input
                 type="text"
@@ -187,7 +194,7 @@ export function ReconcileModal({
                   data-testid="reconcile-hours-error"
                   style={{ fontSize: 11, color: "var(--bad)" }}
                 >
-                  Enter a non-negative number, up to 2 decimal places, at most 744.
+                  {t("reconcileHoursError")}
                 </span>
               )}
             </label>
@@ -205,7 +212,7 @@ export function ReconcileModal({
             }}
           >
             <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)" }}>
-              Esc to close
+              {tCommon("actions.escToClose")}
             </span>
             <span style={{ flex: 1 }} />
             <button
@@ -224,7 +231,7 @@ export function ReconcileModal({
                 opacity: isSubmitting ? 0.55 : 1,
               }}
             >
-              Cancel
+              {tCommon("actions.cancel")}
             </button>
             <button
               type="button"
@@ -247,7 +254,7 @@ export function ReconcileModal({
                 cursor: !isValid || isSubmitting ? "not-allowed" : "pointer",
               }}
             >
-              {isSubmitting ? "Confirming…" : "Confirm & move to done"}
+              {isSubmitting ? t("reconcileConfirming") : t("reconcileConfirm")}
             </button>
           </div>
         </div>

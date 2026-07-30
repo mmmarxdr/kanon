@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import { roadmapRoute } from "./roadmap";
 import { useRoadmapQuery } from "@/features/roadmap/use-roadmap-query";
@@ -15,6 +16,7 @@ import { Segmented } from "@/components/ui/primitives";
 import { Icon } from "@/components/ui/icons";
 
 export default function RoadmapPage() {
+  const { t } = useTranslation("roadmap");
   const { projectKey } = roadmapRoute.useParams();
   const { data: items, isLoading, error } = useRoadmapQuery(projectKey);
   const [selectedItemId, setSelectedItemId] = useState<string | undefined>();
@@ -28,9 +30,9 @@ export default function RoadmapPage() {
   const setViewMode = useRoadmapStore((s) => s.setViewMode);
 
   const VIEW_MODE_OPTIONS: { id: Exclude<ViewMode, "graph">; label: string }[] = [
-    { id: "board", label: "Horizons" },
-    { id: "timeline", label: "Timeline" },
-    { id: "analytics", label: "Analytics" },
+    { id: "board", label: t("viewHorizons") },
+    { id: "timeline", label: t("viewTimeline") },
+    { id: "analytics", label: t("viewAnalytics") },
   ];
 
   const effectiveViewMode: Exclude<ViewMode, "graph"> =
@@ -105,9 +107,9 @@ export default function RoadmapPage() {
           fontSize: 12,
         }}
       >
-        <p>No project selected.</p>
+        <p>{t("noProject")}</p>
         <Link to="/" style={{ color: "var(--accent-ink)" }}>
-          Go to project selection
+          {t("goToProjectSelection")}
         </Link>
       </div>
     );
@@ -125,7 +127,7 @@ export default function RoadmapPage() {
           fontSize: 12,
         }}
       >
-        Failed to load roadmap: {error.message}
+        {t("failedLoad", { message: error.message })}
       </div>
     );
   }
@@ -172,7 +174,7 @@ export default function RoadmapPage() {
             fontSize: 12,
           }}
         >
-          <Icon.Graph /> Open dependency graph
+          <Icon.Graph /> {t("openDependencyGraph")}
         </Link>
         <button
           type="button"
@@ -194,7 +196,7 @@ export default function RoadmapPage() {
             fontWeight: 500,
           }}
         >
-          <Icon.Plus /> New item
+          <Icon.Plus /> {t("newItem")}
         </button>
 
         <div style={{ flex: 1 }} />

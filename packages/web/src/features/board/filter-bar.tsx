@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { useBoardStore, type BoardFilters } from "@/stores/board-store";
 import { useCommandPaletteStore } from "@/stores/command-palette-store";
 import { NewIssueModal } from "./new-issue-modal";
@@ -7,24 +8,8 @@ import {
   Segmented,
 } from "@/components/ui/primitives";
 
-const ISSUE_TYPES: { value: string; label: string }[] = [
-  { value: "feature", label: "Feature" },
-  { value: "bug", label: "Bug" },
-  { value: "task", label: "Task" },
-  { value: "spike", label: "Spike" },
-];
-
-const ISSUE_PRIORITIES: { value: string; label: string }[] = [
-  { value: "critical", label: "Critical" },
-  { value: "high", label: "High" },
-  { value: "medium", label: "Medium" },
-  { value: "low", label: "Low" },
-];
-
-const GROUP_OPTIONS: { value: string; label: string }[] = [
-  { value: "grouped", label: "Group" },
-  { value: "flat", label: "None" },
-];
+const ISSUE_TYPE_VALUES = ["feature", "bug", "task", "spike"] as const;
+const ISSUE_PRIORITY_VALUES = ["critical", "high", "medium", "low"] as const;
 
 interface FilterBarProps {
   assignees: { id: string; username: string }[];
@@ -32,8 +17,26 @@ interface FilterBarProps {
 }
 
 export function FilterBar({ assignees, projectKey }: FilterBarProps) {
+  const { t } = useTranslation("board");
+  const { t: tCommon } = useTranslation("common");
   const { filters, setFilter, viewMode, setViewMode } = useBoardStore();
   const [showNewIssue, setShowNewIssue] = useState(false);
+
+  const ISSUE_TYPES = useMemo(
+    () => ISSUE_TYPE_VALUES.map((value) => ({ value, label: tCommon(`type.${value}`) })),
+    [tCommon],
+  );
+  const ISSUE_PRIORITIES = useMemo(
+    () => ISSUE_PRIORITY_VALUES.map((value) => ({ value, label: tCommon(`priority.${value}`) })),
+    [tCommon],
+  );
+  const GROUP_OPTIONS = useMemo(
+    () => [
+      { value: "grouped", label: t("groupByGroup") },
+      { value: "flat", label: t("groupByNone") },
+    ],
+    [t],
+  );
 
   const createIssueRequested = useCommandPaletteStore(
     (s) => s.createIssueRequested,
@@ -90,37 +93,33 @@ export function FilterBar({ assignees, projectKey }: FilterBarProps) {
       />
 
       <FilterChipSelect
-        label="Group by"
+        label={t("groupBy")}
         value={viewMode === "grouped" ? "grouped" : "flat"}
         options={GROUP_OPTIONS}
         onChange={(v) =>
           setViewMode(v === "grouped" ? "grouped" : "flat")
         }
-        allLabel="state"
       />
 
       <FilterChipSelect
-        label="Type"
+        label={t("filterType")}
         value={filters.type ?? ""}
         options={ISSUE_TYPES}
         onChange={(v) => handleSelect("type", v)}
-        allLabel="any"
       />
 
       <FilterChipSelect
-        label="Priority"
+        label={t("filterPriority")}
         value={filters.priority ?? ""}
         options={ISSUE_PRIORITIES}
         onChange={(v) => handleSelect("priority", v)}
-        allLabel="any"
       />
 
       <FilterChipSelect
-        label="Assignee"
+        label={t("filterAssignee")}
         value={filters.assigneeId ?? ""}
         options={assigneeOptions}
         onChange={(v) => handleSelect("assigneeId", v)}
-        allLabel="any"
       />
 
       {showNewIssue && (

@@ -1,5 +1,6 @@
 import { useCallback } from "react";
-import { STATE_LABELS, type IssueState } from "@/stores/board-store";
+import { useTranslation } from "react-i18next";
+import { type IssueState } from "@/stores/board-store";
 import type { ChildIssueSummary } from "@/types/issue";
 
 /** Color map for state badges in child rows. */
@@ -27,6 +28,7 @@ export function ChildrenSection({
   children,
   onSelect,
 }: ChildrenSectionProps) {
+  const { t } = useTranslation("issue");
   if (children.length === 0) {
     return null;
   }
@@ -34,7 +36,7 @@ export function ChildrenSection({
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-        Sub-tasks
+        {t("sectionSubIssues")}
       </span>
       <ul className="flex flex-col gap-1" role="list">
         {children.map((child) => (
@@ -56,6 +58,7 @@ function ChildRow({
   issue: ChildIssueSummary;
   onSelect: (issueKey: string) => void;
 }) {
+  const { t } = useTranslation("common");
   const handleClick = useCallback(() => {
     onSelect(issue.key);
   }, [onSelect, issue.key]);
@@ -107,7 +110,7 @@ function ChildRow({
       <span
         className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${stateColor}`}
       >
-        {STATE_LABELS[issue.state]}
+        {t(`state.${issue.state}`)}
       </span>
     </li>
   );

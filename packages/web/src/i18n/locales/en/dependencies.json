@@ -1,0 +1,8 @@
+{
+  "loading": "Loading graph…",
+  "failed": "Failed to load dependencies: {{message}}",
+  "legendInProgress": "In progress",
+  "legendPlanned": "Planned",
+  "legendDone": "Done",
+  "legendIdea": "Idea"
+}

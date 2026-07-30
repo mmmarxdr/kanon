@@ -1,0 +1,20 @@
+{
+  "ariaLabel": "Paleta de comandos",
+  "placeholder": "Buscar issues, ejecutar comandos…",
+  "sectionIssues": "Issues",
+  "sectionActions": "Acciones",
+  "actionCreateIssue": "Crear nueva issue",
+  "actionGoBoard": "Ir al Tablero",
+  "actionGoSchedule": "Ir al Cronograma",
+  "actionGoInbox": "Ir a Bandeja de entrada",
+  "actionGoRoadmap": "Ir a Hoja de ruta",
+  "actionGoDependencies": "Ir a Dependencias",
+  "actionGoSettings": "Ir a Configuración",
+  "filterState": "Estado",
+  "filterType": "Tipo",
+  "filterPriority": "Prioridad",
+  "searching": "Buscando…",
+  "noResults": "Sin resultados",
+  "navigate": "Navegar",
+  "select": "Seleccionar"
+}

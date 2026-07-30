@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import type { Horizon, RoadmapItem } from "@/types/roadmap";
 import { ChartCard } from "./chart-card";
 
@@ -18,16 +19,17 @@ interface HorizonDistributionChartProps {
 
 const HORIZON_ORDER: readonly Horizon[] = ["now", "next", "later", "someday"];
 
-const HORIZON_CONFIG: Record<Horizon, { label: string; color: string }> = {
-  now: { label: "Now", color: "var(--accent)" },
-  next: { label: "Next", color: "var(--ai, var(--accent))" },
-  later: { label: "Later", color: "var(--warn)" },
-  someday: { label: "Someday", color: "var(--ink-4)" },
+const HORIZON_CONFIG: Record<Horizon, { labelKey: string; color: string }> = {
+  now: { labelKey: "horizonNow", color: "var(--accent)" },
+  next: { labelKey: "horizonNext", color: "var(--ai, var(--accent))" },
+  later: { labelKey: "horizonLater", color: "var(--warn)" },
+  someday: { labelKey: "horizonSomeday", color: "var(--ink-4)" },
 };
 
 export function HorizonDistributionChart({
   items,
 }: HorizonDistributionChartProps) {
+  const { t } = useTranslation("roadmap");
   const buckets = useMemo(() => {
     const counts: Record<Horizon, number> = {
       now: 0,
@@ -38,20 +40,21 @@ export function HorizonDistributionChart({
     for (const it of items) counts[it.horizon]++;
     return HORIZON_ORDER.map((h) => ({
       horizon: h,
-      ...HORIZON_CONFIG[h],
+      label: t(HORIZON_CONFIG[h].labelKey),
+      color: HORIZON_CONFIG[h].color,
       count: counts[h],
     }));
-  }, [items]);
+  }, [items, t]);
 
   const total = buckets.reduce((s, b) => s + b.count, 0);
   const hasData = total > 0;
 
   return (
     <ChartCard
-      title="Horizon distribution"
+      title={t("analyticsHorizonDistribution")}
       subtitle="by horizon · stacked"
       isEmpty={!hasData}
-      emptyMessage="No roadmap items yet."
+      emptyMessage={t("emptyNoItems")}
     >
       {/* Stacked bar — flex with `flex: count` so widths are proportional. */}
       <div

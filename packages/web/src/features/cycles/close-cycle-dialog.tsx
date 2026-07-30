@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { useEscapeKey } from "@/hooks/use-escape-key";
 import { useBackdropClose } from "@/hooks/use-backdrop-close";
 import { useQueryClient } from "@tanstack/react-query";
@@ -61,6 +62,8 @@ const radioRowStyle: React.CSSProperties = {
 // ---------------------------------------------------------------------------
 
 export function CloseCycleDialog({ cycle, cycles, onClose }: CloseCycleDialogProps) {
+  const { t } = useTranslation("cycles");
+  const { t: tCommon } = useTranslation("common");
   const projectKey = cycle.projectId; // used as cache-key for invalidation (see D5)
   const queryClient = useQueryClient();
   const closeMutation = useCloseCycleMutation(cycle.id, projectKey);
@@ -229,7 +232,7 @@ export function CloseCycleDialog({ cycle, cycles, onClose }: CloseCycleDialogPro
                 color: "var(--ink-4)",
               }}
             >
-              Close cycle
+              {t("closeModalTitle")}
             </span>
             <span style={{ fontSize: 12, color: "var(--ink-2)", marginLeft: 4 }}>
               {cycle.name}
@@ -251,21 +254,17 @@ export function CloseCycleDialog({ cycle, cycles, onClose }: CloseCycleDialogPro
             >
               {hasIncomplete ? (
                 <span data-testid="close-cycle-incomplete-count">
-                  <strong data-testid="incomplete-count-value">
-                    {incompleteIssues.length} incomplete
-                  </strong>{" "}
-                  {incompleteIssues.length === 1 ? "issue" : "issues"} will not move to{" "}
-                  <strong>done</strong>. Choose how to handle {incompleteIssues.length === 1 ? "it" : "them"}:
+                  {t("closeIncomplete", { count: incompleteIssues.length })}
                 </span>
               ) : (
-                <span>All issues are done. Ready to close.</span>
+                <span>{t("closeAllDone")}</span>
               )}
             </div>
 
             {/* Disposition options — only shown when there are incomplete issues */}
             {hasIncomplete && (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <span style={labelStyle}>Disposition</span>
+                <span style={labelStyle}>{t("disposition")}</span>
 
                 {/* Move to next cycle */}
                 <label
@@ -287,18 +286,18 @@ export function CloseCycleDialog({ cycle, cycles, onClose }: CloseCycleDialogPro
                   />
                   <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                     <span style={{ fontSize: 12.5, fontWeight: 500, color: "var(--ink)" }}>
-                      Move to next cycle
+                      {t("moveToNext")}
                     </span>
                     {nextCycle ? (
                       <span style={{ fontSize: 11, color: "var(--ink-3)" }}>
-                        Attach to <strong>{nextCycle.name}</strong> and detach from this cycle
+                        {t("moveToNextHint", { name: nextCycle.name })}
                       </span>
                     ) : (
                       <span
                         style={{ fontSize: 11, color: "var(--ink-4)" }}
                         data-testid="move-next-disabled-hint"
                       >
-                        No upcoming cycle exists in this project
+                        {t("moveToNextDisabled")}
                       </span>
                     )}
                   </div>
@@ -317,10 +316,10 @@ export function CloseCycleDialog({ cycle, cycles, onClose }: CloseCycleDialogPro
                   />
                   <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                     <span style={{ fontSize: 12.5, fontWeight: 500, color: "var(--ink)" }}>
-                      Move to backlog
+                      {t("moveToBacklog")}
                     </span>
                     <span style={{ fontSize: 11, color: "var(--ink-3)" }}>
-                      Detach all incomplete issues from this cycle (no new cycle attached)
+                      {t("moveToBacklogHint")}
                     </span>
                   </div>
                 </label>
@@ -338,10 +337,10 @@ export function CloseCycleDialog({ cycle, cycles, onClose }: CloseCycleDialogPro
                   />
                   <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                     <span style={{ fontSize: 12.5, fontWeight: 500, color: "var(--ink)" }}>
-                      Leave attached
+                      {t("leaveAttached")}
                     </span>
                     <span style={{ fontSize: 11, color: "var(--ink-3)" }}>
-                      Keep incomplete issues attached to this closed cycle
+                      {t("leaveAttachedHint")}
                     </span>
                   </div>
                 </label>
@@ -378,7 +377,7 @@ export function CloseCycleDialog({ cycle, cycles, onClose }: CloseCycleDialogPro
             }}
           >
             <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)" }}>
-              Esc to close
+              {tCommon("actions.escToClose")}
             </span>
             <span style={{ flex: 1 }} />
             <button
@@ -396,7 +395,7 @@ export function CloseCycleDialog({ cycle, cycles, onClose }: CloseCycleDialogPro
                 opacity: isSubmitting ? 0.55 : 1,
               }}
             >
-              Cancel
+              {tCommon("actions.cancel")}
             </button>
             <button
               type="button"

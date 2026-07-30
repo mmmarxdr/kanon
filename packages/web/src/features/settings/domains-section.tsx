@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useUpdateWorkspaceMutation } from "./use-settings-queries";
 
 export function DomainsSection({
@@ -10,6 +11,7 @@ export function DomainsSection({
   currentUserRole: string | undefined;
   allowedDomains: string[];
 }) {
+  const { t } = useTranslation("settings");
   const updateWorkspace = useUpdateWorkspaceMutation(workspaceId);
   const [newDomain, setNewDomain] = useState("");
   const [domainError, setDomainError] = useState<string | null>(null);
@@ -26,12 +28,12 @@ export function DomainsSection({
 
     // Basic domain validation
     if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$/.test(domain)) {
-      setDomainError("Please enter a valid domain (e.g. example.com)");
+      setDomainError(t("domainsInvalid"));
       return;
     }
 
     if (domains.includes(domain)) {
-      setDomainError("This domain is already in the list.");
+      setDomainError(t("domainsDuplicate"));
       return;
     }
 
@@ -54,14 +56,14 @@ export function DomainsSection({
 
   return (
     <div className="rounded-lg border border-border bg-card p-6">
-      <h2 className="text-lg font-semibold text-foreground mb-1">Allowed Domains</h2>
+      <h2 className="text-lg font-semibold text-foreground mb-1">{t("domainsTitle")}</h2>
       <p className="text-xs text-muted-foreground mb-4">
-        Restrict which email domains can join this workspace via invite links.
+        {t("domainsHelp")}
       </p>
 
       {domains.length === 0 ? (
         <p className="text-sm text-muted-foreground mb-4">
-          No domain restrictions -- any email domain can join.
+          {t("domainsNone")}
         </p>
       ) : (
         <div className="flex flex-wrap gap-2 mb-4">
@@ -76,7 +78,7 @@ export function DomainsSection({
                   onClick={() => handleRemoveDomain(domain)}
                   disabled={updateWorkspace.isPending}
                   className="ml-0.5 text-muted-foreground hover:text-destructive transition-colors disabled:opacity-50"
-                  aria-label={`Remove ${domain}`}
+                  aria-label={t("domainsRemoveAria", { domain })}
                 >
                   &times;
                 </button>
@@ -96,7 +98,7 @@ export function DomainsSection({
                 setNewDomain(e.target.value);
                 setDomainError(null);
               }}
-              placeholder="example.com"
+              placeholder={t("domainsPlaceholder")}
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
             />
             {domainError && (
@@ -111,7 +113,7 @@ export function DomainsSection({
             disabled={updateWorkspace.isPending || !newDomain.trim()}
             className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200 ease-out"
           >
-            {updateWorkspace.isPending ? "Adding..." : "Add Domain"}
+            {updateWorkspace.isPending ? t("domainsAdding") : t("domainsAdd")}
           </button>
         </form>
       )}

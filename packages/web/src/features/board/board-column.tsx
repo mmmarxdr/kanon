@@ -4,12 +4,9 @@ import {
   SortableContext,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+import { useTranslation } from "react-i18next";
 import type { BoardColumn as BoardColumnType } from "@/stores/board-store";
-import {
-  COLUMN_LABELS,
-  COLUMN_STATE_MAP,
-  STATE_LABELS,
-} from "@/stores/board-store";
+import { COLUMN_STATE_MAP } from "@/stores/board-store";
 import type { Issue } from "@/types/issue";
 import { IssueCard } from "./issue-card";
 import { Icon } from "@/components/ui/icons";
@@ -41,10 +38,13 @@ export const BoardColumn = memo(function BoardColumn({
 }: BoardColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: column });
   const [expanded, setExpanded] = useState(false);
+  const { t } = useTranslation("common");
+  const { t: tBoard } = useTranslation("board");
 
   const states = COLUMN_STATE_MAP[column];
   const hasSubGroups = states.length > 1;
   const dot = COLUMN_DOT[column] ?? "var(--ink-4)";
+  const columnLabel = t(`state.${column}`);
 
   return (
     <div
@@ -80,7 +80,7 @@ export const BoardColumn = memo(function BoardColumn({
               transform: expanded ? "rotate(90deg)" : "none",
               transition: "transform 120ms",
             }}
-            aria-label={expanded ? "Collapse sub-groups" : "Expand sub-groups"}
+            aria-label={expanded ? tBoard("collapseSubGroups") : tBoard("expandSubGroups")}
           >
             <Icon.ChevR style={{ width: 11, height: 11 }} />
           </button>
@@ -103,7 +103,7 @@ export const BoardColumn = memo(function BoardColumn({
               boxShadow: `0 0 0 2px color-mix(in oklch, ${dot} 16%, transparent)`,
             }}
           />
-          {COLUMN_LABELS[column]}
+          {columnLabel}
         </span>
         <span style={{ flex: 1 }} />
         <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)" }}>
@@ -113,8 +113,8 @@ export const BoardColumn = memo(function BoardColumn({
           type="button"
           onClick={() => onAddIssue?.(column)}
           style={{ color: "var(--ink-4)" }}
-          title="Add issue"
-          aria-label={`Add issue to ${COLUMN_LABELS[column]}`}
+          title={t("actions.addIssue")}
+          aria-label={tBoard("addIssueTo", { column: columnLabel })}
         >
           <Icon.Plus />
         </button>
@@ -133,7 +133,7 @@ export const BoardColumn = memo(function BoardColumn({
           minHeight: 64,
         }}
       >
-        <PanelErrorBoundary label={`${COLUMN_LABELS[column]} column`}>
+        <PanelErrorBoundary label={`${columnLabel} column`}>
           {expanded && hasSubGroups ? (
             states.map((state) => {
               const stateIssues = issues.filter((i) => i.state === state);
@@ -159,7 +159,7 @@ export const BoardColumn = memo(function BoardColumn({
                         textTransform: "uppercase",
                       }}
                     >
-                      {STATE_LABELS[state]}
+                      {t(`state.${state}`)}
                     </span>
                     <span
                       className="mono"
@@ -213,7 +213,7 @@ export const BoardColumn = memo(function BoardColumn({
               borderRadius: 5,
             }}
           >
-            Empty
+            {tBoard("emptyColumn")}
           </div>
         )}
       </div>

@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { RoadmapItem, RoadmapStatus } from "@/types/roadmap";
 import { ChartCard } from "./chart-card";
 import { useStatusData } from "./use-analytics-data";
@@ -20,11 +21,11 @@ const STAGE_TOKEN_COLOR: Record<RoadmapStatus, string> = {
   done: "var(--ok)",
 };
 
-const STAGE_LABELS: Record<RoadmapStatus, string> = {
-  idea: "Idea",
-  planned: "Planned",
-  in_progress: "In progress",
-  done: "Done",
+const STAGE_LABEL_KEYS: Record<RoadmapStatus, string> = {
+  idea: "statusIdea",
+  planned: "statusPlanned",
+  in_progress: "statusInProgress",
+  done: "statusDone",
 };
 
 /**
@@ -45,6 +46,7 @@ const STAGE_LABELS: Record<RoadmapStatus, string> = {
  * state distribution, not a flow.
  */
 export function PipelineFunnel({ items }: PipelineFunnelProps) {
+  const { t } = useTranslation("roadmap");
   const data = useStatusData(items);
   const total = data.reduce((sum, d) => sum + d.count, 0);
   const hasData = total > 0;
@@ -54,7 +56,7 @@ export function PipelineFunnel({ items }: PipelineFunnelProps) {
     const bucket = byStatus.get(s);
     return {
       status: s,
-      label: STAGE_LABELS[s],
+      label: t(STAGE_LABEL_KEYS[s]),
       count: bucket?.count ?? 0,
       color: STAGE_TOKEN_COLOR[s],
     };
@@ -75,10 +77,10 @@ export function PipelineFunnel({ items }: PipelineFunnelProps) {
 
   return (
     <ChartCard
-      title="Pipeline"
+      title={t("analyticsPipeline")}
       subtitle="state distribution · all horizons"
       isEmpty={!hasData}
-      emptyMessage="No roadmap items yet. Add items to see the pipeline."
+      emptyMessage={t("emptyPipeline")}
     >
       <div className="flex flex-col gap-1.5">
         {stages.map((s) => {

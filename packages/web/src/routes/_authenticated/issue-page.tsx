@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { issueRoute, SubscribeButton } from "./issue";
 import { useIssueDetail } from "@/features/issue-detail/use-issue-detail";
 import { IssueDetailHeader } from "@/features/issue-detail/issue-detail-header";
@@ -10,6 +11,7 @@ import { Icon } from "@/components/ui/icons";
 
 export default function IssuePage() {
   const { key: issueKey } = issueRoute.useParams();
+  const { t } = useTranslation("issue");
 
   const d = useIssueDetail(issueKey);
 
@@ -25,7 +27,7 @@ export default function IssuePage() {
           fontSize: 12,
         }}
       >
-        Loading issue…
+        {t("loading")}
       </div>
     );
   }
@@ -72,7 +74,7 @@ export default function IssuePage() {
               fontSize: 12,
             }}
           >
-            <Icon.ChevL /> Back
+            <Icon.ChevL /> {t("back")}
           </button>
           <span style={{ flex: 1 }} />
           <SubscribeButton
@@ -143,7 +145,7 @@ export default function IssuePage() {
               textTransform: "uppercase",
             }}
           >
-            Properties
+            {t("properties")}
           </div>
           <MetadataSection
             issue={d.issue}

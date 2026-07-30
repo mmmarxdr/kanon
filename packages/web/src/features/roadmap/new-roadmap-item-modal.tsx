@@ -1,16 +1,16 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { useEscapeKey } from "@/hooks/use-escape-key";
 import { useBackdropClose } from "@/hooks/use-backdrop-close";
 import { FocusTrap } from "focus-trap-react";
 import { useCreateRoadmapMutation } from "./use-roadmap-query";
 import type { Horizon } from "@/types/roadmap";
-import { HORIZON_LABELS } from "@/stores/roadmap-store";
 
-const HORIZON_OPTIONS: { value: Horizon; label: string }[] = [
-  { value: "someday", label: "Someday" },
-  { value: "later", label: "Later" },
-  { value: "next", label: "Next" },
-  { value: "now", label: "Now" },
+const HORIZON_OPTIONS: { value: Horizon; labelKey: string }[] = [
+  { value: "someday", labelKey: "horizonSomeday" },
+  { value: "later", labelKey: "horizonLater" },
+  { value: "next", labelKey: "horizonNext" },
+  { value: "now", labelKey: "horizonNow" },
 ];
 
 interface NewRoadmapItemModalProps {
@@ -34,6 +34,8 @@ export function NewRoadmapItemModal({
   defaultHorizon = "later",
   onClose,
 }: NewRoadmapItemModalProps) {
+  const { t } = useTranslation("roadmap");
+  const { t: tCommon } = useTranslation("common");
   const titleRef = useRef<HTMLInputElement>(null);
   const createMutation = useCreateRoadmapMutation(projectKey);
 
@@ -111,7 +113,7 @@ export function NewRoadmapItemModal({
             id="new-roadmap-title"
             className="text-base font-semibold text-foreground mb-4"
           >
-            New Roadmap Item
+            {t("newModalTitle")}
           </h2>
 
           <div className="flex flex-col gap-3">
@@ -123,7 +125,7 @@ export function NewRoadmapItemModal({
               onKeyDown={(e) => {
                 if (e.key === "Enter") handleSubmit();
               }}
-              placeholder="Title"
+              placeholder={t("placeholderTitle")}
               className="w-full rounded border border-border bg-secondary px-3 py-2
                 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
             />
@@ -132,7 +134,7 @@ export function NewRoadmapItemModal({
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Description (optional)"
+              placeholder={t("placeholderDescription")}
               rows={3}
               className="w-full rounded border border-border bg-secondary px-3 py-2
                 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/30
@@ -143,7 +145,7 @@ export function NewRoadmapItemModal({
             <div className="grid grid-cols-3 gap-3">
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                  Horizon
+                  {t("fieldHorizon")}
                 </label>
                 <select
                   value={horizon}
@@ -152,7 +154,7 @@ export function NewRoadmapItemModal({
                 >
                   {HORIZON_OPTIONS.map((h) => (
                     <option key={h.value} value={h.value}>
-                      {h.label}
+                      {t(h.labelKey)}
                     </option>
                   ))}
                 </select>
@@ -160,7 +162,7 @@ export function NewRoadmapItemModal({
 
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                  Effort
+                  {t("fieldEffort")}
                 </label>
                 <select
                   value={effort}
@@ -178,7 +180,7 @@ export function NewRoadmapItemModal({
 
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                  Impact
+                  {t("fieldImpact")}
                 </label>
                 <select
                   value={impact}
@@ -199,7 +201,7 @@ export function NewRoadmapItemModal({
             <input
               value={labels}
               onChange={(e) => setLabels(e.target.value)}
-              placeholder="Labels (comma-separated)"
+              placeholder={t("placeholderLabels")}
               className="w-full rounded border border-border bg-secondary px-3 py-2
                 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
             />
@@ -207,7 +209,7 @@ export function NewRoadmapItemModal({
             {/* Target Date */}
             <div className="flex flex-col gap-1">
               <label className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                Target Date
+                {t("fieldTargetDate")}
               </label>
               <input
                 type="date"
@@ -227,7 +229,7 @@ export function NewRoadmapItemModal({
               className="px-3 py-1.5 text-sm font-medium rounded border border-border
                 text-muted-foreground hover:bg-secondary transition-colors"
             >
-              Cancel
+              {tCommon("actions.cancel")}
             </button>
             <button
               type="button"
@@ -236,7 +238,7 @@ export function NewRoadmapItemModal({
               className="px-3 py-1.5 text-sm font-medium rounded bg-primary text-primary-foreground
                 hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
-              {createMutation.isPending ? "Creating..." : "Create"}
+              {createMutation.isPending ? tCommon("actions.creating") : t("createSubmit")}
             </button>
           </div>
         </div>

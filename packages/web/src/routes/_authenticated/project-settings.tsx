@@ -1,4 +1,5 @@
 import { createRoute, redirect } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 import { authenticatedRoute } from "../_authenticated";
 import { ProjectMembersSection } from "@/features/project-members/project-members-section";
 
@@ -14,6 +15,7 @@ export const projectSettingsRoute = createRoute({
 });
 
 function ProjectSettingsPage() {
+  const { t } = useTranslation("settings");
   const { projectKey } = projectSettingsRoute.useParams();
 
   return (
@@ -36,7 +38,7 @@ function ProjectSettingsPage() {
             marginBottom: 24,
           }}
         >
-          Project Settings — {projectKey}
+          {t("projectSettings", { key: projectKey })}
         </h1>
         <ProjectMembersSection projectKey={projectKey} />
       </div>

@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useState, useCallback, useEffect } from "react";
 import { useEscapeKey } from "@/hooks/use-escape-key";
 import { useBackdropClose } from "@/hooks/use-backdrop-close";
@@ -48,6 +49,8 @@ interface CreateProjectModalProps {
 }
 
 export function CreateProjectModal({ workspaceId, onClose }: CreateProjectModalProps) {
+  const { t } = useTranslation("settings");
+  const { t: tCommon } = useTranslation("common");
   const createMutation = useCreateProjectMutation(workspaceId);
 
   const [name, setName] = useState("");
@@ -139,13 +142,13 @@ export function CreateProjectModal({ workspaceId, onClose }: CreateProjectModalP
               color: "var(--ink-4)",
             }}
           >
-            New project
+            {t("createProjectTitle")}
           </span>
           <span style={{ flex: 1 }} />
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close"
+            aria-label={tCommon("actions.close")}
             style={{ color: "var(--ink-4)", padding: 2 }}
           >
             <Icon.X />
@@ -168,7 +171,7 @@ export function CreateProjectModal({ workspaceId, onClose }: CreateProjectModalP
           {/* Name */}
           <div>
             <label htmlFor="project-name" style={labelStyle}>
-              Name <span style={{ color: "var(--bad)" }}>*</span>
+              {t("createProjectName")} <span style={{ color: "var(--bad)" }}>*</span>
             </label>
             <input
               id="project-name"
@@ -177,7 +180,7 @@ export function CreateProjectModal({ workspaceId, onClose }: CreateProjectModalP
               value={name}
               onChange={(e) => setName(e.target.value)}
               maxLength={MAX_NAME_LENGTH}
-              placeholder="My project"
+              placeholder={t("createProjectNamePlaceholder")}
               data-testid="new-project-name"
               style={inputStyle}
             />
@@ -186,9 +189,9 @@ export function CreateProjectModal({ workspaceId, onClose }: CreateProjectModalP
           {/* Key */}
           <div>
             <label htmlFor="project-key" style={labelStyle}>
-              Key <span style={{ color: "var(--bad)" }}>*</span>{" "}
+              {t("createProjectKey")} <span style={{ color: "var(--bad)" }}>*</span>{" "}
               <span style={{ color: "var(--ink-4)", fontSize: 9, textTransform: "none", letterSpacing: 0 }}>
-                (1–6 uppercase letters/digits, starts with letter)
+                {t("createProjectKeyHint")}
               </span>
             </label>
             <input
@@ -200,7 +203,7 @@ export function CreateProjectModal({ workspaceId, onClose }: CreateProjectModalP
                 setKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, MAX_KEY_LENGTH));
               }}
               maxLength={MAX_KEY_LENGTH}
-              placeholder="KAN"
+              placeholder={t("createProjectKeyPlaceholder")}
               data-testid="new-project-key"
               style={inputStyle}
             />
@@ -210,7 +213,7 @@ export function CreateProjectModal({ workspaceId, onClose }: CreateProjectModalP
                 data-testid="new-project-key-error"
                 style={{ fontSize: 11, color: "var(--bad)" }}
               >
-                Key must be 1–6 uppercase letters/digits starting with a letter.
+                {t("createProjectKeyError")}
               </span>
             )}
           </div>
@@ -218,9 +221,9 @@ export function CreateProjectModal({ workspaceId, onClose }: CreateProjectModalP
           {/* Description (optional) */}
           <div>
             <label htmlFor="project-description" style={labelStyle}>
-              Description{" "}
+              {t("createProjectDescription")}{" "}
               <span style={{ color: "var(--ink-4)", fontSize: 9, textTransform: "none", letterSpacing: 0 }}>
-                (optional)
+                {tCommon("actions.optional")}
               </span>
             </label>
             <textarea
@@ -228,7 +231,7 @@ export function CreateProjectModal({ workspaceId, onClose }: CreateProjectModalP
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={2}
-              placeholder="What is this project about?"
+              placeholder={t("createProjectDescriptionPlaceholder")}
               data-testid="new-project-description"
               style={{
                 width: "100%",
@@ -252,7 +255,7 @@ export function CreateProjectModal({ workspaceId, onClose }: CreateProjectModalP
               data-testid="new-project-error"
               style={{ fontSize: 12, color: "var(--bad)" }}
             >
-              Failed to create project. Please try again.
+              {t("createProjectError")}
             </span>
           )}
         </form>
@@ -269,7 +272,7 @@ export function CreateProjectModal({ workspaceId, onClose }: CreateProjectModalP
           }}
         >
           <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)" }}>
-            Esc to close
+            {tCommon("actions.escToClose")}
           </span>
           <span style={{ flex: 1 }} />
           <button
@@ -285,7 +288,7 @@ export function CreateProjectModal({ workspaceId, onClose }: CreateProjectModalP
               fontSize: 12,
             }}
           >
-            Cancel
+            {tCommon("actions.cancel")}
           </button>
           <button
             type="button"
@@ -308,7 +311,7 @@ export function CreateProjectModal({ workspaceId, onClose }: CreateProjectModalP
               cursor: !isValid || createMutation.isPending ? "not-allowed" : "pointer",
             }}
           >
-            {createMutation.isPending ? "Creating…" : "Create project"}
+            {createMutation.isPending ? tCommon("actions.creating") : t("createProjectSubmit")}
           </button>
         </div>
       </div>

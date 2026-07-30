@@ -8,6 +8,7 @@ import {
   ReferenceLine,
   usePlotArea,
 } from "recharts";
+import { useTranslation } from "react-i18next";
 import type { RoadmapItem } from "@/types/roadmap";
 import { HORIZON_CHART_COLORS } from "./chart-colors";
 import { HORIZON_LABELS } from "@/stores/roadmap-store";
@@ -104,15 +105,16 @@ function CustomTooltip({ active, payload }: { active?: boolean; payload?: Array<
 }
 
 export function EffortImpactChart({ items }: EffortImpactChartProps) {
+  const { t } = useTranslation("roadmap");
   const data = useEffortImpactData(items);
   const [containerRef, containerWidth] = useContainerWidth();
 
   return (
     <ChartCard
-      title="Effort vs Impact"
+      title={t("analyticsEffortVsImpact")}
       subtitle="Items with both scores plotted"
       isEmpty={data.length === 0}
-      emptyMessage="No items have both effort and impact scores. Add scores to see them here."
+      emptyMessage={t("emptyEffortImpact")}
     >
       <div ref={containerRef}>
         {containerWidth > 0 && (

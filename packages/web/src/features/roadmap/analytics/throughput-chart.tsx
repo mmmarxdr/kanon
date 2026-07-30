@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import type { RoadmapItem } from "@/types/roadmap";
 import { ChartCard } from "./chart-card";
 
@@ -23,6 +24,7 @@ const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
  * dedicated `completedAt` field lands).
  */
 export function ThroughputChart({ items }: ThroughputChartProps) {
+  const { t } = useTranslation("roadmap");
   const { weeks, target, avg, etaNow, etaNowNext } = useMemo(() => {
     // Bucket completed items into the last 12 weeks (week 0 = current week).
     const now = Date.now();
@@ -67,10 +69,10 @@ export function ThroughputChart({ items }: ThroughputChartProps) {
 
   return (
     <ChartCard
-      title="Throughput"
+      title={t("analyticsThroughput")}
       subtitle={`items shipped per week · last ${WEEKS}`}
       isEmpty={isEmpty}
-      emptyMessage="No items shipped in the last 12 weeks."
+      emptyMessage={t("emptyThroughput")}
     >
       <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet">
         {[0, 0.5, 1].map((t) => (

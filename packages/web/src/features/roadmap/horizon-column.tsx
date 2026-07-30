@@ -3,14 +3,25 @@ import {
   SortableContext,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+import { useTranslation } from "react-i18next";
 import type { Horizon } from "@/types/roadmap";
 import type { RoadmapItem } from "@/types/roadmap";
-import {
-  HORIZON_LABELS,
-  HORIZON_SUB_LABELS,
-} from "@/stores/roadmap-store";
 import { RoadmapCard } from "./roadmap-card";
 import { Icon } from "@/components/ui/icons";
+
+/** i18n key lookups for horizon names/sub-labels (roadmap.json). */
+const HORIZON_LABEL_KEYS: Record<Horizon, string> = {
+  now: "horizonNow",
+  next: "horizonNext",
+  later: "horizonLater",
+  someday: "horizonSomeday",
+};
+const HORIZON_SUB_LABEL_KEYS: Record<Horizon, string> = {
+  now: "horizonSubNow",
+  next: "horizonSubNext",
+  later: "horizonSubLater",
+  someday: "horizonSubSomeday",
+};
 
 interface HorizonColumnProps {
   horizon: Horizon;
@@ -25,7 +36,9 @@ export function HorizonColumn({
   onSelectItem,
   onAddItem,
 }: HorizonColumnProps) {
+  const { t } = useTranslation("roadmap");
   const { setNodeRef, isOver } = useDroppable({ id: horizon });
+  const label = t(HORIZON_LABEL_KEYS[horizon]);
 
   return (
     <div
@@ -49,10 +62,10 @@ export function HorizonColumn({
         }}
       >
         <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
-          {HORIZON_LABELS[horizon]}
+          {label}
         </span>
         <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)" }}>
-          {HORIZON_SUB_LABELS[horizon]}
+          {t(HORIZON_SUB_LABEL_KEYS[horizon])}
         </span>
         <span style={{ flex: 1 }} />
         <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
@@ -63,7 +76,7 @@ export function HorizonColumn({
             type="button"
             onClick={() => onAddItem(horizon)}
             style={{ color: "var(--ink-4)" }}
-            aria-label={`Add item to ${HORIZON_LABELS[horizon]}`}
+            aria-label={t("addItemTo", { horizon: label })}
           >
             <Icon.Plus />
           </button>
@@ -102,7 +115,7 @@ export function HorizonColumn({
               borderRadius: 5,
             }}
           >
-            Empty
+            {t("emptyColumn")}
           </div>
         )}
       </div>

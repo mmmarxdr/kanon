@@ -3,6 +3,13 @@ export { parseKanonConfig, findKanonConfig, writeKanonConfig } from "./kanon-bin
 export type { KanonBinding, KanonBindingFs } from "./kanon-binding.js";
 
 export {
+  SUPPORTED_LOCALES,
+  DEFAULT_LOCALE,
+  isSupportedLocale,
+} from "./locales.js";
+export type { SupportedLocale } from "./locales.js";
+
+export {
   activeCycleKPIsSchema,
   mentionDashboardItemSchema,
   notificationDashboardItemSchema,

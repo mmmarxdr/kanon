@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { RoadmapItem, RoadmapStatus } from "@/types/roadmap";
 import { Icon } from "@/components/ui/icons";
 import { Kbd } from "@/components/ui/primitives";
@@ -424,6 +425,7 @@ export default function GraphView({ items, onSelectItem }: GraphViewProps) {
 }
 
 function GraphLegend() {
+  const { t } = useTranslation("dependencies");
   return (
     <div
       style={{
@@ -434,10 +436,10 @@ function GraphLegend() {
         color: "var(--ink-3)",
       }}
     >
-      <Dot color="var(--accent)" label="In progress" />
-      <Dot color="var(--ink-2)" label="Planned" />
-      <Dot color="var(--ok)" label="Done" />
-      <Dot color="var(--ink-4)" label="Idea" />
+      <Dot color="var(--accent)" label={t("legendInProgress")} />
+      <Dot color="var(--ink-2)" label={t("legendPlanned")} />
+      <Dot color="var(--ok)" label={t("legendDone")} />
+      <Dot color="var(--ink-4)" label={t("legendIdea")} />
     </div>
   );
 }

@@ -1,0 +1,57 @@
+{
+  "state": {
+    "backlog": "Backlog",
+    "analysis": "Análisis",
+    "todo": "Por hacer",
+    "in_progress": "En progreso",
+    "review": "En revisión",
+    "done": "Hecho",
+    "idea": "Idea",
+    "planned": "Planificado"
+  },
+  "priority": {
+    "critical": "Crítica",
+    "high": "Alta",
+    "medium": "Media",
+    "low": "Baja"
+  },
+  "type": {
+    "feature": "Función",
+    "bug": "Error",
+    "task": "Tarea",
+    "spike": "Spike",
+    "incident": "Incidente"
+  },
+  "actions": {
+    "search": "Buscar",
+    "newIssue": "Nueva issue",
+    "addIssue": "Añadir issue",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "confirm": "Confirmar",
+    "create": "Crear",
+    "creating": "Creando…",
+    "close": "Cerrar",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "clearFilters": "Limpiar filtros",
+    "loading": "Cargando…",
+    "retry": "Reintentar",
+    "none": "Ninguno",
+    "any": "cualquiera",
+    "empty": "Vacío",
+    "unassigned": "Sin asignar",
+    "unknown": "Desconocido",
+    "optional": "(opcional)",
+    "escToClose": "Esc para cerrar"
+  },
+  "theme": {
+    "toLight": "Cambiar a modo claro",
+    "toDark": "Cambiar a modo oscuro"
+  },
+  "language": {
+    "switchTo": "Cambiar idioma",
+    "en": "EN",
+    "es": "ES"
+  }
+}

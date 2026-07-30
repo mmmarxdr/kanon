@@ -3,6 +3,7 @@ import { createRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { authenticatedRoute } from "../_authenticated";
 import { useRoadmapQuery } from "@/features/roadmap/use-roadmap-query";
 import GraphView from "@/features/roadmap/graph/graph-view";
+import { useTranslation } from "react-i18next";
 
 export const dependenciesRoute = createRoute({
   path: "/dependencies/$projectKey",
@@ -16,6 +17,7 @@ export const dependenciesRoute = createRoute({
 });
 
 function DependenciesPage() {
+  const { t } = useTranslation("dependencies");
   const { projectKey } = dependenciesRoute.useParams();
   const navigate = useNavigate();
   const { data: items, isLoading, error } = useRoadmapQuery(projectKey);
@@ -45,7 +47,7 @@ function DependenciesPage() {
           fontSize: 12,
         }}
       >
-        Loading graph…
+        {t("loading")}
       </div>
     );
   }
@@ -62,7 +64,7 @@ function DependenciesPage() {
           fontSize: 12,
         }}
       >
-        Failed to load dependencies: {error.message}
+        {t("failed", { message: error.message })}
       </div>
     );
   }

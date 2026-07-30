@@ -16,6 +16,7 @@
  */
 
 import type { ActiveCycleKPIs } from "@kanon/shared";
+import { useTranslation } from "react-i18next";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -119,6 +120,7 @@ export function CurrentCycleCard({
   multipleActiveProjects,
   isLoading: _isLoading,
 }: CurrentCycleCardProps) {
+  const { t } = useTranslation("inbox");
   // Empty state
   if (activeCycle === null) {
     return (
@@ -131,7 +133,7 @@ export function CurrentCycleCard({
           fontStyle: "italic",
         }}
       >
-        No active cycle
+        {t("cycleEmpty")}
       </div>
     );
   }
@@ -178,15 +180,15 @@ export function CurrentCycleCard({
         }}
       >
         <MiniKPI
-          label="Done"
+          label={t("cycleStatDone")}
           value={<span data-testid="done-pct-value">{activeCycle.donePct}%</span>}
         />
         <MiniKPI
-          label="Avg lead"
+          label={t("cycleStatAvgLead")}
           value={<span data-testid="avg-lead-value">{avgLeadText}</span>}
         />
         <MiniKPI
-          label="Velocity"
+          label={t("cycleStatVelocity")}
           value={
             <span data-testid="velocity-value">
               {activeCycle.velocity > 0 ? `+${activeCycle.velocity}` : activeCycle.velocity}

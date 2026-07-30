@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { useBackdropClose } from "@/hooks/use-backdrop-close";
 import { useNavigate } from "@tanstack/react-router";
 import type { Issue } from "@/types/issue";
@@ -25,6 +26,7 @@ interface CommandItem {
 }
 
 export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) {
+  const { t } = useTranslation("palette");
   const [search, setSearch] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -71,7 +73,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
     const actions: { id: string; label: string; sub?: string; onSelect: () => void }[] = [
       {
         id: "create-issue",
-        label: "Create new issue",
+        label: t("actionCreateIssue"),
         sub: "C",
         onSelect: () => {
           onClose();
@@ -80,7 +82,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
       },
       {
         id: "go-board",
-        label: "Go to Board",
+        label: t("actionGoBoard"),
         sub: "G B",
         onSelect: () => {
           if (projectKey) {
@@ -94,7 +96,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
       },
       {
         id: "go-schedule",
-        label: "Go to Schedule",
+        label: t("actionGoSchedule"),
         sub: "G T",
         onSelect: () => {
           if (projectKey) {
@@ -106,10 +108,10 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
           onClose();
         },
       },
-      { id: "go-inbox",        label: "Go to Inbox",        sub: "G I", onSelect: onClose },
-      { id: "go-roadmap",      label: "Go to Roadmap",      sub: "G R", onSelect: onClose },
-      { id: "go-dependencies", label: "Go to Dependencies", sub: "G D", onSelect: onClose },
-      { id: "go-settings",     label: "Go to Settings",     sub: "G S", onSelect: onClose },
+      { id: "go-inbox",        label: t("actionGoInbox"),        sub: "G I", onSelect: onClose },
+      { id: "go-roadmap",      label: t("actionGoRoadmap"),      sub: "G R", onSelect: onClose },
+      { id: "go-dependencies", label: t("actionGoDependencies"), sub: "G D", onSelect: onClose },
+      { id: "go-settings",     label: t("actionGoSettings"),     sub: "G S", onSelect: onClose },
     ];
 
     const filteredActions = rawQuery
@@ -127,7 +129,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
     }
 
     return result;
-  }, [search, searchResults, navigate, onClose, onCreateIssue, projectKey]);
+  }, [search, searchResults, navigate, onClose, onCreateIssue, projectKey, t]);
 
   useEffect(() => {
     setSelectedIndex(0);
@@ -189,7 +191,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Command palette"
+        aria-label={t("ariaLabel")}
         data-testid="command-palette"
         onKeyDown={handleKeyDown}
         style={{
@@ -222,7 +224,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search issues, run commands…"
+            placeholder={t("placeholder")}
             autoFocus
             data-testid="command-palette-input"
             style={{
@@ -246,7 +248,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
                 flexShrink: 0,
               }}
             >
-              Searching…
+              {t("searching")}
             </span>
           )}
           <Kbd>Esc</Kbd>
@@ -269,12 +271,12 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
                 color: "var(--ink-4)",
               }}
             >
-              No results
+              {t("noResults")}
             </div>
           ) : (
             <>
               {issueItems.length > 0 && (
-                <Section label="Issues">
+                <Section label={t("sectionIssues")}>
                   {issueItems.map((it, i) => (
                     <Row
                       key={it.id}
@@ -304,7 +306,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
               )}
 
               {actionItems.length > 0 && (
-                <Section label="Actions">
+                <Section label={t("sectionActions")}>
                   {actionItems.map((it, i) => {
                     const globalIndex = actionIndexOffset + i;
                     return (
@@ -338,10 +340,10 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
           }}
         >
           <span>
-            <Kbd>↑↓</Kbd> Navigate
+            <Kbd>↑↓</Kbd> {t("navigate")}
           </span>
           <span>
-            <Kbd>↵</Kbd> Select
+            <Kbd>↵</Kbd> {t("select")}
           </span>
           <span style={{ flex: 1 }} />
           <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>

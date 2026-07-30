@@ -1,0 +1,20 @@
+{
+  "ariaLabel": "Command palette",
+  "placeholder": "Search issues, run commands…",
+  "sectionIssues": "Issues",
+  "sectionActions": "Actions",
+  "actionCreateIssue": "Create new issue",
+  "actionGoBoard": "Go to Board",
+  "actionGoSchedule": "Go to Schedule",
+  "actionGoInbox": "Go to Inbox",
+  "actionGoRoadmap": "Go to Roadmap",
+  "actionGoDependencies": "Go to Dependencies",
+  "actionGoSettings": "Go to Settings",
+  "filterState": "State",
+  "filterType": "Type",
+  "filterPriority": "Priority",
+  "searching": "Searching…",
+  "noResults": "No results",
+  "navigate": "Navigate",
+  "select": "Select"
+}

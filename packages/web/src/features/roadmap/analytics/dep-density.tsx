@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import type { RoadmapItem } from "@/types/roadmap";
 import { ChartCard } from "./chart-card";
 
@@ -15,6 +16,7 @@ interface DepDensityProps {
  * Action enabled: protect blockers; unblock the chokepoints.
  */
 export function DepDensity({ items }: DepDensityProps) {
+  const { t } = useTranslation("roadmap");
   const { topBlockers, mostBlocked, worstBlocker } = useMemo(() => {
     const blockerScore = (it: RoadmapItem) => it.blocks?.length ?? 0;
     const blockedScore = (it: RoadmapItem) => it.dependsOn?.length ?? 0;
@@ -42,10 +44,10 @@ export function DepDensity({ items }: DepDensityProps) {
 
   return (
     <ChartCard
-      title="Dependency hotspots"
+      title={t("analyticsDepHotspots")}
       subtitle="who blocks · who's blocked"
       isEmpty={isEmpty}
-      emptyMessage="No dependencies recorded yet."
+      emptyMessage={t("emptyDeps")}
     >
       <div className="grid grid-cols-2 gap-5">
         <Column

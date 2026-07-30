@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useTranslation } from "react-i18next";
+import i18n from "@/i18n";
 import type { RoadmapItem, RoadmapStatus, Horizon } from "@/types/roadmap";
 import { useRoadmapStore } from "@/stores/roadmap-store";
 import { Segmented } from "@/components/ui/primitives";
@@ -32,7 +34,10 @@ const MIN_CANVAS_WIDTH = 1100;
 type GroupBy = "horizon" | "owner";
 
 const GROUP_BY_STORAGE_KEY = "kanon.timeline.groupBy";
-const UNASSIGNED_OWNER = "Unassigned";
+
+function unassignedOwnerLabel(): string {
+  return i18n.t("roadmap:unassignedOwner");
+}
 
 function loadGroupBy(): GroupBy {
   try {
@@ -56,12 +61,12 @@ function persistGroupBy(value: GroupBy): void {
 const STATUS_LEGEND: ReadonlyArray<{
   status: RoadmapStatus;
   color: string;
-  label: string;
+  labelKey: string;
 }> = [
-  { status: "in_progress", color: "var(--accent)", label: "In progress" },
-  { status: "planned", color: "var(--ink-2)", label: "Planned" },
-  { status: "done", color: "var(--ok)", label: "Done" },
-  { status: "idea", color: "var(--ink-4)", label: "Idea" },
+  { status: "in_progress", color: "var(--accent)", labelKey: "statusInProgress" },
+  { status: "planned", color: "var(--ink-2)", labelKey: "statusPlanned" },
+  { status: "done", color: "var(--ok)", labelKey: "statusDone" },
+  { status: "idea", color: "var(--ink-4)", labelKey: "statusIdea" },
 ];
 
 function statusDotColor(status: RoadmapStatus): string {
@@ -152,6 +157,7 @@ function flatRowIndex(groups: TimelineGroup[]): Map<string, number> {
  * a pixel width.
  */
 export function GanttTimeline({ items }: GanttTimelineProps) {
+  const { t } = useTranslation("roadmap");
   const [containerRef, containerWidth] = useContainerWidth();
   const { groups: horizonGroups } = useTimelineData(items);
   const setSelectedItemId = useRoadmapStore((s) => s.setSelectedItemId);
@@ -217,15 +223,12 @@ export function GanttTimeline({ items }: GanttTimelineProps) {
   if (items.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
-        <p className="text-sm text-on-surface/40">No roadmap items yet</p>
+        <p className="text-sm text-on-surface/40">{t("timelineEmpty")}</p>
       </div>
     );
   }
 
-  const sparseMessage =
-    items.length < 3
-      ? "Add more items to see a richer timeline view."
-      : null;
+  const sparseMessage = items.length < 3 ? t("timelineSparse") : null;
 
   return (
     <div
@@ -269,8 +272,8 @@ export function GanttTimeline({ items }: GanttTimelineProps) {
         <Segmented<GroupBy>
           value={groupBy}
           options={[
-            { id: "horizon", label: "Horizon" },
-            { id: "owner", label: "Owner" },
+            { id: "horizon", label: t("groupByHorizon") },
+            { id: "owner", label: t("groupByOwner") },
           ]}
           onChange={setGroupBy}
         />
@@ -406,6 +409,7 @@ interface PixelMath {
 }
 
 function QuarterRow({ xpx, wpx }: PixelMath) {
+  const { t } = useTranslation("roadmap");
   return (
     <div
       style={{
@@ -432,7 +436,7 @@ function QuarterRow({ xpx, wpx }: PixelMath) {
         }}
         className="mono"
       >
-        Track
+        {t("track")}
       </div>
       {QUARTERS.map((q) => (
         <div
@@ -848,7 +852,7 @@ function groupByOwner(horizonGroups: TimelineGroup[]): TimelineGroup[] {
   const byOwner = new Map<string, TimelineItem[]>();
   for (const g of horizonGroups) {
     for (const item of g.items) {
-      const key = item.owner ?? UNASSIGNED_OWNER;
+      const key = item.owner ?? unassignedOwnerLabel();
       const bucket = byOwner.get(key);
       if (bucket) {
         bucket.push(item);
@@ -878,6 +882,7 @@ function groupByOwner(horizonGroups: TimelineGroup[]): TimelineGroup[] {
 // are scoped to what this file actually consumes.)
 
 function Legend() {
+  const { t } = useTranslation("roadmap");
   const wrap: CSSProperties = {
     display: "flex",
     gap: 10,
@@ -902,7 +907,7 @@ function Legend() {
               background: l.color,
             }}
           />
-          {l.label}
+          {t(l.labelKey)}
         </span>
       ))}
     </div>

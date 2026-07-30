@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { IssueDependencyEdge } from "@/types/issue";
 import { StatePip } from "@/components/ui/primitives";
 
@@ -11,6 +12,9 @@ export function DependenciesSection({
   blocks,
   blockedBy,
 }: DependenciesSectionProps) {
+  const { t } = useTranslation("issue");
+  const { t: tCommon } = useTranslation("common");
+
   if (blocks.length === 0 && blockedBy.length === 0) {
     return null;
   }
@@ -25,7 +29,7 @@ export function DependenciesSection({
           textTransform: "uppercase",
         }}
       >
-        Dependencies
+        {t("sectionDependencies")}
       </span>
       <div
         style={{
@@ -34,8 +38,8 @@ export function DependenciesSection({
           gap: 16,
         }}
       >
-        <DepCol title="Blocked by" dir="←" items={blockedBy} side="source" />
-        <DepCol title="Blocks" dir="→" items={blocks} side="target" />
+        <DepCol title={t("depBlockedBy")} dir="←" items={blockedBy} side="source" emptyLabel={tCommon("actions.none")} />
+        <DepCol title={t("depBlocks")} dir="→" items={blocks} side="target" emptyLabel={tCommon("actions.none")} />
       </div>
     </div>
   );
@@ -46,11 +50,13 @@ function DepCol({
   dir,
   items,
   side,
+  emptyLabel,
 }: {
   title: string;
   dir: string;
   items: IssueDependencyEdge[];
   side: "source" | "target";
+  emptyLabel: string;
 }) {
   return (
     <div>
@@ -74,7 +80,7 @@ function DepCol({
               fontStyle: "italic",
             }}
           >
-            none
+            {emptyLabel}
           </span>
         ) : (
           items.map((dep) => {

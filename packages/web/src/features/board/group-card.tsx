@@ -1,7 +1,8 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { useTranslation } from "react-i18next";
 import type { GroupSummary } from "@/types/issue";
-import { STATE_LABELS, type IssueState } from "@/stores/board-store";
+import type { IssueState } from "@/stores/board-store";
 import { humanizeGroupKey } from "@/lib/humanize-group-key";
 
 const STATE_DOT: Record<IssueState, string> = {
@@ -19,6 +20,8 @@ interface GroupCardProps {
 }
 
 export function GroupCard({ group, onClick }: GroupCardProps) {
+  const { t } = useTranslation("common");
+  const { t: tBoard } = useTranslation("board");
   const {
     attributes,
     listeners,
@@ -101,7 +104,7 @@ export function GroupCard({ group, onClick }: GroupCardProps) {
         <span style={{ flex: 1 }} />
         <span
           className="mono"
-          title={`${group.count} issue${group.count === 1 ? "" : "s"} in group`}
+          title={tBoard("issuesInGroup", { count: group.count })}
           style={{
             padding: "0 5px",
             borderRadius: 3,
@@ -151,7 +154,7 @@ export function GroupCard({ group, onClick }: GroupCardProps) {
             textTransform: "uppercase",
           }}
         >
-          {STATE_LABELS[group.latestState]}
+          {t(`state.${group.latestState}`)}
         </span>
       </div>
     </div>

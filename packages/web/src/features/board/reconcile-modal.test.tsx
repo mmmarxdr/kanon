@@ -18,7 +18,8 @@ describe("ReconcileModal", () => {
     );
 
     expect(screen.getByTestId("reconcile-modal")).toBeInTheDocument();
-    expect(screen.getByText(/5/)).toBeInTheDocument();
+    expect(screen.getByTestId("reconcile-hours-input")).toHaveValue("5");
+    expect(screen.getByTestId("reconcile-reported-hours")).toHaveTextContent("5");
   });
 
   it("does not call onConfirm until the user explicitly confirms", async () => {

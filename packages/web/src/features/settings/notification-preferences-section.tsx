@@ -1,24 +1,25 @@
+import { useTranslation } from "react-i18next";
 import { useNotificationPreferencesQuery } from "./use-notification-preferences-query";
 import { useUpdateNotificationPreferencesMutation } from "./use-update-notification-preferences-mutation";
 import type { NotificationPreferenceItem } from "@kanon/shared";
 
 type PrefKey = keyof NotificationPreferenceItem;
 
-const PREF_ROWS: { key: PrefKey; label: string; description: string }[] = [
+const PREF_ROWS: { key: PrefKey; labelKey: string; descriptionKey: string }[] = [
   {
     key: "emailMention",
-    label: "Mentions",
-    description: "Receive an email when someone mentions you in a comment.",
+    labelKey: "notifMentions",
+    descriptionKey: "notifMentionsDesc",
   },
   {
     key: "emailAssignment",
-    label: "Assignments",
-    description: "Receive an email when an issue is assigned to you.",
+    labelKey: "notifAssignments",
+    descriptionKey: "notifAssignmentsDesc",
   },
   {
     key: "emailCycleClosed",
-    label: "Cycle closed",
-    description: "Receive an email when a cycle you participate in is closed.",
+    labelKey: "notifCycleClosed",
+    descriptionKey: "notifCycleClosedDesc",
   },
 ];
 
@@ -27,13 +28,14 @@ export function NotificationPreferencesSection({
 }: {
   workspaceId: string;
 }) {
+  const { t } = useTranslation("settings");
   const { data, isLoading, error } = useNotificationPreferencesQuery(workspaceId);
   const update = useUpdateNotificationPreferencesMutation(workspaceId);
 
   if (isLoading) {
     return (
       <div className="rounded-lg border border-border bg-card p-6">
-        <p className="text-sm text-muted-foreground">Loading preferences...</p>
+        <p className="text-sm text-muted-foreground">{t("notifLoading")}</p>
       </div>
     );
   }
@@ -42,8 +44,9 @@ export function NotificationPreferencesSection({
     return (
       <div className="rounded-lg border border-border bg-card p-6">
         <p className="text-sm text-destructive">
-          Failed to load notification preferences:{" "}
-          {error instanceof Error ? error.message : "Unknown error"}
+          {t("notifFailed", {
+            message: error instanceof Error ? error.message : t("notifUnknownError"),
+          })}
         </p>
       </div>
     );
@@ -52,14 +55,14 @@ export function NotificationPreferencesSection({
   return (
     <div className="rounded-lg border border-border bg-card p-6">
       <h2 className="text-lg font-semibold text-foreground mb-1">
-        Email Notifications
+        {t("notifTitle")}
       </h2>
       <p className="text-sm text-muted-foreground mb-4">
-        Choose which events trigger email notifications.
+        {t("notifHelp")}
       </p>
 
       <div className="space-y-3">
-        {PREF_ROWS.map(({ key, label, description }) => {
+        {PREF_ROWS.map(({ key, labelKey, descriptionKey }) => {
           const enabled = data?.[key] ?? true;
 
           return (
@@ -94,8 +97,8 @@ export function NotificationPreferencesSection({
 
               {/* Label + Description */}
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-foreground">{label}</p>
-                <p className="text-xs text-muted-foreground">{description}</p>
+                <p className="text-sm font-medium text-foreground">{t(labelKey)}</p>
+                <p className="text-xs text-muted-foreground">{t(descriptionKey)}</p>
               </div>
             </div>
           );
