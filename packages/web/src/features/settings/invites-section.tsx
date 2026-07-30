@@ -155,7 +155,7 @@ export function InvitesSection({
             </div>
             <div className="space-y-1">
               <label className="text-xs font-medium text-card-foreground">
-                Max Uses <span className="text-muted-foreground">(0 = unlimited)</span>
+                {t("invitesMaxUses")} <span className="text-muted-foreground">{t("invitesMaxUsesHint")}</span>
               </label>
               <input
                 type="number"
@@ -166,7 +166,7 @@ export function InvitesSection({
               />
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-card-foreground">Expires in (hours)</label>
+              <label className="text-xs font-medium text-card-foreground">{t("invitesFieldExpires")}</label>
               <input
                 type="number"
                 min={1}
@@ -177,12 +177,12 @@ export function InvitesSection({
               />
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-card-foreground">Label (optional)</label>
+              <label className="text-xs font-medium text-card-foreground">{t("invitesFieldLabel")}</label>
               <input
                 type="text"
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
-                placeholder="e.g. Team onboarding"
+                placeholder={t("invitesLabelPlaceholder")}
                 className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
               />
             </div>

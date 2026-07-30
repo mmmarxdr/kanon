@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useNavigate, Link } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 import type { IssueDocument, DocumentKind } from "@/types/issue";
 import { Markdown } from "@/components/ui/markdown";
+import i18n from "@/i18n";
 
 interface DocumentListProps {
   documents: IssueDocument[];
@@ -22,6 +24,8 @@ interface DocumentListProps {
  * MermaidBlock only mounts when a card is expanded (unmounted on collapse).
  */
 export function DocumentList({ documents, isLoading, issueKey }: DocumentListProps) {
+  const { t } = useTranslation("issue");
+
   if (isLoading) {
     return (
       <div
@@ -34,7 +38,7 @@ export function DocumentList({ documents, isLoading, issueKey }: DocumentListPro
           fontSize: 12.5,
         }}
       >
-        Loading design records…
+        {t("docsLoading")}
       </div>
     );
   }
@@ -55,9 +59,9 @@ export function DocumentList({ documents, isLoading, issueKey }: DocumentListPro
         }}
       >
         <span style={{ fontSize: 22 }}>📋</span>
-        <span>No design records yet.</span>
+        <span>{t("docsEmpty")}</span>
         <span style={{ fontSize: 11.5, color: "var(--ink-4)" }}>
-          Use <code style={{ fontFamily: "monospace" }}>kanon_create_document</code> via MCP to record an ADR, PDR, RFC, or note.
+          {t("docsEmptyHint")}
         </span>
       </div>
     );
@@ -82,6 +86,7 @@ interface DocumentCardProps {
 }
 
 function DocumentCard({ document: doc, issueKey }: DocumentCardProps) {
+  const { t } = useTranslation("issue");
   const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
 
