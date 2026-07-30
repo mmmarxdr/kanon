@@ -37,5 +37,10 @@
   "scheduleStart": "Start",
   "scheduleDue": "Due",
   "scheduleEmpty": "No schedule yet",
-  "relativeJustNow": "just now"
+  "relativeJustNow": "just now",
+  "relativeMinutesAgo": "{{count}}m ago",
+  "relativeHoursAgo": "{{count}}h ago",
+  "relativeDaysAgo": "{{count}}d ago",
+  "collapseDesignRecord": "Collapse design record",
+  "expandDesignRecord": "Expand design record"
 }

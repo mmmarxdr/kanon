@@ -100,7 +100,7 @@ export function InvitesSection({
   if (isLoading) {
     return (
       <div className="rounded-lg border border-border bg-card p-6">
-        <p className="text-sm text-muted-foreground">Loading invites...</p>
+        <p className="text-sm text-muted-foreground">{t("invitesLoading")}</p>
       </div>
     );
   }
@@ -109,7 +109,7 @@ export function InvitesSection({
     return (
       <div className="rounded-lg border border-border bg-card p-6">
         <p className="text-sm text-destructive">
-          Failed to load invites: {error.message}
+          {t("invitesFailed", { message: error.message })}
         </p>
       </div>
     );
@@ -121,13 +121,13 @@ export function InvitesSection({
   return (
     <div className="rounded-lg border border-border bg-card p-6">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-foreground">Invite Links</h2>
+        <h2 className="text-lg font-semibold text-foreground">{t("invitesTitle")}</h2>
         {isAdmin && (
           <button
             onClick={() => setShowForm(!showForm)}
             className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
           >
-            {showForm ? "Cancel" : "Create Invite"}
+            {showForm ? tCommon("actions.cancel") : t("invitesCreate")}
           </button>
         )}
       </div>
@@ -137,7 +137,7 @@ export function InvitesSection({
         <form onSubmit={handleCreate} className="mb-6 space-y-3 rounded-md border border-border p-4 bg-secondary/30">
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <label className="text-xs font-medium text-card-foreground">Role</label>
+              <label className="text-xs font-medium text-card-foreground">{t("invitesFieldRole")}</label>
               <div className="relative">
               <select
                 value={role}
@@ -146,7 +146,7 @@ export function InvitesSection({
               >
                 {INVITE_ROLES.map((r) => (
                   <option key={r} value={r}>
-                    {roleLabel(r)}
+                    {roleLabel(r, t)}
                   </option>
                 ))}
               </select>

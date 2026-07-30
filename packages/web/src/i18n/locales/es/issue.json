@@ -37,5 +37,10 @@
   "scheduleStart": "Inicio",
   "scheduleDue": "Vencimiento",
   "scheduleEmpty": "Sin calendario aún",
-  "relativeJustNow": "ahora mismo"
+  "relativeJustNow": "ahora mismo",
+  "relativeMinutesAgo": "hace {{count}}m",
+  "relativeHoursAgo": "hace {{count}}h",
+  "relativeDaysAgo": "hace {{count}}d",
+  "collapseDesignRecord": "Contraer registro de diseño",
+  "expandDesignRecord": "Expandir registro de diseño"
 }
