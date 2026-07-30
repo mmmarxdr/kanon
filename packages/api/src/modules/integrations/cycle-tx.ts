@@ -12,13 +12,13 @@ export async function captureCycleMutationTx(
   cycle: CycleRow,
   actorId: string | null | undefined,
   operation: IntegrationWorkOperation,
-): Promise<void> {
+) {
   const binding = await transaction.integrationProjectBinding.findFirst({
     where: { projectId: cycle.projectId },
     orderBy: { id: "asc" },
     select: { id: true, connectionId: true },
   });
-  if (!binding) return;
+  if (!binding) return null;
 
   const [actor, credential, reference] = await Promise.all([
     actorId
@@ -28,12 +28,12 @@ export async function captureCycleMutationTx(
         })
       : null,
     actorId
-      ? transaction.memberIntegrationCredential.findUnique({
+      ? transaction.memberIntegrationCredential.findFirst({
           where: {
-            memberId_connectionId: {
-              memberId: actorId,
-              connectionId: binding.connectionId,
-            },
+            memberId: actorId,
+            connectionId: binding.connectionId,
+            lastAuthStatus: "valid",
+            revokedAt: null,
           },
           select: { id: true },
         })
@@ -48,7 +48,7 @@ export async function captureCycleMutationTx(
     }),
   ]);
 
-  await captureIntegrationWorkTx(transaction, {
+  return captureIntegrationWorkTx(transaction, {
     bindingId: binding.id,
     entityType: "cycle",
     entityId: cycle.id,

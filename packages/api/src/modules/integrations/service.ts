@@ -33,7 +33,12 @@ const defaultDeps: ConnectionServiceDeps = {
 
 type Database = Pick<
   Prisma.TransactionClient,
-  "member" | "project" | "integrationConnection" | "integrationProjectBinding" | "memberIntegrationCredential"
+  | "member"
+  | "project"
+  | "integrationConnection"
+  | "integrationProjectBinding"
+  | "integrationExternalIdentity"
+  | "memberIntegrationCredential"
 >;
 
 async function requireOwner(database: Database, workspaceId: string, userId: string) {
@@ -54,11 +59,47 @@ async function ownedConnection(database: Database, connectionId: string, userId:
   return connection;
 }
 
+async function memberConnection(database: Database, connectionId: string, userId: string) {
+  const connection = await database.integrationConnection.findUnique({ where: { id: connectionId } });
+  if (!connection) throw new AppError(404, "INTEGRATION_NOT_FOUND", "Integration connection not found");
+  const member = await database.member.findUnique({
+    where: { userId_workspaceId: { userId, workspaceId: connection.workspaceId } },
+    select: { id: true },
+  });
+  if (!member) throw new AppError(403, "FORBIDDEN", "Workspace membership is required");
+  return { connection, member };
+}
+
+async function upsertExternalIdentities(
+  database: Database,
+  connectionId: string,
+  memberId: string,
+  remoteUserId: string,
+  remoteLogin: string | null,
+) {
+  const bindings = await database.integrationProjectBinding.findMany({
+    where: { connectionId },
+    select: { id: true },
+  });
+  for (const binding of bindings) {
+    await database.integrationExternalIdentity.upsert({
+      where: { bindingId_memberId: { bindingId: binding.id, memberId } },
+      create: { bindingId: binding.id, memberId, remoteUserId, remoteLogin },
+      update: { remoteUserId, remoteLogin },
+    });
+  }
+}
+
 async function serviceCredential(database: Database, connection: { id: string; serviceCredentialId: string | null }) {
   const credential = connection.serviceCredentialId
     ? await database.memberIntegrationCredential.findUnique({ where: { id: connection.serviceCredentialId } })
     : null;
-  if (!credential || credential.connectionId !== connection.id || credential.revokedAt) {
+  if (
+    !credential ||
+    credential.connectionId !== connection.id ||
+    credential.lastAuthStatus !== "valid" ||
+    credential.revokedAt
+  ) {
     throw new AppError(409, "INTEGRATION_NOT_READY", "A valid service credential is required");
   }
   return credential;
@@ -213,6 +254,19 @@ export async function configureConnection(
         lifecycleEpoch: { increment: 1 },
       },
     });
+    const credentials = await transaction.memberIntegrationCredential.findMany({
+      where: { connectionId, externalUserId: { not: null } },
+      select: { memberId: true, externalUserId: true, externalLogin: true },
+    });
+    for (const credential of credentials) {
+      await upsertExternalIdentities(
+        transaction,
+        connectionId,
+        credential.memberId,
+        credential.externalUserId!,
+        credential.externalLogin,
+      );
+    }
     if (current.lifecycle !== "draft") {
       await transaction.integrationConnection.update({
         where: { id: connectionId },
@@ -299,4 +353,206 @@ export async function setConnectionLifecycle(
     });
     return connection;
   });
+}
+
+function publicCredential(
+  credential: {
+    externalUserId: string | null;
+    externalLogin: string | null;
+    lastValidatedAt: Date | null;
+    lastAuthStatus: string;
+    revokedAt: Date | null;
+  } | null,
+) {
+  if (!credential) {
+    return {
+      connected: false,
+      status: "missing",
+      externalUserId: null,
+      externalLogin: null,
+      lastValidatedAt: null,
+      revokedAt: null,
+    };
+  }
+  return {
+    connected: credential.lastAuthStatus === "valid" && credential.revokedAt === null,
+    status: credential.lastAuthStatus,
+    externalUserId: credential.externalUserId,
+    externalLogin: credential.externalLogin,
+    lastValidatedAt: credential.lastValidatedAt,
+    revokedAt: credential.revokedAt,
+  };
+}
+
+export async function connectCredential(
+  connectionId: string,
+  apiKey: string,
+  userId: string,
+  deps: ConnectionServiceDeps = defaultDeps,
+) {
+  const { connection } = await memberConnection(prisma, connectionId, userId);
+  const identity = await deps.remote(connection.baseUrl, apiKey).whoAmI();
+  const encryptedKey = deps.encrypt(apiKey);
+  const validatedAt = new Date();
+
+  try {
+    const credential = await prisma.$transaction(async (transaction) => {
+      const current = await memberConnection(transaction, connectionId, userId);
+      const saved = await transaction.memberIntegrationCredential.upsert({
+        where: {
+          memberId_connectionId: { memberId: current.member.id, connectionId },
+        },
+        create: {
+          memberId: current.member.id,
+          connectionId,
+          encryptedKey,
+          externalUserId: identity.id,
+          externalLogin: identity.login ?? null,
+          lastValidatedAt: validatedAt,
+          lastAuthStatus: "valid",
+        },
+        update: {
+          encryptedKey,
+          externalUserId: identity.id,
+          externalLogin: identity.login ?? null,
+          lastValidatedAt: validatedAt,
+          lastAuthStatus: "valid",
+          revokedAt: null,
+        },
+      });
+      await upsertExternalIdentities(
+        transaction,
+        connectionId,
+        current.member.id,
+        identity.id,
+        identity.login ?? null,
+      );
+      return saved;
+    });
+    return publicCredential(credential);
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      throw new AppError(
+        409,
+        "REMOTE_IDENTITY_ALREADY_CONNECTED",
+        "This provider identity is already connected to another workspace member",
+      );
+    }
+    throw error;
+  }
+}
+
+export async function clearCredential(connectionId: string, userId: string) {
+  const { member } = await memberConnection(prisma, connectionId, userId);
+  await prisma.memberIntegrationCredential.updateMany({
+    where: { connectionId, memberId: member.id },
+    data: { lastAuthStatus: "revoked", revokedAt: new Date() },
+  });
+  const credential = await prisma.memberIntegrationCredential.findUnique({
+    where: { memberId_connectionId: { memberId: member.id, connectionId } },
+  });
+  return publicCredential(credential);
+}
+
+export async function getConnection(connectionId: string, userId: string) {
+  const { connection, member } = await memberConnection(prisma, connectionId, userId);
+  const [credential, bindings, workspaceMembers, validCredentials, externalIdentities] =
+    await Promise.all([
+      prisma.memberIntegrationCredential.findUnique({
+        where: { memberId_connectionId: { memberId: member.id, connectionId } },
+      }),
+      prisma.integrationProjectBinding.findMany({
+        where: { connectionId },
+        orderBy: { id: "asc" },
+        select: {
+          id: true,
+          projectId: true,
+          remoteProjectId: true,
+          readMap: true,
+          writeMap: true,
+          lifecycle: true,
+          lifecycleEpoch: true,
+        },
+      }),
+      prisma.member.count({ where: { workspaceId: connection.workspaceId } }),
+      prisma.memberIntegrationCredential.count({
+        where: { connectionId, lastAuthStatus: "valid", revokedAt: null },
+      }),
+      prisma.integrationExternalIdentity.count({
+        where: { binding: { connectionId } },
+      }),
+    ]);
+  return {
+    id: connection.id,
+    workspaceId: connection.workspaceId,
+    provider: connection.provider,
+    baseUrl: connection.baseUrl,
+    lifecycle: connection.lifecycle,
+    lifecycleEpoch: connection.lifecycleEpoch,
+    serviceFallbackEnabled: connection.serviceFallbackEnabled,
+    discoveredStatuses: connection.discoveredStatuses,
+    bindings,
+    callerCredential: publicCredential(credential),
+    counts: { workspaceMembers, validCredentials, externalIdentities },
+  };
+}
+
+export async function reencryptCredentials(
+  options: {
+    oldKey: Buffer;
+    newKey: Buffer;
+    dryRun?: boolean;
+    batchSize?: number;
+  },
+  database: typeof prisma = prisma,
+) {
+  if (options.oldKey.equals(options.newKey)) {
+    throw new Error("Old and new integration encryption keys must differ");
+  }
+  const batchSize = options.batchSize ?? 100;
+  if (!Number.isInteger(batchSize) || batchSize < 1) throw new Error("Batch size must be positive");
+  const credentials = await database.memberIntegrationCredential.findMany({
+    orderBy: { id: "asc" },
+    select: { id: true, encryptedKey: true },
+  });
+  const pending: Array<{ id: string; encryptedKey: string }> = [];
+  const invalid: string[] = [];
+  let alreadyRotated = 0;
+
+  for (const credential of credentials) {
+    try {
+      const plaintext = decryptCredential(credential.encryptedKey, options.oldKey);
+      pending.push({ id: credential.id, encryptedKey: encryptCredential(plaintext, options.newKey) });
+    } catch {
+      try {
+        decryptCredential(credential.encryptedKey, options.newKey);
+        alreadyRotated += 1;
+      } catch {
+        invalid.push(credential.id);
+      }
+    }
+  }
+  if (invalid.length > 0) {
+    throw new Error(`Undecryptable integration credentials: ${invalid.join(", ")}`);
+  }
+  if (options.dryRun) {
+    return { total: credentials.length, pending: pending.length, alreadyRotated, updated: 0 };
+  }
+  for (let offset = 0; offset < pending.length; offset += batchSize) {
+    const batch = pending.slice(offset, offset + batchSize);
+    await database.$transaction(
+      batch.map((credential) =>
+        database.memberIntegrationCredential.update({
+          where: { id: credential.id },
+          data: { encryptedKey: credential.encryptedKey },
+        }),
+      ),
+    );
+  }
+  return {
+    total: credentials.length,
+    pending: pending.length,
+    alreadyRotated,
+    updated: pending.length,
+  };
 }

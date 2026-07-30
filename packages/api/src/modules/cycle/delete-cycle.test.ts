@@ -111,6 +111,20 @@ describe("deleteCycle()", () => {
     vi.clearAllMocks();
   });
 
+  it("locks the cycle row before reading lifecycle guards", async () => {
+    const tx = makeTxMock({
+      cycleFindUniqueResult: buildCycle(),
+      auditLogCreateResult: { id: AUDIT_LOG_ID },
+    });
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => cb(tx));
+
+    await deleteCycle(CYCLE_ID, {}, AUTHOR_ID);
+
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.cycle.findUnique.mock.invocationCallOrder[0]!,
+    );
+  });
+
   // ── B.1 ── REQ-CYCLE-DELETE-002 ─────────────────────────────────────────────
   describe("B.1 — active-state guard (REQ-CYCLE-DELETE-002)", () => {
     it("rejects an active cycle unconditionally, even with force:true", async () => {

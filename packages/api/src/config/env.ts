@@ -130,6 +130,12 @@ export const envSchema = z.object({
   // required and validated as exactly 32 decoded bytes in production via
   // superRefine below. Generate with: `openssl rand -base64 32`.
   INTEGRATION_ENCRYPTION_KEY: z.string().optional(),
+  INTEGRATION_SYNC_DEBOUNCE_MS: z
+    .string()
+    .optional()
+    .default("2000")
+    .transform((val) => parseInt(val, 10))
+    .pipe(z.number().int().min(100)),
   CORS_ORIGIN: z
     .string()
     .optional()

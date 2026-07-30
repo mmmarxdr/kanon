@@ -28,6 +28,8 @@ export function makeTxMock(overrides?: {
   const auditLogCreateResult = overrides?.auditLogCreateResult ?? { id: "audit-1" };
 
   const tx = {
+    $queryRaw: vi.fn().mockResolvedValue([]),
+    $executeRaw: vi.fn().mockResolvedValue(0),
     cycle: {
       create: vi.fn().mockImplementation(async () => {
         if (overrides?.shouldThrow) throw new Error("tx-fail");
@@ -56,6 +58,9 @@ export function makeTxMock(overrides?: {
     },
     adminAuditLog: {
       create: vi.fn().mockResolvedValue(auditLogCreateResult),
+    },
+    externalRef: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     integrationProjectBinding: {
       findFirst: vi.fn(),

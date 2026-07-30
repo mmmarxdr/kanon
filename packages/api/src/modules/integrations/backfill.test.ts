@@ -8,6 +8,7 @@ import {
   ExternalRefBackfillError,
   ExternalRefBackfillInvariantError,
   resolveBindingCandidates,
+  withTargetedExternalRefBackfillWriteGate,
   withExternalRefBackfillWriteGate,
 } from "./backfill.js";
 import * as backfillModule from "./backfill.js";
@@ -379,6 +380,78 @@ describe("external reference binding backfill core", () => {
 
     await expect(
       prisma.externalRef.findUnique({ where: { id: projectRef.id } }),
+    ).resolves.toMatchObject({ bindingId: null });
+  });
+
+  it("validates only the ref returned by the targeted worker gate", async () => {
+    const { workspace, connection } = await createProjectFixture();
+    const validProject = await createProject(workspace.id, "T");
+    const validBinding = await createBinding(connection.id, validProject.id);
+    const validRef = await createExternalRef(
+      connection.id,
+      "project",
+      validProject.id,
+      validBinding.id,
+    );
+
+    await prisma.$transaction((transaction) =>
+      withTargetedExternalRefBackfillWriteGate(transaction, async (gated) => {
+        await gated.externalRef.update({
+          where: { id: validRef.id },
+          data: { externalId: "remote-targeted-updated" },
+        });
+        return validRef.id;
+      }),
+    );
+
+    await expect(
+      prisma.externalRef.findUniqueOrThrow({ where: { id: validRef.id } }),
+    ).resolves.toMatchObject({ externalId: "remote-targeted-updated" });
+  });
+
+  it("rolls back a targeted ref that violates the shared ownership invariant", async () => {
+    const { binding, projectRef } = await createProjectFixture();
+
+    await expect(
+      prisma.$transaction((transaction) =>
+        withTargetedExternalRefBackfillWriteGate(transaction, async (gated) => {
+          await gated.externalRef.update({
+            where: { id: projectRef.id },
+            data: { bindingId: binding.id, entityId: randomUUID() },
+          });
+          return projectRef.id;
+        }),
+      ),
+    ).rejects.toMatchObject({
+      name: ExternalRefBackfillInvariantError.name,
+      violations: [
+        expect.objectContaining({
+          externalRefId: projectRef.id,
+          reason: "local-entity-not-found",
+        }),
+      ],
+    });
+    await expect(
+      prisma.externalRef.findUniqueOrThrow({ where: { id: projectRef.id } }),
+    ).resolves.toMatchObject({ bindingId: null });
+  });
+
+  it("rolls back when the targeted gate returns a missing ref ID", async () => {
+    const { binding, projectRef } = await createProjectFixture();
+
+    await expect(
+      prisma.$transaction((transaction) =>
+        withTargetedExternalRefBackfillWriteGate(transaction, async (gated) => {
+          await gated.externalRef.update({
+            where: { id: projectRef.id },
+            data: { bindingId: binding.id },
+          });
+          return randomUUID();
+        }),
+      ),
+    ).rejects.toThrow(/targeted external reference/i);
+    await expect(
+      prisma.externalRef.findUniqueOrThrow({ where: { id: projectRef.id } }),
     ).resolves.toMatchObject({ bindingId: null });
   });
 

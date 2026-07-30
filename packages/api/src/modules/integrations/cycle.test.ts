@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { PrismaClient } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { closeCycle, createCycle, deleteCycle } from "../cycle/service.js";
 import {
@@ -12,6 +13,15 @@ import {
 const startDate = new Date("2026-08-03T00:00:00.000Z");
 const endDate = new Date("2026-08-09T00:00:00.000Z");
 const cycleInput = (name: string) => ({ name, startDate, endDate });
+const concurrentPrisma = new PrismaClient();
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 async function bindProject(workspaceId: string, projectId: string, memberId?: string) {
   const connection = await prisma.integrationConnection.create({
@@ -43,7 +53,9 @@ async function bindProject(workspaceId: string, projectId: string, memberId?: st
 
 describe("cycle integration capture", () => {
   beforeEach(cleanDatabase);
-  afterAll(disconnectTestDb);
+  afterAll(async () => {
+    await Promise.all([disconnectTestDb(), concurrentPrisma.$disconnect()]);
+  });
 
   it("captures create, close, and linked hard-delete before the cycle disappears", async () => {
     const workspace = await seedTestWorkspace();
@@ -123,11 +135,64 @@ describe("cycle integration capture", () => {
     expect(work[1]!.payload).toMatchObject({
       cycle: { id: created.id, state: "done", closedAt: expect.any(String) },
     });
-    expect(work[3]).toMatchObject({ refId: reference.id, actorKey: `member:${member.id}` });
+    expect(work[3]).toMatchObject({
+      refId: null,
+      actorKey: `member:${member.id}`,
+      state: "skipped",
+      skippedReason: "Remote cycle hard-delete is not supported",
+    });
     expect(work[3]!.payload).toMatchObject({
       version: 1,
       cycle: { id: doomed.id, name: "Deleted cycle", startDate: startDate.toISOString() },
     });
+    await expect(
+      prisma.externalRef.findUnique({ where: { id: reference.id } }),
+    ).resolves.toBeNull();
+    await expect(
+      prisma.externalRef.count({ where: { entityType: "cycle", entityId: doomed.id } }),
+    ).resolves.toBe(0);
+  });
+
+  it("re-reads a cycle under lock so a winning activation prevents deletion", async () => {
+    const workspace = await seedTestWorkspace();
+    const member = await seedTestMember(workspace.id);
+    const project = await seedTestProject(workspace.id);
+    const cycle = await prisma.cycle.create({
+      data: { ...cycleInput("Activation winner"), projectId: project.id },
+    });
+    const ready = deferred();
+    const release = deferred();
+    const activation = concurrentPrisma.$transaction(async (transaction) => {
+      await transaction.$queryRaw`
+        SELECT "id" FROM "cycles" WHERE "id" = ${cycle.id}::uuid FOR UPDATE
+      `;
+      await transaction.cycle.update({
+        where: { id: cycle.id },
+        data: { state: "active" },
+      });
+      ready.resolve();
+      await release.promise;
+    });
+    await ready.promise;
+
+    const deletion = deleteCycle(cycle.id, { force: true }, member.id);
+    await vi.waitFor(async () => {
+      const [row] = await prisma.$queryRaw<Array<{ waiting: boolean }>>`
+        SELECT EXISTS (
+          SELECT 1 FROM pg_stat_activity
+          WHERE datname = current_database() AND pid <> pg_backend_pid()
+            AND wait_event_type = 'Lock' AND query ILIKE '%cycles%'
+        ) AS "waiting"
+      `;
+      expect(row?.waiting).toBe(true);
+    });
+    release.resolve();
+    await activation;
+
+    await expect(deletion).rejects.toMatchObject({ code: "CYCLE_ACTIVE", statusCode: 409 });
+    await expect(prisma.cycle.findUniqueOrThrow({ where: { id: cycle.id } })).resolves.toMatchObject(
+      { state: "active" },
+    );
   });
 
   it("rolls back create, close, delete, and audit when cycle capture fails", async () => {

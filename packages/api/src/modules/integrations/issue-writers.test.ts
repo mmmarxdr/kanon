@@ -117,4 +117,20 @@ describe("issue writer integration capture", () => {
     ).rejects.toThrow("mismatched ownership");
     expect(await prisma.issue.findFirst({ where: { title: "Must roll back" } })).toBeNull();
   });
+
+  it("does not attach a revoked personal credential to future work", async () => {
+    const workspace = await seedTestWorkspace();
+    const member = await seedTestMember(workspace.id);
+    const project = await seedTestProject(workspace.id);
+    const { credential } = await bindProject(workspace.id, project.id, member.id);
+    await prisma.memberIntegrationCredential.update({
+      where: { id: credential!.id },
+      data: { lastAuthStatus: "revoked", revokedAt: new Date() },
+    });
+
+    const issue = await createIssue(project.id, { title: "No stale auth", labels: [] }, member.id);
+    await expect(
+      prisma.integrationSyncWork.findFirstOrThrow({ where: { entityId: issue.id } }),
+    ).resolves.toMatchObject({ authCredentialId: null });
+  });
 });

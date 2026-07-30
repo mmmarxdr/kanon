@@ -103,7 +103,63 @@ export interface PushResult {
   readonly remoteVersion: string | null;
 }
 
-export interface PmProviderAdapter {
+export interface ProviderCreateReconciliationRequest {
+  readonly entityType: "issue" | "cycle";
+  readonly entityId: string;
+  readonly remoteProjectId: string;
+}
+
+export interface ProviderCreateReconciler {
+  reconcileCreate(
+    request: ProviderCreateReconciliationRequest,
+  ): Promise<readonly PushResult[]>;
+}
+
+export type ProviderDispatchOutcome = "retry" | "ambiguous";
+
+export class ProviderDispatchError extends Error {
+  constructor(
+    readonly outcome: ProviderDispatchOutcome,
+    cause: unknown,
+  ) {
+    super(`Provider dispatch outcome is ${outcome}`, { cause });
+    this.name = "ProviderDispatchError";
+  }
+}
+
+const RETRYABLE_NETWORK_CODES = new Set([
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "EPIPE",
+  "ETIMEDOUT",
+]);
+
+export function isRetryableProviderError(error: unknown): boolean {
+  if (error instanceof ProviderDispatchError) return error.outcome === "retry";
+  if (!error || typeof error !== "object") return false;
+  const value = error as {
+    code?: unknown;
+    message?: unknown;
+    name?: unknown;
+    statusCode?: unknown;
+  };
+  return (
+    value.statusCode === 429 ||
+    (typeof value.statusCode === "number" && value.statusCode >= 500 && value.statusCode <= 599) ||
+    (typeof value.code === "string" &&
+      (RETRYABLE_NETWORK_CODES.has(value.code) || value.code.startsWith("UND_ERR_"))) ||
+    value.name === "AbortError" ||
+    value.name === "TimeoutError" ||
+    (typeof value.message === "string" &&
+      /abort|fetch failed|network|socket|timed out/i.test(value.message))
+  );
+}
+
+export interface PmProviderAdapter extends ProviderCreateReconciler {
   capabilities(): Promise<PmProviderCapabilities>;
   listProjects(): Promise<readonly DiscoveredProject[]>;
   listStatuses(): Promise<readonly DiscoveredStatus[]>;

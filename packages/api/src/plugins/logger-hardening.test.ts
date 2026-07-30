@@ -31,7 +31,12 @@ function buildLogCapture() {
     logger: {
       level: "info",
       stream,
-      redact: ["req.headers.authorization", "req.headers.cookie", "req.body.password"],
+      redact: [
+        "req.headers.authorization",
+        "req.headers.cookie",
+        "req.body.password",
+        "req.body.apiKey",
+      ],
       base: { service: "kanon-api" },
       formatters: {
         level: (label: string) => ({ level: label }),
@@ -118,5 +123,19 @@ describe("pino logger hardening", () => {
     if (requestLog) {
       expect(requestLog.req.headers.authorization).toBe("[Redacted]");
     }
+  });
+
+  it("integration API keys are redacted when a request body is logged", async () => {
+    const { app, lines } = buildLogCapture();
+    app.post("/credential", async (request) => {
+      request.log.info({ req: { body: request.body } }, "credential request");
+      return { ok: true };
+    });
+    await app.ready();
+    await app.inject({ method: "POST", url: "/credential", payload: { apiKey: "raw-provider-key" } });
+    await app.close();
+
+    const combined = lines.join("\n");
+    expect(combined).not.toContain("raw-provider-key");
   });
 });

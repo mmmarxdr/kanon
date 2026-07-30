@@ -130,7 +130,7 @@ export function resolveBindingCandidates(
   };
 }
 
-async function acquireExternalRefBackfillWriteGate(
+export async function acquireExternalRefBackfillWriteGate(
   transaction: Prisma.TransactionClient,
 ): Promise<void> {
   await transaction.$executeRaw(
@@ -142,8 +142,10 @@ async function acquireExternalRefBackfillWriteGate(
 
 async function validateExternalRefBackfillInvariants(
   transaction: Prisma.TransactionClient,
+  externalRefId?: string,
 ): Promise<readonly ExternalRefBackfillInvariantViolation[]> {
   const refs = await transaction.externalRef.findMany({
+    ...(externalRefId ? { where: { id: externalRefId } } : {}),
     orderBy: { id: "asc" },
     select: {
       id: true,
@@ -225,8 +227,9 @@ async function runWithExternalRefBackfillWriteGate<T>(
 
 async function assertExternalRefBackfillInvariant(
   transaction: Prisma.TransactionClient,
+  externalRefId?: string,
 ): Promise<void> {
-  const violations = await validateExternalRefBackfillInvariants(transaction);
+  const violations = await validateExternalRefBackfillInvariants(transaction, externalRefId);
   if (violations.length > 0) {
     throw new ExternalRefBackfillInvariantError(violations);
   }
@@ -243,6 +246,19 @@ export async function withExternalRefBackfillWriteGate<T>(
   return database.$transaction((transaction) =>
     runWithExternalRefBackfillWriteGate(transaction, callback),
   );
+}
+
+/** Runs a pre-locked worker ref write and validates only the touched reference. */
+export async function withTargetedExternalRefBackfillWriteGate(
+  transaction: Prisma.TransactionClient,
+  callback: (transaction: Prisma.TransactionClient) => Promise<string>,
+): Promise<void> {
+  await acquireExternalRefBackfillWriteGate(transaction);
+  const externalRefId = await callback(transaction);
+  if ((await transaction.externalRef.count({ where: { id: externalRefId } })) !== 1) {
+    throw new Error(`Targeted external reference ${externalRefId} does not exist`);
+  }
+  await assertExternalRefBackfillInvariant(transaction, externalRefId);
 }
 
 export async function backfillExternalRefBindings(
