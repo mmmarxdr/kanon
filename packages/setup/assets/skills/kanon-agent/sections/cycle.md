@@ -8,7 +8,7 @@ description: Cycle lifecycle, scope changes, and close dispositions for Kanon pr
 ## Cycle Lifecycle
 
 1. kanon_create_cycle({ projectKey, name, startDate, endDate })
-2. kanon_attach_issues_to_cycle({ cycleId, add: issueKeys, remove: [], reason }) — scope at start
+2. kanon_update_cycle_scope({ cycleId, add: issueKeys, remove: [], reason }) — scope at start
 3. During cycle: kanon_get_cycle(cycleId) for burnup/risks
 4. Scope change: audit trail — add comment before attaching/detaching
 5. kanon_close_cycle({ cycleId, disposition }) at end

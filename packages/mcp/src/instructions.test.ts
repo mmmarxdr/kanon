@@ -25,8 +25,8 @@ describe("Win B — SERVER_INSTRUCTIONS deferred tools block", () => {
   it("B2: DEFERRED_TOOLS array has exactly 18 entries", () => {
     // Updated for KAN-104: +2 PM-only timesheet tools (approve/reject).
     // Updated for KAN-118: +3 occasion-only tools (add/remove dependency, adjust time entry).
-    // Updated for KAN-119: +1 resolution helper (kanon_list_members).
-    // Updated for KAN-120: +1 agent communication tool (kanon_comment_issue).
+    // Updated for KAN-119: +1 resolution helper (list_members).
+    // Updated for KAN-120: +1 agent communication tool (create_issue_comment).
     // Updated for KAN-104 capture tools: +3 (report_incident, propose_estimate, apply_proposal).
     expect(DEFERRED_TOOLS).toHaveLength(18);
   });
@@ -39,11 +39,11 @@ describe("Win B — SERVER_INSTRUCTIONS deferred tools block", () => {
 
   it("B4: the 5 deferred tools are exactly the expected cold tools", () => {
     const expected = [
-      "kanon_create_project",
-      "kanon_update_project",
-      "kanon_delete_cycle",
-      "kanon_delete_roadmap_item",
-      "kanon_who_is_working",
+      "create_project",
+      "update_project",
+      "delete_cycle",
+      "delete_roadmap_item",
+      "list_active_workers",
     ];
     for (const name of expected) {
       expect(DEFERRED_TOOLS).toContain(name);
@@ -64,7 +64,7 @@ describe("PM Persona — byte ceiling and firing pins", () => {
     // KAN-104 timesheet: +2 deferred names (~54 B) + 2 core tool lines (~105 B) → ~159 B added.
     // KAN-104 capture tools: +3 deferred names (report_incident, propose_estimate, apply_proposal)
     //   → ~72 B added; ceiling bumped to 1900 (CORE section unchanged, only DEFERRED list grows).
-    // KAN-188: +kanon_reconcile_time in CORE TOOLS + 1 short reconcile-gate hint line
+    // KAN-188: +reconcile_time in CORE TOOLS + 1 short reconcile-gate hint line
     //   → ~92 B added; ceiling bumped to 1950 (actual at landing: 1901 B, margin: 49 B).
     expect(Buffer.byteLength(SERVER_INSTRUCTIONS, "utf8")).toBeLessThanOrEqual(
       1950,
@@ -79,8 +79,8 @@ describe("PM Persona — byte ceiling and firing pins", () => {
     expect(SERVER_INSTRUCTIONS).toContain("[Area]");
   });
 
-  it("P4: SERVER_INSTRUCTIONS contains kanon_list_groups", () => {
-    expect(SERVER_INSTRUCTIONS).toContain("kanon_list_groups");
+  it("P4: SERVER_INSTRUCTIONS contains list_groups", () => {
+    expect(SERVER_INSTRUCTIONS).toContain("list_groups");
   });
 
   it("P5: SERVER_INSTRUCTIONS contains format: ack", () => {
@@ -126,9 +126,9 @@ describe("PR-4a firing pins — design records guidance", () => {
 
 // ─── KAN-188 — reconcile-time confirm-or-adjust flow discoverability ────────
 
-describe("KAN-188 — kanon_reconcile_time discoverability", () => {
-  it("R1: SERVER_INSTRUCTIONS mentions kanon_reconcile_time in CORE TOOLS", () => {
-    expect(SERVER_INSTRUCTIONS).toContain("kanon_reconcile_time");
+describe("KAN-188 — reconcile_time discoverability", () => {
+  it("R1: SERVER_INSTRUCTIONS mentions reconcile_time in CORE TOOLS", () => {
+    expect(SERVER_INSTRUCTIONS).toContain("reconcile_time");
   });
 
   it("R2: SERVER_INSTRUCTIONS documents the done-transition reconcile gate", () => {
@@ -137,19 +137,19 @@ describe("KAN-188 — kanon_reconcile_time discoverability", () => {
 });
 
 describe("PR-4a review — document tools discoverability", () => {
-  it("B2-doc: DEFERRED_TOOLS includes kanon_create_document", () => {
-    expect(DEFERRED_TOOLS).toContain("kanon_create_document");
+  it("B2-doc: DEFERRED_TOOLS includes create_design_record", () => {
+    expect(DEFERRED_TOOLS).toContain("create_design_record");
   });
 
-  it("B2-list: DEFERRED_TOOLS includes kanon_list_documents", () => {
-    expect(DEFERRED_TOOLS).toContain("kanon_list_documents");
+  it("B2-list: DEFERRED_TOOLS includes list_design_records", () => {
+    expect(DEFERRED_TOOLS).toContain("list_design_records");
   });
 
-  it("B2-get: DEFERRED_TOOLS includes kanon_get_document", () => {
-    expect(DEFERRED_TOOLS).toContain("kanon_get_document");
+  it("B2-get: DEFERRED_TOOLS includes get_design_record", () => {
+    expect(DEFERRED_TOOLS).toContain("get_design_record");
   });
 
-  it("B2-pin: kanon_create_document appears verbatim in SERVER_INSTRUCTIONS", () => {
-    expect(SERVER_INSTRUCTIONS).toContain("kanon_create_document");
+  it("B2-pin: create_design_record appears verbatim in SERVER_INSTRUCTIONS", () => {
+    expect(SERVER_INSTRUCTIONS).toContain("create_design_record");
   });
 });

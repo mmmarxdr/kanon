@@ -50,17 +50,17 @@ describe("registerProjectTools", () => {
     const registered = (server.tool as ReturnType<typeof vi.fn>).mock.calls.map(
       (call: unknown[]) => call[0],
     );
-    expect(registered).toContain("kanon_list_workspaces");
-    expect(registered).toContain("kanon_list_projects");
-    expect(registered).toContain("kanon_get_project");
-    expect(registered).toContain("kanon_create_project");
-    expect(registered).toContain("kanon_update_project");
+    expect(registered).toContain("list_workspaces");
+    expect(registered).toContain("list_projects");
+    expect(registered).toContain("get_project");
+    expect(registered).toContain("create_project");
+    expect(registered).toContain("update_project");
   });
 });
 
-// ─── kanon_list_workspaces ──────────────────────────────────────────────────
+// ─── list_workspaces ──────────────────────────────────────────────────
 
-describe("kanon_list_workspaces handler", () => {
+describe("list_workspaces handler", () => {
   let server: ReturnType<typeof createMockServer>;
 
   beforeEach(() => {
@@ -75,7 +75,7 @@ describe("kanon_list_workspaces handler", () => {
     const client = createMockClient({ listWorkspaces: vi.fn().mockResolvedValue(workspaces) });
     registerProjectTools(server as any, client);
 
-    const handler = server.getHandler("kanon_list_workspaces");
+    const handler = server.getHandler("list_workspaces");
     const result = parseResult(await handler({ format: "full" })) as any;
 
     // New shape: data directly, no {success, data} wrapper
@@ -88,7 +88,7 @@ describe("kanon_list_workspaces handler", () => {
     const client = createMockClient({ listWorkspaces: vi.fn().mockResolvedValue([]) });
     registerProjectTools(server as any, client);
 
-    const handler = server.getHandler("kanon_list_workspaces");
+    const handler = server.getHandler("list_workspaces");
     const result = parseResult(await handler({ format: "full" })) as any;
 
     expect(result.items).toEqual([]);
@@ -103,7 +103,7 @@ describe("kanon_list_workspaces handler", () => {
     });
     registerProjectTools(server as any, client);
 
-    const handler = server.getHandler("kanon_list_workspaces");
+    const handler = server.getHandler("list_workspaces");
     const raw = await handler({}) as { isError?: boolean; content: Array<{ text: string }> };
 
     expect(raw.isError).toBe(true);
@@ -114,9 +114,9 @@ describe("kanon_list_workspaces handler", () => {
   });
 });
 
-// ─── kanon_create_project ───────────────────────────────────────────────────
+// ─── create_project ───────────────────────────────────────────────────
 
-describe("kanon_create_project handler", () => {
+describe("create_project handler", () => {
   let server: ReturnType<typeof createMockServer>;
 
   beforeEach(() => {
@@ -129,7 +129,7 @@ describe("kanon_create_project handler", () => {
     const client = createMockClient({ createProject: createFn });
     registerProjectTools(server as any, client);
 
-    const handler = server.getHandler("kanon_create_project");
+    const handler = server.getHandler("create_project");
     const result = parseResult(await handler({
       workspaceId: "ws1",
       key: "KAN",
@@ -151,7 +151,7 @@ describe("kanon_create_project handler", () => {
     const client = createMockClient({ createProject: createFn });
     registerProjectTools(server as any, client);
 
-    const handler = server.getHandler("kanon_create_project");
+    const handler = server.getHandler("create_project");
     await handler({
       workspaceId: "ws1",
       key: "KAN",
@@ -174,7 +174,7 @@ describe("kanon_create_project handler", () => {
     });
     registerProjectTools(server as any, client);
 
-    const handler = server.getHandler("kanon_create_project");
+    const handler = server.getHandler("create_project");
     const raw = await handler({
       workspaceId: "ws1",
       key: "KAN",
@@ -187,9 +187,9 @@ describe("kanon_create_project handler", () => {
   });
 });
 
-// ─── kanon_update_project ───────────────────────────────────────────────────
+// ─── update_project ───────────────────────────────────────────────────
 
-describe("kanon_update_project handler", () => {
+describe("update_project handler", () => {
   let server: ReturnType<typeof createMockServer>;
 
   beforeEach(() => {
@@ -201,7 +201,7 @@ describe("kanon_update_project handler", () => {
     const client = createMockClient({ updateProject: updateFn });
     registerProjectTools(server as any, client);
 
-    const handler = server.getHandler("kanon_update_project");
+    const handler = server.getHandler("update_project");
     const result = parseResult(await handler({
       projectKey: "KAN",
       name: "Kanon Updated",
@@ -224,7 +224,7 @@ describe("kanon_update_project handler", () => {
     });
     registerProjectTools(server as any, client);
 
-    const handler = server.getHandler("kanon_update_project");
+    const handler = server.getHandler("update_project");
     const raw = await handler({
       projectKey: "NOPE",
       name: "X",
@@ -240,7 +240,7 @@ describe("kanon_update_project handler", () => {
     const client = createMockClient({ updateProject: updateFn });
     registerProjectTools(server as any, client);
 
-    const handler = server.getHandler("kanon_update_project");
+    const handler = server.getHandler("update_project");
     await handler({ projectKey: "KAN", description: null });
 
     expect(updateFn).toHaveBeenCalledWith("KAN", { description: null });
@@ -251,16 +251,16 @@ describe("kanon_update_project handler", () => {
     const client = createMockClient({ updateProject: updateFn });
     registerProjectTools(server as any, client);
 
-    const handler = server.getHandler("kanon_update_project");
+    const handler = server.getHandler("update_project");
     await handler({ projectKey: "KAN", name: "New Name" });
 
     expect(updateFn).toHaveBeenCalledWith("KAN", { name: "New Name" });
   });
 });
 
-// ─── C13: kanon_create_project — ack default ─────────────────────────────────
+// ─── C13: create_project — ack default ─────────────────────────────────
 
-describe("kanon_create_project — format tier (C13)", () => {
+describe("create_project — format tier (C13)", () => {
   let server: ReturnType<typeof createMockServer>;
 
   beforeEach(() => {
@@ -272,7 +272,7 @@ describe("kanon_create_project — format tier (C13)", () => {
     const client = createMockClient({ createProject: vi.fn().mockResolvedValue(created) });
     registerProjectTools(server as any, client);
 
-    const handler = server.getHandler("kanon_create_project");
+    const handler = server.getHandler("create_project");
     const result = parseResult(await handler({
       workspaceId: "ws1",
       key: "KAN",
@@ -292,7 +292,7 @@ describe("kanon_create_project — format tier (C13)", () => {
     const client = createMockClient({ createProject: vi.fn().mockResolvedValue(created) });
     registerProjectTools(server as any, client);
 
-    const handler = server.getHandler("kanon_create_project");
+    const handler = server.getHandler("create_project");
     const result = parseResult(await handler({
       workspaceId: "ws1",
       key: "KAN",
@@ -307,9 +307,9 @@ describe("kanon_create_project — format tier (C13)", () => {
   });
 });
 
-// ─── C14: kanon_update_project — ack default ─────────────────────────────────
+// ─── C14: update_project — ack default ─────────────────────────────────
 
-describe("kanon_update_project — format tier (C14)", () => {
+describe("update_project — format tier (C14)", () => {
   let server: ReturnType<typeof createMockServer>;
 
   beforeEach(() => {
@@ -321,7 +321,7 @@ describe("kanon_update_project — format tier (C14)", () => {
     const client = createMockClient({ updateProject: vi.fn().mockResolvedValue(updated) });
     registerProjectTools(server as any, client);
 
-    const handler = server.getHandler("kanon_update_project");
+    const handler = server.getHandler("update_project");
     const result = parseResult(await handler({
       projectKey: "KAN",
       name: "Kanon Updated",
@@ -339,7 +339,7 @@ describe("kanon_update_project — format tier (C14)", () => {
     const client = createMockClient({ updateProject: vi.fn().mockResolvedValue(updated) });
     registerProjectTools(server as any, client);
 
-    const handler = server.getHandler("kanon_update_project");
+    const handler = server.getHandler("update_project");
     const result = parseResult(await handler({
       projectKey: "KAN",
       name: "Kanon Updated",
@@ -357,7 +357,7 @@ describe("kanon_update_project — format tier (C14)", () => {
 // Confirms each tool FORWARDS the credential and SURFACES a 403 as
 // { isError: true, code: "FORBIDDEN" }. Enforcement lives in the API layer.
 
-describe("kanon_create_project — surfaces 403 as FORBIDDEN", () => {
+describe("create_project — surfaces 403 as FORBIDDEN", () => {
   let server: ReturnType<typeof createMockServer>;
 
   beforeEach(() => {
@@ -372,7 +372,7 @@ describe("kanon_create_project — surfaces 403 as FORBIDDEN", () => {
     });
     registerProjectTools(server as any, client);
 
-    const handler = server.getHandler("kanon_create_project");
+    const handler = server.getHandler("create_project");
     const raw = await handler({
       workspaceId: "ws1",
       key: "KAN",
@@ -385,7 +385,7 @@ describe("kanon_create_project — surfaces 403 as FORBIDDEN", () => {
   });
 });
 
-describe("kanon_update_project — surfaces 403 as FORBIDDEN", () => {
+describe("update_project — surfaces 403 as FORBIDDEN", () => {
   let server: ReturnType<typeof createMockServer>;
 
   beforeEach(() => {
@@ -400,7 +400,7 @@ describe("kanon_update_project — surfaces 403 as FORBIDDEN", () => {
     });
     registerProjectTools(server as any, client);
 
-    const handler = server.getHandler("kanon_update_project");
+    const handler = server.getHandler("update_project");
     const raw = await handler({
       projectKey: "KAN",
       name: "Updated",

@@ -320,9 +320,9 @@ describe("closeCycleWithDisposition — move_to_next", () => {
   });
 });
 
-// ─── D5: kanon_create_cycle — attachIssueKeys forwarded to client ────────────
+// ─── D5: create_cycle — attachIssueKeys forwarded to client ────────────
 
-describe("kanon_create_cycle — attachIssueKeys (D5)", () => {
+describe("create_cycle — attachIssueKeys (D5)", () => {
   let mockClient: { createCycle: ReturnType<typeof vi.fn> };
   let createCycleTool: RegisteredTool;
 
@@ -342,8 +342,8 @@ describe("kanon_create_cycle — attachIssueKeys (D5)", () => {
       }),
     };
     const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_create_cycle");
-    if (!tool) throw new Error("kanon_create_cycle not registered");
+    const tool = tools.get("create_cycle");
+    if (!tool) throw new Error("create_cycle not registered");
     createCycleTool = tool;
   });
 
@@ -375,9 +375,9 @@ describe("kanon_create_cycle — attachIssueKeys (D5)", () => {
   });
 });
 
-// ─── D7: kanon_get_cycle — includeAllScopeEvents forwarded ───────────────────
+// ─── D7: get_cycle — includeAllScopeEvents forwarded ───────────────────
 
-describe("kanon_get_cycle — includeAllScopeEvents (D7)", () => {
+describe("get_cycle — includeAllScopeEvents (D7)", () => {
   let mockClient: { getCycle: ReturnType<typeof vi.fn> };
   let getCycleTool: RegisteredTool;
 
@@ -408,8 +408,8 @@ describe("kanon_get_cycle — includeAllScopeEvents (D7)", () => {
   beforeEach(() => {
     mockClient = { getCycle: vi.fn().mockResolvedValue(fakeDetail) };
     const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_get_cycle");
-    if (!tool) throw new Error("kanon_get_cycle not registered");
+    const tool = tools.get("get_cycle");
+    if (!tool) throw new Error("get_cycle not registered");
     getCycleTool = tool;
   });
 
@@ -472,9 +472,9 @@ describe("closeCycleWithDisposition — movedIssueKeys in return (D11)", () => {
   });
 });
 
-// ─── D11: kanon_close_cycle ack includes actual movedIssueKeys ───────────────
+// ─── D11: close_cycle ack includes actual movedIssueKeys ───────────────
 
-describe("kanon_close_cycle — movedIssueKeys in ack (D11)", () => {
+describe("close_cycle — movedIssueKeys in ack (D11)", () => {
   it("ack includes movedIssueKeys from disposition result (move_to_backlog)", async () => {
     const mockClient = makeClient();
     const detail = makeDetail([
@@ -486,7 +486,7 @@ describe("kanon_close_cycle — movedIssueKeys in ack (D11)", () => {
     mockClient.closeCycle.mockResolvedValueOnce(makeClosed());
 
     const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
-    const closeTool = tools.get("kanon_close_cycle")!;
+    const closeTool = tools.get("close_cycle")!;
 
     const result = await closeTool.handler({
       cycleId: CYCLE_ID,
@@ -502,9 +502,9 @@ describe("kanon_close_cycle — movedIssueKeys in ack (D11)", () => {
   });
 });
 
-// ─── C5: kanon_create_cycle — format tier ────────────────────────────────────
+// ─── C5: create_cycle — format tier ────────────────────────────────────
 
-describe("kanon_create_cycle — format tier", () => {
+describe("create_cycle — format tier", () => {
   const fakeCycle: KanonCycle = {
     id: CYCLE_ID,
     name: "Sprint 1",
@@ -524,8 +524,8 @@ describe("kanon_create_cycle — format tier", () => {
   beforeEach(() => {
     mockClient = { createCycle: vi.fn().mockResolvedValue(fakeCycle) };
     const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_create_cycle");
-    if (!tool) throw new Error("kanon_create_cycle not registered");
+    const tool = tools.get("create_cycle");
+    if (!tool) throw new Error("create_cycle not registered");
     createCycleTool = tool;
   });
 
@@ -567,9 +567,9 @@ describe("kanon_create_cycle — format tier", () => {
   });
 });
 
-// ─── C6: kanon_attach_issues_to_cycle — format tier ──────────────────────────
+// ─── C6: update_cycle_scope — format tier ──────────────────────────
 
-describe("kanon_attach_issues_to_cycle — format tier", () => {
+describe("update_cycle_scope — format tier", () => {
   const fakeCycleDetail: KanonCycleDetail = {
     id: CYCLE_ID,
     name: "Sprint 1",
@@ -603,8 +603,8 @@ describe("kanon_attach_issues_to_cycle — format tier", () => {
   beforeEach(() => {
     mockClient = { attachIssuesToCycle: vi.fn().mockResolvedValue(fakeCycleDetail) };
     const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_attach_issues_to_cycle");
-    if (!tool) throw new Error("kanon_attach_issues_to_cycle not registered");
+    const tool = tools.get("update_cycle_scope");
+    if (!tool) throw new Error("update_cycle_scope not registered");
     attachTool = tool;
   });
 
@@ -640,9 +640,9 @@ describe("kanon_attach_issues_to_cycle — format tier", () => {
   });
 });
 
-// ─── C7: kanon_close_cycle — format tier ─────────────────────────────────────
+// ─── C7: close_cycle — format tier ─────────────────────────────────────
 
-describe("kanon_close_cycle — format tier", () => {
+describe("close_cycle — format tier", () => {
   let mockClient: MockClient;
   let closeTool: RegisteredTool;
 
@@ -651,8 +651,8 @@ describe("kanon_close_cycle — format tier", () => {
     // Default: leave disposition (no detail fetch)
     mockClient.closeCycle.mockResolvedValue(makeClosed());
     const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_close_cycle");
-    if (!tool) throw new Error("kanon_close_cycle not registered");
+    const tool = tools.get("close_cycle");
+    if (!tool) throw new Error("close_cycle not registered");
     closeTool = tool;
   });
 
@@ -691,7 +691,7 @@ describe("kanon_close_cycle — format tier", () => {
   });
 });
 
-// ─── D1–D5: kanon_delete_cycle ───────────────────────────────────────────────
+// ─── D1–D5: delete_cycle ───────────────────────────────────────────────
 
 const DELETE_CYCLE_ID = "a1b2c3d4-0001-0001-0001-000000000001";
 const DELETE_AUDIT_ID = "aud-0099";
@@ -706,14 +706,14 @@ function makeDeleteResult(overrides: Partial<KanonCycleDeleteResult> = {}): Kano
   };
 }
 
-describe("kanon_delete_cycle — D.1 schema registration", () => {
-  it("registers kanon_delete_cycle with cycleId, force?, reason?, format?", () => {
+describe("delete_cycle — D.1 schema registration", () => {
+  it("registers delete_cycle with cycleId, force?, reason?, format?", () => {
     const mockClient = makeClient();
     const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_delete_cycle");
+    const tool = tools.get("delete_cycle");
 
     expect(tool).toBeDefined();
-    expect(tool!.name).toBe("kanon_delete_cycle");
+    expect(tool!.name).toBe("delete_cycle");
 
     const shape = tool!.shape as Record<string, { _def?: { typeName?: string; innerType?: unknown } }>;
     // cycleId should be a uuid string
@@ -727,12 +727,12 @@ describe("kanon_delete_cycle — D.1 schema registration", () => {
   });
 });
 
-describe("kanon_delete_cycle — D.2 delegates to client.deleteCycle", () => {
+describe("delete_cycle — D.2 delegates to client.deleteCycle", () => {
   it("calls client.deleteCycle with cycleId and normalized opts exactly once", async () => {
     const mockClient = makeClient();
     mockClient.deleteCycle.mockResolvedValueOnce(makeDeleteResult());
     const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_delete_cycle")!;
+    const tool = tools.get("delete_cycle")!;
 
     await tool.handler({
       cycleId: DELETE_CYCLE_ID,
@@ -747,12 +747,12 @@ describe("kanon_delete_cycle — D.2 delegates to client.deleteCycle", () => {
   });
 });
 
-describe("kanon_delete_cycle — D.3 ack format (default)", () => {
+describe("delete_cycle — D.3 ack format (default)", () => {
   it("ack format returns cycle name + detach count and does NOT include auditLogId", async () => {
     const mockClient = makeClient();
     mockClient.deleteCycle.mockResolvedValueOnce(makeDeleteResult());
     const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_delete_cycle")!;
+    const tool = tools.get("delete_cycle")!;
 
     const result = await tool.handler({ cycleId: DELETE_CYCLE_ID });
 
@@ -764,12 +764,12 @@ describe("kanon_delete_cycle — D.3 ack format (default)", () => {
   });
 });
 
-describe("kanon_delete_cycle — D.4 slim and full formats", () => {
+describe("delete_cycle — D.4 slim and full formats", () => {
   it("slim format includes detachedIssueKeys list", async () => {
     const mockClient = makeClient();
     mockClient.deleteCycle.mockResolvedValueOnce(makeDeleteResult());
     const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_delete_cycle")!;
+    const tool = tools.get("delete_cycle")!;
 
     const result = await tool.handler({ cycleId: DELETE_CYCLE_ID, format: "slim" });
 
@@ -784,7 +784,7 @@ describe("kanon_delete_cycle — D.4 slim and full formats", () => {
     const mockClient = makeClient();
     mockClient.deleteCycle.mockResolvedValueOnce(makeDeleteResult());
     const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_delete_cycle")!;
+    const tool = tools.get("delete_cycle")!;
 
     const result = await tool.handler({ cycleId: DELETE_CYCLE_ID, format: "full" });
 
@@ -794,14 +794,14 @@ describe("kanon_delete_cycle — D.4 slim and full formats", () => {
   });
 });
 
-describe("kanon_delete_cycle — D.5 KanonApiError propagated as error result", () => {
+describe("delete_cycle — D.5 KanonApiError propagated as error result", () => {
   it("propagates KanonApiError as errorResult (parity with sibling tools)", async () => {
     const mockClient = makeClient();
     mockClient.deleteCycle.mockRejectedValueOnce(
       new KanonApiError(409, "CYCLE_ACTIVE", "Cannot delete an active cycle"),
     );
     const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_delete_cycle")!;
+    const tool = tools.get("delete_cycle")!;
 
     const result = await tool.handler({ cycleId: DELETE_CYCLE_ID });
 
@@ -815,7 +815,7 @@ describe("kanon_delete_cycle — D.5 KanonApiError propagated as error result", 
 // Confirms each tool FORWARDS the credential and SURFACES a 403 as
 // { isError: true, code: "FORBIDDEN" }. Enforcement lives in the API layer.
 
-describe("kanon_create_cycle — surfaces 403 as FORBIDDEN", () => {
+describe("create_cycle — surfaces 403 as FORBIDDEN", () => {
   it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
     const mockClient = {
       createCycle: vi.fn().mockRejectedValue(
@@ -823,7 +823,7 @@ describe("kanon_create_cycle — surfaces 403 as FORBIDDEN", () => {
       ),
     };
     const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
-    const handler = tools.get("kanon_create_cycle")!.handler;
+    const handler = tools.get("create_cycle")!.handler;
 
     const result = await handler({
       projectKey: "KAN",
@@ -843,12 +843,12 @@ describe("kanon_create_cycle — surfaces 403 as FORBIDDEN", () => {
 // move_to_next must route through resolveProjectKey → actionable .kanon guidance.
 // leave / move_to_backlog must NOT require projectKey (no binding needed).
 
-describe("kanon_close_cycle — move_to_next without projectKey or binding → actionable error", () => {
+describe("close_cycle — move_to_next without projectKey or binding → actionable error", () => {
   it("returns isError with .kanon guidance when no projectKey and no binding", async () => {
     const mockClient = makeClient();
     // No closeCycle or listCycles needed — error fires before API call
     const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
-    const handler = tools.get("kanon_close_cycle")!.handler;
+    const handler = tools.get("close_cycle")!.handler;
 
     const result = await handler({
       cycleId: CYCLE_ID,
@@ -866,12 +866,12 @@ describe("kanon_close_cycle — move_to_next without projectKey or binding → a
   });
 });
 
-describe("kanon_close_cycle — leave works without projectKey or binding", () => {
+describe("close_cycle — leave works without projectKey or binding", () => {
   it("succeeds with disposition:leave and no projectKey", async () => {
     const mockClient = makeClient();
     mockClient.closeCycle.mockResolvedValueOnce(makeClosed());
     const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
-    const handler = tools.get("kanon_close_cycle")!.handler;
+    const handler = tools.get("close_cycle")!.handler;
 
     const result = await handler({
       cycleId: CYCLE_ID,
@@ -884,7 +884,7 @@ describe("kanon_close_cycle — leave works without projectKey or binding", () =
   });
 });
 
-describe("kanon_close_cycle — move_to_backlog works without projectKey or binding", () => {
+describe("close_cycle — move_to_backlog works without projectKey or binding", () => {
   it("succeeds with disposition:move_to_backlog and no projectKey", async () => {
     const mockClient = makeClient();
     const detail = makeDetail([
@@ -894,7 +894,7 @@ describe("kanon_close_cycle — move_to_backlog works without projectKey or bind
     mockClient.attachIssuesToCycle.mockResolvedValueOnce(detail);
     mockClient.closeCycle.mockResolvedValueOnce(makeClosed());
     const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
-    const handler = tools.get("kanon_close_cycle")!.handler;
+    const handler = tools.get("close_cycle")!.handler;
 
     const result = await handler({
       cycleId: CYCLE_ID,
@@ -1019,7 +1019,7 @@ describe("closeCycleWithDisposition — move_to_backlog: closeCycle fails after 
   });
 });
 
-describe("kanon_close_cycle — partial-mutation: tool returns isError with partial state description", () => {
+describe("close_cycle — partial-mutation: tool returns isError with partial state description", () => {
   it("closeCycle failure after move_to_next attach returns isError with step info in text", async () => {
     const mockClient = makeClient();
     const detail = makeDetail([
@@ -1047,7 +1047,7 @@ describe("kanon_close_cycle — partial-mutation: tool returns isError with part
     );
 
     const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
-    const closeTool = tools.get("kanon_close_cycle")!;
+    const closeTool = tools.get("close_cycle")!;
 
     const result = await closeTool.handler({
       cycleId: CYCLE_ID,
@@ -1062,7 +1062,7 @@ describe("kanon_close_cycle — partial-mutation: tool returns isError with part
   });
 });
 
-describe("kanon_list_cycles — surfaces 403 as FORBIDDEN", () => {
+describe("list_cycles — surfaces 403 as FORBIDDEN", () => {
   it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
     const mockClient = {
       listCycles: vi.fn().mockRejectedValue(
@@ -1070,7 +1070,7 @@ describe("kanon_list_cycles — surfaces 403 as FORBIDDEN", () => {
       ),
     };
     const tools = captureTools(registerCycleTools, mockClient as unknown as KanonClient);
-    const handler = tools.get("kanon_list_cycles")!.handler;
+    const handler = tools.get("list_cycles")!.handler;
 
     const result = await handler({ projectKey: "KAN" });
 

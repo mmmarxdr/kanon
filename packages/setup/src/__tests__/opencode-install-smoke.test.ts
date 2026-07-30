@@ -149,12 +149,12 @@ describe("opencode install smoke — KAN-55 Phase 4", () => {
       expect(Array.isArray(mcp)).toBe(false);
     });
 
-    it("(1d) `mcp.kanon-mcp` entry exists with correct OpenCode array form", () => {
+    it("(1d) `mcp.kanon` entry exists with correct OpenCode array form", () => {
       const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
       const mcp = config["mcp"] as Record<string, unknown>;
-      expect(mcp).toHaveProperty("kanon-mcp");
+      expect(mcp).toHaveProperty("kanon");
 
-      const entry = mcp["kanon-mcp"] as {
+      const entry = mcp["kanon"] as {
         type?: string;
         command?: unknown;
         environment?: Record<string, string>;
@@ -166,10 +166,10 @@ describe("opencode install smoke — KAN-55 Phase 4", () => {
       expect((entry.command as string[]).length).toBeGreaterThan(0);
     });
 
-    it("(1e) `mcp.kanon-mcp` uses `environment` (NOT `env`) for credentials", () => {
+    it("(1e) `mcp.kanon` uses `environment` (NOT `env`) for credentials", () => {
       const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
       const mcp = config["mcp"] as Record<string, unknown>;
-      const entry = mcp["kanon-mcp"] as Record<string, unknown>;
+      const entry = mcp["kanon"] as Record<string, unknown>;
 
       // OpenCode spec: credentials MUST be in `environment`, never `env`
       expect(entry).toHaveProperty("environment");
@@ -266,7 +266,7 @@ describe("opencode install smoke — KAN-55 Phase 4", () => {
       fs.writeFileSync(path.join(commandDir, "other.md"), "# other command\nNot ours.");
     });
 
-    it("(5a) removeConfig removes the kanon-mcp entry from opencode.json", () => {
+    it("(5a) removeConfig removes the kanon entry from opencode.json", () => {
       const opencode = getToolByName("opencode")!;
       const removed = removeConfig(configPath, opencode.rootKey);
 
@@ -274,9 +274,9 @@ describe("opencode install smoke — KAN-55 Phase 4", () => {
 
       const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
       const mcp = config["mcp"] as Record<string, unknown> | undefined;
-      // mcp section may remain but kanon-mcp key must be gone
+      // mcp section may remain but kanon key must be gone
       if (mcp) {
-        expect(mcp).not.toHaveProperty("kanon-mcp");
+        expect(mcp).not.toHaveProperty("kanon");
       }
     });
 

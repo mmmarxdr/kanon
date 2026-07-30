@@ -45,11 +45,11 @@ If the user asks "where is my API key?" the correct answer is: there isn't one �
 
    Unix, macOS, or WSL:
 
-   `bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.10.1/install.sh)"`
+   `bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.11.0/install.sh)"`
 
    Native Windows PowerShell:
 
-   `irm https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.10.1/install.ps1 | iex`
+   `irm https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.11.0/install.ps1 | iex`
 3. **Read the success output** — three blocks in order:
    - `✓ Onboarded as <email>` + server URL + credentials path
    - `✓ Configured N tool(s):` + a per-tool line with the config file that was updated
@@ -92,10 +92,10 @@ Codex uses a non-default home.
 | Symptom | Cause | Fix |
 | ------- | ----- | --- |
 | Config written to wrong directory | `CODEX_HOME` unset or different from Codex runtime | Export `CODEX_HOME`, then `kanon-setup --tool codex -y` |
-| MCP entry missing after setup | Wrong file edited manually | Look for `[mcp_servers.kanon-mcp]` with `command` + `args`; env vars under `[mcp_servers.kanon-mcp.env]` |
-| Re-run duplicates or corrupts config | Hand-edited TOML | Re-run `kanon-setup --tool codex -y` — merge is idempotent and overwrites only `kanon-mcp` |
-| Comments disappeared in `config.toml` | TOML parse/stringify round-trip | Expected — setup only touches `kanon-mcp` tables; restore comments manually if needed |
-| Manual rollback | User wants to uninstall Kanon only | Remove `[mcp_servers.kanon-mcp]` and `[mcp_servers.kanon-mcp.env]` from `config.toml`, delete `kanon-*` under `$CODEX_HOME/skills/`, or run `kanon-setup --tool codex --remove -y` |
+| MCP entry missing after setup | Wrong file edited manually | Look for `[mcp_servers.kanon]` with `command` + `args`; env vars under `[mcp_servers.kanon.env]` |
+| Re-run duplicates or corrupts config | Hand-edited TOML | Re-run `kanon-setup --tool codex -y` — merge is idempotent and migrates `kanon-mcp` to `kanon` |
+| Comments disappeared in `config.toml` | TOML parse/stringify round-trip | Expected — setup only touches current `kanon` and legacy `kanon-mcp` tables; restore comments manually if needed |
+| Manual rollback | User wants to uninstall Kanon only | Remove `[mcp_servers.kanon]` and `[mcp_servers.kanon.env]` from `config.toml`, delete `kanon-*` under `$CODEX_HOME/skills/`, or run `kanon-setup --tool codex --remove -y` |
 
 Codex install does **not** write `AGENTS.md` — that file is personal harness, not product surface.
 
@@ -116,7 +116,7 @@ On WSL, IDE setup writes to the Windows host (`wsl-bridge`); CLI setup writes to
 | MCP written to IDE path instead | Used `--tool antigravity` | Re-run with `--tool antigravity-cli` |
 | MCP tools missing after setup | CLI session not restarted | Quit and restart `agy` — MCP loads at startup |
 | Re-run duplicates entry | Hand-edited JSON | Re-run `kanon-setup --tool antigravity-cli -y` — merge is idempotent |
-| Manual rollback | User wants to uninstall Kanon only | Delete `mcpServers.kanon-mcp` from `mcp_config.json`, remove `kanon-*` under `skills/`, or run `kanon-setup --tool antigravity-cli --remove -y` |
+| Manual rollback | User wants to uninstall Kanon only | Delete `mcpServers.kanon` from `mcp_config.json`, remove `kanon-*` under `skills/`, or run `kanon-setup --tool antigravity-cli --remove -y` |
 
 CLI install does **not** write `settings.json`, `keybindings.json`, or `GEMINI.md`.
 
@@ -143,14 +143,14 @@ Re-running with the same `kanon://` link will fail with `TOKEN_CONSUMED`. There 
 Allowed and idempotent for the configs/credentials side, but you still need a fresh invite:
 
 - **Credentials**: `writeCredentials` is merge-safe — re-onboarding updates the entry for that apiUrl without disturbing other servers in the same file.
-- **MCP entries**: `mergeConfig` overwrites only the `kanon-mcp` key in each tool's config; other MCP servers are untouched.
+- **MCP entries**: `mergeConfig` migrates `kanon-mcp` to `kanon` in each tool's config; other MCP servers are untouched.
 - **Token side**: still single-use. Need a new invite.
 
 ---
 
 ## Multi-Server Coexistence
 
-The credential store and wrapper are designed so a single user can be onboarded to several Kanon servers (e.g., personal cloud + work self-hosted) on the same machine. Each `kanon-setup` run writes its credential entry under its own apiUrl key, and each tool's MCP config can in theory hold one `kanon-mcp` entry — but only one. **The most recently onboarded server wins** in the AI tool config; the others remain in credentials but are not wired in until the user re-runs `kanon-setup` against them. Mention this if the user is juggling multiple servers.
+The credential store and wrapper are designed so a single user can be onboarded to several Kanon servers (e.g., personal cloud + work self-hosted) on the same machine. Each `kanon-setup` run writes its credential entry under its own apiUrl key, and each tool's MCP config can in theory hold one `kanon` entry — but only one. **The most recently onboarded server wins** in the AI tool config; the others remain in credentials but are not wired in until the user re-runs `kanon-setup` against them. Mention this if the user is juggling multiple servers.
 
 ---
 
@@ -162,7 +162,7 @@ The credential store and wrapper are designed so a single user can be onboarded 
 2. Run the pinned installer for Unix/WSL or native Windows and paste the link when prompted.
 3. Read the three success blocks. If any is missing, jump to Troubleshooting.
 4. Fully restart Claude Code / Cursor / Antigravity (whichever you use).
-5. For Cursor CLI, run `agent mcp list-tools kanon-mcp`; in the IDE check **Customize > MCP**. Then ask the agent to list your workspaces.
+5. For Cursor CLI, run `agent mcp list-tools kanon`; in the IDE check **Customize > MCP**. Then ask the agent to list your workspaces.
 
 ### "I'm a workspace admin — invite Maya to the workspace"
 
@@ -175,7 +175,7 @@ The credential store and wrapper are designed so a single user can be onboarded 
 ### "Maya says `kanon-setup` finished but Claude Code doesn't show kanon tools"
 
 1. Confirm she restarted Claude Code (not just reloaded a window — full quit and reopen).
-2. Open `~/.claude.json` (or `%APPDATA%\Claude\claude_desktop_config.json` on Windows-native), look for the `kanon-mcp` entry. It should have `command: node ...wrapper-cli.js` and `--server <apiUrl>` in args.
+2. Open `~/.claude.json` (or `%APPDATA%\Claude\claude_desktop_config.json` on Windows-native), look for the `kanon` entry. It should have `command: node ...wrapper-cli.js` and `--server <apiUrl>` in args.
 3. Open `~/.kanon/credentials`. Check there's a top-level key whose value is exactly the `--server` value from step 2 (full URL, scheme + host + port).
 4. If those two strings differ, that is the bug — re-run `kanon-setup` to repair, or fix the credentials key by hand if the user knows what they're doing.
 5. If both look right, run the wrapper directly: `node <wrapper-cli.js> --server <apiUrl>` and inspect stderr — it logs the refresh→exchange step.

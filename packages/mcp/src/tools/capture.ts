@@ -3,12 +3,12 @@
 // MCP tools for incident capture and estimation proposals.
 // Both tools are DEFERRED (not CORE) to protect the MCP description budget.
 //
-// kanon_report_incident (AC4):
+// report_incident (AC4):
 //   One-call composition: creates an incident-type issue + starts a work session.
 //   Per KAN-103, startWork performs the implicit session switch + Interruption
 //   record when another session is active.
 //
-// kanon_propose_estimate + kanon_apply_proposal (AC1):
+// propose_estimate + apply_proposal (AC1):
 //   Estimation is judgment-bearing: agent PROPOSES, dev CONFIRMS — never
 //   auto-accepted (PRD-0004, ADR-0005 D7). Uses McpProposal flow with
 //   kind:"generic" and a typed payload { kind:"estimate", issueKey, estimateHours }.
@@ -26,9 +26,9 @@ import { errorResult, dataResult } from "../errors.js";
  * not part of the daily board flow — keeping dev-agent context lean.
  */
 export const CAPTURE_DEFERRED_TOOLS = [
-  "kanon_report_incident",
-  "kanon_propose_estimate",
-  "kanon_apply_proposal",
+  "report_incident",
+  "propose_estimate",
+  "apply_proposal",
 ] as const;
 
 // ─── Input Schemas ─────────────────────────────────────────────────────────
@@ -37,12 +37,12 @@ const ReportIncidentInput = z.object({
   projectKey: z.string().describe("Project key (e.g. 'KAN')"),
   title: z.string().min(1).max(200).describe("Issue title: [Area] imperative verb phrase"),
   description: z.string().optional().describe("Optional incident description"),
-  groupKey: z.string().optional().describe("Optional group key (call kanon_list_groups first)"),
+  groupKey: z.string().optional().describe("Optional group key (call list_groups first)"),
   via: z.string().optional().describe("Work-session source identifier (default: 'mcp'); applies to the session, not the issue record"),
 });
 
 const ProposeEstimateInput = z.object({
-  workspaceId: z.string().uuid().describe("Workspace ID (call kanon_list_workspaces to obtain it)"),
+  workspaceId: z.string().uuid().describe("Workspace ID (call list_workspaces to obtain it)"),
   issueKey: z.string().describe("Issue key to estimate (e.g. 'KAN-42')"),
   estimateHours: z.number().positive().describe("Proposed estimate in hours"),
   rationale: z.string().max(1000).optional().describe("Optional rationale for the estimate"),
@@ -55,10 +55,10 @@ const ApplyProposalInput = z.object({
 // ─── Registration ──────────────────────────────────────────────────────────
 
 export function registerCaptureTools(server: McpServer, client: KanonClient): void {
-  // ── kanon_report_incident — DEFERRED ────────────────────────────────────
+  // ── report_incident — DEFERRED ────────────────────────────────────
 
   server.tool(
-    "kanon_report_incident",
+    "report_incident",
     "Create incident issue in projectKey + start work session in one call. Forces type:incident. Returns {ok,issueKey,sessionId}. Per KAN-103: auto-switches active session.",
     ReportIncidentInput.shape,
     async ({ projectKey, title, description, groupKey, via }) => {
@@ -90,18 +90,18 @@ export function registerCaptureTools(server: McpServer, client: KanonClient): vo
         return errorResult(
           new Error(
             `Incident issue ${issue.key} was created but starting the work session failed: ${message}. ` +
-            `Use kanon_start_work with issue_key: "${issue.key}" to start tracking manually.`,
+            `Use start_work with issue_key: "${issue.key}" to start tracking manually.`,
           ),
         );
       }
     },
   );
 
-  // ── kanon_propose_estimate — DEFERRED ────────────────────────────────────
+  // ── propose_estimate — DEFERRED ────────────────────────────────────
 
   server.tool(
-    "kanon_propose_estimate",
-    "Propose an estimate for issueKey — proposal only, does NOT apply the estimate; dev confirms via kanon_apply_proposal. Creates a pending generic proposal. Re-proposing the same issue while one is pending returns 409.",
+    "propose_estimate",
+    "Propose an estimate for issueKey — proposal only, does NOT apply the estimate; dev confirms via apply_proposal. Creates a pending generic proposal. Re-proposing the same issue while one is pending returns 409.",
     ProposeEstimateInput.shape,
     async ({ workspaceId, issueKey, estimateHours, rationale }) => {
       try {
@@ -127,10 +127,10 @@ export function registerCaptureTools(server: McpServer, client: KanonClient): vo
     },
   );
 
-  // ── kanon_apply_proposal — DEFERRED ─────────────────────────────────────
+  // ── apply_proposal — DEFERRED ─────────────────────────────────────
 
   server.tool(
-    "kanon_apply_proposal",
+    "apply_proposal",
     "Apply a pending proposal proposalId (developer confirmation step). Works for any pending proposal kind. Returns the applied proposal.",
     ApplyProposalInput.shape,
     async ({ proposalId }) => {

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { installAgents, removeAgents } from "./agents.js";
+import { getAssetsDir } from "./tool-surface.js";
 import { parseFrontmatter } from "./utils/frontmatter.js";
 
 const SOURCE = `---
@@ -16,6 +17,17 @@ readonly: true
 
 Use kanon_start_work(issue_key).
 `;
+
+function readMarkdownTree(dir: string): string {
+  return fs.readdirSync(dir, { withFileTypes: true })
+    .flatMap((entry) => {
+      const entryPath = path.join(dir, entry.name);
+      return entry.isDirectory()
+        ? readMarkdownTree(entryPath)
+        : entry.name.endsWith(".md") ? fs.readFileSync(entryPath, "utf8") : "";
+    })
+    .join("\n");
+}
 
 describe("agent installation", () => {
   let tmpDir: string;
@@ -60,5 +72,20 @@ describe("agent installation", () => {
 
     expect(removeAgents(agentDest)).toEqual(["kanon.md"]);
     expect(fs.readFileSync(path.join(agentDest, "kanon-notes.md"), "utf8")).toBe("user-owned");
+  });
+
+  it("ships no references to retired visible tool names", () => {
+    const content = readMarkdownTree(getAssetsDir());
+    for (const retired of [
+      "kanon_who_is_working",
+      "kanon_comment_issue",
+      "kanon_batch_transition",
+      "kanon_attach_issues_to_cycle",
+      "kanon_create_document",
+      "kanon_list_documents",
+      "kanon_get_document",
+    ]) {
+      expect(content).not.toContain(retired);
+    }
   });
 });

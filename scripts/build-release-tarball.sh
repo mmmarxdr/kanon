@@ -288,7 +288,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const [home, installDir] = process.argv.slice(2);
 const config = JSON.parse(fs.readFileSync(path.join(home, ".cursor", "mcp.json"), "utf8"));
-const entry = config.mcpServers?.["kanon-mcp"];
+const entry = config.mcpServers?.["kanon"];
 if (entry?.type !== "stdio") throw new Error("packaged onboarding did not install Cursor stdio MCP");
 if (entry.args?.[0] !== path.join(installDir, "mcp", "dist", "wrapper-cli.js")) {
   throw new Error("packaged onboarding did not use the release wrapper");

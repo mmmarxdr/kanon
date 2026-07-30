@@ -1,7 +1,7 @@
 // ─── Work Session Tools — format-tier behavior ───────────────────────────────
 //
-// C16: kanon_start_work — ack default
-// C17: kanon_stop_work — ack default
+// C16: start_work — ack default
+// C17: stop_work — ack default
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -64,9 +64,9 @@ const fakeStopResultNoLog = {
   workLog: null,
 };
 
-// ─── C16: kanon_start_work — format tier ─────────────────────────────────────
+// ─── C16: start_work — format tier ─────────────────────────────────────
 
-describe("kanon_start_work — format tier (C16)", () => {
+describe("start_work — format tier (C16)", () => {
   let mockClient: {
     startWork: ReturnType<typeof vi.fn>;
   };
@@ -77,8 +77,8 @@ describe("kanon_start_work — format tier (C16)", () => {
       startWork: vi.fn().mockResolvedValue(fakeStartResult),
     };
     const tools = captureTools(registerWorkSessionTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_start_work");
-    if (!tool) throw new Error("kanon_start_work not registered");
+    const tool = tools.get("start_work");
+    if (!tool) throw new Error("start_work not registered");
     startTool = tool;
   });
 
@@ -95,9 +95,9 @@ describe("kanon_start_work — format tier (C16)", () => {
   });
 });
 
-// ─── C17: kanon_stop_work — format tier ──────────────────────────────────────
+// ─── C17: stop_work — format tier ──────────────────────────────────────
 
-describe("kanon_stop_work — format tier (C17)", () => {
+describe("stop_work — format tier (C17)", () => {
   let mockClient: {
     stopWork: ReturnType<typeof vi.fn>;
   };
@@ -108,8 +108,8 @@ describe("kanon_stop_work — format tier (C17)", () => {
       stopWork: vi.fn().mockResolvedValue(fakeStopResult),
     };
     const tools = captureTools(registerWorkSessionTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_stop_work");
-    if (!tool) throw new Error("kanon_stop_work not registered");
+    const tool = tools.get("stop_work");
+    if (!tool) throw new Error("stop_work not registered");
     stopTool = tool;
   });
 
@@ -137,7 +137,7 @@ describe("kanon_stop_work — format tier (C17)", () => {
     // Override mock to return no workLog
     mockClient.stopWork = vi.fn().mockResolvedValue(fakeStopResultNoLog);
     const tools = captureTools(registerWorkSessionTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_stop_work")!;
+    const tool = tools.get("stop_work")!;
 
     const result = await tool.handler({ issue_key: "KAN-1" });
 

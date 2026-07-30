@@ -310,7 +310,7 @@ describe("onboardFromLink()", () => {
       const cursorConfig = JSON.parse(
         fs.readFileSync(path.join(home, ".cursor", "mcp.json"), "utf8"),
       );
-      expect(cursorConfig.mcpServers["kanon-mcp"]).toMatchObject({
+      expect(cursorConfig.mcpServers["kanon"]).toMatchObject({
         type: "stdio",
         command: "/usr/bin/node",
         args: [
@@ -328,7 +328,7 @@ describe("onboardFromLink()", () => {
         .not.toContain("allowed-tools");
 
       const codex = parse(fs.readFileSync(path.join(home, ".codex", "config.toml"), "utf8")) as Record<string, unknown>;
-      expect((codex["mcp_servers"] as Record<string, unknown>)["kanon-mcp"]).toBeDefined();
+      expect((codex["mcp_servers"] as Record<string, unknown>)["kanon"]).toBeDefined();
       expect(fs.existsSync(path.join(home, ".codex", "skills", "kanon-onboard", "SKILL.md"))).toBe(true);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });

@@ -20,8 +20,8 @@ import { errorResult, dataResult } from "../errors.js";
  * dev-agent context lean.
  */
 export const TIMESHEET_DEFERRED_TOOLS = [
-  "kanon_approve_time_entry",
-  "kanon_reject_time_entry",
+  "approve_time_entry",
+  "reject_time_entry",
 ] as const;
 
 // ─── Hours regex (mirrors API schema.ts) ──────────────────────────────────
@@ -88,11 +88,11 @@ export const AdjustTimeEntryInput = z.object({
 // ─── Registration ──────────────────────────────────────────────────────────
 
 export function registerTimesheetTools(server: McpServer, client: KanonClient): void {
-  // ── kanon_list_my_worklogs ────────────────────────────────────────────────
+  // ── list_my_worklogs ────────────────────────────────────────────────
 
   server.tool(
-    "kanon_list_my_worklogs",
-    "List own WorkLogs in workspaceId. Use IDs with kanon_promote_worklog. Filters: from,to (ISO),limit.",
+    "list_my_worklogs",
+    "List own WorkLogs in workspaceId. Use IDs with promote_worklog. Filters: from,to (ISO),limit.",
     ListMyWorklogsInput.shape,
     async ({ workspaceId, from, to, limit }) => {
       try {
@@ -104,10 +104,10 @@ export function registerTimesheetTools(server: McpServer, client: KanonClient): 
     },
   );
 
-  // ── kanon_promote_worklog ─────────────────────────────────────────────────
+  // ── promote_worklog ─────────────────────────────────────────────────
 
   server.tool(
-    "kanon_promote_worklog",
+    "promote_worklog",
     "Promote WorkLog worklogId to a draft TimeEntry (idempotent). Optional hours/issueId/workedOn override service defaults.",
     PromoteWorklogInput.shape,
     async ({ worklogId, hours, issueId, workedOn }) => {
@@ -124,10 +124,10 @@ export function registerTimesheetTools(server: McpServer, client: KanonClient): 
     },
   );
 
-  // ── kanon_update_time_entry ───────────────────────────────────────────────
+  // ── update_time_entry ───────────────────────────────────────────────
 
   server.tool(
-    "kanon_update_time_entry",
+    "update_time_entry",
     "Patch draft/submitted TimeEntry timeEntryId (owner-only). Partial: supply only changed fields (hours,issueId,workedOn).",
     UpdateTimeEntryInput.shape,
     async ({ timeEntryId, hours, issueId, workedOn }) => {
@@ -144,10 +144,10 @@ export function registerTimesheetTools(server: McpServer, client: KanonClient): 
     },
   );
 
-  // ── kanon_submit_time_entry ───────────────────────────────────────────────
+  // ── submit_time_entry ───────────────────────────────────────────────
 
   server.tool(
-    "kanon_submit_time_entry",
+    "submit_time_entry",
     "Submit draft TimeEntry timeEntryId for PM approval (owner-only). Status: draft→submitted.",
     SubmitTimeEntryInput.shape,
     async ({ timeEntryId }) => {
@@ -160,10 +160,10 @@ export function registerTimesheetTools(server: McpServer, client: KanonClient): 
     },
   );
 
-  // ── kanon_approve_time_entry — DEFERRED (PM-only) ─────────────────────────
+  // ── approve_time_entry — DEFERRED (PM-only) ─────────────────────────
 
   server.tool(
-    "kanon_approve_time_entry",
+    "approve_time_entry",
     "Approve submitted TimeEntry timeEntryId — PM role required (403 otherwise). Status: submitted→approved.",
     ApproveTimeEntryInput.shape,
     async ({ timeEntryId }) => {
@@ -176,10 +176,10 @@ export function registerTimesheetTools(server: McpServer, client: KanonClient): 
     },
   );
 
-  // ── kanon_reject_time_entry — DEFERRED (PM-only) ──────────────────────────
+  // ── reject_time_entry — DEFERRED (PM-only) ──────────────────────────
 
   server.tool(
-    "kanon_reject_time_entry",
+    "reject_time_entry",
     "Reject submitted TimeEntry timeEntryId — PM role required (403 otherwise). Optional reason stored on entry.",
     RejectTimeEntryInput.shape,
     async ({ timeEntryId, reason }) => {
@@ -194,10 +194,10 @@ export function registerTimesheetTools(server: McpServer, client: KanonClient): 
     },
   );
 
-  // ── kanon_adjust_time_entry ───────────────────────────────────────────────
+  // ── adjust_time_entry ───────────────────────────────────────────────
 
   server.tool(
-    "kanon_adjust_time_entry",
+    "adjust_time_entry",
     "Create adjustment TimeEntry for approved timeEntryId (owner-only). hours signed ('-1.00' reduces, '0.50' adds), workedOn required. Original must be approved.",
     AdjustTimeEntryInput.shape,
     async ({ timeEntryId, hours, workedOn, issueId }) => {

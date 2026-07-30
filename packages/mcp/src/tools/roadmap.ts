@@ -19,7 +19,7 @@ import type { KanonBinding } from "../kanon-binding.js";
 
 export function registerRoadmapTools(server: McpServer, client: KanonClient, binding: KanonBinding | InvalidBinding | null = null): void {
   server.tool(
-    "kanon_list_roadmap",
+    "list_roadmap",
     "List roadmap items for projectKey with filters (horizon,status,label). Returns compact list.",
     ListRoadmapInput.shape,
     async ({ projectKey, horizon, status, label, format, limit, offset }) => {
@@ -48,7 +48,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient, bin
   );
 
   server.tool(
-    "kanon_create_roadmap_item",
+    "create_roadmap_item",
     "Create roadmap item (title,horizon,status,effort,impact,labels,targetDate). Returns ack {ok,id,status}; format:'full' for entity.",
     CreateRoadmapItemInput.shape,
     async ({ projectKey, title, description, horizon, status, effort, impact, labels, sortOrder, targetDate, format }) => {
@@ -79,7 +79,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient, bin
   // ─── Write Tools ────────────────────────────────────────────────────────
 
   server.tool(
-    "kanon_update_roadmap_item",
+    "update_roadmap_item",
     "Update roadmap item fields (itemId,title,horizon,status,effort,impact,labels,targetDate). Returns ack {ok,id,status}; format:'full' for entity.",
     UpdateRoadmapItemInput.shape,
     async ({ projectKey, itemId, title, description, horizon, status, effort, impact, labels, sortOrder, targetDate, format }) => {
@@ -108,7 +108,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient, bin
   );
 
   server.tool(
-    "kanon_delete_roadmap_item",
+    "delete_roadmap_item",
     "Delete roadmap item (projectKey,itemId). Returns {deleted:true,itemId}.",
     DeleteRoadmapItemInput.shape,
     async ({ projectKey, itemId }) => {
@@ -124,7 +124,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient, bin
   );
 
   server.tool(
-    "kanon_promote_roadmap_item",
+    "promote_roadmap_item",
     "Promote roadmap item to issue (itemId,title,type,priority,labels,groupKey). Returns ack {ok,id,key}; format:'full' for entity.",
     PromoteRoadmapItemInput.shape,
     async ({ projectKey, itemId, title, type, priority, labels, groupKey, format }) => {
@@ -151,7 +151,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient, bin
   // ─── Dependency Tools ──────────────────────────────────────────────────
 
   server.tool(
-    "kanon_add_dependency",
+    "add_dependency",
     "Add dependency: source blocks target. Errors if circular. Returns ack {ok,id,projectId}; format:'full' for entity.",
     AddDependencyInput.shape,
     async ({ projectKey, sourceItemId, targetItemId, type, format }) => {
@@ -172,7 +172,7 @@ export function registerRoadmapTools(server: McpServer, client: KanonClient, bin
   );
 
   server.tool(
-    "kanon_remove_dependency",
+    "remove_dependency",
     "Remove dependency (projectKey,sourceItemId,dependencyId). Returns {ok,deleted,dependencyId}.",
     RemoveDependencyInput.shape,
     async ({ projectKey, sourceItemId, dependencyId }) => {

@@ -11,8 +11,8 @@ import type { KanonBinding } from "../kanon-binding.js";
 
 export function registerGroupTools(server: McpServer, client: KanonClient, binding: KanonBinding | InvalidBinding | null = null): void {
   server.tool(
-    "kanon_list_groups",
-    "List issue groups for projectKey. Call before kanon_create_issue to get valid groupKey values.",
+    "list_groups",
+    "List issue groups for projectKey. Call before create_issue to get valid groupKey values.",
     ListGroupsInput.shape,
     async ({ projectKey, format, limit, offset }) => {
       try {
@@ -27,7 +27,7 @@ export function registerGroupTools(server: McpServer, client: KanonClient, bindi
   );
 
   server.tool(
-    "kanon_batch_transition",
+    "transition_issues",
     "Batch-transition (projectKey,state,groupKey|keys[]). groupKey or keys — mutually exclusive. Returns ack {ok,count,keys}; format:'full' for raw.",
     BatchTransitionInputShape.shape,
     async (rawInput: unknown) => {

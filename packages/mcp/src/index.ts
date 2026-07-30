@@ -72,7 +72,8 @@ const kanonBinding: KanonBinding | InvalidBinding | null = (() => {
 
 const server = new McpServer(
   {
-    name: "kanon-mcp",
+    name: "kanon",
+    title: "Kanon",
     version: MCP_VERSION,
   },
   {

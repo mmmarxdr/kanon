@@ -31,7 +31,7 @@ Always call kanon_list_groups before creating an issue — assign a real groupKe
 
 ## Design Records
 
-Use kanon_create_document (kind: adr|pdr|rfc|note). Propose before creating — human approves.
+Use kanon_create_design_record (kind: adr|pdr|rfc|note). Propose before creating — human approves.
 PROPOSE when: real alternatives existed AND lasting consequences (architecture, API contracts, conventions).
 Skip: routine fixes, refactors, work logs, cosmetic changes, obvious-only-choice situations.
 Template: ## Context / ## Decision / ## Alternatives Considered / ## Consequences

@@ -14,6 +14,13 @@ import type {
 import { resolveToolTargets, toolRegistry } from "./registry.js";
 import { canonicalizeApiUrl } from "./canonical-url.js";
 
+const MCP_SERVER_NAME = "kanon";
+const LEGACY_MCP_SERVER_NAME = "kanon-mcp";
+
+function getKanonServerEntry(servers: Record<string, unknown>): unknown {
+  return servers[MCP_SERVER_NAME] ?? servers[LEGACY_MCP_SERVER_NAME];
+}
+
 /**
  * Union of all MCP entry shapes the setup package can write.
  *
@@ -48,7 +55,7 @@ export type ToolMcpEntry =
  * `mergeConfig` calls it so callers can stay agnostic about which tools use
  * which shape. `removeConfig` does NOT call this formatter — it operates
  * on the raw on-disk entry by key lookup and never needs to know the
- * per-tool schema, since it only deletes the `kanon-mcp` key.
+ * per-tool schema, since it only deletes Kanon's current and legacy keys.
  */
 export function formatMcpEntry(rootKey: string, entry: McpServerEntry): ToolMcpEntry {
   if (rootKey === "mcp") {
@@ -168,7 +175,7 @@ export function inspectToolMcpConfig(
   if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
     return "unconfigured";
   }
-  return "kanon-mcp" in servers || "kanon" in servers
+  return MCP_SERVER_NAME in servers || LEGACY_MCP_SERVER_NAME in servers
     ? "configured"
     : "unconfigured";
 }
@@ -185,7 +192,7 @@ export function mergeTomlMcpConfig(
   const config = parseTomlConfigFile(configPath);
 
   const servers = (config["mcp_servers"] as Record<string, unknown>) || {};
-  delete servers["kanon"];
+  if (serverName === MCP_SERVER_NAME) delete servers[LEGACY_MCP_SERVER_NAME];
 
   const serverEntry: Record<string, unknown> = {
     command: entry.command,
@@ -225,11 +232,21 @@ export function removeTomlMcpConfig(
   }
 
   const servers = config["mcp_servers"] as Record<string, unknown> | undefined;
-  if (!servers || !(serverName in servers)) {
+  if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
     return false;
   }
 
-  delete servers[serverName];
+  const names = serverName === MCP_SERVER_NAME
+    ? [MCP_SERVER_NAME, LEGACY_MCP_SERVER_NAME]
+    : [serverName];
+  let removed = false;
+  for (const name of names) {
+    if (name in servers) {
+      delete servers[name];
+      removed = true;
+    }
+  }
+  if (!removed) return false;
   config["mcp_servers"] = servers;
   fs.writeFileSync(configPath, stringify(config) + "\n");
   return true;
@@ -244,7 +261,7 @@ export function installToolMcpConfig(
   entry: McpServerEntry,
 ): void {
   if (tool.configFormat === "toml") {
-    mergeTomlMcpConfig(configPath, "kanon-mcp", formatCodexMcpEntry(entry));
+    mergeTomlMcpConfig(configPath, MCP_SERVER_NAME, formatCodexMcpEntry(entry));
     return;
   }
   mergeConfig(configPath, tool.rootKey, entry);
@@ -258,7 +275,7 @@ export function removeToolMcpConfig(
   tool: Pick<ToolDefinition, "rootKey" | "configFormat">,
 ): boolean {
   if (tool.configFormat === "toml") {
-    return removeTomlMcpConfig(configPath, "kanon-mcp");
+    return removeTomlMcpConfig(configPath, MCP_SERVER_NAME);
   }
   return removeConfig(configPath, tool.rootKey);
 }
@@ -266,7 +283,7 @@ export function removeToolMcpConfig(
 /**
  * Merge a Kanon MCP server entry into a tool's JSON config file.
  * Creates the file and parent directories if they don't exist.
- * Idempotent — overwrites the "kanon-mcp" key without touching other servers.
+ * Idempotent — overwrites the "kanon" key without touching other servers.
  *
  * The entry is reshaped by `formatMcpEntry(rootKey, entry)` so callers
  * can always pass the object form regardless of the target tool.
@@ -297,8 +314,8 @@ export function mergeConfig(
   }
 
   const servers = (config[rootKey] as Record<string, unknown>) || {};
-  delete servers["kanon"];  // cleanup legacy entry from old setup-mcp.sh
-  servers["kanon-mcp"] = formatted;
+  delete servers[LEGACY_MCP_SERVER_NAME];
+  servers[MCP_SERVER_NAME] = formatted;
   config[rootKey] = servers;
 
   const dir = path.dirname(configPath);
@@ -310,11 +327,11 @@ export function mergeConfig(
 }
 
 /**
- * Remove the "kanon-mcp" entry from a tool's JSON config.
+ * Remove current and legacy Kanon entries from a tool's JSON config.
  * Returns true if the entry was found and removed, false otherwise.
  *
  * NOTE: this function does NOT call `formatMcpEntry` — it operates on the
- * raw on-disk entry by key lookup and only deletes the `kanon-mcp` key,
+ * raw on-disk entry by key lookup and only deletes Kanon's exact keys,
  * regardless of whether the file uses object form (`mcpServers`) or
  * OpenCode's array form (`mcp`). It never needs to know the per-tool
  * schema.
@@ -333,11 +350,18 @@ export function removeConfig(configPath: string, rootKey: string): boolean {
   }
 
   const servers = config[rootKey] as Record<string, unknown> | undefined;
-  if (!servers || !("kanon-mcp" in servers)) {
+  if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
     return false;
   }
 
-  delete servers["kanon-mcp"];
+  let removed = false;
+  for (const name of [MCP_SERVER_NAME, LEGACY_MCP_SERVER_NAME]) {
+    if (name in servers) {
+      delete servers[name];
+      removed = true;
+    }
+  }
+  if (!removed) return false;
   config[rootKey] = servers;
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
   return true;
@@ -560,7 +584,7 @@ export function resolveNodeBin(): string {
 }
 
 /**
- * Shape of a parsed kanon-mcp entry as it lives on disk across all tools.
+ * Shape of a parsed Kanon MCP entry as it lives on disk across all tools.
  * Object form (Claude / Cursor / Antigravity) and array form (OpenCode)
  * both reduce to this once normalized.
  *
@@ -639,10 +663,10 @@ export function extractAuthFromEntry(entry: RawMcpEntry): {
 }
 
 /**
- * Extract auth credentials from existing kanon-mcp entries across all tool configs.
+ * Extract auth credentials from current or legacy Kanon entries across all tool configs.
  *
  * Scans each tool in the registry that supports the current platform, reads its
- * MCP config file, and looks for a "kanon-mcp" entry. Extracts KANON_API_URL and
+ * MCP config file, and looks for a `kanon` or legacy `kanon-mcp` entry. Extracts KANON_API_URL and
  * KANON_API_KEY from:
  * - Direct mode: `entry.env.KANON_API_URL` / `entry.env.KANON_API_KEY`
  * - WSL bridge mode: parses `entry.args` array for `KANON_API_URL=xxx` patterns
@@ -673,7 +697,7 @@ export function extractExistingAuth(
           | undefined;
         if (!servers) continue;
 
-        const raw = servers["kanon-mcp"] as RawMcpEntry | undefined;
+        const raw = getKanonServerEntry(servers) as RawMcpEntry | undefined;
         if (!raw) continue;
 
         const entry: RawMcpEntry = {
@@ -704,7 +728,7 @@ export function extractExistingAuth(
         | undefined;
       if (!servers) continue;
 
-      const entry = servers["kanon-mcp"] as RawMcpEntry | undefined;
+      const entry = getKanonServerEntry(servers) as RawMcpEntry | undefined;
       if (!entry) continue;
 
       // Delegate parsing to the pure helper — handles both object-form and
@@ -724,7 +748,7 @@ export function extractExistingAuth(
 }
 
 /**
- * Extract the KANON_WORKSPACE_ID from an existing kanon-mcp entry in a tool's
+ * Extract the KANON_WORKSPACE_ID from an existing current or legacy Kanon entry in a tool's
  * config file, if present.
  *
  * Used during re-run (wrapper-reuse path) to preserve the workspace binding
@@ -750,7 +774,7 @@ export function extractExistingWorkspaceId(
       const servers = config[rootKey] as Record<string, unknown> | undefined;
       if (!servers) return undefined;
 
-      const entry = servers["kanon-mcp"] as { env?: Record<string, string> } | undefined;
+      const entry = getKanonServerEntry(servers) as { env?: Record<string, string> } | undefined;
       return entry?.env?.["KANON_WORKSPACE_ID"];
     } catch {
       return undefined;
@@ -768,7 +792,7 @@ export function extractExistingWorkspaceId(
   const servers = config[rootKey] as Record<string, unknown> | undefined;
   if (!servers) return undefined;
 
-  const entry = servers["kanon-mcp"] as
+  const entry = getKanonServerEntry(servers) as
     | {
         args?: string[];
         env?: Record<string, string>;

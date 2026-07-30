@@ -29,7 +29,7 @@ const FORBIDDEN_SEGMENTS = [".atl"];
 /** Hermetic — do not call resolveWrapperPath() (needs install.sh layout on disk). */
 const FAKE_WRAPPER = {
   mode: "local" as const,
-  path: "/fake/kanon-mcp/wrapper-cli.js",
+  path: "/fake/kanon/wrapper-cli.js",
 };
 
 function walkFiles(dir: string, base = dir): string[] {
@@ -105,13 +105,13 @@ describe("antigravity-cli install smoke — KAN-130", () => {
       expect(configPath.startsWith(cliHome)).toBe(true);
     });
 
-    it("contains mcpServers.kanon-mcp with object form", () => {
+    it("contains mcpServers.kanon with object form", () => {
       const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<
         string,
         unknown
       >;
       const servers = config["mcpServers"] as Record<string, unknown>;
-      expect(servers["kanon-mcp"]).toBeDefined();
+      expect(servers["kanon"]).toBeDefined();
 
       const entry = formatMcpEntry(
         "mcpServers",
@@ -123,7 +123,7 @@ describe("antigravity-cli install smoke — KAN-130", () => {
         ),
       ) as { command?: string; args?: string[]; type?: string };
 
-      const onDisk = servers["kanon-mcp"] as {
+      const onDisk = servers["kanon"] as {
         command?: string;
         args?: string[];
         type?: string;
@@ -174,7 +174,7 @@ describe("antigravity-cli install smoke — KAN-130", () => {
   });
 
   describe("idempotent install and remove", () => {
-    it("re-run leaves exactly one kanon-mcp entry", () => {
+    it("re-run leaves exactly one kanon entry", () => {
       runInstall();
       runInstall();
 
@@ -183,7 +183,7 @@ describe("antigravity-cli install smoke — KAN-130", () => {
         unknown
       >;
       const servers = config["mcpServers"] as Record<string, unknown>;
-      expect(Object.keys(servers).filter((k) => k === "kanon-mcp")).toHaveLength(
+      expect(Object.keys(servers).filter((k) => k === "kanon")).toHaveLength(
         1,
       );
     });
@@ -210,7 +210,7 @@ describe("antigravity-cli install smoke — KAN-130", () => {
       >;
       const servers = config["mcpServers"] as Record<string, unknown> | undefined;
       if (servers) {
-        expect(servers["kanon-mcp"]).toBeUndefined();
+        expect(servers["kanon"]).toBeUndefined();
         expect(servers["other"]).toEqual({ command: "other", args: ["run"] });
       }
 

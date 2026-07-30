@@ -27,13 +27,13 @@ instance that issued it. Default lifetime is 72 hours
 On Linux, macOS, or WSL, run:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.10.1/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.11.0/install.sh)"
 ```
 
 On native Windows PowerShell, run:
 
 ```powershell
-irm https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.10.1/install.ps1 | iex
+irm https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.11.0/install.ps1 | iex
 ```
 
 > Use the **tagged** installer (`mcp-v<version>`), not `main`. The tagged script has
@@ -96,7 +96,7 @@ One `--tool cursor` run always configures the local WSL CLI target first and
 adds the Windows IDE target only when `<Windows home>/.cursor` already exists.
 The Windows entry uses `wsl env ...`; the WSL CLI invokes the same installed
 release directly. During upgrades, a workspace ID found in either target is
-written to both. Native Windows setup migrates only `kanon-mcp` from the old
+written to both. Native Windows setup migrates only the legacy `kanon-mcp` entry from the old
 `%APPDATA%/Cursor/User/mcp.json` and removes only the legacy
 `~/.cursor/rules/kanon.mdc`. Other servers and user rules are preserved. Setup
 does not install a new global rule or broad MCP allowlist.
@@ -106,10 +106,10 @@ current tool set with:
 
 ```bash
 agent mcp list
-agent mcp list-tools kanon-mcp
+agent mcp list-tools kanon
 ```
 
-In the IDE, open **Customize > MCP**, confirm `kanon-mcp` is connected, then ask
+In the IDE, open **Customize > MCP**, confirm `kanon` is connected, then ask
 the agent to list your Kanon workspaces.
 
 ### Antigravity IDE vs Antigravity CLI
@@ -151,9 +151,9 @@ kanon-setup --tool codex -y
 kanon-setup --tool codex --remove -y
 ```
 
-Setup writes `[mcp_servers.kanon-mcp]` with flat `command`/`args` and env vars
-under `[mcp_servers.kanon-mcp.env]`. TOML round-trip via `smol-toml` may drop
-comments in `config.toml` — only the `kanon-mcp` tables are touched.
+Setup writes `[mcp_servers.kanon]` with flat `command`/`args` and env vars
+under `[mcp_servers.kanon.env]`. TOML round-trip via `smol-toml` may drop
+comments in `config.toml` — only the current `kanon` and legacy `kanon-mcp` tables are touched.
 
 ## Non-interactive use
 
@@ -162,7 +162,7 @@ can run unattended (CI, provisioning scripts):
 
 ```bash
 echo "kanon://<your-host>/onboard?token=<jwt>" \
-  | bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.10.1/install.sh)"
+  | bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.11.0/install.sh)"
 ```
 
 Native Windows can set `$env:KANON_ONBOARD_LINK` before invoking the tagged

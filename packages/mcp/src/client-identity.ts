@@ -38,7 +38,7 @@ export function resolveClientIdentity(raw: string | undefined): string | null {
 
   // Invalid value — warn loudly and refuse to forward the header
   process.stderr.write(
-    `[kanon-mcp] KANON_CLIENT_IDENTITY="${raw}" is invalid. ` +
+    `[kanon] KANON_CLIENT_IDENTITY="${raw}" is invalid. ` +
       `Accepted values: ${VALID_IDENTITIES.join(", ")}. ` +
       `The X-Kanon-Client header will NOT be sent.\n`,
   );

@@ -200,7 +200,7 @@ export async function closeCycleWithDisposition(
 
 export function registerCycleTools(server: McpServer, client: KanonClient, binding: KanonBinding | InvalidBinding | null = null): void {
   server.tool(
-    "kanon_list_cycles",
+    "list_cycles",
     "List cycles for projectKey. isActive boolean per entry — use it, don't infer from dates.",
     ListCyclesInput.shape,
     async ({ projectKey, format }) => {
@@ -221,7 +221,7 @@ export function registerCycleTools(server: McpServer, client: KanonClient, bindi
   );
 
   server.tool(
-    "kanon_get_cycle",
+    "get_cycle",
     "Get cycle detail (burnup,scope events,risks,issues) by cycleId. includeAllScopeEvents for full audit. Returns slim; format:'full' for entity.",
     GetCycleInput.shape,
     async ({ cycleId, includeAllScopeEvents, format }) => {
@@ -235,7 +235,7 @@ export function registerCycleTools(server: McpServer, client: KanonClient, bindi
   );
 
   server.tool(
-    "kanon_create_cycle",
+    "create_cycle",
     "Create cycle (name,startDate,endDate,state,attachIssueKeys[]). Dates: YYYY-MM-DD or ISO. state:active demotes current active cycle. Returns ack {ok,id,name,state}; format:'full' for entity.",
     CreateCycleInput.shape,
     async ({ projectKey, name, goal, startDate, endDate, state, attachIssueKeys, format }) => {
@@ -270,7 +270,7 @@ export function registerCycleTools(server: McpServer, client: KanonClient, bindi
   );
 
   server.tool(
-    "kanon_attach_issues_to_cycle",
+    "update_cycle_scope",
     "Add/remove issues in a cycle (add[],remove[],reason). reason logged in audit trail. Returns ack {ok,cycleId,added,removed,scope,completed}; format:'full' for cycle detail.",
     AttachIssuesToCycleShape,
     async ({ cycleId, add, remove, reason, format }) => {
@@ -303,7 +303,7 @@ export function registerCycleTools(server: McpServer, client: KanonClient, bindi
   );
 
   server.tool(
-    "kanon_close_cycle",
+    "close_cycle",
     "Close cycle with disposition: move_to_next (needs projectKey), move_to_backlog, leave. Returns ack {ok,cycleId,disposition,movedIssueKeys}; format:'full' for detail.",
     CloseCycleShape,
     async (args) => {
@@ -346,7 +346,7 @@ export function registerCycleTools(server: McpServer, client: KanonClient, bindi
   );
 
   server.tool(
-    "kanon_delete_cycle",
+    "delete_cycle",
     "Hard-delete a cycle. Active cycles always refused (409). Non-terminal issues block unless force:true. Returns ack with detach count; slim adds detachedIssueKeys; full adds auditLogId.",
     DeleteCycleShape,
     async (args) => {

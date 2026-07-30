@@ -10,7 +10,7 @@ export function registerDocumentTools(
   client: KanonClient,
 ): void {
   server.tool(
-    "kanon_create_document",
+    "create_design_record",
     "Create design record for issue. Propose to user before writing.",
     CreateDocumentInput.shape,
     async ({ issueKey, kind, title, body }) => {
@@ -24,7 +24,7 @@ export function registerDocumentTools(
   );
 
   server.tool(
-    "kanon_list_documents",
+    "list_design_records",
     "List all design records (adr/pdr/rfc/note) for an issue.",
     ListDocumentsInput.shape,
     async ({ issueKey }) => {
@@ -38,7 +38,7 @@ export function registerDocumentTools(
   );
 
   server.tool(
-    "kanon_get_document",
+    "get_design_record",
     "Get a design record (adr/pdr/rfc/note) by document ID.",
     GetDocumentInput.shape,
     async ({ documentId }) => {
