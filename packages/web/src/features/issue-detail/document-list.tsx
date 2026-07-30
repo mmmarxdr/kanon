@@ -141,7 +141,7 @@ function DocumentCard({ document: doc, issueKey }: DocumentCardProps) {
           type="button"
           data-testid="document-expand-toggle"
           aria-expanded={expanded}
-          aria-label={expanded ? "Collapse design record" : "Expand design record"}
+          aria-label={expanded ? t("collapseDesignRecord") : t("expandDesignRecord")}
           onClick={handleToggle as React.MouseEventHandler}
           onKeyDown={handleToggle as React.KeyboardEventHandler}
           style={{
@@ -235,7 +235,7 @@ function DocumentCard({ document: doc, issueKey }: DocumentCardProps) {
                 gap: 4,
               }}
             >
-              Open full page ↗
+              {t("docsOpenFull")}
             </Link>
           </div>
         </div>
@@ -287,15 +287,15 @@ export function formatRelativeTime(iso: string): string {
     const date = new Date(iso);
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
-    if (diffMs < 0) return "just now";
+    if (diffMs < 0) return i18n.t("issue:relativeJustNow");
     const diffMin = Math.floor(diffMs / 60_000);
 
-    if (diffMin < 1) return "just now";
-    if (diffMin < 60) return `${diffMin}m ago`;
+    if (diffMin < 1) return i18n.t("issue:relativeJustNow");
+    if (diffMin < 60) return i18n.t("issue:relativeMinutesAgo", { count: diffMin });
     const diffHr = Math.floor(diffMin / 60);
-    if (diffHr < 24) return `${diffHr}h ago`;
+    if (diffHr < 24) return i18n.t("issue:relativeHoursAgo", { count: diffHr });
     const diffDay = Math.floor(diffHr / 24);
-    if (diffDay < 30) return `${diffDay}d ago`;
+    if (diffDay < 30) return i18n.t("issue:relativeDaysAgo", { count: diffDay });
     return date.toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",
