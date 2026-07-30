@@ -208,7 +208,7 @@ describe("selectTools", () => {
         const configuredCtx = { ...ctx, homedir };
         const configPath = configured.platforms.linux!.config(configuredCtx);
         fs.mkdirSync(path.dirname(configPath), { recursive: true });
-        fs.writeFileSync(configPath, JSON.stringify({ mcpServers: { "kanon-mcp": {} } }));
+        fs.writeFileSync(configPath, JSON.stringify({ mcpServers: { kanon: {} } }));
         const promptTools = vi.fn().mockResolvedValue(["configured"]);
 
         await selectTools([configured], {}, true, configuredCtx, { promptTools });

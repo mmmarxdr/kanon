@@ -40,7 +40,7 @@ function toFiniteHours(value: unknown): number | null {
 
 export function registerIssueTools(server: McpServer, client: KanonClient, binding: KanonBinding | InvalidBinding | null = null): void {
   server.tool(
-    "kanon_list_issues",
+    "list_issues",
     "List issues with filters (state,type,priority,assigneeId,cycleId,label,groupKey,keys[]). Returns slim list.",
     ListIssuesInput.shape,
     async ({ projectKey, state, type, priority, assigneeId, cycleId, label, groupKey, keys, format, limit, offset }) => {
@@ -74,7 +74,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
   );
 
   server.tool(
-    "kanon_get_issue",
+    "get_issue",
     "Get issue detail by issueKey. Returns slim; format:'full' for full entity.",
     GetIssueInput.shape,
     async ({ issueKey, format }) => {
@@ -91,8 +91,8 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
   // ─── Write Tools ────────────────────────────────────────────────────────
 
   server.tool(
-    "kanon_create_issue",
-    "Create issue. Title: [Area] imperative verb (e.g. [Auth] Fix OAuth redirect). Call kanon_list_groups for groupKey. cycleId attaches on create. Returns ack {ok,id,key}; format:'full' for entity.",
+    "create_issue",
+    "Create issue. Title: [Area] imperative verb (e.g. [Auth] Fix OAuth redirect). Call list_groups for groupKey. cycleId attaches on create. Returns ack {ok,id,key}; format:'full' for entity.",
     CreateIssueInputShape,
     async (input) => {
       try {
@@ -127,7 +127,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
   );
 
   server.tool(
-    "kanon_update_issue",
+    "update_issue",
     "Update issue fields. Read first, append don't overwrite. cycleId=null detaches. Returns ack {ok,id,key}; format:'full' for entity.",
     UpdateIssueInput.shape,
     async ({ issueKey, title, description, priority, labels, assigneeId, cycleId, roadmapItemId, format }) => {
@@ -152,8 +152,8 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
   );
 
   server.tool(
-    "kanon_transition_issue",
-    "Transition issueKey to state (backlog,todo,in_progress,review,done). Returns ack {ok,id,key}; format:'full' for entity. Done with unconfirmed time is blocked — call kanon_reconcile_time then retry.",
+    "transition_issue",
+    "Transition issueKey to state (backlog,todo,in_progress,review,done). Returns ack {ok,id,key}; format:'full' for entity. Done with unconfirmed time is blocked — call reconcile_time then retry.",
     TransitionIssueInput.shape,
     async ({ issueKey, state, format }) => {
       try {
@@ -176,10 +176,10 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
           const message =
             totalHours !== null
               ? `${totalHours} hours were reported on this ticket and need confirmation. ` +
-                `Call kanon_reconcile_time with issueKey "${issueKey}" and confirmedTotalHours ` +
+                `Call reconcile_time with issueKey "${issueKey}" and confirmedTotalHours ` +
                 `(accept ${totalHours}, or set a corrected value), then retry the transition to done.`
               : `This ticket has unconfirmed reported time that must be confirmed before it can move to done. ` +
-                `Call kanon_reconcile_time with issueKey "${issueKey}" (optionally set confirmedTotalHours to ` +
+                `Call reconcile_time with issueKey "${issueKey}" (optionally set confirmedTotalHours to ` +
                 `correct the total), then retry the transition to done.`;
           return errorResult(
             new KanonApiError(err.statusCode, err.code, message, err.details),
@@ -191,8 +191,8 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
   );
 
   server.tool(
-    "kanon_reconcile_time",
-    "Reconcile captured time on issueKey — clears the review→done gate. confirmedTotalHours accepts reported hours as-is or corrects up/down, then retry kanon_transition_issue to done.",
+    "reconcile_time",
+    "Reconcile captured time on issueKey — clears the review→done gate. confirmedTotalHours accepts reported hours as-is or corrects up/down, then retry transition_issue to done.",
     ReconcileTimeInput.shape,
     async ({ issueKey, confirmedTotalHours }) => {
       try {

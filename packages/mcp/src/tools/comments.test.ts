@@ -1,7 +1,7 @@
 // ─── Comment Tools — unit tests ───────────────────────────────────────────────
 //
 // Tools covered:
-//   kanon_comment_issue
+//   create_issue_comment
 //
 // Pattern mirrors members.test.ts — captureTools() harness + mocked KanonClient.
 
@@ -53,30 +53,30 @@ const fakeComment = {
 // ─── Registration tests ───────────────────────────────────────────────────────
 
 describe("registerCommentTools — registration", () => {
-  it("registers kanon_comment_issue tool", () => {
+  it("registers create_issue_comment tool", () => {
     const mockClient = {} as unknown as KanonClient;
     const tools = captureTools(registerCommentTools, mockClient);
 
-    expect(tools.has("kanon_comment_issue")).toBe(true);
+    expect(tools.has("create_issue_comment")).toBe(true);
     expect(tools.size).toBe(1);
   });
 
-  it("COMMENTS_DEFERRED_TOOLS contains kanon_comment_issue (deferred — not daily board-flow core)", () => {
-    expect(COMMENTS_DEFERRED_TOOLS).toContain("kanon_comment_issue");
+  it("COMMENTS_DEFERRED_TOOLS contains create_issue_comment (deferred — not daily board-flow core)", () => {
+    expect(COMMENTS_DEFERRED_TOOLS).toContain("create_issue_comment");
   });
 });
 
-// ─── kanon_comment_issue ─────────────────────────────────────────────────────
+// ─── create_issue_comment ─────────────────────────────────────────────────────
 
-describe("kanon_comment_issue", () => {
+describe("create_issue_comment", () => {
   let mockClient: { createComment: ReturnType<typeof vi.fn> };
   let tool: RegisteredTool;
 
   beforeEach(() => {
     mockClient = { createComment: vi.fn().mockResolvedValue(fakeComment) };
     const tools = captureTools(registerCommentTools, mockClient as unknown as KanonClient);
-    const t = tools.get("kanon_comment_issue");
-    if (!t) throw new Error("kanon_comment_issue not registered");
+    const t = tools.get("create_issue_comment");
+    if (!t) throw new Error("create_issue_comment not registered");
     tool = t;
   });
 
@@ -106,7 +106,7 @@ describe("kanon_comment_issue", () => {
   it("error path: client throws generic error → returns errorResult", async () => {
     mockClient.createComment = vi.fn().mockRejectedValue(new Error("network failure"));
     const tools = captureTools(registerCommentTools, mockClient as unknown as KanonClient);
-    const errorTool = tools.get("kanon_comment_issue")!;
+    const errorTool = tools.get("create_issue_comment")!;
 
     const result = await errorTool.handler({ issueKey: "KAN-42", body: "test" });
 
@@ -121,7 +121,7 @@ describe("kanon_comment_issue", () => {
       new KanonApiError(403, "FORBIDDEN", "Not a project member"),
     );
     const tools = captureTools(registerCommentTools, mockClient as unknown as KanonClient);
-    const errorTool = tools.get("kanon_comment_issue")!;
+    const errorTool = tools.get("create_issue_comment")!;
 
     const result = await errorTool.handler({ issueKey: "KAN-42", body: "test" });
 

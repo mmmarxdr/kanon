@@ -1,8 +1,8 @@
 // ─── Roadmap Tools — format-tier behavior ────────────────────────────────────
 //
-// C8: kanon_create_roadmap_item — ack default
-// C9: kanon_update_roadmap_item — ack default
-// C10: kanon_promote_roadmap_item — ack default (promotes to issue)
+// C8: create_roadmap_item — ack default
+// C9: update_roadmap_item — ack default
+// C10: promote_roadmap_item — ack default (promotes to issue)
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -73,17 +73,17 @@ function makeIssueFromPromotion() {
   };
 }
 
-// ─── C8: kanon_create_roadmap_item — format tier ─────────────────────────────
+// ─── C8: create_roadmap_item — format tier ─────────────────────────────
 
-describe("kanon_create_roadmap_item — format tier", () => {
+describe("create_roadmap_item — format tier", () => {
   let mockClient: { createRoadmapItem: ReturnType<typeof vi.fn> };
   let createTool: RegisteredTool;
 
   beforeEach(() => {
     mockClient = { createRoadmapItem: vi.fn().mockResolvedValue(makeRoadmapItem()) };
     const tools = captureTools(registerRoadmapTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_create_roadmap_item");
-    if (!tool) throw new Error("kanon_create_roadmap_item not registered");
+    const tool = tools.get("create_roadmap_item");
+    if (!tool) throw new Error("create_roadmap_item not registered");
     createTool = tool;
   });
 
@@ -120,17 +120,17 @@ describe("kanon_create_roadmap_item — format tier", () => {
   });
 });
 
-// ─── C9: kanon_update_roadmap_item — format tier ─────────────────────────────
+// ─── C9: update_roadmap_item — format tier ─────────────────────────────
 
-describe("kanon_update_roadmap_item — format tier", () => {
+describe("update_roadmap_item — format tier", () => {
   let mockClient: { updateRoadmapItem: ReturnType<typeof vi.fn> };
   let updateTool: RegisteredTool;
 
   beforeEach(() => {
     mockClient = { updateRoadmapItem: vi.fn().mockResolvedValue(makeRoadmapItem()) };
     const tools = captureTools(registerRoadmapTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_update_roadmap_item");
-    if (!tool) throw new Error("kanon_update_roadmap_item not registered");
+    const tool = tools.get("update_roadmap_item");
+    if (!tool) throw new Error("update_roadmap_item not registered");
     updateTool = tool;
   });
 
@@ -166,9 +166,9 @@ describe("kanon_update_roadmap_item — format tier", () => {
   });
 });
 
-// ─── C10: kanon_promote_roadmap_item — format tier ───────────────────────────
+// ─── C10: promote_roadmap_item — format tier ───────────────────────────
 
-describe("kanon_promote_roadmap_item — format tier", () => {
+describe("promote_roadmap_item — format tier", () => {
   let mockClient: { promoteRoadmapItem: ReturnType<typeof vi.fn> };
   let promoteTool: RegisteredTool;
 
@@ -177,8 +177,8 @@ describe("kanon_promote_roadmap_item — format tier", () => {
   beforeEach(() => {
     mockClient = { promoteRoadmapItem: vi.fn().mockResolvedValue(fakeIssue) };
     const tools = captureTools(registerRoadmapTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_promote_roadmap_item");
-    if (!tool) throw new Error("kanon_promote_roadmap_item not registered");
+    const tool = tools.get("promote_roadmap_item");
+    if (!tool) throw new Error("promote_roadmap_item not registered");
     promoteTool = tool;
   });
 
@@ -214,9 +214,9 @@ describe("kanon_promote_roadmap_item — format tier", () => {
   });
 });
 
-// ─── C11: kanon_add_dependency — format tier ─────────────────────────────────
+// ─── C11: add_dependency — format tier ─────────────────────────────────
 
-describe("kanon_add_dependency — format tier (C11)", () => {
+describe("add_dependency — format tier (C11)", () => {
   const fakeDep = { id: "dep_001", type: "blocks", projectId: "proj_001" };
 
   let mockClient: { addDependency: ReturnType<typeof vi.fn> };
@@ -225,8 +225,8 @@ describe("kanon_add_dependency — format tier (C11)", () => {
   beforeEach(() => {
     mockClient = { addDependency: vi.fn().mockResolvedValue(fakeDep) };
     const tools = captureTools(registerRoadmapTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_add_dependency");
-    if (!tool) throw new Error("kanon_add_dependency not registered");
+    const tool = tools.get("add_dependency");
+    if (!tool) throw new Error("add_dependency not registered");
     addDepTool = tool;
   });
 
@@ -262,17 +262,17 @@ describe("kanon_add_dependency — format tier (C11)", () => {
   });
 });
 
-// ─── C12: kanon_remove_dependency — format tier ──────────────────────────────
+// ─── C12: remove_dependency — format tier ──────────────────────────────
 
-describe("kanon_remove_dependency — format tier (C12)", () => {
+describe("remove_dependency — format tier (C12)", () => {
   let mockClient: { removeDependency: ReturnType<typeof vi.fn> };
   let removeDepTool: RegisteredTool;
 
   beforeEach(() => {
     mockClient = { removeDependency: vi.fn().mockResolvedValue(undefined) };
     const tools = captureTools(registerRoadmapTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_remove_dependency");
-    if (!tool) throw new Error("kanon_remove_dependency not registered");
+    const tool = tools.get("remove_dependency");
+    if (!tool) throw new Error("remove_dependency not registered");
     removeDepTool = tool;
   });
 
@@ -296,7 +296,7 @@ describe("kanon_remove_dependency — format tier (C12)", () => {
 // Confirms each tool FORWARDS the credential and SURFACES a 403 as
 // { isError: true, code: "FORBIDDEN" }. Enforcement lives in the API layer.
 
-describe("kanon_create_roadmap_item — surfaces 403 as FORBIDDEN", () => {
+describe("create_roadmap_item — surfaces 403 as FORBIDDEN", () => {
   it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
     const mockClient = {
       createRoadmapItem: vi.fn().mockRejectedValue(
@@ -304,7 +304,7 @@ describe("kanon_create_roadmap_item — surfaces 403 as FORBIDDEN", () => {
       ),
     };
     const tools = captureTools(registerRoadmapTools, mockClient as unknown as KanonClient);
-    const handler = tools.get("kanon_create_roadmap_item")!.handler;
+    const handler = tools.get("create_roadmap_item")!.handler;
 
     const result = await handler({ projectKey: "KAN", title: "Add dark mode" });
 

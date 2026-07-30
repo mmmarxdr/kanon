@@ -20,7 +20,7 @@ export function registerProjectTools(server: McpServer, client: KanonClient, bin
   // ─── Workspace Tools ────────────────────────────────────────────────────
 
   server.tool(
-    "kanon_list_workspaces",
+    "list_workspaces",
     "List workspaces visible to the authenticated user. Returns compact list.",
     ListWorkspacesInput.shape,
     async ({ format }) => {
@@ -40,7 +40,7 @@ export function registerProjectTools(server: McpServer, client: KanonClient, bin
   // ─── Project Tools ──────────────────────────────────────────────────────
 
   server.tool(
-    "kanon_list_projects",
+    "list_projects",
     "List projects by workspaceId. Returns compact list.",
     ListProjectsInput.shape,
     async ({ workspaceId, format, limit, offset }) => {
@@ -54,7 +54,7 @@ export function registerProjectTools(server: McpServer, client: KanonClient, bin
   );
 
   server.tool(
-    "kanon_get_project",
+    "get_project",
     "Get project details by projectKey. Returns entity.",
     GetProjectInput.shape,
     async ({ projectKey, format }) => {
@@ -70,7 +70,7 @@ export function registerProjectTools(server: McpServer, client: KanonClient, bin
   );
 
   server.tool(
-    "kanon_create_project",
+    "create_project",
     "Create project (workspaceId,key,name,description). Returns ack {ok,id,key,name}; format:'full' for entity.",
     CreateProjectInput.shape,
     async ({ workspaceId, key, name, description, format }) => {
@@ -88,7 +88,7 @@ export function registerProjectTools(server: McpServer, client: KanonClient, bin
   );
 
   server.tool(
-    "kanon_update_project",
+    "update_project",
     "Update project (projectKey,name,description). Returns ack {ok,id,key,name}; format:'full' for entity.",
     UpdateProjectInput.shape,
     async (args) => {

@@ -21,7 +21,7 @@ import { errorResult, dataResult } from "../errors.js";
  * not part of the core daily board flow (create/update/transition issues).
  */
 export const MEMBERS_DEFERRED_TOOLS = [
-  "kanon_list_members",
+  "list_members",
 ] as const;
 
 // ─── Input Schemas ─────────────────────────────────────────────────────────
@@ -35,10 +35,10 @@ const ListMembersInput = z.object({
 // ─── Registration ──────────────────────────────────────────────────────────
 
 export function registerMemberTools(server: McpServer, client: KanonClient): void {
-  // ── kanon_list_members ────────────────────────────────────────────────────
+  // ── list_members ────────────────────────────────────────────────────
 
   server.tool(
-    "kanon_list_members",
+    "list_members",
     "List members of project projectKey. Returns userId, displayName, email, role per member. Use to resolve assigneeId↔name or pick an assignee.",
     ListMembersInput.shape,
     async ({ projectKey }) => {

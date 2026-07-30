@@ -24,7 +24,7 @@ const WhoIsWorkingInput = z.object({
 
 export function registerWorkSessionTools(server: McpServer, client: KanonClient): void {
   server.tool(
-    "kanon_start_work",
+    "start_work",
     "Start work session on issue_key. Auto-assigns if unassigned; starts heartbeat. Returns ack {ok,sessionId,action:'started'}.",
     StartWorkInput.shape,
     async ({ issue_key }) => {
@@ -47,7 +47,7 @@ export function registerWorkSessionTools(server: McpServer, client: KanonClient)
   );
 
   server.tool(
-    "kanon_stop_work",
+    "stop_work",
     "Stop work session on issue_key; clears session and heartbeat. Returns {ok,deleted,issueKey}.",
     StopWorkInput.shape,
     async ({ issue_key }) => {
@@ -74,7 +74,7 @@ export function registerWorkSessionTools(server: McpServer, client: KanonClient)
   );
 
   server.tool(
-    "kanon_who_is_working",
+    "list_active_workers",
     "List active workers on issue_key: username, source (mcp/web/etc), elapsed time.",
     WhoIsWorkingInput.shape,
     async ({ issue_key }) => {

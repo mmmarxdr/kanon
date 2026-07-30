@@ -69,7 +69,7 @@ describe("Cursor tool surface upgrades", () => {
       fs.readFileSync(path.join(ctx.homedir, ".cursor", "mcp.json"), "utf8"),
     );
     const legacy = JSON.parse(fs.readFileSync(legacyConfig, "utf8"));
-    expect(current.mcpServers["kanon-mcp"].type).toBe("stdio");
+    expect(current.mcpServers["kanon"].type).toBe("stdio");
     expect(legacy.mcpServers.other).toBeDefined();
     expect(legacy.mcpServers["kanon-mcp"]).toBeUndefined();
     expect(fs.existsSync(path.join(rulesDir, "kanon.mdc"))).toBe(false);
@@ -82,7 +82,7 @@ describe("Cursor tool surface upgrades", () => {
     }));
     fs.writeFileSync(path.join(rulesDir, "kanon.mdc"), "legacy-owned");
     expect(removeToolMcpSurface(cursor, ctx)).toEqual([currentConfig]);
-    expect(JSON.parse(fs.readFileSync(currentConfig, "utf8")).mcpServers["kanon-mcp"])
+    expect(JSON.parse(fs.readFileSync(currentConfig, "utf8")).mcpServers["kanon"])
       .toBeUndefined();
     expect(JSON.parse(fs.readFileSync(legacyConfig, "utf8")).mcpServers["kanon-mcp"])
       .toBeUndefined();
@@ -126,7 +126,7 @@ describe("Cursor tool surface upgrades", () => {
     });
 
     const [local, windows] = resolveToolTargets(cursor, ctx).map((target) =>
-      JSON.parse(fs.readFileSync(target.config(ctx), "utf8")).mcpServers["kanon-mcp"],
+      JSON.parse(fs.readFileSync(target.config(ctx), "utf8")).mcpServers["kanon"],
     );
     expect(local.env.KANON_WORKSPACE_ID).toBe("workspace-from-windows");
     expect(windows.args).toContain("KANON_WORKSPACE_ID=workspace-from-windows");

@@ -1,6 +1,6 @@
 // ─── Group Tools — format-tier behavior ──────────────────────────────────────
 //
-// C4: kanon_batch_transition — ack-default + format:full regression
+// C4: transition_issues — ack-default + format:full regression
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -36,9 +36,9 @@ function captureTools(
   return tools;
 }
 
-// ─── D9: kanon_batch_transition — keys-mode XOR validation ───────────────────
+// ─── D9: transition_issues — keys-mode XOR validation ───────────────────
 
-describe("kanon_batch_transition — keys-mode XOR validation (D9)", () => {
+describe("transition_issues — keys-mode XOR validation (D9)", () => {
   let mockClient: {
     batchTransition: ReturnType<typeof vi.fn>;
     batchTransitionByKeys: ReturnType<typeof vi.fn>;
@@ -51,8 +51,8 @@ describe("kanon_batch_transition — keys-mode XOR validation (D9)", () => {
       batchTransitionByKeys: vi.fn().mockResolvedValue({ count: 2, keys: ["KAN-1", "KAN-2"] }),
     };
     const tools = captureTools(registerGroupTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_batch_transition");
-    if (!tool) throw new Error("kanon_batch_transition not registered");
+    const tool = tools.get("transition_issues");
+    if (!tool) throw new Error("transition_issues not registered");
     batchTool = tool;
   });
 
@@ -101,9 +101,9 @@ describe("kanon_batch_transition — keys-mode XOR validation (D9)", () => {
   });
 });
 
-// ─── C4: kanon_batch_transition — format tier ────────────────────────────────
+// ─── C4: transition_issues — format tier ────────────────────────────────
 
-describe("kanon_batch_transition — format tier", () => {
+describe("transition_issues — format tier", () => {
   // Simulated result from the API (could be array or {count, keys} shape)
   const fakeResult = [
     { id: "i1", key: "KAN-1", state: "done" },
@@ -118,8 +118,8 @@ describe("kanon_batch_transition — format tier", () => {
       batchTransition: vi.fn().mockResolvedValue(fakeResult),
     };
     const tools = captureTools(registerGroupTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_batch_transition");
-    if (!tool) throw new Error("kanon_batch_transition not registered");
+    const tool = tools.get("transition_issues");
+    if (!tool) throw new Error("transition_issues not registered");
     batchTool = tool;
   });
 
@@ -155,14 +155,14 @@ describe("kanon_batch_transition — format tier", () => {
 
 // ─── KAN-188 regression pin: batch reconcile-gate is not made worse ──────────
 //
-// kanon_batch_transition does not yet have reconcile-aware 409 handling
+// transition_issues does not yet have reconcile-aware 409 handling
 // (full batch reconcile-awareness is deferred, tracked separately). This
 // test pins the current "no worse than before" contract: when the
 // underlying batch call rejects with RECONCILIATION_REQUIRED, the tool
 // surfaces it via the existing errorResult path — it must not crash and
 // must not report the transition as having succeeded.
 
-describe("kanon_batch_transition — RECONCILIATION_REQUIRED regression pin (KAN-188)", () => {
+describe("transition_issues — RECONCILIATION_REQUIRED regression pin (KAN-188)", () => {
   it("surfaces a RECONCILIATION_REQUIRED 409 via errorResult without crashing or reporting success", async () => {
     const mockClient = {
       batchTransition: vi.fn().mockRejectedValue(
@@ -175,8 +175,8 @@ describe("kanon_batch_transition — RECONCILIATION_REQUIRED regression pin (KAN
       ),
     };
     const tools = captureTools(registerGroupTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_batch_transition");
-    if (!tool) throw new Error("kanon_batch_transition not registered");
+    const tool = tools.get("transition_issues");
+    if (!tool) throw new Error("transition_issues not registered");
 
     const result = await tool.handler({
       projectKey: "KAN",

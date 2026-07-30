@@ -87,7 +87,7 @@ export const NullableOptionalUuid = z
 
 // ─── Tool Input Schemas ─────────────────────────────────────────────────────
 
-/** kanon_list_projects */
+/** list_projects */
 export const ListProjectsInput = z.object({
   workspaceId: z.string().describe("Workspace ID to list projects for"),
   format: ListFormatParam.optional(),
@@ -95,13 +95,13 @@ export const ListProjectsInput = z.object({
   offset: OffsetParam.optional(),
 });
 
-/** kanon_get_project */
+/** get_project */
 export const GetProjectInput = z.object({
   projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   format: FormatParam.optional(),
 });
 
-/** kanon_list_issues */
+/** list_issues */
 export const ListIssuesInput = z.object({
   projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   state: z.enum(ISSUE_STATES).optional().describe("Filter by issue state"),
@@ -117,13 +117,13 @@ export const ListIssuesInput = z.object({
   offset: OffsetParam.optional(),
 });
 
-/** kanon_get_issue */
+/** get_issue */
 export const GetIssueInput = z.object({
   issueKey: z.string().describe("Issue key (e.g. 'KAN-42')"),
   format: FormatParam.optional(),
 });
 
-/** kanon_list_groups */
+/** list_groups */
 export const ListGroupsInput = z.object({
   projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   format: ListFormatParam.optional(),
@@ -131,7 +131,7 @@ export const ListGroupsInput = z.object({
   offset: OffsetParam.optional(),
 });
 
-/** kanon_create_issue */
+/** create_issue */
 export const CreateIssueInput = z.object({
   projectKey: z.string().optional().describe("Project key to create the issue in. Resolved from .kanon if omitted."),
   title: IssueTitle,
@@ -150,7 +150,7 @@ export const CreateIssueInput = z.object({
   format: FormatParam.optional(),
 });
 
-/** kanon_update_issue */
+/** update_issue */
 export const UpdateIssueInput = z.object({
   issueKey: z.string().describe("Issue key (e.g. 'KAN-42')"),
   title: IssueTitle.optional(),
@@ -164,14 +164,14 @@ export const UpdateIssueInput = z.object({
   ...WriteFormatField,
 });
 
-/** kanon_transition_issue */
+/** transition_issue */
 export const TransitionIssueInput = z.object({
   issueKey: z.string().describe("Issue key (e.g. 'KAN-42')"),
   state: z.enum(ISSUE_STATES).describe("Target state"),
   ...WriteFormatField,
 });
 
-/** kanon_reconcile_time */
+/** reconcile_time */
 export const ReconcileTimeInput = z.object({
   issueKey: z.string().describe("Issue key (e.g. 'KAN-42')"),
   confirmedTotalHours: z
@@ -183,7 +183,7 @@ export const ReconcileTimeInput = z.object({
     ),
 });
 
-/** kanon_batch_transition (raw shape — used for MCP server.tool registration) */
+/** transition_issues (raw shape — used for MCP server.tool registration) */
 export const BatchTransitionInputShape = z.object({
   projectKey: z.string().optional().describe("Project key. Resolved from .kanon if omitted."),
   groupKey: z.string().optional().describe("Group key to transition (mutually exclusive with keys)"),
@@ -192,7 +192,7 @@ export const BatchTransitionInputShape = z.object({
   ...WriteFormatField,
 });
 
-/** kanon_batch_transition (refined — used for runtime safeParse validation) */
+/** transition_issues (refined — used for runtime safeParse validation) */
 export const BatchTransitionInput = BatchTransitionInputShape.refine(
   (d) => Boolean(d.groupKey) !== Boolean(d.keys?.length),
   { message: "Exactly one of groupKey or keys must be provided" },
@@ -200,14 +200,14 @@ export const BatchTransitionInput = BatchTransitionInputShape.refine(
 
 // ─── Workspace Tool Input Schemas ───────────────────────────────────────────
 
-/** kanon_list_workspaces */
+/** list_workspaces */
 export const ListWorkspacesInput = z.object({
   format: ListFormatParam.optional(),
 });
 
 // ─── Project Creation / Update Schemas ─────────────────────────────────────
 
-/** kanon_create_project */
+/** create_project */
 export const CreateProjectInput = z.object({
   workspaceId: z.string().uuid().describe("Workspace ID"),
   key: z.string().min(1).max(6).regex(/^[A-Z][A-Z0-9]*$/)
@@ -217,7 +217,7 @@ export const CreateProjectInput = z.object({
   ...WriteFormatField,
 });
 
-/** kanon_update_project */
+/** update_project */
 export const UpdateProjectInput = z.object({
   projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   name: z.string().min(1).max(100).optional().describe("New name"),
@@ -227,7 +227,7 @@ export const UpdateProjectInput = z.object({
 
 // ─── Roadmap Tool Input Schemas ─────────────────────────────────────────────
 
-/** kanon_list_roadmap */
+/** list_roadmap */
 export const ListRoadmapInput = z.object({
   projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   horizon: z.enum(HORIZONS).optional().describe("Filter by horizon"),
@@ -238,7 +238,7 @@ export const ListRoadmapInput = z.object({
   offset: OffsetParam.optional(),
 });
 
-/** kanon_create_roadmap_item */
+/** create_roadmap_item */
 export const CreateRoadmapItemInput = z.object({
   projectKey: z.string().optional().describe("Project key to create the roadmap item in. Resolved from .kanon if omitted."),
   title: z.string().min(1, "Title must not be empty").describe("Roadmap item title"),
@@ -253,7 +253,7 @@ export const CreateRoadmapItemInput = z.object({
   ...WriteFormatField,
 });
 
-/** kanon_update_roadmap_item */
+/** update_roadmap_item */
 export const UpdateRoadmapItemInput = z.object({
   projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   itemId: z.string().describe("Roadmap item ID (UUID)"),
@@ -269,13 +269,13 @@ export const UpdateRoadmapItemInput = z.object({
   ...WriteFormatField,
 });
 
-/** kanon_delete_roadmap_item */
+/** delete_roadmap_item */
 export const DeleteRoadmapItemInput = z.object({
   projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   itemId: z.string().describe("Roadmap item ID to delete (UUID)"),
 });
 
-/** kanon_promote_roadmap_item */
+/** promote_roadmap_item */
 export const PromoteRoadmapItemInput = z.object({
   projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   itemId: z.string().describe("Roadmap item ID to promote"),
@@ -291,7 +291,7 @@ export const PromoteRoadmapItemInput = z.object({
 
 export const DEPENDENCY_TYPES = ["blocks", "FS", "SS", "FF", "SF"] as const;
 
-/** kanon_add_dependency */
+/** add_dependency */
 export const AddDependencyInput = z.object({
   projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   sourceItemId: z.string().describe("Source roadmap item ID (the item that blocks)"),
@@ -300,7 +300,7 @@ export const AddDependencyInput = z.object({
   ...WriteFormatField,
 });
 
-/** kanon_remove_dependency */
+/** remove_dependency */
 export const RemoveDependencyInput = z.object({
   projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   sourceItemId: z.string().describe("Roadmap item ID that owns the dependency"),
@@ -312,13 +312,13 @@ export const RemoveDependencyInput = z.object({
 export const CYCLE_STATES = ["upcoming", "active", "done"] as const;
 export const CYCLE_DISPOSITIONS = ["move_to_next", "move_to_backlog", "leave"] as const;
 
-/** kanon_list_cycles */
+/** list_cycles */
 export const ListCyclesInput = z.object({
   projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   format: ListFormatParam.optional(),
 });
 
-/** kanon_get_cycle */
+/** get_cycle */
 export const GetCycleInput = z.object({
   cycleId: z.string().uuid().describe("Cycle ID (UUID)"),
   includeAllScopeEvents: z.boolean().optional()
@@ -326,7 +326,7 @@ export const GetCycleInput = z.object({
   format: FormatParam.optional(),
 });
 
-/** kanon_create_cycle */
+/** create_cycle */
 export const CreateCycleInput = z.object({
   projectKey: z.string().optional().describe("Project key (e.g. 'KAN'). Resolved from .kanon if omitted."),
   name: z.string().min(1).max(200).describe("Cycle name (e.g. 'Sprint 12')"),
@@ -340,7 +340,7 @@ export const CreateCycleInput = z.object({
   ...WriteFormatField,
 });
 
-/** kanon_attach_issues_to_cycle */
+/** update_cycle_scope */
 export const AttachIssuesToCycleShape = {
   cycleId: z.string().uuid().describe("Cycle ID (UUID)"),
   add: z.array(z.string()).optional().describe("Issue keys to attach (e.g. ['KAN-12','KAN-13'])"),
@@ -354,7 +354,7 @@ export const AttachIssuesToCycleInput = z.object(AttachIssuesToCycleShape).refin
   { message: "add or remove must contain at least one issue key" },
 );
 
-/** kanon_delete_cycle */
+/** delete_cycle */
 export const DeleteCycleShape = {
   cycleId: z.string().uuid().describe("Cycle ID to delete (UUID)"),
   force: z.boolean().optional()
@@ -364,7 +364,7 @@ export const DeleteCycleShape = {
   ...WriteFormatField,
 };
 
-/** kanon_close_cycle (raw shape — refine is applied at the schema level below) */
+/** close_cycle (raw shape — refine is applied at the schema level below) */
 export const CloseCycleShape = {
   cycleId: z.string().uuid().describe("Cycle ID (UUID)"),
   disposition: z.enum(CYCLE_DISPOSITIONS).describe(
@@ -381,7 +381,7 @@ export const CloseCycleShape = {
 
 export const DOCUMENT_KINDS = ["adr", "pdr", "rfc", "note"] as const;
 
-/** kanon_create_document */
+/** create_design_record */
 export const CreateDocumentInput = z.object({
   issueKey: z.string().describe("Issue key the document belongs to (e.g. 'KAN-42')"),
   kind: z.enum(DOCUMENT_KINDS).default("note")
@@ -396,12 +396,12 @@ export const CreateDocumentInput = z.object({
     ),
 });
 
-/** kanon_list_documents */
+/** list_design_records */
 export const ListDocumentsInput = z.object({
   issueKey: z.string().describe("Issue key (e.g. 'KAN-42')"),
 });
 
-/** kanon_get_document */
+/** get_design_record */
 export const GetDocumentInput = z.object({
   documentId: z.string().uuid().describe("Document ID (UUID)"),
 });

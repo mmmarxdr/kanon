@@ -321,7 +321,7 @@ describe("PR-2 — description field coaching annotations", () => {
 });
 
 // ─── work-session-resilience: UUID normalization (Slice A, Phase 1) ──────
-// The MCP `kanon_create_issue` and `kanon_update_issue` tools must accept
+// The MCP `create_issue` and `update_issue` tools must accept
 // `""` for `assigneeId` / `cycleId` / `parentId` / `roadmapItemId` and
 // normalize it to `undefined` (or `null` for the nullable update fields).
 // This matches the API's `z.string().uuid().nullable().optional()` and

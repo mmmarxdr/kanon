@@ -1,5 +1,19 @@
 # Changelog — @kanon/mcp
 
+## v0.11.0 (2026-07-30)
+
+Breaking naming cleanup: the configured MCP server and `serverInfo.name` are
+now `kanon`, and raw tool IDs no longer repeat the `kanon_` prefix. Setup
+migrates the legacy `kanon-mcp` config key without leaving duplicate servers.
+Client-visible names are now concise (`kanon_start_work`, `kanon_get_issue`).
+
+Semantic tool renames:
+- `who_is_working` → `list_active_workers`
+- `comment_issue` → `create_issue_comment`
+- `batch_transition` → `transition_issues`
+- `attach_issues_to_cycle` → `update_cycle_scope`
+- `create/list/get_document` → `create/list/get_design_record`
+
 ## v0.4.0 (2026-05-22)
 
 Always-on overhead reduction — Phase 2 of MCP token optimization.

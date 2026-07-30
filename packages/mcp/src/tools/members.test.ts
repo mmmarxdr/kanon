@@ -1,7 +1,7 @@
 // ─── Member Tools — unit tests ────────────────────────────────────────────────
 //
 // Tools covered:
-//   kanon_list_members
+//   list_members
 //
 // Pattern mirrors timesheet.test.ts — captureTools() harness + mocked KanonClient.
 
@@ -72,30 +72,30 @@ const fakeMemberList = {
 // ─── Registration test ───────────────────────────────────────────────────────
 
 describe("registerMemberTools — registration", () => {
-  it("registers kanon_list_members tool", () => {
+  it("registers list_members tool", () => {
     const mockClient = {} as unknown as KanonClient;
     const tools = captureTools(registerMemberTools, mockClient);
 
-    expect(tools.has("kanon_list_members")).toBe(true);
+    expect(tools.has("list_members")).toBe(true);
     expect(tools.size).toBe(1);
   });
 
-  it("MEMBERS_DEFERRED_TOOLS contains kanon_list_members (deferred — not daily-flow core)", () => {
-    expect(MEMBERS_DEFERRED_TOOLS).toContain("kanon_list_members");
+  it("MEMBERS_DEFERRED_TOOLS contains list_members (deferred — not daily-flow core)", () => {
+    expect(MEMBERS_DEFERRED_TOOLS).toContain("list_members");
   });
 });
 
-// ─── kanon_list_members ──────────────────────────────────────────────────────
+// ─── list_members ──────────────────────────────────────────────────────
 
-describe("kanon_list_members", () => {
+describe("list_members", () => {
   let mockClient: { listProjectMembers: ReturnType<typeof vi.fn> };
   let tool: RegisteredTool;
 
   beforeEach(() => {
     mockClient = { listProjectMembers: vi.fn().mockResolvedValue(fakeMemberList) };
     const tools = captureTools(registerMemberTools, mockClient as unknown as KanonClient);
-    const t = tools.get("kanon_list_members");
-    if (!t) throw new Error("kanon_list_members not registered");
+    const t = tools.get("list_members");
+    if (!t) throw new Error("list_members not registered");
     tool = t;
   });
 
@@ -134,7 +134,7 @@ describe("kanon_list_members", () => {
   it("error path: client throws → returns errorResult", async () => {
     mockClient.listProjectMembers = vi.fn().mockRejectedValue(new Error("network failure"));
     const tools = captureTools(registerMemberTools, mockClient as unknown as KanonClient);
-    const errorTool = tools.get("kanon_list_members")!;
+    const errorTool = tools.get("list_members")!;
 
     const result = await errorTool.handler({ projectKey: "KAN" });
 
@@ -149,7 +149,7 @@ describe("kanon_list_members", () => {
       new KanonApiError(403, "FORBIDDEN", "Not a project member"),
     );
     const tools = captureTools(registerMemberTools, mockClient as unknown as KanonClient);
-    const errorTool = tools.get("kanon_list_members")!;
+    const errorTool = tools.get("list_members")!;
 
     const result = await errorTool.handler({ projectKey: "KAN" });
 

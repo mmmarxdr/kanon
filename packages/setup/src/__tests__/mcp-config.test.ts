@@ -25,7 +25,7 @@ describe("mcp-config", () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-mcp-test-"));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-test-"));
   });
 
   afterEach(() => {
@@ -40,7 +40,7 @@ describe("mcp-config", () => {
       mergeConfig(configPath, "mcpServers", entry);
 
       const result = JSON.parse(fs.readFileSync(configPath, "utf8"));
-      expect(result.mcpServers["kanon-mcp"]).toEqual(entry);
+      expect(result.mcpServers["kanon"]).toEqual(entry);
     });
 
     it("should merge into config with existing MCP servers without clobbering them", () => {
@@ -57,7 +57,25 @@ describe("mcp-config", () => {
 
       const result = JSON.parse(fs.readFileSync(configPath, "utf8"));
       expect(result.mcpServers["other-server"]).toEqual({ command: "other", args: [] });
-      expect(result.mcpServers["kanon-mcp"]).toEqual(entry);
+      expect(result.mcpServers["kanon"]).toEqual(entry);
+    });
+
+    it("migrates the legacy kanon-mcp key without leaving a duplicate", () => {
+      const configPath = path.join(tmpDir, "mcp.json");
+      fs.writeFileSync(configPath, JSON.stringify({
+        mcpServers: {
+          other: { command: "other", args: [] },
+          "kanon-mcp": { command: "old", args: [] },
+        },
+      }));
+
+      const entry = { command: "node", args: ["server.js"] };
+      mergeConfig(configPath, "mcpServers", entry);
+
+      const servers = JSON.parse(fs.readFileSync(configPath, "utf8")).mcpServers;
+      expect(servers.other).toBeDefined();
+      expect(servers["kanon-mcp"]).toBeUndefined();
+      expect(servers.kanon).toEqual(entry);
     });
 
     it("should be idempotent — running twice produces same result", () => {
@@ -81,7 +99,7 @@ describe("mcp-config", () => {
 
       expect(fs.existsSync(configPath)).toBe(true);
       const result = JSON.parse(fs.readFileSync(configPath, "utf8"));
-      expect(result.mcpServers["kanon-mcp"]).toEqual(entry);
+      expect(result.mcpServers["kanon"]).toEqual(entry);
     });
 
     // ── PR2 — Task 2.1 RED: opencode "mcp" rootKey writes array-form command ──
@@ -89,7 +107,7 @@ describe("mcp-config", () => {
       const configPath = path.join(tmpDir, "opencode.json");
       const entry: McpServerEntry = {
         command: "node",
-        args: ["/path/with spaces/wrapper.js", "kanon-mcp"],
+        args: ["/path/with spaces/wrapper.js", "kanon"],
         env: { KANON_API_URL: "http://localhost:4001" },
       };
 
@@ -97,9 +115,9 @@ describe("mcp-config", () => {
 
       const result = JSON.parse(fs.readFileSync(configPath, "utf8"));
       // OpenCode array form: type discriminator + argv array + environment.
-      expect(result.mcp["kanon-mcp"]).toEqual({
+      expect(result.mcp["kanon"]).toEqual({
         type: "local",
-        command: ["node", "/path/with spaces/wrapper.js", "kanon-mcp"],
+        command: ["node", "/path/with spaces/wrapper.js", "kanon"],
         environment: { KANON_API_URL: "http://localhost:4001" },
       });
     });
@@ -112,7 +130,7 @@ describe("mcp-config", () => {
       mergeConfig(configPath, "mcpServers", entry);
 
       const result = JSON.parse(fs.readFileSync(configPath, "utf8"));
-      expect(result.mcpServers["kanon-mcp"]).toEqual({
+      expect(result.mcpServers["kanon"]).toEqual({
         command: "node",
         args: ["/srv.js"],
       });
@@ -137,7 +155,7 @@ describe("mcp-config", () => {
       const config = {
         mcpServers: {
           "other-server": { command: "other", args: [] },
-          "kanon-mcp": { command: "node", args: ["server.js"] },
+          "kanon": { command: "node", args: ["server.js"] },
         },
       };
       fs.writeFileSync(configPath, JSON.stringify(config));
@@ -147,7 +165,7 @@ describe("mcp-config", () => {
       expect(removed).toBe(true);
       const result = JSON.parse(fs.readFileSync(configPath, "utf8"));
       expect(result.mcpServers["other-server"]).toEqual({ command: "other", args: [] });
-      expect(result.mcpServers["kanon-mcp"]).toBeUndefined();
+      expect(result.mcpServers["kanon"]).toBeUndefined();
     });
 
     it("should return false when config file does not exist", () => {
@@ -172,11 +190,11 @@ describe("mcp-config", () => {
 
   describe("extractExistingAuth", () => {
     it("should extract auth from direct-mode config (env object)", () => {
-      // Write a config file that looks like a direct-mode kanon-mcp entry
+      // Write a config file that looks like a direct-mode kanon entry
       const configPath = path.join(tmpDir, ".claude.json");
       const config = {
         mcpServers: {
-          "kanon-mcp": {
+          "kanon": {
             command: "node",
             args: ["/path/to/server.js"],
             env: {
@@ -212,7 +230,7 @@ describe("mcp-config", () => {
       const configPath = path.join(cursorDir, "mcp.json");
       const config = {
         mcpServers: {
-          "kanon-mcp": {
+          "kanon": {
             command: "wsl",
             args: [
               "env",
@@ -238,8 +256,8 @@ describe("mcp-config", () => {
       expect(result.apiKey).toBe("bridge-key-456");
     });
 
-    it("should return empty object when no kanon-mcp entry exists", () => {
-      // Write a config with other servers but no kanon-mcp
+    it("should return empty object when no kanon entry exists", () => {
+      // Write a config with other servers but no kanon
       const configPath = path.join(tmpDir, ".claude.json");
       const config = {
         mcpServers: {
@@ -437,7 +455,7 @@ describe("mcp-config", () => {
       const configPath = path.join(tmpDir, ".claude.json");
       const config = {
         mcpServers: {
-          "kanon-mcp": {
+          "kanon": {
             command: "/usr/bin/node",
             args: ["/opt/kanon/mcp-wrapper.js", "--server", "https://server.example.com"],
             // no env.KANON_API_KEY
@@ -571,7 +589,7 @@ describe("mcp-config", () => {
     it("returns OpenCode array-form { type: 'local'; command: string[]; environment? } when rootKey === 'mcp'", () => {
       const entry: McpServerEntry = {
         command: "node",
-        args: ["/path/with spaces/wrapper.js", "kanon-mcp"],
+        args: ["/path/with spaces/wrapper.js", "kanon"],
         env: { KANON_API_URL: "http://localhost:4001" },
       };
 
@@ -579,7 +597,7 @@ describe("mcp-config", () => {
 
       expect(result).toEqual({
         type: "local",
-        command: ["node", "/path/with spaces/wrapper.js", "kanon-mcp"],
+        command: ["node", "/path/with spaces/wrapper.js", "kanon"],
         environment: { KANON_API_URL: "http://localhost:4001" },
       });
       // And not the object form
@@ -655,18 +673,18 @@ describe("mcp-config", () => {
   });
 
   describe("mergeTomlMcpConfig", () => {
-    it("upserts kanon-mcp into a missing config file", () => {
+    it("upserts kanon into a missing config file", () => {
       const configPath = path.join(tmpDir, "config.toml");
       const entry = formatCodexMcpEntry({
         command: "node",
         args: ["/wrapper.js", "--server", "https://api.test"],
       });
 
-      mergeTomlMcpConfig(configPath, "kanon-mcp", entry);
+      mergeTomlMcpConfig(configPath, "kanon", entry);
 
       const result = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
       const servers = result["mcp_servers"] as Record<string, unknown>;
-      expect(servers["kanon-mcp"]).toEqual({
+      expect(servers["kanon"]).toEqual({
         command: "node",
         args: ["/wrapper.js", "--server", "https://api.test"],
       });
@@ -685,21 +703,21 @@ args = ["run"]
 
       mergeTomlMcpConfig(
         configPath,
-        "kanon-mcp",
+        "kanon",
         formatCodexMcpEntry({ command: "node", args: ["/srv.js"] }),
       );
 
       const result = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
       const servers = result["mcp_servers"] as Record<string, unknown>;
       expect(servers["other"]).toEqual({ command: "other", args: ["run"] });
-      expect(servers["kanon-mcp"]).toEqual({ command: "node", args: ["/srv.js"] });
+      expect(servers["kanon"]).toEqual({ command: "node", args: ["/srv.js"] });
     });
 
-    it("writes env vars under mcp_servers.kanon-mcp.env subtable", () => {
+    it("writes env vars under mcp_servers.kanon.env subtable", () => {
       const configPath = path.join(tmpDir, "config.toml");
       mergeTomlMcpConfig(
         configPath,
-        "kanon-mcp",
+        "kanon",
         formatCodexMcpEntry({
           command: "node",
           args: ["/srv.js"],
@@ -711,7 +729,7 @@ args = ["run"]
       );
 
       const result = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
-      const entry = (result["mcp_servers"] as Record<string, unknown>)["kanon-mcp"] as {
+      const entry = (result["mcp_servers"] as Record<string, unknown>)["kanon"] as {
         env?: Record<string, string>;
       };
       expect(entry.env).toEqual({
@@ -720,12 +738,12 @@ args = ["run"]
       });
     });
 
-    it("deletes legacy kanon key during merge", () => {
+    it("deletes the legacy kanon-mcp key during merge", () => {
       const configPath = path.join(tmpDir, "config.toml");
       fs.writeFileSync(
         configPath,
         `
-[mcp_servers.kanon]
+[mcp_servers.kanon-mcp]
 command = "legacy"
 args = ["old"]
 `,
@@ -733,24 +751,24 @@ args = ["old"]
 
       mergeTomlMcpConfig(
         configPath,
-        "kanon-mcp",
+        "kanon",
         formatCodexMcpEntry({ command: "node", args: ["/srv.js"] }),
       );
 
       const result = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
       const servers = result["mcp_servers"] as Record<string, unknown>;
-      expect(servers["kanon"]).toBeUndefined();
-      expect(servers["kanon-mcp"]).toBeDefined();
+      expect(servers["kanon-mcp"]).toBeUndefined();
+      expect(servers["kanon"]).toBeDefined();
     });
 
     it("is idempotent — running twice produces the same file", () => {
       const configPath = path.join(tmpDir, "config.toml");
       const entry = formatCodexMcpEntry({ command: "node", args: ["/srv.js"] });
 
-      mergeTomlMcpConfig(configPath, "kanon-mcp", entry);
+      mergeTomlMcpConfig(configPath, "kanon", entry);
       const first = fs.readFileSync(configPath, "utf8");
 
-      mergeTomlMcpConfig(configPath, "kanon-mcp", entry);
+      mergeTomlMcpConfig(configPath, "kanon", entry);
       const second = fs.readFileSync(configPath, "utf8");
 
       expect(first).toBe(second);
@@ -768,7 +786,7 @@ args = ["old"]
 
       mergeTomlMcpConfig(
         configPath,
-        "kanon-mcp",
+        "kanon",
         formatCodexMcpEntry({ command: "node", args: ["/new-wrapper.js"] }),
       );
 
@@ -777,6 +795,8 @@ args = ["old"]
       const migrated = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
       expect(migrated["model"]).toBe("gpt-5");
       expect((migrated["mcp_servers"] as Record<string, unknown>)["kanon-mcp"])
+        .toBeUndefined();
+      expect((migrated["mcp_servers"] as Record<string, unknown>)["kanon"])
         .toEqual({ command: "node", args: ["/new-wrapper.js"] });
     });
 
@@ -786,7 +806,7 @@ args = ["old"]
 
       expect(() => mergeTomlMcpConfig(
         configPath,
-        "kanon-mcp",
+        "kanon",
         formatCodexMcpEntry({ command: "node", args: ["/wrapper.js"] }),
       )).toThrow(/Invalid TOML/);
       expect(fs.readFileSync(configPath, "utf8")).toBe("not = valid = toml");
@@ -795,26 +815,26 @@ args = ["old"]
   });
 
   describe("removeTomlMcpConfig", () => {
-    it("removes kanon-mcp table and env subtable", () => {
+    it("removes kanon table and env subtable", () => {
       const configPath = path.join(tmpDir, "config.toml");
       fs.writeFileSync(
         configPath,
         `
-[mcp_servers.kanon-mcp]
+[mcp_servers.kanon]
 command = "node"
 args = ["/srv.js"]
 
-[mcp_servers.kanon-mcp.env]
+[mcp_servers.kanon.env]
 KANON_WORKSPACE_ID = "ws-1"
 `,
       );
 
-      const removed = removeTomlMcpConfig(configPath, "kanon-mcp");
+      const removed = removeTomlMcpConfig(configPath, "kanon");
       expect(removed).toBe(true);
 
       const result = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
       const servers = result["mcp_servers"] as Record<string, unknown> | undefined;
-      expect(servers?.["kanon-mcp"]).toBeUndefined();
+      expect(servers?.["kanon"]).toBeUndefined();
     });
 
     it("preserves unrelated mcp_servers entries", () => {
@@ -826,26 +846,26 @@ KANON_WORKSPACE_ID = "ws-1"
 command = "other"
 args = ["run"]
 
-[mcp_servers.kanon-mcp]
+[mcp_servers.kanon]
 command = "node"
 args = ["/srv.js"]
 `,
       );
 
-      removeTomlMcpConfig(configPath, "kanon-mcp");
+      removeTomlMcpConfig(configPath, "kanon");
 
       const result = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
       const servers = result["mcp_servers"] as Record<string, unknown>;
       expect(servers["other"]).toEqual({ command: "other", args: ["run"] });
-      expect(servers["kanon-mcp"]).toBeUndefined();
+      expect(servers["kanon"]).toBeUndefined();
     });
 
     it("returns false when config file does not exist", () => {
       const configPath = path.join(tmpDir, "missing.toml");
-      expect(removeTomlMcpConfig(configPath, "kanon-mcp")).toBe(false);
+      expect(removeTomlMcpConfig(configPath, "kanon")).toBe(false);
     });
 
-    it("returns false when kanon-mcp entry is absent (no-op)", () => {
+    it("returns false when kanon entry is absent (no-op)", () => {
       const configPath = path.join(tmpDir, "config.toml");
       fs.writeFileSync(
         configPath,
@@ -856,23 +876,23 @@ args = ["run"]
 `,
       );
 
-      expect(removeTomlMcpConfig(configPath, "kanon-mcp")).toBe(false);
+      expect(removeTomlMcpConfig(configPath, "kanon")).toBe(false);
     });
   });
 
   describe("extractExistingAuth — codex TOML", () => {
-    it("extracts static-key credentials from mcp_servers.kanon-mcp.env", () => {
+    it("extracts static-key credentials from mcp_servers.kanon.env", () => {
       const codexHome = path.join(tmpDir, ".codex");
       fs.mkdirSync(codexHome, { recursive: true });
       const configPath = path.join(codexHome, "config.toml");
       fs.writeFileSync(
         configPath,
         `
-[mcp_servers.kanon-mcp]
+[mcp_servers.kanon]
 command = "node"
 args = ["/srv.js"]
 
-[mcp_servers.kanon-mcp.env]
+[mcp_servers.kanon.env]
 KANON_API_URL = "http://localhost:4001"
 KANON_API_KEY = "toml-key-123"
 `,
@@ -892,7 +912,7 @@ KANON_API_KEY = "toml-key-123"
       fs.writeFileSync(
         configPath,
         `
-[mcp_servers.kanon-mcp]
+[mcp_servers.kanon]
 command = "node"
 args = ["/wrapper.js", "--server", "https://server.example.com"]
 `,
@@ -907,16 +927,16 @@ args = ["/wrapper.js", "--server", "https://server.example.com"]
   });
 
   describe("extractExistingWorkspaceId — TOML", () => {
-    it("reads KANON_WORKSPACE_ID from mcp_servers.kanon-mcp.env", () => {
+    it("reads KANON_WORKSPACE_ID from mcp_servers.kanon.env", () => {
       const configPath = path.join(tmpDir, "config.toml");
       fs.writeFileSync(
         configPath,
         `
-[mcp_servers.kanon-mcp]
+[mcp_servers.kanon]
 command = "node"
 args = ["/wrapper.js", "--server", "https://api.test"]
 
-[mcp_servers.kanon-mcp.env]
+[mcp_servers.kanon.env]
 KANON_WORKSPACE_ID = "ws-toml-42"
 `,
       );
@@ -946,7 +966,7 @@ KANON_WORKSPACE_ID = "ws-toml-42"
       const configPath = path.join(tmpDir, "mcp.json");
       fs.writeFileSync(configPath, JSON.stringify({
         mcpServers: {
-          "kanon-mcp": {
+          "kanon": {
             command: "wsl",
             args: [
               "env",
@@ -993,7 +1013,7 @@ KANON_WORKSPACE_ID = "ws-toml-42"
       }, entry);
 
       const parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
-      expect(parsed.mcpServers["kanon-mcp"]).toEqual(entry);
+      expect(parsed.mcpServers["kanon"]).toEqual(entry);
     });
 
     it("routes toml remove to removeTomlMcpConfig", () => {
@@ -1001,7 +1021,7 @@ KANON_WORKSPACE_ID = "ws-toml-42"
       fs.writeFileSync(
         configPath,
         `
-[mcp_servers.kanon-mcp]
+[mcp_servers.kanon]
 command = "node"
 args = ["/srv.js"]
 `,
@@ -1021,7 +1041,7 @@ describe("resolveWrapperPath — installed MCP layout", () => {
   let prevInstallDir: string | undefined;
 
   beforeEach(() => {
-    tmpInstallDir = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-mcp-install-"));
+    tmpInstallDir = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-install-"));
     prevInstallDir = process.env.KANON_INSTALL_DIR;
     process.env.KANON_INSTALL_DIR = tmpInstallDir;
   });

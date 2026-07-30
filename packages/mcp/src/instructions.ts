@@ -11,8 +11,8 @@
 // 5 admin/rare tools + 3 document tools (rare-path, design-coherent)
 // + 2 PM-only timesheet tools (approve/reject)
 // + 3 occasion-only tools (add/remove dependency, adjust time entry)
-// + 1 resolution helper (kanon_list_members)
-// + 1 agent communication tool (kanon_comment_issue)
+// + 1 resolution helper (list_members)
+// + 1 agent communication tool (create_issue_comment)
 // + 3 capture tools (report_incident, propose_estimate, apply_proposal) = 18 deferred.
 
 /**
@@ -21,29 +21,29 @@
  * Document tools are deferred: most issues need none; propose before creating.
  * Timesheet approve/reject are PM-only — keep dev-agent context lean.
  * Dependency and adjust tools are occasion-only — not part of daily board flow.
- * kanon_list_members is a resolution helper (assigneeId lookup, activity id→name) — not daily board flow.
- * kanon_comment_issue is agent communication — occasional, not daily board flow.
+ * list_members is a resolution helper (assigneeId lookup, activity id→name) — not daily board flow.
+ * create_issue_comment is agent communication — occasional, not daily board flow.
  * Capture tools are occasion-only: incident reporting and estimation proposals.
  */
 export const DEFERRED_TOOLS = [
-  "kanon_create_project",
-  "kanon_update_project",
-  "kanon_delete_cycle",
-  "kanon_delete_roadmap_item",
-  "kanon_who_is_working",
-  "kanon_create_document",
-  "kanon_list_documents",
-  "kanon_get_document",
-  "kanon_approve_time_entry",
-  "kanon_reject_time_entry",
-  "kanon_add_dependency",
-  "kanon_remove_dependency",
-  "kanon_adjust_time_entry",
-  "kanon_list_members",
-  "kanon_comment_issue",
-  "kanon_report_incident",
-  "kanon_propose_estimate",
-  "kanon_apply_proposal",
+  "create_project",
+  "update_project",
+  "delete_cycle",
+  "delete_roadmap_item",
+  "list_active_workers",
+  "create_design_record",
+  "list_design_records",
+  "get_design_record",
+  "approve_time_entry",
+  "reject_time_entry",
+  "add_dependency",
+  "remove_dependency",
+  "adjust_time_entry",
+  "list_members",
+  "create_issue_comment",
+  "report_incident",
+  "propose_estimate",
+  "apply_proposal",
 ] as const;
 
 /**
@@ -62,11 +62,11 @@ TITLE FORMAT (required): [Area] Imperative verb phrase
 DESCRIPTION (recommended): ## Context / ## Acceptance Criteria / ## Notes.
 Design records: most issues need none; propose before creating.
 
-Before kanon_create_issue: kanon_list_groups(projectKey) -> assign groupKey.
-Before kanon_update_issue: kanon_get_issue first — never overwrite blindly.
+Before create_issue: list_groups(projectKey) -> assign groupKey.
+Before update_issue: get_issue first — never overwrite blindly.
 Lists: format: compact, limit: 10. Writes: format: ack.
 Deferred work (later/someday) -> roadmap, not backlog.
-Done blocked by unconfirmed time -> kanon_reconcile_time, then retry.
+Done blocked by unconfirmed time -> reconcile_time, then retry.
 
 ## DEFERRED TOOLS (use ToolSearch when needed)
 
@@ -77,14 +77,14 @@ Retrieve via ToolSearch only when explicitly requested:
 ## CORE TOOLS (always available)
 
 Standard issue and project management flows use these tools:
-kanon_list_issues, kanon_get_issue, kanon_create_issue, kanon_update_issue,
-kanon_transition_issue, kanon_batch_transition, kanon_list_groups,
-kanon_start_work, kanon_stop_work,
-kanon_list_workspaces, kanon_list_projects, kanon_get_project,
-kanon_list_roadmap, kanon_create_roadmap_item, kanon_update_roadmap_item,
-kanon_promote_roadmap_item,
-kanon_list_cycles, kanon_get_cycle,
-kanon_create_cycle, kanon_attach_issues_to_cycle, kanon_close_cycle,
-kanon_list_my_worklogs, kanon_promote_worklog, kanon_update_time_entry,
-kanon_submit_time_entry, kanon_reconcile_time
+list_issues, get_issue, create_issue, update_issue,
+transition_issue, transition_issues, list_groups,
+start_work, stop_work,
+list_workspaces, list_projects, get_project,
+list_roadmap, create_roadmap_item, update_roadmap_item,
+promote_roadmap_item,
+list_cycles, get_cycle,
+create_cycle, update_cycle_scope, close_cycle,
+list_my_worklogs, promote_worklog, update_time_entry,
+submit_time_entry, reconcile_time
 `.trim();

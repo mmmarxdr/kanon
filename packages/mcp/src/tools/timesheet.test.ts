@@ -1,9 +1,9 @@
 // ─── Timesheet Tools — unit tests ────────────────────────────────────────────
 //
 // Tools covered:
-//   kanon_list_my_worklogs, kanon_promote_worklog, kanon_update_time_entry,
-//   kanon_submit_time_entry, kanon_approve_time_entry, kanon_reject_time_entry,
-//   kanon_adjust_time_entry
+//   list_my_worklogs, promote_worklog, update_time_entry,
+//   submit_time_entry, approve_time_entry, reject_time_entry,
+//   adjust_time_entry
 //
 // Pattern mirrors work-sessions.test.ts — captureTools() harness + mocked KanonClient.
 
@@ -87,33 +87,33 @@ describe("registerTimesheetTools — registration", () => {
     const mockClient = {} as unknown as KanonClient;
     const tools = captureTools(registerTimesheetTools, mockClient);
 
-    expect(tools.has("kanon_list_my_worklogs")).toBe(true);
-    expect(tools.has("kanon_promote_worklog")).toBe(true);
-    expect(tools.has("kanon_update_time_entry")).toBe(true);
-    expect(tools.has("kanon_submit_time_entry")).toBe(true);
-    expect(tools.has("kanon_approve_time_entry")).toBe(true);
-    expect(tools.has("kanon_reject_time_entry")).toBe(true);
-    expect(tools.has("kanon_adjust_time_entry")).toBe(true);
+    expect(tools.has("list_my_worklogs")).toBe(true);
+    expect(tools.has("promote_worklog")).toBe(true);
+    expect(tools.has("update_time_entry")).toBe(true);
+    expect(tools.has("submit_time_entry")).toBe(true);
+    expect(tools.has("approve_time_entry")).toBe(true);
+    expect(tools.has("reject_time_entry")).toBe(true);
+    expect(tools.has("adjust_time_entry")).toBe(true);
     expect(tools.size).toBe(7);
   });
 
   it("TIMESHEET_DEFERRED_TOOLS contains approve and reject (PM-only)", () => {
-    expect(TIMESHEET_DEFERRED_TOOLS).toContain("kanon_approve_time_entry");
-    expect(TIMESHEET_DEFERRED_TOOLS).toContain("kanon_reject_time_entry");
+    expect(TIMESHEET_DEFERRED_TOOLS).toContain("approve_time_entry");
+    expect(TIMESHEET_DEFERRED_TOOLS).toContain("reject_time_entry");
   });
 });
 
-// ─── kanon_list_my_worklogs ──────────────────────────────────────────────────
+// ─── list_my_worklogs ──────────────────────────────────────────────────
 
-describe("kanon_list_my_worklogs", () => {
+describe("list_my_worklogs", () => {
   let mockClient: { listMyWorklogs: ReturnType<typeof vi.fn> };
   let tool: RegisteredTool;
 
   beforeEach(() => {
     mockClient = { listMyWorklogs: vi.fn().mockResolvedValue(fakeWorklogList) };
     const tools = captureTools(registerTimesheetTools, mockClient as unknown as KanonClient);
-    const t = tools.get("kanon_list_my_worklogs");
-    if (!t) throw new Error("kanon_list_my_worklogs not registered");
+    const t = tools.get("list_my_worklogs");
+    if (!t) throw new Error("list_my_worklogs not registered");
     tool = t;
   });
 
@@ -148,7 +148,7 @@ describe("kanon_list_my_worklogs", () => {
   it("error path: client throws → returns errorResult", async () => {
     mockClient.listMyWorklogs = vi.fn().mockRejectedValue(new Error("network failure"));
     const tools = captureTools(registerTimesheetTools, mockClient as unknown as KanonClient);
-    const errorTool = tools.get("kanon_list_my_worklogs")!;
+    const errorTool = tools.get("list_my_worklogs")!;
 
     const result = await errorTool.handler({ workspaceId: "ws-uuid-1" });
 
@@ -158,17 +158,17 @@ describe("kanon_list_my_worklogs", () => {
   });
 });
 
-// ─── kanon_promote_worklog ───────────────────────────────────────────────────
+// ─── promote_worklog ───────────────────────────────────────────────────
 
-describe("kanon_promote_worklog", () => {
+describe("promote_worklog", () => {
   let mockClient: { promoteWorklog: ReturnType<typeof vi.fn> };
   let tool: RegisteredTool;
 
   beforeEach(() => {
     mockClient = { promoteWorklog: vi.fn().mockResolvedValue(fakeTimeEntry) };
     const tools = captureTools(registerTimesheetTools, mockClient as unknown as KanonClient);
-    const t = tools.get("kanon_promote_worklog");
-    if (!t) throw new Error("kanon_promote_worklog not registered");
+    const t = tools.get("promote_worklog");
+    if (!t) throw new Error("promote_worklog not registered");
     tool = t;
   });
 
@@ -200,7 +200,7 @@ describe("kanon_promote_worklog", () => {
   it("error path: client throws → returns errorResult", async () => {
     mockClient.promoteWorklog = vi.fn().mockRejectedValue(new Error("not found"));
     const tools = captureTools(registerTimesheetTools, mockClient as unknown as KanonClient);
-    const errorTool = tools.get("kanon_promote_worklog")!;
+    const errorTool = tools.get("promote_worklog")!;
 
     const result = await errorTool.handler({ worklogId: "wl-1" });
 
@@ -208,17 +208,17 @@ describe("kanon_promote_worklog", () => {
   });
 });
 
-// ─── kanon_update_time_entry ─────────────────────────────────────────────────
+// ─── update_time_entry ─────────────────────────────────────────────────
 
-describe("kanon_update_time_entry", () => {
+describe("update_time_entry", () => {
   let mockClient: { updateTimeEntry: ReturnType<typeof vi.fn> };
   let tool: RegisteredTool;
 
   beforeEach(() => {
     mockClient = { updateTimeEntry: vi.fn().mockResolvedValue(fakeTimeEntry) };
     const tools = captureTools(registerTimesheetTools, mockClient as unknown as KanonClient);
-    const t = tools.get("kanon_update_time_entry");
-    if (!t) throw new Error("kanon_update_time_entry not registered");
+    const t = tools.get("update_time_entry");
+    if (!t) throw new Error("update_time_entry not registered");
     tool = t;
   });
 
@@ -249,7 +249,7 @@ describe("kanon_update_time_entry", () => {
   it("error path: client throws → returns errorResult", async () => {
     mockClient.updateTimeEntry = vi.fn().mockRejectedValue(new Error("forbidden"));
     const tools = captureTools(registerTimesheetTools, mockClient as unknown as KanonClient);
-    const errorTool = tools.get("kanon_update_time_entry")!;
+    const errorTool = tools.get("update_time_entry")!;
 
     const result = await errorTool.handler({ timeEntryId: "te-1" });
 
@@ -257,9 +257,9 @@ describe("kanon_update_time_entry", () => {
   });
 });
 
-// ─── kanon_submit_time_entry ─────────────────────────────────────────────────
+// ─── submit_time_entry ─────────────────────────────────────────────────
 
-describe("kanon_submit_time_entry", () => {
+describe("submit_time_entry", () => {
   let mockClient: { submitTimeEntry: ReturnType<typeof vi.fn> };
   let tool: RegisteredTool;
 
@@ -268,8 +268,8 @@ describe("kanon_submit_time_entry", () => {
       submitTimeEntry: vi.fn().mockResolvedValue({ ...fakeTimeEntry, status: "submitted" }),
     };
     const tools = captureTools(registerTimesheetTools, mockClient as unknown as KanonClient);
-    const t = tools.get("kanon_submit_time_entry");
-    if (!t) throw new Error("kanon_submit_time_entry not registered");
+    const t = tools.get("submit_time_entry");
+    if (!t) throw new Error("submit_time_entry not registered");
     tool = t;
   });
 
@@ -285,7 +285,7 @@ describe("kanon_submit_time_entry", () => {
   it("error path: client throws → returns errorResult", async () => {
     mockClient.submitTimeEntry = vi.fn().mockRejectedValue(new Error("already submitted"));
     const tools = captureTools(registerTimesheetTools, mockClient as unknown as KanonClient);
-    const errorTool = tools.get("kanon_submit_time_entry")!;
+    const errorTool = tools.get("submit_time_entry")!;
 
     const result = await errorTool.handler({ timeEntryId: "te-1" });
 
@@ -293,17 +293,17 @@ describe("kanon_submit_time_entry", () => {
   });
 });
 
-// ─── kanon_approve_time_entry ────────────────────────────────────────────────
+// ─── approve_time_entry ────────────────────────────────────────────────
 
-describe("kanon_approve_time_entry", () => {
+describe("approve_time_entry", () => {
   let mockClient: { approveTimeEntry: ReturnType<typeof vi.fn> };
   let tool: RegisteredTool;
 
   beforeEach(() => {
     mockClient = { approveTimeEntry: vi.fn().mockResolvedValue(fakeApprovedEntry) };
     const tools = captureTools(registerTimesheetTools, mockClient as unknown as KanonClient);
-    const t = tools.get("kanon_approve_time_entry");
-    if (!t) throw new Error("kanon_approve_time_entry not registered");
+    const t = tools.get("approve_time_entry");
+    if (!t) throw new Error("approve_time_entry not registered");
     tool = t;
   });
 
@@ -323,7 +323,7 @@ describe("kanon_approve_time_entry", () => {
       new KanonApiError(403, "FORBIDDEN", "Insufficient role: pm required"),
     );
     const tools = captureTools(registerTimesheetTools, mockClient as unknown as KanonClient);
-    const errorTool = tools.get("kanon_approve_time_entry")!;
+    const errorTool = tools.get("approve_time_entry")!;
 
     const result = await errorTool.handler({ timeEntryId: "te-1" });
 
@@ -334,9 +334,9 @@ describe("kanon_approve_time_entry", () => {
   });
 });
 
-// ─── kanon_reject_time_entry ─────────────────────────────────────────────────
+// ─── reject_time_entry ─────────────────────────────────────────────────
 
-describe("kanon_reject_time_entry", () => {
+describe("reject_time_entry", () => {
   let mockClient: { rejectTimeEntry: ReturnType<typeof vi.fn> };
   let tool: RegisteredTool;
 
@@ -345,8 +345,8 @@ describe("kanon_reject_time_entry", () => {
       rejectTimeEntry: vi.fn().mockResolvedValue({ ...fakeTimeEntry, status: "rejected" }),
     };
     const tools = captureTools(registerTimesheetTools, mockClient as unknown as KanonClient);
-    const t = tools.get("kanon_reject_time_entry");
-    if (!t) throw new Error("kanon_reject_time_entry not registered");
+    const t = tools.get("reject_time_entry");
+    if (!t) throw new Error("reject_time_entry not registered");
     tool = t;
   });
 
@@ -371,7 +371,7 @@ describe("kanon_reject_time_entry", () => {
       new KanonApiError(403, "FORBIDDEN", "Insufficient role: pm required"),
     );
     const tools = captureTools(registerTimesheetTools, mockClient as unknown as KanonClient);
-    const errorTool = tools.get("kanon_reject_time_entry")!;
+    const errorTool = tools.get("reject_time_entry")!;
 
     const result = await errorTool.handler({ timeEntryId: "te-1" });
 
@@ -381,9 +381,9 @@ describe("kanon_reject_time_entry", () => {
   });
 });
 
-// ─── kanon_adjust_time_entry ─────────────────────────────────────────────────
+// ─── adjust_time_entry ─────────────────────────────────────────────────
 
-describe("kanon_adjust_time_entry", () => {
+describe("adjust_time_entry", () => {
   let mockClient: { adjustTimeEntry: ReturnType<typeof vi.fn> };
   let tool: RegisteredTool;
 
@@ -398,8 +398,8 @@ describe("kanon_adjust_time_entry", () => {
   beforeEach(() => {
     mockClient = { adjustTimeEntry: vi.fn().mockResolvedValue(fakeAdjustment) };
     const tools = captureTools(registerTimesheetTools, mockClient as unknown as KanonClient);
-    const t = tools.get("kanon_adjust_time_entry");
-    if (!t) throw new Error("kanon_adjust_time_entry not registered");
+    const t = tools.get("adjust_time_entry");
+    if (!t) throw new Error("adjust_time_entry not registered");
     tool = t;
   });
 
@@ -451,7 +451,7 @@ describe("kanon_adjust_time_entry", () => {
   it("error path: client throws → returns errorResult", async () => {
     mockClient.adjustTimeEntry = vi.fn().mockRejectedValue(new Error("entry not approved"));
     const tools = captureTools(registerTimesheetTools, mockClient as unknown as KanonClient);
-    const errorTool = tools.get("kanon_adjust_time_entry")!;
+    const errorTool = tools.get("adjust_time_entry")!;
 
     const result = await errorTool.handler({
       timeEntryId: "te-1",

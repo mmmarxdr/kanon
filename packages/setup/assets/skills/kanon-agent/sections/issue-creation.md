@@ -33,5 +33,5 @@ kanon_list_issues({ projectKey, groupKey?, limit: 3, format: compact })
 1. Parse NL description → extract title, type, priority, groupKey
 2. kanon_list_groups(projectKey) → confirm groupKey is valid
 3. kanon_create_issue({ projectKey, title: "[Area] Verb phrase", groupKey, description, type, priority })
-4. If cycleId known → kanon_attach_issues_to_cycle({ cycleId, add: [issueKey], remove: [], reason })
+4. If cycleId known → kanon_update_cycle_scope({ cycleId, add: [issueKey], remove: [], reason })
 5. Confirm with format: ack response

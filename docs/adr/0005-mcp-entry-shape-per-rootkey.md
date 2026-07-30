@@ -13,7 +13,7 @@ root keys:
   ```json
   {
     "mcpServers": {
-      "kanon-mcp": { "command": "node", "args": ["/path/to/server.js"], "env": {} }
+      "kanon": { "command": "node", "args": ["/path/to/server.js"], "env": {} }
     }
   }
   ```
@@ -24,7 +24,7 @@ root keys:
   ```json
   {
     "mcp": {
-      "kanon-mcp": { "type": "local", "command": ["/path/to/node", "/path/to/server.js"], "environment": {} }
+      "kanon": { "type": "local", "command": ["/path/to/node", "/path/to/server.js"], "environment": {} }
     }
   }
   ```

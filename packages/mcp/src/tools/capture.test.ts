@@ -1,9 +1,9 @@
 // ─── Capture Tools — unit tests ───────────────────────────────────────────────
 //
 // Tools covered:
-//   kanon_report_incident  (AC4)
-//   kanon_propose_estimate (AC1)
-//   kanon_apply_proposal   (AC1 confirm step)
+//   report_incident  (AC4)
+//   propose_estimate (AC1)
+//   apply_proposal   (AC1 confirm step)
 //
 // Pattern mirrors timesheet.test.ts — captureTools() harness + mocked KanonClient.
 
@@ -80,22 +80,22 @@ describe("registerCaptureTools — registration", () => {
     const mockClient = {} as unknown as KanonClient;
     const tools = captureTools(registerCaptureTools, mockClient);
 
-    expect(tools.has("kanon_report_incident")).toBe(true);
-    expect(tools.has("kanon_propose_estimate")).toBe(true);
-    expect(tools.has("kanon_apply_proposal")).toBe(true);
+    expect(tools.has("report_incident")).toBe(true);
+    expect(tools.has("propose_estimate")).toBe(true);
+    expect(tools.has("apply_proposal")).toBe(true);
     expect(tools.size).toBe(3);
   });
 
   it("CAPTURE_DEFERRED_TOOLS contains report_incident, propose_estimate, apply_proposal", () => {
-    expect(CAPTURE_DEFERRED_TOOLS).toContain("kanon_report_incident");
-    expect(CAPTURE_DEFERRED_TOOLS).toContain("kanon_propose_estimate");
-    expect(CAPTURE_DEFERRED_TOOLS).toContain("kanon_apply_proposal");
+    expect(CAPTURE_DEFERRED_TOOLS).toContain("report_incident");
+    expect(CAPTURE_DEFERRED_TOOLS).toContain("propose_estimate");
+    expect(CAPTURE_DEFERRED_TOOLS).toContain("apply_proposal");
   });
 });
 
-// ─── kanon_report_incident ───────────────────────────────────────────────────
+// ─── report_incident ───────────────────────────────────────────────────
 
-describe("kanon_report_incident", () => {
+describe("report_incident", () => {
   let mockClient: {
     createIssue: ReturnType<typeof vi.fn>;
     startWork: ReturnType<typeof vi.fn>;
@@ -108,8 +108,8 @@ describe("kanon_report_incident", () => {
       startWork: vi.fn().mockResolvedValue(fakeSession),
     };
     const tools = captureTools(registerCaptureTools, mockClient as unknown as KanonClient);
-    const t = tools.get("kanon_report_incident");
-    if (!t) throw new Error("kanon_report_incident not registered");
+    const t = tools.get("report_incident");
+    if (!t) throw new Error("report_incident not registered");
     tool = t;
   });
 
@@ -214,7 +214,7 @@ describe("kanon_report_incident", () => {
     expect(parsed.error).toContain("KAN-99");
     expect(parsed.error).toContain("was created but");
     expect(parsed.error).toContain("session conflict");
-    expect(parsed.error).toContain("kanon_start_work");
+    expect(parsed.error).toContain("start_work");
   });
 
   it("error path: createIssue fails → returns errorResult (no startWork called)", async () => {
@@ -227,9 +227,9 @@ describe("kanon_report_incident", () => {
   });
 });
 
-// ─── kanon_propose_estimate ──────────────────────────────────────────────────
+// ─── propose_estimate ──────────────────────────────────────────────────
 
-describe("kanon_propose_estimate", () => {
+describe("propose_estimate", () => {
   let mockClient: {
     createProposal: ReturnType<typeof vi.fn>;
   };
@@ -240,8 +240,8 @@ describe("kanon_propose_estimate", () => {
       createProposal: vi.fn().mockResolvedValue(fakeProposal),
     };
     const tools = captureTools(registerCaptureTools, mockClient as unknown as KanonClient);
-    const t = tools.get("kanon_propose_estimate");
-    if (!t) throw new Error("kanon_propose_estimate not registered");
+    const t = tools.get("propose_estimate");
+    if (!t) throw new Error("propose_estimate not registered");
     tool = t;
   });
 
@@ -318,9 +318,9 @@ describe("kanon_propose_estimate", () => {
   });
 });
 
-// ─── kanon_apply_proposal ────────────────────────────────────────────────────
+// ─── apply_proposal ────────────────────────────────────────────────────
 
-describe("kanon_apply_proposal", () => {
+describe("apply_proposal", () => {
   let mockClient: {
     applyProposal: ReturnType<typeof vi.fn>;
   };
@@ -331,8 +331,8 @@ describe("kanon_apply_proposal", () => {
       applyProposal: vi.fn().mockResolvedValue(fakeAppliedProposal),
     };
     const tools = captureTools(registerCaptureTools, mockClient as unknown as KanonClient);
-    const t = tools.get("kanon_apply_proposal");
-    if (!t) throw new Error("kanon_apply_proposal not registered");
+    const t = tools.get("apply_proposal");
+    if (!t) throw new Error("apply_proposal not registered");
     tool = t;
   });
 

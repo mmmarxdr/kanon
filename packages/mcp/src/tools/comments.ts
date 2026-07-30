@@ -25,7 +25,7 @@ import { errorResult, dataResult } from "../errors.js";
  * Posting a comment is occasional agent communication — not core daily board flow.
  */
 export const COMMENTS_DEFERRED_TOOLS = [
-  "kanon_comment_issue",
+  "create_issue_comment",
 ] as const;
 
 // ─── Input Schemas ──────────────────────────────────────────────────────────
@@ -44,10 +44,10 @@ const CommentIssueInput = z.object({
 // ─── Registration ────────────────────────────────────────────────────────────
 
 export function registerCommentTools(server: McpServer, client: KanonClient): void {
-  // ── kanon_comment_issue ───────────────────────────────────────────────────
+  // ── create_issue_comment ───────────────────────────────────────────────────
 
   server.tool(
-    "kanon_comment_issue",
+    "create_issue_comment",
     "Post an attributed comment on issue issueKey. Use for status updates or agent notes during work. Provenance via X-Kanon-Client header — do not pass via in body.",
     CommentIssueInput.shape,
     async ({ issueKey, body }) => {

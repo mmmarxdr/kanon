@@ -3,8 +3,8 @@
  *
  * E1: Captures the baseline byte count of all tool descriptions at the time
  *     this test was written (5393 bytes across 29 tools).
- *     Updated for KAN-23 (2026-05-01): +1 tool kanon_delete_cycle → 30 tools.
- *     New baseline: 5730 (5393 + ~337 pre-trim estimate for kanon_delete_cycle).
+ *     Updated for KAN-23 (2026-05-01): +1 tool delete_cycle → 30 tools.
+ *     New baseline: 5730 (5393 + ~337 pre-trim estimate for delete_cycle).
  *
  * E2: Asserts that after the trim pass (E3):
  *     1. Total bytes < 70% of baseline  (≥ 30% reduction)
@@ -29,14 +29,14 @@ const TOOLS_DIR = __dirname;
 
 /**
  * Baseline measured before any description trimming (Batch E, 2026-04-28).
- * Updated for KAN-23 (Batch G, 2026-05-01): +1 tool kanon_delete_cycle added.
+ * Updated for KAN-23 (Batch G, 2026-05-01): +1 tool delete_cycle added.
  * New baseline = 5730 (5393 + ~337 pre-trim estimate for the new tool).
  */
 // Updated for KAN-104 (2026-06-16): +7 timesheet tools → 38 tools. New baseline: 6455.
-// Updated for KAN-119 (2026-06-16): +1 kanon_list_members tool → 39 tools. New baseline: 6622 (6455 + ~167 pre-trim estimate).
-// Updated for KAN-120 (2026-06-16): +1 kanon_comment_issue tool → 40 tools. New baseline: 6784 (6622 + 162 measured).
+// Updated for KAN-119 (2026-06-16): +1 list_members tool → 39 tools. New baseline: 6622 (6455 + ~167 pre-trim estimate).
+// Updated for KAN-120 (2026-06-16): +1 create_issue_comment tool → 40 tools. New baseline: 6784 (6622 + 162 measured).
 // Updated for KAN-104 capture tools (2026-06-22): +3 capture tools → 43 tools. New baseline: 7264 (6784 + 480 measured).
-// Updated for KAN-188 (2026-07-06): +1 kanon_reconcile_time tool → 44 tools.
+// Updated for KAN-188 (2026-07-06): +1 reconcile_time tool → 44 tools.
 // The E2a ratio requires baseline > actual/0.7 (7571); re-anchored to 7600 for headroom.
 const BASELINE_BYTES = 7600;
 
@@ -52,16 +52,68 @@ function collectDescriptions() {
   return parseAllToolDescriptions(files);
 }
 
+const EXPECTED_TOOL_NAMES = [
+  "add_dependency",
+  "adjust_time_entry",
+  "apply_proposal",
+  "approve_time_entry",
+  "close_cycle",
+  "create_cycle",
+  "create_design_record",
+  "create_issue",
+  "create_issue_comment",
+  "create_project",
+  "create_roadmap_item",
+  "delete_cycle",
+  "delete_roadmap_item",
+  "get_cycle",
+  "get_design_record",
+  "get_issue",
+  "get_project",
+  "list_active_workers",
+  "list_cycles",
+  "list_design_records",
+  "list_groups",
+  "list_issues",
+  "list_members",
+  "list_my_worklogs",
+  "list_projects",
+  "list_roadmap",
+  "list_workspaces",
+  "promote_roadmap_item",
+  "promote_worklog",
+  "propose_estimate",
+  "reconcile_time",
+  "reject_time_entry",
+  "remove_dependency",
+  "report_incident",
+  "start_work",
+  "stop_work",
+  "submit_time_entry",
+  "transition_issue",
+  "transition_issues",
+  "update_cycle_scope",
+  "update_issue",
+  "update_project",
+  "update_roadmap_item",
+  "update_time_entry",
+] as const;
+
 describe("tool descriptions — trim ≥ 30% (Batch E)", () => {
-  it("E1: parses 44 tools (43 pre-KAN-188 + kanon_reconcile_time added in KAN-188); BASELINE_BYTES is 7600", () => {
+  it("E1: parses 44 tools (43 pre-KAN-188 + reconcile_time added in KAN-188); BASELINE_BYTES is 7600", () => {
     const tools = collectDescriptions();
     // Verify the parser finds exactly 44 tools (was 43 before KAN-188 added
-    // kanon_reconcile_time).
+    // reconcile_time).
     expect(tools).toHaveLength(44);
     // BASELINE_BYTES is the historical pre-trim value — used only as the
     // threshold denominator in E2. We don't assert the current total equals it
     // (E3 trimmed descriptions are in the same files the parser reads).
     expect(BASELINE_BYTES).toBe(7600);
+  });
+
+  it("uses concise raw names without duplicating the server namespace", () => {
+    expect(collectDescriptions().map((tool) => tool.toolName).sort())
+      .toEqual([...EXPECTED_TOOL_NAMES].sort());
   });
 
   it("E2a: total trimmed bytes < 70% of baseline (≥ 30% reduction)", () => {
@@ -106,58 +158,58 @@ describe("Win C — description byte budget and firing pins", () => {
     expect(total).toBeLessThanOrEqual(ceiling);
   });
 
-  it("C2: kanon_create_issue — groups lookup firing pin", () => {
+  it("C2: create_issue — groups lookup firing pin", () => {
     const tools = collectDescriptions();
-    const t = tools.find((t) => t.toolName === "kanon_create_issue");
+    const t = tools.find((t) => t.toolName === "create_issue");
     expect(t).toBeDefined();
-    expect(t!.description).toMatch(/kanon_list_groups.*groupKey/i);
+    expect(t!.description).toMatch(/list_groups.*groupKey/i);
   });
 
-  it("C3: kanon_create_issue — imperative verb firing pin", () => {
+  it("C3: create_issue — imperative verb firing pin", () => {
     const tools = collectDescriptions();
-    const t = tools.find((t) => t.toolName === "kanon_create_issue");
+    const t = tools.find((t) => t.toolName === "create_issue");
     expect(t).toBeDefined();
     expect(t!.description).toMatch(/imperative verb|starts with a verb/i);
   });
 
-  it("C4: kanon_update_issue — read-first firing pin", () => {
+  it("C4: update_issue — read-first firing pin", () => {
     const tools = collectDescriptions();
-    const t = tools.find((t) => t.toolName === "kanon_update_issue");
+    const t = tools.find((t) => t.toolName === "update_issue");
     expect(t).toBeDefined();
     expect(t!.description).toMatch(/read first/i);
   });
 
-  it("C5: kanon_update_issue — append don't overwrite firing pin", () => {
+  it("C5: update_issue — append don't overwrite firing pin", () => {
     const tools = collectDescriptions();
-    const t = tools.find((t) => t.toolName === "kanon_update_issue");
+    const t = tools.find((t) => t.toolName === "update_issue");
     expect(t).toBeDefined();
     expect(t!.description).toMatch(/append.*don.t overwrite|don.t overwrite/i);
   });
 
-  it("C6: kanon_delete_cycle — active refused 409 firing pin", () => {
+  it("C6: delete_cycle — active refused 409 firing pin", () => {
     const tools = collectDescriptions();
-    const t = tools.find((t) => t.toolName === "kanon_delete_cycle");
+    const t = tools.find((t) => t.toolName === "delete_cycle");
     expect(t).toBeDefined();
     expect(t!.description).toMatch(/active.*refused|409/i);
   });
 
-  it("C8: kanon_close_cycle — disposition firing pin", () => {
+  it("C8: close_cycle — disposition firing pin", () => {
     const tools = collectDescriptions();
-    const t = tools.find((t) => t.toolName === "kanon_close_cycle");
+    const t = tools.find((t) => t.toolName === "close_cycle");
     expect(t).toBeDefined();
     expect(t!.description).toMatch(/disposition/i);
   });
 
-  it("C9: kanon_create_cycle — demote firing pin", () => {
+  it("C9: create_cycle — demote firing pin", () => {
     const tools = collectDescriptions();
-    const t = tools.find((t) => t.toolName === "kanon_create_cycle");
+    const t = tools.find((t) => t.toolName === "create_cycle");
     expect(t).toBeDefined();
     expect(t!.description).toMatch(/demot/i);
   });
 
-  it("C10: kanon_create_issue — [Area] title pattern firing pin", () => {
+  it("C10: create_issue — [Area] title pattern firing pin", () => {
     const tools = collectDescriptions();
-    const t = tools.find((t) => t.toolName === "kanon_create_issue");
+    const t = tools.find((t) => t.toolName === "create_issue");
     expect(t).toBeDefined();
     expect(t!.description).toMatch(/\[Area\].*[Vv]erb|\[Area\]/);
   });

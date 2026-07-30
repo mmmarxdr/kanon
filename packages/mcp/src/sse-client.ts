@@ -1,6 +1,6 @@
 // ─── Background SSE Client ──────────────────────────────────────────────────
 // Connects to the Kanon API's workspace SSE endpoint and maintains a local
-// cache of recent events. The kanon_get_issue tool can check this cache to
+// cache of recent events. The get_issue tool can check this cache to
 // include warnings about recent changes to issues the AI is working on.
 //
 // Uses the simpler approach: local event cache + polling via tool calls,

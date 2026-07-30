@@ -57,7 +57,7 @@ function makeFullIssue(overrides: Partial<KanonIssue> = {}): KanonIssue {
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
-describe("kanon_create_issue — format tier", () => {
+describe("create_issue — format tier", () => {
   let mockClient: { createIssue: ReturnType<typeof vi.fn> };
   let createTool: RegisteredTool;
 
@@ -66,8 +66,8 @@ describe("kanon_create_issue — format tier", () => {
       createIssue: vi.fn().mockResolvedValue(makeFullIssue()),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_create_issue");
-    if (!tool) throw new Error("kanon_create_issue not registered");
+    const tool = tools.get("create_issue");
+    if (!tool) throw new Error("create_issue not registered");
     createTool = tool;
   });
 
@@ -129,9 +129,9 @@ describe("kanon_create_issue — format tier", () => {
   });
 });
 
-// ─── C2: kanon_update_issue — format tier ────────────────────────────────────
+// ─── C2: update_issue — format tier ────────────────────────────────────
 
-describe("kanon_update_issue — format tier", () => {
+describe("update_issue — format tier", () => {
   let mockClient: { updateIssue: ReturnType<typeof vi.fn> };
   let updateTool: RegisteredTool;
 
@@ -140,8 +140,8 @@ describe("kanon_update_issue — format tier", () => {
       updateIssue: vi.fn().mockResolvedValue(makeFullIssue()),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_update_issue");
-    if (!tool) throw new Error("kanon_update_issue not registered");
+    const tool = tools.get("update_issue");
+    if (!tool) throw new Error("update_issue not registered");
     updateTool = tool;
   });
 
@@ -176,9 +176,9 @@ describe("kanon_update_issue — format tier", () => {
   });
 });
 
-// ─── C3: kanon_transition_issue — format tier ────────────────────────────────
+// ─── C3: transition_issue — format tier ────────────────────────────────
 
-describe("kanon_transition_issue — format tier", () => {
+describe("transition_issue — format tier", () => {
   let mockClient: { transitionIssue: ReturnType<typeof vi.fn> };
   let transitionTool: RegisteredTool;
 
@@ -187,8 +187,8 @@ describe("kanon_transition_issue — format tier", () => {
       transitionIssue: vi.fn().mockResolvedValue(makeFullIssue({ state: "done" })),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_transition_issue");
-    if (!tool) throw new Error("kanon_transition_issue not registered");
+    const tool = tools.get("transition_issue");
+    if (!tool) throw new Error("transition_issue not registered");
     transitionTool = tool;
   });
 
@@ -221,9 +221,9 @@ describe("kanon_transition_issue — format tier", () => {
   });
 });
 
-// ─── D3: kanon_list_issues — keys[] filter ───────────────────────────────────
+// ─── D3: list_issues — keys[] filter ───────────────────────────────────
 
-describe("kanon_list_issues — keys[] filter (D3)", () => {
+describe("list_issues — keys[] filter (D3)", () => {
   let mockClient: { listIssues: ReturnType<typeof vi.fn> };
   let listTool: RegisteredTool;
 
@@ -232,8 +232,8 @@ describe("kanon_list_issues — keys[] filter (D3)", () => {
       listIssues: vi.fn().mockResolvedValue([makeFullIssue()]),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_list_issues");
-    if (!tool) throw new Error("kanon_list_issues not registered");
+    const tool = tools.get("list_issues");
+    if (!tool) throw new Error("list_issues not registered");
     listTool = tool;
   });
 
@@ -262,7 +262,7 @@ describe("kanon_list_issues — keys[] filter (D3)", () => {
 // Confirms each tool FORWARDS the credential and SURFACES a 403 as
 // { isError: true, code: "FORBIDDEN" }. Enforcement lives in the API layer.
 
-describe("kanon_create_issue — surfaces 403 as FORBIDDEN", () => {
+describe("create_issue — surfaces 403 as FORBIDDEN", () => {
   it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
     const mockClient = {
       createIssue: vi.fn().mockRejectedValue(
@@ -270,7 +270,7 @@ describe("kanon_create_issue — surfaces 403 as FORBIDDEN", () => {
       ),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
-    const handler = tools.get("kanon_create_issue")!.handler;
+    const handler = tools.get("create_issue")!.handler;
 
     const result = await handler({ projectKey: "KAN", title: "Test" });
 
@@ -280,7 +280,7 @@ describe("kanon_create_issue — surfaces 403 as FORBIDDEN", () => {
   });
 });
 
-describe("kanon_update_issue — surfaces 403 as FORBIDDEN", () => {
+describe("update_issue — surfaces 403 as FORBIDDEN", () => {
   it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
     const mockClient = {
       updateIssue: vi.fn().mockRejectedValue(
@@ -288,7 +288,7 @@ describe("kanon_update_issue — surfaces 403 as FORBIDDEN", () => {
       ),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
-    const handler = tools.get("kanon_update_issue")!.handler;
+    const handler = tools.get("update_issue")!.handler;
 
     const result = await handler({ issueKey: "KAN-1", title: "Updated" });
 
@@ -298,7 +298,7 @@ describe("kanon_update_issue — surfaces 403 as FORBIDDEN", () => {
   });
 });
 
-describe("kanon_transition_issue — surfaces 403 as FORBIDDEN", () => {
+describe("transition_issue — surfaces 403 as FORBIDDEN", () => {
   it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
     const mockClient = {
       transitionIssue: vi.fn().mockRejectedValue(
@@ -306,7 +306,7 @@ describe("kanon_transition_issue — surfaces 403 as FORBIDDEN", () => {
       ),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
-    const handler = tools.get("kanon_transition_issue")!.handler;
+    const handler = tools.get("transition_issue")!.handler;
 
     const result = await handler({ issueKey: "KAN-1", state: "done" });
 
@@ -316,7 +316,7 @@ describe("kanon_transition_issue — surfaces 403 as FORBIDDEN", () => {
   });
 });
 
-describe("kanon_list_issues — surfaces 403 as FORBIDDEN", () => {
+describe("list_issues — surfaces 403 as FORBIDDEN", () => {
   it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
     const mockClient = {
       listIssues: vi.fn().mockRejectedValue(
@@ -324,7 +324,7 @@ describe("kanon_list_issues — surfaces 403 as FORBIDDEN", () => {
       ),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
-    const handler = tools.get("kanon_list_issues")!.handler;
+    const handler = tools.get("list_issues")!.handler;
 
     const result = await handler({ projectKey: "KAN" });
 
@@ -334,9 +334,9 @@ describe("kanon_list_issues — surfaces 403 as FORBIDDEN", () => {
   });
 });
 
-// ─── KAN-188: kanon_transition_issue → done blocked by RECONCILIATION_REQUIRED ──
+// ─── KAN-188: transition_issue → done blocked by RECONCILIATION_REQUIRED ──
 
-describe("kanon_transition_issue — RECONCILIATION_REQUIRED surfacing (KAN-188)", () => {
+describe("transition_issue — RECONCILIATION_REQUIRED surfacing (KAN-188)", () => {
   it("surfaces the reported hours and reconcile guidance instead of a hard failure", async () => {
     const mockClient = {
       transitionIssue: vi.fn().mockRejectedValue(
@@ -349,7 +349,7 @@ describe("kanon_transition_issue — RECONCILIATION_REQUIRED surfacing (KAN-188)
       ),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
-    const handler = tools.get("kanon_transition_issue")!.handler;
+    const handler = tools.get("transition_issue")!.handler;
 
     const result = await handler({ issueKey: "ENG-1", state: "done" });
 
@@ -357,7 +357,7 @@ describe("kanon_transition_issue — RECONCILIATION_REQUIRED surfacing (KAN-188)
     const parsed = JSON.parse(result.content[0]!.text);
     expect(parsed.code).toBe("RECONCILIATION_REQUIRED");
     expect(parsed.error).toMatch(/5 hours/i);
-    expect(parsed.error).toMatch(/kanon_reconcile_time/);
+    expect(parsed.error).toMatch(/reconcile_time/);
     expect(mockClient.transitionIssue).toHaveBeenCalledTimes(1);
   });
 
@@ -371,7 +371,7 @@ describe("kanon_transition_issue — RECONCILIATION_REQUIRED surfacing (KAN-188)
       ),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
-    const handler = tools.get("kanon_transition_issue")!.handler;
+    const handler = tools.get("transition_issue")!.handler;
 
     const result = await handler({ issueKey: "ENG-1", state: "review" });
 
@@ -385,7 +385,7 @@ describe("kanon_transition_issue — RECONCILIATION_REQUIRED surfacing (KAN-188)
       transitionIssue: vi.fn().mockResolvedValue(makeFullIssue({ state: "done" })),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
-    const handler = tools.get("kanon_transition_issue")!.handler;
+    const handler = tools.get("transition_issue")!.handler;
 
     const result = await handler({ issueKey: "ENG-1", state: "done" });
 
@@ -405,13 +405,13 @@ describe("kanon_transition_issue — RECONCILIATION_REQUIRED surfacing (KAN-188)
       ),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
-    const handler = tools.get("kanon_transition_issue")!.handler;
+    const handler = tools.get("transition_issue")!.handler;
 
     const result = await handler({ issueKey: "ENG-1", state: "done" });
 
     const parsed = JSON.parse(result.content[0]!.text);
     expect(parsed.error).toMatch(/5 hours were reported/);
-    expect(parsed.error).toMatch(/kanon_reconcile_time/);
+    expect(parsed.error).toMatch(/reconcile_time/);
   });
 
   it("falls back to a generic message with no interpolated hours when details is undefined", async () => {
@@ -421,14 +421,14 @@ describe("kanon_transition_issue — RECONCILIATION_REQUIRED surfacing (KAN-188)
       ),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
-    const handler = tools.get("kanon_transition_issue")!.handler;
+    const handler = tools.get("transition_issue")!.handler;
 
     const result = await handler({ issueKey: "ENG-1", state: "done" });
 
     const parsed = JSON.parse(result.content[0]!.text);
     expect(parsed.error).not.toMatch(/undefined/);
     expect(parsed.error).toMatch(/unconfirmed reported time/i);
-    expect(parsed.error).toMatch(/kanon_reconcile_time/);
+    expect(parsed.error).toMatch(/reconcile_time/);
   });
 
   it("falls back to a generic message with no interpolated hours when totalHours is missing or non-numeric", async () => {
@@ -443,7 +443,7 @@ describe("kanon_transition_issue — RECONCILIATION_REQUIRED surfacing (KAN-188)
       ),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
-    const handler = tools.get("kanon_transition_issue")!.handler;
+    const handler = tools.get("transition_issue")!.handler;
 
     const result = await handler({ issueKey: "ENG-1", state: "done" });
 
@@ -453,9 +453,9 @@ describe("kanon_transition_issue — RECONCILIATION_REQUIRED surfacing (KAN-188)
   });
 });
 
-// ─── KAN-188: kanon_reconcile_time tool ──────────────────────────────────────
+// ─── KAN-188: reconcile_time tool ──────────────────────────────────────
 
-describe("kanon_reconcile_time", () => {
+describe("reconcile_time", () => {
   let mockClient: { reconcileTime: ReturnType<typeof vi.fn>; transitionIssue: ReturnType<typeof vi.fn> };
   let reconcileTool: RegisteredTool;
 
@@ -469,13 +469,13 @@ describe("kanon_reconcile_time", () => {
       transitionIssue: vi.fn().mockResolvedValue(makeFullIssue({ key: "ENG-1", state: "done" })),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
-    const tool = tools.get("kanon_reconcile_time");
-    if (!tool) throw new Error("kanon_reconcile_time not registered");
+    const tool = tools.get("reconcile_time");
+    if (!tool) throw new Error("reconcile_time not registered");
     reconcileTool = tool;
   });
 
-  it("is registered as its own tool (not a flag on kanon_transition_issue)", () => {
-    expect(reconcileTool.name).toBe("kanon_reconcile_time");
+  it("is registered as its own tool (not a flag on transition_issue)", () => {
+    expect(reconcileTool.name).toBe("reconcile_time");
   });
 
   it("calls client.reconcileTime with confirmedTotalHours when provided", async () => {
@@ -511,7 +511,7 @@ describe("kanon_reconcile_time", () => {
 
 // ─── KAN-188: full reconcile → retry → done flow ─────────────────────────────
 
-describe("KAN-188 regression: 409 → kanon_reconcile_time → retry kanon_transition_issue", () => {
+describe("KAN-188 regression: 409 → reconcile_time → retry transition_issue", () => {
   it("reconcile-then-retry succeeds after the initial transition is blocked", async () => {
     const mockClient = {
       transitionIssue: vi.fn().mockRejectedValueOnce(
@@ -529,8 +529,8 @@ describe("KAN-188 regression: 409 → kanon_reconcile_time → retry kanon_trans
       }),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
-    const transitionHandler = tools.get("kanon_transition_issue")!.handler;
-    const reconcileHandler = tools.get("kanon_reconcile_time")!.handler;
+    const transitionHandler = tools.get("transition_issue")!.handler;
+    const reconcileHandler = tools.get("reconcile_time")!.handler;
 
     // 1. First transition attempt is blocked
     const blocked = await transitionHandler({ issueKey: "ENG-1", state: "done" });
@@ -538,7 +538,7 @@ describe("KAN-188 regression: 409 → kanon_reconcile_time → retry kanon_trans
     const blockedParsed = JSON.parse(blocked.content[0]!.text);
     expect(blockedParsed.error).toMatch(/5 hours/i);
 
-    // 2. Agent accepts reported hours as-is via kanon_reconcile_time
+    // 2. Agent accepts reported hours as-is via reconcile_time
     const reconciled = await reconcileHandler({ issueKey: "ENG-1", confirmedTotalHours: "5" });
     expect(reconciled.isError).toBeUndefined();
     expect(mockClient.reconcileTime).toHaveBeenCalledWith("ENG-1", { confirmedTotalHours: "5" });
@@ -575,7 +575,7 @@ function captureToolsWithBinding(
 
 import type { KanonBinding } from "../kanon-binding.js";
 
-describe("kanon_list_issues — .kanon binding fallback", () => {
+describe("list_issues — .kanon binding fallback", () => {
   const binding: KanonBinding = {
     projectKey: "BOUND",
     workspaceId: "ws_abc",
@@ -585,7 +585,7 @@ describe("kanon_list_issues — .kanon binding fallback", () => {
   it("uses binding.projectKey when no explicit projectKey is passed", async () => {
     const mockClient = { listIssues: vi.fn().mockResolvedValue([]) };
     const tools = captureToolsWithBinding(registerIssueTools, mockClient as unknown as KanonClient, binding);
-    const handler = tools.get("kanon_list_issues")!.handler;
+    const handler = tools.get("list_issues")!.handler;
 
     const result = await handler({});
 
@@ -596,7 +596,7 @@ describe("kanon_list_issues — .kanon binding fallback", () => {
   it("explicit projectKey overrides binding", async () => {
     const mockClient = { listIssues: vi.fn().mockResolvedValue([]) };
     const tools = captureToolsWithBinding(registerIssueTools, mockClient as unknown as KanonClient, binding);
-    const handler = tools.get("kanon_list_issues")!.handler;
+    const handler = tools.get("list_issues")!.handler;
 
     await handler({ projectKey: "EXPLICIT" });
 
@@ -606,7 +606,7 @@ describe("kanon_list_issues — .kanon binding fallback", () => {
   it("returns isError when no projectKey and no binding", async () => {
     const mockClient = { listIssues: vi.fn().mockResolvedValue([]) };
     const tools = captureToolsWithBinding(registerIssueTools, mockClient as unknown as KanonClient, null);
-    const handler = tools.get("kanon_list_issues")!.handler;
+    const handler = tools.get("list_issues")!.handler;
 
     const result = await handler({});
 

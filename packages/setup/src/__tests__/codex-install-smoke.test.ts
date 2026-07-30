@@ -30,7 +30,7 @@ const FORBIDDEN_SEGMENTS = [".atl"];
 /** Hermetic — do not call resolveWrapperPath() (needs install.sh layout on disk). */
 const FAKE_WRAPPER = {
   mode: "local" as const,
-  path: "/fake/kanon-mcp/wrapper-cli.js",
+  path: "/fake/kanon/wrapper-cli.js",
 };
 
 function walkFiles(dir: string, base = dir): string[] {
@@ -89,7 +89,7 @@ describe("codex install smoke — KAN-128", () => {
       process.execPath,
       FAKE_WRAPPER,
     );
-    mergeTomlMcpConfig(configPath, "kanon-mcp", formatCodexMcpEntry(entry));
+    mergeTomlMcpConfig(configPath, "kanon", formatCodexMcpEntry(entry));
     installSkills(skillDir, REAL_ASSETS_DIR);
   }
 
@@ -112,12 +112,12 @@ args = ["run"]
       expect(configPath.startsWith(codexHome)).toBe(true);
     });
 
-    it("contains mcp_servers.kanon-mcp with command and args", () => {
+    it("contains mcp_servers.kanon with command and args", () => {
       const config = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
       const servers = config["mcp_servers"] as Record<string, unknown>;
-      expect(servers["kanon-mcp"]).toBeDefined();
+      expect(servers["kanon"]).toBeDefined();
 
-      const entry = servers["kanon-mcp"] as {
+      const entry = servers["kanon"] as {
         command?: string;
         args?: string[];
       };
@@ -162,32 +162,32 @@ args = ["run"]
   });
 
   describe("idempotent install and remove", () => {
-    it("re-run leaves exactly one kanon-mcp entry", () => {
+    it("re-run leaves exactly one kanon entry", () => {
       runInstall();
       runInstall();
 
       const config = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
       const servers = config["mcp_servers"] as Record<string, unknown>;
-      expect(Object.keys(servers).filter((k) => k === "kanon-mcp")).toHaveLength(1);
+      expect(Object.keys(servers).filter((k) => k === "kanon")).toHaveLength(1);
     });
 
     it("remove cleans MCP + skills; second remove is a no-op", () => {
       runInstall();
 
-      expect(removeTomlMcpConfig(configPath, "kanon-mcp")).toBe(true);
+      expect(removeTomlMcpConfig(configPath, "kanon")).toBe(true);
       removeSkills(skillDir);
 
       const config = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
       const servers = config["mcp_servers"] as Record<string, unknown> | undefined;
       if (servers) {
-        expect(servers["kanon-mcp"]).toBeUndefined();
+        expect(servers["kanon"]).toBeUndefined();
       }
 
       for (const skill of PRODUCT_SKILLS) {
         expect(fs.existsSync(path.join(skillDir, skill))).toBe(false);
       }
 
-      expect(removeTomlMcpConfig(configPath, "kanon-mcp")).toBe(false);
+      expect(removeTomlMcpConfig(configPath, "kanon")).toBe(false);
       expect(() => removeSkills(skillDir)).not.toThrow();
     });
   });
