@@ -51,8 +51,9 @@ describe("release installer contract", () => {
     expect(ps1.match(/Get-Command node\.exe/g)).toHaveLength(1);
     expect(ps1).toContain("$NodePath = if ($NodeCommand) { $NodeCommand.Source }");
     expect(ps1).toContain("& $NodePath $SetupPath");
-    expect(ps1.match(/Get-Command tar\.exe/g)).toHaveLength(1);
-    expect(ps1).toContain("$TarPath = if ($TarCommand) { $TarCommand.Source }");
+    expect(ps1).not.toContain("Get-Command tar.exe");
+    expect(ps1).toContain('Join-Path $env:SystemRoot "System32\\tar.exe"');
+    expect(ps1).toContain("Test-Path $SystemTar -PathType Leaf");
     expect(ps1).toContain("& $TarPath -xzf");
   });
 

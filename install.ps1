@@ -23,10 +23,11 @@ $RequiredFiles = @(
   "mcp\dist\index.js",
   "mcp\dist\wrapper-cli.js"
 )
-$NodeCommand = Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue
+$NodeCommand = Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue |
+  Select-Object -First 1
 $NodePath = if ($NodeCommand) { $NodeCommand.Source } else { $null }
-$TarCommand = Get-Command tar.exe -CommandType Application -ErrorAction SilentlyContinue
-$TarPath = if ($TarCommand) { $TarCommand.Source } else { $null }
+$SystemTar = Join-Path $env:SystemRoot "System32\tar.exe"
+$TarPath = if (Test-Path $SystemTar -PathType Leaf) { $SystemTar } else { $null }
 
 function Write-Info([string]$Message) {
   Write-Host "[kanon] $Message"
