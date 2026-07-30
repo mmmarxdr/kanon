@@ -1,5 +1,6 @@
 import { useLocation, Link } from "@tanstack/react-router";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useSidebarStore } from "@/stores/sidebar-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useCommandPaletteStore } from "@/stores/command-palette-store";
@@ -14,7 +15,7 @@ import { CreateProjectModal } from "@/features/projects/create-project-modal";
 // ---------------------------------------------------------------------------
 
 interface NavItem {
-  label: string;
+  labelKey: string;
   icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>;
   href: string;
   matchPrefix: string;
@@ -24,13 +25,13 @@ interface NavItem {
 
 function buildNavItems(projectKey: string): NavItem[] {
   return [
-    { label: "Inbox",        icon: Icon.Inbox,    href: "/inbox",                       matchPrefix: "/inbox",        hint: "G I" },
-    { label: "Roadmap",      icon: Icon.Road,     href: `/roadmap/${projectKey}`,       matchPrefix: "/roadmap",      hint: "G R", requiresProject: true },
-    { label: "Dependencies", icon: Icon.Graph,    href: `/dependencies/${projectKey}`,  matchPrefix: "/dependencies", hint: "G D", requiresProject: true },
-    { label: "Board",        icon: Icon.Board,    href: `/board/${projectKey}`,         matchPrefix: "/board",        hint: "G B", requiresProject: true },
-    { label: "Cycles",       icon: Icon.Cycles,   href: projectKey ? `/cycles/${projectKey}` : "/cycles", matchPrefix: "/cycles",       hint: "G C" },
-    { label: "Schedule",     icon: Icon.Timeline, href: `/schedule/${projectKey}`,      matchPrefix: "/schedule",     hint: "G T", requiresProject: true },
-    { label: "Settings",     icon: Icon.Settings, href: "/settings",                    matchPrefix: "/settings",     hint: "G S" },
+    { labelKey: "inbox",        icon: Icon.Inbox,    href: "/inbox",                       matchPrefix: "/inbox",        hint: "G I" },
+    { labelKey: "roadmap",      icon: Icon.Road,     href: `/roadmap/${projectKey}`,       matchPrefix: "/roadmap",      hint: "G R", requiresProject: true },
+    { labelKey: "dependencies", icon: Icon.Graph,    href: `/dependencies/${projectKey}`,  matchPrefix: "/dependencies", hint: "G D", requiresProject: true },
+    { labelKey: "board",        icon: Icon.Board,    href: `/board/${projectKey}`,         matchPrefix: "/board",        hint: "G B", requiresProject: true },
+    { labelKey: "cycles",       icon: Icon.Cycles,   href: projectKey ? `/cycles/${projectKey}` : "/cycles", matchPrefix: "/cycles",       hint: "G C" },
+    { labelKey: "schedule",     icon: Icon.Timeline, href: `/schedule/${projectKey}`,      matchPrefix: "/schedule",     hint: "G T", requiresProject: true },
+    { labelKey: "settings",     icon: Icon.Settings, href: "/settings",                    matchPrefix: "/settings",     hint: "G S" },
   ];
 }
 
@@ -93,6 +94,8 @@ export function AppSidebar() {
   const openPalette = useCommandPaletteStore((s) => s.open);
   const location = useLocation();
   const [showCreateProject, setShowCreateProject] = useState(false);
+  const { t } = useTranslation("nav");
+  const { t: tCommon } = useTranslation("common");
 
   const workspaceId = useActiveWorkspaceId();
   const { data: projects, isLoading: projectsLoading } = useProjectsQuery(workspaceId);
@@ -176,7 +179,7 @@ export function AppSidebar() {
         <Icon.Search />
         {!collapsed && (
           <>
-            <span style={{ fontSize: 12, flex: 1, textAlign: "left" }}>Search or ask…</span>
+            <span style={{ fontSize: 12, flex: 1, textAlign: "left" }}>{t("searchOrAsk")}</span>
             <span className="mono" style={{ fontSize: 10, color: "var(--ink-4)" }}>⌘K</span>
           </>
         )}
@@ -193,6 +196,7 @@ export function AppSidebar() {
       >
         {navItems.map((item) => {
           const Icn = item.icon;
+          const label = t(item.labelKey);
           const isActive = location.pathname.startsWith(item.matchPrefix);
           const isDisabled = item.requiresProject && !projectKey;
 
@@ -247,7 +251,7 @@ export function AppSidebar() {
               />
               {!collapsed && (
                 <>
-                  <span style={{ flex: 1, textAlign: "left" }}>{item.label}</span>
+                  <span style={{ flex: 1, textAlign: "left" }}>{label}</span>
                   {item.hint && (
                     <span className="mono" style={{ fontSize: 10, color: "var(--ink-4)" }}>
                       {item.hint}
@@ -259,18 +263,18 @@ export function AppSidebar() {
           );
 
           const tipLabel = isDisabled
-            ? `${item.label} (select a project first)`
-            : item.label;
+            ? t("selectProjectFirst", { label })
+            : label;
 
           if (isDisabled) {
             return (
-              <Tooltip key={item.label} label={tipLabel} show={collapsed}>
+              <Tooltip key={item.labelKey} label={tipLabel} show={collapsed}>
                 {linkInner}
               </Tooltip>
             );
           }
           return (
-            <Tooltip key={item.label} label={tipLabel} show={collapsed}>
+            <Tooltip key={item.labelKey} label={tipLabel} show={collapsed}>
               <Link to={item.href}>{linkInner}</Link>
             </Tooltip>
           );
@@ -297,12 +301,12 @@ export function AppSidebar() {
                 textTransform: "uppercase",
               }}
             >
-              Projects
+              {t("projects")}
             </span>
             <button
               type="button"
               style={{ color: "var(--ink-4)" }}
-              title="New project"
+              title={t("createProject")}
               onClick={() => setShowCreateProject(true)}
             >
               <Icon.Plus />
@@ -326,7 +330,7 @@ export function AppSidebar() {
               fontSize: 11,
             }}
           >
-            {!collapsed && "Loading…"}
+            {!collapsed && tCommon("actions.loading")}
           </div>
         )}
         {!projectsLoading &&
@@ -421,7 +425,7 @@ export function AppSidebar() {
               fontStyle: "italic",
             }}
           >
-            No projects
+            {t("noProjects")}
           </p>
         )}
       </div>
@@ -458,7 +462,7 @@ export function AppSidebar() {
                 onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
               >
                 <Icon.Settings style={{ color: "var(--ink-4)" }} />
-                <span>Admin</span>
+                <span>{t("admin")}</span>
               </div>
             </Link>
           )}
@@ -481,7 +485,7 @@ export function AppSidebar() {
                 onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
               >
                 <Icon.Plus style={{ color: "var(--ink-4)" }} />
-                <span>New workspace</span>
+                <span>{t("newWorkspace")}</span>
               </div>
             </Link>
           )}
@@ -504,7 +508,7 @@ export function AppSidebar() {
                 onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
               >
                 <Icon.User style={{ color: "var(--ink-4)" }} />
-                <span>Invite admin</span>
+                <span>{t("inviteAdmin")}</span>
               </div>
             </Link>
           )}
@@ -567,7 +571,7 @@ export function AppSidebar() {
               <button
                 type="button"
                 style={{ color: "var(--ink-4)", padding: 4 }}
-                title="Profile"
+                title={t("profile")}
               >
                 <Icon.User />
               </button>
@@ -580,7 +584,7 @@ export function AppSidebar() {
                 });
               }}
               style={{ color: "var(--ink-4)", padding: 4 }}
-              title="Logout"
+              title={t("logout")}
             >
               <Icon.Logout />
             </button>
@@ -598,7 +602,7 @@ export function AppSidebar() {
             left: collapsed ? 14 : undefined,
             margin: collapsed ? "auto" : undefined,
           }}
-          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          title={collapsed ? t("expandSidebar") : t("collapseSidebar")}
         >
           {collapsed ? <Icon.ChevR /> : <Icon.ChevL />}
         </button>

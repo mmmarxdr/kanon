@@ -1,0 +1,57 @@
+{
+  "state": {
+    "backlog": "Backlog",
+    "analysis": "Analysis",
+    "todo": "Todo",
+    "in_progress": "In progress",
+    "review": "In review",
+    "done": "Done",
+    "idea": "Idea",
+    "planned": "Planned"
+  },
+  "priority": {
+    "critical": "Critical",
+    "high": "High",
+    "medium": "Medium",
+    "low": "Low"
+  },
+  "type": {
+    "feature": "Feature",
+    "bug": "Bug",
+    "task": "Task",
+    "spike": "Spike",
+    "incident": "Incident"
+  },
+  "actions": {
+    "search": "Search",
+    "newIssue": "New issue",
+    "addIssue": "Add issue",
+    "save": "Save",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "create": "Create",
+    "creating": "Creating…",
+    "close": "Close",
+    "delete": "Delete",
+    "edit": "Edit",
+    "clearFilters": "Clear filters",
+    "loading": "Loading…",
+    "retry": "Retry",
+    "none": "None",
+    "any": "any",
+    "empty": "Empty",
+    "unassigned": "Unassigned",
+    "unknown": "Unknown",
+    "optional": "(optional)",
+    "escToClose": "Esc to close"
+  },
+  "theme": {
+    "toLight": "Switch to light mode",
+    "toDark": "Switch to dark mode"
+  },
+  "language": {
+    "switchTo": "Switch language",
+    "en": "EN",
+    "es": "ES"
+  }
+}

@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { IssueDocument, ChildIssueSummary, IssueDependencyEdge } from "@/types/issue";
 import { IssueDescription } from "./issue-description";
 import { DocumentList } from "./document-list";
@@ -45,6 +46,7 @@ export function IssueTopZone({
   blocks,
   blockedBy,
 }: IssueTopZoneProps) {
+  const { t } = useTranslation("issue");
   const docCount = documents.length;
   const childCount = children.length;
   const depCount = blocks.length + blockedBy.length;
@@ -66,7 +68,7 @@ export function IssueTopZone({
       <div style={{ marginTop: 20 }}>
         <CollapsibleSection
           sectionId={SECTION_IDS.DESIGN_RECORDS}
-          title="Design Records"
+          title={t("sectionDesignRecords")}
           count={docCount}
           issueKey={issueKey}
           defaultCollapsed={false}
@@ -83,7 +85,7 @@ export function IssueTopZone({
       <div style={{ marginTop: 20 }}>
         <CollapsibleSection
           sectionId={SECTION_IDS.SUB_ISSUES}
-          title="Sub-issues"
+          title={t("sectionSubIssues")}
           count={childCount}
           issueKey={issueKey}
           defaultCollapsed={childCount > 5}
@@ -96,7 +98,7 @@ export function IssueTopZone({
       <div style={{ marginTop: 20 }}>
         <CollapsibleSection
           sectionId={SECTION_IDS.DEPENDENCIES}
-          title="Dependencies"
+          title={t("sectionDependencies")}
           count={depCount}
           issueKey={issueKey}
           defaultCollapsed={depCount > 5}

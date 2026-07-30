@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { useEscapeKey } from "@/hooks/use-escape-key";
 import { useBackdropClose } from "@/hooks/use-backdrop-close";
 import { useQueryClient } from "@tanstack/react-query";
@@ -61,6 +62,8 @@ const radioRowStyle: React.CSSProperties = {
 // ---------------------------------------------------------------------------
 
 export function CloseCycleDialog({ cycle, cycles, onClose }: CloseCycleDialogProps) {
+  const { t } = useTranslation("cycles");
+  const { t: tCommon } = useTranslation("common");
   const projectKey = cycle.projectId; // used as cache-key for invalidation (see D5)
   const queryClient = useQueryClient();
   const closeMutation = useCloseCycleMutation(cycle.id, projectKey);
@@ -229,7 +232,7 @@ export function CloseCycleDialog({ cycle, cycles, onClose }: CloseCycleDialogPro
                 color: "var(--ink-4)",
               }}
             >
-              Close cycle
+              {t("closeModalTitle")}
             </span>
             <span style={{ fontSize: 12, color: "var(--ink-2)", marginLeft: 4 }}>
               {cycle.name}
@@ -251,14 +254,10 @@ export function CloseCycleDialog({ cycle, cycles, onClose }: CloseCycleDialogPro
             >
               {hasIncomplete ? (
                 <span data-testid="close-cycle-incomplete-count">
-                  <strong data-testid="incomplete-count-value">
-                    {incompleteIssues.length} incomplete
-                  </strong>{" "}
-                  {incompleteIssues.length === 1 ? "issue" : "issues"} will not move to{" "}
-                  <strong>done</strong>. Choose how to handle {incompleteIssues.length === 1 ? "it" : "them"}:
+                  {t("closeIncomplete", { count: incompleteIssues.length })}
                 </span>
               ) : (
-                <span>All issues are done. Ready to close.</span>
+                <span>{t("closeAllDone")}</span>
               )}
             </div>
 

@@ -1,0 +1,8 @@
+{
+  "loading": "Cargando grafo…",
+  "failed": "No se pudieron cargar las dependencias: {{message}}",
+  "legendInProgress": "En progreso",
+  "legendPlanned": "Planificado",
+  "legendDone": "Hecho",
+  "legendIdea": "Idea"
+}

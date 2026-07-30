@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { useEscapeKey } from "@/hooks/use-escape-key";
 import { useBackdropClose } from "@/hooks/use-backdrop-close";
 import { FocusTrap } from "focus-trap-react";
@@ -35,6 +36,8 @@ interface CreateCycleModalProps {
 }
 
 export function CreateCycleModal({ projectKey, onClose }: CreateCycleModalProps) {
+  const { t } = useTranslation("cycles");
+  const { t: tCommon } = useTranslation("common");
   const createMutation = useCreateCycleMutation(projectKey);
 
   const [name, setName] = useState("");
@@ -132,7 +135,7 @@ export function CreateCycleModal({ projectKey, onClose }: CreateCycleModalProps)
                 color: "var(--ink-4)",
               }}
             >
-              New cycle
+              {t("createModalTitle")}
             </span>
             <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
               · {projectKey}
@@ -141,7 +144,7 @@ export function CreateCycleModal({ projectKey, onClose }: CreateCycleModalProps)
             <button
               type="button"
               onClick={onClose}
-              aria-label="Close"
+              aria-label={tCommon("actions.close")}
               style={{ color: "var(--ink-4)", padding: 2 }}
             >
               <Icon.X />
@@ -172,7 +175,7 @@ export function CreateCycleModal({ projectKey, onClose }: CreateCycleModalProps)
                 }}
               >
                 <label htmlFor="cycle-name" style={{ ...labelStyle, marginBottom: 0 }}>
-                  Name <span style={{ color: "var(--bad)" }}>*</span>
+                  {t("fieldName")} <span style={{ color: "var(--bad)" }}>*</span>
                 </label>
                 <span
                   className="mono"
@@ -191,7 +194,7 @@ export function CreateCycleModal({ projectKey, onClose }: CreateCycleModalProps)
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 maxLength={MAX_NAME_LENGTH}
-                placeholder="Sprint 1"
+                placeholder={t("placeholderName")}
                 data-testid="new-cycle-name"
                 style={inputStyle}
               />
@@ -200,14 +203,14 @@ export function CreateCycleModal({ projectKey, onClose }: CreateCycleModalProps)
             {/* Goal (optional) */}
             <div>
               <label htmlFor="cycle-goal" style={labelStyle}>
-                Goal <span style={{ color: "var(--ink-4)", fontSize: 9 }}>(optional)</span>
+                {t("fieldGoal")} <span style={{ color: "var(--ink-4)", fontSize: 9 }}>{tCommon("actions.optional")}</span>
               </label>
               <textarea
                 id="cycle-goal"
                 value={goal}
                 onChange={(e) => setGoal(e.target.value)}
                 rows={2}
-                placeholder="What do we want to ship?"
+                placeholder={t("placeholderGoal")}
                 data-testid="new-cycle-goal"
                 style={{
                   width: "100%",
@@ -235,7 +238,7 @@ export function CreateCycleModal({ projectKey, onClose }: CreateCycleModalProps)
             >
               <div>
                 <label htmlFor="cycle-start-date" style={labelStyle}>
-                  Start date <span style={{ color: "var(--bad)" }}>*</span>
+                  {t("fieldStartDate")} <span style={{ color: "var(--bad)" }}>*</span>
                 </label>
                 <input
                   id="cycle-start-date"
@@ -249,7 +252,7 @@ export function CreateCycleModal({ projectKey, onClose }: CreateCycleModalProps)
               </div>
               <div>
                 <label htmlFor="cycle-end-date" style={labelStyle}>
-                  End date <span style={{ color: "var(--bad)" }}>*</span>
+                  {t("fieldEndDate")} <span style={{ color: "var(--bad)" }}>*</span>
                 </label>
                 <input
                   id="cycle-end-date"
@@ -270,7 +273,7 @@ export function CreateCycleModal({ projectKey, onClose }: CreateCycleModalProps)
                 role="alert"
                 data-testid="new-cycle-date-error"
               >
-                End date must be after start date.
+                {t("dateError")}
               </span>
             )}
           </form>
@@ -287,7 +290,7 @@ export function CreateCycleModal({ projectKey, onClose }: CreateCycleModalProps)
             }}
           >
             <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)" }}>
-              Esc to close
+              {tCommon("actions.escToClose")}
             </span>
             <span style={{ flex: 1 }} />
             <button
@@ -303,7 +306,7 @@ export function CreateCycleModal({ projectKey, onClose }: CreateCycleModalProps)
                 fontSize: 12,
               }}
             >
-              Cancel
+              {tCommon("actions.cancel")}
             </button>
             <button
               type="button"
@@ -326,7 +329,7 @@ export function CreateCycleModal({ projectKey, onClose }: CreateCycleModalProps)
                 cursor: !isValid || createMutation.isPending ? "not-allowed" : "pointer",
               }}
             >
-              {createMutation.isPending ? "Creating…" : "Create cycle"}
+              {createMutation.isPending ? tCommon("actions.creating") : t("createSubmit")}
             </button>
           </div>
         </div>

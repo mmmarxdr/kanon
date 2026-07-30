@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { createRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { authenticatedRoute } from "../_authenticated";
@@ -17,14 +18,15 @@ export const settingsRoute = createRoute({
 
 type SettingsTab = "members" | "invites" | "domains" | "notifications";
 
-const TABS: { key: SettingsTab; label: string }[] = [
-  { key: "members", label: "Members" },
-  { key: "invites", label: "Invites" },
-  { key: "domains", label: "Allowed Domains" },
-  { key: "notifications", label: "Notifications" },
+const TAB_KEYS: { key: SettingsTab; labelKey: string }[] = [
+  { key: "members", labelKey: "tabMembers" },
+  { key: "invites", labelKey: "tabInvites" },
+  { key: "domains", labelKey: "tabDomains" },
+  { key: "notifications", labelKey: "tabNotifications" },
 ];
 
 function SettingsPage() {
+  const { t } = useTranslation("settings");
   const [activeTab, setActiveTab] = useState<SettingsTab>("members");
   const workspaceId = useActiveWorkspaceId();
   const { data: workspaces } = useWorkspacesQuery();
@@ -41,7 +43,7 @@ function SettingsPage() {
   if (!workspaceId) {
     return (
       <div className="flex items-center justify-center h-full p-8">
-        <p className="text-muted-foreground">No workspace selected.</p>
+        <p className="text-muted-foreground">{t("noWorkspace")}</p>
       </div>
     );
   }
@@ -79,17 +81,17 @@ function SettingsPage() {
               letterSpacing: "-0.02em",
             }}
           >
-            {workspace?.name ?? "Workspace"}
+            {workspace?.name ?? t("workspaceFallback")}
           </h1>
           <span
             className="mono"
             style={{ fontSize: 11, color: "var(--ink-3)" }}
           >
-            workspace settings
+            {t("workspaceSettingsSub")}
           </span>
         </div>
         <div style={{ display: "flex", gap: 2, marginTop: 4 }}>
-          {TABS.map((tab) => {
+          {TAB_KEYS.map((tab) => {
             const active = activeTab === tab.key;
             return (
               <button
@@ -111,7 +113,7 @@ function SettingsPage() {
                   marginBottom: -1,
                 }}
               >
-                {tab.label}
+                {t(tab.labelKey)}
               </button>
             );
           })}

@@ -1,19 +1,19 @@
-import {
-  useBoardStore,
-  BOARD_COLUMNS,
-  COLUMN_LABELS,
-} from "@/stores/board-store";
+import { useTranslation } from "react-i18next";
+import { useBoardStore, BOARD_COLUMNS } from "@/stores/board-store";
 
 export function ColumnToggle() {
+  const { t } = useTranslation("common");
+  const { t: tBoard } = useTranslation("board");
   const { hiddenColumns, toggleColumn } = useBoardStore();
 
   return (
     <div className="inline-flex items-center gap-0 rounded-md bg-surface-container-high overflow-hidden">
       <span className="text-[0.6875rem] font-medium text-on-surface/50 uppercase tracking-wider px-3">
-        Columns
+        {tBoard("columns")}
       </span>
       {BOARD_COLUMNS.map((column) => {
         const isVisible = !hiddenColumns.has(column);
+        const columnLabel = t(`state.${column}`);
         return (
           <button
             key={column}
@@ -25,9 +25,9 @@ export function ColumnToggle() {
                   ? "bg-primary text-primary-foreground"
                   : "text-on-surface/50 hover:text-on-surface hover:bg-on-surface/5"
               }`}
-            title={isVisible ? `Hide ${COLUMN_LABELS[column]}` : `Show ${COLUMN_LABELS[column]}`}
+            title={columnLabel}
           >
-            {COLUMN_LABELS[column]}
+            {columnLabel}
           </button>
         );
       })}

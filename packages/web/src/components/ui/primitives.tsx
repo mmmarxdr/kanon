@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 /* ====================================================================
    Avatar — initials chip with optional agent styling
@@ -135,19 +136,34 @@ export type IssueState =
   | "idea"
   | "planned";
 
-const STATE_MAP: Record<IssueState, { label: string; dot: string }> = {
-  backlog:     { label: "Backlog",     dot: "var(--ink-4)" },
-  analysis:    { label: "Analysis",    dot: "var(--ink-4)" },
-  todo:        { label: "Todo",        dot: "var(--ink-3)" },
-  in_progress: { label: "In progress", dot: "var(--accent)" },
-  review:      { label: "In review",   dot: "var(--ai)" },
-  done:        { label: "Done",        dot: "var(--ok)" },
-  idea:        { label: "Idea",        dot: "var(--ink-4)" },
-  planned:     { label: "Planned",     dot: "var(--ink-3)" },
+const STATE_DOT: Record<IssueState, string> = {
+  backlog:     "var(--ink-4)",
+  analysis:    "var(--ink-4)",
+  todo:        "var(--ink-3)",
+  in_progress: "var(--accent)",
+  review:      "var(--ai)",
+  done:        "var(--ok)",
+  idea:        "var(--ink-4)",
+  planned:     "var(--ink-3)",
+};
+
+const STATE_FALLBACK: Record<IssueState, string> = {
+  backlog:     "Backlog",
+  analysis:    "Analysis",
+  todo:        "Todo",
+  in_progress: "In progress",
+  review:      "In review",
+  done:        "Done",
+  idea:        "Idea",
+  planned:     "Planned",
 };
 
 export function StatePip({ state, hideLabel = false }: { state: IssueState; hideLabel?: boolean }) {
-  const s = STATE_MAP[state] ?? STATE_MAP.todo;
+  const { t } = useTranslation("common");
+  const dot = STATE_DOT[state] ?? STATE_DOT.todo;
+  const label = t(`state.${state}`, {
+    defaultValue: STATE_FALLBACK[state] ?? STATE_FALLBACK.todo,
+  });
   return (
     <span
       style={{
@@ -163,18 +179,20 @@ export function StatePip({ state, hideLabel = false }: { state: IssueState; hide
           width: 8,
           height: 8,
           borderRadius: "50%",
-          background: s.dot,
-          boxShadow: `0 0 0 2px color-mix(in oklch, ${s.dot} 16%, transparent)`,
+          background: dot,
+          boxShadow: `0 0 0 2px color-mix(in oklch, ${dot} 16%, transparent)`,
           flexShrink: 0,
         }}
       />
-      {!hideLabel && s.label}
+      {!hideLabel && label}
     </span>
   );
 }
 
-export function stateLabel(state: IssueState) {
-  return (STATE_MAP[state] ?? STATE_MAP.todo).label;
+export function stateLabel(state: IssueState, t?: (key: string, opts?: { defaultValue?: string }) => string) {
+  const fallback = STATE_FALLBACK[state] ?? STATE_FALLBACK.todo;
+  if (t) return t(`state.${state}`, { defaultValue: fallback });
+  return fallback;
 }
 
 /* ====================================================================

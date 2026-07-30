@@ -1,9 +1,9 @@
+import { useTranslation } from "react-i18next";
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { issueKeys } from "@/lib/query-keys";
 import {
   ISSUE_STATES,
-  STATE_LABELS,
   type IssueState,
 } from "@/stores/board-store";
 import type {
@@ -17,11 +17,6 @@ import type { Cycle } from "@/types/cycle";
 
 const ISSUE_TYPES: IssueType[] = ["feature", "bug", "task", "spike"];
 const ISSUE_PRIORITIES: IssuePriority[] = ["critical", "high", "medium", "low"];
-
-/** Capitalize first letter for display labels. */
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
 
 interface MetadataSectionProps {
   issue: IssueDetail;
@@ -53,6 +48,8 @@ export function MetadataSection({
   onTransition,
   onCycleChange,
 }: MetadataSectionProps) {
+  const { t } = useTranslation("issue");
+  const { t: tCommon } = useTranslation("common");
   const queryClient = useQueryClient();
 
   // Derive unique assignees from the board issues cache
@@ -103,37 +100,37 @@ export function MetadataSection({
   return (
     <div className="grid grid-cols-2 gap-x-4 gap-y-3">
       {/* Type */}
-      <MetadataField label="Type">
+      <MetadataField label={t("fieldType")}>
         <select
           value={issue.type}
           onChange={handleTypeChange}
           className="w-full rounded bg-secondary text-sm text-foreground border border-border px-2 py-1 outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
         >
-          {ISSUE_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {capitalize(t)}
+          {ISSUE_TYPES.map((type) => (
+            <option key={type} value={type}>
+              {tCommon(`type.${type}`)}
             </option>
           ))}
         </select>
       </MetadataField>
 
       {/* Priority */}
-      <MetadataField label="Priority">
+      <MetadataField label={t("fieldPriority")}>
         <select
           value={issue.priority}
           onChange={handlePriorityChange}
           className="w-full rounded bg-secondary text-sm text-foreground border border-border px-2 py-1 outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
         >
-          {ISSUE_PRIORITIES.map((p) => (
-            <option key={p} value={p}>
-              {capitalize(p)}
+          {ISSUE_PRIORITIES.map((prio) => (
+            <option key={prio} value={prio}>
+              {tCommon(`priority.${prio}`)}
             </option>
           ))}
         </select>
       </MetadataField>
 
       {/* State (uses transition endpoint) */}
-      <MetadataField label="State">
+      <MetadataField label={t("fieldState")}>
         <select
           value={issue.state}
           onChange={handleStateChange}
@@ -141,21 +138,21 @@ export function MetadataSection({
         >
           {ISSUE_STATES.map((s) => (
             <option key={s} value={s}>
-              {STATE_LABELS[s]}
+              {tCommon(`state.${s}`)}
             </option>
           ))}
         </select>
       </MetadataField>
 
       {/* Cycle (attach/detach via cycle-scoped endpoints — NOT via PATCH issue) */}
-      <MetadataField label="Cycle">
+      <MetadataField label={t("fieldCycle")}>
         <select
           value={issue.cycle?.id ?? ""}
           onChange={handleCycleSelectChange}
           data-testid="metadata-cycle-select"
           className="w-full rounded bg-secondary text-sm text-foreground border border-border px-2 py-1 outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
         >
-          <option value="">Unassigned</option>
+          <option value="">{tCommon("actions.unassigned")}</option>
           {sortedCycles.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
@@ -165,13 +162,13 @@ export function MetadataSection({
       </MetadataField>
 
       {/* Assignee (derived from board cache) */}
-      <MetadataField label="Assignee">
+      <MetadataField label={t("fieldAssignee")}>
         <select
           value={issue.assigneeId ?? ""}
           onChange={handleAssigneeChange}
           className="w-full rounded bg-secondary text-sm text-foreground border border-border px-2 py-1 outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
         >
-          <option value="">Unassigned</option>
+          <option value="">{tCommon("actions.unassigned")}</option>
           {assignees.map((a) => (
             <option key={a.id} value={a.id}>
               {a.username}
@@ -181,7 +178,7 @@ export function MetadataSection({
       </MetadataField>
 
       {/* Labels (read-only text for v1) */}
-      <MetadataField label="Labels">
+      <MetadataField label={t("fieldLabels")}>
         <div className="flex flex-wrap gap-1 py-1">
           {issue.labels.length > 0 ? (
             issue.labels.map((label) => (
@@ -193,13 +190,13 @@ export function MetadataSection({
               </span>
             ))
           ) : (
-            <span className="text-xs text-muted-foreground">None</span>
+            <span className="text-xs text-muted-foreground">{t("labelsNone")}</span>
           )}
         </div>
       </MetadataField>
 
       {/* Timestamps (read-only) */}
-      <MetadataField label="Created">
+      <MetadataField label={t("fieldCreated")}>
         <span className="text-xs text-muted-foreground py-1">
           {formatDate(issue.createdAt)}
         </span>

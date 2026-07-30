@@ -1,6 +1,7 @@
 import { useMemo, useCallback, useState } from "react";
 import React from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 import { useCyclesQuery, useCycleQuery } from "./use-cycles-query";
 import { CreateCycleModal } from "./create-cycle-modal";
 import { CloseCycleDialog } from "./close-cycle-dialog";
@@ -16,6 +17,7 @@ import { Icon } from "@/components/ui/icons";
 import { Avatar, avatarInitials } from "@/components/ui/primitives";
 
 export function CyclesView() {
+  const { t } = useTranslation("cycles");
   const { projectKey } = useParams({ from: "/_authenticated/cycles/$projectKey" });
   const { data: cycles, isLoading: cyclesLoading } = useCyclesQuery(projectKey);
 
@@ -37,15 +39,15 @@ export function CyclesView() {
   const handleCloseCycle = useCallback(() => setIsCloseOpen(true), []);
 
   if (!projectKey) {
-    return <Empty>Pick a project to see cycles.</Empty>;
+    return <Empty>{t("pickProject")}</Empty>;
   }
-  if (cyclesLoading) return <Empty>Loading cycles…</Empty>;
+  if (cyclesLoading) return <Empty>{t("loadingList")}</Empty>;
   if (!cycles || cycles.length === 0) {
     return (
       <>
         <Empty>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-            <span>No cycles yet. Create one to start planning the next iteration.</span>
+            <span>{t("empty")}</span>
             <button
               type="button"
               onClick={() => setIsCreateOpen(true)}
@@ -62,7 +64,7 @@ export function CyclesView() {
                 cursor: "pointer",
               }}
             >
-              + New cycle
+              {t("newCyclePlus")}
             </button>
           </div>
         </Empty>
@@ -75,7 +77,7 @@ export function CyclesView() {
       </>
     );
   }
-  if (isLoading || !cycle) return <Empty>Loading cycle…</Empty>;
+  if (isLoading || !cycle) return <Empty>{t("loadingOne")}</Empty>;
 
   const doneCycles = cycles.filter((c) => c.state === "done").reverse();
 
@@ -152,6 +154,7 @@ const CycleHeader = React.memo(function CycleHeader({
   onNewCycle: () => void;
   onCloseCycle: () => void;
 }) {
+  const { t } = useTranslation("cycles");
   const [open, setOpen] = useState(false);
   return (
     <div
@@ -294,7 +297,7 @@ const CycleHeader = React.memo(function CycleHeader({
                   }}
                 >
                   <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
-                  New cycle
+                  {t("newCycle")}
                 </button>
               </div>
             </div>
@@ -311,7 +314,7 @@ const CycleHeader = React.memo(function CycleHeader({
             <Icon.Spark style={{ color: "var(--ai)" }} /> Plan next with Claude
           </button>
           <button type="button" onClick={onCloseCycle} style={pillBtn(true)}>
-            Close cycle →
+            {t("closeCycle")}
           </button>
         </div>
       </div>

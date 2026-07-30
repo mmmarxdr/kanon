@@ -1,4 +1,5 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { useEscapeKey } from "@/hooks/use-escape-key";
 import { useBackdropClose } from "@/hooks/use-backdrop-close";
 import { FocusTrap } from "focus-trap-react";
@@ -6,31 +7,14 @@ import { useCreateIssueMutation } from "./use-create-issue-mutation";
 import { useIssuesQuery } from "./use-issues-query";
 import type { IssueType, IssuePriority } from "@/types/issue";
 import {
-  STATE_LABELS,
   ISSUE_STATES,
   type IssueState,
 } from "@/stores/board-store";
 import { Icon } from "@/components/ui/icons";
 import { FilterChipSelect } from "@/components/ui/primitives";
 
-const ISSUE_TYPES: { value: IssueType; label: string }[] = [
-  { value: "task", label: "Task" },
-  { value: "feature", label: "Feature" },
-  { value: "bug", label: "Bug" },
-  { value: "spike", label: "Spike" },
-];
-
-const ISSUE_PRIORITIES: { value: IssuePriority; label: string }[] = [
-  { value: "critical", label: "Critical" },
-  { value: "high", label: "High" },
-  { value: "medium", label: "Medium" },
-  { value: "low", label: "Low" },
-];
-
-const STATE_OPTIONS = ISSUE_STATES.map((s) => ({
-  value: s,
-  label: STATE_LABELS[s],
-}));
+const ISSUE_TYPE_VALUES: IssueType[] = ["task", "feature", "bug", "spike"];
+const ISSUE_PRIORITY_VALUES: IssuePriority[] = ["critical", "high", "medium", "low"];
 
 type IssueTemplateEntry = {
   key: string;
@@ -114,6 +98,8 @@ export function NewIssueModal({
   onClose,
   defaultState,
 }: NewIssueModalProps) {
+  const { t } = useTranslation("board");
+  const { t: tCommon } = useTranslation("common");
   const createMutation = useCreateIssueMutation(projectKey);
   const { data: issues } = useIssuesQuery(projectKey);
 
@@ -125,6 +111,29 @@ export function NewIssueModal({
   const [labels, setLabels] = useState("");
   const [parentId, setParentId] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState("");
+
+  const ISSUE_TYPES = useMemo(
+    () => ISSUE_TYPE_VALUES.map((value) => ({ value, label: tCommon(`type.${value}`) })),
+    [tCommon],
+  );
+  const ISSUE_PRIORITIES = useMemo(
+    () => ISSUE_PRIORITY_VALUES.map((value) => ({ value, label: tCommon(`priority.${value}`) })),
+    [tCommon],
+  );
+  const STATE_OPTIONS = useMemo(
+    () => ISSUE_STATES.map((s) => ({ value: s, label: tCommon(`state.${s}`) })),
+    [tCommon],
+  );
+  const templateOptions = useMemo(
+    () => [
+      { value: "", label: t("templateNone") },
+      { value: "bug-report", label: t("templateBug") },
+      { value: "feature-request", label: t("templateFeature") },
+      { value: "task", label: t("templateTask") },
+      { value: "spike", label: t("templateSpike") },
+    ],
+    [t],
+  );
 
   useEscapeKey(onClose);
 
@@ -242,7 +251,7 @@ export function NewIssueModal({
                 color: "var(--ink-4)",
               }}
             >
-              New issue
+              {t("newIssueTitle")}
             </span>
             <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
               · {projectKey}
@@ -251,7 +260,7 @@ export function NewIssueModal({
             <button
               type="button"
               onClick={onClose}
-              aria-label="Close"
+              aria-label={tCommon("actions.close")}
               style={{ color: "var(--ink-4)", padding: 2 }}
             >
               <Icon.X />
@@ -278,7 +287,7 @@ export function NewIssueModal({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               onKeyDown={handleTitleKeyDown}
-              placeholder="Issue title"
+              placeholder={t("placeholderTitle")}
               data-testid="new-issue-title-input"
               style={{
                 width: "100%",
@@ -297,7 +306,7 @@ export function NewIssueModal({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={5}
-              placeholder="Add description…"
+              placeholder={t("placeholderDescription")}
               data-testid="new-issue-description"
               style={{
                 width: "100%",
@@ -325,28 +334,28 @@ export function NewIssueModal({
               }}
             >
               <FilterChipSelect
-                label="Type"
+                label={t("fieldType")}
                 value={type}
                 options={ISSUE_TYPES}
                 onChange={(v) => setType((v || "task") as IssueType)}
                 allLabel="task"
               />
               <FilterChipSelect
-                label="Priority"
+                label={t("fieldPriority")}
                 value={priority}
                 options={ISSUE_PRIORITIES}
                 onChange={(v) => setPriority((v || "medium") as IssuePriority)}
                 allLabel="medium"
               />
               <FilterChipSelect
-                label="State"
+                label={t("fieldState")}
                 value={state}
                 options={STATE_OPTIONS}
                 onChange={(v) => setState((v || "backlog") as IssueState)}
                 allLabel="backlog"
               />
               <FilterChipSelect
-                label="Template"
+                label={t("fieldTemplate")}
                 value={selectedTemplate}
                 options={TEMPLATE_OPTIONS}
                 onChange={handleTemplateChange}
@@ -364,21 +373,21 @@ export function NewIssueModal({
             >
               <div>
                 <label htmlFor="issue-labels" style={labelStyle}>
-                  Labels
+                  {t("fieldLabels")}
                 </label>
                 <input
                   id="issue-labels"
                   type="text"
                   value={labels}
                   onChange={(e) => setLabels(e.target.value)}
-                  placeholder="bug, ui (comma-separated)"
+                  placeholder={t("placeholderLabels")}
                   data-testid="new-issue-labels"
                   style={inputStyle}
                 />
               </div>
               <div>
                 <label htmlFor="issue-parent" style={labelStyle}>
-                  Parent issue
+                  {t("fieldParent")}
                 </label>
                 <select
                   id="issue-parent"
@@ -387,7 +396,7 @@ export function NewIssueModal({
                   data-testid="new-issue-parent"
                   style={{ ...inputStyle, paddingLeft: 8 }}
                 >
-                  <option value="">None</option>
+                  <option value="">{t("parentNone")}</option>
                   {issues?.map((issue) => (
                     <option key={issue.id} value={issue.id}>
                       {issue.key}: {issue.title}
@@ -413,7 +422,7 @@ export function NewIssueModal({
               className="mono"
               style={{ fontSize: 10.5, color: "var(--ink-4)" }}
             >
-              ⌘↵ to create · Esc to close
+              {t("footerShortcut")}
             </span>
             <span style={{ flex: 1 }} />
             <button
@@ -429,7 +438,7 @@ export function NewIssueModal({
                 fontSize: 12,
               }}
             >
-              Cancel
+              {tCommon("actions.cancel")}
             </button>
             <button
               type="button"
@@ -452,7 +461,7 @@ export function NewIssueModal({
                 cursor: !title.trim() || createMutation.isPending ? "not-allowed" : "pointer",
               }}
             >
-              {createMutation.isPending ? "Creating…" : "Create issue"}
+              {createMutation.isPending ? t("creatingIssue") : t("createIssue")}
             </button>
           </div>
         </div>

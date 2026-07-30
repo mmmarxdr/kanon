@@ -1,20 +1,23 @@
 import { useLocation } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 import { useCommandPaletteStore } from "@/stores/command-palette-store";
 import { useThemeStore } from "@/stores/theme-store";
 import { Icon } from "@/components/ui/icons";
 import { Kbd } from "@/components/ui/primitives";
+import { LanguageSwitcher } from "@/components/language-switcher";
 
-const VIEW_TITLES: Record<string, string> = {
-  inbox: "Inbox",
-  board: "Board",
-  roadmap: "Roadmap",
-  dependencies: "Dependencies",
-  issue: "Issue",
-  cycles: "Cycles",
-  settings: "Settings",
-  workspaces: "Workspaces",
-  "project-select": "Pick a project",
-  profile: "Profile",
+const VIEW_TITLE_KEYS: Record<string, string> = {
+  inbox: "inbox",
+  board: "board",
+  roadmap: "roadmap",
+  dependencies: "dependencies",
+  issue: "issue",
+  cycles: "cycles",
+  schedule: "schedule",
+  settings: "settings",
+  workspaces: "workspaces",
+  "project-select": "projectSelect",
+  profile: "profile",
 };
 
 interface Crumb {
@@ -22,22 +25,29 @@ interface Crumb {
   mono?: boolean;
 }
 
-function buildCrumbs(pathname: string): Crumb[] {
-  const m = pathname.match(/^\/(board|roadmap|dependencies|cycles)\/([^/]+)/);
+function buildCrumbs(
+  pathname: string,
+  tNav: (key: string) => string,
+): Crumb[] {
+  const m = pathname.match(/^\/(board|roadmap|dependencies|cycles|schedule)\/([^/]+)/);
   if (m && m[1] && m[2]) {
     const view = m[1];
     const projectKey = m[2];
+    const titleKey = VIEW_TITLE_KEYS[view];
     return [
       { label: projectKey, mono: true },
-      { label: VIEW_TITLES[view] ?? view },
+      { label: titleKey ? tNav(titleKey) : view },
     ];
   }
   const segments = pathname.split("/").filter(Boolean);
   const head = segments[0];
-  if (!head) return [{ label: "Inbox" }];
+  if (!head) return [{ label: tNav("inbox") }];
+  const titleKey = VIEW_TITLE_KEYS[head];
   return [
     {
-      label: VIEW_TITLES[head] ?? head.charAt(0).toUpperCase() + head.slice(1),
+      label: titleKey
+        ? tNav(titleKey)
+        : head.charAt(0).toUpperCase() + head.slice(1),
     },
   ];
 }
@@ -47,8 +57,10 @@ export function AppTopbar() {
   const openPalette = useCommandPaletteStore((s) => s.open);
   const appearance = useThemeStore((s) => s.appearance);
   const toggleAppearance = useThemeStore((s) => s.toggleAppearance);
+  const { t } = useTranslation("common");
+  const { t: tNav } = useTranslation("nav");
 
-  const crumbs = buildCrumbs(location.pathname);
+  const crumbs = buildCrumbs(location.pathname, tNav);
 
   return (
     <header
@@ -102,11 +114,14 @@ export function AppTopbar() {
 
       <div style={{ flex: 1 }} />
 
+      {/* ── Language switcher (left of theme) ── */}
+      <LanguageSwitcher />
+
       {/* ── Theme toggle ── */}
       <button
         type="button"
         onClick={toggleAppearance}
-        title={appearance === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        title={appearance === "dark" ? t("theme.toLight") : t("theme.toDark")}
         style={{
           display: "flex",
           alignItems: "center",
@@ -140,7 +155,7 @@ export function AppTopbar() {
         }}
       >
         <Icon.Search />
-        <span style={{ color: "var(--ink-3)" }}>Search</span>
+        <span style={{ color: "var(--ink-3)" }}>{t("actions.search")}</span>
         <Kbd>⌘K</Kbd>
       </button>
 
@@ -161,7 +176,7 @@ export function AppTopbar() {
           fontWeight: 500,
         }}
       >
-        <Icon.Plus /> New issue
+        <Icon.Plus /> {t("actions.newIssue")}
       </button>
     </header>
   );

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   useWorkspaceInvitesQuery,
   useCreateInviteMutation,
@@ -8,8 +9,16 @@ import {
 
 const INVITE_ROLES = ["viewer", "member", "admin"] as const;
 
-function roleLabel(role: string): string {
-  return role.charAt(0).toUpperCase() + role.slice(1);
+const ROLE_KEYS: Record<string, string> = {
+  viewer: "roleViewer",
+  member: "roleMember",
+  admin: "roleAdmin",
+  owner: "roleOwner",
+};
+
+function roleLabel(role: string, t: (key: string) => string): string {
+  const key = ROLE_KEYS[role];
+  return key ? t(key) : role.charAt(0).toUpperCase() + role.slice(1);
 }
 
 function isExpired(invite: WorkspaceInvite): boolean {
@@ -24,11 +33,14 @@ function isActive(invite: WorkspaceInvite): boolean {
   return !invite.revokedAt && !isExpired(invite) && !isExhausted(invite);
 }
 
-function statusBadge(invite: WorkspaceInvite): { label: string; className: string } {
-  if (invite.revokedAt) return { label: "Revoked", className: "bg-destructive/10 text-destructive" };
-  if (isExpired(invite)) return { label: "Expired", className: "bg-muted text-muted-foreground" };
-  if (isExhausted(invite)) return { label: "Exhausted", className: "bg-muted text-muted-foreground" };
-  return { label: "Active", className: "bg-green-500/10 text-green-700" };
+function statusBadge(
+  invite: WorkspaceInvite,
+  t: (key: string) => string,
+): { label: string; className: string } {
+  if (invite.revokedAt) return { label: t("inviteStatusRevoked"), className: "bg-destructive/10 text-destructive" };
+  if (isExpired(invite)) return { label: t("inviteStatusExpired"), className: "bg-muted text-muted-foreground" };
+  if (isExhausted(invite)) return { label: t("inviteStatusExhausted"), className: "bg-muted text-muted-foreground" };
+  return { label: t("inviteStatusActive"), className: "bg-green-500/10 text-green-700" };
 }
 
 export function InvitesSection({

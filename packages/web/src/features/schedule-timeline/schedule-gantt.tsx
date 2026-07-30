@@ -13,6 +13,7 @@
  */
 
 import { useMemo, useCallback, useState, useId, type CSSProperties } from "react";
+import { useTranslation } from "react-i18next";
 import { useContainerWidth } from "@/features/roadmap/use-container-size";
 import {
   useProjectScheduleTimeline,
@@ -1111,6 +1112,7 @@ function GanttLegend({
   compact?: boolean;
   onCompact?: (v: boolean) => void;
 }) {
+  const { t } = useTranslation("schedule");
   // KAN-164: issues hidden from the current view (out-of-scope + unscheduled) vs the
   // true project total, so a scoped Gantt never silently understates the project.
   const hidden =
@@ -1195,8 +1197,8 @@ function GanttLegend({
               cursor: "pointer",
             }}
           >
-            <option value="active">Active cycle</option>
-            <option value="window">Around today</option>
+            <option value="active">{t("scopeActiveCycle")}</option>
+            <option value="window">{t("scopeAroundToday")}</option>
             {(cycles ?? []).map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -1257,7 +1259,7 @@ function GanttLegend({
               cursor: "pointer",
             }}
           >
-            Hide done
+            {t("hideDone")}
           </button>
         )}
         {onSlippingOnly && (
@@ -1279,7 +1281,7 @@ function GanttLegend({
               cursor: "pointer",
             }}
           >
-            Slipping
+            {t("slipping")}
           </button>
         )}
         {onCompact && (
