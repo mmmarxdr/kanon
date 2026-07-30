@@ -38,7 +38,7 @@
   "createIssue": "Crear issue",
   "creatingIssue": "Creando…",
   "reconcileTitle": "Confirmar tiempo capturado",
-  "reconcileBody": "Se reportaron {{hours}} horas en este ticket. Confirma para moverlo a hecho, o ajusta el total abajo.",
+  "reconcileBody": "Se reportaron <hours>{{hours}}</hours> horas en este ticket. Confirma para moverlo a <done>hecho</done>, o ajusta el total abajo.",
   "reconcileHoursLabel": "Total de horas confirmadas",
   "reconcileHoursError": "Introduce un número ≥ 0, hasta 2 decimales, máximo 744.",
   "reconcileConfirm": "Confirmar y pasar a hecho",

@@ -38,7 +38,7 @@
   "createIssue": "Create issue",
   "creatingIssue": "Creating…",
   "reconcileTitle": "Confirm captured time",
-  "reconcileBody": "{{hours}} hours were reported on this ticket. Confirm to move it to done, or adjust the total below.",
+  "reconcileBody": "<hours>{{hours}}</hours> hours were reported on this ticket. Confirm to move it to <done>done</done>, or adjust the total below.",
   "reconcileHoursLabel": "Confirmed total hours",
   "reconcileHoursError": "Enter a non-negative number, up to 2 decimal places, at most 744.",
   "reconcileConfirm": "Confirm & move to done",

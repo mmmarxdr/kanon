@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
 import { useEscapeKey } from "@/hooks/use-escape-key";
 import { useBackdropClose } from "@/hooks/use-backdrop-close";
 import { FocusTrap } from "focus-trap-react";
@@ -149,10 +149,15 @@ export function ReconcileModal({
                 color: "var(--ink-2)",
               }}
             >
-              <span data-testid="reconcile-reported-hours" style={{ display: "none" }}>
-                {totalHours}
-              </span>
-              {t("reconcileBody", { hours: totalHours })}
+              <Trans
+                i18nKey="reconcileBody"
+                ns="board"
+                values={{ hours: totalHours }}
+                components={{
+                  hours: <strong data-testid="reconcile-reported-hours" />,
+                  done: <strong />,
+                }}
+              />
             </div>
 
             <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
