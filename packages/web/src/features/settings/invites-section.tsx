@@ -50,6 +50,8 @@ export function InvitesSection({
   workspaceId: string;
   currentUserRole: string | undefined;
 }) {
+  const { t } = useTranslation("settings");
+  const { t: tCommon } = useTranslation("common");
   const { data: invites, isLoading, error } = useWorkspaceInvitesQuery(workspaceId);
   const createInvite = useCreateInviteMutation(workspaceId);
   const revokeInvite = useRevokeInviteMutation(workspaceId);
