@@ -2,6 +2,27 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { parseFrontmatter } from "./utils/frontmatter.js";
+
+export const PRODUCT_AGENT_FILES = ["kanon.md"] as const;
+
+function renderCursorAgent(source: string): string {
+  const { body, data } = parseFrontmatter(source);
+  const name = typeof data["name"] === "string" ? data["name"] : "kanon";
+  const description = typeof data["description"] === "string"
+    ? data["description"]
+    : "Project management operations through Kanon";
+
+  return [
+    "---",
+    `name: ${name}`,
+    `description: ${JSON.stringify(description)}`,
+    "readonly: false",
+    "is_background: false",
+    "---",
+    body,
+  ].join("\n");
+}
 
 /**
  * Install agent files from assets to the tool's agent directory.
@@ -11,6 +32,7 @@ import path from "node:path";
 export function installAgents(
   agentDest: string,
   assetsDir: string,
+  host?: string,
 ): string[] {
   const agentsSource = path.join(assetsDir, "agents");
   if (!fs.existsSync(agentsSource)) {
@@ -21,33 +43,17 @@ export function installAgents(
 
   fs.mkdirSync(agentDest, { recursive: true });
 
-  // Clean stale kanon agents not in the current source set
-  const sourceFiles = fs.readdirSync(agentsSource).filter(
-    (f) => f.startsWith("kanon") && f.endsWith(".md"),
-  );
-  const sourceSet = new Set(sourceFiles);
-  if (fs.existsSync(agentDest)) {
-    const existing = fs.readdirSync(agentDest).filter(
-      (f) => f.startsWith("kanon") && f.endsWith(".md"),
-    );
-    for (const file of existing) {
-      if (!sourceSet.has(file)) {
-        fs.rmSync(path.join(agentDest, file));
-      }
-    }
-  }
-
-  const files = fs.readdirSync(agentsSource);
-  for (const file of files) {
-    if (!file.startsWith("kanon") || !file.endsWith(".md")) continue;
-
+  for (const file of PRODUCT_AGENT_FILES) {
     const srcFile = path.join(agentsSource, file);
     const destFile = path.join(agentDest, file);
 
-    if (fs.statSync(srcFile).isFile()) {
+    if (!fs.existsSync(srcFile) || !fs.statSync(srcFile).isFile()) continue;
+    if (host === "cursor") {
+      fs.writeFileSync(destFile, renderCursorAgent(fs.readFileSync(srcFile, "utf8")));
+    } else {
       fs.copyFileSync(srcFile, destFile);
-      installed.push(file);
     }
+    installed.push(file);
   }
 
   return installed;
@@ -64,12 +70,9 @@ export function removeAgents(agentDest: string): string[] {
 
   const removed: string[] = [];
 
-  const files = fs.readdirSync(agentDest);
-  for (const file of files) {
-    if (!file.startsWith("kanon") || !file.endsWith(".md")) continue;
-
+  for (const file of PRODUCT_AGENT_FILES) {
     const filePath = path.join(agentDest, file);
-    if (fs.statSync(filePath).isFile()) {
+    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
       fs.rmSync(filePath);
       removed.push(file);
     }

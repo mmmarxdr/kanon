@@ -6,43 +6,40 @@ import chalk from "chalk";
 import { checkbox } from "@inquirer/prompts";
 import { buildPlatformContext } from "./detect.js";
 import { resolveAuth } from "./auth.js";
-import { detectTools, getToolByName, toolRegistry } from "./registry.js";
+import {
+  detectTools,
+  getToolByName,
+  resolveToolTargets,
+  toolRegistry,
+} from "./registry.js";
 import {
   buildMcpEntry,
   buildWrapperMcpEntry,
-  extractExistingWorkspaceId,
-  installToolMcpConfig,
   removeToolMcpConfig,
   resolveMcpServerPath,
   resolveNodeBin,
 } from "./mcp-config.js";
-import { installSkills, removeSkills } from "./skills.js";
-import { installTemplate, removeTemplate } from "./templates.js";
-import { installWorkflows, removeWorkflows } from "./workflows.js";
-import { installAgents, removeAgents } from "./agents.js";
-import { installCommands, removeCommands } from "./commands.js";
+import { removeSkills } from "./skills.js";
+import { removeTemplate } from "./templates.js";
+import { removeWorkflows } from "./workflows.js";
+import { removeAgents } from "./agents.js";
+import { removeCommands } from "./commands.js";
 import type { ToolDefinition, PlatformContext, AuthResult } from "./types.js";
 import { getCredentialStore } from "./credential-store/factory.js";
 import { resolveWrapperReuse } from "./wrapper-reuse.js";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-function getAssetsDir(): string {
-  // In dist: __dirname is dist/, assets are at ../assets/
-  const fromDist = path.resolve(__dirname, "../assets");
-  // In dev: __dirname is src/, assets are at ../assets/
-  const fromSrc = path.resolve(__dirname, "../assets");
-  // Both resolve to the same relative path
-  return fromDist || fromSrc;
-}
+import {
+  cleanupLegacyToolSurface,
+  getAssetsDir,
+  installToolSurface,
+  resolveExistingToolWorkspaceId,
+} from "./tool-surface.js";
+import { SETUP_VERSION } from "./version.js";
 
 const program = new Command();
 
 program
   .name("kanon-setup")
-  .version("0.2.0")
+  .version(SETUP_VERSION)
   .description(
     "Configure Kanon AI tool integrations — MCP servers, skills, templates, and workflows",
   )
@@ -284,8 +281,8 @@ async function run(options: {
   let successCount = 0;
 
   for (const tool of selectedTools) {
-    const platformPaths = tool.platforms[ctx.platform];
-    if (!platformPaths) {
+    const targets = resolveToolTargets(tool, ctx);
+    if (targets.length === 0) {
       console.log(
         chalk.yellow("  ⚠") +
           ` ${tool.displayName} is not supported on ${ctx.platform} — skipping`,
@@ -294,78 +291,58 @@ async function run(options: {
       continue;
     }
 
-    const configPath = platformPaths.config(ctx);
-    const skillDir = platformPaths.skills(ctx);
-    // `template` is OPTIONAL on PlatformPaths — OpenCode is a product
-    // surface only and does NOT write a personal harness file. When
-    // absent, the install/remove template branch is skipped entirely.
-    const templatePath = platformPaths.template?.(ctx);
-    // `commands` is OPTIONAL — present on OpenCode. When present, setup
-    // installs slash-command files from assets/commands/ into this directory.
-    const commandDir = platformPaths.commands?.(ctx);
-
     if (removeMode) {
-      // ── Remove Mode ──────────────────────────────────────────────
-      const removed = removeToolMcpConfig(configPath, tool);
-      if (removed) {
-        console.log(
-          chalk.green("  ✓") +
-            ` Removed MCP config from ${chalk.bold(tool.displayName)}`,
-        );
-      } else {
-        console.log(
-          chalk.yellow("  ⚠") +
-            ` MCP config not found for ${tool.displayName} — nothing to remove`,
-        );
-      }
+      for (const target of targets) {
+        const configPath = target.config(ctx);
+        const removed = removeToolMcpConfig(configPath, tool);
+        if (removed) {
+          console.log(
+            chalk.green("  ✓") +
+              ` Removed MCP config from ${chalk.bold(tool.displayName)} (${configPath})`,
+          );
+        } else {
+          console.log(
+            chalk.yellow("  ⚠") +
+              ` MCP config not found for ${tool.displayName} at ${configPath}`,
+          );
+        }
 
-      // Remove skills
-      const removedSkills = removeSkills(skillDir);
-      if (removedSkills.length > 0) {
-        console.log(
-          chalk.green("  ✓") +
-            ` Removed ${removedSkills.length} skills from ${chalk.bold(tool.displayName)}`,
-        );
-      }
+        const removedSkills = removeSkills(target.skills(ctx));
+        if (removedSkills.length > 0) {
+          console.log(
+            chalk.green("  ✓") +
+              ` Removed ${removedSkills.length} skills from ${chalk.bold(tool.displayName)}`,
+          );
+        }
 
-      // Remove template (only when the tool declares one — OpenCode doesn't)
-      if (templatePath) {
-        const removedTemplate = removeTemplate(templatePath, tool.templateMode);
-        if (removedTemplate) {
+        const templatePath = target.template?.(ctx);
+        if (templatePath && removeTemplate(templatePath, tool.templateMode)) {
           console.log(
             chalk.green("  ✓") +
               ` Removed template from ${chalk.bold(tool.displayName)}`,
           );
         }
-      }
 
-      // Remove workflows
-      if (platformPaths.workflows) {
-        const wfDir = platformPaths.workflows(ctx);
-        const removedWfs = removeWorkflows(wfDir);
+        const workflowDir = target.workflows?.(ctx);
+        const removedWfs = workflowDir ? removeWorkflows(workflowDir) : [];
         if (removedWfs.length > 0) {
           console.log(
             chalk.green("  ✓") +
               ` Removed ${removedWfs.length} workflows from ${chalk.bold(tool.displayName)}`,
           );
         }
-      }
 
-      // Remove agents
-      if (platformPaths.agents) {
-        const agentDir = platformPaths.agents(ctx);
-        const removedAgents = removeAgents(agentDir);
-        if (removedAgents.length > 0) {
+        const agentDir = target.agents?.(ctx);
+        const removedAgentFiles = agentDir ? removeAgents(agentDir) : [];
+        if (removedAgentFiles.length > 0) {
           console.log(
             chalk.green("  ✓") +
-              ` Removed ${removedAgents.length} agents from ${chalk.bold(tool.displayName)}`,
+              ` Removed ${removedAgentFiles.length} agents from ${chalk.bold(tool.displayName)}`,
           );
         }
-      }
 
-      // Remove commands (OpenCode only — other tools have no commands dir)
-      if (commandDir) {
-        const removedCommands = removeCommands(commandDir);
+        const commandDir = target.commands?.(ctx);
+        const removedCommands = commandDir ? removeCommands(commandDir) : [];
         if (removedCommands.length > 0) {
           console.log(
             chalk.green("  ✓") +
@@ -373,107 +350,75 @@ async function run(options: {
           );
         }
       }
-
-      successCount++;
+      cleanupLegacyToolSurface(tool, ctx);
     } else {
-      // ── Install Mode ─────────────────────────────────────────────
-      const entry = wrapperReuse
-        ? buildWrapperMcpEntry(
-            apiUrl,
-            platformPaths.mcpMode,
-            nodeBin,
-            undefined,
-            extractExistingWorkspaceId(
-              configPath,
-              tool.rootKey,
-              tool.configFormat,
+      const existingWorkspaceId = wrapperReuse
+        ? resolveExistingToolWorkspaceId(tool, ctx)
+        : undefined;
+      const installedTargets = installToolSurface({
+        tool,
+        ctx,
+        assetsDir,
+        buildEntry: (target) => wrapperReuse
+          ? buildWrapperMcpEntry(
+              apiUrl,
+              target.mcpMode,
+              nodeBin,
+              undefined,
+              existingWorkspaceId,
+              tool.clientIdentity,
+            )
+          : buildMcpEntry(
+              mcpResolution,
+              apiUrl,
+              apiKey,
+              ctx,
+              target.mcpMode,
+              nodeBin,
+              "static-key",
+              tool.clientIdentity,
             ),
-          )
-        : buildMcpEntry(
-            mcpResolution,
-            apiUrl,
-            apiKey,
-            ctx,
-            platformPaths.mcpMode,
-            nodeBin,
-          );
+      });
 
-      // 1. MCP config
-      // OpenCode is a product surface — do NOT write personal harness files
-      // (AGENTS.md, opencode.jsonc, .atl/, kanon.md, …). The `mcp` rootKey
-      // entry is the only thing written; `mergeConfig` reshapes it to the
-      // OpenCode array form via `formatMcpEntry("mcp", entry)` — output is
-      // `{ type: "local", command: string[]; environment?; enabled? }` per
-      // OpenCode's `McpLocalConfig` schema.
-      installToolMcpConfig(configPath, tool, entry);
-      console.log(
-        chalk.green("  ✓") +
-          ` Configured MCP for ${chalk.bold(tool.displayName)} (${configPath})`,
-      );
-
-      // 2. Skills
-      const installedSkills = installSkills(skillDir, assetsDir);
-      if (installedSkills.length > 0) {
+      for (const installed of installedTargets) {
         console.log(
           chalk.green("  ✓") +
-            ` Installed ${installedSkills.length} skills to ${chalk.cyan(skillDir)}`,
+            ` Configured MCP for ${chalk.bold(tool.displayName)} (${installed.configPath})`,
         );
-      }
-
-      // 3. Template (only when the tool declares one — OpenCode is a
-      //    product surface only and MUST NOT have a personal harness file
-      //    written by setup).
-      if (templatePath) {
-        installTemplate(
-          templatePath,
-          tool.templateSource,
-          assetsDir,
-          tool.templateMode,
-        );
-        console.log(
-          chalk.green("  ✓") +
-            ` Installed template for ${chalk.bold(tool.displayName)} (${templatePath})`,
-        );
-      }
-
-      // 4. Workflows
-      if (platformPaths.workflows) {
-        const wfDir = platformPaths.workflows(ctx);
-        const installedWfs = installWorkflows(wfDir, assetsDir);
-        if (installedWfs.length > 0) {
+        if (installed.installedSkills.length > 0) {
           console.log(
             chalk.green("  ✓") +
-              ` Installed ${installedWfs.length} workflows to ${chalk.cyan(wfDir)}`,
+              ` Installed ${installed.installedSkills.length} skills to ${chalk.cyan(installed.skillDir)}`,
+          );
+        }
+        if (installed.templatePath) {
+          console.log(
+            chalk.green("  ✓") +
+              ` Installed template for ${chalk.bold(tool.displayName)} (${installed.templatePath})`,
+          );
+        }
+        if (installed.installedWorkflows.length > 0) {
+          console.log(
+            chalk.green("  ✓") +
+              ` Installed ${installed.installedWorkflows.length} workflows to ${chalk.cyan(installed.workflowDir!)}`,
+          );
+        }
+        if (installed.installedAgents.length > 0) {
+          console.log(
+            chalk.green("  ✓") +
+              ` Installed ${installed.installedAgents.length} agents to ${chalk.cyan(installed.agentDir!)}`,
+          );
+        }
+        if (installed.installedCommands.length > 0) {
+          console.log(
+            chalk.green("  ✓") +
+              ` Installed ${installed.installedCommands.length} commands to ${chalk.cyan(installed.commandDir!)}`,
           );
         }
       }
-
-      // 5. Agents
-      if (platformPaths.agents) {
-        const agentDir = platformPaths.agents(ctx);
-        const installedAgents = installAgents(agentDir, assetsDir);
-        if (installedAgents.length > 0) {
-          console.log(
-            chalk.green("  ✓") +
-              ` Installed ${installedAgents.length} agents to ${chalk.cyan(agentDir)}`,
-          );
-        }
-      }
-
-      // 6. Commands (OpenCode only — other tools have no commands dir)
-      if (commandDir) {
-        const installedCommands = installCommands(commandDir, assetsDir);
-        if (installedCommands.length > 0) {
-          console.log(
-            chalk.green("  ✓") +
-              ` Installed ${installedCommands.length} commands to ${chalk.cyan(commandDir)}`,
-          );
-        }
-      }
-
-      successCount++;
     }
 
+    successCount++;
     console.log("");
   }
 

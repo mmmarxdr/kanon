@@ -179,7 +179,7 @@ describe("runWrapper", () => {
     // Must fail with a clear message pointing to onboarding
     expect(exitCode).toBe(1);
     expect(stderrOutput.join("")).toMatch(/static API key/i);
-    expect(stderrOutput.join("")).toMatch(/kanon-setup <kanon:\/\/link>/i);
+    expect(stderrOutput.join("")).toMatch(/pinned Kanon installer/i);
     expect(stderrOutput.join("")).not.toMatch(/@kanon-pm\/setup/i);
   });
 
@@ -272,7 +272,7 @@ describe("runWrapper", () => {
     expect(spawnFn).not.toHaveBeenCalled();
     expect(exitCode).toBe(1);
     expect(stderrOutput.join("")).toMatch(/No credentials found/i);
-    expect(stderrOutput.join("")).toMatch(/kanon-setup <kanon:\/\/link>/i);
+    expect(stderrOutput.join("")).toMatch(/pinned Kanon installer/i);
     expect(stderrOutput.join("")).not.toMatch(/@kanon-pm\/setup/i);
   });
 
@@ -306,6 +306,31 @@ describe("runWrapper", () => {
     expect(opts.env["KANON_API_KEY"]).toBe("acc-token-r3a");
     expect(opts.env["KANON_REFRESH_TOKEN"]).toBe("refresh-tok-r3a");
     expect(exitCode).toBe(0);
+  });
+
+  it("preserves Cursor identity and workspace env when spawning MCP", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ accessToken: "access-token", expiresIn: 3600 }),
+    });
+    const spawnFn = makeSpawn(makeMockChild(0));
+
+    await runWrapper({
+      argv: ["node", "wrapper.js", "--server", "https://server.example.com"],
+      env: {
+        KANON_CLIENT_IDENTITY: "cursor",
+        KANON_WORKSPACE_ID: "workspace-1",
+      },
+      fetch: mockFetch,
+      getCredentialStore: () => makeCredStore({ refreshToken: "refresh-token" }),
+      stderr: { write: (s: string) => { stderrOutput.push(s); } },
+      exit: (code: number) => { exitCode = code; },
+      spawn: spawnFn as unknown as WrapperDeps["spawn"],
+    });
+
+    const [, , opts] = spawnFn.mock.calls[0] as [string, string[], SpawnOptions & { env: Record<string, string> }];
+    expect(opts.env["KANON_CLIENT_IDENTITY"]).toBe("cursor");
+    expect(opts.env["KANON_WORKSPACE_ID"]).toBe("workspace-1");
   });
 
   /**

@@ -43,6 +43,8 @@ export interface ToolDefinition {
   rootKey: string;
   /** On-disk config format — default `"json"` (Claude / Cursor / Antigravity / OpenCode). */
   configFormat?: "json" | "toml";
+  mcpType?: "stdio";
+  clientIdentity?: string;
   templateSource: string;
   templateMode: "marker-inject" | "file-copy";
 
@@ -51,6 +53,7 @@ export interface ToolDefinition {
 }
 
 export interface McpServerEntry {
+  type?: "stdio";
   command: string;
   args: string[];
   env?: Record<string, string>;

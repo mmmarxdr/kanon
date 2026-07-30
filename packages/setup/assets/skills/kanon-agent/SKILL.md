@@ -15,11 +15,11 @@ Human-readable titles, not internal paths.
 
 1. kanon_list_groups(projectKey) → pick groupKey
 2. kanon_create_issue with [Area] title + group + description
-3. kanon_start_work(issueKey)
-4. kanon_transition_issue: backlog → todo → in_progress → review → done
+3. kanon_start_work(issue_key)
+4. kanon_transition_issue: backlog → analysis → todo → in_progress → review → done
 5. kanon_update_issue: enrich description as work evolves
 6. Deferred/later work → kanon_create_roadmap_item, NOT backlog
-7. kanon_stop_work when done
+7. kanon_stop_work(issue_key) when done
 
 ## Title Format
 

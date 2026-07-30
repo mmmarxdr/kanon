@@ -34,7 +34,7 @@ export function isLocalhost(url: string): boolean {
  *
  * NOTE: Auto-generation of API keys via POST /api/auth/api-key was removed in PR1 (KAN-35).
  * Key resolution no longer has an auto-generate step — use the installer to onboard:
- *   bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.4.0/install.sh)"
+ *   bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.9.0/install.sh)"
  */
 export async function resolveAuth(
   options: { apiUrl?: string; apiKey?: string; yes?: boolean },

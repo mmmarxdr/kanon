@@ -11,8 +11,8 @@ description: Detailed issue creation flow — natural-language field mapping, ch
 |-----------|-------|
 | "bug", "broken", "crash" | type: bug |
 | "feature", "add", "support" | type: feature |
-| "improve", "refactor", "clean" | type: improvement |
-| "urgent", "blocking" | priority: urgent |
+| "improve", "refactor", "clean" | type: task |
+| "urgent", "blocking" | priority: critical |
 | "next sprint" | cycleId: current cycle |
 | "later", "someday", "eventually" | → roadmap, not backlog |
 
@@ -33,5 +33,5 @@ kanon_list_issues({ projectKey, groupKey?, limit: 3, format: compact })
 1. Parse NL description → extract title, type, priority, groupKey
 2. kanon_list_groups(projectKey) → confirm groupKey is valid
 3. kanon_create_issue({ projectKey, title: "[Area] Verb phrase", groupKey, description, type, priority })
-4. If cycleId known → kanon_attach_issues_to_cycle({ cycleId, issueKeys })
+4. If cycleId known → kanon_attach_issues_to_cycle({ cycleId, add: [issueKey], remove: [], reason })
 5. Confirm with format: ack response

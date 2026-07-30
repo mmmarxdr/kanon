@@ -72,7 +72,7 @@ export async function runWrapper(deps?: Partial<WrapperDeps>): Promise<void> {
     if (!env["KANON_API_KEY"].startsWith("eyJ")) {
       stderr.write(
         "Error: KANON_API_KEY is a static API key, which is no longer supported.\n" +
-        "Run: kanon-setup <kanon://link> to onboard via the wrapper.\n"
+        "Run the pinned Kanon installer with a fresh kanon:// onboarding link.\n"
       );
       exit(1);
       return;
@@ -92,7 +92,7 @@ export async function runWrapper(deps?: Partial<WrapperDeps>): Promise<void> {
   // ── Require --server when not in legacy bypass mode ──────────────────────
   if (!server) {
     stderr.write(
-      "Error: --server <url> is required. Run: kanon-setup <kanon://link>\n"
+      "Error: --server <url> is required. Re-run the pinned Kanon installer.\n"
     );
     exit(1);
     return;
@@ -109,7 +109,7 @@ export async function runWrapper(deps?: Partial<WrapperDeps>): Promise<void> {
 
   if (!creds) {
     stderr.write(
-      `No credentials found. Run: kanon-setup <kanon://link>\n`
+      `No credentials found. Run the pinned Kanon installer with a fresh onboarding link.\n`
     );
     exit(1);
     return;

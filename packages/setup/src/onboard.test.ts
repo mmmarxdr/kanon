@@ -4,7 +4,7 @@
  * All external calls are injected via deps so no real HTTP / FS happens.
  *
  * Scenarios:
- *   S2.1 happy path  → store.writeCredentials() + writeMcpEntries() called
+ *   S2.1 happy path  → credentials + full tool surface installer
  *   S2.3 invalid URL → process.exit(1) + stderr "Invalid onboarding link format"
  *   S2.4 expired token (400 TOKEN_EXPIRED)  → process.exit(1) + stderr msg
  *   S2.5 consumed token (400 TOKEN_CONSUMED) → process.exit(1) + stderr msg
@@ -12,9 +12,14 @@
  *   S2.7 store.writeCredentials throws       → process.exit(1) + stderr msg
  */
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { parse } from "smol-toml";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { onboardFromLink } from "./onboard.js";
+import { installOnboardedTools, onboardFromLink } from "./onboard.js";
 import type { CredentialStore, Creds } from "./credential-store/index.js";
+import { getToolByName } from "./registry.js";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -42,22 +47,23 @@ function makeStore(): CredentialStore {
     readCredentials: vi.fn().mockResolvedValue(null),
     writeCredentials: vi.fn().mockResolvedValue(undefined),
     clearCredentials: vi.fn().mockResolvedValue(undefined),
+    listServers: vi.fn().mockResolvedValue([]),
   };
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
 describe("onboardFromLink()", () => {
-  let writeMcpEntries: ReturnType<typeof vi.fn>;
+  let installToolSurfaces: ReturnType<typeof vi.fn>;
   let stdoutSink: { write: ReturnType<typeof vi.fn> };
   let store: CredentialStore;
 
   beforeEach(() => {
-    writeMcpEntries = vi.fn().mockResolvedValue([
+    installToolSurfaces = vi.fn().mockResolvedValue([
       {
         name: "claude-code",
         displayName: "Claude Code",
-        configPath: "/home/test/.claude.json",
+        configPaths: ["/home/test/.claude.json"],
       },
     ]);
     stdoutSink = { write: vi.fn() };
@@ -70,7 +76,7 @@ describe("onboardFromLink()", () => {
     await onboardFromLink(VALID_LINK, {
       fetchFn,
       credentialStore: store,
-      writeMcpEntries,
+      installToolSurfaces,
       stdout: stdoutSink,
     });
 
@@ -94,8 +100,8 @@ describe("onboardFromLink()", () => {
     );
 
     // MCP entries registered for detected tools — now receives (apiUrl, workspaceId)
-    expect(writeMcpEntries).toHaveBeenCalledOnce();
-    expect(writeMcpEntries).toHaveBeenCalledWith(
+    expect(installToolSurfaces).toHaveBeenCalledOnce();
+    expect(installToolSurfaces).toHaveBeenCalledWith(
       "https://server.example.com",
       ONBOARD_RESPONSE.workspace.id,
     );
@@ -116,7 +122,7 @@ describe("onboardFromLink()", () => {
     await onboardFromLink(VALID_LINK, {
       fetchFn,
       credentialStore: store,
-      writeMcpEntries: emptyWrite,
+      installToolSurfaces: emptyWrite,
       stdout: stdoutSink,
     });
 
@@ -124,6 +130,20 @@ describe("onboardFromLink()", () => {
     expect(stdoutOutput).toMatch(/onboarded as dev@example\.com/i);
     expect(stdoutOutput).toMatch(/no supported ai tools detected/i);
     expect(stdoutOutput).not.toMatch(/restart your ai coding tool/i);
+  });
+
+  it("fails onboarding when full-surface installation fails", async () => {
+    const installError = new Error("Invalid JSON in ~/.cursor/mcp.json");
+
+    await expect(onboardFromLink(VALID_LINK, {
+      fetchFn: makeFetch(200, ONBOARD_RESPONSE),
+      credentialStore: store,
+      installToolSurfaces: vi.fn().mockRejectedValue(installError),
+      stdout: stdoutSink,
+    })).rejects.toBe(installError);
+
+    expect(stdoutSink.write.mock.calls.map((call) => call[0]).join(""))
+      .toMatch(/Failed to configure AI tools.*Invalid JSON/s);
   });
 
   it("S2.3 invalid URL format → exits 1", async () => {
@@ -163,7 +183,7 @@ describe("onboardFromLink()", () => {
       });
 
     await expect(
-      onboardFromLink(VALID_LINK, { fetchFn, credentialStore: store, writeMcpEntries }),
+      onboardFromLink(VALID_LINK, { fetchFn, credentialStore: store, installToolSurfaces }),
     ).rejects.toThrow("process.exit");
 
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -189,7 +209,7 @@ describe("onboardFromLink()", () => {
       });
 
     await expect(
-      onboardFromLink(VALID_LINK, { fetchFn, credentialStore: store, writeMcpEntries }),
+      onboardFromLink(VALID_LINK, { fetchFn, credentialStore: store, installToolSurfaces }),
     ).rejects.toThrow("process.exit");
 
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -214,7 +234,7 @@ describe("onboardFromLink()", () => {
       });
 
     await expect(
-      onboardFromLink(VALID_LINK, { fetchFn, credentialStore: store, writeMcpEntries }),
+      onboardFromLink(VALID_LINK, { fetchFn, credentialStore: store, installToolSurfaces }),
     ).rejects.toThrow("process.exit");
 
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -246,7 +266,7 @@ describe("onboardFromLink()", () => {
       onboardFromLink(VALID_LINK, {
         fetchFn,
         credentialStore: badStore,
-        writeMcpEntries,
+        installToolSurfaces,
       }),
     ).rejects.toThrow("process.exit");
 
@@ -256,5 +276,62 @@ describe("onboardFromLink()", () => {
 
     stderrSpy.mockRestore();
     exitSpy.mockRestore();
+  });
+
+  it("production onboarding installer writes MCP, skills, agent, and TOML surfaces", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-onboard-surface-"));
+    const assetsDir = path.join(home, "assets");
+    try {
+      for (const skill of ["kanon-agent", "kanon-init", "kanon-onboard"]) {
+        const dir = path.join(assetsDir, "skills", skill);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, "SKILL.md"), `# ${skill}\n`);
+      }
+      fs.mkdirSync(path.join(assetsDir, "agents"), { recursive: true });
+      fs.writeFileSync(
+        path.join(assetsDir, "agents", "kanon.md"),
+        "---\nname: kanon\ndescription: Board agent\nallowed-tools:\n  - kanon_*\n---\n\nBody\n",
+      );
+
+      const tools = [getToolByName("cursor")!, getToolByName("codex")!];
+      const installed = await installOnboardedTools(
+        "https://server.example.com/",
+        "workspace-1",
+        {
+          ctx: { platform: "linux", homedir: home },
+          tools,
+          assetsDir,
+          nodeBin: "/usr/bin/node",
+          wrapperResolution: { mode: "local", path: "/release/mcp/dist/wrapper-cli.js" },
+        },
+      );
+
+      expect(installed.map((tool) => tool.name)).toEqual(["cursor", "codex"]);
+      const cursorConfig = JSON.parse(
+        fs.readFileSync(path.join(home, ".cursor", "mcp.json"), "utf8"),
+      );
+      expect(cursorConfig.mcpServers["kanon-mcp"]).toMatchObject({
+        type: "stdio",
+        command: "/usr/bin/node",
+        args: [
+          "/release/mcp/dist/wrapper-cli.js",
+          "--server",
+          "https://server.example.com",
+        ],
+        env: {
+          KANON_CLIENT_IDENTITY: "cursor",
+          KANON_WORKSPACE_ID: "workspace-1",
+        },
+      });
+      expect(fs.existsSync(path.join(home, ".cursor", "skills", "kanon-agent", "SKILL.md"))).toBe(true);
+      expect(fs.readFileSync(path.join(home, ".cursor", "agents", "kanon.md"), "utf8"))
+        .not.toContain("allowed-tools");
+
+      const codex = parse(fs.readFileSync(path.join(home, ".codex", "config.toml"), "utf8")) as Record<string, unknown>;
+      expect((codex["mcp_servers"] as Record<string, unknown>)["kanon-mcp"]).toBeDefined();
+      expect(fs.existsSync(path.join(home, ".codex", "skills", "kanon-onboard", "SKILL.md"))).toBe(true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });

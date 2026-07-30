@@ -33,6 +33,6 @@ When an SDD phase returns `deferred_items` in its result envelope:
 ## Promote to Issue
 
 When a roadmap item becomes actionable:
-1. kanon_get_roadmap_item(itemId) → review description and context
-2. kanon_promote_roadmap_item(itemId) → creates a linked issue
+1. kanon_list_roadmap(projectKey) → review description and copy the itemId
+2. kanon_promote_roadmap_item({ projectKey, itemId }) → creates a linked issue
 3. Enrich the new issue with current context before attaching to a cycle

@@ -74,6 +74,32 @@ const ANTIGRAVITY_CLI_PATHS: PlatformPaths = {
   mcpMode: "direct",
 };
 
+const CURSOR_DIRECT_PATHS: PlatformPaths = {
+  detect: async (ctx) =>
+    commandExists("cursor", ctx.platform) ||
+    fs.existsSync(path.join(ctx.homedir, ".cursor")),
+  config: (ctx) => path.join(ctx.homedir, ".cursor", "mcp.json"),
+  skills: (ctx) => path.join(ctx.homedir, ".cursor", "skills"),
+  agents: (ctx) => path.join(ctx.homedir, ".cursor", "agents"),
+  mcpMode: "direct",
+};
+
+const CURSOR_WSL_PATHS: PlatformPaths = {
+  ...CURSOR_DIRECT_PATHS,
+  detect: async (ctx) =>
+    (await CURSOR_DIRECT_PATHS.detect(ctx)) ||
+    (!!ctx.winHome && fs.existsSync(path.join(ctx.winHome, ".cursor"))),
+};
+
+const CURSOR_WSL_WINDOWS_PATHS: PlatformPaths = {
+  detect: async (ctx) =>
+    !!ctx.winHome && fs.existsSync(path.join(ctx.winHome, ".cursor")),
+  config: (ctx) => path.join(ctx.winHome!, ".cursor", "mcp.json"),
+  skills: (ctx) => path.join(ctx.winHome!, ".cursor", "skills"),
+  agents: (ctx) => path.join(ctx.winHome!, ".cursor", "agents"),
+  mcpMode: "wsl-bridge",
+};
+
 export const toolRegistry: ToolDefinition[] = [
   // ── Claude Code ──────────────────────────────────────────────────────
   {
@@ -115,42 +141,16 @@ export const toolRegistry: ToolDefinition[] = [
     name: "cursor",
     displayName: "Cursor",
     rootKey: "mcpServers",
-    templateSource: "cursor-rules.mdc",
+    mcpType: "stdio",
+    clientIdentity: "cursor",
+    templateSource: "",
     templateMode: "file-copy",
 
     platforms: {
-      win32: {
-        detect: async (ctx) => {
-          const appData = ctx.appDataDir;
-          return !!appData && fs.existsSync(`${appData}\\Cursor\\User`);
-        },
-        config: (ctx) => {
-          const appData = ctx.appDataDir!;
-          return `${appData}\\Cursor\\User\\mcp.json`;
-        },
-        skills: (ctx) => `${ctx.homedir}\\.cursor\\skills`,
-        agents: (ctx) => `${ctx.homedir}\\.cursor\\agents`,
-        template: (ctx) => `${ctx.homedir}\\.cursor\\rules\\kanon.mdc`,
-        mcpMode: "direct",
-      },
-      wsl: {
-        detect: async (ctx) => {
-          return !!ctx.winHome && fs.existsSync(`${ctx.winHome}/.cursor`);
-        },
-        config: (ctx) => `${ctx.winHome!}/.cursor/mcp.json`,
-        skills: (ctx) => `${ctx.winHome!}/.cursor/skills`,
-        agents: (ctx) => `${ctx.winHome!}/.cursor/agents`,
-        template: (ctx) => `${ctx.winHome!}/.cursor/rules/kanon.mdc`,
-        mcpMode: "wsl-bridge",
-      },
-      linux: {
-        detect: async (ctx) => fs.existsSync(`${ctx.homedir}/.cursor`),
-        config: (ctx) => `${ctx.homedir}/.cursor/mcp.json`,
-        skills: (ctx) => `${ctx.homedir}/.cursor/skills`,
-        agents: (ctx) => `${ctx.homedir}/.cursor/agents`,
-        template: (ctx) => `${ctx.homedir}/.cursor/rules/kanon.mdc`,
-        mcpMode: "direct",
-      },
+      darwin: CURSOR_DIRECT_PATHS,
+      linux: CURSOR_DIRECT_PATHS,
+      win32: CURSOR_DIRECT_PATHS,
+      wsl: CURSOR_WSL_PATHS,
     },
   },
 
@@ -312,4 +312,42 @@ export async function detectTools(
  */
 export function getToolByName(name: string): ToolDefinition | undefined {
   return toolRegistry.find((t) => t.name === name);
+}
+
+/** Cursor remains one tool while WSL installs its Windows IDE and Linux CLI homes. */
+export function resolveToolTargets(
+  tool: ToolDefinition,
+  ctx: PlatformContext,
+): PlatformPaths[] {
+  const paths = tool.platforms[ctx.platform];
+  if (!paths) return [];
+  if (
+    tool.name === "cursor" &&
+    ctx.platform === "wsl" &&
+    ctx.winHome &&
+    fs.existsSync(path.join(ctx.winHome, ".cursor"))
+  ) {
+    return [paths, CURSOR_WSL_WINDOWS_PATHS];
+  }
+  return [paths];
+}
+
+export function resolveToolLegacyConfigPaths(
+  tool: ToolDefinition,
+  ctx: PlatformContext,
+): string[] {
+  if (tool.name !== "cursor" || ctx.platform !== "win32" || !ctx.appDataDir) {
+    return [];
+  }
+  return [path.join(ctx.appDataDir, "Cursor", "User", "mcp.json")];
+}
+
+export function resolveToolLegacyRulePaths(
+  tool: ToolDefinition,
+  ctx: PlatformContext,
+): string[] {
+  if (tool.name !== "cursor") return [];
+  return resolveToolTargets(tool, ctx).map((target) =>
+    path.join(path.dirname(target.config(ctx)), "rules", "kanon.mdc"),
+  );
 }

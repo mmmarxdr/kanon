@@ -13,6 +13,7 @@
 # ── Pinned tarball layout (--strip-components=1 yields under ~/.kanon/mcp) ────
 #   kanon-mcp-<VERSION>/
 #     setup/dist/index.js        (esbuild-bundled setup entry)
+#     setup/package.json         (setup version source)
 #     setup/assets/              (copied verbatim — skills/agents/templates/workflows)
 #     mcp/dist/index.js          (esbuild-bundled MCP server)
 #     mcp/dist/wrapper-cli.js    (esbuild-bundled wrapper bin)
@@ -44,13 +45,19 @@ abort() {
 # ─── Version ──────────────────────────────────────────────────────────────────
 
 VERSION="${1:-}"
+MCP_PACKAGE_VERSION="$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('$REPO_ROOT/packages/mcp/package.json','utf8')).version)")"
+SETUP_PACKAGE_VERSION="$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('$REPO_ROOT/packages/setup/package.json','utf8')).version)")"
 if [ -z "$VERSION" ]; then
   # Extract version from packages/mcp/package.json
   if command -v node >/dev/null 2>&1; then
-    VERSION="$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('$REPO_ROOT/packages/mcp/package.json','utf8')).version)")"
+    VERSION="$MCP_PACKAGE_VERSION"
   else
     abort "node not found; pass VERSION as first argument"
   fi
+fi
+
+if [ "$VERSION" != "$MCP_PACKAGE_VERSION" ] || [ "$VERSION" != "$SETUP_PACKAGE_VERSION" ]; then
+  abort "version $VERSION must match MCP ($MCP_PACKAGE_VERSION) and setup ($SETUP_PACKAGE_VERSION) package versions"
 fi
 
 info "building release tarball for kanon-mcp v${VERSION}"
@@ -84,6 +91,10 @@ fi
 # works at runtime. esbuild's own shim uses __require, not bare require, so
 # there is no collision. import.meta.url continues to work in ESM output.
 CJS_COMPAT_BANNER='import { createRequire } from "node:module"; const require = createRequire(import.meta.url);'
+
+info "building MCP and setup from source..."
+pnpm --filter @kanon/mcp build
+pnpm --filter @kanon-pm/setup build
 
 # ─── Stage directory ─────────────────────────────────────────────────────────
 
@@ -145,6 +156,7 @@ if [ ! -d "$SETUP_ASSETS" ]; then
   abort "setup/assets not found at $SETUP_ASSETS — run: pnpm --filter @kanon-pm/setup build first (runs copy-assets.sh)"
 fi
 cp -r "$SETUP_ASSETS" "$STAGE/setup/assets"
+cp "$REPO_ROOT/packages/setup/package.json" "$STAGE/setup/package.json"
 
 # ─── Copy: mcp/package.json → mcp/package.json ──────────────────────────────
 # version.ts single-sources the server version from ../package.json at runtime
@@ -195,7 +207,15 @@ info "created: $SHA256_FILE"
 
 info "boot smoke: extracting tarball to temp dir..."
 SMOKE_DIR="$(mktemp -d)"
-trap 'rm -rf "$SMOKE_DIR"' EXIT
+SMOKE_SERVER_PID=""
+cleanup_smoke() {
+  if [ -n "$SMOKE_SERVER_PID" ]; then
+    kill "$SMOKE_SERVER_PID" 2>/dev/null || true
+    wait "$SMOKE_SERVER_PID" 2>/dev/null || true
+  fi
+  rm -rf "$SMOKE_DIR"
+}
+trap cleanup_smoke EXIT
 tar -xzf "$OUTPUT_DIR/$ASSET_NAME" -C "$SMOKE_DIR" --strip-components=1
 
 info "boot smoke: starting bundled MCP server..."
@@ -224,6 +244,70 @@ if [ "$BOOT_OK" != true ]; then
 fi
 info "boot smoke: OK — bundled server announced 'Kanon MCP ${VERSION}'"
 
+info "setup smoke: checking packaged setup version..."
+PACKAGED_SETUP_VERSION="$(node "$SMOKE_DIR/setup/dist/index.js" --version)"
+if [ "$PACKAGED_SETUP_VERSION" != "$VERSION" ]; then
+  abort "packaged setup reported $PACKAGED_SETUP_VERSION, expected $VERSION"
+fi
+
+info "tool parity smoke: comparing source build and packaged runtime..."
+TOOL_LIST_SCRIPT="$REPO_ROOT/packages/mcp/scripts/list-tools.mjs"
+SOURCE_TOOLS="$(node "$TOOL_LIST_SCRIPT" "$REPO_ROOT/packages/mcp/dist/index.js")"
+PACKAGED_TOOLS="$(node "$TOOL_LIST_SCRIPT" "$SMOKE_DIR/mcp/dist/index.js")"
+if [ "$SOURCE_TOOLS" != "$PACKAGED_TOOLS" ]; then
+  echo "source:   $SOURCE_TOOLS" >&2
+  echo "packaged: $PACKAGED_TOOLS" >&2
+  abort "source and packaged MCP tool lists differ"
+fi
+TOOL_COUNT="$(node -e 'process.stdout.write(String(JSON.parse(process.argv[1]).length))' "$PACKAGED_TOOLS")"
+info "tool parity smoke: OK — ${TOOL_COUNT} tools match"
+
+info "onboarding smoke: running packaged setup against a local invite..."
+SMOKE_HOME="$SMOKE_DIR/home"
+PORT_FILE="$SMOKE_DIR/onboard-port"
+mkdir -p "$SMOKE_HOME/.cursor"
+node "$REPO_ROOT/scripts/onboarding-smoke-server.mjs" "$PORT_FILE" &
+SMOKE_SERVER_PID=$!
+for _ in $(seq 1 40); do
+  [ -s "$PORT_FILE" ] && break
+  kill -0 "$SMOKE_SERVER_PID" 2>/dev/null || abort "onboarding smoke server exited early"
+  sleep 0.1
+done
+[ -s "$PORT_FILE" ] || abort "onboarding smoke server did not publish a port"
+SMOKE_PORT="$(cat "$PORT_FILE")"
+HOME="$SMOKE_HOME" \
+KANON_INSTALL_DIR="$SMOKE_DIR" \
+KANON_ONBOARD_LINK="kanon://127.0.0.1:${SMOKE_PORT}/onboard?token=release.smoke.token.123456" \
+  node "$SMOKE_DIR/setup/dist/index.js" >"$SMOKE_DIR/onboard.log"
+kill "$SMOKE_SERVER_PID" 2>/dev/null || true
+wait "$SMOKE_SERVER_PID" 2>/dev/null || true
+SMOKE_SERVER_PID=""
+
+node - "$SMOKE_HOME" "$SMOKE_DIR" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const [home, installDir] = process.argv.slice(2);
+const config = JSON.parse(fs.readFileSync(path.join(home, ".cursor", "mcp.json"), "utf8"));
+const entry = config.mcpServers?.["kanon-mcp"];
+if (entry?.type !== "stdio") throw new Error("packaged onboarding did not install Cursor stdio MCP");
+if (entry.args?.[0] !== path.join(installDir, "mcp", "dist", "wrapper-cli.js")) {
+  throw new Error("packaged onboarding did not use the release wrapper");
+}
+if (entry.env?.KANON_CLIENT_IDENTITY !== "cursor" || !entry.env?.KANON_WORKSPACE_ID) {
+  throw new Error("packaged onboarding omitted Cursor identity or workspace");
+}
+for (const skill of ["kanon-agent", "kanon-init", "kanon-onboard"]) {
+  if (!fs.existsSync(path.join(home, ".cursor", "skills", skill, "SKILL.md"))) {
+    throw new Error(`packaged onboarding omitted ${skill}`);
+  }
+}
+const agent = fs.readFileSync(path.join(home, ".cursor", "agents", "kanon.md"), "utf8");
+if (agent.includes("allowed-tools") || agent.includes("\nmodel:")) {
+  throw new Error("packaged Cursor agent contains host-incompatible frontmatter");
+}
+NODE
+info "onboarding smoke: OK — packaged MCP, skills, and Cursor agent installed"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 
 echo ""
@@ -233,4 +317,4 @@ info "  SHA256  : $OUTPUT_DIR/${ASSET_NAME}.sha256"
 info "  Hash    : $HASH_VALUE"
 echo ""
 info "To test locally:"
-info "  KANON_INSTALL_BASE_URL=file://$OUTPUT_DIR KANON_INSTALL_DIR=/tmp/kanon-test KANON_INSTALL_SKIP_SETUP=1 bash install.sh"
+info "  KANON_INSTALL_BASE_URL=file://$OUTPUT_DIR KANON_INSTALL_DIR=/tmp/kanon-test KANON_INSTALL_SKIP_SETUP=1 KANON_INSTALL_ALLOW_UNPINNED_LOCAL=1 bash install.sh"

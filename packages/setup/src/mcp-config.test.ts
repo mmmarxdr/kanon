@@ -89,4 +89,24 @@ describe("buildWrapperMcpEntry includes canonicalized --server arg", () => {
     const serverArg = entry.args[serverIdx + 1];
     expect(serverArg).toBe("https://server.example.com");
   });
+
+  it("wrapper entry carries Cursor identity and workspace through wsl env", () => {
+    const entry = buildWrapperMcpEntry(
+      "https://server.example.com/",
+      "wsl-bridge",
+      "/usr/bin/node",
+      { mode: "local", path: "/release/mcp/dist/wrapper-cli.js" },
+      "workspace-1",
+      "cursor",
+    );
+    expect(entry.args).toEqual([
+      "env",
+      "KANON_CLIENT_IDENTITY=cursor",
+      "KANON_WORKSPACE_ID=workspace-1",
+      "/usr/bin/node",
+      "/release/mcp/dist/wrapper-cli.js",
+      "--server",
+      "https://server.example.com",
+    ]);
+  });
 });
