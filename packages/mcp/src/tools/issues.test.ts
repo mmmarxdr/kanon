@@ -357,7 +357,8 @@ describe("transition_issue — RECONCILIATION_REQUIRED surfacing (KAN-188)", () 
     const parsed = JSON.parse(result.content[0]!.text);
     expect(parsed.code).toBe("RECONCILIATION_REQUIRED");
     expect(parsed.error).toMatch(/5 hours/i);
-    expect(parsed.error).toMatch(/reconcile_time/);
+    expect(parsed.error).toMatch(/\breconcile_time\b/);
+    expect(parsed.error).not.toContain("kanon_reconcile_time");
     expect(mockClient.transitionIssue).toHaveBeenCalledTimes(1);
   });
 
@@ -411,7 +412,8 @@ describe("transition_issue — RECONCILIATION_REQUIRED surfacing (KAN-188)", () 
 
     const parsed = JSON.parse(result.content[0]!.text);
     expect(parsed.error).toMatch(/5 hours were reported/);
-    expect(parsed.error).toMatch(/reconcile_time/);
+    expect(parsed.error).toMatch(/\breconcile_time\b/);
+    expect(parsed.error).not.toContain("kanon_reconcile_time");
   });
 
   it("falls back to a generic message with no interpolated hours when details is undefined", async () => {
@@ -428,7 +430,8 @@ describe("transition_issue — RECONCILIATION_REQUIRED surfacing (KAN-188)", () 
     const parsed = JSON.parse(result.content[0]!.text);
     expect(parsed.error).not.toMatch(/undefined/);
     expect(parsed.error).toMatch(/unconfirmed reported time/i);
-    expect(parsed.error).toMatch(/reconcile_time/);
+    expect(parsed.error).toMatch(/\breconcile_time\b/);
+    expect(parsed.error).not.toContain("kanon_reconcile_time");
   });
 
   it("falls back to a generic message with no interpolated hours when totalHours is missing or non-numeric", async () => {

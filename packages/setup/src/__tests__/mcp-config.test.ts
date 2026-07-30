@@ -186,6 +186,13 @@ describe("mcp-config", () => {
       const removed = removeConfig(configPath, "mcpServers");
       expect(removed).toBe(false);
     });
+
+    it("should return false when the JSON server map is not an object", () => {
+      const configPath = path.join(tmpDir, "mcp.json");
+      fs.writeFileSync(configPath, JSON.stringify({ mcpServers: "invalid" }));
+
+      expect(removeConfig(configPath, "mcpServers")).toBe(false);
+    });
   });
 
   describe("extractExistingAuth", () => {
@@ -875,6 +882,13 @@ command = "other"
 args = ["run"]
 `,
       );
+
+      expect(removeTomlMcpConfig(configPath, "kanon")).toBe(false);
+    });
+
+    it("returns false when the TOML server map is not an object", () => {
+      const configPath = path.join(tmpDir, "config.toml");
+      fs.writeFileSync(configPath, 'mcp_servers = "invalid"\n');
 
       expect(removeTomlMcpConfig(configPath, "kanon")).toBe(false);
     });

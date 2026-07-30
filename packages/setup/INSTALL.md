@@ -38,7 +38,7 @@ When prompted, paste your `kanon://` onboarding link. Press Enter to skip and ru
 
 ## Pinned version + tamper-resistance
 
-The installer always fetches an exact version (`0.9.0`) — never `latest`.
+The installer always fetches an exact version (`0.11.0`) — never `latest`.
 
 **How tamper-resistance works (hash-in-tag):**
 

@@ -232,7 +232,7 @@ export function removeTomlMcpConfig(
   }
 
   const servers = config["mcp_servers"] as Record<string, unknown> | undefined;
-  if (!servers) {
+  if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
     return false;
   }
 
@@ -350,7 +350,7 @@ export function removeConfig(configPath: string, rootKey: string): boolean {
   }
 
   const servers = config[rootKey] as Record<string, unknown> | undefined;
-  if (!servers) {
+  if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
     return false;
   }
 
