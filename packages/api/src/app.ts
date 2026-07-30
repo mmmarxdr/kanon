@@ -51,6 +51,7 @@ import { registerForecastListener } from "./modules/forecast/index.js";
 import { registerTransitionListener } from "./modules/work-session/transition-listener.js";
 import { scanIntegrationWork } from "./modules/integrations/outbox.js";
 import { startIntegrationScheduler } from "./modules/integrations/scheduler.js";
+import integrationRoutes from "./modules/integrations/routes.js";
 
 export interface BuildAppOptions {
   /** Optional override for the email provider (useful for testing with a spy). */
@@ -254,6 +255,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(publicInviteRoutes, { prefix: "/api/invites" });
   await app.register(projectMemberRoutes, { prefix: "/api/projects/:key/members" });
   await app.register(instanceRoutes, { prefix: "/api/instance" });
+  await app.register(integrationRoutes, { prefix: "/api/integrations" });
 
   // ─── Instance Setup Token (first-boot onReady hook) ───────────────────
   app.addHook("onReady", async () => {
