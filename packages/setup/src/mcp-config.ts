@@ -104,10 +104,73 @@ function parseTomlConfigFile(configPath: string): Record<string, unknown> {
   try {
     return parse(content) as Record<string, unknown>;
   } catch (err) {
+    try {
+      const legacy = JSON.parse(content) as unknown;
+      if (!legacy || typeof legacy !== "object" || Array.isArray(legacy)) {
+        throw new Error("not an object");
+      }
+      const backupPath = `${configPath}.kanon-legacy-json.bak`;
+      if (!fs.existsSync(backupPath)) {
+        fs.copyFileSync(configPath, backupPath);
+      }
+      return legacy as Record<string, unknown>;
+    } catch {
+      // Preserve the original TOML error because it is more actionable here.
+    }
     throw new Error(
       `Invalid TOML in ${configPath}: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+}
+
+export type ToolConfigState = "configured" | "legacy" | "unconfigured" | "invalid";
+
+/** Inspect a tool config without modifying it, for interactive selection defaults. */
+export function inspectToolMcpConfig(
+  configPath: string,
+  tool: Pick<ToolDefinition, "rootKey" | "configFormat">,
+): ToolConfigState {
+  let content: string;
+  try {
+    content = fs.readFileSync(configPath, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return "unconfigured";
+    return "invalid";
+  }
+
+  let config: Record<string, unknown>;
+  if (tool.configFormat === "toml") {
+    try {
+      config = parse(content) as Record<string, unknown>;
+    } catch {
+      try {
+        const legacy = JSON.parse(content) as unknown;
+        return legacy && typeof legacy === "object" && !Array.isArray(legacy)
+          ? "legacy"
+          : "invalid";
+      } catch {
+        return "invalid";
+      }
+    }
+  } else {
+    try {
+      const parsedJson = JSON.parse(content) as unknown;
+      if (!parsedJson || typeof parsedJson !== "object" || Array.isArray(parsedJson)) {
+        return "invalid";
+      }
+      config = parsedJson as Record<string, unknown>;
+    } catch {
+      return "invalid";
+    }
+  }
+
+  const servers = config[tool.rootKey];
+  if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
+    return "unconfigured";
+  }
+  return "kanon-mcp" in servers || "kanon" in servers
+    ? "configured"
+    : "unconfigured";
 }
 
 /**
@@ -678,7 +741,12 @@ export function extractExistingWorkspaceId(
   if (configFormat === "toml") {
     try {
       const content = fs.readFileSync(configPath, "utf8");
-      const config = parse(content) as Record<string, unknown>;
+      let config: Record<string, unknown>;
+      try {
+        config = parse(content) as Record<string, unknown>;
+      } catch {
+        config = JSON.parse(content) as Record<string, unknown>;
+      }
       const servers = config[rootKey] as Record<string, unknown> | undefined;
       if (!servers) return undefined;
 

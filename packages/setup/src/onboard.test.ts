@@ -334,4 +334,33 @@ describe("onboardFromLink()", () => {
       fs.rmSync(home, { recursive: true, force: true });
     }
   });
+
+  it("isolates an invalid selected tool after configuring the others", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-onboard-isolation-"));
+    const assetsDir = path.join(home, "assets");
+    try {
+      fs.mkdirSync(path.join(assetsDir, "skills"), { recursive: true });
+      fs.mkdirSync(path.join(home, ".codex"), { recursive: true });
+      fs.writeFileSync(path.join(home, ".codex", "config.toml"), "not = valid = toml");
+
+      const installed = await installOnboardedTools(
+        "https://server.example.com",
+        "workspace-1",
+        {
+          ctx: { platform: "linux", homedir: home },
+          tools: [getToolByName("cursor")!, getToolByName("codex")!],
+          assetsDir,
+          nodeBin: "/usr/bin/node",
+          wrapperResolution: { mode: "local", path: "/release/mcp/dist/wrapper-cli.js" },
+        },
+      );
+
+      expect(installed[0]?.name).toBe("cursor");
+      expect(installed[0]?.error).toBeUndefined();
+      expect(installed[1]).toMatchObject({ name: "codex", error: expect.stringMatching(/Invalid TOML/) });
+      expect(fs.existsSync(path.join(home, ".cursor", "mcp.json"))).toBe(true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
 });

@@ -23,6 +23,7 @@ import {
 import { canonicalizeApiUrl } from "./canonical-url.js";
 import { getAssetsDir, installToolSurface } from "./tool-surface.js";
 import type { PlatformContext, ToolDefinition } from "./types.js";
+import { selectTools } from "./tool-selection.js";
 
 export interface OnboardedTool {
   /** Tool registry name (e.g. "claude-code", "cursor"). */
@@ -31,6 +32,8 @@ export interface OnboardedTool {
   displayName: string;
   /** Paths to every config target updated for this user-facing tool. */
   configPaths: string[];
+  /** Present when this tool failed without blocking the remaining selections. */
+  error?: string;
 }
 
 export interface OnboardDeps {
@@ -53,35 +56,57 @@ export async function installOnboardedTools(
     assetsDir?: string;
     nodeBin?: string;
     wrapperResolution?: McpResolution;
+    isInteractive?: boolean;
+    promptTools?: (choices: Array<{ name: string; value: string; checked: boolean }>) => Promise<string[]>;
   } = {},
 ): Promise<OnboardedTool[]> {
   const ctx = deps.ctx ?? await buildPlatformContext();
-  const tools = deps.tools ?? await detectTools(ctx);
+  const detected = deps.tools ?? await detectTools(ctx);
+  const tools = deps.tools ?? (
+    detected.length === 0
+      ? []
+      : await selectTools(
+          detected,
+          {},
+          deps.isInteractive ?? !!process.stdin.isTTY,
+          ctx,
+          { promptTools: deps.promptTools },
+        )
+  );
   const nodeBin = deps.nodeBin ?? resolveNodeBin();
   const assetsDir = deps.assetsDir ?? getAssetsDir();
   const wrapperResolution = deps.wrapperResolution ?? resolveWrapperPath();
   const written: OnboardedTool[] = [];
 
   for (const tool of tools) {
-    const targets = installToolSurface({
-      tool,
-      ctx,
-      assetsDir,
-      buildEntry: (target) => buildWrapperMcpEntry(
-        apiUrl,
-        target.mcpMode,
-        nodeBin,
-        wrapperResolution,
-        workspaceId,
-        tool.clientIdentity,
-      ),
-    });
+    try {
+      const targets = installToolSurface({
+        tool,
+        ctx,
+        assetsDir,
+        buildEntry: (target) => buildWrapperMcpEntry(
+          apiUrl,
+          target.mcpMode,
+          nodeBin,
+          wrapperResolution,
+          workspaceId,
+          tool.clientIdentity,
+        ),
+      });
 
-    written.push({
-      name: tool.name,
-      displayName: tool.displayName,
-      configPaths: targets.map((target) => target.configPath),
-    });
+      written.push({
+        name: tool.name,
+        displayName: tool.displayName,
+        configPaths: targets.map((target) => target.configPath),
+      });
+    } catch (err) {
+      written.push({
+        name: tool.name,
+        displayName: tool.displayName,
+        configPaths: [],
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   return written;
@@ -248,9 +273,20 @@ export async function onboardFromLink(
     return;
   }
 
-  stdout.write(`✓ Configured ${registered.length} tool(s):\n`);
-  for (const tool of registered) {
+  const configured = registered.filter((tool) => !tool.error);
+  const failed = registered.filter((tool) => tool.error);
+
+  if (configured.length > 0) {
+    stdout.write(`✓ Configured ${configured.length} tool(s):\n`);
+  }
+  for (const tool of configured) {
     stdout.write(`  - ${tool.displayName} (${tool.configPaths.join(", ")})\n`);
+  }
+  for (const tool of failed) {
+    stdout.write(`⚠  ${tool.displayName} was not configured: ${tool.error}\n`);
+  }
+  if (failed.length > 0) {
+    throw new Error(`${failed.length} selected tool(s) could not be configured`);
   }
   stdout.write("\nRestart your AI coding tool(s) to pick up the new configuration.\n");
 }

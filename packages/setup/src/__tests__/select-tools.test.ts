@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, it, expect, vi } from "vitest";
 import type { ToolDefinition, PlatformContext } from "../types.js";
 
 // Import after module is available
@@ -177,8 +180,8 @@ describe("selectTools", () => {
       );
 
       expect(promptTools).toHaveBeenCalledWith([
-        { name: "Claude Code", value: "claude-code", checked: true },
-        { name: "Cursor", value: "cursor", checked: true },
+        { name: "Claude Code", value: "claude-code", checked: false },
+        { name: "Cursor", value: "cursor", checked: false },
       ]);
       expect(result).toHaveLength(1);
       expect(result[0].name).toBe("cursor");
@@ -196,6 +199,52 @@ describe("selectTools", () => {
       );
 
       expect(result).toHaveLength(2);
+    });
+
+    it("preselects an existing Kanon integration", async () => {
+      const homedir = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-selection-"));
+      try {
+        const configured = makeTool("configured", "Configured Tool");
+        const configuredCtx = { ...ctx, homedir };
+        const configPath = configured.platforms.linux!.config(configuredCtx);
+        fs.mkdirSync(path.dirname(configPath), { recursive: true });
+        fs.writeFileSync(configPath, JSON.stringify({ mcpServers: { "kanon-mcp": {} } }));
+        const promptTools = vi.fn().mockResolvedValue(["configured"]);
+
+        await selectTools([configured], {}, true, configuredCtx, { promptTools });
+
+        expect(promptTools).toHaveBeenCalledWith([
+          { name: "Configured Tool (already configured)", value: "configured", checked: true },
+        ]);
+      } finally {
+        fs.rmSync(homedir, { recursive: true, force: true });
+      }
+    });
+
+    it("labels a legacy JSON Codex config as repairable", async () => {
+      const homedir = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-selection-"));
+      try {
+        const codex = makeTool("legacy-codex", "Codex CLI");
+        codex.rootKey = "mcp_servers";
+        codex.configFormat = "toml";
+        const legacyCtx = { ...ctx, homedir };
+        const configPath = codex.platforms.linux!.config(legacyCtx);
+        fs.mkdirSync(path.dirname(configPath), { recursive: true });
+        fs.writeFileSync(configPath, JSON.stringify({ mcp_servers: { "kanon-mcp": {} } }));
+        const promptTools = vi.fn().mockResolvedValue(["legacy-codex"]);
+
+        await selectTools([codex], {}, true, legacyCtx, { promptTools });
+
+        expect(promptTools).toHaveBeenCalledWith([
+          {
+            name: "Codex CLI (legacy config will be repaired)",
+            value: "legacy-codex",
+            checked: false,
+          },
+        ]);
+      } finally {
+        fs.rmSync(homedir, { recursive: true, force: true });
+      }
     });
 
     it("should exit when user deselects all tools", async () => {
