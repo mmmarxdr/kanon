@@ -4,18 +4,95 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (e.g. 0.4.0). Must match @kanon/mcp package version."
+        description: "Version to release. Must match MCP and setup package versions."
         required: true
         type: string
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-mcp-v${{ inputs.version }}
+  cancel-in-progress: false
+
 jobs:
+  windows-installer:
+    name: Verify native Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ inputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Exercise install.ps1 fixture, idempotency, and repair
+        shell: pwsh
+        run: |
+          if ($env:VERSION -notmatch '^\d+\.\d+\.\d+$') {
+            throw "invalid release version: $env:VERSION"
+          }
+          $FixtureDir = Join-Path $env:RUNNER_TEMP "kanon-fixture"
+          $PackageRoot = Join-Path $FixtureDir "package\kanon-mcp-$env:VERSION"
+          $InstallDir = Join-Path $env:RUNNER_TEMP "kanon-install"
+          New-Item (Join-Path $PackageRoot "setup\dist") -ItemType Directory -Force | Out-Null
+          New-Item (Join-Path $PackageRoot "mcp\dist") -ItemType Directory -Force | Out-Null
+          Set-Content (Join-Path $PackageRoot "setup\dist\index.js") "process.exit(0);"
+          Set-Content (Join-Path $PackageRoot "mcp\dist\index.js") "// mcp"
+          Set-Content (Join-Path $PackageRoot "mcp\dist\wrapper-cli.js") "// wrapper"
+
+          $AssetName = "kanon-mcp-$env:VERSION.tar.gz"
+          $Archive = Join-Path $FixtureDir $AssetName
+          Push-Location (Join-Path $FixtureDir "package")
+          try {
+            & tar.exe -czf $Archive "kanon-mcp-$env:VERSION"
+            if ($LASTEXITCODE -ne 0) { throw "fixture tar failed" }
+          } finally {
+            Pop-Location
+          }
+          $Hash = (Get-FileHash -Algorithm SHA256 $Archive).Hash.ToLowerInvariant()
+          Set-Content "$Archive.sha256" "$Hash  $AssetName"
+
+          $env:KANON_INSTALL_BASE_URL = ([Uri]::new((Resolve-Path $FixtureDir).Path + "\")).AbsoluteUri.TrimEnd("/")
+          $env:KANON_INSTALL_DIR = $InstallDir
+          $env:KANON_INSTALL_SKIP_SETUP = "1"
+          $env:KANON_INSTALL_ALLOW_UNPINNED_LOCAL = "1"
+
+          & .\install.ps1
+          if ((Get-Content (Join-Path $InstallDir "version") -Raw).Trim() -ne $env:VERSION) {
+            throw "version marker mismatch"
+          }
+          foreach ($Relative in @("setup\dist\index.js", "mcp\dist\index.js", "mcp\dist\wrapper-cli.js")) {
+            if (-not (Test-Path (Join-Path $InstallDir $Relative) -PathType Leaf)) {
+              throw "missing installed file: $Relative"
+            }
+          }
+
+          $IdempotentOutput = (& .\install.ps1 6>&1 | Out-String)
+          if ($IdempotentOutput -notmatch "already installed") {
+            throw "idempotent run did not skip download"
+          }
+
+          Remove-Item (Join-Path $InstallDir "mcp\dist\wrapper-cli.js")
+          $WrapperRepairOutput = (& .\install.ps1 6>&1 | Out-String)
+          if ($WrapperRepairOutput -match "already installed" -or
+              -not (Test-Path (Join-Path $InstallDir "mcp\dist\wrapper-cli.js"))) {
+            throw "missing wrapper did not force a clean reinstall"
+          }
+
+          Remove-Item (Join-Path $InstallDir "mcp\dist\index.js")
+          $McpRepairOutput = (& .\install.ps1 6>&1 | Out-String)
+          if ($McpRepairOutput -match "already installed" -or
+              -not (Test-Path (Join-Path $InstallDir "mcp\dist\index.js"))) {
+            throw "missing MCP did not force a clean reinstall"
+          }
+
   release:
     name: Build + Publish Release
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: windows-installer
 
     # F4: pass inputs.version through env once; all steps reference $VERSION (quoted).
     # This prevents shell injection from a version string containing shell metacharacters.
@@ -54,9 +131,22 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # ── Build setup assets first (copy-assets.sh populates packages/setup/assets) ──
-      - name: Build setup assets
-        run: pnpm --filter @kanon-pm/setup run prebuild
+      - name: Validate package versions
+        run: |
+          MCP_VERSION="$(node -p "require('./packages/mcp/package.json').version")"
+          SETUP_VERSION="$(node -p "require('./packages/setup/package.json').version")"
+          test "$VERSION" = "$MCP_VERSION" || { echo "MCP version is $MCP_VERSION" >&2; exit 1; }
+          test "$VERSION" = "$SETUP_VERSION" || { echo "setup version is $SETUP_VERSION" >&2; exit 1; }
+
+      - name: Test MCP and setup
+        run: |
+          pnpm --filter @kanon/mcp test
+          pnpm --filter @kanon-pm/setup test
+
+      - name: Build MCP and setup
+        run: |
+          pnpm --filter @kanon/mcp build
+          pnpm --filter @kanon-pm/setup build
 
       # ── Bundle + package the release tarball ─────────────────────────────────
       - name: Build release tarball
@@ -75,14 +165,14 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      # ── Stamp install.sh (tag-only commit — NOT pushed to main) ──────────────
+      # ── Stamp both installers (tag-only commit — NOT pushed to main) ─────────
       # F1: sed pattern matches any current value (empty OR non-empty) so re-runs
       #     are idempotent and never produce "nothing to commit".
       # F2: also stamps KANON_MCP_VERSION so the tag's install.sh downloads the
       #     correct asset, not the hardcoded 0.4.0.
       # F3: changes land on a detached HEAD commit — only the tag is pushed.
       #     main stays floating with EXPECTED_SHA256="" (correct model).
-      - name: Stamp install.sh and create tag commit
+      - name: Stamp installers and create tag commit
         env:
           HASH: ${{ steps.sha256.outputs.hash }}
         run: |
@@ -94,49 +184,99 @@ jobs:
 
           # F2: stamp the version so the script downloads the right tarball.
           sed -i 's|^KANON_MCP_VERSION="[^"]*"|KANON_MCP_VERSION="'"$VERSION"'"|' install.sh
+          sed -i 's|^\$EXPECTED_SHA256 = "[^"]*"|$EXPECTED_SHA256 = "'"$HASH"'"|' install.ps1
+          sed -i 's|^\$KANON_MCP_VERSION = "[^"]*"|$KANON_MCP_VERSION = "'"$VERSION"'"|' install.ps1
 
           # Sanity-check both substitutions took effect.
           grep 'EXPECTED_SHA256=' install.sh
           grep 'KANON_MCP_VERSION=' install.sh
+          grep '^\$EXPECTED_SHA256 = ' install.ps1
+          grep '^\$KANON_MCP_VERSION = ' install.ps1
 
-          # Create an ephemeral commit carrying only the stamped install.sh.
-          git add install.sh
+          # Create an ephemeral commit carrying only the stamped installers.
+          git add install.sh install.ps1
           git commit -m "release: stamp mcp-v${VERSION} sha256 (tag-only, not on main)"
 
           # Tag at this exact commit (hash baked in; tag URL = tamper-resistant).
           git tag "mcp-v${VERSION}"
 
-      # ── Push ONLY the tag — never main ───────────────────────────────────────
-      # F3: explicit refspec; branch protection on main is not touched.
-      - name: Push tag
-        run: |
-          git push origin "refs/tags/mcp-v${VERSION}"
-
-      # ── Create GitHub Release with both assets in one atomic call ────────────
-      # Atomically uploads tarball + .sha256 so they are never visible separately.
-      # Tag already exists on the remote; gh attaches the release to it.
-      # On failure, clean up the remote tag so no dangling tag is left.
-      - name: Create GitHub Release
+      # Push the tag and publish assets under one cleanup boundary. Any failure,
+      # cancellation signal, or partial release removes both release and remote tag.
+      - name: Publish release and tag with rollback
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HASH: ${{ steps.sha256.outputs.hash }}
         run: |
-          gh release create "mcp-v${VERSION}" \
+          TAG="mcp-v${VERSION}"
+          tag_status=0
+          git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null || tag_status=$?
+          if [ "$tag_status" -eq 0 ]; then
+            echo "ERROR: remote tag '$TAG' already exists; refusing to modify it" >&2
+            exit 1
+          elif [ "$tag_status" -ne 2 ]; then
+            echo "ERROR: could not verify whether remote tag '$TAG' exists" >&2
+            exit "$tag_status"
+          fi
+
+          REPO_OWNER="${GITHUB_REPOSITORY%%/*}"
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          EXISTING_RELEASE="$(gh api graphql \
+            -f query='query($owner: String!, $name: String!, $tag: String!) { repository(owner: $owner, name: $name) { release(tagName: $tag) { tagName } } }' \
+            -f owner="$REPO_OWNER" -f name="$REPO_NAME" -f tag="$TAG" \
+            --jq '.data.repository.release.tagName // empty')"
+          if [ -n "$EXISTING_RELEASE" ]; then
+            echo "ERROR: release '$TAG' already exists; refusing to modify it" >&2
+            exit 1
+          fi
+
+          tag_pushed=false
+          release_created=false
+          cleanup() {
+            status="$1"
+            trap - ERR INT TERM EXIT
+            if [ "$release_created" = true ]; then
+              gh release delete "$TAG" --yes >/dev/null 2>&1 || true
+            fi
+            if [ "$tag_pushed" = true ]; then
+              git push origin --delete "refs/tags/$TAG" >/dev/null 2>&1 || true
+            fi
+            exit "$status"
+          }
+          trap 'cleanup $?' ERR
+          trap 'cleanup 130' INT
+          trap 'cleanup 143' TERM
+          trap 'cleanup $?' EXIT
+
+          git push origin "refs/tags/$TAG"
+          tag_pushed=true
+          # Mark ownership before creation so cleanup also covers the tiny window
+          # after GitHub creates the release but before the command returns.
+          release_created=true
+          gh release create "$TAG" \
+            --verify-tag \
             --title "Kanon MCP v${VERSION}" \
             --notes "$(cat <<'EOF'
           ## Kanon MCP v${{ inputs.version }}
 
           ### Installation
 
+          Unix, macOS, and WSL:
+
           ```bash
           bash -c "$(curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/mcp-v${{ inputs.version }}/install.sh)"
+          ```
+
+          Native Windows PowerShell:
+
+          ```powershell
+          irm https://raw.githubusercontent.com/${{ github.repository }}/mcp-v${{ inputs.version }}/install.ps1 | iex
           ```
 
           This command downloads and runs the pinned installer. The script is the trust root: the expected sha256 of the tarball is embedded directly in the script, so a compromised CDN cannot substitute a matching tarball+checksum pair.
 
           ### Tamper-resistance
 
-          `EXPECTED_SHA256` in `install.sh` is stamped at release time, then the script is committed to a tag-only detached commit. The tag URL always resolves to this exact script. `main` intentionally carries `EXPECTED_SHA256=""` (latest/floating — corruption detection only).
+          The expected SHA-256 in both installers is stamped at release time, then both scripts are committed to a tag-only detached commit. The tag URLs always resolve to these exact scripts. `main` intentionally carries an empty hash and refuses unpinned network installs.
 
           ### Assets
 
@@ -145,10 +285,9 @@ jobs:
           | `kanon-mcp-${{ inputs.version }}.tar.gz` | Release tarball (esbuild-bundled MCP server + setup) |
           | `kanon-mcp-${{ inputs.version }}.tar.gz.sha256` | SHA-256 checksum (`HASH  FILENAME` format) |
           EOF
-          )" \
+          )"
+          gh release upload "$TAG" \
             "dist/release/kanon-mcp-${VERSION}.tar.gz" \
-            "dist/release/kanon-mcp-${VERSION}.tar.gz.sha256" || {
-            echo "gh release create failed — cleaning up remote tag to avoid dangling ref" >&2
-            git push origin --delete "refs/tags/mcp-v${VERSION}" || true
-            exit 1
-          }
+            "dist/release/kanon-mcp-${VERSION}.tar.gz.sha256"
+
+          trap - ERR INT TERM EXIT

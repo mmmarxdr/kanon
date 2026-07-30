@@ -1,13 +1,13 @@
 ---
 name: kanon-onboard
-description: Team onboarding — invite teammates to a workspace, walk a new dev through `kanon-setup <kanon://link>`, and troubleshoot the resulting MCP wrapper config across Claude Code, Cursor, Antigravity, Antigravity CLI, OpenCode, and Codex CLI.
+description: Team onboarding — invite teammates, run the pinned Unix/WSL or Windows installer, and troubleshoot the resulting MCP, skills, and agent surfaces.
 version: 1.0.0
 tags: [kanon, onboarding, team, invite, mcp, wrapper, setup]
 ---
 
 # Kanon Onboarding — Team Invites & Per-Machine Setup
 
-Onboarding turns a fresh teammate into a working contributor: they receive a one-shot `kanon://` link from a workspace admin, run `kanon-setup`, and end up with credentials saved + a wrapper-mode MCP entry registered in every AI tool installed on their machine. The agent's job is to **guide both sides of that flow without inventing steps, recognize the small set of failure modes, and explain wrapper mode when the user is confused about where their key lives.**
+Onboarding turns a fresh teammate into a working contributor: they receive a one-shot `kanon://` link from a workspace admin, run a pinned tagged installer, and end up with credentials plus each detected tool's complete supported Kanon surface. The agent's job is to guide that real flow without inventing hooks or Cloud support.
 
 This skill does NOT cover initial project bootstrap (use `kanon-init` for that) or static-key MCP setup for solo developers (covered in `kanon-mcp` install docs).
 
@@ -24,7 +24,7 @@ This skill does NOT cover initial project bootstrap (use `kanon-init` for that) 
 | Role | What they do | What they need from us |
 |------|--------------|------------------------|
 | **Workspace admin** | Sends an invite from the Kanon UI; receives a `kanon://` link to forward | Confirm the workspace, surface the link, remind them links are single-use and time-bound |
-| **New teammate** | Receives the link; runs `kanon-setup <link>` on each machine they want connected | Walk them through one command, verify success output, restart hint |
+| **New teammate** | Receives the link; runs the tagged installer on each machine they want connected | Pick Unix/WSL or native Windows, verify success output, restart hint |
 
 **Single-use, time-bound.** Each invite token can be redeemed exactly once and expires. If the teammate has more than one machine, the admin must send a separate invite per machine — there is no "redeem on every machine" mode. Make this explicit; do NOT suggest copy-pasting the same link twice.
 
@@ -41,7 +41,15 @@ If the user asks "where is my API key?" the correct answer is: there isn't one �
 ## The Happy Path (teammate side)
 
 1. **Receive the link.** Format: `kanon://<host>[:port]/onboard?token=<jwt>`. Localhost resolves to `http://`; everything else resolves to `https://`.
-2. **Run** `kanon-setup <kanon://link>` on a machine where any supported AI tool is installed (Claude Code, Cursor, Antigravity IDE, Antigravity CLI, OpenCode, or Codex CLI).
+2. **Run the pinned installer** and paste the link when prompted:
+
+   Unix, macOS, or WSL:
+
+   `bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.10.0/install.sh)"`
+
+   Native Windows PowerShell:
+
+   `irm https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.10.0/install.ps1 | iex`
 3. **Read the success output** — three blocks in order:
    - `✓ Onboarded as <email>` + server URL + credentials path
    - `✓ Configured N tool(s):` + a per-tool line with the config file that was updated
@@ -71,8 +79,8 @@ The setup CLI exits non-zero with a specific message for each failure. Map the m
 | `Onboarding link has expired` (`TOKEN_EXPIRED`) | Past the invite TTL | Admin generates a new invite |
 | `This onboarding link has already been used` (`TOKEN_CONSUMED`) | Single-use token already redeemed | Admin generates a new invite — same one cannot be reused on a second machine |
 | `Network request failed — server unreachable` | Wrong server URL, server down, or VPN required | Verify the link's host, ping the server, check VPN |
-| `Unexpected response from server: …` | Server version mismatch (CLI expects a schema the server doesn't return) | Update `@kanon/setup` (`pnpm dlx @kanon/setup@latest …`) |
-| `Failed to save credentials` | Permission issue on `~/.kanon/credentials` | `chmod` the file, or `rm` it and re-run |
+| `Unexpected response from server: …` | Server/release schema mismatch | Re-run the current tagged GitHub release installer |
+| `Failed to save credentials` | POSIX permission or Windows `icacls` failure | Fix ownership/ACL and re-run the tagged installer |
 | `No supported AI tools detected on this machine.` | None of the supported tools have config dirs | Install at least one tool, then re-run `kanon-setup --tool <name>` |
 
 ### Codex CLI troubleshooting
@@ -124,7 +132,7 @@ CLI install does **not** write `settings.json`, `keybindings.json`, or `GEMINI.m
 Onboarding is per-machine because credentials live in `~/.kanon/credentials` and MCP configs live in each tool's user-level config. To onboard a second machine:
 
 1. Admin generates a **new** invite link.
-2. Teammate runs `kanon-setup <new-link>` on the second machine.
+2. Teammate runs the tagged installer and pastes the new link on the second machine.
 
 Re-running with the same `kanon://` link will fail with `TOKEN_CONSUMED`. There is no shared credential sync — the credentials file is intentionally local and never copied across machines.
 
@@ -151,17 +159,17 @@ The credential store and wrapper are designed so a single user can be onboarded 
 ### "I just got a link from my workspace admin — what do I do?"
 
 1. Confirm the link starts with `kanon://`. If not, ask the admin to resend (it's not the `https://` invite-page URL).
-2. Run `kanon-setup <full-link>` from a terminal. Quote the URL if your shell complains about the `?` or `&`.
+2. Run the pinned installer for Unix/WSL or native Windows and paste the link when prompted.
 3. Read the three success blocks. If any is missing, jump to Troubleshooting.
-4. Restart Claude Code / Cursor / Antigravity (whichever you use).
-5. Verify by asking your AI tool to run a Kanon command (e.g., "list my workspaces") — it should return your assigned workspace.
+4. Fully restart Claude Code / Cursor / Antigravity (whichever you use).
+5. For Cursor CLI, run `agent mcp list-tools kanon-mcp`; in the IDE check **Customize > MCP**. Then ask the agent to list your workspaces.
 
 ### "I'm a workspace admin — invite Maya to the workspace"
 
 1. Open Kanon UI → workspace settings → Members → Invite.
 2. Enter Maya's email + role.
 3. Copy the generated `kanon://` link.
-4. Forward to Maya privately. Tell her: it's single-use, expires in (whatever the UI says), and to run `kanon-setup <link>` after pasting.
+4. Forward to Maya privately. Tell her it is single-use, expires, and must be pasted into the pinned installer.
 5. If Maya works on multiple machines, send a fresh link per machine.
 
 ### "Maya says `kanon-setup` finished but Claude Code doesn't show kanon tools"
@@ -178,13 +186,18 @@ The credential store and wrapper are designed so a single user can be onboarded 
 2. Send the new link.
 3. (Optional) If this happens often, mention to the admin that invite TTL is configurable workspace-wide — they may want to extend it.
 
-### "Maya is on Windows and the wrapper doesn't start"
+### "Maya uses Windows Cursor IDE plus Cursor CLI in WSL"
 
-WSL bridge mode applies when the AI tool is Windows-native but Node lives in WSL. In that case the registered command is `wsl node <wrapper-path> --server <apiUrl>`. If the user reports the wrapper not starting:
+Run `install.sh` inside WSL. One Cursor selection writes the Windows IDE target
+under `<winHome>/.cursor/` with `wsl env ...` and the Cursor CLI target under
+`$HOME/.cursor/` with direct Node invocation. Both receive MCP, skills, and the
+same custom agent. If the Windows IDE wrapper does not start:
 
 1. From a WSL shell, run `which node` — record the path.
 2. From CMD/PowerShell, run `wsl node --version` — confirms WSL can invoke Node.
 3. Compare the path in the registered MCP entry's `args[0]` to `which node`. If they differ, re-run `kanon-setup` from inside WSL so it picks up the right node binary.
+
+For fully native Windows, use `install.ps1`; do not route it through WSL.
 
 ---
 

@@ -9,7 +9,7 @@ Available workflows:
 
 Available skills (auto-loaded when relevant):
 - kanon-agent — Issue management, board updates, roadmap capture, cycles, and SDD phase hooks (core + on-demand sections)
-- kanon-onboard — Team invites and `kanon-setup <kanon://link>` per machine
+- kanon-onboard — Team invites and pinned release onboarding per machine
 
 When creating issues:
 - Title format: `[Area] Verb phrase`

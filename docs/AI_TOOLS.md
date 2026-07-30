@@ -24,10 +24,16 @@ instance that issued it. Default lifetime is 72 hours
 
 ## 2. Run the installer
 
-On the machine where your AI tools live, run:
+On Linux, macOS, or WSL, run:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.8.0/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.10.0/install.sh)"
+```
+
+On native Windows PowerShell, run:
+
+```powershell
+irm https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.10.0/install.ps1 | iex
 ```
 
 > Use the **tagged** installer (`mcp-v<version>`), not `main`. The tagged script has
@@ -39,8 +45,11 @@ The installer:
 - Downloads the pinned `@kanon/mcp` release tarball.
 - Verifies its sha256 **before** extracting — on mismatch it aborts and writes
   nothing.
-- Installs to `~/.kanon/mcp` (idempotent: re-runs skip the download if the
-  pinned version is already present).
+- On Windows, downloads and extracts only inside current-user DACL-protected
+  directories, validates setup/MCP/wrapper, then replaces the installation with
+  backup/rollback rather than extracting over live files.
+- Installs to `~/.kanon/mcp`. Re-runs skip the download only when the version,
+  setup, MCP server, and wrapper are all present.
 - Prompts for your `kanon://` link, then runs setup.
 
 ## 3. Paste the link
@@ -55,8 +64,10 @@ paste the link from step 1. Setup then:
 
 - Exchanges the link's token for credentials and stores them in
   `~/.kanon/credentials`, keyed by the instance's API URL.
-- Detects your installed AI tools and patches each one's native config to add a
-  Kanon MCP server entry pointing at that instance.
+- Detects your installed AI tools and installs their complete supported Kanon
+  surface: MCP config, product skills, and custom agent where supported.
+- Stores refresh credentials at `~/.kanon/credentials` with POSIX permissions
+  on Unix or a protected DACL containing only the current Windows SID.
 
 Restart your AI tool and the `kanon_*` tools are live against your board.
 
@@ -65,11 +76,41 @@ Restart your AI tool and the `kanon_*` tools are live against your board.
 | Tool        | Platform              | Status    |
 | ----------- | --------------------- | --------- |
 | Claude Code | WSL2, Linux           | Supported |
-| Cursor      | Windows, WSL2, Linux  | Supported |
+| Cursor      | macOS, Linux, WSL2, Windows | Supported |
 | Antigravity | Windows, WSL2, Linux  | Supported |
 | Antigravity CLI | macOS, Linux, WSL2, Windows | Supported |
 | OpenCode    | macOS, Linux, WSL2    | Beta      |
 | Codex CLI   | macOS, Linux, WSL2, Windows | Supported |
+
+### Cursor IDE and CLI
+
+Cursor uses the documented global MCP config and user skill/agent directories:
+
+| Runtime | MCP config | Skills and agent |
+| ------- | ---------- | ---------------- |
+| Linux/macOS/native Windows | `~/.cursor/mcp.json` | `~/.cursor/skills/`, `~/.cursor/agents/kanon.md` |
+| Windows Cursor IDE configured from WSL | `<Windows home>/.cursor/mcp.json` | `<Windows home>/.cursor/skills/`, `<Windows home>/.cursor/agents/kanon.md` |
+| Cursor CLI running inside WSL | `$HOME/.cursor/mcp.json` | `$HOME/.cursor/skills/`, `$HOME/.cursor/agents/kanon.md` |
+
+One `--tool cursor` run always configures the local WSL CLI target first and
+adds the Windows IDE target only when `<Windows home>/.cursor` already exists.
+The Windows entry uses `wsl env ...`; the WSL CLI invokes the same installed
+release directly. During upgrades, a workspace ID found in either target is
+written to both. Native Windows setup migrates only `kanon-mcp` from the old
+`%APPDATA%/Cursor/User/mcp.json` and removes only the legacy
+`~/.cursor/rules/kanon.mdc`. Other servers and user rules are preserved. Setup
+does not install a new global rule or broad MCP allowlist.
+
+Fully quit and restart Cursor after setup. In Cursor CLI, verify the server and
+current tool set with:
+
+```bash
+agent mcp list
+agent mcp list-tools kanon-mcp
+```
+
+In the IDE, open **Customize > MCP**, confirm `kanon-mcp` is connected, then ask
+the agent to list your Kanon workspaces.
 
 ### Antigravity IDE vs Antigravity CLI
 
@@ -121,8 +162,11 @@ can run unattended (CI, provisioning scripts):
 
 ```bash
 echo "kanon://<your-host>/onboard?token=<jwt>" \
-  | bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.8.0/install.sh)"
+  | bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.10.0/install.sh)"
 ```
+
+Native Windows can set `$env:KANON_ONBOARD_LINK` before invoking the tagged
+PowerShell installer.
 
 Advanced overrides (test seams / pinned mirrors) are read from the environment:
 
@@ -132,6 +176,11 @@ Advanced overrides (test seams / pinned mirrors) are read from the environment:
 | `KANON_INSTALL_BASE_URL` | Override the release download base URL |
 | `KANON_REPO` | Override the GitHub `owner/repo` (default `mmmarxdr/kanon`) |
 | `KANON_INSTALL_SKIP_SETUP` | Set to `1` to install the MCP without running setup |
+| `KANON_INSTALL_ALLOW_UNPINNED_LOCAL` | Test-only: set to `1` with a local, non-UNC `file:` fixture when using the unstamped `main` installer |
+
+The unpinned local seam is only for repository tests. It rejects UNC paths,
+remote file authorities, and network URLs. Normal installation must always use
+the tagged script with its embedded hash.
 
 ## Troubleshooting
 
@@ -139,7 +188,7 @@ If a tool is not detected after install, check that:
 
 1. The tool is installed in its default path.
 2. You ran the installer from a shell with access to your home directory
-   (on Windows, prefer WSL2 for Claude Code).
+   (use PowerShell for native Windows or a WSL shell for WSL-hosted tools).
 3. The instance behind your `kanon://` link is reachable from this machine —
    the host in the link comes from the API's `BASE_URL`, so a `localhost` link
    only works on the same machine as the instance.

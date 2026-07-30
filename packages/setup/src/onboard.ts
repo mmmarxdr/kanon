@@ -6,7 +6,7 @@
  *   2. POST /api/auth/onboard with the JWT token
  *   3. Validate the response (refreshToken, apiUrl, email, workspace)
  *   4. Write credentials to the credential store
- *   5. Register the MCP entry in wrapper mode (no KANON_API_KEY)
+ *   5. Install each detected tool's complete supported product surface
  */
 
 import type { CredentialStore } from "./credential-store/index.js";
@@ -16,56 +16,71 @@ import { buildPlatformContext } from "./detect.js";
 import { detectTools } from "./registry.js";
 import {
   buildWrapperMcpEntry,
-  mergeConfig,
+  type McpResolution,
   resolveNodeBin,
+  resolveWrapperPath,
 } from "./mcp-config.js";
 import { canonicalizeApiUrl } from "./canonical-url.js";
+import { getAssetsDir, installToolSurface } from "./tool-surface.js";
+import type { PlatformContext, ToolDefinition } from "./types.js";
 
 export interface OnboardedTool {
   /** Tool registry name (e.g. "claude-code", "cursor"). */
   name: string;
   /** Display name (e.g. "Claude Code"). */
   displayName: string;
-  /** Path to the config file that was updated. */
-  configPath: string;
+  /** Paths to every config target updated for this user-facing tool. */
+  configPaths: string[];
 }
 
 export interface OnboardDeps {
   fetchFn?: typeof globalThis.fetch;
   credentialStore?: CredentialStore;
   /**
-   * Detect installed AI tools and write a wrapper-mode MCP entry into each.
-   * Production default uses `detectTools` + `mergeConfig`. Tests inject a mock.
+   * Detect installed AI tools and install every supported product surface.
    */
-  writeMcpEntries?: (apiUrl: string, workspaceId: string) => Promise<OnboardedTool[]>;
+  installToolSurfaces?: (apiUrl: string, workspaceId: string) => Promise<OnboardedTool[]>;
   /** Stdout sink for progress messages (defaults to process.stdout). */
   stdout?: { write: (s: string) => void };
 }
 
-async function defaultWriteMcpEntries(apiUrl: string, workspaceId: string): Promise<OnboardedTool[]> {
-  const ctx = await buildPlatformContext();
-  const tools = await detectTools(ctx);
-  const nodeBin = resolveNodeBin();
+export async function installOnboardedTools(
+  apiUrl: string,
+  workspaceId: string,
+  deps: {
+    ctx?: PlatformContext;
+    tools?: ToolDefinition[];
+    assetsDir?: string;
+    nodeBin?: string;
+    wrapperResolution?: McpResolution;
+  } = {},
+): Promise<OnboardedTool[]> {
+  const ctx = deps.ctx ?? await buildPlatformContext();
+  const tools = deps.tools ?? await detectTools(ctx);
+  const nodeBin = deps.nodeBin ?? resolveNodeBin();
+  const assetsDir = deps.assetsDir ?? getAssetsDir();
+  const wrapperResolution = deps.wrapperResolution ?? resolveWrapperPath();
   const written: OnboardedTool[] = [];
 
   for (const tool of tools) {
-    const platformPaths = tool.platforms[ctx.platform];
-    if (!platformPaths) continue;
-
-    const configPath = platformPaths.config(ctx);
-    const entry = buildWrapperMcpEntry(apiUrl, platformPaths.mcpMode, nodeBin, undefined, workspaceId);
-    // OpenCode is a product surface — do NOT write personal harness files
-    // (AGENTS.md, opencode.jsonc, .atl/, kanon.md, …). The `mcp` rootKey
-    // entry is the only thing written; `mergeConfig` reshapes it to the
-    // OpenCode array form via `formatMcpEntry("mcp", entry)` — output is
-    // `{ type: "local", command: string[]; environment?; enabled? }` per
-    // OpenCode's `McpLocalConfig` schema.
-    mergeConfig(configPath, tool.rootKey, entry);
+    const targets = installToolSurface({
+      tool,
+      ctx,
+      assetsDir,
+      buildEntry: (target) => buildWrapperMcpEntry(
+        apiUrl,
+        target.mcpMode,
+        nodeBin,
+        wrapperResolution,
+        workspaceId,
+        tool.clientIdentity,
+      ),
+    });
 
     written.push({
       name: tool.name,
       displayName: tool.displayName,
-      configPath,
+      configPaths: targets.map((target) => target.configPath),
     });
   }
 
@@ -212,17 +227,17 @@ export async function onboardFromLink(
   stdout.write(`  Credentials saved to ~/.kanon/credentials\n`);
   stdout.write("\n");
 
-  // ── 6. Register MCP entry (wrapper mode) for each detected tool ──────────
-  const writeMcpEntries = deps.writeMcpEntries ?? defaultWriteMcpEntries;
+  // ── 6. Install the full surface for each detected tool ───────────────────
+  const installToolSurfaces = deps.installToolSurfaces ?? installOnboardedTools;
   let registered: OnboardedTool[] = [];
   try {
-    registered = await writeMcpEntries(canonApiUrl, data.workspace.id);
+    registered = await installToolSurfaces(canonApiUrl, data.workspace.id);
   } catch (err) {
     stdout.write(
-      `⚠  Failed to register MCP entry: ${err instanceof Error ? err.message : String(err)}\n` +
+      `⚠  Failed to configure AI tools: ${err instanceof Error ? err.message : String(err)}\n` +
         `   Credentials are saved — configure manually with: kanon-setup --tool <name>\n`,
     );
-    return;
+    throw err;
   }
 
   if (registered.length === 0) {
@@ -235,7 +250,7 @@ export async function onboardFromLink(
 
   stdout.write(`✓ Configured ${registered.length} tool(s):\n`);
   for (const tool of registered) {
-    stdout.write(`  - ${tool.displayName} (${tool.configPath})\n`);
+    stdout.write(`  - ${tool.displayName} (${tool.configPaths.join(", ")})\n`);
   }
   stdout.write("\nRestart your AI coding tool(s) to pick up the new configuration.\n");
 }

@@ -34,7 +34,8 @@ cadence of engineering work.
 - **Self-hosted** — your data stays in your Postgres, your infra, your network.
 - **SDD-aware lifecycle** — issues move through states that mirror real work:
   `backlog → explore → propose → spec → design → tasks → apply → verify → archive`.
-- **Zero-friction AI setup** — one script (`install.sh`) wires your AI tools to
+- **Zero-friction AI setup** — one tagged installer (`install.sh` or
+  `install.ps1`) wires your AI tools to
   any instance from a single `kanon://` onboarding link, over a sha256-pinned
   MCP release.
 - **Real-time** — WebSocket-backed updates across clients.
@@ -141,11 +142,16 @@ to this instance.
 
 ### 4. Run the install script
 
-On the machine where your AI tools live (Claude Code, Cursor, Antigravity),
-run the installer:
+On Linux, macOS, or WSL where your AI tools live, run:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.9.0/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.10.0/install.sh)"
+```
+
+On native Windows PowerShell, run:
+
+```powershell
+irm https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.10.0/install.ps1 | iex
 ```
 
 > Use the **tagged** installer (`mcp-v<version>`), not `main`. The tagged script has
@@ -161,9 +167,9 @@ Paste your kanon:// onboarding link:
 ```
 
 Paste the link from step 3. Setup exchanges it for credentials, stores them in
-`~/.kanon/credentials`, and patches each detected AI tool's MCP config to point
-at your instance. Restart the tool and the `kanon_*` tools are live against your
-board.
+`~/.kanon/credentials`, and installs each detected tool's MCP config, Kanon
+skills, and supported custom agent. Restart the tool and the `kanon_*` tools are
+live against your board.
 
 ---
 

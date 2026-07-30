@@ -5,7 +5,7 @@
 // declared here so the host can hide them behind a ToolSearch step rather than
 // surfacing them eagerly in every turn's context.
 //
-// The server still registers all 40 tools normally — hosts that ignore
+// The server still registers every tool normally — hosts that ignore
 // `instructions` simply surface every tool. No SDK feature detection needed.
 // See design ADR-1 and ADR-2 for rationale.
 // 5 admin/rare tools + 3 document tools (rare-path, design-coherent)

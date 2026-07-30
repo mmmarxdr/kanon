@@ -5,10 +5,10 @@ import type { CredentialStore } from "./types.js";
  * Returns the appropriate CredentialStore for the current platform.
  * Copied from packages/setup — self-contained runtime copy.
  */
-export function getCredentialStore(): CredentialStore {
-  const platform = process.platform;
-
-  if (platform === "linux") {
+export function getCredentialStore(
+  platform: NodeJS.Platform = process.platform,
+): CredentialStore {
+  if (platform === "linux" || platform === "darwin" || platform === "win32") {
     return new FileCredentialStore();
   }
 

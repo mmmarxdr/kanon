@@ -14,8 +14,87 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getToolByName, toolRegistry } from "../registry.js";
+import {
+  getToolByName,
+  resolveToolLegacyConfigPaths,
+  resolveToolTargets,
+  toolRegistry,
+} from "../registry.js";
 import type { PlatformContext } from "../types.js";
+
+describe("registry — cursor", () => {
+  const cursor = getToolByName("cursor")!;
+
+  it("uses the documented global ~/.cursor paths on native platforms", () => {
+    for (const platform of ["linux", "darwin", "win32"] as const) {
+      const homedir = platform === "win32" ? "C:\\Users\\test" : "/home/test";
+      const ctx: PlatformContext = { platform, homedir };
+      const paths = cursor.platforms[platform]!;
+
+      expect(paths.config(ctx)).toBe(path.join(homedir, ".cursor", "mcp.json"));
+      expect(paths.skills(ctx)).toBe(path.join(homedir, ".cursor", "skills"));
+      expect(paths.agents?.(ctx)).toBe(path.join(homedir, ".cursor", "agents"));
+      expect(paths.template).toBeUndefined();
+      expect(paths.mcpMode).toBe("direct");
+    }
+  });
+
+  it("resolves Windows IDE and WSL CLI as two internal targets", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-cursor-wsl-"));
+    try {
+      const ctx: PlatformContext = {
+        platform: "wsl",
+        homedir: path.join(root, "linux-home"),
+        winHome: path.join(root, "windows-home"),
+      };
+      fs.mkdirSync(path.join(ctx.winHome!, ".cursor"), { recursive: true });
+      const targets = resolveToolTargets(cursor, ctx);
+
+      expect(targets.map((target) => target.config(ctx))).toEqual([
+        path.join(ctx.homedir, ".cursor", "mcp.json"),
+        path.join(ctx.winHome!, ".cursor", "mcp.json"),
+      ]);
+      expect(targets.map((target) => target.mcpMode)).toEqual([
+        "direct",
+        "wsl-bridge",
+      ]);
+      for (const target of targets) {
+        expect(target.agents?.(ctx)).toBeDefined();
+        expect(target.skills(ctx)).toContain(path.join(".cursor", "skills"));
+        expect(target.template).toBeUndefined();
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not create a phantom Windows target when only winHome resolves", () => {
+    const ctx: PlatformContext = {
+      platform: "wsl",
+      homedir: "/home/test",
+      winHome: "/missing/windows-home",
+    };
+    expect(resolveToolTargets(cursor, ctx).map((target) => target.mcpMode))
+      .toEqual(["direct"]);
+  });
+
+  it("declares Cursor MCP identity/type once and resolves only the win32 legacy config", () => {
+    expect(cursor.mcpType).toBe("stdio");
+    expect(cursor.clientIdentity).toBe("cursor");
+    const ctx: PlatformContext = {
+      platform: "win32",
+      homedir: "C:\\Users\\test",
+      appDataDir: "C:\\Users\\test\\AppData\\Roaming",
+    };
+    expect(resolveToolLegacyConfigPaths(cursor, ctx)).toEqual([
+      path.join(ctx.appDataDir!, "Cursor", "User", "mcp.json"),
+    ]);
+  });
+
+  it("stays one user-facing registry tool", () => {
+    expect(toolRegistry.filter((tool) => tool.name === "cursor")).toHaveLength(1);
+  });
+});
 
 describe("registry — opencode", () => {
   it("registers an `opencode` ToolDefinition", () => {

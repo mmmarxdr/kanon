@@ -4,7 +4,7 @@
 # installs to ~/.kanon/mcp, then invokes `node setup` to configure your tools.
 #
 # Usage (install form) — use the PINNED, TAGGED installer:
-#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.6.3/install.sh)"
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.10.0/install.sh)"
 #
 # The tagged installer ships EXPECTED_SHA256 baked in (the trust root). The copy on
 # `main` carries EXPECTED_SHA256="" and, over a network origin, ABORTS rather than
@@ -18,6 +18,7 @@
 #   KANON_INSTALL_BASE_URL   Override download base URL (e.g. file:///fixtures)
 #   KANON_INSTALL_DIR        Override install directory (default: ~/.kanon/mcp)
 #   KANON_INSTALL_SKIP_SETUP Set to 1 to skip the final `node setup` invocation
+#   KANON_INSTALL_ALLOW_UNPINNED_LOCAL Set to 1 only for local file:// test fixtures
 #   KANON_REPO               Override the GitHub owner/repo (default: mmmarxdr/kanon)
 #
 # ── Asset contract (C3 — matches PR5 release workflow) ───────────────────────
@@ -29,7 +30,7 @@
 # nothing written to INSTALL_DIR.
 #
 # ── Idempotency ───────────────────────────────────────────────────────────────
-# If INSTALL_DIR already contains the pinned version, the download is skipped.
+# If INSTALL_DIR contains the pinned version and all runtime files, download is skipped.
 
 set -euo pipefail
 
@@ -38,11 +39,11 @@ set -euo pipefail
 # Hardcoded trust-root checksum for the pinned release.
 # Empty on main by design — release.yml stamps the real sha256 into this field
 # on the tagged, detached commit (mcp-v<version>), never touching main.
-# The KAN-52 gate below refuses unpinned network installs when this is empty;
-# only the file:// local dev/test seam is exempt (not a network origin).
+# The KAN-52 gate below refuses unpinned installs unless a local, non-UNC
+# file:// test fixture is explicitly enabled.
 EXPECTED_SHA256=""
 
-KANON_MCP_VERSION="0.7.0"
+KANON_MCP_VERSION="0.10.0"
 KANON_REPO="${KANON_REPO:-mmmarxdr/kanon}"
 DEFAULT_BASE_URL="https://github.com/${KANON_REPO}/releases/download/mcp-v${KANON_MCP_VERSION}"
 BASE_URL="${KANON_INSTALL_BASE_URL:-$DEFAULT_BASE_URL}"
@@ -79,6 +80,12 @@ locate_setup_bin() {
   printf '%s' "$found"
 }
 
+complete_install() {
+  [ -f "$INSTALL_DIR/setup/dist/index.js" ] &&
+    [ -f "$INSTALL_DIR/mcp/dist/index.js" ] &&
+    [ -f "$INSTALL_DIR/mcp/dist/wrapper-cli.js" ]
+}
+
 # Portable sha256 verification: prefer sha256sum (Linux), fall back to shasum (macOS)
 sha256_check() {
   local file="$1"
@@ -97,8 +104,11 @@ download() {
   local url="$1"
   local dest="$2"
   if [[ "$url" == file://* ]]; then
-    # file:// URI — strip prefix and copy directly (test seam)
+    # file:// URI — local absolute paths only; never UNC or remote authorities.
     local src="${url#file://}"
+    if [[ "$src" != /* ]] || [[ "$src" == //* ]]; then
+      abort "file:// test sources must be local absolute paths, not UNC/remote paths"
+    fi
     cp "$src" "$dest"
   elif command -v curl >/dev/null 2>&1; then
     curl -fsSL --output "$dest" "$url"
@@ -114,19 +124,12 @@ download() {
 if [ -f "$VERSION_FILE" ]; then
   installed_version="$(cat "$VERSION_FILE")"
   if [ "$installed_version" = "$KANON_MCP_VERSION" ]; then
-    info "already installed: kanon-mcp v${KANON_MCP_VERSION} at ${INSTALL_DIR}"
-    # F2: verify the setup binary is actually present before trusting the version file.
-    # If the version file says installed but the binary is missing (partial install),
-    # fall through to re-download rather than silently skipping.
-    IDEMPOTENT_BIN="$(locate_setup_bin)"
-    if [ -z "$IDEMPOTENT_BIN" ]; then
-      warn "version file present but setup binary missing — re-downloading (delete ${INSTALL_DIR} and retry if this loops)"
-      # Fall through to the download phase below
-    else
-      # Binary confirmed present — skip download and proceed to setup (or exit)
+    if complete_install; then
+      info "already installed: kanon-mcp v${KANON_MCP_VERSION} at ${INSTALL_DIR}"
       if [ "${KANON_INSTALL_SKIP_SETUP:-0}" = "1" ]; then
         exit 0
       fi
+      IDEMPOTENT_BIN="$(locate_setup_bin)"
       info "running node setup..."
       if [ -t 0 ]; then
         printf "Paste your kanon:// onboarding link (or press Enter to skip): "
@@ -140,6 +143,8 @@ if [ -f "$VERSION_FILE" ]; then
         node "$IDEMPOTENT_BIN"
       fi
       exit 0
+    else
+      warn "version file present but runtime is incomplete — re-downloading"
     fi
   fi
 fi
@@ -150,12 +155,18 @@ fi
 # release workflow stamps it on the tagged, detached commit. A network origin with
 # an empty pin can only be checked against a same-origin .sha256 — which a
 # compromised origin serves to match a malicious tarball, so the check is worthless.
-# Refuse rather than offer a false guarantee. file:// is the local dev/test seam
-# (not a network origin) and is exempt; it still runs the corruption-only check.
-if [ -z "$EXPECTED_SHA256" ] && [[ "$BASE_URL" != file://* ]]; then
-  abort "this installer is UNPINNED (EXPECTED_SHA256 is empty) and cannot guarantee tamper-resistance over the network.
+# Refuse rather than offer a false guarantee. The unpinned local fixture seam
+# requires an explicit opt-in and a local absolute, non-UNC file:// path.
+if [ -z "$EXPECTED_SHA256" ]; then
+  LOCAL_BASE="${BASE_URL#file://}"
+  if [ "${KANON_INSTALL_ALLOW_UNPINNED_LOCAL:-0}" != "1" ] || \
+     [[ "$BASE_URL" != file://* ]] || \
+     [[ "$LOCAL_BASE" != /* ]] || \
+     [[ "$LOCAL_BASE" == //* ]]; then
+    abort "this installer is UNPINNED (EXPECTED_SHA256 is empty) and local test mode was not safely enabled.
 Use the pinned, tagged installer instead:
   bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/${KANON_REPO}/mcp-v${KANON_MCP_VERSION}/install.sh)\""
+  fi
 fi
 
 # ─── Download phase ───────────────────────────────────────────────────────────
@@ -188,10 +199,7 @@ if [ -n "$EXPECTED_SHA256" ]; then
     sha256_check "$ASSET_NAME" "${ASSET_NAME}.sha256.pinned"
   ) || abort "sha256 verification FAILED — installation aborted. The tarball does not match the pinned checksum in this installer (tamper or corruption detected)."
 else
-  # Reached ONLY via the file:// dev/test seam (a network origin with an empty pin
-  # was already refused by the KAN-52 gate above). file:// is not a network origin,
-  # so same-origin tampering does not apply — this is a pure corruption check against
-  # the local fixture .sha256 (bit-rot, partial copy).
+  # Reached only through the explicit local, non-UNC file:// test seam.
   (
     cd "$WORK_DIR"
     sha256_check "$ASSET_NAME" "${ASSET_NAME}.sha256.normalized"

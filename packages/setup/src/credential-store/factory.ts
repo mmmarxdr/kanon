@@ -4,13 +4,12 @@ import type { CredentialStore } from "./types.js";
 /**
  * Returns the appropriate CredentialStore for the current platform.
  *
- * - linux (includes WSL2): FileCredentialStore (~/.kanon/credentials, 0600)
- * - darwin / win32: throws — adapters tracked in roadmap
+ * Linux/WSL and macOS use POSIX modes; Windows adds a current-user ACL.
  */
-export function getCredentialStore(): CredentialStore {
-  const platform = process.platform;
-
-  if (platform === "linux") {
+export function getCredentialStore(
+  platform: NodeJS.Platform = process.platform,
+): CredentialStore {
+  if (platform === "linux" || platform === "darwin" || platform === "win32") {
     return new FileCredentialStore();
   }
 

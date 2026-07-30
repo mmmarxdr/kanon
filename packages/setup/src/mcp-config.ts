@@ -11,7 +11,7 @@ import type {
   PlatformContext,
   ToolDefinition,
 } from "./types.js";
-import { toolRegistry } from "./registry.js";
+import { resolveToolTargets, toolRegistry } from "./registry.js";
 import { canonicalizeApiUrl } from "./canonical-url.js";
 
 /**
@@ -94,14 +94,19 @@ export function formatCodexMcpEntry(entry: McpServerEntry): {
 }
 
 function parseTomlConfigFile(configPath: string): Record<string, unknown> {
+  let content: string;
   try {
-    if (!fs.existsSync(configPath)) {
-      return {};
-    }
-    const content = fs.readFileSync(configPath, "utf8");
+    content = fs.readFileSync(configPath, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw err;
+  }
+  try {
     return parse(content) as Record<string, unknown>;
-  } catch {
-    return {};
+  } catch (err) {
+    throw new Error(
+      `Invalid TOML in ${configPath}: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 
@@ -212,11 +217,20 @@ export function mergeConfig(
 
   let config: Record<string, unknown> = {};
 
+  let content: string | undefined;
   try {
-    const content = fs.readFileSync(configPath, "utf8");
-    config = JSON.parse(content) as Record<string, unknown>;
-  } catch {
-    // File doesn't exist or is invalid JSON — start fresh
+    content = fs.readFileSync(configPath, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  if (content !== undefined) {
+    try {
+      config = JSON.parse(content) as Record<string, unknown>;
+    } catch (err) {
+      throw new Error(
+        `Invalid JSON in ${configPath}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   const servers = (config[rootKey] as Record<string, unknown>) || {};
@@ -269,7 +283,7 @@ export function removeConfig(configPath: string, rootKey: string): boolean {
 export type McpResolution = { mode: "local"; path: string };
 
 export const MCP_NOT_FOUND_MESSAGE =
-  "Kanon MCP not found. Install via the signed release tarball first (install.sh — see docs/AI_TOOLS.md).";
+  "Kanon MCP not found. Install via the signed release tarball first (install.sh or install.ps1 — see docs/AI_TOOLS.md).";
 
 /**
  * Candidate paths for MCP binaries installed via install.sh (~/.kanon/mcp).
@@ -323,19 +337,34 @@ export function buildMcpEntry(
   mcpMode: McpMode,
   nodeBin: string,
   entryMode: McpEntryMode = "static-key",
+  clientIdentity?: string,
+  workspaceId?: string,
 ): McpServerEntry {
+  const identityEnv: Record<string, string> = {};
+  if (clientIdentity) identityEnv["KANON_CLIENT_IDENTITY"] = clientIdentity;
+  if (workspaceId) identityEnv["KANON_WORKSPACE_ID"] = workspaceId;
+
   // ── Wrapper mode: token-based auth, no KANON_API_KEY ─────────────────────────
   if (entryMode === "wrapper") {
     if (mcpMode === "wsl-bridge") {
       return {
         command: "wsl",
-        args: [nodeBin, resolution.path, "--server", apiUrl],
+        args: [
+          "env",
+          ...Object.entries(identityEnv).map(([key, value]) => `${key}=${value}`),
+          nodeBin,
+          resolution.path,
+          "--server",
+          apiUrl,
+        ],
       };
     }
-    return {
+    const entry: McpServerEntry = {
       command: nodeBin,
       args: [resolution.path, "--server", apiUrl],
     };
+    if (Object.keys(identityEnv).length > 0) entry.env = identityEnv;
+    return entry;
   }
 
   // ── Static-key mode (default) ─────────────────────────────────────────────────
@@ -344,6 +373,9 @@ export function buildMcpEntry(
     if (apiKey) {
       envArgs.push(`KANON_API_KEY=${apiKey}`);
     }
+    envArgs.push(
+      ...Object.entries(identityEnv).map(([key, value]) => `${key}=${value}`),
+    );
     return {
       command: "wsl",
       args: ["env", ...envArgs, nodeBin, resolution.path],
@@ -355,6 +387,7 @@ export function buildMcpEntry(
   if (apiKey) {
     env["KANON_API_KEY"] = apiKey;
   }
+  Object.assign(env, identityEnv);
 
   return {
     command: nodeBin,
@@ -367,22 +400,26 @@ export function buildMcpEntry(
  * Resolve how to invoke the Kanon MCP wrapper-cli.
  *
  * Search order:
- *   1. Relative to setup dist (install.sh layout: setup/dist → mcp/dist)
- *   2. Monorepo node_modules (@kanon/mcp)
- *   3. install.sh target (~/.kanon/mcp/mcp/dist or KANON_INSTALL_DIR)
+ *   1. Installed release (~/.kanon/mcp or strict KANON_INSTALL_DIR)
+ *   2. Relative packaged/development layout (setup/dist → mcp/dist)
+ *   3. Monorepo node_modules (@kanon/mcp)
  *
  * No npx fallback — @kanon/mcp is not published to npm; distribution is tarball-only.
  */
 export function resolveWrapperPath(): McpResolution {
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-  return requireLocalMcpResolution("wrapper-cli.js", [
-    path.resolve(scriptDir, "../../mcp/dist/wrapper-cli.js"),
-    path.resolve(
-      scriptDir,
-      "../../../node_modules/@kanon/mcp/dist/wrapper-cli.js",
-    ),
-    ...resolveInstalledMcpPaths("wrapper-cli.js"),
-  ]);
+  const installed = resolveInstalledMcpPaths("wrapper-cli.js");
+  const candidates = process.env["KANON_INSTALL_DIR"]
+    ? installed
+    : [
+        ...installed,
+        path.resolve(scriptDir, "../../mcp/dist/wrapper-cli.js"),
+        path.resolve(
+          scriptDir,
+          "../../../node_modules/@kanon/mcp/dist/wrapper-cli.js",
+        ),
+      ];
+  return requireLocalMcpResolution("wrapper-cli.js", candidates);
 }
 
 /**
@@ -403,13 +440,24 @@ export function buildWrapperMcpEntry(
   nodeBin: string = process.execPath,
   resolution: McpResolution = resolveWrapperPath(),
   workspaceId?: string,
+  clientIdentity?: string,
 ): McpServerEntry {
   const canonUrl = canonicalizeApiUrl(apiUrl);
+  const env: Record<string, string> = {};
+  if (clientIdentity) env["KANON_CLIENT_IDENTITY"] = clientIdentity;
+  if (workspaceId) env["KANON_WORKSPACE_ID"] = workspaceId;
 
   if (mcpMode === "wsl-bridge") {
     return {
       command: "wsl",
-      args: [nodeBin, resolution.path, "--server", canonUrl],
+      args: [
+        "env",
+        ...Object.entries(env).map(([key, value]) => `${key}=${value}`),
+        nodeBin,
+        resolution.path,
+        "--server",
+        canonUrl,
+      ],
     };
   }
 
@@ -417,9 +465,7 @@ export function buildWrapperMcpEntry(
     command: nodeBin,
     args: [resolution.path, "--server", canonUrl],
   };
-  if (workspaceId) {
-    entry.env = { KANON_WORKSPACE_ID: workspaceId };
-  }
+  if (Object.keys(env).length > 0) entry.env = env;
   return entry;
 }
 
@@ -429,14 +475,18 @@ export function buildWrapperMcpEntry(
  */
 export function resolveMcpServerPath(): McpResolution {
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-  return requireLocalMcpResolution("index.js", [
-    path.resolve(scriptDir, "../../mcp/dist/index.js"),
-    path.resolve(
-      scriptDir,
-      "../../../node_modules/@kanon/mcp/dist/index.js",
-    ),
-    ...resolveInstalledMcpPaths("index.js"),
-  ]);
+  const installed = resolveInstalledMcpPaths("index.js");
+  const candidates = process.env["KANON_INSTALL_DIR"]
+    ? installed
+    : [
+        ...installed,
+        path.resolve(scriptDir, "../../mcp/dist/index.js"),
+        path.resolve(
+          scriptDir,
+          "../../../node_modules/@kanon/mcp/dist/index.js",
+        ),
+      ];
+  return requireLocalMcpResolution("index.js", candidates);
 }
 
 /**
@@ -542,18 +592,47 @@ export function extractExistingAuth(
   let apiUrl: string | undefined;
   let apiKey: string | undefined;
 
-  for (const tool of toolRegistry) {
-    const platformPaths = tool.platforms[ctx.platform];
-    if (!platformPaths) continue;
+  outer: for (const tool of toolRegistry) {
+    for (const platformPaths of resolveToolTargets(tool, ctx)) {
+      const configPath = platformPaths.config(ctx);
 
-    const configPath = platformPaths.config(ctx);
+      if (tool.configFormat === "toml") {
+        let config: Record<string, unknown>;
+        try {
+          const content = fs.readFileSync(configPath, "utf8");
+          config = parse(content) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
 
-    if (tool.configFormat === "toml") {
+        const servers = config[tool.rootKey] as
+          | Record<string, unknown>
+          | undefined;
+        if (!servers) continue;
+
+        const raw = servers["kanon-mcp"] as RawMcpEntry | undefined;
+        if (!raw) continue;
+
+        const entry: RawMcpEntry = {
+          command: raw.command,
+          args: raw.args,
+          env: raw.env,
+        };
+
+        const found = extractAuthFromEntry(entry);
+        if (!apiUrl && found.apiUrl) apiUrl = found.apiUrl;
+        if (!apiKey && found.apiKey) apiKey = found.apiKey;
+
+        if (apiUrl && apiKey) break outer;
+        continue;
+      }
+
       let config: Record<string, unknown>;
       try {
         const content = fs.readFileSync(configPath, "utf8");
-        config = parse(content) as Record<string, unknown>;
+        config = JSON.parse(content) as Record<string, unknown>;
       } catch {
+        // File doesn't exist or is invalid JSON — skip
         continue;
       }
 
@@ -562,48 +641,17 @@ export function extractExistingAuth(
         | undefined;
       if (!servers) continue;
 
-      const raw = servers["kanon-mcp"] as RawMcpEntry | undefined;
-      if (!raw) continue;
+      const entry = servers["kanon-mcp"] as RawMcpEntry | undefined;
+      if (!entry) continue;
 
-      const entry: RawMcpEntry = {
-        command: raw.command,
-        args: raw.args,
-        env: raw.env,
-      };
-
+      // Delegate parsing to the pure helper — handles both object-form and
+      // array-form entries uniformly.
       const found = extractAuthFromEntry(entry);
       if (!apiUrl && found.apiUrl) apiUrl = found.apiUrl;
       if (!apiKey && found.apiKey) apiKey = found.apiKey;
 
-      if (apiUrl && apiKey) break;
-      continue;
+      if (apiUrl && apiKey) break outer;
     }
-
-    let config: Record<string, unknown>;
-    try {
-      const content = fs.readFileSync(configPath, "utf8");
-      config = JSON.parse(content) as Record<string, unknown>;
-    } catch {
-      // File doesn't exist or is invalid JSON — skip
-      continue;
-    }
-
-    const servers = config[tool.rootKey] as
-      | Record<string, unknown>
-      | undefined;
-    if (!servers) continue;
-
-    const entry = servers["kanon-mcp"] as RawMcpEntry | undefined;
-    if (!entry) continue;
-
-    // Delegate parsing to the pure helper — handles both object-form and
-    // array-form entries uniformly.
-    const found = extractAuthFromEntry(entry);
-    if (!apiUrl && found.apiUrl) apiUrl = found.apiUrl;
-    if (!apiKey && found.apiKey) apiKey = found.apiKey;
-
-    // Stop early if we have both values
-    if (apiUrl && apiKey) break;
   }
 
   const result: { apiUrl?: string; apiKey?: string } = {};
@@ -653,12 +701,20 @@ export function extractExistingWorkspaceId(
   if (!servers) return undefined;
 
   const entry = servers["kanon-mcp"] as
-    | { env?: Record<string, string>; environment?: Record<string, string> }
+    | {
+        args?: string[];
+        env?: Record<string, string>;
+        environment?: Record<string, string>;
+      }
     | undefined;
 
   // Read whichever env key the tool wrote. `environment` is the OpenCode
   // on-disk name; `env` is the legacy/internal name. Read `environment`
   // first, fall back to `env`.
-  return entry?.environment?.["KANON_WORKSPACE_ID"]
+  const fromEnv = entry?.environment?.["KANON_WORKSPACE_ID"]
     ?? entry?.env?.["KANON_WORKSPACE_ID"];
+  if (fromEnv) return fromEnv;
+  return entry?.args
+    ?.find((arg) => arg.startsWith("KANON_WORKSPACE_ID="))
+    ?.slice("KANON_WORKSPACE_ID=".length);
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
@@ -75,6 +75,90 @@ describe("FileCredentialStore", () => {
     const credFile = path.join(tmpDir, ".kanon", "credentials");
     const stat = fs.statSync(credFile);
     expect(stat.mode & 0o777).toBe(0o600);
+  });
+
+  it("replaces Windows DACLs with only the current SID via system PowerShell", async () => {
+    const runCommand = vi.fn(async () => undefined);
+    const powerShellPath = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+    const windowsStore = new FileCredentialStore(tmpDir, {
+      platform: "win32",
+      powerShellPath,
+      runCommand,
+    });
+
+    await windowsStore.writeCredentials("https://server.example.com", VALID_CREDS);
+
+    expect(runCommand).toHaveBeenCalledTimes(2);
+    for (const [command, args] of runCommand.mock.calls) {
+      expect(command).toBe(powerShellPath);
+      expect(args).toContain("-EncodedCommand");
+      const encoded = args[args.indexOf("-EncodedCommand") + 1]!;
+      const script = Buffer.from(encoded, "base64").toString("utf16le");
+      expect(script).toContain("WindowsIdentity]::GetCurrent().User");
+      expect(script).toContain("SetAccessRuleProtection($true,$false)");
+      expect(script).toContain("$acl.AddAccessRule($rule)");
+      expect(script).not.toContain("icacls");
+    }
+    const directoryScript = Buffer.from(
+      runCommand.mock.calls[0]![1].at(-1)!,
+      "base64",
+    ).toString("utf16le");
+    const fileScript = Buffer.from(
+      runCommand.mock.calls[1]![1].at(-1)!,
+      "base64",
+    ).toString("utf16le");
+    expect(directoryScript).toContain("DirectorySecurity");
+    expect(fileScript).toContain("FileSecurity");
+  });
+
+  it("does not write the refresh token when the Windows directory ACL fails", async () => {
+    const windowsStore = new FileCredentialStore(tmpDir, {
+      platform: "win32",
+      runCommand: vi.fn().mockRejectedValue(new Error("access denied")),
+    });
+
+    await expect(
+      windowsStore.writeCredentials("https://server.example.com", VALID_CREDS),
+    ).rejects.toThrow(/secure.*access denied/i);
+    expect(fs.existsSync(path.join(tmpDir, ".kanon", "credentials"))).toBe(false);
+  });
+
+  it("keeps existing credentials unchanged when the temp-file ACL fails", async () => {
+    const kanoDir = path.join(tmpDir, ".kanon");
+    const credFile = path.join(kanoDir, "credentials");
+    fs.mkdirSync(kanoDir);
+    fs.writeFileSync(credFile, "existing-credentials");
+    const runCommand = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("file ACL failed"));
+    const windowsStore = new FileCredentialStore(tmpDir, {
+      platform: "win32",
+      runCommand,
+    });
+
+    await expect(
+      windowsStore.writeCredentials("https://server.example.com", VALID_CREDS),
+    ).rejects.toThrow(/file ACL failed/);
+    expect(fs.readFileSync(credFile, "utf8")).toBe("existing-credentials");
+    expect(fs.readdirSync(kanoDir)).toEqual(["credentials"]);
+  });
+
+  it("keeps existing credentials unchanged when atomic rename fails", async () => {
+    const kanoDir = path.join(tmpDir, ".kanon");
+    const credFile = path.join(kanoDir, "credentials");
+    fs.mkdirSync(kanoDir);
+    fs.writeFileSync(credFile, "existing-credentials");
+    const windowsStore = new FileCredentialStore(tmpDir, {
+      platform: "win32",
+      runCommand: vi.fn().mockResolvedValue(undefined),
+      renameFile: vi.fn().mockRejectedValue(new Error("rename failed")),
+    });
+
+    await expect(
+      windowsStore.writeCredentials("https://server.example.com", VALID_CREDS),
+    ).rejects.toThrow(/rename failed/);
+    expect(fs.readFileSync(credFile, "utf8")).toBe("existing-credentials");
+    expect(fs.readdirSync(kanoDir)).toEqual(["credentials"]);
   });
 
   it("overwrites existing credentials for same server", async () => {

@@ -117,6 +117,18 @@ describe("mcp-config", () => {
         args: ["/srv.js"],
       });
     });
+
+    it("rejects malformed JSON without changing a byte", () => {
+      const configPath = path.join(tmpDir, "mcp.json");
+      const malformed = "{\r\n  this stays invalid\r\n";
+      fs.writeFileSync(configPath, malformed);
+
+      expect(() => mergeConfig(configPath, "mcpServers", {
+        command: "node",
+        args: ["server.js"],
+      })).toThrow(/Invalid JSON/);
+      expect(fs.readFileSync(configPath, "utf8")).toBe(malformed);
+    });
   });
 
   describe("removeConfig", () => {
@@ -331,6 +343,47 @@ describe("mcp-config", () => {
         "KANON_API_KEY=key123",
         "/usr/bin/node",
         "/path/to/server.js",
+      ]);
+    });
+
+    it("propagates Cursor identity and workspace through direct wrapper mode", () => {
+      const entry = buildMcpEntry(
+        { mode: "local", path: "/release/wrapper-cli.js" },
+        "https://api.test",
+        "",
+        { platform: "linux", homedir: "/home/user" },
+        "direct",
+        "/usr/bin/node",
+        "wrapper",
+        "cursor",
+        "workspace-1",
+      );
+      expect(entry.env).toEqual({
+        KANON_CLIENT_IDENTITY: "cursor",
+        KANON_WORKSPACE_ID: "workspace-1",
+      });
+    });
+
+    it("propagates Cursor identity and workspace through wsl env", () => {
+      const entry = buildMcpEntry(
+        { mode: "local", path: "/release/wrapper-cli.js" },
+        "https://api.test",
+        "",
+        { platform: "wsl", homedir: "/home/user", winHome: "/mnt/c/Users/user" },
+        "wsl-bridge",
+        "/usr/bin/node",
+        "wrapper",
+        "cursor",
+        "workspace-1",
+      );
+      expect(entry.args).toEqual([
+        "env",
+        "KANON_CLIENT_IDENTITY=cursor",
+        "KANON_WORKSPACE_ID=workspace-1",
+        "/usr/bin/node",
+        "/release/wrapper-cli.js",
+        "--server",
+        "https://api.test",
       ]);
     });
 
@@ -834,6 +887,29 @@ KANON_WORKSPACE_ID = "ws-toml-42"
       expect(
         extractExistingWorkspaceId(configPath, "mcp_servers", "toml"),
       ).toBe("ws-toml-42");
+    });
+  });
+
+  describe("extractExistingWorkspaceId — WSL bridge", () => {
+    it("reads workspace identity from wsl env args", () => {
+      const configPath = path.join(tmpDir, "mcp.json");
+      fs.writeFileSync(configPath, JSON.stringify({
+        mcpServers: {
+          "kanon-mcp": {
+            command: "wsl",
+            args: [
+              "env",
+              "KANON_CLIENT_IDENTITY=cursor",
+              "KANON_WORKSPACE_ID=workspace-from-windows",
+              "node",
+              "/wrapper.js",
+            ],
+          },
+        },
+      }));
+
+      expect(extractExistingWorkspaceId(configPath, "mcpServers"))
+        .toBe("workspace-from-windows");
     });
   });
 
