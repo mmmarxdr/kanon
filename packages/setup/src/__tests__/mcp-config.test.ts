@@ -755,6 +755,43 @@ args = ["old"]
 
       expect(first).toBe(second);
     });
+
+    it("backs up and migrates a legacy JSON Codex config before reinstalling", () => {
+      const configPath = path.join(tmpDir, "config.toml");
+      const legacy = {
+        model: "gpt-5",
+        mcp_servers: {
+          "kanon-mcp": { command: "old-node", args: ["old-wrapper.js"] },
+        },
+      };
+      fs.writeFileSync(configPath, JSON.stringify(legacy, null, 2));
+
+      mergeTomlMcpConfig(
+        configPath,
+        "kanon-mcp",
+        formatCodexMcpEntry({ command: "node", args: ["/new-wrapper.js"] }),
+      );
+
+      expect(JSON.parse(fs.readFileSync(`${configPath}.kanon-legacy-json.bak`, "utf8")))
+        .toEqual(legacy);
+      const migrated = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+      expect(migrated["model"]).toBe("gpt-5");
+      expect((migrated["mcp_servers"] as Record<string, unknown>)["kanon-mcp"])
+        .toEqual({ command: "node", args: ["/new-wrapper.js"] });
+    });
+
+    it("does not overwrite an unrecognized invalid Codex config", () => {
+      const configPath = path.join(tmpDir, "config.toml");
+      fs.writeFileSync(configPath, "not = valid = toml");
+
+      expect(() => mergeTomlMcpConfig(
+        configPath,
+        "kanon-mcp",
+        formatCodexMcpEntry({ command: "node", args: ["/wrapper.js"] }),
+      )).toThrow(/Invalid TOML/);
+      expect(fs.readFileSync(configPath, "utf8")).toBe("not = valid = toml");
+      expect(fs.existsSync(`${configPath}.kanon-legacy-json.bak`)).toBe(false);
+    });
   });
 
   describe("removeTomlMcpConfig", () => {
@@ -887,6 +924,20 @@ KANON_WORKSPACE_ID = "ws-toml-42"
       expect(
         extractExistingWorkspaceId(configPath, "mcp_servers", "toml"),
       ).toBe("ws-toml-42");
+    });
+
+    it("preserves workspace identity from a legacy JSON Codex config", () => {
+      const configPath = path.join(tmpDir, "config.toml");
+      fs.writeFileSync(configPath, JSON.stringify({
+        mcp_servers: {
+          "kanon-mcp": {
+            env: { KANON_WORKSPACE_ID: "ws-legacy-42" },
+          },
+        },
+      }));
+
+      expect(extractExistingWorkspaceId(configPath, "mcp_servers", "toml"))
+        .toBe("ws-legacy-42");
     });
   });
 

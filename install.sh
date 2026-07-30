@@ -4,7 +4,7 @@
 # installs to ~/.kanon/mcp, then invokes `node setup` to configure your tools.
 #
 # Usage (install form) — use the PINNED, TAGGED installer:
-#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.10.0/install.sh)"
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.10.1/install.sh)"
 #
 # The tagged installer ships EXPECTED_SHA256 baked in (the trust root). The copy on
 # `main` carries EXPECTED_SHA256="" and, over a network origin, ABORTS rather than
@@ -43,7 +43,7 @@ set -euo pipefail
 # file:// test fixture is explicitly enabled.
 EXPECTED_SHA256=""
 
-KANON_MCP_VERSION="0.10.0"
+KANON_MCP_VERSION="0.10.1"
 KANON_REPO="${KANON_REPO:-mmmarxdr/kanon}"
 DEFAULT_BASE_URL="https://github.com/${KANON_REPO}/releases/download/mcp-v${KANON_MCP_VERSION}"
 BASE_URL="${KANON_INSTALL_BASE_URL:-$DEFAULT_BASE_URL}"
@@ -135,7 +135,7 @@ if [ -f "$VERSION_FILE" ]; then
         printf "Paste your kanon:// onboarding link (or press Enter to skip): "
         read -r KANON_LINK </dev/tty || KANON_LINK=""
         if [ -n "$KANON_LINK" ]; then
-          echo "$KANON_LINK" | node "$IDEMPOTENT_BIN"
+          KANON_ONBOARD_LINK="$KANON_LINK" node "$IDEMPOTENT_BIN"
         else
           node "$IDEMPOTENT_BIN"
         fi
@@ -225,7 +225,7 @@ if [ "${KANON_INSTALL_SKIP_SETUP:-0}" = "1" ]; then
   exit 0
 fi
 
-# ─── Invoke node setup (KAN-36 — stdin link pipe) ────────────────────────────
+# ─── Invoke node setup ───────────────────────────────────────────────────────
 # The `bash -c "$(curl -fsSL ...)"` invocation form frees stdin from the curl
 # pipe, so we can `read` interactively from the TTY here.
 
@@ -239,12 +239,12 @@ info "launching Kanon setup..."
 echo ""
 
 if [ -t 0 ]; then
-  # Stdin is a TTY — prompt for the onboarding link, then pipe it to setup
+  # Keep stdin attached to the TTY so setup can show its tool checklist.
   printf "Paste your kanon:// onboarding link (or press Enter for interactive setup): "
   read -r KANON_LINK </dev/tty || KANON_LINK=""
   echo ""
   if [ -n "$KANON_LINK" ]; then
-    echo "$KANON_LINK" | node "$SETUP_BIN"
+    KANON_ONBOARD_LINK="$KANON_LINK" node "$SETUP_BIN"
   else
     node "$SETUP_BIN"
   fi

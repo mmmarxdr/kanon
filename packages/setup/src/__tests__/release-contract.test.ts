@@ -66,6 +66,8 @@ describe("release installer contract", () => {
       expect(sh).toContain(required);
     }
     expect(sh).toContain("if complete_install; then");
+    expect(sh).toContain('KANON_ONBOARD_LINK="$KANON_LINK" node');
+    expect(sh).not.toContain('echo "$KANON_LINK" | node');
   });
 
   it("release tests/builds both packages and stamps both installers", () => {

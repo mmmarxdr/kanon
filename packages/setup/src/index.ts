@@ -3,14 +3,11 @@
 
 import { Command } from "commander";
 import chalk from "chalk";
-import { checkbox } from "@inquirer/prompts";
 import { buildPlatformContext } from "./detect.js";
 import { resolveAuth } from "./auth.js";
 import {
   detectTools,
-  getToolByName,
   resolveToolTargets,
-  toolRegistry,
 } from "./registry.js";
 import {
   buildMcpEntry,
@@ -24,7 +21,7 @@ import { removeTemplate } from "./templates.js";
 import { removeWorkflows } from "./workflows.js";
 import { removeAgents } from "./agents.js";
 import { removeCommands } from "./commands.js";
-import type { ToolDefinition, PlatformContext, AuthResult } from "./types.js";
+import type { AuthResult } from "./types.js";
 import { getCredentialStore } from "./credential-store/factory.js";
 import { resolveWrapperReuse } from "./wrapper-reuse.js";
 import {
@@ -34,6 +31,9 @@ import {
   resolveExistingToolWorkspaceId,
 } from "./tool-surface.js";
 import { SETUP_VERSION } from "./version.js";
+import { selectTools } from "./tool-selection.js";
+
+export { selectTools } from "./tool-selection.js";
 
 const program = new Command();
 
@@ -454,86 +454,6 @@ async function run(options: {
     );
   }
   console.log("");
-}
-
-// ─── Tool Selection ──────────────────────────────────────────────────────────
-
-/**
- * Select which tools to configure based on flags or interactive checkbox.
- *
- * - --tool <name> → single tool (validated against registry)
- * - --all or --yes → all detected tools
- * - interactive (TTY, no flags) → checkbox with all pre-selected
- * - non-interactive (no TTY, no flags) → all detected tools
- */
-export async function selectTools(
-  detected: ToolDefinition[],
-  flags: { tool?: string; all?: boolean; yes?: boolean },
-  isInteractive: boolean,
-  ctx: PlatformContext,
-  deps?: { promptTools?: (choices: Array<{ name: string; value: string; checked: boolean }>) => Promise<string[]> },
-): Promise<ToolDefinition[]> {
-  // --tool flag: single tool by name
-  if (flags.tool) {
-    const tool = getToolByName(flags.tool);
-    if (!tool) {
-      const supported = toolRegistry.map((t) => t.name).join(", ");
-      throw new Error(
-        `Unknown tool: '${flags.tool}'. Supported: ${supported}`,
-      );
-    }
-    if (!tool.platforms[ctx.platform]) {
-      throw new Error(
-        `${tool.displayName} is not supported on ${ctx.platform}`,
-      );
-    }
-    return [tool];
-  }
-
-  // No tools detected → error
-  if (detected.length === 0) {
-    throw new Error(
-      "No supported tools detected. Install at least one supported AI coding tool.",
-    );
-  }
-
-  // --all or --yes → all detected
-  if (flags.all || flags.yes) {
-    return detected;
-  }
-
-  // Non-interactive (no TTY) → all detected
-  if (!isInteractive) {
-    return detected;
-  }
-
-  // Interactive → checkbox with all pre-selected
-  const _promptTools = deps?.promptTools ?? defaultPromptTools;
-
-  console.log("");
-  const selectedNames = await _promptTools(
-    detected.map((t) => ({
-      name: t.displayName,
-      value: t.name,
-      checked: true,
-    })),
-  );
-
-  if (selectedNames.length === 0) {
-    console.log(chalk.yellow("No tools selected — nothing to do."));
-    process.exit(0);
-  }
-
-  return detected.filter((t) => selectedNames.includes(t.name));
-}
-
-async function defaultPromptTools(
-  choices: Array<{ name: string; value: string; checked: boolean }>,
-): Promise<string[]> {
-  return checkbox({
-    message: "Select tools to configure:",
-    choices,
-  });
 }
 
 program.parse();
