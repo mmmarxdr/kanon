@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import type { RoadmapItem } from "@/types/roadmap";
 
 interface AnalyticsKPIStripProps {
@@ -30,6 +31,7 @@ function meanOrDash(nums: Array<number | null | undefined>, decimals = 1): strin
  * Empty / null guards: if there are no items, every value renders as a dash.
  */
 export function AnalyticsKPIStrip({ items }: AnalyticsKPIStripProps) {
+  const { t } = useTranslation("roadmap");
   const kpis = useMemo<KPI[]>(() => {
     const total = items.length;
 
@@ -41,12 +43,12 @@ export function AnalyticsKPIStrip({ items }: AnalyticsKPIStripProps) {
         sub,
       });
       return [
-        empty("items", "Items", "across 4 horizons"),
-        empty("in-progress", "In progress", "% of total"),
-        empty("dependency-edges", "Dependency edges", "graph edges"),
-        empty("avg-effort", "Avg effort", "scale 1–5"),
-        empty("avg-impact", "Avg impact", "scale 1–5"),
-        empty("now-next-ratio", "Now / Next ratio", "healthy < 1 : 2"),
+        empty("items", t("kpiItems"), "across 4 horizons"),
+        empty("in-progress", t("kpiInProgress"), "% of total"),
+        empty("dependency-edges", t("kpiDependencyEdges"), "graph edges"),
+        empty("avg-effort", t("kpiAvgEffort"), "scale 1–5"),
+        empty("avg-impact", t("kpiAvgImpact"), "scale 1–5"),
+        empty("now-next-ratio", t("kpiNowNextRatio"), "healthy < 1 : 2"),
       ];
     }
 
@@ -71,43 +73,43 @@ export function AnalyticsKPIStrip({ items }: AnalyticsKPIStripProps) {
     return [
       {
         key: "items",
-        label: "Items",
+        label: t("kpiItems"),
         value: String(total),
         sub: "across 4 horizons",
       },
       {
         key: "in-progress",
-        label: "In progress",
+        label: t("kpiInProgress"),
         value: `${inProgressPct}%`,
         sub: `${inProgressCount} of ${total}`,
         tone: "var(--accent)",
       },
       {
         key: "dependency-edges",
-        label: "Dependency edges",
+        label: t("kpiDependencyEdges"),
         value: String(dependencyEdges),
         sub: dependencyEdges === 1 ? "graph edge" : "graph edges",
       },
       {
         key: "avg-effort",
-        label: "Avg effort",
+        label: t("kpiAvgEffort"),
         value: avgEffort,
         sub: "scale 1–5",
       },
       {
         key: "avg-impact",
-        label: "Avg impact",
+        label: t("kpiAvgImpact"),
         value: avgImpact,
         sub: "scale 1–5",
       },
       {
         key: "now-next-ratio",
-        label: "Now / Next ratio",
+        label: t("kpiNowNextRatio"),
         value: ratio,
         sub: "healthy < 1 : 2",
       },
     ];
-  }, [items]);
+  }, [items, t]);
 
   return (
     <div

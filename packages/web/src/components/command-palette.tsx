@@ -248,7 +248,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
                 flexShrink: 0,
               }}
             >
-              Searching…
+              {t("searching")}
             </span>
           )}
           <Kbd>Esc</Kbd>
@@ -271,7 +271,7 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
                 color: "var(--ink-4)",
               }}
             >
-              No results
+              {t("noResults")}
             </div>
           ) : (
             <>
@@ -340,10 +340,10 @@ export function CommandPalette({ onClose, onCreateIssue }: CommandPaletteProps) 
           }}
         >
           <span>
-            <Kbd>↑↓</Kbd> Navigate
+            <Kbd>↑↓</Kbd> {t("navigate")}
           </span>
           <span>
-            <Kbd>↵</Kbd> Select
+            <Kbd>↵</Kbd> {t("select")}
           </span>
           <span style={{ flex: 1 }} />
           <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>

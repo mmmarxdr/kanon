@@ -1,4 +1,5 @@
 {
+  "loading": "Loading roadmap…",
   "viewHorizons": "Horizons",
   "viewTimeline": "Timeline",
   "viewAnalytics": "Analytics",
@@ -38,6 +39,8 @@
   "fieldHorizon": "Horizon",
   "fieldEffort": "Effort",
   "fieldImpact": "Impact",
+  "fieldTargetDate": "Target Date",
+  "addItemTo": "Add item to {{horizon}}",
   "placeholderLabels": "Labels (comma-separated)",
   "createSubmit": "Create",
   "promoteToIssue": "Promote to Issue",
@@ -59,5 +62,6 @@
   "emptyPipeline": "No roadmap items yet. Add items to see the pipeline.",
   "emptyDeps": "No dependencies recorded yet.",
   "emptyThroughput": "No items shipped in the last 12 weeks.",
-  "emptyEffortImpact": "No items have both effort and impact scores. Add scores to see them here."
+  "emptyEffortImpact": "No items have both effort and impact scores. Add scores to see them here.",
+  "unassignedOwner": "Unassigned"
 }

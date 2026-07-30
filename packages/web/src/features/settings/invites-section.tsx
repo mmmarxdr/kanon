@@ -190,18 +190,18 @@ export function InvitesSection({
 
           <div className="space-y-1">
             <label className="text-xs font-medium text-card-foreground">
-              Send to email <span className="text-muted-foreground">(optional)</span>
+              {t("invitesSendEmail")} <span className="text-muted-foreground">{tCommon("actions.optional")}</span>
             </label>
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="colleague@example.com"
+              placeholder={t("invitesEmailPlaceholder")}
               className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
             />
             {email && (
               <p className="text-xs text-muted-foreground mt-1">
-                Invite will be sent to <span className="font-medium text-foreground">{email}</span>
+                {t("invitesWillSendTo")} <span className="font-medium text-foreground">{email}</span>
               </p>
             )}
           </div>
@@ -217,14 +217,14 @@ export function InvitesSection({
             disabled={createInvite.isPending}
             className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200 ease-out"
           >
-            {createInvite.isPending ? "Creating..." : "Create Invite Link"}
+            {createInvite.isPending ? tCommon("actions.creating") : t("invitesCreateLink")}
           </button>
         </form>
       )}
 
       {/* Active invites */}
       {activeInvites.length === 0 && inactiveInvites.length === 0 && (
-        <p className="text-sm text-muted-foreground">No invite links yet.</p>
+        <p className="text-sm text-muted-foreground">{t("invitesEmpty")}</p>
       )}
 
       {activeInvites.length > 0 && (
@@ -247,7 +247,7 @@ export function InvitesSection({
       {inactiveInvites.length > 0 && (
         <div>
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
-            Inactive
+            {t("invitesInactive")}
           </p>
           <div className="space-y-2 opacity-60">
             {inactiveInvites.map((invite) => (
@@ -283,7 +283,8 @@ function InviteRow({
   onRevoke: (id: string) => void;
   revoking: boolean;
 }) {
-  const status = statusBadge(invite);
+  const { t } = useTranslation("settings");
+  const status = statusBadge(invite, t);
   const active = isActive(invite);
 
   return (
@@ -291,13 +292,13 @@ function InviteRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <p className="text-sm font-medium text-foreground truncate">
-            {invite.label || "Untitled invite"}
+            {invite.label || t("invitesUntitled")}
           </p>
           <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${status.className}`}>
             {status.label}
           </span>
           <span className="text-xs text-muted-foreground">
-            {roleLabel(invite.role)}
+            {roleLabel(invite.role, t)}
           </span>
           {invite.email && (
             <span className="text-xs text-muted-foreground">
@@ -307,13 +308,13 @@ function InviteRow({
         </div>
         <div className="flex items-center gap-3 mt-0.5">
           <p className="text-xs text-muted-foreground">
-            Uses: {invite.useCount}{invite.maxUses > 0 ? `/${invite.maxUses}` : "/\u221E"}
+            {t("invitesUsesLabel")} {invite.useCount}{invite.maxUses > 0 ? `/${invite.maxUses}` : "/\u221E"}
           </p>
           <p className="text-xs text-muted-foreground">
-            Expires: {new Date(invite.expiresAt).toLocaleDateString()}
+            {t("invitesExpiresLabel")} {new Date(invite.expiresAt).toLocaleDateString()}
           </p>
           <p className="text-xs text-muted-foreground">
-            By: {invite.createdBy.displayName ?? invite.createdBy.email}
+            {t("invitesByLabel")} {invite.createdBy.displayName ?? invite.createdBy.email}
           </p>
         </div>
       </div>
@@ -323,7 +324,7 @@ function InviteRow({
           onClick={() => onCopy(invite)}
           className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors shrink-0"
         >
-          {copiedId === invite.id ? "Copied!" : "Copy Link"}
+          {copiedId === invite.id ? t("invitesCopied") : t("invitesCopyLink")}
         </button>
       )}
 
@@ -333,7 +334,7 @@ function InviteRow({
           disabled={revoking}
           className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-colors shrink-0 disabled:opacity-50"
         >
-          Revoke
+          {t("invitesRevoke")}
         </button>
       )}
     </div>

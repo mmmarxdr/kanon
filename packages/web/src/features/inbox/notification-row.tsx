@@ -1,11 +1,12 @@
+import { useTranslation } from "react-i18next";
 import { Icon } from "@/components/ui/icons";
 import type { NotificationDashboardItem } from "@kanon/shared";
 
-const KIND_LABELS: Record<NotificationDashboardItem["kind"], string> = {
-  mention: "Mentioned you",
-  assignment: "Assigned to you",
-  subscribed_activity: "Update on subscribed issue",
-  cycle_closed: "Cycle closed",
+const KIND_KEYS: Record<NotificationDashboardItem["kind"], string> = {
+  mention: "notifMention",
+  assignment: "notifAssignment",
+  subscribed_activity: "notifSubscribed",
+  cycle_closed: "notifCycleClosed",
 };
 
 export interface NotificationRowProps {
@@ -15,7 +16,8 @@ export interface NotificationRowProps {
 }
 
 export function NotificationRow({ notification, onMarkRead, isMarkingRead = false }: NotificationRowProps) {
-  const label = KIND_LABELS[notification.kind];
+  const { t } = useTranslation("inbox");
+  const label = t(KIND_KEYS[notification.kind]);
   const isUnread = !notification.read;
 
   return (
@@ -79,7 +81,7 @@ export function NotificationRow({ notification, onMarkRead, isMarkingRead = fals
           data-testid="mark-read-btn"
           onClick={() => onMarkRead(notification.id)}
           disabled={isMarkingRead}
-          title={isMarkingRead ? "Marking as read…" : "Mark as read"}
+          title={isMarkingRead ? t("markingRead") : t("markAsRead")}
           style={{
             padding: "2px 6px",
             fontSize: 10.5,
@@ -96,7 +98,7 @@ export function NotificationRow({ notification, onMarkRead, isMarkingRead = fals
             (e.currentTarget.style.background = "transparent")
           }
         >
-          Mark read
+          {t("markReadShort")}
         </button>
       )}
     </div>

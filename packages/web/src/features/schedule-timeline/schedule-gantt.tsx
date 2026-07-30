@@ -61,10 +61,10 @@ const ZOOM_OPTIONS: ReadonlyArray<{ value: ZoomLevel; label: string }> = [
 // ── Filters (KAN-150 polish) ─────────────────────────────────────────────────
 
 type TierFilter = "all" | "atrisk" | "critical";
-const TIER_FILTERS: ReadonlyArray<{ value: TierFilter; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "atrisk", label: "At risk" },
-  { value: "critical", label: "Critical" },
+const TIER_FILTERS: ReadonlyArray<{ value: TierFilter; labelKey: string }> = [
+  { value: "all", labelKey: "filterAll" },
+  { value: "atrisk", labelKey: "filterAtRisk" },
+  { value: "critical", labelKey: "filterCritical" },
 ];
 
 const NEAR_CRITICAL_DAYS = 3;
@@ -163,6 +163,7 @@ export interface ScheduleGanttProps {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
+  const { t } = useTranslation("schedule");
   const [containerRef, containerWidth] = useContainerWidth();
   const { mutate: mutatePlan } = useUpsertPlanMutation();
 
@@ -278,7 +279,7 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
           fontSize: 12,
         }}
       >
-        Loading schedule…
+        {t("loading")}
       </div>
     );
   }
@@ -319,7 +320,7 @@ export function ScheduleGantt({ projectKey }: ScheduleGanttProps) {
           fontSize: 12,
         }}
       >
-        No schedule data yet. Add start/due dates to issues to see them here.
+        {t("empty")}
       </div>
     );
   }
@@ -982,7 +983,7 @@ function GanttTooltip({ row, x, y }: { row: ScheduleTimelineRow; x: number; y: n
 
 const LEGEND_ITEMS = [
   {
-    label: "Baseline",
+    labelKey: "legendBaseline",
     style: {
       width: 20,
       height: 8,
@@ -993,7 +994,7 @@ const LEGEND_ITEMS = [
     } as CSSProperties,
   },
   {
-    label: "Plan",
+    labelKey: "legendPlan",
     style: {
       width: 20,
       height: 10,
@@ -1003,7 +1004,7 @@ const LEGEND_ITEMS = [
     } as CSSProperties,
   },
   {
-    label: "Forecast",
+    labelKey: "legendForecast",
     style: {
       width: 20,
       height: 5,
@@ -1013,7 +1014,7 @@ const LEGEND_ITEMS = [
     } as CSSProperties,
   },
   {
-    label: "Slip",
+    labelKey: "legendSlip",
     style: {
       width: 20,
       height: 10,
@@ -1024,7 +1025,7 @@ const LEGEND_ITEMS = [
   },
   {
     // KAN-150: critical-path bars are colored red.
-    label: "Critical",
+    labelKey: "legendCritical",
     style: {
       width: 20,
       height: 10,
@@ -1035,7 +1036,7 @@ const LEGEND_ITEMS = [
   },
   {
     // KAN-150: near-critical (low schedule float) bars are colored amber.
-    label: "Near-critical",
+    labelKey: "legendNearCritical",
     style: {
       width: 20,
       height: 10,
@@ -1046,7 +1047,7 @@ const LEGEND_ITEMS = [
   },
   {
     // KAN-149: dependency connector.
-    label: "Dependency",
+    labelKey: "legendDependency",
     style: {
       width: 20,
       height: 0,
@@ -1054,7 +1055,7 @@ const LEGEND_ITEMS = [
     } as CSSProperties,
   },
   {
-    label: "Critical link",
+    labelKey: "legendCriticalLink",
     style: {
       width: 20,
       height: 0,
@@ -1062,7 +1063,7 @@ const LEGEND_ITEMS = [
     } as CSSProperties,
   },
   {
-    label: "Today",
+    labelKey: "today",
     style: {
       width: 0,
       height: 12,
@@ -1145,11 +1146,11 @@ function GanttLegend({
       </span>
       {LEGEND_ITEMS.map((item) => (
         <span
-          key={item.label}
+          key={item.labelKey}
           style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
         >
           <span style={item.style} />
-          <span style={{ fontSize: 11, color: "var(--ink-3)" }}>{item.label}</span>
+          <span style={{ fontSize: 11, color: "var(--ink-3)" }}>{t(item.labelKey)}</span>
         </span>
       ))}
 
@@ -1235,7 +1236,7 @@ function GanttLegend({
                     cursor: "pointer",
                   }}
                 >
-                  {opt.label}
+                  {t(opt.labelKey)}
                 </button>
               );
             })}

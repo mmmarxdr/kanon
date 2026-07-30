@@ -109,7 +109,7 @@ export default function RoadmapPage() {
       >
         <p>{t("noProject")}</p>
         <Link to="/" style={{ color: "var(--accent-ink)" }}>
-          Go to project selection
+          {t("goToProjectSelection")}
         </Link>
       </div>
     );
@@ -127,7 +127,7 @@ export default function RoadmapPage() {
           fontSize: 12,
         }}
       >
-        Failed to load roadmap: {error.message}
+        {t("failedLoad", { message: error.message })}
       </div>
     );
   }
@@ -235,7 +235,7 @@ export default function RoadmapPage() {
         />
       )}
 
-      {/* {t("newItem")} modal */}
+      {/* New item modal */}
       {showNewItem && (
         <NewRoadmapItemModal
           projectKey={projectKey}

@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { McpProposal } from "@/types/proposal";
 import { Icon } from "@/components/ui/icons";
 
@@ -14,6 +15,7 @@ export function ProposalRow({
   onDismiss,
   isPending,
 }: ProposalRowProps) {
+  const { t } = useTranslation("inbox");
   const applied = proposal.status === "applied";
   const dismissed = proposal.status === "dismissed";
   const inactive = applied || dismissed;
@@ -76,7 +78,7 @@ export function ProposalRow({
       </div>
       {applied && (
         <span className="mono" style={{ fontSize: 10.5, color: "var(--ok)" }}>
-          APPLIED
+          {t("proposalApplied")}
         </span>
       )}
       {dismissed && (
@@ -84,7 +86,7 @@ export function ProposalRow({
           className="mono"
           style={{ fontSize: 10.5, color: "var(--ink-4)" }}
         >
-          DISMISSED
+          {t("proposalDismissed")}
         </span>
       )}
       {!inactive && (
@@ -102,7 +104,7 @@ export function ProposalRow({
               opacity: isPending ? 0.55 : 1,
             }}
           >
-            Skip
+            {t("proposalSkip")}
           </button>
           <button
             type="button"
@@ -120,7 +122,7 @@ export function ProposalRow({
               opacity: isPending ? 0.55 : 1,
             }}
           >
-            Apply
+            {t("proposalApply")}
           </button>
         </>
       )}

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 interface Project {
   key: string;
@@ -32,6 +33,7 @@ export function ProjectPickerPopover({
   children,
   "data-testid": testId,
 }: ProjectPickerPopoverProps) {
+  const { t } = useTranslation("inbox");
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -137,7 +139,7 @@ export function ProjectPickerPopover({
       {isOpen && (
         <div
           role="menu"
-          aria-label="Select project"
+          aria-label={t("selectProject")}
           onKeyDown={handleMenuKeyDown}
           style={{
             position: "absolute",

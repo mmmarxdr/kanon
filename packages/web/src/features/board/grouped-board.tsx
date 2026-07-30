@@ -1,4 +1,5 @@
 import { memo, useCallback, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   DndContext,
   DragOverlay,
@@ -19,7 +20,6 @@ import {
   useBoardStore,
   BOARD_COLUMNS,
   COLUMN_DEFAULT_STATE,
-  COLUMN_LABELS,
   COLUMN_STATE_MAP,
   type BoardColumn as BoardColumnType,
 } from "@/stores/board-store";
@@ -68,6 +68,9 @@ const GroupedColumn = memo(function GroupedColumn({
   showRightDivider = false,
 }: GroupedColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: column });
+  const { t } = useTranslation("common");
+  const { t: tBoard } = useTranslation("board");
+  const columnLabel = t(`state.${column}`);
 
   const totalCount =
     groups.reduce((sum, g) => sum + g.count, 0) +
@@ -124,7 +127,7 @@ const GroupedColumn = memo(function GroupedColumn({
               boxShadow: `0 0 0 2px color-mix(in oklch, ${dot} 16%, transparent)`,
             }}
           />
-          {COLUMN_LABELS[column]}
+          {columnLabel}
         </span>
         <span style={{ flex: 1 }} />
         <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)" }}>
@@ -134,8 +137,8 @@ const GroupedColumn = memo(function GroupedColumn({
           type="button"
           onClick={() => onAddIssue?.(column)}
           style={{ color: "var(--ink-4)" }}
-          title="Add issue"
-          aria-label={`Add issue to ${COLUMN_LABELS[column]}`}
+          title={t("actions.addIssue")}
+          aria-label={tBoard("addIssueTo", { column: columnLabel })}
         >
           <Icon.Plus />
         </button>
@@ -154,7 +157,7 @@ const GroupedColumn = memo(function GroupedColumn({
           minHeight: 64,
         }}
       >
-        <PanelErrorBoundary label={`${COLUMN_LABELS[column]} column`}>
+        <PanelErrorBoundary label={`${columnLabel} column`}>
           <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
             {groups.map((group) => (
               <GroupCard
@@ -188,7 +191,7 @@ const GroupedColumn = memo(function GroupedColumn({
               borderRadius: 5,
             }}
           >
-            Empty
+            {tBoard("emptyColumn")}
           </div>
         )}
       </div>

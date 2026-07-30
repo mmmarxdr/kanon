@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { useEscapeKey } from "@/hooks/use-escape-key";
 import { useBackdropClose } from "@/hooks/use-backdrop-close";
 import { FocusTrap } from "focus-trap-react";
@@ -10,13 +11,15 @@ interface OnboardingLinkModalProps {
   expiresAt: string;  // ISO 8601
 }
 
-function formatExpiry(expiresAt: string): string {
+function formatExpiry(expiresAt: string, t: (key: string, opts?: Record<string, unknown>) => string): string {
   const msLeft = new Date(expiresAt).getTime() - Date.now();
   const hoursLeft = Math.max(0, Math.ceil(msLeft / (1000 * 60 * 60)));
-  if (hoursLeft <= 1) return "Expires in less than 1 hour";
-  if (hoursLeft < 24) return `Expires in ${hoursLeft} hours`;
+  if (hoursLeft <= 1) return t("onboardingExpiresLessThanHour");
+  if (hoursLeft < 24) return t("onboardingExpiresHours", { count: hoursLeft });
   const daysLeft = Math.ceil(hoursLeft / 24);
-  return `Expires in ${daysLeft} day${daysLeft !== 1 ? "s" : ""}`;
+  return daysLeft === 1
+    ? t("onboardingExpiresDay", { count: daysLeft })
+    : t("onboardingExpiresDays", { count: daysLeft });
 }
 
 export function OnboardingLinkModal({
@@ -25,6 +28,8 @@ export function OnboardingLinkModal({
   url,
   expiresAt,
 }: OnboardingLinkModalProps) {
+  const { t } = useTranslation("settings");
+  const { t: tCommon } = useTranslation("common");
   const [copied, setCopied] = useState(false);
 
   useEscapeKey(onClose, open);
@@ -102,12 +107,12 @@ export function OnboardingLinkModal({
                 color: "var(--ink-4)",
               }}
             >
-              Onboarding Link
+              {t("onboardingTitle")}
             </span>
             <button
               type="button"
               onClick={onClose}
-              aria-label="Close"
+              aria-label={tCommon("actions.close")}
               data-testid="onboarding-close-btn"
               style={{ color: "var(--ink-4)", padding: 2, lineHeight: 1 }}
             >
@@ -129,7 +134,7 @@ export function OnboardingLinkModal({
                   marginBottom: 6,
                 }}
               >
-                Share this link with the developer
+                {t("onboardingShareHint")}
               </p>
               <div
                 style={{
@@ -171,7 +176,7 @@ export function OnboardingLinkModal({
                     transition: "background 0.15s",
                   }}
                 >
-                  {copied ? "Copied!" : "Copy"}
+                  {copied ? t("onboardingCopied") : t("onboardingCopy")}
                 </button>
               </div>
             </div>
@@ -192,11 +197,10 @@ export function OnboardingLinkModal({
                 data-testid="onboarding-expiry"
                 style={{ fontSize: 12, color: "var(--ink-3)", margin: 0 }}
               >
-                {formatExpiry(expiresAt)} — valid for 72 hours maximum.
+                {formatExpiry(expiresAt, t)} {t("onboardingValidNote")}
               </p>
               <p style={{ fontSize: 12, color: "var(--ink-3)", margin: 0 }}>
-                Single-use — share it only with the intended developer. The link
-                becomes invalid after first use.
+                {t("onboardingSingleUseNote")}
               </p>
             </div>
           </div>
@@ -225,7 +229,7 @@ export function OnboardingLinkModal({
                 cursor: "pointer",
               }}
             >
-              Close
+              {tCommon("actions.close")}
             </button>
           </div>
         </div>

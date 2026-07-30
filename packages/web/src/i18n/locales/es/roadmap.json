@@ -1,4 +1,5 @@
 {
+  "loading": "Cargando hoja de ruta…",
   "viewHorizons": "Horizontes",
   "viewTimeline": "Cronograma",
   "viewAnalytics": "Analítica",
@@ -38,6 +39,8 @@
   "fieldHorizon": "Horizonte",
   "fieldEffort": "Esfuerzo",
   "fieldImpact": "Impacto",
+  "fieldTargetDate": "Fecha objetivo",
+  "addItemTo": "Añadir ítem a {{horizon}}",
   "placeholderLabels": "Etiquetas (separadas por comas)",
   "createSubmit": "Crear",
   "promoteToIssue": "Promover a issue",
@@ -59,5 +62,6 @@
   "emptyPipeline": "Aún no hay ítems. Añade ítems para ver el pipeline.",
   "emptyDeps": "Aún no hay dependencias registradas.",
   "emptyThroughput": "Ningún ítem entregado en las últimas 12 semanas.",
-  "emptyEffortImpact": "Ningún ítem tiene esfuerzo e impacto. Añade puntuaciones para verlos aquí."
+  "emptyEffortImpact": "Ningún ítem tiene esfuerzo e impacto. Añade puntuaciones para verlos aquí.",
+  "unassignedOwner": "Sin asignar"
 }
