@@ -33,7 +33,7 @@ function SettingsPage() {
   const currentUser = useAuthStore((s) => s.user);
   const { data: members } = useWorkspaceMembersQuery(workspaceId);
 
-  const workspace = workspaces?.[0];
+  const workspace = workspaces?.find((w) => w.id === workspaceId) ?? workspaces?.[0];
 
   // Find current user's role in this workspace
   const currentUserRole = members?.find(

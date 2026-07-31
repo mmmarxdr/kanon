@@ -22,5 +22,9 @@
   "searchOrAsk": "Buscar o preguntar…",
   "selectProjectFirst": "{{label}} (elige un proyecto primero)",
   "showAllProjects": "Ver todos ({{count}})",
-  "showLessProjects": "Ver menos"
+  "showLessProjects": "Ver menos",
+  "workspace": "espacio",
+  "workspaceFallback": "Espacio de trabajo",
+  "switchWorkspace": "Cambiar de espacio",
+  "manageWorkspaces": "Gestionar / crear…"
 }
