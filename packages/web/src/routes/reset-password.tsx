@@ -1,5 +1,6 @@
 import { createRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { rootRoute } from "./__root";
 import {
   AuthLayout,
@@ -27,6 +28,7 @@ export const resetPasswordRoute = createRoute({
 });
 
 function ResetPasswordPage() {
+  const { t } = useTranslation("auth");
   const navigate = useNavigate();
   const { token } = resetPasswordRoute.useSearch();
 
@@ -55,7 +57,7 @@ function ResetPasswordPage() {
         onClick={() => void navigate({ to: "/login" })}
         style={{ color: "var(--ink-3)" }}
       >
-        ← Back to sign in
+        {t("layout.backToSignIn")}
       </button>
     </div>
   );
@@ -63,23 +65,23 @@ function ResetPasswordPage() {
   if (!token) {
     return (
       <AuthLayout
-        eyebrow="Reset"
-        title="Invalid reset link."
-        subtitle="This password reset link is invalid or has expired."
+        eyebrow={t("reset.noToken.eyebrow")}
+        title={t("reset.noToken.title")}
+        subtitle={t("reset.noToken.subtitle")}
         footer={backToSignIn}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
           <div>
-            <H2>Invalid reset link</H2>
+            <H2>{t("reset.noToken.heading")}</H2>
             <Sub>
-              Please request a new password reset link to continue.
+              {t("reset.noToken.body")}
             </Sub>
           </div>
           <PrimaryBtn
             type="button"
             onClick={() => void navigate({ to: "/forgot-password" })}
           >
-            Request a new reset link →
+            {t("reset.noToken.requestNew")}
           </PrimaryBtn>
         </div>
       </AuthLayout>
@@ -89,19 +91,19 @@ function ResetPasswordPage() {
   if (success) {
     return (
       <AuthLayout
-        eyebrow="Done"
-        title="Password updated."
-        subtitle="You can now sign in with your new password."
+        eyebrow={t("reset.success.eyebrow")}
+        title={t("reset.success.title")}
+        subtitle={t("reset.success.subtitle")}
         footer={backToSignIn}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
           <div>
-            <H2>Password reset successful</H2>
-            <Sub>Your password has been updated.</Sub>
+            <H2>{t("reset.success.heading")}</H2>
+            <Sub>{t("reset.success.body")}</Sub>
           </div>
-          <SuccessBox>You can now sign in.</SuccessBox>
+          <SuccessBox>{t("reset.success.box")}</SuccessBox>
           <PrimaryBtn type="button" onClick={() => void navigate({ to: "/login" })}>
-            Sign in →
+            {t("reset.success.signIn")}
           </PrimaryBtn>
         </div>
       </AuthLayout>
@@ -113,7 +115,7 @@ function ResetPasswordPage() {
     setError(null);
 
     if (!valid) {
-      setError("Please ensure your password meets all requirements.");
+      setError(t("reset.errors.passwordRequirements"));
       return;
     }
 
@@ -135,7 +137,7 @@ function ResetPasswordPage() {
           // Response may not be JSON
         }
         throw new Error(
-          (body.message as string) ?? "An unexpected error occurred",
+          (body.message as string) ?? t("reset.errors.unexpected"),
         );
       }
 
@@ -144,7 +146,7 @@ function ResetPasswordPage() {
       if (err instanceof Error) {
         setError(err.message);
       } else {
-        setError("An unexpected error occurred");
+        setError(t("reset.errors.unexpected"));
       }
     } finally {
       setLoading(false);
@@ -153,9 +155,9 @@ function ResetPasswordPage() {
 
   return (
     <AuthLayout
-      eyebrow="Reset"
-      title="Set a new password."
-      subtitle="Choose a strong, unique password — at least 12 characters."
+      eyebrow={t("reset.form.eyebrow")}
+      title={t("reset.form.title")}
+      subtitle={t("reset.form.subtitle")}
       footer={backToSignIn}
     >
       <form
@@ -164,20 +166,20 @@ function ResetPasswordPage() {
         style={{ display: "flex", flexDirection: "column", gap: 22 }}
       >
         <div>
-          <H2>Set new password</H2>
-          <Sub>You'll use this to sign in next time.</Sub>
+          <H2>{t("reset.form.heading")}</H2>
+          <Sub>{t("reset.form.subheading")}</Sub>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <FormInput
             id="password"
-            fieldLabel="New password"
+            fieldLabel={t("reset.fields.newPassword")}
             type="password"
             value={password}
             onChange={(e) => {
               setPassword(e.target.value);
               if (!pwTouched) setPwTouched(true);
             }}
-            placeholder="At least 12 characters"
+            placeholder={t("reset.fields.newPasswordPlaceholder")}
             required
             minLength={12}
             maxLength={128}
@@ -185,14 +187,14 @@ function ResetPasswordPage() {
           />
           <FormInput
             id="confirmPassword"
-            fieldLabel="Confirm password"
+            fieldLabel={t("reset.fields.confirmPassword")}
             type="password"
             value={confirmPassword}
             onChange={(e) => {
               setConfirmPassword(e.target.value);
               if (!pwTouched) setPwTouched(true);
             }}
-            placeholder="Repeat your password"
+            placeholder={t("reset.fields.confirmPasswordPlaceholder")}
             required
             minLength={12}
             maxLength={128}
@@ -201,7 +203,7 @@ function ResetPasswordPage() {
         </div>
         {error && <ErrorBox>{error}</ErrorBox>}
         <PrimaryBtn disabled={loading || !valid}>
-          {loading ? "Resetting…" : "Reset password →"}
+          {loading ? t("reset.submit.resetting") : t("reset.submit.resetPassword")}
         </PrimaryBtn>
       </form>
     </AuthLayout>

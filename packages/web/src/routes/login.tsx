@@ -1,5 +1,6 @@
 import { createRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { rootRoute } from "./__root";
 import { useAuthStore } from "@/stores/auth-store";
 import { fetchApi, ApiError } from "@/lib/api-client";
@@ -38,6 +39,7 @@ interface LoginFormProps {
 }
 
 export function LoginForm({ invite, onNavigate }: LoginFormProps) {
+  const { t } = useTranslation("auth");
   const { setUser } = useAuthStore();
 
   const [email, setEmail] = useState("");
@@ -52,7 +54,7 @@ export function LoginForm({ invite, onNavigate }: LoginFormProps) {
 
   async function handleMagicLink() {
     if (!email.trim()) {
-      setMagicLinkError("Enter your email address above first.");
+      setMagicLinkError(t("login.errors.enterEmailFirst"));
       return;
     }
     setMagicLinkError(null);
@@ -69,7 +71,7 @@ export function LoginForm({ invite, onNavigate }: LoginFormProps) {
       }
       setMagicLinkSent(true);
     } catch {
-      setMagicLinkError("Could not send sign-in link. Please try again.");
+      setMagicLinkError(t("login.errors.sendFailed"));
     } finally {
       setMagicLinkLoading(false);
     }
@@ -79,9 +81,9 @@ export function LoginForm({ invite, onNavigate }: LoginFormProps) {
   if (magicLinkSent) {
     return (
       <AuthLayout
-        eyebrow="Check your inbox"
-        title="Sign-in link sent."
-        subtitle="We emailed you a magic link. Click it to sign in instantly."
+        eyebrow={t("login.magicLinkSent.eyebrow")}
+        title={t("login.magicLinkSent.title")}
+        subtitle={t("login.magicLinkSent.subtitle")}
         footer={
           <div style={{ display: "flex", justifyContent: "flex-end", fontSize: 12, color: "var(--ink-3)" }}>
             <button
@@ -89,31 +91,34 @@ export function LoginForm({ invite, onNavigate }: LoginFormProps) {
               onClick={() => { setMagicLinkSent(false); setMagicLinkError(null); }}
               style={{ color: "var(--ink-3)" }}
             >
-              ← Try a different email
+              {t("login.magicLinkSent.tryDifferentEmail")}
             </button>
           </div>
         }
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
           <div>
-            <H2>Check your email</H2>
-            <Sub>We sent a sign-in link to <strong>{email}</strong>. The link is valid for 15 minutes.</Sub>
+            <H2>{t("login.magicLinkSent.heading")}</H2>
+            <Sub>
+              {t("login.magicLinkSent.bodyBefore")} <strong>{email}</strong>
+              {t("login.magicLinkSent.bodyAfter")}
+            </Sub>
           </div>
-          <SuccessBox>Sign-in link sent — check your inbox (and spam folder).</SuccessBox>
+          <SuccessBox>{t("login.magicLinkSent.success")}</SuccessBox>
           {magicLinkError && <ErrorBox>{magicLinkError}</ErrorBox>}
           <PrimaryBtn
             type="button"
             disabled={magicLinkLoading}
             onClick={() => { void handleMagicLink(); }}
           >
-            {magicLinkLoading ? "Sending…" : "Resend →"}
+            {magicLinkLoading ? t("login.magicLinkSent.resendSending") : t("login.magicLinkSent.resend")}
           </PrimaryBtn>
           <button
             type="button"
             onClick={() => void onNavigate({ to: "/login" })}
             style={{ fontSize: 12, color: "var(--ink-3)", textAlign: "center" }}
           >
-            Back to sign in with password
+            {t("login.magicLinkSent.backToPassword")}
           </button>
         </div>
       </AuthLayout>
@@ -168,7 +173,7 @@ export function LoginForm({ invite, onNavigate }: LoginFormProps) {
       if (err instanceof ApiError) {
         setError(err.message);
       } else {
-        setError("An unexpected error occurred");
+        setError(t("login.errors.unexpected"));
       }
     } finally {
       setLoading(false);
@@ -177,9 +182,9 @@ export function LoginForm({ invite, onNavigate }: LoginFormProps) {
 
   return (
     <AuthLayout
-      eyebrow="Welcome back"
-      title="Make work concrete."
-      subtitle="The instrument-grade tracker for teams that ship faster than they plan."
+      eyebrow={t("login.eyebrow")}
+      title={t("login.title")}
+      subtitle={t("login.subtitle")}
       footer={
         <div
           style={{
@@ -190,7 +195,7 @@ export function LoginForm({ invite, onNavigate }: LoginFormProps) {
             gap: 8,
           }}
         >
-          New to Kanon?{" "}
+          {t("login.footer.newToKanon")}{" "}
           <button
             type="button"
             onClick={() =>
@@ -201,7 +206,7 @@ export function LoginForm({ invite, onNavigate }: LoginFormProps) {
             }
             style={{ color: "var(--accent-ink)", fontWeight: 500 }}
           >
-            Create workspace →
+            {t("login.footer.createWorkspace")}
           </button>
         </div>
       }
@@ -212,8 +217,8 @@ export function LoginForm({ invite, onNavigate }: LoginFormProps) {
         style={{ display: "flex", flexDirection: "column", gap: 22 }}
       >
         <div>
-          <H2>Sign in to your workspace</H2>
-          <Sub>Use your work email or single sign-on.</Sub>
+          <H2>{t("login.form.heading")}</H2>
+          <Sub>{t("login.form.subheading")}</Sub>
         </div>
 
         {/* SSO buttons — coming soon, rendered disabled for visual hierarchy */}
@@ -224,7 +229,7 @@ export function LoginForm({ invite, onNavigate }: LoginFormProps) {
               data-testid="sso-google-btn"
               icon={<GoogleIcon />}
             >
-              Continue with Google
+              {t("login.sso.google")}
             </GhostBtn>
           </ComingSoonTooltip>
           <ComingSoonTooltip>
@@ -233,21 +238,21 @@ export function LoginForm({ invite, onNavigate }: LoginFormProps) {
               data-testid="sso-saml-btn"
               icon={<KeyIcon />}
             >
-              Continue with SAML SSO
+              {t("login.sso.saml")}
             </GhostBtn>
           </ComingSoonTooltip>
         </div>
 
-        <MonoDivider label="or with email" />
+        <MonoDivider label={t("login.divider.orWithEmail")} />
 
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <FormInput
             id="email"
-            fieldLabel="Work email"
+            fieldLabel={t("login.fields.workEmail")}
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@company.com"
+            placeholder={t("login.fields.workEmailPlaceholder")}
             required
             autoFocus
           />
@@ -267,7 +272,7 @@ export function LoginForm({ invite, onNavigate }: LoginFormProps) {
                   fontWeight: 500,
                 }}
               >
-                Password
+                {t("login.fields.password")}
               </label>
               <button
                 type="button"
@@ -277,7 +282,7 @@ export function LoginForm({ invite, onNavigate }: LoginFormProps) {
                   color: "var(--accent-ink)",
                 }}
               >
-                Forgot?
+                {t("login.fields.forgotPassword")}
               </button>
             </div>
             <div
@@ -320,7 +325,7 @@ export function LoginForm({ invite, onNavigate }: LoginFormProps) {
 
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <PrimaryBtn disabled={loading}>
-            {loading ? "Signing in…" : "Sign in →"}
+            {loading ? t("login.submit.signingIn") : t("login.submit.signIn")}
           </PrimaryBtn>
           {magicLinkError && (
             <div data-testid="magic-link-error" style={{ fontSize: 12, color: "var(--bad)" }}>
@@ -344,7 +349,7 @@ export function LoginForm({ invite, onNavigate }: LoginFormProps) {
               border: "none",
             }}
           >
-            {magicLinkLoading ? "Sending…" : "Email me a magic link instead"}
+            {magicLinkLoading ? t("login.magicLink.sending") : t("login.magicLink.cta")}
           </button>
         </div>
       </form>

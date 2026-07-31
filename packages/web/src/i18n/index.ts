@@ -14,6 +14,7 @@ import enSchedule from "./locales/en/schedule.json";
 import enSettings from "./locales/en/settings.json";
 import enPalette from "./locales/en/palette.json";
 import enDependencies from "./locales/en/dependencies.json";
+import enAuth from "./locales/en/auth.json";
 
 import esCommon from "./locales/es/common.json";
 import esNav from "./locales/es/nav.json";
@@ -26,6 +27,7 @@ import esSchedule from "./locales/es/schedule.json";
 import esSettings from "./locales/es/settings.json";
 import esPalette from "./locales/es/palette.json";
 import esDependencies from "./locales/es/dependencies.json";
+import esAuth from "./locales/es/auth.json";
 
 export const I18N_NAMESPACES = [
   "common",
@@ -39,6 +41,7 @@ export const I18N_NAMESPACES = [
   "settings",
   "palette",
   "dependencies",
+  "auth",
 ] as const;
 
 export type I18nNamespace = (typeof I18N_NAMESPACES)[number];
@@ -56,6 +59,7 @@ const resources = {
     settings: enSettings,
     palette: enPalette,
     dependencies: enDependencies,
+    auth: enAuth,
   },
   es: {
     common: esCommon,
@@ -69,6 +73,7 @@ const resources = {
     settings: esSettings,
     palette: esPalette,
     dependencies: esDependencies,
+    auth: esAuth,
   },
 };
 

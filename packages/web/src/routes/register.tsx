@@ -1,5 +1,6 @@
 import { createRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { rootRoute } from "./__root";
 import { useAuthStore } from "@/stores/auth-store";
 import { fetchApi, ApiError } from "@/lib/api-client";
@@ -36,6 +37,7 @@ interface RegisterFormProps {
 }
 
 export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
+  const { t } = useTranslation("auth");
   const { setUser } = useAuthStore();
 
   const [email, setEmail] = useState("");
@@ -55,7 +57,7 @@ export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
     e.preventDefault();
     if (!agreedToTerms) return;
     if (!valid) {
-      setError("Please ensure your password meets all requirements.");
+      setError(t("register.errors.passwordRequirements"));
       return;
     }
     setError(null);
@@ -99,7 +101,7 @@ export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
       if (err instanceof ApiError) {
         setError(err.message);
       } else {
-        setError("An unexpected error occurred");
+        setError(t("register.errors.unexpected"));
       }
     } finally {
       setLoading(false);
@@ -107,12 +109,12 @@ export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
   }
 
   // Invite-aware copy: when an invite is present, frame as joining.
-  const eyebrow = invite ? "You've been invited" : "New here";
-  const title = invite ? "Join your team." : "Create your account.";
+  const eyebrow = invite ? t("register.invite.eyebrow") : t("register.default.eyebrow");
+  const title = invite ? t("register.invite.title") : t("register.default.title");
   const subtitle = invite
-    ? "Set up your account to start collaborating."
-    : "Free for teams under 10. No credit card.";
-  const submitLabel = invite ? "Join workspace →" : "Create account →";
+    ? t("register.invite.subtitle")
+    : t("register.default.subtitle");
+  const submitLabel = invite ? t("register.invite.submit") : t("register.default.submit");
 
   return (
     <AuthLayout
@@ -129,7 +131,7 @@ export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
             gap: 8,
           }}
         >
-          Already on Kanon?{" "}
+          {t("register.footer.alreadyOnKanon")}{" "}
           <button
             type="button"
             onClick={() =>
@@ -140,7 +142,7 @@ export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
             }
             style={{ color: "var(--accent-ink)", fontWeight: 500 }}
           >
-            Sign in →
+            {t("register.footer.signIn")}
           </button>
         </div>
       }
@@ -151,39 +153,39 @@ export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
         style={{ display: "flex", flexDirection: "column", gap: 22 }}
       >
         <div>
-          <H2>{invite ? "Join your team" : "Create your account"}</H2>
+          <H2>{invite ? t("register.invite.heading") : t("register.default.heading")}</H2>
           <Sub>{subtitle}</Sub>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <FormInput
             id="displayName"
-            fieldLabel="Full name"
+            fieldLabel={t("register.fields.fullName")}
             type="text"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
-            placeholder="Your name"
+            placeholder={t("register.fields.fullNamePlaceholder")}
             maxLength={100}
           />
           <FormInput
             id="email"
-            fieldLabel="Work email"
+            fieldLabel={t("register.fields.workEmail")}
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@company.com"
+            placeholder={t("register.fields.workEmailPlaceholder")}
             required
           />
           <FormInput
             id="password"
-            fieldLabel="Password"
+            fieldLabel={t("register.fields.password")}
             type="password"
             value={password}
             onChange={(e) => {
               setPassword(e.target.value);
               if (!pwTouched) setPwTouched(true);
             }}
-            placeholder="At least 8 characters"
+            placeholder={t("register.fields.passwordPlaceholder")}
             required
             minLength={8}
             maxLength={128}
@@ -191,14 +193,14 @@ export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
           />
           <FormInput
             id="confirmPassword"
-            fieldLabel="Confirm password"
+            fieldLabel={t("register.fields.confirmPassword")}
             type="password"
             value={confirmPassword}
             onChange={(e) => {
               setConfirmPassword(e.target.value);
               if (!pwTouched) setPwTouched(true);
             }}
-            placeholder="Repeat your password"
+            placeholder={t("register.fields.confirmPasswordPlaceholder")}
             required
             minLength={8}
             maxLength={128}
@@ -226,7 +228,7 @@ export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
             style={{ marginTop: 2, accentColor: "var(--accent)" }}
           />
           <span>
-            I agree to Kanon's{" "}
+            {t("register.tos.prefix")}{" "}
             {/* TODO: link to /terms when that page exists */}
             <button
               type="button"
@@ -234,9 +236,9 @@ export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
               aria-disabled
               style={{ color: "var(--accent-ink)", cursor: "default" }}
             >
-              Terms of Service
+              {t("register.tos.termsOfService")}
             </button>{" "}
-            and{" "}
+            {t("register.tos.conjunction")}{" "}
             {/* TODO: link to /privacy when that page exists */}
             <button
               type="button"
@@ -244,9 +246,9 @@ export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
               aria-disabled
               style={{ color: "var(--accent-ink)", cursor: "default" }}
             >
-              Privacy Policy
+              {t("register.tos.privacyPolicy")}
             </button>
-            .
+            {t("register.tos.suffix")}
           </span>
         </label>
 
@@ -257,7 +259,7 @@ export function RegisterForm({ invite, onNavigate }: RegisterFormProps) {
         )}
 
         <PrimaryBtn disabled={loading || !agreedToTerms || !valid}>
-          {loading ? "Creating account…" : submitLabel}
+          {loading ? t("register.submit.creating") : submitLabel}
         </PrimaryBtn>
       </form>
     </AuthLayout>
