@@ -24,11 +24,13 @@ import {
   type BoardColumn as BoardColumnType,
 } from "@/stores/board-store";
 import type { GroupSummary, Issue } from "@/types/issue";
+import type { IssueNode } from "@/lib/build-issue-forest";
 import { groupSummariesByColumn, groupByColumn } from "./use-issues-query";
 import { useGroupTransitionMutation } from "./use-group-transition-mutation";
 import { useTransitionMutation } from "./use-transition-mutation";
 import { GroupCard } from "./group-card";
 import { IssueCard } from "./issue-card";
+import { HierarchyIssueBlock } from "./hierarchy-issue-block";
 import { GroupDrillDown } from "./group-drill-down";
 import { ReconcileModal } from "./reconcile-modal";
 import { Icon } from "@/components/ui/icons";
@@ -49,7 +51,7 @@ const COLUMN_DOT: Record<string, string> = {
 interface GroupedColumnProps {
   column: BoardColumnType;
   groups: GroupSummary[];
-  ungroupedIssues: Issue[];
+  ungroupedIssues: IssueNode[];
   showUngrouped: boolean;
   onSelectGroup: (groupKey: string) => void;
   onSelectIssue?: (key: string) => void;
@@ -170,9 +172,9 @@ const GroupedColumn = memo(function GroupedColumn({
             {showUngrouped &&
               ungroupedIssues.map((issue) => (
                 <PanelErrorBoundary key={issue.key} label={`Card ${issue.key}`}>
-                  <IssueCard
-                    issue={issue}
-                    onSelect={onSelectIssue}
+                  <HierarchyIssueBlock
+                    node={issue}
+                    onSelectIssue={onSelectIssue}
                   />
                 </PanelErrorBoundary>
               ))}
@@ -205,7 +207,7 @@ const GroupedColumn = memo(function GroupedColumn({
 
 interface GroupedBoardProps {
   groups: GroupSummary[];
-  issues: Issue[];
+  issues: IssueNode[];
   projectKey: string;
   onSelectIssue?: (key: string) => void;
   onAddIssue?: (column: BoardColumnType) => void;

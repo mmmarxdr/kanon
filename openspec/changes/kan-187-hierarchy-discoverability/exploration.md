@@ -67,7 +67,7 @@ Grouped drill-down (`?group_key=`) and group summaries do **not** use
 5. **Integrity** — same-project, self/cycle/depth validation; safe render of legacy cycles.
 6. **Planning semantics (follow-up)** — rollups, cycle membership, Gantt hierarchy.
 
-Slice 1 landed in PR #233 (`1b75572`). Slice 2 is `kan-187-hierarchy-read-model/`.
+Slice 1 landed in PR #233. Slice 2 landed in PR #235. Slice 3 is `kan-187-board-hierarchy-ux/`.
 
 ## 5. ADR gate
 

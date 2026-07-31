@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import type { Issue } from "@/types/issue";
+import type { IssueNode } from "@/lib/build-issue-forest";
 
 vi.mock("focus-trap-react", () => ({
   FocusTrap: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -26,7 +27,7 @@ vi.mock("./use-transition-mutation", () => ({
   }),
 }));
 
-function makeIssue(key: string, state: Issue["state"] = "review"): Issue {
+function makeIssue(key: string, state: Issue["state"] = "review"): IssueNode {
   return {
     id: `id-${key}`,
     key,
@@ -38,6 +39,9 @@ function makeIssue(key: string, state: Issue["state"] = "review"): Issue {
     projectId: "proj-1",
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
+    children: [],
+    descendantCount: 0,
+    depth: 0,
   };
 }
 

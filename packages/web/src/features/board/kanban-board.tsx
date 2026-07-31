@@ -17,14 +17,24 @@ import {
   type BoardColumn as BoardColumnType,
 } from "@/stores/board-store";
 import type { Issue } from "@/types/issue";
+import type { IssueNode } from "@/lib/build-issue-forest";
 import { groupByColumn } from "./use-issues-query";
 import { useTransitionMutation } from "./use-transition-mutation";
 import { BoardColumn } from "./board-column";
 import { IssueCard } from "./issue-card";
 import { ReconcileModal } from "./reconcile-modal";
 
+function findNodeByKey(nodes: IssueNode[], key: string): IssueNode | undefined {
+  for (const node of nodes) {
+    if (node.key === key) return node;
+    const nested = findNodeByKey(node.children, key);
+    if (nested) return nested;
+  }
+  return undefined;
+}
+
 interface KanbanBoardProps {
-  issues: Issue[];
+  issues: IssueNode[];
   projectKey: string;
   onSelectIssue?: (key: string) => void;
   onAddIssue?: (column: BoardColumnType) => void;
@@ -71,7 +81,7 @@ export function KanbanBoard({ issues, projectKey, onSelectIssue, onAddIssue }: K
   const handleDragStart = useCallback(
     (event: DragStartEvent) => {
       const issueKey = event.active.id as string;
-      const found = issues.find((i) => i.key === issueKey);
+      const found = findNodeByKey(issues, issueKey);
       setActiveIssue(found ?? null);
     },
     [issues],
@@ -85,14 +95,14 @@ export function KanbanBoard({ issues, projectKey, onSelectIssue, onAddIssue }: K
       if (!over) return;
 
       const issueKey = active.id as string;
-      const issue = issues.find((i) => i.key === issueKey);
+      const issue = findNodeByKey(issues, issueKey);
       if (!issue) return;
 
       let targetColumn: BoardColumnType;
       if (BOARD_COLUMNS.includes(over.id as BoardColumnType)) {
         targetColumn = over.id as BoardColumnType;
       } else {
-        const overIssue = issues.find((i) => i.key === over.id);
+        const overIssue = findNodeByKey(issues, over.id as string);
         if (!overIssue) return;
         const found = BOARD_COLUMNS.find((col) =>
           COLUMN_STATE_MAP[col].includes(overIssue.state),

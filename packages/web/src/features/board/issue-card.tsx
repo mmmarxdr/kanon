@@ -1,8 +1,16 @@
 import { memo } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { useTranslation } from "react-i18next";
 import type { Issue } from "@/types/issue";
 import { Avatar, Prio, Tag, TypeGlyph, avatarInitials } from "@/components/ui/primitives";
+import { Icon } from "@/components/ui/icons";
+
+export interface IssueCardDisclosure {
+  expanded: boolean;
+  count: number;
+  onToggle: (e: React.MouseEvent) => void;
+}
 
 // Static style objects extracted to module level to avoid identity churn on
 // every render. Only transform/transition/opacity/boxShadow remain inline
@@ -53,9 +61,16 @@ const BOTTOM_ROW_STYLE = {
 interface IssueCardProps {
   issue: Issue;
   onSelect?: (key: string) => void;
+  /** KAN-187: hierarchy disclosure (roots with descendants). */
+  disclosure?: IssueCardDisclosure;
 }
 
-export const IssueCard = memo(function IssueCard({ issue, onSelect }: IssueCardProps) {
+export const IssueCard = memo(function IssueCard({
+  issue,
+  onSelect,
+  disclosure,
+}: IssueCardProps) {
+  const { t } = useTranslation("board");
   const {
     attributes,
     listeners,
@@ -107,21 +122,60 @@ export const IssueCard = memo(function IssueCard({ issue, onSelect }: IssueCardP
         <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-3)" }}>
           {issue.key}
         </span>
-        {issue.children && issue.children.length > 0 && (
-          <span
-            className="mono"
-            title={`${issue.children.length} child issue${issue.children.length === 1 ? "" : "s"}`}
+        {disclosure ? (
+          <button
+            type="button"
+            data-testid={`hierarchy-toggle-${issue.key}`}
+            aria-expanded={disclosure.expanded}
+            aria-label={
+              disclosure.expanded
+                ? t("collapseDescendants")
+                : t("expandDescendants", { count: disclosure.count })
+            }
+            onClick={disclosure.onToggle}
+            onPointerDown={(e) => e.stopPropagation()}
             style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 3,
               padding: "0 4px",
               borderRadius: 3,
               background: "var(--bg-3)",
               color: "var(--ink-3)",
               fontSize: 9.5,
               fontWeight: 600,
+              border: "none",
+              cursor: "pointer",
             }}
           >
-            {issue.children.length}
-          </span>
+            <Icon.ChevR
+              style={{
+                width: 10,
+                height: 10,
+                transform: disclosure.expanded ? "rotate(90deg)" : "none",
+                transition: "transform 120ms",
+              }}
+            />
+            <span className="mono">{disclosure.count}</span>
+          </button>
+        ) : (
+          issue.children &&
+          issue.children.length > 0 && (
+            <span
+              className="mono"
+              title={`${issue.children.length} child issue${issue.children.length === 1 ? "" : "s"}`}
+              style={{
+                padding: "0 4px",
+                borderRadius: 3,
+                background: "var(--bg-3)",
+                color: "var(--ink-3)",
+                fontSize: 9.5,
+                fontWeight: 600,
+              }}
+            >
+              {issue.children.length}
+            </span>
+          )
         )}
         <span style={SPACER_STYLE} />
         <Prio value={issue.priority} />
