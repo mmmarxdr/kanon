@@ -130,15 +130,31 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
     "update_issue",
     "Update issue fields. Read first, append don't overwrite. cycleId=null detaches. Returns ack {ok,id,key}; format:'full' for entity.",
     UpdateIssueInput.shape,
-    async ({ issueKey, title, description, priority, labels, assigneeId, cycleId, roadmapItemId, format }) => {
+    async ({
+      issueKey,
+      title,
+      description,
+      type,
+      priority,
+      labels,
+      groupKey,
+      assigneeId,
+      cycleId,
+      parentId,
+      roadmapItemId,
+      format,
+    }) => {
       try {
         const body: Record<string, unknown> = {};
         if (title !== undefined) body["title"] = title;
         if (description !== undefined) body["description"] = description;
+        if (type !== undefined) body["type"] = type;
         if (priority !== undefined) body["priority"] = priority;
         if (labels !== undefined) body["labels"] = labels;
+        if (groupKey !== undefined) body["groupKey"] = groupKey;
         if (assigneeId !== undefined) body["assigneeId"] = assigneeId;
         if (cycleId !== undefined) body["cycleId"] = cycleId;
+        if (parentId !== undefined) body["parentId"] = parentId;
         if (roadmapItemId !== undefined) body["roadmapItemId"] = roadmapItemId;
 
         const issue = await client.updateIssue(issueKey, body);

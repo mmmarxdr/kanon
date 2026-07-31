@@ -476,6 +476,28 @@ describe("UpdateIssueInput — UUID optional fields normalize empty string", () 
     }
   });
 
+  it("accepts optional type and groupKey (including null groupKey)", () => {
+    const result = UpdateIssueInput.safeParse({
+      issueKey: "KAN-42",
+      type: "bug",
+      groupKey: "auth",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.type).toBe("bug");
+      expect(result.data.groupKey).toBe("auth");
+    }
+
+    const cleared = UpdateIssueInput.safeParse({
+      issueKey: "KAN-42",
+      groupKey: null,
+    });
+    expect(cleared.success).toBe(true);
+    if (cleared.success) {
+      expect(cleared.data.groupKey).toBeNull();
+    }
+  });
+
   it("accepts empty-string roadmapItemId and normalizes to undefined", () => {
     const result = UpdateIssueInput.safeParse({
       issueKey: "KAN-42",

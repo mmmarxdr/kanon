@@ -176,6 +176,74 @@ describe("update_issue — format tier", () => {
   });
 });
 
+// ─── update_issue — field forwarding (KAN-187) ─────────────────────────────
+
+describe("update_issue — field forwarding", () => {
+  let mockClient: { updateIssue: ReturnType<typeof vi.fn> };
+  let updateTool: RegisteredTool;
+
+  beforeEach(() => {
+    mockClient = {
+      updateIssue: vi.fn().mockResolvedValue(makeFullIssue()),
+    };
+    const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
+    const tool = tools.get("update_issue");
+    if (!tool) throw new Error("update_issue not registered");
+    updateTool = tool;
+  });
+
+  it("forwards parentId UUID in the update body", async () => {
+    const parentId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    await updateTool.handler({ issueKey: "KAN-1", parentId });
+
+    expect(mockClient.updateIssue).toHaveBeenCalledWith("KAN-1", { parentId });
+  });
+
+  it("forwards parentId null for unlink", async () => {
+    await updateTool.handler({ issueKey: "KAN-1", parentId: null });
+
+    expect(mockClient.updateIssue).toHaveBeenCalledWith("KAN-1", { parentId: null });
+  });
+
+  it("omits parentId when not provided", async () => {
+    await updateTool.handler({ issueKey: "KAN-1", title: "[Auth] Retitle only" });
+
+    const body = mockClient.updateIssue.mock.calls[0]![1] as Record<string, unknown>;
+    expect(body).toEqual({ title: "[Auth] Retitle only" });
+    expect(body).not.toHaveProperty("parentId");
+  });
+
+  it("forwards type and groupKey when provided", async () => {
+    await updateTool.handler({
+      issueKey: "KAN-1",
+      type: "bug",
+      groupKey: "auth",
+    });
+
+    expect(mockClient.updateIssue).toHaveBeenCalledWith("KAN-1", {
+      type: "bug",
+      groupKey: "auth",
+    });
+  });
+
+  it("forwards groupKey null to clear grouping", async () => {
+    await updateTool.handler({ issueKey: "KAN-1", groupKey: null });
+
+    expect(mockClient.updateIssue).toHaveBeenCalledWith("KAN-1", { groupKey: null });
+  });
+
+  it("ack remains default when updating parentId", async () => {
+    const result = await updateTool.handler({
+      issueKey: "KAN-1",
+      parentId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]!.text);
+    expect(parsed).toEqual({ ok: true, id: "iss_001", key: "KAN-1" });
+  });
+});
+
 // ─── C3: transition_issue — format tier ────────────────────────────────
 
 describe("transition_issue — format tier", () => {
