@@ -11,15 +11,17 @@ import type { BoardColumn, IssueState } from "@/stores/board-store";
 import { BOARD_COLUMNS, COLUMN_STATE_MAP } from "@/stores/board-store";
 
 /**
- * Fetches all issues for a project.
- * The full list is fetched once; filtering and grouping happen client-side.
+ * Fetches all issues for a project (including nested children).
+ * KAN-187: no longer sends parent_only — the board derives root cards via
+ * buildIssueForest so descendants are available without flat duplication.
+ * Filtering and grouping happen client-side.
  */
 export function useIssuesQuery(projectKey: string) {
   return useQuery({
     queryKey: issueKeys.list(projectKey),
     queryFn: () =>
       fetchApiValidated(
-        `/api/projects/${encodeURIComponent(projectKey)}/issues?parent_only=true`,
+        `/api/projects/${encodeURIComponent(projectKey)}/issues`,
         issueListSchema,
       ),
     staleTime: 1000 * 60, // 1 minute

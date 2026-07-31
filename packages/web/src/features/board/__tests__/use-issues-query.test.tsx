@@ -134,9 +134,7 @@ describe("useIssuesQuery — Zod boundary", () => {
     );
 
     const [url] = vi.mocked(fetchApiValidated).mock.calls[0]!;
-    expect(url).toBe(
-      "/api/projects/KAN/issues?parent_only=true",
-    );
+    expect(url).toBe("/api/projects/KAN/issues");
   });
 });
 
