@@ -6,7 +6,8 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useCommandPaletteStore } from "@/stores/command-palette-store";
 import { useProjectsQuery } from "@/hooks/use-projects-query";
 import { useActiveWorkspaceId } from "@/hooks/use-workspace-query";
-import { Icon, Monogram } from "@/components/ui/icons";
+import { WorkspaceSwitcher } from "@/components/workspace-switcher";
+import { Icon } from "@/components/ui/icons";
 import { Avatar, avatarInitials } from "@/components/ui/primitives";
 import { CreateProjectModal } from "@/features/projects/create-project-modal";
 import {
@@ -136,41 +137,7 @@ export function AppSidebar() {
     >
       {/* ── ChromeTop (sticky) ── */}
       <div style={{ flexShrink: 0 }}>
-        {/* ── Workspace header ── */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            height: 44,
-            padding: collapsed ? "10px 0" : "10px 12px",
-            justifyContent: collapsed ? "center" : "space-between",
-            borderBottom: "1px solid var(--line)",
-          }}
-        >
-          {!collapsed ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-              <Monogram size={20} />
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  lineHeight: 1.1,
-                  minWidth: 0,
-                }}
-              >
-                <span style={{ fontWeight: 600, fontSize: 13, letterSpacing: "-0.01em" }}>
-                  Kanon
-                </span>
-                <span className="mono" style={{ fontSize: 10, color: "var(--ink-3)" }}>
-                  workspace
-                </span>
-              </div>
-            </div>
-          ) : (
-            <Monogram size={20} />
-          )}
-        </div>
+        <WorkspaceSwitcher collapsed={collapsed} />
 
         {/* ── Search trigger ── */}
         <button

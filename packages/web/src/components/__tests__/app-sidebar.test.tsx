@@ -101,6 +101,16 @@ vi.mock("@/hooks/use-projects-query", () => ({
 
 vi.mock("@/hooks/use-workspace-query", () => ({
   useActiveWorkspaceId: () => "ws-1",
+  useWorkspacesQuery: () => ({
+    data: [{ id: "ws-1", name: "Alpha", slug: "alpha" }],
+  }),
+  useSetActiveWorkspace: () => vi.fn(),
+}));
+
+vi.mock("@/components/workspace-switcher", () => ({
+  WorkspaceSwitcher: () => (
+    <div data-testid="workspace-switcher">Workspace switcher</div>
+  ),
 }));
 
 // ─── component mocks ──────────────────────────────────────────────────────────
