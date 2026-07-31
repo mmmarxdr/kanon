@@ -11,13 +11,13 @@
 
 ### Phase 1 — Schema (STRICT TDD)
 
-- [ ] **1.1 RED** `types.test.ts`: `UpdateIssueInput` accepts `type` and `groupKey` (incl. null groupKey).
-- [ ] **1.2 GREEN** Add `type`, `groupKey` to `UpdateIssueInput` in `types.ts`.
+- [x] **1.1 RED** `types.test.ts`: `UpdateIssueInput` accepts `type` and `groupKey` (incl. null groupKey).
+- [x] **1.2 GREEN** Add `type`, `groupKey` to `UpdateIssueInput` in `types.ts`.
 - [ ] **1.3 COMMIT** `feat(mcp): add type and groupKey to UpdateIssueInput`
 
 ### Phase 2 — Handler forwarding (STRICT TDD)
 
-- [ ] **2.1 RED** `issues.test.ts`: assert `updateIssue` body for parentId uuid/null/omitted, type, groupKey.
-- [ ] **2.2 GREEN** Forward fields in `tools/issues.ts` update handler.
+- [x] **2.1 RED** `issues.test.ts`: assert `updateIssue` body for parentId uuid/null/omitted, type, groupKey.
+- [x] **2.2 GREEN** Forward fields in `tools/issues.ts` update handler.
 - [ ] **2.3 COMMIT** `fix(mcp): forward parentId type groupKey on update_issue`
-- [ ] **2.4** Run `pnpm --filter @kanon/mcp test`
+- [x] **2.4** Run `pnpm --filter @kanon/mcp test`
