@@ -23,9 +23,14 @@ function deferred() {
   return { promise, resolve };
 }
 
-async function bindProject(workspaceId: string, projectId: string, memberId?: string) {
+async function bindProject(
+  workspaceId: string,
+  projectId: string,
+  memberId?: string,
+  provider = "redmine",
+) {
   const connection = await prisma.integrationConnection.create({
-    data: { provider: "redmine", baseUrl: "https://pm.example.test", workspaceId },
+    data: { provider, baseUrl: "https://pm.example.test", workspaceId },
   });
   const binding = await prisma.integrationProjectBinding.create({
     data: {
@@ -150,6 +155,49 @@ describe("cycle integration capture", () => {
     ).resolves.toBeNull();
     await expect(
       prisma.externalRef.count({ where: { entityType: "cycle", entityId: doomed.id } }),
+    ).resolves.toBe(0);
+  });
+
+  it("captures and skips hard-delete work for every project binding", async () => {
+    const workspace = await seedTestWorkspace();
+    const member = await seedTestMember(workspace.id);
+    const project = await seedTestProject(workspace.id);
+    const first = await bindProject(workspace.id, project.id, member.id);
+    const second = await bindProject(workspace.id, project.id, member.id, "jira");
+    const cycle = await createCycle(project.id, cycleInput("Multi-binding cycle"), member.id);
+    await Promise.all(
+      [first, second].map(({ connection, binding }) =>
+        prisma.externalRef.create({
+          data: {
+            connectionId: connection.id,
+            bindingId: binding.id,
+            entityType: "cycle",
+            entityId: cycle.id,
+            externalId: `remote-${binding.id}`,
+          },
+        }),
+      ),
+    );
+
+    await deleteCycle(cycle.id, { reason: "obsolete" }, member.id);
+
+    const work = await prisma.integrationSyncWork.findMany({
+      where: { entityType: "cycle", entityId: cycle.id },
+      orderBy: [{ bindingId: "asc" }, { sequence: "asc" }],
+    });
+    expect(work).toHaveLength(4);
+    for (const binding of [first.binding, second.binding]) {
+      expect(work.filter((row) => row.bindingId === binding.id)).toMatchObject([
+        { operation: "create", state: "queued" },
+        {
+          operation: "delete",
+          state: "skipped",
+          skippedReason: "Remote cycle hard-delete is not supported",
+        },
+      ]);
+    }
+    await expect(
+      prisma.externalRef.count({ where: { entityType: "cycle", entityId: cycle.id } }),
     ).resolves.toBe(0);
   });
 

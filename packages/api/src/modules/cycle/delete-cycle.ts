@@ -165,9 +165,9 @@ export async function deleteCycle(
       });
 
       const deleteWork = await captureCycleMutationTx(tx, cycle, authorId, "delete");
-      if (deleteWork) {
+      for (const work of deleteWork) {
         await tx.integrationSyncWork.update({
-          where: { id: deleteWork.id },
+          where: { id: work.id },
           data: {
             state: "skipped",
             skippedReason: "Remote cycle hard-delete is not supported",

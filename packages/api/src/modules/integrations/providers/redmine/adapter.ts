@@ -28,7 +28,11 @@ type RemoteIssue = {
   status?: RemoteRef;
   updated_on?: string;
 };
-type RemoteVersion = RemoteRef & { description?: string | null; updated_on?: string };
+type RemoteVersion = RemoteRef & {
+  description?: string | null;
+  status?: string;
+  updated_on?: string;
+};
 
 const ISSUE_PAGE_SIZE = 100;
 const MAX_ISSUE_PAGES = 3;
@@ -57,11 +61,11 @@ const byExternalId = (left: PushResult, right: PushResult) =>
   Number(left.externalId) - Number(right.externalId);
 
 function reconciliationResult(remote: RemoteIssue | RemoteVersion): PushResult {
-  const issue = remote as RemoteIssue;
+  const status = remote.status;
   return {
     externalId: externalId(remote.id),
     requestedStatusId: null,
-    achievedStatusId: issue.status ? externalId(issue.status.id) : null,
+    achievedStatusId: typeof status === "object" && status ? externalId(status.id) : null,
     remoteVersion: remote.updated_on ?? null,
   };
 }

@@ -305,8 +305,8 @@ describe("RedmineProviderAdapter", () => {
     const http = client();
     http.get.mockResolvedValue({
       versions: [
-        { id: 12, description: "<!-- kanon-cycle:cycle-1 -->", updated_on: "version-1" },
-        { id: 12, description: "<!-- kanon-cycle:cycle-1 -->", updated_on: "version-1" },
+        { id: 12, status: "open", description: "<!-- kanon-cycle:cycle-1 -->", updated_on: "version-1" },
+        { id: 12, status: "open", description: "<!-- kanon-cycle:cycle-1 -->", updated_on: "version-1" },
         { id: 13, description: "<!-- kanon-cycle:cycle-10 -->" },
       ],
     });

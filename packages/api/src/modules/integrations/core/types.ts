@@ -147,9 +147,10 @@ export function isRetryableProviderError(error: unknown): boolean {
     name?: unknown;
     statusCode?: unknown;
   };
+  if (typeof value.statusCode === "number") {
+    return value.statusCode === 429 || (value.statusCode >= 500 && value.statusCode <= 599);
+  }
   return (
-    value.statusCode === 429 ||
-    (typeof value.statusCode === "number" && value.statusCode >= 500 && value.statusCode <= 599) ||
     (typeof value.code === "string" &&
       (RETRYABLE_NETWORK_CODES.has(value.code) || value.code.startsWith("UND_ERR_"))) ||
     value.name === "AbortError" ||

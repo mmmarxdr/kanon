@@ -532,6 +532,33 @@ describe("claimIntegrationWork", () => {
     expect(clock!.remainingMs).toBeGreaterThan(250);
   });
 
+  it("bounds waits for a locked coalescing row", async () => {
+    const { binding } = await createFixture();
+    const laneKey = randomUUID();
+    await createWork(binding, { laneKey });
+    const locked = await createWork(binding, { laneKey });
+    const started = deferred();
+    const release = deferred();
+    const locker = concurrentPrisma.$transaction(async (transaction) => {
+      await transaction.$queryRaw`
+        SELECT "id" FROM "integration_sync_work" WHERE "id" = ${locked.id}::uuid FOR UPDATE
+      `;
+      started.resolve();
+      await release.promise;
+    });
+    await started.promise;
+
+    try {
+      await expect(claimIntegrationWork(prisma, { limit: 1 })).rejects.toThrow(/lock timeout/i);
+    } finally {
+      release.resolve();
+      await locker;
+    }
+    await expect(
+      prisma.integrationSyncWork.count({ where: { bindingId: binding.id, state: "queued" } }),
+    ).resolves.toBe(2);
+  });
+
   it("skips a binding while another claim is uncommitted", async () => {
     const { binding } = await createFixture();
     const work = await createWork(binding);

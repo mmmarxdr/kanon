@@ -52,6 +52,7 @@ export async function claimIntegrationWork(
   }
 
   return database.$transaction(async (transaction) => {
+    await transaction.$queryRaw`SELECT set_config('lock_timeout', '1000ms', true)`;
     const dueAt = options.now ? Prisma.sql`${options.now}` : Prisma.sql`clock_timestamp()`;
     const eligibility = genuinelyClaimable(dueAt);
     const bindings = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
