@@ -117,10 +117,10 @@ const STATE_TO_COLUMN: Record<IssueState, BoardColumn> = (() => {
  * all columns. Each issue is placed in the column whose COLUMN_STATE_MAP
  * contains that issue's state.
  */
-export function groupByColumn(
-  issues: Issue[],
-): Map<BoardColumn, Issue[]> {
-  const grouped = new Map<BoardColumn, Issue[]>();
+export function groupByColumn<T extends Issue>(
+  issues: T[],
+): Map<BoardColumn, T[]> {
+  const grouped = new Map<BoardColumn, T[]>();
 
   // Initialize every column with an empty array
   for (const col of BOARD_COLUMNS) {

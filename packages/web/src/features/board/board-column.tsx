@@ -7,8 +7,8 @@ import {
 import { useTranslation } from "react-i18next";
 import type { BoardColumn as BoardColumnType } from "@/stores/board-store";
 import { COLUMN_STATE_MAP } from "@/stores/board-store";
-import type { Issue } from "@/types/issue";
-import { IssueCard } from "./issue-card";
+import type { IssueNode } from "@/lib/build-issue-forest";
+import { HierarchyIssueBlock } from "./hierarchy-issue-block";
 import { Icon } from "@/components/ui/icons";
 import { PanelErrorBoundary } from "@/components/panel-error-boundary";
 
@@ -23,7 +23,7 @@ const COLUMN_DOT: Record<string, string> = {
 
 interface BoardColumnProps {
   column: BoardColumnType;
-  issues: Issue[];
+  issues: IssueNode[];
   onSelectIssue?: (key: string) => void;
   onAddIssue?: (column: BoardColumnType) => void;
   showRightDivider?: boolean;
@@ -174,9 +174,9 @@ export const BoardColumn = memo(function BoardColumn({
                   >
                     {stateIssues.map((issue) => (
                       <PanelErrorBoundary key={issue.key} label={`Card ${issue.key}`}>
-                        <IssueCard
-                          issue={issue}
-                          onSelect={onSelectIssue}
+                        <HierarchyIssueBlock
+                          node={issue}
+                          onSelectIssue={onSelectIssue}
                         />
                       </PanelErrorBoundary>
                     ))}
@@ -191,9 +191,9 @@ export const BoardColumn = memo(function BoardColumn({
             >
               {issues.map((issue) => (
                 <PanelErrorBoundary key={issue.key} label={`Card ${issue.key}`}>
-                  <IssueCard
-                    issue={issue}
-                    onSelect={onSelectIssue}
+                  <HierarchyIssueBlock
+                    node={issue}
+                    onSelectIssue={onSelectIssue}
                   />
                 </PanelErrorBoundary>
               ))}

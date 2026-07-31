@@ -42,5 +42,7 @@
   "reconcileHoursLabel": "Confirmed total hours",
   "reconcileHoursError": "Enter a non-negative number, up to 2 decimal places, at most 744.",
   "reconcileConfirm": "Confirm & move to done",
-  "reconcileConfirming": "Confirming…"
+  "reconcileConfirming": "Confirming…",
+  "expandDescendants": "Show {{count}} descendants",
+  "collapseDescendants": "Hide descendants"
 }
