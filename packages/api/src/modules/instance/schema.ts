@@ -23,6 +23,8 @@ export const PatchSettingsBody = z.object({
   instanceName: z.string().max(120).optional(),
   signupMode: z.enum(["open", "invite", "closed"]).optional(),
   allowedSignupDomains: z.array(z.string()).optional(),
+  /** Locale for outbound transactional emails (KAN-203 Slice 2). */
+  defaultLocale: z.enum(["en", "es"]).optional(),
 });
 export type PatchSettingsBodyType = z.infer<typeof PatchSettingsBody>;
 
@@ -34,6 +36,7 @@ export const SettingsResponse = z.object({
   instanceName: z.string().nullable(),
   signupMode: z.string(),
   allowedSignupDomains: z.array(z.string()),
+  defaultLocale: z.string(),
   ownerUserId: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),

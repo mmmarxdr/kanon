@@ -7,6 +7,7 @@ import { AppError } from "../../shared/types.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import type { EmailProvider } from "../../services/email/types.js";
 import { buildInviteEmail } from "../../services/email/templates/invite.js";
+import { getInstanceLocale } from "../instance/service.js";
 import type { CreateInviteBody, OnboardingInviteBody, ProjectAssignment } from "./schema.js";
 import { ProjectAssignmentSchema } from "./schema.js";
 import { createProjectMembersInTx } from "../project/project-member-service.js";
@@ -212,12 +213,14 @@ export async function createInvite(
   if (body.email && emailProvider) {
     const inviteUrl = `${env.APP_URL}/invite/${token}`;
     const inviterName = invite.createdBy.displayName ?? invite.createdBy.email;
+    const locale = await getInstanceLocale();
     const emailContent = buildInviteEmail({
       workspaceName: invite.workspace.name,
       role: invite.role,
       inviterName,
       inviteUrl,
       expiresAt,
+      locale,
     });
 
     // Fire-and-forget — don't let email failure break invite creation

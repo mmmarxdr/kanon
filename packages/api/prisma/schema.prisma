@@ -929,6 +929,8 @@ model InstanceSettings {
   signupMode           String   @default("open") @map("signup_mode")
   /// Stored-only placeholder for layer 2 enforcement (NOT enforced in foundation).
   allowedSignupDomains String[] @default([]) @map("allowed_signup_domains")
+  /// Locale used for all outbound transactional emails (KAN-203 Slice 2). "en" | "es".
+  defaultLocale        String   @default("en") @map("default_locale")
 
   ownerUserId String? @unique @map("owner_user_id") @db.Uuid
   owner       User?   @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)

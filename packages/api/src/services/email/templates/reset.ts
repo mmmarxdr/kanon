@@ -1,5 +1,6 @@
 import { renderEmailLayout } from "../layout.js";
 import type { EmailContent } from "../types.js";
+import { emailT, DEFAULT_EMAIL_LOCALE, type EmailLocale } from "../i18n/messages.js";
 
 export type { EmailContent };
 
@@ -12,6 +13,8 @@ const E_sans = "Arial,Helvetica,sans-serif";
 
 export interface BuildResetEmailOptions {
   resetUrl: string;
+  /** Instance email locale (KAN-203 Slice 2). Defaults to "en". */
+  locale?: EmailLocale;
 }
 
 /**
@@ -27,31 +30,31 @@ export interface BuildResetEmailOptions {
  * CRITICAL: resetUrl must appear as href="<url>" with reset-password in the path
  * so that ConsoleProvider's regex /href="([^"]*reset-password[^"]*)"/ matches.
  * And /token=([^"&\s]+)/ must extract the token from the URL.
+ *
+ * Copy is localized via emailT() from `../i18n/messages.js` using the instance's
+ * `defaultLocale` (KAN-203 Slice 2). The "1 hour" expiry copy and reset-password
+ * URL structure are unaffected by locale.
  */
 export function buildResetEmail(opts: BuildResetEmailOptions): EmailContent {
   const { resetUrl } = opts;
+  const locale = opts.locale ?? DEFAULT_EMAIL_LOCALE;
+  const t = (key: string) => emailT(locale, key);
 
   const bodyHtml = `
     <p style="margin:10px 0 0;font-family:${E_sans};font-size:14px;line-height:1.55;color:${E_ink2};letter-spacing:-0.005em;">
-      Someone asked to reset the password for this account.
-      If that wasn&#8217;t you, ignore this — your password stays as it is.
+      ${t("reset.body1")}
     </p>
     <p style="margin:8px 0 0;font-family:${E_sans};font-size:12px;line-height:1.5;color:${E_ink3};">
-      The link expires <strong style="color:${E_ink2};">1 hour</strong> from request.
-      If it&#8217;s stale, just request a new one.
+      ${t("reset.body2")}
     </p>`;
 
   const safetyHtml = `
     <div style="padding:18px 32px 8px;background:${E_bg2};">
       <p style="margin:0 0 4px;font-family:'Courier New',Courier,monospace;font-size:10px;color:#71757A;letter-spacing:0.1em;text-transform:uppercase;">
-        Account safety
+        ${t("reset.safetyLabel")}
       </p>
       <table cellpadding="0" cellspacing="0" border="0" role="presentation" style="margin-top:4px;">
-        ${[
-          "Use a passphrase, not a single word.",
-          "Turn on 2FA — Settings → Security.",
-          "Revoke any session that wasn&#8217;t yours.",
-        ]
+        ${[t("reset.tip1"), t("reset.tip2"), t("reset.tip3")]
           .map(
             (tip) => `
         <tr>
@@ -66,42 +69,41 @@ export function buildResetEmail(opts: BuildResetEmailOptions): EmailContent {
     </div>
     <div style="padding:14px 32px 22px;background:${E_bg2};border-top:1px solid ${E_line};">
       <p style="margin:0;font-family:${E_sans};font-size:11px;line-height:1.55;color:${E_ink3};">
-        Need help? Reply to this email — a human will get back to you.
+        ${t("reset.helpText")}
       </p>
     </div>`;
 
   const html = renderEmailLayout({
-    eyebrow: "Password reset · 1 hour",
+    eyebrow: t("reset.eyebrow"),
     eyebrowTone: "warn",
-    heading: "Reset your password.",
+    heading: t("reset.heading"),
     bodyHtml,
-    cta: { label: "Choose a new password →", href: resetUrl },
+    cta: { label: t("reset.ctaLabel"), href: resetUrl },
     extraSectionHtml: safetyHtml,
-    disclaimerText:
-      "If you didn&#8217;t request a password reset, no action is needed. Your password has not been changed.",
+    disclaimerText: t("reset.disclaimer"),
   });
 
   const text = [
-    "Password reset",
+    t("reset.textTitle"),
     "",
-    "Someone asked to reset the password for this account.",
-    "If that wasn't you, ignore this — your password stays as it is.",
+    t("reset.textBody1"),
+    t("reset.textBody2"),
     "",
-    "Reset your password:",
+    t("reset.textCta"),
     resetUrl,
     "",
-    "This link expires in 1 hour.",
+    t("reset.textExpiry"),
     "",
-    "Account safety tips:",
-    "- Use a passphrase, not a single word.",
-    "- Turn on 2FA — Settings → Security.",
-    "- Revoke any session that wasn't yours.",
+    t("reset.textTipsLabel"),
+    t("reset.textTip1"),
+    t("reset.textTip2"),
+    t("reset.textTip3"),
     "",
     "Kanon · 1 Cromwell Pl, London",
   ].join("\n");
 
   return {
-    subject: "Reset your password",
+    subject: t("reset.subject"),
     html,
     text,
   };

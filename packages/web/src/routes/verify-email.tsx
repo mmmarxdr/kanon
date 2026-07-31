@@ -1,5 +1,6 @@
 import { createRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { rootRoute } from "./__root";
 import { useAuthStore } from "@/stores/auth-store";
 import {
@@ -19,12 +20,13 @@ interface VerifyEmailViewProps {
 }
 
 export function VerifyEmailView({ token, onSuccess }: VerifyEmailViewProps) {
+  const { t } = useTranslation("auth");
   const navigate = useNavigate();
   const [status, setStatus] = useState<"pending" | "success" | "error">(
     token ? "pending" : "error",
   );
   const [errorMessage, setErrorMessage] = useState<string>(
-    token ? "" : "Invalid verification link.",
+    token ? "" : t("verify.error.noToken"),
   );
 
   useEffect(() => {
@@ -47,7 +49,7 @@ export function VerifyEmailView({ token, onSuccess }: VerifyEmailViewProps) {
           setStatus("success");
           await onSuccess();
         } else {
-          let message = "This verification link is invalid or has expired.";
+          let message = t("verify.error.linkInvalidOrExpired");
           try {
             const body = (await res.json()) as Record<string, unknown>;
             if (typeof body.message === "string") message = body.message;
@@ -59,7 +61,7 @@ export function VerifyEmailView({ token, onSuccess }: VerifyEmailViewProps) {
         }
       } catch {
         if (!cancelled) {
-          setErrorMessage("Could not connect. Please try again.");
+          setErrorMessage(t("verify.error.connectionFailed"));
           setStatus("error");
         }
       }
@@ -69,6 +71,7 @@ export function VerifyEmailView({ token, onSuccess }: VerifyEmailViewProps) {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `t` is stable across a fixed language
   }, [token, onSuccess]);
 
   const backToSignIn = (
@@ -85,7 +88,7 @@ export function VerifyEmailView({ token, onSuccess }: VerifyEmailViewProps) {
         onClick={() => void navigate({ to: "/login" })}
         style={{ color: "var(--ink-3)" }}
       >
-        ← Back to sign in
+        {t("layout.backToSignIn")}
       </button>
     </div>
   );
@@ -93,15 +96,15 @@ export function VerifyEmailView({ token, onSuccess }: VerifyEmailViewProps) {
   if (status === "pending") {
     return (
       <AuthLayout
-        eyebrow="Verifying"
-        title="Verifying your email…"
-        subtitle="Please wait while we confirm your email address."
+        eyebrow={t("verify.pending.eyebrow")}
+        title={t("verify.pending.title")}
+        subtitle={t("verify.pending.subtitle")}
         footer={backToSignIn}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
           <div>
-            <H2>Verifying…</H2>
-            <Sub>This should only take a moment.</Sub>
+            <H2>{t("verify.pending.heading")}</H2>
+            <Sub>{t("verify.pending.body")}</Sub>
           </div>
         </div>
       </AuthLayout>
@@ -111,19 +114,19 @@ export function VerifyEmailView({ token, onSuccess }: VerifyEmailViewProps) {
   if (status === "success") {
     return (
       <AuthLayout
-        eyebrow="Done"
-        title="Email verified."
-        subtitle="Your email address has been confirmed."
+        eyebrow={t("verify.success.eyebrow")}
+        title={t("verify.success.title")}
+        subtitle={t("verify.success.subtitle")}
         footer={backToSignIn}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
           <div>
-            <H2>Email verified</H2>
-            <Sub>You're all set.</Sub>
+            <H2>{t("verify.success.heading")}</H2>
+            <Sub>{t("verify.success.body")}</Sub>
           </div>
-          <SuccessBox>Your email has been verified successfully.</SuccessBox>
+          <SuccessBox>{t("verify.success.box")}</SuccessBox>
           <PrimaryBtn type="button" onClick={() => void navigate({ to: "/workspaces" })}>
-            Continue →
+            {t("verify.success.continue")}
           </PrimaryBtn>
         </div>
       </AuthLayout>
@@ -133,19 +136,19 @@ export function VerifyEmailView({ token, onSuccess }: VerifyEmailViewProps) {
   // error state
   return (
     <AuthLayout
-      eyebrow="Error"
-      title="Verification failed."
-      subtitle="This link may have expired or already been used."
+      eyebrow={t("verify.error.eyebrow")}
+      title={t("verify.error.title")}
+      subtitle={t("verify.error.subtitle")}
       footer={backToSignIn}
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
         <div>
-          <H2>Invalid or expired link</H2>
-          <Sub>Please request a new verification email.</Sub>
+          <H2>{t("verify.error.heading")}</H2>
+          <Sub>{t("verify.error.body")}</Sub>
         </div>
         <ErrorBox>{errorMessage}</ErrorBox>
         <PrimaryBtn type="button" onClick={() => void navigate({ to: "/login" })}>
-          Back to sign in →
+          {t("verify.error.backToSignIn")}
         </PrimaryBtn>
       </div>
     </AuthLayout>

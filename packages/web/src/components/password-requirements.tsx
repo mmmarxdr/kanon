@@ -1,3 +1,5 @@
+import { useTranslation } from "react-i18next";
+import { PASSWORD_MIN_LENGTH } from "@kanon/shared";
 import type { Requirement } from "@/lib/password-policy";
 
 export interface PasswordRequirementsProps {
@@ -11,6 +13,7 @@ export interface PasswordRequirementsProps {
  * Styling uses inline styles + CSS vars to match auth screen conventions.
  */
 export function PasswordRequirements({ requirements }: PasswordRequirementsProps) {
+  const { t } = useTranslation("auth");
   const visible = requirements.filter(
     (r) => !(r.id === "max-length" && r.met),
   );
@@ -40,7 +43,7 @@ export function PasswordRequirements({ requirements }: PasswordRequirementsProps
           }}
         >
           <span aria-hidden="true">{r.met ? "✓" : "✗"}</span>
-          {r.label}
+          {t(`passwordRequirements.${r.id}`, { count: PASSWORD_MIN_LENGTH })}
         </div>
       ))}
     </div>

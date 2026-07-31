@@ -222,8 +222,26 @@ export async function patchSettings(body: PatchSettingsBodyType) {
       ...(body.allowedSignupDomains !== undefined
         ? { allowedSignupDomains: body.allowedSignupDomains }
         : {}),
+      ...(body.defaultLocale !== undefined ? { defaultLocale: body.defaultLocale } : {}),
     },
   });
+}
+
+/**
+ * Resolve the instance-wide locale for outbound transactional emails
+ * (KAN-203 Slice 2). This is the ONLY source of email locale — no
+ * Accept-Language header, no per-user locale. Falls back to "en" for any
+ * unrecognized/legacy value stored in the column, AND if settings cannot be
+ * read at all (e.g. transient DB error) — locale resolution must never be
+ * the reason an email fails to send.
+ */
+export async function getInstanceLocale(): Promise<"en" | "es"> {
+  try {
+    const s = await getSettings();
+    return s.defaultLocale === "es" ? "es" : "en";
+  } catch {
+    return "en";
+  }
 }
 
 // ─── Instance Admin Invite (PR1b) ────────────────────────────────────────────

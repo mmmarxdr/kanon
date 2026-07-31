@@ -79,6 +79,14 @@ describe("buildMentionEmail", () => {
     expect(html).not.toContain("<b>XSS</b>");
     expect(html).toContain("&lt;b&gt;");
   });
+
+  // KAN-203 Slice 2: instance email locale
+  it("locale='es' translates the subject", () => {
+    const { subject: enSubject } = buildMentionEmail(base);
+    const { subject: esSubject } = buildMentionEmail({ ...base, locale: "es" });
+    expect(esSubject).not.toBe(enSubject);
+    expect(esSubject).toContain("mencionó");
+  });
 });
 
 // ─── assignment template ─────────────────────────────────────────────────────
@@ -140,6 +148,15 @@ describe("buildAssignmentEmail", () => {
   it("escapes HTML special chars in issueTitle", () => {
     const { html } = buildAssignmentEmail({ ...base, issueTitle: '<b>Bold</b>' });
     expect(html).not.toContain("<b>Bold</b>");
+  });
+
+  // KAN-203 Slice 2: instance email locale
+  it("locale='es' translates the subject and heading", () => {
+    const { subject: enSubject } = buildAssignmentEmail(base);
+    const { subject: esSubject, html: esHtml } = buildAssignmentEmail({ ...base, locale: "es" });
+    expect(esSubject).not.toBe(enSubject);
+    expect(esSubject).toContain("asignado");
+    expect(esHtml).toContain("te asignó");
   });
 });
 
@@ -237,5 +254,14 @@ describe("buildCycleClosedEmail", () => {
   it("includes scope-changes row when scopeRemoved > 0 (fix-8)", () => {
     const { html } = buildCycleClosedEmail({ ...base, scopeAdded: 0, scopeRemoved: 2 });
     expect(html).toContain("Scope changes");
+  });
+
+  // KAN-203 Slice 2: instance email locale
+  it("locale='es' translates the subject and stat labels", () => {
+    const { subject: enSubject } = buildCycleClosedEmail(base);
+    const { subject: esSubject, html: esHtml } = buildCycleClosedEmail({ ...base, locale: "es" });
+    expect(esSubject).not.toBe(enSubject);
+    expect(esSubject).toContain("Ciclo cerrado");
+    expect(esHtml).toContain("Velocidad");
   });
 });

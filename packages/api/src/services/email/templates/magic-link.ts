@@ -1,5 +1,6 @@
 import { renderEmailLayout } from "../layout.js";
 import type { EmailContent } from "../types.js";
+import { emailT, DEFAULT_EMAIL_LOCALE, type EmailLocale } from "../i18n/messages.js";
 
 export type { EmailContent };
 
@@ -9,6 +10,8 @@ const E_sans = "Arial,Helvetica,sans-serif";
 
 export interface BuildMagicLinkEmailOptions {
   url: string;
+  /** Instance email locale (KAN-203 Slice 2). Defaults to "en". */
+  locale?: EmailLocale;
 }
 
 /**
@@ -17,45 +20,48 @@ export interface BuildMagicLinkEmailOptions {
  * CRITICAL: url must appear as href="...magic-link..." with /magic-link?token=
  * in the path so that ConsoleProvider's capture regex can extract it:
  *   /href="([^"]*magic-link[^"]*)"/
+ *
+ * Copy is localized via emailT() from `../i18n/messages.js` using the instance's
+ * `defaultLocale` (KAN-203 Slice 2). The href pattern is unaffected by locale.
  */
 export function buildMagicLinkEmail(opts: BuildMagicLinkEmailOptions): EmailContent {
   const { url } = opts;
+  const locale = opts.locale ?? DEFAULT_EMAIL_LOCALE;
+  const t = (key: string) => emailT(locale, key);
 
   const bodyHtml = `
     <p style="margin:10px 0 0;font-family:${E_sans};font-size:14px;line-height:1.55;color:${E_ink2};letter-spacing:-0.005em;">
-      Click the button below to sign in to Kanon. No password needed.
-      If you didn&#8217;t request this, you can safely ignore this email.
+      ${t("magicLink.body1")}
     </p>
     <p style="margin:8px 0 0;font-family:${E_sans};font-size:12px;line-height:1.5;color:${E_ink3};">
-      The link expires <strong style="color:${E_ink2};">15 minutes</strong> from request.
+      ${t("magicLink.body2")}
     </p>`;
 
   const html = renderEmailLayout({
-    eyebrow: "Magic link · 15 minutes",
+    eyebrow: t("magicLink.eyebrow"),
     eyebrowTone: "default",
-    heading: "Sign in to Kanon.",
+    heading: t("magicLink.heading"),
     bodyHtml,
-    cta: { label: "Sign in →", href: url },
-    disclaimerText:
-      "If you didn&#8217;t request a sign-in link, no action is needed. This link will expire shortly.",
+    cta: { label: t("magicLink.ctaLabel"), href: url },
+    disclaimerText: t("magicLink.disclaimer"),
   });
 
   const text = [
-    "Kanon sign-in link",
+    t("magicLink.textTitle"),
     "",
-    "Click the link below to sign in. No password needed.",
-    "If you didn't request this, ignore this email.",
+    t("magicLink.textBody1"),
+    t("magicLink.textBody2"),
     "",
-    "Sign in:",
+    t("magicLink.textCta"),
     url,
     "",
-    "This link expires in 15 minutes.",
+    t("magicLink.textExpiry"),
     "",
     "Kanon · 1 Cromwell Pl, London",
   ].join("\n");
 
   return {
-    subject: "Your Kanon sign-in link",
+    subject: t("magicLink.subject"),
     html,
     text,
   };

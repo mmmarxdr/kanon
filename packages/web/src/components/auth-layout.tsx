@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { Monogram } from "@/components/ui/icons";
+import { LanguageSwitcher } from "@/components/language-switcher";
 
 interface AuthLayoutProps {
   eyebrow: string;
@@ -43,6 +45,7 @@ function BrandPanel({
   title: string;
   subtitle: string;
 }) {
+  const { t } = useTranslation("auth");
   return (
     <div
       style={{
@@ -88,7 +91,7 @@ function BrandPanel({
             letterSpacing: "0.05em",
           }}
         >
-          v3.4
+          {t("layout.version")}
         </span>
       </div>
 
@@ -149,8 +152,8 @@ function BrandPanel({
         }}
       >
         <Quote
-          body="The agent thread on each issue is the killer feature. We stopped writing standup notes."
-          who="Maya Chen · Eng Lead"
+          body={t("layout.quote.body")}
+          who={t("layout.quote.attribution")}
         />
       </div>
     </div>
@@ -264,6 +267,7 @@ function FormPanel({
   children: ReactNode;
   footer?: ReactNode;
 }) {
+  const { t } = useTranslation("auth");
   return (
     <div
       style={{
@@ -274,6 +278,16 @@ function FormPanel({
         overflow: "auto",
       }}
     >
+      <div
+        style={{
+          position: "absolute",
+          top: 32,
+          right: 40,
+          zIndex: 1,
+        }}
+      >
+        <LanguageSwitcher />
+      </div>
       <div style={{ minHeight: 24 }}>{footer}</div>
       <div
         style={{
@@ -295,11 +309,11 @@ function FormPanel({
           color: "var(--ink-4)",
         }}
       >
-        <span>© {new Date().getFullYear()} Kanon Labs</span>
+        <span>{t("layout.footer.copyright", { year: new Date().getFullYear() })}</span>
         <span style={{ display: "flex", gap: 14 }}>
-          <button type="button">Privacy</button>
-          <button type="button">Terms</button>
-          <button type="button">Status</button>
+          <button type="button">{t("layout.footer.privacy")}</button>
+          <button type="button">{t("layout.footer.terms")}</button>
+          <button type="button">{t("layout.footer.status")}</button>
         </span>
       </div>
     </div>
@@ -555,7 +569,7 @@ if (typeof document !== "undefined" && !document.getElementById("coming-soon-too
   s.id = "coming-soon-tooltip-style";
   s.textContent = `
     .coming-soon-wrap:hover::after {
-      content: "Coming soon";
+      content: attr(data-coming-soon);
       position: absolute;
       top: 50%;
       right: 8px;
@@ -577,10 +591,14 @@ if (typeof document !== "undefined" && !document.getElementById("coming-soon-too
 }
 
 export function ComingSoonTooltip({ children }: { children: ReactNode }) {
+  const { t } = useTranslation("auth");
+  const comingSoon = t("layout.comingSoon");
   return (
     <div
       className="coming-soon-wrap"
-      title="Coming soon"
+      data-coming-soon={comingSoon}
+      title={comingSoon}
+      aria-label={comingSoon}
       style={{ position: "relative", display: "block" }}
     >
       {children}

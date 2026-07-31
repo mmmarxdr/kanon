@@ -1,5 +1,6 @@
 import { createRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { rootRoute } from "./__root";
 import {
   AuthLayout,
@@ -18,6 +19,7 @@ export const forgotPasswordRoute = createRoute({
 });
 
 function ForgotPasswordPage() {
+  const { t } = useTranslation("auth");
   const navigate = useNavigate();
 
   const [email, setEmail] = useState("");
@@ -46,7 +48,7 @@ function ForgotPasswordPage() {
           // Response may not be JSON
         }
         throw new Error(
-          (body.message as string) ?? "An unexpected error occurred",
+          (body.message as string) ?? t("forgot.errors.unexpected"),
         );
       }
 
@@ -55,7 +57,7 @@ function ForgotPasswordPage() {
       if (err instanceof Error) {
         setError(err.message);
       } else {
-        setError("An unexpected error occurred");
+        setError(t("forgot.errors.unexpected"));
       }
     } finally {
       setLoading(false);
@@ -76,7 +78,7 @@ function ForgotPasswordPage() {
         onClick={() => void navigate({ to: "/login" })}
         style={{ color: "var(--ink-3)" }}
       >
-        ← Back to sign in
+        {t("layout.backToSignIn")}
       </button>
     </div>
   );
@@ -84,19 +86,20 @@ function ForgotPasswordPage() {
   if (submitted) {
     return (
       <AuthLayout
-        eyebrow="Inbox"
-        title="Check your email."
-        subtitle="If an account exists, we've sent reset instructions. The link expires in 30 minutes."
+        eyebrow={t("forgot.submitted.eyebrow")}
+        title={t("forgot.submitted.title")}
+        subtitle={t("forgot.submitted.subtitle")}
         footer={backToSignIn}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
           <div>
-            <H2>Check your email</H2>
+            <H2>{t("forgot.submitted.heading")}</H2>
             <Sub>
-              We sent a sign-in link to <span className="mono">{email}</span>.
+              {t("forgot.submitted.bodyBefore")} <span className="mono">{email}</span>
+              {t("forgot.submitted.bodyAfter")}
             </Sub>
           </div>
-          <SuccessBox>Email sent · just now</SuccessBox>
+          <SuccessBox>{t("forgot.submitted.success")}</SuccessBox>
         </div>
       </AuthLayout>
     );
@@ -104,9 +107,9 @@ function ForgotPasswordPage() {
 
   return (
     <AuthLayout
-      eyebrow="Reset"
-      title="Forgotten passwords happen."
-      subtitle="We'll email a reset link. It expires in 30 minutes."
+      eyebrow={t("forgot.eyebrow")}
+      title={t("forgot.title")}
+      subtitle={t("forgot.subtitle")}
       footer={backToSignIn}
     >
       <form
@@ -114,22 +117,22 @@ function ForgotPasswordPage() {
         style={{ display: "flex", flexDirection: "column", gap: 22 }}
       >
         <div>
-          <H2>Reset your password</H2>
-          <Sub>Enter the email tied to your workspace.</Sub>
+          <H2>{t("forgot.form.heading")}</H2>
+          <Sub>{t("forgot.form.subheading")}</Sub>
         </div>
         <FormInput
           id="email"
-          fieldLabel="Work email"
+          fieldLabel={t("forgot.fields.workEmail")}
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          placeholder="you@company.com"
+          placeholder={t("forgot.fields.workEmailPlaceholder")}
           required
           autoFocus
         />
         {error && <ErrorBox>{error}</ErrorBox>}
         <PrimaryBtn disabled={loading}>
-          {loading ? "Sending…" : "Send reset link →"}
+          {loading ? t("forgot.submit.sending") : t("forgot.submit.sendResetLink")}
         </PrimaryBtn>
       </form>
     </AuthLayout>

@@ -417,6 +417,57 @@ describe("Instance routes", () => {
 
       expect(res.statusCode).toBe(403);
     });
+
+    // ── KAN-203 Slice 2: instance email locale ───────────────────────────────
+
+    it("PATCH defaultLocale=es → 200, persists, and GET reflects it (KAN-203)", async () => {
+      const { token } = await seedOwner();
+
+      const patchRes = await app.inject({
+        method: "PATCH",
+        url: "/api/instance/settings",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { defaultLocale: "es" },
+      });
+
+      expect(patchRes.statusCode).toBe(200);
+      expect(patchRes.json().defaultLocale).toBe("es");
+
+      const getRes = await app.inject({
+        method: "GET",
+        url: "/api/instance/settings",
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(getRes.statusCode).toBe(200);
+      expect(getRes.json().defaultLocale).toBe("es");
+    });
+
+    it("GET defaultLocale defaults to en for a freshly-seeded instance", async () => {
+      const { token } = await seedOwner();
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/instance/settings",
+        headers: { authorization: `Bearer ${token}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().defaultLocale).toBe("en");
+    });
+
+    it("PATCH rejects an unsupported locale", async () => {
+      const { token } = await seedOwner();
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: "/api/instance/settings",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { defaultLocale: "fr" },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
   });
 
   // ─── 1b.5 / 1b.7: POST /api/instance/admins/invites ──────────────────────

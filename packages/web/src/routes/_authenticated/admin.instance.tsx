@@ -18,9 +18,11 @@
  */
 import { createRoute, useNavigate } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { authenticatedRoute } from "../_authenticated";
 import { fetchApi, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/stores/auth-store";
+import { SUPPORTED_LOCALES } from "@kanon/shared";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,6 +38,8 @@ interface InstanceSettings {
   instanceName: string | null;
   signupMode: string;
   allowedSignupDomains: string[];
+  /** Locale used for outbound transactional emails (KAN-203 Slice 2). */
+  defaultLocale: string;
   ownerUserId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -56,6 +60,7 @@ interface AdminInstanceFormProps {
 }
 
 export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
+  const { t } = useTranslation("settings");
   const user = useAuthStore((s) => s.user);
 
   const [settings, setSettings] = useState<InstanceSettings | null>(null);
@@ -63,6 +68,7 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
   const [instanceName, setInstanceName] = useState("");
   const [signupMode, setSignupMode] = useState("open");
   const [allowedDomains, setAllowedDomains] = useState("");
+  const [defaultLocale, setDefaultLocale] = useState("en");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -82,6 +88,7 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
         setInstanceName(data.instanceName ?? "");
         setSignupMode(data.signupMode);
         setAllowedDomains(data.allowedSignupDomains.join(", "));
+        setDefaultLocale(data.defaultLocale);
       } catch (err) {
         if (err instanceof ApiError) {
           if (err.status === 403) {
@@ -122,12 +129,14 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
           instanceName: instanceName || null,
           signupMode,
           allowedSignupDomains: parsedDomains,
+          defaultLocale,
         }),
       });
       setSettings(updated);
       setInstanceName(updated.instanceName ?? "");
       setSignupMode(updated.signupMode);
       setAllowedDomains(updated.allowedSignupDomains.join(", "));
+      setDefaultLocale(updated.defaultLocale);
       setSaveSuccess(true);
     } catch (err) {
       if (err instanceof ApiError) {
@@ -515,6 +524,52 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
                     fontSize: 13,
                   }}
                 />
+              </div>
+            </div>
+
+            {/* Default email locale — instance-wide, selects language of outbound emails */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <label
+                htmlFor="defaultLocale"
+                style={{ fontSize: 11, color: "var(--ink-3)", fontWeight: 500 }}
+              >
+                {t("instance.defaultLocale")}
+                <span style={{ marginLeft: 6, fontSize: 10, color: "var(--ink-4)", fontWeight: 400 }}>
+                  {t("instance.defaultLocaleHelp")}
+                </span>
+              </label>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  height: 36,
+                  border: "1px solid var(--line-2)",
+                  borderRadius: 5,
+                  background: "var(--panel)",
+                  padding: "0 10px",
+                }}
+              >
+                <select
+                  id="defaultLocale"
+                  data-testid="default-locale-select"
+                  value={defaultLocale}
+                  onChange={(e) => setDefaultLocale(e.target.value)}
+                  style={{
+                    flex: 1,
+                    height: "100%",
+                    border: 0,
+                    outline: 0,
+                    background: "transparent",
+                    color: "var(--ink)",
+                    fontSize: 13,
+                  }}
+                >
+                  {SUPPORTED_LOCALES.map((locale) => (
+                    <option key={locale.code} value={locale.code}>
+                      {locale.label}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 

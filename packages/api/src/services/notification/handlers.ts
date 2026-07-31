@@ -23,6 +23,7 @@ import type { NotificationServiceDeps } from "./types.js";
 import { buildMentionEmail } from "../email/templates/mention.js";
 import { buildAssignmentEmail } from "../email/templates/assignment.js";
 import { buildCycleClosedEmail } from "../email/templates/cycle-closed.js";
+import { getInstanceLocale } from "../../modules/instance/service.js";
 import {
   getSubscriberIds,
   getSubscribersByIssues,
@@ -144,6 +145,7 @@ export async function handleMentionCreated(
 
       if (memberWithUser?.user?.email && isEmailEnabled(prefs, recipientId, "emailMention")) {
 
+        const locale = await getInstanceLocale();
         const msg = buildMentionEmail({
           mentionedByName: actorMember?.user?.displayName ?? "Someone",
           issueKey: payload.issueKey,
@@ -152,6 +154,7 @@ export async function handleMentionCreated(
           context: payload.context,
           issueUrl: `${APP_URL}/issue/${encodeURIComponent(payload.issueKey)}`,
           appUrl: APP_URL,
+          locale,
         });
 
         await provider
@@ -247,12 +250,14 @@ export async function handleIssueAssigned(
       ]);
 
       if (memberWithUser?.user?.email && isEmailEnabled(prefs, recipientId, "emailAssignment")) {
+        const locale = await getInstanceLocale();
         const msg = buildAssignmentEmail({
           assignedByName: actorMember?.user?.displayName ?? "Someone", // actorMember pre-fetched in parallel above
           issueKey: payload.issueKey,
           issueTitle: payload.issueTitle ?? payload.issueKey,
           issueUrl: `${APP_URL}/issue/${encodeURIComponent(payload.issueKey)}`,
           appUrl: APP_URL,
+          locale,
         });
 
         await provider
@@ -396,6 +401,7 @@ export async function handleCycleClosed(
       select: { memberId: true, emailMention: true, emailAssignment: true, emailCycleClosed: true },
     });
 
+    const locale = await getInstanceLocale();
     const msg = buildCycleClosedEmail({
       cycleName: payload.cycleName,
       projectName: payload.projectName,
@@ -406,6 +412,7 @@ export async function handleCycleClosed(
       scopeAdded: payload.scopeAdded,
       scopeRemoved: payload.scopeRemoved,
       appUrl: APP_URL,
+      locale,
     });
 
     // Filter opted-in recipients, then send in sequential chunks of 10 (fix-2).
