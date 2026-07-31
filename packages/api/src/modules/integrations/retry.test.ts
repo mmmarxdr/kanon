@@ -619,7 +619,10 @@ describe("integration worker retry and completion", () => {
     const fixture = await createFixture();
     const work = await createWork(fixture);
     await createRef(fixture, "issue", fixture.issue.id, "remote-known");
-    const networkError = Object.assign(new Error("socket reset"), { code: "ECONNRESET" });
+    const networkError = Object.assign(new Error("socket reset"), {
+      code: "ECONNRESET",
+      apiKey: "must-not-be-logged",
+    });
     const { deps, logger } = dependencies(
       adapter({ pushIssue: vi.fn().mockRejectedValue(networkError) }),
       { jitter: () => 1_234 }
@@ -628,9 +631,14 @@ describe("integration worker retry and completion", () => {
     await runIntegrationWorkerCycle(prisma, deps);
 
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ workId: work.id, state: "retry" }),
+      expect.objectContaining({
+        error: { name: "Error", code: "ECONNRESET" },
+        workId: work.id,
+        state: "retry",
+      }),
       "Integration work scheduled for retry"
     );
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("must-not-be-logged");
     await expect(
       prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })
     ).resolves.toMatchObject({

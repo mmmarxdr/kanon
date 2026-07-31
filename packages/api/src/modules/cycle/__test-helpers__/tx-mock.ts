@@ -63,7 +63,7 @@ export function makeTxMock(overrides?: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     integrationProjectBinding: {
-      findFirst: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
     },
   };
   return tx;

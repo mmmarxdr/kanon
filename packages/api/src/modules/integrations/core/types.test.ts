@@ -11,6 +11,7 @@ import {
   type CanonicalUser,
   type FieldValue,
   type InboundSource,
+  isRetryableProviderError,
   type PmProviderAdapter,
   type ProviderCreateReconciler,
   type PushResult,
@@ -64,6 +65,12 @@ const noChangePatch: CanonicalIssuePatch = {
 };
 
 describe("integrations/core/types", () => {
+  it("does not let network heuristics override a definitive HTTP status", () => {
+    expect(isRetryableProviderError({ statusCode: 400, name: "TimeoutError", message: "socket timed out" })).toBe(false);
+    expect(isRetryableProviderError({ statusCode: 429, message: "rate limited" })).toBe(true);
+    expect(isRetryableProviderError({ statusCode: 503, message: "unavailable" })).toBe(true);
+  });
+
   it("models explicit omit, set, and clear field values", () => {
     const values: FieldValue<number>[] = [
       { kind: "omit" },

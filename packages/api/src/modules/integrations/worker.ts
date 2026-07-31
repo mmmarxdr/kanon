@@ -1005,7 +1005,7 @@ async function fail(
     log(
       d,
       state === "dead" ? "error" : "warn",
-      { err: error, workId: work.id, attempts, state },
+      { error: safeErrorEvidence(error), workId: work.id, attempts, state },
       state === "retry"
         ? "Integration work scheduled for retry"
         : state === "dead"
@@ -1016,7 +1016,11 @@ async function fail(
     log(
       d,
       "error",
-      { err: transitionError, dispatchError: error, workId: work.id },
+      {
+        error: safeErrorEvidence(transitionError),
+        dispatchError: safeErrorEvidence(error),
+        workId: work.id,
+      },
       "Integration work failure transition failed"
     );
   }
@@ -1065,7 +1069,7 @@ async function process(database: PrismaClient, work: IntegrationSyncWork, d: Dep
       log(
         d,
         "error",
-        { err: transitionError, workId: work.id },
+        { error: safeErrorEvidence(transitionError), workId: work.id },
         "Integration work ambiguity transition failed"
       );
       return false;
@@ -1073,7 +1077,11 @@ async function process(database: PrismaClient, work: IntegrationSyncWork, d: Dep
     log(
       d,
       "error",
-      { err: error, workId: work.id, state: ambiguous ? "ambiguous" : "stale" },
+      {
+        error: safeErrorEvidence(error),
+        workId: work.id,
+        state: ambiguous ? "ambiguous" : "stale",
+      },
       "Integration work finalize failed after provider success"
     );
     if (!ambiguous)
