@@ -12,7 +12,7 @@ const key = decodeKey(generateEncryptionKey());
 
 describe("integrations/core/crypto — AES-256-GCM", () => {
   it("round-trips plaintext", () => {
-    const secret = "07396669bd54a31c3de4b89d4d1f3f479d3d41ce"; // shape of a Redmine key
+    const secret = "0123456789abcdef0123456789abcdef01234567"; // shape of a Redmine key
     expect(decrypt(encrypt(secret, key), key)).toBe(secret);
   });
 

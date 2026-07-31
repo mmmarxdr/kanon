@@ -1,10 +1,15 @@
 import type { Prisma } from "@prisma/client";
 
+export const ISSUE_CAPTURE_FIELDS = [
+  "title",
+  "description",
+  "state",
+  "assigneeId",
+  "cycleId",
+  "estimate",
+] as const;
 export type IssueMutationRow = Prisma.IssueGetPayload<{}>;
-export type IssueCaptureField = keyof Pick<
-  IssueMutationRow,
-  "title" | "description" | "state" | "assigneeId" | "cycleId" | "estimate"
->;
+export type IssueCaptureField = (typeof ISSUE_CAPTURE_FIELDS)[number];
 export type IssueCaptureFields = Readonly<Partial<Pick<IssueMutationRow, IssueCaptureField>>>;
 export type IssueCaptureIntent = Readonly<
   Record<"bindingId" | "actorKey" | "correlationId", string> &
@@ -39,7 +44,6 @@ const ROW =
   "id key sequenceNum title description type priority state labels completedAt timeConfirmedAt createdAt updatedAt groupKey engramContext specArtifacts projectId assigneeId estimate cycleId parentId roadmapItemId".split(
     " "
   );
-const FIELDS = ["title", "description", "state", "assigneeId", "cycleId", "estimate"] as const;
 const CAPTURE =
   "bindingId direction operation actorKey actorKind correlationId fields refId authCredentialId availableAt marker".split(
     " "
@@ -210,7 +214,8 @@ function captureField(field: string, value: unknown): unknown {
   return field === "title" ? scalar(value, "string") : nullable(value, "string");
 }
 function captureValue(key: string, value: unknown): unknown {
-  if (key === "fields") return Object.freeze(parseRecord(value, FIELDS, [], captureField));
+  if (key === "fields")
+    return Object.freeze(parseRecord(value, ISSUE_CAPTURE_FIELDS, [], captureField));
   if (CAPTURE_CHOICES[key]) return scalar(value, "choice", CAPTURE_CHOICES[key]);
   if (key === "availableAt") return scalar(value, "date");
   if (key === "refId" || key === "authCredentialId") return nullable(value, "required");

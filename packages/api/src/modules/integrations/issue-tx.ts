@@ -22,6 +22,8 @@ export async function captureIssueMutationTx(
 ): Promise<IssueMutationRow> {
   const { capture, payload, result } = canonicalizeIssueMutationDraft(mutation);
 
+  if (capture.operation === "update" && Object.keys(payload.fields).length === 0) return result;
+
   await captureIntegrationWorkTx(transaction, {
     bindingId: capture.bindingId,
     entityType: "issue",

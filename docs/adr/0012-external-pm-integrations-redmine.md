@@ -242,8 +242,31 @@ sequenceDiagram
   Dev->>UI: "Connect my Redmine account" + token
   UI->>API: POST /integrations/credentials
   API->>Redmine: GET /my/account.json
-  API->>API: store encrypted key + externalUserId (bind member)
+   API->>API: store encrypted key + externalUserId (bind member)
 ```
+
+### Integration encryption-key rotation
+
+Provider API keys and Kanon's encryption key rotate independently. A member
+replaces a Redmine API key through the credential endpoint. Operators rotate
+`INTEGRATION_ENCRYPTION_KEY` with the re-encryption script:
+
+```bash
+INTEGRATION_ENCRYPTION_KEY_OLD=<current> \
+INTEGRATION_ENCRYPTION_KEY_NEW=<next> \
+pnpm --filter @kanon/api exec tsx scripts/reencrypt-integration-keys.ts --dry-run
+
+INTEGRATION_ENCRYPTION_KEY_OLD=<current> \
+INTEGRATION_ENCRYPTION_KEY_NEW=<next> \
+pnpm --filter @kanon/api exec tsx scripts/reencrypt-integration-keys.ts
+```
+
+The dry run must report zero undecryptable rows before the write run. The
+script recognizes credentials already encrypted with the new key, so a failed
+or interrupted run can be rerun. Keep both keys until application validation
+is complete; swapping `OLD` and `NEW` reverses the rotation while both remain
+available. Only then configure the application with the new
+`INTEGRATION_ENCRYPTION_KEY` and retire the old key.
 
 ## Consequences
 

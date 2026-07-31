@@ -3,10 +3,7 @@ import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
-import {
-  serializerCompiler,
-  validatorCompiler,
-} from "fastify-type-provider-zod";
+import { serializerCompiler, validatorCompiler } from "fastify-type-provider-zod";
 import { env } from "./config/env.js";
 import { prisma } from "./config/prisma.js";
 import errorHandler from "./plugins/error-handler.js";
@@ -18,10 +15,7 @@ import authRoutes from "./modules/auth/routes.js";
 import activityRoutes from "./modules/activity/routes.js";
 import workspaceRoutes from "./modules/workspace/routes.js";
 import dashboardRoutes from "./modules/dashboard/routes.js";
-import {
-  workspaceProposalRoutes,
-  proposalActionRoutes,
-} from "./modules/mcp-proposal/routes.js";
+import { workspaceProposalRoutes, proposalActionRoutes } from "./modules/mcp-proposal/routes.js";
 import projectRoutes from "./modules/project/routes.js";
 import issueRoutes from "./modules/issue/routes.js";
 import issueDependencyRoutes from "./modules/issue-dependency/routes.js";
@@ -49,8 +43,13 @@ import { createEmailProvider } from "./services/email/index.js";
 import type { EmailProvider } from "./services/email/types.js";
 import { registerForecastListener } from "./modules/forecast/index.js";
 import { registerTransitionListener } from "./modules/work-session/transition-listener.js";
-import { scanIntegrationWork } from "./modules/integrations/outbox.js";
 import { startIntegrationScheduler } from "./modules/integrations/scheduler.js";
+import { registerIntegrationSyncListener } from "./modules/integrations/sync-listener.js";
+import {
+  createIntegrationWorkerCycle,
+  readIntegrationWorkerStartupSnapshot,
+} from "./modules/integrations/worker.js";
+import integrationRoutes from "./modules/integrations/routes.js";
 
 export interface BuildAppOptions {
   /** Optional override for the email provider (useful for testing with a spy). */
@@ -80,10 +79,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     trustProxy: env.TRUST_PROXY,
     logger: {
       level: process.env["NODE_ENV"] === "production" ? "info" : "debug",
-      transport:
-        process.env["NODE_ENV"] !== "production"
-          ? { target: "pino-pretty" }
-          : undefined,
+      transport: process.env["NODE_ENV"] !== "production" ? { target: "pino-pretty" } : undefined,
       // Observability slice 1: redact secrets from structured log output so
       // they never reach log aggregators. Pino replaces matched paths with
       // "[Redacted]". Paths are pino-style dot-notation; Authorization and
@@ -92,6 +88,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
         "req.headers.authorization",
         "req.headers.cookie",
         "req.body.password",
+        "req.body.apiKey",
       ],
       // ^ceiling: extend redact list if new sensitive fields are added (e.g.
       // req.body.token, req.body.refreshToken).
@@ -202,18 +199,48 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     unsubscribeTransitionListener();
   });
 
-  // Durable outbox repair scan. Claiming and dispatch are added by later slices;
-  // this scheduler owns only non-overlapping scan cadence and shutdown.
-  let stopIntegrationScheduler: (() => void) | undefined;
+  const injectedScan = opts.integrationScan;
+  let injectedRunning: Promise<unknown> | undefined;
+  const integrationWorker = injectedScan
+    ? undefined
+    : createIntegrationWorkerCycle(prisma, { logger: app.log });
+  const integrationScan = injectedScan
+    ? () => {
+        if (injectedRunning) return injectedRunning;
+        const current = Promise.resolve()
+          .then(injectedScan)
+          .finally(() => {
+            if (injectedRunning === current) injectedRunning = undefined;
+          });
+        injectedRunning = current;
+        return current;
+      }
+    : integrationWorker!;
+  const unsubscribeIntegrationSync = registerIntegrationSyncListener(
+    eventBus,
+    integrationScan,
+    app.log
+  );
+  let stopIntegrationScheduler: (() => Promise<void>) | undefined;
   app.addHook("onReady", async () => {
-    stopIntegrationScheduler = startIntegrationScheduler(
-      opts.integrationScan ?? (() => scanIntegrationWork(prisma)),
-      (err) => app.log.error({ err }, "Integration work scan failed"),
+    try {
+      app.log.info(
+        await readIntegrationWorkerStartupSnapshot(prisma),
+        "Integration worker startup snapshot",
+      );
+    } catch (err) {
+      app.log.error({ err }, "Integration worker startup snapshot failed");
+    }
+    stopIntegrationScheduler = startIntegrationScheduler(integrationScan, (err) =>
+      app.log.error({ err }, "Integration work scan failed")
     );
   });
   app.addHook("onClose", async () => {
-    stopIntegrationScheduler?.();
+    integrationWorker?.stop();
+    const listenerDrain = unsubscribeIntegrationSync();
+    const schedulerDrain = stopIntegrationScheduler?.() ?? Promise.resolve();
     stopIntegrationScheduler = undefined;
+    await Promise.all([listenerDrain, schedulerDrain]);
   });
 
   // Health check with DB connectivity (always public, before auth)
@@ -254,6 +281,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(publicInviteRoutes, { prefix: "/api/invites" });
   await app.register(projectMemberRoutes, { prefix: "/api/projects/:key/members" });
   await app.register(instanceRoutes, { prefix: "/api/instance" });
+  await app.register(integrationRoutes, { prefix: "/api/integrations" });
 
   // ─── Instance Setup Token (first-boot onReady hook) ───────────────────
   app.addHook("onReady", async () => {
@@ -266,10 +294,10 @@ export async function buildApp(opts: BuildAppOptions = {}) {
         // confirmation through pino; write the token itself straight to stdout
         // for the operator reading boot output.
         app.log.info(
-          `[SETUP] Minted instance setup token (valid ${env.SETUP_TOKEN_TTL_DAYS} days). Claim token printed to stdout below.`,
+          `[SETUP] Minted instance setup token (valid ${env.SETUP_TOKEN_TTL_DAYS} days). Claim token printed to stdout below.`
         );
         process.stdout.write(
-          `\n[SETUP-TOKEN do-not-store] Instance setup token — claim at /setup:\n  ${raw}\n\n`,
+          `\n[SETUP-TOKEN do-not-store] Instance setup token — claim at /setup:\n  ${raw}\n\n`
         );
       }
     } catch (err) {
@@ -311,7 +339,9 @@ export async function buildApp(opts: BuildAppOptions = {}) {
 
   app.addHook("onReady", async () => {
     scheduleCleanupTick();
-    app.log.info(`Work session cleanup interval started (every ${CLEANUP_INTERVAL_MS / 1000}s, non-overlapping)`);
+    app.log.info(
+      `Work session cleanup interval started (every ${CLEANUP_INTERVAL_MS / 1000}s, non-overlapping)`
+    );
   });
 
   app.addHook("onClose", async () => {

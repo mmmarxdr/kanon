@@ -12,6 +12,7 @@ import {
   type FieldValue,
   type InboundSource,
   type PmProviderAdapter,
+  type ProviderCreateReconciler,
   type PushResult,
   type StatusMaps,
 } from "./types.js";
@@ -137,6 +138,7 @@ describe("integrations/core/types", () => {
       ensureProject: async () => pushResult,
       ensureCycle: async () => pushResult,
        pushIssue: async () => pushResult,
+       reconcileCreate: async () => [pushResult],
      };
     const inbound: InboundSource = {
       poll: async () => ({ changes: [], nextCursor: null, hasMore: false }),
@@ -157,6 +159,7 @@ describe("integrations/core/types", () => {
     expectTypeOf(adapter).toMatchTypeOf<PmProviderAdapter>();
     expectTypeOf(inbound).toMatchTypeOf<InboundSource>();
     expectTypeOf<PmProviderAdapter>().not.toHaveProperty("poll");
+    expectTypeOf(adapter).toMatchTypeOf<ProviderCreateReconciler>();
   });
 
   it("represents inbound changes with opaque identity and version metadata", () => {

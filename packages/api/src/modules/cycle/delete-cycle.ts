@@ -3,6 +3,7 @@ import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import { captureCycleMutationTx } from "../integrations/cycle-tx.js";
+import { acquireExternalRefBackfillWriteGate } from "../integrations/backfill.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -67,6 +68,10 @@ export async function deleteCycle(
 
   try {
     txResult = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`
+        SELECT "id" FROM "cycles" WHERE "id" = ${cycleId}::uuid FOR UPDATE
+      `;
+
       // 1. Re-fetch cycle with attached issues and project for workspaceId
       const cycle: CycleWithIssuesAndProject | null = await tx.cycle.findUnique({
         where: { id: cycleId },
@@ -123,6 +128,23 @@ export async function deleteCycle(
         force: opts.force ?? false,
       };
 
+      await tx.$queryRaw`
+        SELECT connection."id"
+        FROM "integration_connections" AS connection
+        JOIN "integration_project_bindings" AS binding
+          ON binding."connection_id" = connection."id"
+        WHERE binding."project_id" = ${cycle.projectId}::uuid
+        ORDER BY connection."id"
+        FOR UPDATE OF connection
+      `;
+      await tx.$queryRaw`
+        SELECT "id" FROM "integration_project_bindings"
+        WHERE "project_id" = ${cycle.projectId}::uuid
+        ORDER BY "id"
+        FOR UPDATE
+      `;
+      await acquireExternalRefBackfillWriteGate(tx);
+
       // 6. Audit row — inside tx for atomicity
       const audit = await tx.adminAuditLog.create({
         data: {
@@ -142,7 +164,22 @@ export async function deleteCycle(
         data: { cycleId: null },
       });
 
-      await captureCycleMutationTx(tx, cycle, authorId, "delete");
+      const deleteWork = await captureCycleMutationTx(tx, cycle, authorId, "delete");
+      if (deleteWork) {
+        await tx.integrationSyncWork.update({
+          where: { id: deleteWork.id },
+          data: {
+            state: "skipped",
+            skippedReason: "Remote cycle hard-delete is not supported",
+            leaseToken: null,
+            leaseUntil: null,
+          },
+        });
+      }
+
+      await tx.externalRef.deleteMany({
+        where: { entityType: "cycle", entityId: cycle.id },
+      });
 
       // 8. Hard delete — CycleScopeEvent rows cascade via DB onDelete: Cascade
       await tx.cycle.delete({ where: { id: cycle.id } });

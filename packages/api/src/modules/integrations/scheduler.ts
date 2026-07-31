@@ -4,25 +4,32 @@ export function startIntegrationScheduler(
   run: () => Promise<unknown>,
   onError: (error: unknown) => void,
   intervalMs = DEFAULT_INTERVAL_MS,
-): () => void {
+): () => Promise<void> {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let inFlight: Promise<void> | undefined;
 
   const schedule = (): void => {
     if (stopped) return;
-    timer = setTimeout(async () => {
+    timer = setTimeout(() => {
       timer = undefined;
-      try {
-        await run();
-      } catch (error) {
+      const current = (async () => {
         try {
-          onError(error);
-        } catch {
-          // Error reporting must not stop future scans.
+          await run();
+        } catch (error) {
+          try {
+            onError(error);
+          } catch {
+            // Error reporting must not stop future scans.
+          }
+        } finally {
+          schedule();
         }
-      } finally {
-        schedule();
-      }
+      })();
+      inFlight = current;
+      void current.finally(() => {
+        if (inFlight === current) inFlight = undefined;
+      });
     }, intervalMs);
     timer.unref?.();
   };
@@ -32,5 +39,6 @@ export function startIntegrationScheduler(
     stopped = true;
     if (timer) clearTimeout(timer);
     timer = undefined;
+    return inFlight ?? Promise.resolve();
   };
 }

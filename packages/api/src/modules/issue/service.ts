@@ -59,7 +59,7 @@ async function issueCaptureContext(
       connection: {
         select: {
           credentials: {
-            where: { memberId },
+            where: { memberId, lastAuthStatus: "valid", revokedAt: null },
             select: { id: true },
             take: 1,
           },
