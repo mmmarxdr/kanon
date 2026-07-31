@@ -24,7 +24,8 @@ function wouldCreateCycle(
   const seen = new Set<string>();
   while (current) {
     if (current === childId) return true;
-    if (seen.has(current)) return true;
+    // Ancestor chain hit a separate cycle (not involving this child) — safe to attach.
+    if (seen.has(current)) return false;
     seen.add(current);
     current = byId.get(current)?.parentId ?? null;
   }

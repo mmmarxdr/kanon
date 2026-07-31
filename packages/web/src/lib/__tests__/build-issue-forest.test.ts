@@ -82,6 +82,23 @@ describe("buildIssueForest", () => {
     expect(forest.roots.every((r) => r.children.length === 0)).toBe(true);
   });
 
+  it("keeps non-cyclic child attached when ancestry hits a separate cycle", () => {
+    // A → B, and B ↔ C. Attaching A under B must succeed.
+    const forest = buildIssueForest([
+      issue("a", "A", "b"),
+      issue("b", "B", "c"),
+      issue("c", "C", "b"),
+    ]);
+
+    const a = forest.byId.get("a");
+    expect(a).toBeTruthy();
+    // B and C form a cycle → both roots; A should nest under B if B is a root
+    const bRoot = forest.roots.find((r) => r.key === "B");
+    expect(bRoot).toBeTruthy();
+    expect(keys(bRoot!.children)).toContain("A");
+    expect(forest.roots.some((r) => r.key === "A")).toBe(false);
+  });
+
   it("caps nesting at ISSUE_FOREST_MAX_DEPTH", () => {
     const chain: Issue[] = [];
     for (let i = 0; i <= ISSUE_FOREST_MAX_DEPTH + 2; i++) {
