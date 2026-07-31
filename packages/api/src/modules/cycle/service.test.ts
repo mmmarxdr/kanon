@@ -52,7 +52,7 @@ vi.mock("../../config/prisma.js", () => ({
       create: vi.fn(),
     },
     integrationProjectBinding: {
-      findFirst: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
     },
     $transaction: vi.fn(),
   },
