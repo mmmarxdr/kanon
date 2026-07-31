@@ -12,7 +12,7 @@
 Web-only. No API, MCP, or shared-schema changes. Projects already arrive via
 `useProjectsQuery(workspaceId)`.
 
-```
+```text
 ┌─ AppSidebar (column, height:100%, overflow:hidden) ──────────────────────┐
 │ ┌─ ChromeTop (flex-shrink:0) ──────────────────────────────────────────┐ │
 │ │ Workspace header · Search · Primary nav                              │ │
@@ -100,15 +100,16 @@ export function selectVisibleProjects(
 
 1. **Sort**: copy array. Partition active (`p.key === activeKey`) to the front
    (stable among actives — at most one). Sort the remainder by
-   `name.localeCompare(other, undefined, { sensitivity: "base" })`.
+   `a.name.localeCompare(b.name, undefined, { sensitivity: "base" })`.
+   Active-first ordering is the sole discoverability guarantee for the
+   soft window; a separate “pin into last slot” step is unnecessary because
+   the active project is already index 0 after this sort.
 2. **Expand short-circuit**: if `expanded === true` OR `total <= softLimit`,
    return `{ visible: sorted, hiddenCount: 0, total }`.
-3. **Collapse window**: take first `softLimit` of sorted as candidate window.
-4. **Active pin**: if `activeKey` is non-empty, the active project exists in
-   `projects`, and it is not already in the candidate window, replace the last
-   window slot with the active project (after removing any duplicate). This
-   keeps `visible.length <= softLimit` and guarantees presence.
-5. Return `{ visible, hiddenCount: total - visible.length, total }`.
+3. **Collapse window**: take first `softLimit` of sorted as the visible set.
+4. Return `{ visible, hiddenCount: total - visible.length, total }`.
+   Defensive pin (replace last slot if active somehow missing) MAY remain in
+   code as a no-op safety net; it is not part of the product contract.
 
 ### 3.3 UI binding
 
@@ -192,7 +193,7 @@ pixel measurement. Manual notebook smoke remains a verify-phase checklist item.
 
 ## 10. Sequence (user expands list)
 
-```
+```text
 User clicks "Show all (18)"
   → sidebar-store.toggleProjectsExpanded()
   → localStorage.setItem("kanon-sidebar-projects-expanded", "true")

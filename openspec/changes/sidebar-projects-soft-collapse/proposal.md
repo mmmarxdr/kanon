@@ -61,8 +61,9 @@ reachable and large project lists stop saturating the rail.
 - **Sticky chrome.** Header, search, primary nav, admin block, and user row are
   outside the scroll container; only the projects region scrolls.
 - **SOFT_LIMIT = 8.** Constant shared by helper and UI.
-- **Active pin + alpha.** Sort active key first, then `localeCompare` on name;
-  when collapsed, guarantee the active project is in the visible ≤8 set.
+- **Active-first + alpha.** Sort active key first, then `localeCompare` on
+  name for the remainder. Collapsed window = first 8 of that order, so the
+  active project is always visible when it exists.
 - **Persistence.** Same localStorage pattern as `kanon-sidebar-collapsed`.
 - **Aesthetics.** Reuse existing CSS tokens; quiet text control for
   Show all / Show less; no new cards, pills, or decorative chrome.

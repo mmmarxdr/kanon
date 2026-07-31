@@ -20,5 +20,7 @@
   "collapseSidebar": "Contraer barra lateral",
   "expandSidebar": "Expandir barra lateral",
   "searchOrAsk": "Buscar o preguntar…",
-  "selectProjectFirst": "{{label}} (elige un proyecto primero)"
+  "selectProjectFirst": "{{label}} (elige un proyecto primero)",
+  "showAllProjects": "Ver todos ({{count}})",
+  "showLessProjects": "Ver menos"
 }

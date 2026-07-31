@@ -99,13 +99,13 @@ via `localStorage` key `kanon-sidebar-projects-expanded` (default false).
 
 ---
 
-### Requirement: Ordering and active pin
+### Requirement: Ordering and active-first soft window
 
 Visible projects MUST be ordered with the active route project (matching
 `projectKey` from the path) first, then remaining projects alphabetically by
-name (case-insensitive). When soft-collapsed, if an active project would fall
-outside the eight-row window, the UI MUST still include it in the visible set
-(pin), keeping visible length ≤ 8.
+name (case-insensitive). When soft-collapsed, the visible set MUST be the
+first eight projects of that ordered list, which guarantees the active
+project is included whenever it exists.
 
 #### Scenario: Active project sorts first
 
@@ -114,13 +114,13 @@ outside the eight-row window, the UI MUST still include it in the visible set
 - WHEN the list is rendered (collapsed or expanded)
 - THEN Zebra appears before Alpha
 
-#### Scenario: Active project pinned into collapsed window
+#### Scenario: Alphabetically-late active project still visible when collapsed
 
-- GIVEN more than 8 projects sorted alphabetically after the active pin rule
-- AND the active project would not be among the first 8 without pinning
+- GIVEN more than 8 projects
+- AND the active project would be outside the first 8 under pure alphabetical order
 - AND preference is collapsed
 - WHEN the projects region renders
-- THEN the active project is among the visible rows
+- THEN the active project is among the visible rows (as the first row)
 - AND at most 8 rows are visible
 
 #### Scenario: No active project — pure alphabetical soft window
