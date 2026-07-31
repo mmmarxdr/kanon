@@ -20,5 +20,7 @@
   "collapseSidebar": "Collapse sidebar",
   "expandSidebar": "Expand sidebar",
   "searchOrAsk": "Search or ask…",
-  "selectProjectFirst": "{{label}} (select a project first)"
+  "selectProjectFirst": "{{label}} (select a project first)",
+  "showAllProjects": "Show all ({{count}})",
+  "showLessProjects": "Show less"
 }
