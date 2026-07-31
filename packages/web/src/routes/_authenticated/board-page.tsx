@@ -13,6 +13,7 @@ import { GroupedBoard } from "@/features/board/grouped-board";
 import { FilterBar } from "@/features/board/filter-bar";
 import { NewIssueModal } from "@/features/board/new-issue-modal";
 import { PanelErrorBoundary } from "@/components/panel-error-boundary";
+import { buildIssueForest } from "@/lib/build-issue-forest";
 
 export default function BoardPage() {
   const { projectKey } = boardRoute.useParams();
@@ -22,6 +23,10 @@ export default function BoardPage() {
   const { data: groups, isLoading: groupsLoading } = useGroupsQuery(projectKey);
   const viewMode = useBoardStore((s) => s.viewMode);
   const setViewMode = useBoardStore((s) => s.setViewMode);
+
+  const forest = useMemo(() => buildIssueForest(issues ?? []), [issues]);
+  // Slice 2: root cards only — descendants stay in forest for Slice 3 disclosure.
+  const boardIssues = forest.roots;
 
   // Allow deep-linking / forcing the board view mode via ?view= search param.
   useEffect(() => {
@@ -121,7 +126,6 @@ export default function BoardPage() {
     );
   }
 
-  const total = issues?.length ?? 0;
   const inProgress =
     issues?.filter((i) => i.state === "in_progress").length ?? 0;
 
@@ -148,8 +152,12 @@ export default function BoardPage() {
       >
         <FilterBar assignees={assignees} projectKey={projectKey} />
         <div style={{ flex: 1 }} />
-        <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-          {total} issues · {inProgress} active
+        <span
+          className="mono"
+          data-testid="board-issue-counts"
+          style={{ fontSize: 11, color: "var(--ink-3)" }}
+        >
+          {forest.rootCount} roots · {forest.total} issues · {inProgress} active
         </span>
       </div>
 
@@ -159,7 +167,7 @@ export default function BoardPage() {
           <PanelErrorBoundary label="Grouped board">
             <GroupedBoard
               groups={groups ?? []}
-              issues={issues ?? []}
+              issues={boardIssues}
               projectKey={projectKey}
               onSelectIssue={handleSelectIssue}
               onAddIssue={handleAddIssue}
@@ -168,7 +176,7 @@ export default function BoardPage() {
         ) : (
           <PanelErrorBoundary label="Kanban board">
             <KanbanBoard
-              issues={issues ?? []}
+              issues={boardIssues}
               projectKey={projectKey}
               onSelectIssue={handleSelectIssue}
               onAddIssue={handleAddIssue}
