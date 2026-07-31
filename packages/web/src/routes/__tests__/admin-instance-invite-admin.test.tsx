@@ -52,6 +52,7 @@ function makeSettings() {
     instanceName: "My Kanon",
     signupMode: "open",
     allowedSignupDomains: [],
+    defaultLocale: "en",
     ownerUserId: "u1",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),

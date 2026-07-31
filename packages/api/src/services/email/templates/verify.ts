@@ -1,5 +1,6 @@
 import { renderEmailLayout } from "../layout.js";
 import type { EmailContent } from "../types.js";
+import { emailT, DEFAULT_EMAIL_LOCALE, type EmailLocale } from "../i18n/messages.js";
 
 export type { EmailContent };
 
@@ -15,6 +16,8 @@ const E_ink = "#0E1011";
 
 export interface BuildVerifyEmailOptions {
   verifyUrl: string;
+  /** Instance email locale (KAN-203 Slice 2). Defaults to "en". */
+  locale?: EmailLocale;
 }
 
 /**
@@ -27,26 +30,32 @@ export interface BuildVerifyEmailOptions {
  *   - Paste-link fallback CodeBlock
  *   - "What's next" 3-step list
  *   - 24h expiry note
+ *
+ * Copy is localized via emailT() from `../i18n/messages.js` using the instance's
+ * `defaultLocale` (KAN-203 Slice 2). Structure, URLs, and test-critical patterns
+ * (verifyUrl href with ?token=) are unaffected by locale.
  */
 export function buildVerifyEmail(opts: BuildVerifyEmailOptions): EmailContent {
   const { verifyUrl } = opts;
+  const locale = opts.locale ?? DEFAULT_EMAIL_LOCALE;
+  const t = (key: string) => emailT(locale, key);
 
   const bodyHtml = `
     <p style="margin:10px 0 0;font-family:${E_sans};font-size:14px;line-height:1.55;color:${E_ink2};letter-spacing:-0.005em;">
-      Thanks for signing up. Click below to verify this address.
-      The link is good for <strong>24 hours</strong> and only works once.
+      ${t("verify.bodyIntro")}
+      ${t("verify.bodyExpiry")}
     </p>`;
 
   const whatNextHtml = `
     <div style="padding:20px 32px 24px;">
       <p style="margin:0 0 4px;font-family:${E_mono};font-size:10px;color:${E_ai};letter-spacing:0.1em;text-transform:uppercase;">
-        What&#8217;s next
+        ${t("verify.whatsNextLabel")}
       </p>
       <table width="100%" cellpadding="0" cellspacing="0" border="0" role="presentation">
         ${[
-          ["Connect your repo", "GitHub, GitLab, or self-hosted. Read-only by default."],
-          ["Plug in MCP", "Claude reads your roadmap and writes back via MCP. No keys to manage."],
-          ["Invite your team", "Roles map to SAML groups if you have SSO."],
+          [t("verify.step1Title"), t("verify.step1Desc")],
+          [t("verify.step2Title"), t("verify.step2Desc")],
+          [t("verify.step3Title"), t("verify.step3Desc")],
         ]
           .map(
             ([title, desc], i) => `
@@ -63,37 +72,36 @@ export function buildVerifyEmail(opts: BuildVerifyEmailOptions): EmailContent {
     </div>`;
 
   const html = renderEmailLayout({
-    eyebrow: "Step 1 of 2 — verify",
+    eyebrow: t("verify.eyebrow"),
     eyebrowTone: "default",
-    heading: "Confirm your email, then we’ll spin up your workspace.",
+    heading: t("verify.heading"),
     bodyHtml,
-    cta: { label: "Verify email →", href: verifyUrl },
+    cta: { label: t("verify.ctaLabel"), href: verifyUrl },
     linkFallback: verifyUrl,
     extraSectionHtml: whatNextHtml,
-    disclaimerText:
-      "Didn&#8217;t sign up? You can ignore this — the email won&#8217;t be activated. We never share your address.",
+    disclaimerText: t("verify.disclaimer"),
   });
 
   const text = [
-    "Step 1 of 2 — Verify your email",
+    t("verify.textTitle"),
     "",
-    "Thanks for signing up. Click below to verify this address.",
-    "The link is good for 24 hours and only works once.",
+    t("verify.textBody1"),
+    t("verify.textBody2"),
     "",
-    "Verify your email:",
+    t("verify.textCta"),
     verifyUrl,
     "",
-    "What's next:",
-    "01  Connect your repo — GitHub, GitLab, or self-hosted.",
-    "02  Plug in MCP — Claude reads your roadmap via MCP.",
-    "03  Invite your team — Roles map to SAML groups if you have SSO.",
+    t("verify.textWhatsNext"),
+    t("verify.textStep1"),
+    t("verify.textStep2"),
+    t("verify.textStep3"),
     "",
     "Kanon · 1 Cromwell Pl, London",
-    "Didn't sign up? You can ignore this email.",
+    t("verify.textDisclaimer"),
   ].join("\n");
 
   return {
-    subject: "Verify your email",
+    subject: t("verify.subject"),
     html,
     text,
   };

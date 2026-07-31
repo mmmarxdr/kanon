@@ -86,5 +86,9 @@
   "createProjectDescription": "Description",
   "createProjectDescriptionPlaceholder": "What is this project about?",
   "createProjectError": "Failed to create project. Please try again.",
-  "createProjectSubmit": "Create project"
+  "createProjectSubmit": "Create project",
+  "instance": {
+    "defaultLocale": "Outbound email language",
+    "defaultLocaleHelp": "(applies to verify, reset, invite, and notification emails)"
+  }
 }

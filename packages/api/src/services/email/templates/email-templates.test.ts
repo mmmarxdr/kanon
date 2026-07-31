@@ -3,6 +3,7 @@ import { renderEmailLayout } from "../layout.js";
 import { buildVerifyEmail } from "./verify.js";
 import { buildResetEmail } from "./reset.js";
 import { buildInviteEmail } from "./invite.js";
+import { buildMagicLinkEmail } from "./magic-link.js";
 
 // ─── Layout renderer ──────────────────────────────────────────────────────────
 
@@ -196,6 +197,17 @@ describe("buildVerifyEmail", () => {
     const match = html.match(/token=([^"&\s]+)/);
     expect(match![1]).toBe("abc-def_ghi");
   });
+
+  // KAN-203 Slice 2: instance email locale
+  it("locale='es' translates the subject and eyebrow, defaults stay English", () => {
+    const { subject: enSubject } = buildVerifyEmail({ verifyUrl });
+    const { subject: esSubject, html: esHtml } = buildVerifyEmail({ verifyUrl, locale: "es" });
+    expect(esSubject).not.toBe(enSubject);
+    expect(esSubject).toContain("Verifica");
+    expect(esHtml).toContain("verificación");
+    // Structure/URL invariants must hold regardless of locale
+    expect(esHtml).toContain("/verify-email?token=");
+  });
 });
 
 // ─── Reset template ───────────────────────────────────────────────────────────
@@ -248,6 +260,16 @@ describe("buildResetEmail", () => {
     const match = html.match(/token=([^"&\s]+)/);
     expect(match![1]).toBe("a1B2-cD_eF");
     const hrefMatch = html.match(/href="([^"]*reset-password[^"]*)"/);
+    expect(hrefMatch).not.toBeNull();
+  });
+
+  // KAN-203 Slice 2: instance email locale
+  it("locale='es' translates the subject, href pattern is unaffected", () => {
+    const { subject: enSubject } = buildResetEmail({ resetUrl });
+    const { subject: esSubject, html: esHtml } = buildResetEmail({ resetUrl, locale: "es" });
+    expect(esSubject).not.toBe(enSubject);
+    expect(esSubject).toContain("Restablece");
+    const hrefMatch = esHtml.match(/href="([^"]*reset-password[^"]*)"/);
     expect(hrefMatch).not.toBeNull();
   });
 });
@@ -336,5 +358,43 @@ describe("buildInviteEmail", () => {
     expect(html).not.toContain('"><a href=');
     expect(html).toContain("&gt;");
     expect(html).toContain("&lt;a");
+  });
+
+  // KAN-203 Slice 2: instance email locale
+  it("locale='es' translates the subject, invite path unaffected", () => {
+    const { subject: enSubject } = buildInviteEmail(baseOpts);
+    const { subject: esSubject, html: esHtml } = buildInviteEmail({ ...baseOpts, locale: "es" });
+    expect(esSubject).not.toBe(enSubject);
+    expect(esSubject).toContain("invitado");
+    expect(esHtml).toContain("/invite/invTok789");
+  });
+});
+
+// ─── Magic-link template ──────────────────────────────────────────────────────
+
+describe("buildMagicLinkEmail", () => {
+  const url = "https://app.kanon.dev/magic-link?token=magicTok123";
+
+  it("returns correct subject and text alternative", () => {
+    const { subject, text } = buildMagicLinkEmail({ url });
+    expect(subject).toContain("sign-in");
+    expect(text).toContain(url);
+  });
+
+  it("returns HTML with /magic-link?token= href (ConsoleProvider regex)", () => {
+    const { html } = buildMagicLinkEmail({ url });
+    const match = html.match(/href="([^"]*magic-link[^"]*)"/);
+    expect(match).not.toBeNull();
+    expect(match![1]).toContain("token=magicTok123");
+  });
+
+  // KAN-203 Slice 2: instance email locale — the spec's canonical scenario
+  it("locale='es' changes the subject; magic-link href pattern is unaffected", () => {
+    const { subject: enSubject } = buildMagicLinkEmail({ url });
+    const { subject: esSubject, html: esHtml } = buildMagicLinkEmail({ url, locale: "es" });
+    expect(esSubject).not.toBe(enSubject);
+    expect(esSubject).toContain("acceso");
+    const match = esHtml.match(/href="([^"]*magic-link[^"]*)"/);
+    expect(match).not.toBeNull();
   });
 });

@@ -86,5 +86,9 @@
   "createProjectDescription": "Descripción",
   "createProjectDescriptionPlaceholder": "¿De qué trata este proyecto?",
   "createProjectError": "No se pudo crear el proyecto. Inténtalo de nuevo.",
-  "createProjectSubmit": "Crear proyecto"
+  "createProjectSubmit": "Crear proyecto",
+  "instance": {
+    "defaultLocale": "Idioma de los correos salientes",
+    "defaultLocaleHelp": "(aplica a verificación, restablecimiento, invitaciones y notificaciones)"
+  }
 }

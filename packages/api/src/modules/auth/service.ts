@@ -22,7 +22,7 @@ import { buildMagicLinkEmail } from "../../services/email/templates/magic-link.j
 import { ProjectAssignmentSchema } from "../invite/schema.js";
 import { createProjectMembersInTx } from "../project/project-member-service.js";
 import { acceptInvite, deriveUsername } from "../invite/service.js";
-import { consumeInstanceAdminInvite } from "../instance/service.js";
+import { consumeInstanceAdminInvite, getInstanceLocale } from "../instance/service.js";
 import { INSTANCE_SETTINGS_ID } from "../../shared/constants.js";
 
 // ── D6 helpers ────────────────────────────────────────────────────────────────
@@ -356,7 +356,8 @@ export async function sendVerificationEmail(
   });
 
   const verifyUrl = `${env.APP_URL}/verify-email?token=${token}`;
-  const verifyEmail = buildVerifyEmail({ verifyUrl });
+  const locale = await getInstanceLocale();
+  const verifyEmail = buildVerifyEmail({ verifyUrl, locale });
 
   await emailProvider.send({
     to: email,
@@ -471,7 +472,8 @@ export async function requestPasswordReset(
 
   // Build reset URL and send email
   const resetUrl = `${env.APP_URL}/reset-password?token=${token}`;
-  const resetEmail = buildResetEmail({ resetUrl });
+  const resetLocale = await getInstanceLocale();
+  const resetEmail = buildResetEmail({ resetUrl, locale: resetLocale });
 
   await emailProvider.send({
     to: user.email,
@@ -818,7 +820,8 @@ export async function requestMagicLink(
 
   // Build magic-link URL and send email
   const magicUrl = `${env.APP_URL}/magic-link?token=${token}`;
-  const magicEmail = buildMagicLinkEmail({ url: magicUrl });
+  const magicLocale = await getInstanceLocale();
+  const magicEmail = buildMagicLinkEmail({ url: magicUrl, locale: magicLocale });
 
   await emailProvider.send({
     to: user.email,

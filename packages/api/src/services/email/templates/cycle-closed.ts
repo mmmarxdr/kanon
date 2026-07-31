@@ -1,5 +1,6 @@
 import { renderEmailLayout, escapeHtml } from "../layout.js";
 import type { EmailContent } from "../types.js";
+import { emailT, DEFAULT_EMAIL_LOCALE, type EmailLocale } from "../i18n/messages.js";
 
 export type { EmailContent };
 
@@ -13,6 +14,8 @@ export interface BuildCycleClosedEmailOptions {
   scopeAdded: number;
   scopeRemoved: number;
   appUrl: string;
+  /** Instance email locale (KAN-203 Slice 2). Defaults to "en". */
+  locale?: EmailLocale;
 }
 
 /**
@@ -21,9 +24,16 @@ export interface BuildCycleClosedEmailOptions {
  * Sent to all opted-in project members (actor included — locked decision, D5).
  * Pure function: no side-effects, just returns { subject, html, text }.
  * Security: user-controlled strings are HTML-escaped before interpolation.
+ *
+ * Copy is localized via emailT() from `../i18n/messages.js` using the instance's
+ * `defaultLocale` (KAN-203 Slice 2). eyebrow/heading receive RAW values because
+ * renderEmailLayout escapes those fields itself — bodyHtml receives the
+ * pre-escaped safe* values since it bypasses that escaping.
  */
 export function buildCycleClosedEmail(opts: BuildCycleClosedEmailOptions): EmailContent {
   const { cycleName, projectName, projectKey, velocity, completed, planned, scopeAdded, scopeRemoved, appUrl } = opts;
+  const locale = opts.locale ?? DEFAULT_EMAIL_LOCALE;
+  const t = (key: string, vars?: Record<string, string | number>) => emailT(locale, key, vars);
 
   // safe* variables: HTML-escaped user-controlled strings — safe to interpolate into HTML.
   // Numeric fields (velocity, completed, planned, scopeAdded, scopeRemoved) are
@@ -39,8 +49,11 @@ export function buildCycleClosedEmail(opts: BuildCycleClosedEmailOptions): Email
 
   const bodyHtml = `
     <p style="margin:10px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#3A3D40;letter-spacing:-0.005em;">
-      The cycle <strong style="color:#0E1011;">${safeCycleName}</strong> in
-      <strong style="color:#0E1011;">${safeProjectName}</strong> (${safeProjectKey}) has been closed.
+      ${t("cycleClosed.bodyIntro", {
+        cycleName: safeCycleName,
+        projectName: safeProjectName,
+        projectKey: safeProjectKey,
+      })}
     </p>
     <table width="100%" cellpadding="0" cellspacing="0" border="0" role="presentation"
            style="margin:16px 0 0;border-collapse:collapse;">
@@ -49,7 +62,7 @@ export function buildCycleClosedEmail(opts: BuildCycleClosedEmailOptions): Email
           <table width="100%" cellpadding="0" cellspacing="0" border="0" role="presentation">
             <tr>
               <td style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#71757A;padding-bottom:4px;">
-                Velocity (story points)
+                ${t("cycleClosed.statVelocityLabel")}
               </td>
               <td align="right" style="font-family:'Courier New',Courier,monospace;font-size:14px;font-weight:700;color:#0E1011;padding-bottom:4px;">
                 ${velocity}
@@ -57,7 +70,7 @@ export function buildCycleClosedEmail(opts: BuildCycleClosedEmailOptions): Email
             </tr>
             <tr>
               <td style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#71757A;padding-bottom:4px;">
-                Issues completed
+                ${t("cycleClosed.statCompletedLabel")}
               </td>
               <td align="right" style="font-family:'Courier New',Courier,monospace;font-size:14px;color:#1F7A49;padding-bottom:4px;">
                 ${completed} / ${planned} (${completionRate}%)
@@ -65,7 +78,7 @@ export function buildCycleClosedEmail(opts: BuildCycleClosedEmailOptions): Email
             </tr>
             ${scopeAdded > 0 || scopeRemoved > 0 ? `<tr>
               <td style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#71757A;">
-                Scope changes
+                ${t("cycleClosed.statScopeLabel")}
               </td>
               <td align="right" style="font-family:'Courier New',Courier,monospace;font-size:12px;color:#3A3D40;">
                 +${scopeAdded} / −${scopeRemoved}
@@ -77,36 +90,35 @@ export function buildCycleClosedEmail(opts: BuildCycleClosedEmailOptions): Email
     </table>`;
 
   const html = renderEmailLayout({
-    eyebrow: `Cycle closed · ${projectKey}`,
+    eyebrow: t("cycleClosed.eyebrow", { projectKey }),
     eyebrowTone: "ok",
-    heading: `${cycleName} is complete.`,
+    heading: t("cycleClosed.heading", { cycleName }),
     bodyHtml,
-    cta: { label: "View project →", href: `${appUrl}` },
-    disclaimerText:
-      `You received this cycle report as a project member. <a href="${appUrl}/settings/notifications" style="color:#71757A;">Manage notifications</a>.`,
+    cta: { label: t("cycleClosed.ctaLabel"), href: `${appUrl}` },
+    disclaimerText: t("cycleClosed.disclaimer", { appUrl }),
   });
 
   const scopeLine =
     scopeAdded > 0 || scopeRemoved > 0
-      ? [`Scope changes: +${scopeAdded} added / -${scopeRemoved} removed`]
+      ? [t("cycleClosed.textScopeChanges", { added: scopeAdded, removed: scopeRemoved })]
       : [];
 
   const text = [
-    `Cycle closed: ${cycleName} — ${projectName} (${projectKey})`,
+    t("cycleClosed.textTitle", { cycleName, projectName, projectKey }),
     "",
-    `Velocity: ${velocity} story points`,
-    `Issues completed: ${completed} of ${planned} (${completionRate}%)`,
+    t("cycleClosed.textVelocity", { velocity }),
+    t("cycleClosed.textCompleted", { completed, planned, rate: completionRate }),
     ...scopeLine,
     "",
-    `View project: ${appUrl}`,
+    t("cycleClosed.textViewProject", { appUrl }),
     "",
-    `Manage notifications: ${appUrl}/settings/notifications`,
+    t("cycleClosed.textManage", { appUrl }),
     "",
     "Kanon · 1 Cromwell Pl, London",
   ].join("\n");
 
   return {
-    subject: `Cycle closed: ${cycleName}`,
+    subject: t("cycleClosed.subject", { cycleName }),
     html,
     text,
   };

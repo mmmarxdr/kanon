@@ -176,8 +176,14 @@ export async function cleanDatabase(): Promise<void> {
   // Use upsert in case a test somehow deleted the singleton row.
   await prisma.instanceSettings.upsert({
     where: { id: INSTANCE_SETTINGS_ID },
-    update: { ownerUserId: null, instanceName: null, signupMode: "open", allowedSignupDomains: [] },
-    create: { id: INSTANCE_SETTINGS_ID, signupMode: "open", allowedSignupDomains: [] },
+    update: {
+      ownerUserId: null,
+      instanceName: null,
+      signupMode: "open",
+      allowedSignupDomains: [],
+      defaultLocale: "en",
+    },
+    create: { id: INSTANCE_SETTINGS_ID, signupMode: "open", allowedSignupDomains: [], defaultLocale: "en" },
   });
 }
 
