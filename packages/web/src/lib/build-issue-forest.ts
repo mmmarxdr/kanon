@@ -2,7 +2,8 @@ import type { Issue } from "@kanon/shared";
 
 export const ISSUE_FOREST_MAX_DEPTH = 8;
 
-export type IssueNode = Issue & {
+/** Omit API `children` so nested nodes are typed as IssueNode, not Issue[]. */
+export type IssueNode = Omit<Issue, "children"> & {
   children: IssueNode[];
   descendantCount: number;
   depth: number;
