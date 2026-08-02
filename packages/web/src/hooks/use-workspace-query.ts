@@ -1,6 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchApi } from "@/lib/api-client";
-import { workspaceKeys } from "@/lib/query-keys";
+import { projectKeys, workspaceKeys } from "@/lib/query-keys";
+import {
+  resolveActiveWorkspaceId,
+  useWorkspaceStore,
+} from "@/stores/workspace-store";
 
 export interface Workspace {
   id: string;
@@ -12,25 +17,49 @@ export interface Workspace {
 
 /**
  * Fetch the current user's workspaces.
- * Returns the list and a convenience `activeWorkspaceId` (first workspace).
- *
- * Since routes don't include workspaceId in the URL, components that need
- * a workspaceId (sidebar, useCurrentProject, etc.) use this hook instead
- * of trying to extract it from route params.
  */
 export function useWorkspacesQuery() {
   return useQuery({
     queryKey: workspaceKeys.list(),
     queryFn: () => fetchApi<Workspace[]>("/api/workspaces"),
-    staleTime: 10 * 60 * 1000, // workspaces rarely change
+    staleTime: 10 * 60 * 1000,
   });
 }
 
 /**
- * Convenience hook that returns just the active workspace ID.
- * Uses the first workspace in the user's list.
+ * Active workspace id: persisted selection if still a member, else first workspace.
+ * Rewrites storage when falling back from a stale id.
  */
 export function useActiveWorkspaceId(): string | undefined {
   const { data: workspaces } = useWorkspacesQuery();
-  return workspaces?.[0]?.id;
+  const storedId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const setActiveWorkspaceId = useWorkspaceStore((s) => s.setActiveWorkspaceId);
+
+  const ids = workspaces?.map((w) => w.id) ?? [];
+  const { id, shouldPersist } = resolveActiveWorkspaceId(storedId, ids);
+
+  useEffect(() => {
+    if (!workspaces) return;
+    if (shouldPersist) {
+      setActiveWorkspaceId(id ?? null);
+    }
+  }, [workspaces, shouldPersist, id, setActiveWorkspaceId]);
+
+  return id;
+}
+
+/**
+ * Set the active workspace and invalidate project list caches.
+ */
+export function useSetActiveWorkspace() {
+  const queryClient = useQueryClient();
+  const setActiveWorkspaceId = useWorkspaceStore((s) => s.setActiveWorkspaceId);
+
+  return useCallback(
+    (workspaceId: string) => {
+      setActiveWorkspaceId(workspaceId);
+      void queryClient.invalidateQueries({ queryKey: projectKeys.lists() });
+    },
+    [queryClient, setActiveWorkspaceId],
+  );
 }

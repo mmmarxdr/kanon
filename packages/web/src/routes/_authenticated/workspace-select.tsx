@@ -7,6 +7,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { workspaceKeys } from "@/lib/query-keys";
 import { Monogram } from "@/components/ui/icons";
 import { useCreateWorkspaceMutation } from "@/hooks/use-create-workspace-mutation";
+import { useSetActiveWorkspace } from "@/hooks/use-workspace-query";
 import { deriveSlug } from "@/lib/derive-slug";
 
 export const workspaceSelectRoute = createRoute({
@@ -195,6 +196,7 @@ export function WorkspaceSelectPage() {
   const isInstanceAdmin = user?.isInstanceAdmin ?? false;
   const didAutoRedirect = useRef(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const setActiveWorkspace = useSetActiveWorkspace();
 
   const workspacesQuery = useQuery({
     queryKey: workspaceKeys.list(),
@@ -208,6 +210,7 @@ export function WorkspaceSelectPage() {
     if (workspacesQuery.data.length === 1 && !isInstanceAdmin) {
       didAutoRedirect.current = true;
       const workspace = workspacesQuery.data[0]!;
+      setActiveWorkspace(workspace.id);
       void fetchApi<Project[]>(`/api/workspaces/${workspace.id}/projects`).then(
         (projects) => {
           if (projects.length > 0) {
@@ -221,7 +224,7 @@ export function WorkspaceSelectPage() {
         },
       );
     }
-  }, [workspacesQuery.data, navigate, isInstanceAdmin]);
+  }, [workspacesQuery.data, navigate, isInstanceAdmin, setActiveWorkspace]);
 
   if (
     workspacesQuery.isLoading ||
@@ -263,6 +266,7 @@ export function WorkspaceSelectPage() {
   }
 
   function handleSelectWorkspace(workspace: Workspace) {
+    setActiveWorkspace(workspace.id);
     void navigate({
       to: "/workspaces/$workspaceId/projects",
       params: { workspaceId: workspace.id },
@@ -273,6 +277,7 @@ export function WorkspaceSelectPage() {
     // Set the ref BEFORE navigating so the auto-redirect effect (length===1)
     // cannot race and fire a second navigation when the list refetches.
     didAutoRedirect.current = true;
+    setActiveWorkspace(workspaceId);
     void navigate({
       to: "/workspaces/$workspaceId/projects",
       params: { workspaceId },

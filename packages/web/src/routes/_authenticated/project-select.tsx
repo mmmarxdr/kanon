@@ -1,11 +1,12 @@
 import { createRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { authenticatedRoute } from "../_authenticated";
 import { fetchApi } from "@/lib/api-client";
 import { projectKeys } from "@/lib/query-keys";
 import type { Project } from "@/types/project";
 import { CreateProjectModal } from "@/features/projects/create-project-modal";
+import { useSetActiveWorkspace } from "@/hooks/use-workspace-query";
 
 export const projectSelectRoute = createRoute({
   path: "/workspaces/$workspaceId/projects",
@@ -17,6 +18,11 @@ export function ProjectSelectPage() {
   const navigate = useNavigate();
   const { workspaceId } = projectSelectRoute.useParams();
   const [showCreateProject, setShowCreateProject] = useState(false);
+  const setActiveWorkspace = useSetActiveWorkspace();
+
+  useEffect(() => {
+    setActiveWorkspace(workspaceId);
+  }, [workspaceId, setActiveWorkspace]);
 
   const projectsQuery = useQuery({
     queryKey: projectKeys.list(workspaceId),
