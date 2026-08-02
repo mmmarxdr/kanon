@@ -113,6 +113,28 @@ describe("cycle integration capture", () => {
         externalId: "remote-cycle-1",
       },
     });
+    const application = await prisma.integrationInboundApplication.create({
+      data: {
+        bindingId: binding.id,
+        remoteEntityType: "cycle",
+        remoteId: "remote-cycle-1",
+        remoteUpdatedAt: new Date("2026-08-01T10:00:00.000Z"),
+        applicationKey: "deleted-cycle-application",
+        correlationId: "deleted-cycle-correlation",
+        state: "applied",
+        refId: reference.id,
+      },
+    });
+    const conflict = await prisma.integrationConflict.create({
+      data: {
+        bindingId: binding.id,
+        kind: "cycle-delete-test",
+        localEvidence: {},
+        remoteEvidence: {},
+        applicationId: application.id,
+        refId: reference.id,
+      },
+    });
     await deleteCycle(doomed.id, { reason: "obsolete" }, member.id);
 
     const work = await prisma.integrationSyncWork.findMany({
@@ -156,6 +178,12 @@ describe("cycle integration capture", () => {
     await expect(
       prisma.externalRef.count({ where: { entityType: "cycle", entityId: doomed.id } }),
     ).resolves.toBe(0);
+    await expect(
+      prisma.integrationInboundApplication.findUniqueOrThrow({ where: { id: application.id } }),
+    ).resolves.toMatchObject({ refId: null, state: "applied" });
+    await expect(
+      prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } }),
+    ).resolves.toMatchObject({ refId: null, applicationId: application.id });
   });
 
   it("captures and skips hard-delete work for every project binding", async () => {
