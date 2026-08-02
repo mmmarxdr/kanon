@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { integrationConnectionSchema } from "@kanon/shared";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "../../config/prisma.js";
+import { INSTANCE_SETTINGS_ID } from "../../shared/constants.js";
 import {
   cleanDatabase,
   createTestApp,
@@ -53,6 +54,10 @@ describe("integration credentials", () => {
   });
   beforeEach(async () => {
     await cleanDatabase();
+    await prisma.instanceSettings.update({
+      where: { id: INSTANCE_SETTINGS_ID },
+      data: { redmineBaseUrl: "https://redmine.example.test" },
+    });
     vi.clearAllMocks();
   });
   afterAll(async () => {
@@ -66,7 +71,7 @@ describe("integration credentials", () => {
     const member = await seedTestMemberWithRole(workspace.id, "member");
     const project = await seedTestProject(workspace.id);
     const { connection } = await createConnection(
-      { workspaceId: workspace.id, baseUrl: "https://redmine.example.test", apiKey: "owner-key" },
+      { workspaceId: workspace.id, apiKey: "owner-key" },
       owner.userId,
       deps,
     );
@@ -167,7 +172,7 @@ describe("integration credentials", () => {
 
     await expect(getWorkspaceConnection(workspace.id, owner.userId)).resolves.toBeNull();
     const { connection } = await createConnection(
-      { workspaceId: workspace.id, baseUrl: "https://redmine.example.test", apiKey: "owner-key" },
+      { workspaceId: workspace.id, apiKey: "owner-key" },
       owner.userId,
       deps,
     );

@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { env } from "../../config/env.js";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
+import { INSTANCE_SETTINGS_ID } from "../../shared/constants.js";
 import { decrypt as decryptCredential, encrypt as encryptCredential } from "./core/crypto.js";
 import {
   TIME_ENTRY_ACTIVITY_MAP_KEY,
@@ -119,7 +120,7 @@ async function serviceCredential(database: Database, connection: { id: string; s
 }
 
 export async function createConnection(
-  input: { workspaceId: string; baseUrl: string; apiKey: string },
+  input: { workspaceId: string; apiKey: string },
   userId: string,
   deps: ConnectionServiceDeps = defaultDeps,
 ) {
@@ -131,7 +132,19 @@ export async function createConnection(
   if (existing && existing.lifecycle !== "draft") {
     throw new AppError(409, "INTEGRATION_ALREADY_CONFIGURED", "Only a draft connection can be bootstrapped again");
   }
-  const remote = deps.remote(input.baseUrl, input.apiKey);
+  const settings = await prisma.instanceSettings.findUnique({
+    where: { id: INSTANCE_SETTINGS_ID },
+    select: { redmineBaseUrl: true },
+  });
+  const baseUrl = settings?.redmineBaseUrl;
+  if (!baseUrl) {
+    throw new AppError(
+      409,
+      "REDMINE_NOT_CONFIGURED",
+      "An instance admin must configure the Redmine URL first",
+    );
+  }
+  const remote = deps.remote(baseUrl, input.apiKey);
   const [identity, statuses, projects, timeEntryActivities] = await Promise.all([
     remote.whoAmI(),
     remote.listStatuses(),
@@ -142,6 +155,9 @@ export async function createConnection(
   const discoveredStatuses = statuses.map(({ id, name, writable }) => ({ id, name, writable }));
 
   const connection = await prisma.$transaction(async (transaction) => {
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "instance_settings" WHERE "id" = ${INSTANCE_SETTINGS_ID}::uuid FOR UPDATE`,
+    );
     const owner = await requireOwner(transaction, input.workspaceId, userId);
     const current = await transaction.integrationConnection.findUnique({
       where: { workspaceId_provider: { workspaceId: input.workspaceId, provider: "redmine" } },
@@ -150,15 +166,22 @@ export async function createConnection(
     if (current && current.lifecycle !== "draft") {
       throw new AppError(409, "INTEGRATION_ALREADY_CONFIGURED", "Only a draft connection can be bootstrapped again");
     }
+    const currentSettings = await transaction.instanceSettings.findUnique({
+      where: { id: INSTANCE_SETTINGS_ID },
+      select: { redmineBaseUrl: true },
+    });
+    if (currentSettings?.redmineBaseUrl !== baseUrl) {
+      throw new AppError(409, "REDMINE_URL_CHANGED", "The Redmine URL changed; test the connection again");
+    }
     const draft = await transaction.integrationConnection.upsert({
       where: { workspaceId_provider: { workspaceId: input.workspaceId, provider: "redmine" } },
       create: {
         workspaceId: input.workspaceId,
         provider: "redmine",
-        baseUrl: input.baseUrl,
+        baseUrl,
         discoveredStatuses,
       },
-      update: { baseUrl: input.baseUrl, discoveredStatuses },
+      update: { baseUrl, discoveredStatuses },
     });
     const credential = await transaction.memberIntegrationCredential.upsert({
       where: { memberId_connectionId: { memberId: owner.id, connectionId: draft.id } },

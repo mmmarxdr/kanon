@@ -20,6 +20,11 @@ vi.mock("../../config/prisma.js", () => ({
   prisma: {
     member: { findUnique: vi.fn().mockResolvedValue({ id: "member-1", role: "owner" }) },
     integrationConnection: { findUnique: vi.fn().mockResolvedValue(null) },
+    instanceSettings: {
+      findUnique: vi.fn().mockResolvedValue({
+        redmineBaseUrl: "http://redmine.internal.example",
+      }),
+    },
   },
 }));
 
@@ -38,7 +43,6 @@ describe("integration service default Redmine wiring", () => {
       createConnection(
         {
           workspaceId: "workspace-1",
-          baseUrl: "http://redmine.internal.example",
           apiKey: "api-key",
         },
         "user-1"

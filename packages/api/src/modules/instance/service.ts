@@ -12,7 +12,7 @@
  */
 import { randomUUID } from "node:crypto";
 import jwt from "jsonwebtoken";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 import { INSTANCE_SETTINGS_ID } from "../../shared/constants.js";
@@ -214,16 +214,40 @@ export async function getSettings() {
  * signupMode and allowedSignupDomains are stored but NOT enforced (layer 2 deferred).
  */
 export async function patchSettings(body: PatchSettingsBodyType) {
-  return prisma.instanceSettings.update({
-    where: { id: INSTANCE_SETTINGS_ID },
-    data: {
-      ...(body.instanceName !== undefined ? { instanceName: body.instanceName } : {}),
-      ...(body.signupMode !== undefined ? { signupMode: body.signupMode } : {}),
-      ...(body.allowedSignupDomains !== undefined
-        ? { allowedSignupDomains: body.allowedSignupDomains }
-        : {}),
-      ...(body.defaultLocale !== undefined ? { defaultLocale: body.defaultLocale } : {}),
-    },
+  return prisma.$transaction(async (transaction) => {
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "instance_settings" WHERE "id" = ${INSTANCE_SETTINGS_ID}::uuid FOR UPDATE`,
+    );
+    const current = await transaction.instanceSettings.findUnique({
+      where: { id: INSTANCE_SETTINGS_ID },
+      select: { redmineBaseUrl: true },
+    });
+    if (!current) {
+      throw new AppError(500, "INSTANCE_NOT_INITIALIZED", "Instance settings not found");
+    }
+
+    if (
+      body.redmineBaseUrl !== undefined &&
+      body.redmineBaseUrl !== current.redmineBaseUrl
+    ) {
+      // A different origin invalidates every remote ID, mapping, and credential.
+      await transaction.integrationConnection.deleteMany({ where: { provider: "redmine" } });
+    }
+
+    return transaction.instanceSettings.update({
+      where: { id: INSTANCE_SETTINGS_ID },
+      data: {
+        ...(body.instanceName !== undefined ? { instanceName: body.instanceName } : {}),
+        ...(body.signupMode !== undefined ? { signupMode: body.signupMode } : {}),
+        ...(body.allowedSignupDomains !== undefined
+          ? { allowedSignupDomains: body.allowedSignupDomains }
+          : {}),
+        ...(body.defaultLocale !== undefined ? { defaultLocale: body.defaultLocale } : {}),
+        ...(body.redmineBaseUrl !== undefined
+          ? { redmineBaseUrl: body.redmineBaseUrl }
+          : {}),
+      },
+    });
   });
 }
 

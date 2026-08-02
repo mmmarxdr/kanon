@@ -182,8 +182,15 @@ export async function cleanDatabase(): Promise<void> {
       signupMode: "open",
       allowedSignupDomains: [],
       defaultLocale: "en",
+      redmineBaseUrl: null,
     },
-    create: { id: INSTANCE_SETTINGS_ID, signupMode: "open", allowedSignupDomains: [], defaultLocale: "en" },
+    create: {
+      id: INSTANCE_SETTINGS_ID,
+      signupMode: "open",
+      allowedSignupDomains: [],
+      defaultLocale: "en",
+      redmineBaseUrl: null,
+    },
   });
 }
 

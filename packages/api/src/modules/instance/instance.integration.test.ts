@@ -345,6 +345,7 @@ describe("Instance routes", () => {
       const body = res.json();
       expect(body).toHaveProperty("id", INSTANCE_SETTINGS_ID);
       expect(body).toHaveProperty("signupMode", "open");
+      expect(body).toHaveProperty("redmineBaseUrl", null);
     });
 
     it("non-super-admin authenticated → 403", async () => {
@@ -401,6 +402,52 @@ describe("Instance routes", () => {
       const body = res.json();
       expect(body.signupMode).toBe("invite");
       expect(body.allowedSignupDomains).toContain("kanon.io");
+    });
+
+    it("stores or clears the Redmine URL and resets connections", async () => {
+      const { token } = await seedOwner();
+      const workspace = await seedTestWorkspace();
+      await prisma.integrationConnection.create({
+        data: {
+          workspaceId: workspace.id,
+          provider: "redmine",
+          baseUrl: "https://old-redmine.example.test",
+          lifecycle: "active",
+        },
+      });
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: "/api/instance/settings",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { redmineBaseUrl: "https://redmine.example.test/" },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().redmineBaseUrl).toBe("https://redmine.example.test");
+      await expect(
+        prisma.integrationConnection.count({ where: { provider: "redmine" } }),
+      ).resolves.toBe(0);
+
+      await prisma.integrationConnection.create({
+        data: {
+          workspaceId: workspace.id,
+          provider: "redmine",
+          baseUrl: "https://redmine.example.test",
+        },
+      });
+      const cleared = await app.inject({
+        method: "PATCH",
+        url: "/api/instance/settings",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { redmineBaseUrl: null },
+      });
+
+      expect(cleared.statusCode).toBe(200);
+      expect(cleared.json().redmineBaseUrl).toBeNull();
+      await expect(
+        prisma.integrationConnection.count({ where: { provider: "redmine" } }),
+      ).resolves.toBe(0);
     });
 
     it("non-super-admin → 403", async () => {

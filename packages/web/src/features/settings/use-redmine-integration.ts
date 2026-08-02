@@ -44,10 +44,10 @@ export function useRedmineDiscoveryQuery(connectionId: string | undefined, enabl
 export function useCreateRedmineConnectionMutation(workspaceId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { baseUrl: string; apiKey: string }) =>
+    mutationFn: (apiKey: string) =>
       fetchApi<unknown>("/api/integrations/connections", {
         method: "POST",
-        body: JSON.stringify({ workspaceId, ...input }),
+        body: JSON.stringify({ workspaceId, apiKey }),
       }),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: integrationKeys.connection(workspaceId) }),
