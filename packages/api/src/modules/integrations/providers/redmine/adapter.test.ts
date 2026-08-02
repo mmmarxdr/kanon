@@ -199,6 +199,29 @@ describe("RedmineProviderAdapter", () => {
     });
   });
 
+  it("clears Redmine assignee and version with empty identifiers", async () => {
+    const http = client();
+    http.put.mockResolvedValue(undefined);
+    http.get.mockResolvedValue({
+      issue: { id: 99, status: { id: 5 }, updated_on: "2026-07-03T10:00:00Z" },
+    });
+    const adapter = new RedmineProviderAdapter(http, {
+      writeMap: {},
+      resolveExternalId: async (type) => (type === "issue" ? "99" : null),
+    });
+    const clearRelations = {
+      ...noChange,
+      assignee: { kind: "clear", value: null },
+      cycleId: { kind: "clear", value: null },
+    } as const;
+
+    await adapter.pushIssue({ ...issue, assignee: null, cycleId: null }, clearRelations);
+
+    expect(http.put).toHaveBeenCalledWith("/issues/99.json", {
+      issue: { assigned_to_id: "", fixed_version_id: "" },
+    });
+  });
+
   it("reports actual status when Redmine rejects the requested workflow transition", async () => {
     const http = client();
     http.put.mockRejectedValueOnce(new RedmineHttpError(422)).mockResolvedValueOnce(undefined);

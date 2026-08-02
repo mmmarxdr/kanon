@@ -88,6 +88,27 @@ describe("RedmineHttpClient", () => {
     expect(transport).toHaveBeenCalledOnce();
   });
 
+  it("re-resolves an allowlisted private HTTP origin and fails closed on mismatch", async () => {
+    const transport = vi.fn().mockResolvedValue(response(200, "{}"));
+    const resolve = vi
+      .fn()
+      .mockResolvedValueOnce([{ address: "10.20.30.40", family: 4 }])
+      .mockResolvedValueOnce([{ address: "10.20.30.41", family: 4 }]);
+    const client = new RedmineHttpClient("http://redmine.internal.example", "secret", {
+      endpointAllowlist: { "http://redmine.internal.example": ["10.20.30.40"] },
+      resolve,
+      transport,
+    });
+
+    await expect(client.get("/projects.json")).resolves.toEqual({});
+    await expect(client.get("/projects.json")).rejects.toThrow("Unsafe remote endpoint");
+
+    expect(resolve).toHaveBeenCalledTimes(2);
+    expect(transport).toHaveBeenCalledOnce();
+    expect(transport.mock.calls[0]![0]).toBe("http://redmine.internal.example/projects.json");
+    expect(transport.mock.calls[0]![1]).toMatchObject({ maxRedirections: 0 });
+  });
+
   it("aborts requests at the configured timeout", async () => {
     vi.useFakeTimers();
     const transport = vi.fn((_url, options) => {

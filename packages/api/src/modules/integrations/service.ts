@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { env } from "../../config/env.js";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 import { decrypt as decryptCredential, encrypt as encryptCredential } from "./core/crypto.js";
@@ -22,10 +23,15 @@ export interface ConnectionServiceDeps {
 
 const defaultDeps: ConnectionServiceDeps = {
   remote(baseUrl, apiKey) {
-    return new RedmineProviderAdapter(new RedmineHttpClient(baseUrl, apiKey), {
-      writeMap: {},
-      resolveExternalId: async () => null,
-    });
+    return new RedmineProviderAdapter(
+      new RedmineHttpClient(baseUrl, apiKey, {
+        endpointAllowlist: env.REDMINE_ENDPOINT_ALLOWLIST,
+      }),
+      {
+        writeMap: {},
+        resolveExternalId: async () => null,
+      },
+    );
   },
   encrypt: encryptCredential,
   decrypt: decryptCredential,
@@ -329,6 +335,7 @@ export async function setConnectionLifecycle(
   deps: ConnectionServiceDeps = defaultDeps,
 ) {
   const current = await ownedConnection(prisma, connectionId, userId);
+  if (current.lifecycle === lifecycle) return current;
   if (lifecycle === "active") {
     const credential = await assertActivationReady(prisma, current);
     await deps.remote(current.baseUrl, deps.decrypt(credential.encryptedKey)).whoAmI();
@@ -337,6 +344,7 @@ export async function setConnectionLifecycle(
   return prisma.$transaction(async (transaction) => {
     await lockConnection(transaction, connectionId);
     const locked = await ownedConnection(transaction, connectionId, userId);
+    if (locked.lifecycle === lifecycle) return locked;
     if (lifecycle === "active") await assertActivationReady(transaction, locked);
     const connection = await transaction.integrationConnection.update({
       where: { id: connectionId },
@@ -351,6 +359,27 @@ export async function setConnectionLifecycle(
         pollLeaseUntil: null,
       },
     });
+    const preservesPausedWork =
+      (locked.lifecycle === "active" && lifecycle === "paused") ||
+      (locked.lifecycle === "paused" && lifecycle === "active");
+    if (preservesPausedWork) {
+      await transaction.$executeRaw(
+        Prisma.sql`
+          UPDATE "integration_sync_work" AS work
+          SET "epoch" = binding."lifecycle_epoch", "updated_at" = clock_timestamp()
+          FROM "integration_project_bindings" AS binding
+          WHERE work."binding_id" = binding."id"
+            AND binding."connection_id" = ${connectionId}::uuid
+            AND work."epoch" = binding."lifecycle_epoch" - 1
+            AND work."state" IN (
+              'queued'::"SyncWorkState",
+              'retry'::"SyncWorkState",
+              'leased'::"SyncWorkState",
+              'ambiguous'::"SyncWorkState"
+            )
+        `,
+      );
+    }
     return connection;
   });
 }

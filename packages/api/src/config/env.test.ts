@@ -219,3 +219,56 @@ describe("envSchema — FORECAST_* env vars", () => {
     }
   });
 });
+
+describe("envSchema — REDMINE_ENDPOINT_ALLOWLIST", () => {
+  const base = {
+    DATABASE_URL: "postgresql://user:pass@localhost:5432/kanon",
+    JWT_SECRET: "a".repeat(16),
+    JWT_REFRESH_SECRET: "b".repeat(16),
+  };
+
+  it("leaves the private endpoint exception disabled when omitted", () => {
+    expect(envSchema.parse(base).REDMINE_ENDPOINT_ALLOWLIST).toBeUndefined();
+  });
+
+  it("parses exact HTTP origins mapped to exact IP addresses", () => {
+    const allowlist = { "http://redmine.internal.example": ["10.20.30.40"] };
+
+    const result = envSchema.parse({
+      ...base,
+      REDMINE_ENDPOINT_ALLOWLIST: JSON.stringify(allowlist),
+    });
+
+    expect(result.REDMINE_ENDPOINT_ALLOWLIST).toEqual(allowlist);
+  });
+
+  it("canonicalizes equivalent IPv6 address spellings", () => {
+    const result = envSchema.parse({
+      ...base,
+      REDMINE_ENDPOINT_ALLOWLIST: JSON.stringify({
+        "http://redmine.internal.example": ["FD00:0:0:0:0:0:0:1"],
+      }),
+    });
+
+    expect(result.REDMINE_ENDPOINT_ALLOWLIST).toEqual({
+      "http://redmine.internal.example": ["fd00::1"],
+    });
+  });
+
+  it.each([
+    "not-json",
+    JSON.stringify({ "https://redmine.internal.example": ["10.20.30.40"] }),
+    JSON.stringify({ "http://redmine.internal.example/path": ["10.20.30.40"] }),
+    JSON.stringify({ "http://redmine.internal.example": ["10.20.30.0/24"] }),
+    JSON.stringify({ "http://redmine.internal.example": [] }),
+  ])("rejects malformed or broad policy %s", (policy) => {
+    const result = envSchema.safeParse({ ...base, REDMINE_ENDPOINT_ALLOWLIST: policy });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.map((issue) => issue.path.join("."))).toContain(
+        "REDMINE_ENDPOINT_ALLOWLIST",
+      );
+    }
+  });
+});

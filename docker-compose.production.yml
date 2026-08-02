@@ -35,6 +35,7 @@ services:
       COOKIE_SECRET: ${COOKIE_SECRET:?Set COOKIE_SECRET in .env.production}
       BASE_URL: ${BASE_URL:?Set BASE_URL in .env.production}
       APP_URL: ${APP_URL:?Set APP_URL in .env.production}
+      REDMINE_ENDPOINT_ALLOWLIST:
       SETUP_TOKEN_TTL_DAYS: ${SETUP_TOKEN_TTL_DAYS:-7}
       ONBOARDING_TOKEN_TTL_HOURS: ${ONBOARDING_TOKEN_TTL_HOURS:-72}
     networks:

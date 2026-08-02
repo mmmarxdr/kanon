@@ -7,6 +7,8 @@ vi.mock("../../config/prisma.js", () => ({
     issue: { findUnique: vi.fn() },
     issueSchedule: { findUnique: vi.fn(), upsert: vi.fn() },
     estimateRevision: { create: vi.fn() },
+    integrationProjectBinding: { findFirst: vi.fn() },
+    member: { findUnique: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
@@ -33,6 +35,7 @@ const mockEmit = vi.mocked(eventBus.emit);
 const fakeIssue = {
   id: "issue-1",
   key: "KAN-99",
+  projectId: "project-1",
   project: { workspaceId: "ws-1" },
 } as any;
 
@@ -68,6 +71,7 @@ function makeRevision(overrides: Record<string, unknown> = {}) {
 describe("ScheduleService", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.mocked(prisma.integrationProjectBinding.findFirst).mockResolvedValue(null);
   });
 
   // ── getSchedule ────────────────────────────────────────────────────────

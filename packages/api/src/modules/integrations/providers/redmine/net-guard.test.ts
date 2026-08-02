@@ -48,12 +48,75 @@ describe("Redmine network guard", () => {
     await expect(resolveSafeEndpoint(url)).rejects.toThrow("Unsafe remote endpoint");
   });
 
-  it("allows public HTTP only with explicit opt-in", async () => {
-    const resolve = vi.fn().mockResolvedValue([{ address: "203.0.114.10", family: 4 }]);
+  it("allows an exact HTTP origin only at its configured private address", async () => {
+    const resolve = vi.fn().mockResolvedValue([{ address: "10.20.30.40", family: 4 }]);
+    const endpointAllowlist = {
+      "http://redmine.internal.example": ["10.20.30.40"],
+    };
 
+    const endpoint = await resolveSafeEndpoint("http://redmine.internal.example/redmine", {
+      endpointAllowlist,
+      resolve,
+    });
+
+    expect(endpoint).toMatchObject({
+      url: "http://redmine.internal.example/redmine",
+      address: "10.20.30.40",
+    });
+    const pinnedLookup = createPinnedLookup(endpoint, endpointAllowlist);
     await expect(
-      resolveSafeEndpoint("http://redmine.example", { allowHttp: true, resolve }),
-    ).resolves.toMatchObject({ url: "http://redmine.example/" });
+      new Promise((resolveLookup, reject) => {
+        pinnedLookup("redmine.internal.example", {}, (error, address, family) =>
+          error ? reject(error) : resolveLookup({ address, family }),
+        );
+      }),
+    ).resolves.toEqual({ address: "10.20.30.40", family: 4 });
+  });
+
+  it("canonicalizes equivalent IPv6 DNS answers before matching and pinning", async () => {
+    const endpointAllowlist = { "http://redmine.internal.example": ["fd00::1"] };
+    const endpoint = await resolveSafeEndpoint("http://redmine.internal.example", {
+      endpointAllowlist,
+      resolve: async () => [{ address: "FD00:0:0:0:0:0:0:1", family: 6 }],
+    });
+
+    expect(endpoint.address).toBe("fd00::1");
+    const pinnedLookup = createPinnedLookup(endpoint, endpointAllowlist);
+    await expect(
+      new Promise((resolveLookup, reject) => {
+        pinnedLookup("redmine.internal.example", {}, (error, address, family) =>
+          error ? reject(error) : resolveLookup({ address, family }),
+        );
+      }),
+    ).resolves.toEqual({ address: "fd00::1", family: 6 });
+  });
+
+  it.each([
+    ["http://other.internal.example", [{ address: "10.20.30.40", family: 4 }]],
+    ["http://redmine.internal.example", [{ address: "10.20.30.41", family: 4 }]],
+    [
+      "http://redmine.internal.example",
+      [
+        { address: "10.20.30.40", family: 4 },
+        { address: "10.20.30.41", family: 4 },
+      ],
+    ],
+  ] as const)("rejects HTTP endpoint %s when origin or DNS answers mismatch", async (url, answers) => {
+    await expect(
+      resolveSafeEndpoint(url, {
+        endpointAllowlist: { "http://redmine.internal.example": ["10.20.30.40"] },
+        resolve: async () => answers,
+      }),
+    ).rejects.toThrow("Unsafe remote endpoint");
+  });
+
+  it("preserves URL credential rejection for an allowlisted origin", async () => {
+    await expect(
+      resolveSafeEndpoint("http://user:secret@redmine.internal.example", {
+        endpointAllowlist: { "http://redmine.internal.example": ["10.20.30.40"] },
+        resolve: async () => [{ address: "10.20.30.40", family: 4 }],
+      }),
+    ).rejects.toThrow("URL credentials are forbidden");
   });
 
   it("rejects a hostname when any DNS answer is not public", async () => {
