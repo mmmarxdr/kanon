@@ -241,11 +241,20 @@ export interface InboundCursor {
   readonly updatedAt: Date;
   readonly entityId: string;
 }
-export interface InboundPage {
-  readonly changes: readonly CanonicalChange[];
+export interface InboundIssueStatusChange {
+  readonly entityType: "issue";
+  readonly entityId: string;
+  readonly operation: "update" | "close";
+  readonly changedAt: Date;
+  readonly remoteVersion: string;
+  readonly correlationId: null;
+  readonly state: CanonicalIssueState;
+}
+export interface InboundPage<TChange = CanonicalChange> {
+  readonly changes: readonly TChange[];
   readonly nextCursor: InboundCursor | null;
   readonly hasMore: boolean;
 }
-export interface InboundSource {
-  poll(cursor: InboundCursor | null): Promise<InboundPage>;
+export interface InboundSource<TChange = CanonicalChange> {
+  poll(cursor: InboundCursor | null): Promise<InboundPage<TChange>>;
 }

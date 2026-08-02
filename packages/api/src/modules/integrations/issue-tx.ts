@@ -14,6 +14,11 @@ export type IssueCaptureContext = Omit<
   "operation" | "correlationId" | "fields"
 >;
 
+export type IssueCaptureOverride = IssueCaptureContext & {
+  readonly correlationId: string;
+  readonly operation?: IssueCaptureIntent["operation"];
+};
+
 export async function resolveIssueCaptureContext(
   projectId: string,
   memberId: string,
@@ -100,7 +105,7 @@ export async function captureIssueMutationTx(
 
   if (capture.operation === "update" && Object.keys(payload.fields).length === 0) return result;
 
-  await captureIntegrationWorkTx(transaction, {
+  const work = await captureIntegrationWorkTx(transaction, {
     bindingId: capture.bindingId,
     entityType: "issue",
     entityId: result.id,
@@ -115,6 +120,12 @@ export async function captureIssueMutationTx(
     availableAt: capture.availableAt,
     marker: capture.marker,
   });
+  if (capture.direction === "inbound") {
+    await transaction.integrationSyncWork.update({
+      where: { id: work.id },
+      data: { state: "done" },
+    });
+  }
 
   return result;
 }
