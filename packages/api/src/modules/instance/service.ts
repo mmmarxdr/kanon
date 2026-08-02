@@ -12,7 +12,7 @@
  */
 import { randomUUID } from "node:crypto";
 import jwt from "jsonwebtoken";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 import { INSTANCE_SETTINGS_ID } from "../../shared/constants.js";
@@ -215,6 +215,9 @@ export async function getSettings() {
  */
 export async function patchSettings(body: PatchSettingsBodyType) {
   return prisma.$transaction(async (transaction) => {
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "instance_settings" WHERE "id" = ${INSTANCE_SETTINGS_ID}::uuid FOR UPDATE`,
+    );
     const current = await transaction.instanceSettings.findUnique({
       where: { id: INSTANCE_SETTINGS_ID },
       select: { redmineBaseUrl: true },

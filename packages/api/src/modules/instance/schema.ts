@@ -31,6 +31,7 @@ export const PatchSettingsBody = z.object({
     .url()
     .max(2048)
     .transform((value) => value.replace(/\/+$/, ""))
+    .nullable()
     .optional(),
 });
 export type PatchSettingsBodyType = z.infer<typeof PatchSettingsBody>;

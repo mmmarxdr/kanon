@@ -159,4 +159,26 @@ describe("AdminInstanceForm — instance settings page", () => {
       expect(body.redmineBaseUrl).toBe("https://redmine.example.test");
     });
   });
+
+  it("clears the instance-wide Redmine URL", async () => {
+    mockFetchApi
+      .mockResolvedValueOnce({
+        ...makeSettings(),
+        redmineBaseUrl: "https://redmine.example.test",
+      })
+      .mockResolvedValueOnce(makeSettings());
+
+    render(<AdminInstanceForm onNavigate={mockNavigate} />);
+
+    fireEvent.change(await screen.findByTestId("redmine-base-url-input"), {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() => {
+      const patchCall = mockFetchApi.mock.calls.find((call) => call[1]?.method === "PATCH");
+      const body = JSON.parse(patchCall![1].body as string) as Record<string, unknown>;
+      expect(body.redmineBaseUrl).toBeNull();
+    });
+  });
 });

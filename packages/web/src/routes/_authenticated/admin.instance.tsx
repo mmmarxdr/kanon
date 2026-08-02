@@ -133,7 +133,7 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
           signupMode,
           allowedSignupDomains: parsedDomains,
           defaultLocale,
-          ...(redmineBaseUrl.trim() ? { redmineBaseUrl: redmineBaseUrl.trim() } : {}),
+          redmineBaseUrl: redmineBaseUrl.trim() || null,
         }),
       });
       setSettings(updated);

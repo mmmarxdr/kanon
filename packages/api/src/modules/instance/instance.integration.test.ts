@@ -404,7 +404,7 @@ describe("Instance routes", () => {
       expect(body.allowedSignupDomains).toContain("kanon.io");
     });
 
-    it("stores one Redmine URL and resets connections when it changes", async () => {
+    it("stores or clears the Redmine URL and resets connections", async () => {
       const { token } = await seedOwner();
       const workspace = await seedTestWorkspace();
       await prisma.integrationConnection.create({
@@ -425,6 +425,26 @@ describe("Instance routes", () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.json().redmineBaseUrl).toBe("https://redmine.example.test");
+      await expect(
+        prisma.integrationConnection.count({ where: { provider: "redmine" } }),
+      ).resolves.toBe(0);
+
+      await prisma.integrationConnection.create({
+        data: {
+          workspaceId: workspace.id,
+          provider: "redmine",
+          baseUrl: "https://redmine.example.test",
+        },
+      });
+      const cleared = await app.inject({
+        method: "PATCH",
+        url: "/api/instance/settings",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { redmineBaseUrl: null },
+      });
+
+      expect(cleared.statusCode).toBe(200);
+      expect(cleared.json().redmineBaseUrl).toBeNull();
       await expect(
         prisma.integrationConnection.count({ where: { provider: "redmine" } }),
       ).resolves.toBe(0);

@@ -155,6 +155,9 @@ export async function createConnection(
   const discoveredStatuses = statuses.map(({ id, name, writable }) => ({ id, name, writable }));
 
   const connection = await prisma.$transaction(async (transaction) => {
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "instance_settings" WHERE "id" = ${INSTANCE_SETTINGS_ID}::uuid FOR UPDATE`,
+    );
     const owner = await requireOwner(transaction, input.workspaceId, userId);
     const current = await transaction.integrationConnection.findUnique({
       where: { workspaceId_provider: { workspaceId: input.workspaceId, provider: "redmine" } },
