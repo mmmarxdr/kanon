@@ -154,7 +154,11 @@ function SettingsPage() {
             <NotificationPreferencesSection workspaceId={workspaceId} />
           )}
           {activeTab === "integrations" && (
-            <RedmineSection workspaceId={workspaceId} currentUserRole={currentUserRole} />
+            <RedmineSection
+              workspaceId={workspaceId}
+              currentUserRole={currentUserRole}
+              members={members}
+            />
           )}
         </div>
       </div>

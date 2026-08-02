@@ -15,6 +15,7 @@ import {
   useRedmineConnectionQuery,
   useRedmineDiscoveryQuery,
 } from "./use-redmine-integration";
+import type { WorkspaceMember } from "./use-settings-queries";
 
 const ISSUE_STATES = issueStateSchema.options;
 
@@ -367,7 +368,7 @@ function MappingCard({
             </select>
           </label>
           <MappingFields
-            key={selectedProjectId}
+            key={`${selectedProjectId}:${discovery.data.statuses.map((status) => status.id).join(",")}`}
             workspaceId={workspaceId}
             connection={connection}
             discovery={discovery.data}
@@ -379,7 +380,13 @@ function MappingCard({
   );
 }
 
-function CoverageCard({ connection }: { connection: IntegrationConnection }) {
+function CoverageCard({
+  connection,
+  members,
+}: {
+  connection: IntegrationConnection;
+  members: WorkspaceMember[] | undefined;
+}) {
   const { t } = useTranslation("settings");
   const { validCredentials, workspaceMembers } = connection.counts;
   const percent = workspaceMembers ? Math.round((validCredentials / workspaceMembers) * 100) : 0;
@@ -394,7 +401,7 @@ function CoverageCard({ connection }: { connection: IntegrationConnection }) {
         <div className="h-full bg-primary" style={{ width: `${percent}%` }} />
       </div>
       <div className="mt-4 divide-y divide-border rounded-md border border-border">
-        {connection.memberCoverage.map((member) => (
+        {(members ?? []).map((member) => (
           <div key={member.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
             <div className="min-w-0">
               <p className="truncate text-sm font-medium text-foreground">
@@ -404,12 +411,12 @@ function CoverageCard({ connection }: { connection: IntegrationConnection }) {
             </div>
             <span
               className={
-                member.credential.connected
+                connection.connectedMemberIds.includes(member.id)
                   ? "rounded-full bg-emerald-500/10 px-2 py-1 text-xs font-medium text-emerald-600"
                   : "rounded-full bg-secondary px-2 py-1 text-xs text-muted-foreground"
               }
             >
-              {member.credential.connected
+              {connection.connectedMemberIds.includes(member.id)
                 ? t("redmineConnectedBadge")
                 : t("redmineDisconnectedBadge")}
             </span>
@@ -428,9 +435,11 @@ function CoverageCard({ connection }: { connection: IntegrationConnection }) {
 export function RedmineSection({
   workspaceId,
   currentUserRole,
+  members,
 }: {
   workspaceId: string;
   currentUserRole: string | undefined;
+  members: WorkspaceMember[] | undefined;
 }) {
   const { t } = useTranslation("settings");
   const connection = useRedmineConnectionQuery(workspaceId);
@@ -459,13 +468,13 @@ export function RedmineSection({
             <p className="mt-1 break-all text-sm text-muted-foreground">{connection.data.baseUrl}</p>
           </div>
           <span className="self-start rounded-full bg-secondary px-2.5 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            {connection.data.lifecycle}
+            {t(`redmineLifecycle.${connection.data.lifecycle}`)}
           </span>
         </div>
       </Card>
       <CredentialCard workspaceId={workspaceId} connection={connection.data} />
       {isOwner && <MappingCard workspaceId={workspaceId} connection={connection.data} />}
-      <CoverageCard connection={connection.data} />
+      <CoverageCard connection={connection.data} members={members} />
     </div>
   );
 }

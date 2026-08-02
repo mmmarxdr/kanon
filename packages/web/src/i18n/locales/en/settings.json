@@ -102,6 +102,13 @@
   "redmineDisconnectedBadge": "Not connected",
   "redmineProjectsMapped_one": "{{count}} project mapped",
   "redmineProjectsMapped_other": "{{count}} projects mapped",
+  "redmineLifecycle": {
+    "draft": "Draft",
+    "active": "Active",
+    "pausing": "Pausing",
+    "paused": "Paused",
+    "disabled": "Disabled"
+  },
   "redmineState": {
     "backlog": "Backlog",
     "analysis": "Analysis",

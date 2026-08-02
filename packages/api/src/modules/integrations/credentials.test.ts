@@ -181,10 +181,7 @@ describe("integration credentials", () => {
     const detail = integrationConnectionSchema.parse(response.json());
     expect(detail).toMatchObject({
       id: connection.id,
-      memberCoverage: [
-        { id: owner.id, credential: { connected: true } },
-        { id: member.id, credential: { connected: false } },
-      ],
+      connectedMemberIds: [owner.id],
       counts: { workspaceMembers: 2, validCredentials: 1 },
     });
     await expect(getWorkspaceConnection(workspace.id, outsider.userId)).rejects.toMatchObject({

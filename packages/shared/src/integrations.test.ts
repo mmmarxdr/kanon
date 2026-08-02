@@ -34,19 +34,11 @@ describe("integrationConnectionSchema", () => {
         },
       ],
       callerCredential: credential,
-      memberCoverage: [
-        {
-          id: "55555555-5555-4555-8555-555555555555",
-          username: "alice",
-          role: "member",
-          user: { email: "alice@example.test", displayName: "Alice" },
-          credential,
-        },
-      ],
+      connectedMemberIds: ["55555555-5555-4555-8555-555555555555"],
       counts: { workspaceMembers: 1, validCredentials: 1, externalIdentities: 1 },
     });
 
-    expect(result.memberCoverage[0]?.credential.externalLogin).toBe("alice");
+    expect(result.connectedMemberIds).toEqual(["55555555-5555-4555-8555-555555555555"]);
     expect(result.bindings[0]?.readMap).toEqual({ "1": "backlog" });
   });
 
@@ -73,7 +65,7 @@ describe("integrationConnectionSchema", () => {
         },
       ],
       callerCredential: credential,
-      memberCoverage: [],
+      connectedMemberIds: [],
       counts: { workspaceMembers: 0, validCredentials: 0, externalIdentities: 0 },
     });
 

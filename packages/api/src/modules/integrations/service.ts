@@ -525,7 +525,7 @@ export async function getWorkspaceConnection(workspaceId: string, userId: string
 
 export async function getConnection(connectionId: string, userId: string) {
   const { connection, member } = await memberConnection(prisma, connectionId, userId);
-  const [credential, bindings, workspaceMembers, validCredentials, externalIdentities] =
+  const [credential, bindings, workspaceMembers, externalIdentities, connectedCredentials] =
     await Promise.all([
       prisma.memberIntegrationCredential.findUnique({
         where: { memberId_connectionId: { memberId: member.id, connectionId } },
@@ -543,32 +543,13 @@ export async function getConnection(connectionId: string, userId: string) {
           lifecycleEpoch: true,
         },
       }),
-      prisma.member.findMany({
-        where: { workspaceId: connection.workspaceId },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-        select: {
-          id: true,
-          username: true,
-          role: true,
-          user: { select: { email: true, displayName: true } },
-          integrationCredentials: {
-            where: { connectionId },
-            take: 1,
-            select: {
-              externalUserId: true,
-              externalLogin: true,
-              lastValidatedAt: true,
-              lastAuthStatus: true,
-              revokedAt: true,
-            },
-          },
-        },
-      }),
-      prisma.memberIntegrationCredential.count({
-        where: { connectionId, lastAuthStatus: "valid", revokedAt: null },
-      }),
+      prisma.member.count({ where: { workspaceId: connection.workspaceId } }),
       prisma.integrationExternalIdentity.count({
         where: { binding: { connectionId } },
+      }),
+      prisma.memberIntegrationCredential.findMany({
+        where: { connectionId, lastAuthStatus: "valid", revokedAt: null },
+        select: { memberId: true },
       }),
     ]);
   return {
@@ -591,13 +572,10 @@ export async function getConnection(connectionId: string, userId: string) {
           : null,
     })),
     callerCredential: publicCredential(credential),
-    memberCoverage: workspaceMembers.map(({ integrationCredentials, ...workspaceMember }) => ({
-      ...workspaceMember,
-      credential: publicCredential(integrationCredentials[0] ?? null),
-    })),
+    connectedMemberIds: connectedCredentials.map(({ memberId }) => memberId),
     counts: {
-      workspaceMembers: workspaceMembers.length,
-      validCredentials,
+      workspaceMembers,
+      validCredentials: connectedCredentials.length,
       externalIdentities,
     },
   };

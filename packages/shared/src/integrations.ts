@@ -50,15 +50,7 @@ export const integrationConnectionSchema = z.object({
     }),
   ),
   callerCredential: integrationCredentialSchema,
-  memberCoverage: z.array(
-    z.object({
-      id: z.string().uuid(),
-      username: z.string(),
-      role: z.string(),
-      user: z.object({ email: z.string().email(), displayName: z.string().nullable() }),
-      credential: integrationCredentialSchema,
-    }),
-  ),
+  connectedMemberIds: z.array(z.string().uuid()),
   counts: z.object({
     workspaceMembers: z.number().int().nonnegative(),
     validCredentials: z.number().int().nonnegative(),

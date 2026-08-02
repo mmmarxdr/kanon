@@ -102,12 +102,19 @@
   "redmineDisconnectedBadge": "Sin conectar",
   "redmineProjectsMapped_one": "{{count}} proyecto mapeado",
   "redmineProjectsMapped_other": "{{count}} proyectos mapeados",
+  "redmineLifecycle": {
+    "draft": "Borrador",
+    "active": "Activa",
+    "pausing": "Pausando",
+    "paused": "Pausada",
+    "disabled": "Deshabilitada"
+  },
   "redmineState": {
     "backlog": "Backlog",
     "analysis": "Análisis",
     "todo": "Por hacer",
     "in_progress": "En progreso",
-    "review": "Review",
+    "review": "Revisión",
     "done": "Hecho"
   },
   "onboardingTitle": "Enlace de onboarding",
