@@ -9,6 +9,7 @@ import { MembersSection } from "@/features/settings/members-section";
 import { InvitesSection } from "@/features/settings/invites-section";
 import { DomainsSection } from "@/features/settings/domains-section";
 import { NotificationPreferencesSection } from "@/features/settings/notification-preferences-section";
+import { RedmineSection } from "@/features/settings/redmine-section";
 
 export const settingsRoute = createRoute({
   path: "/settings",
@@ -16,13 +17,14 @@ export const settingsRoute = createRoute({
   component: SettingsPage,
 });
 
-type SettingsTab = "members" | "invites" | "domains" | "notifications";
+type SettingsTab = "members" | "invites" | "domains" | "notifications" | "integrations";
 
 const TAB_KEYS: { key: SettingsTab; labelKey: string }[] = [
   { key: "members", labelKey: "tabMembers" },
   { key: "invites", labelKey: "tabInvites" },
   { key: "domains", labelKey: "tabDomains" },
   { key: "notifications", labelKey: "tabNotifications" },
+  { key: "integrations", labelKey: "tabIntegrations" },
 ];
 
 function SettingsPage() {
@@ -90,7 +92,7 @@ function SettingsPage() {
             {t("workspaceSettingsSub")}
           </span>
         </div>
-        <div style={{ display: "flex", gap: 2, marginTop: 4 }}>
+        <div style={{ display: "flex", gap: 2, marginTop: 4, overflowX: "auto" }}>
           {TAB_KEYS.map((tab) => {
             const active = activeTab === tab.key;
             return (
@@ -128,7 +130,7 @@ function SettingsPage() {
           padding: "20px 28px 28px",
         }}
       >
-        <div style={{ maxWidth: 720, display: "flex", flexDirection: "column", gap: 24 }}>
+        <div style={{ maxWidth: activeTab === "integrations" ? 960 : 720, display: "flex", flexDirection: "column", gap: 24 }}>
           {activeTab === "members" && (
             <MembersSection
               workspaceId={workspaceId}
@@ -150,6 +152,9 @@ function SettingsPage() {
           )}
           {activeTab === "notifications" && (
             <NotificationPreferencesSection workspaceId={workspaceId} />
+          )}
+          {activeTab === "integrations" && (
+            <RedmineSection workspaceId={workspaceId} currentUserRole={currentUserRole} />
           )}
         </div>
       </div>

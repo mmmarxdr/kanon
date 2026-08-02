@@ -510,6 +510,19 @@ export async function clearCredential(connectionId: string, userId: string) {
   return publicCredential(credential);
 }
 
+export async function getWorkspaceConnection(workspaceId: string, userId: string) {
+  const member = await prisma.member.findUnique({
+    where: { userId_workspaceId: { userId, workspaceId } },
+    select: { id: true },
+  });
+  if (!member) throw new AppError(403, "FORBIDDEN", "Workspace membership is required");
+  const connection = await prisma.integrationConnection.findUnique({
+    where: { workspaceId_provider: { workspaceId, provider: "redmine" } },
+    select: { id: true },
+  });
+  return connection ? getConnection(connection.id, userId) : null;
+}
+
 export async function getConnection(connectionId: string, userId: string) {
   const { connection, member } = await memberConnection(prisma, connectionId, userId);
   const [credential, bindings, workspaceMembers, validCredentials, externalIdentities] =
@@ -530,7 +543,27 @@ export async function getConnection(connectionId: string, userId: string) {
           lifecycleEpoch: true,
         },
       }),
-      prisma.member.count({ where: { workspaceId: connection.workspaceId } }),
+      prisma.member.findMany({
+        where: { workspaceId: connection.workspaceId },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: {
+          id: true,
+          username: true,
+          role: true,
+          user: { select: { email: true, displayName: true } },
+          integrationCredentials: {
+            where: { connectionId },
+            take: 1,
+            select: {
+              externalUserId: true,
+              externalLogin: true,
+              lastValidatedAt: true,
+              lastAuthStatus: true,
+              revokedAt: true,
+            },
+          },
+        },
+      }),
       prisma.memberIntegrationCredential.count({
         where: { connectionId, lastAuthStatus: "valid", revokedAt: null },
       }),
@@ -547,9 +580,26 @@ export async function getConnection(connectionId: string, userId: string) {
     lifecycleEpoch: connection.lifecycleEpoch,
     serviceFallbackEnabled: connection.serviceFallbackEnabled,
     discoveredStatuses: connection.discoveredStatuses,
-    bindings,
+    bindings: bindings.map((binding) => ({
+      ...binding,
+      timeActivityId:
+        binding.writeMap &&
+        typeof binding.writeMap === "object" &&
+        !Array.isArray(binding.writeMap) &&
+        typeof binding.writeMap[TIME_ENTRY_ACTIVITY_MAP_KEY] === "string"
+          ? binding.writeMap[TIME_ENTRY_ACTIVITY_MAP_KEY]
+          : null,
+    })),
     callerCredential: publicCredential(credential),
-    counts: { workspaceMembers, validCredentials, externalIdentities },
+    memberCoverage: workspaceMembers.map(({ integrationCredentials, ...workspaceMember }) => ({
+      ...workspaceMember,
+      credential: publicCredential(integrationCredentials[0] ?? null),
+    })),
+    counts: {
+      workspaceMembers: workspaceMembers.length,
+      validCredentials,
+      externalIdentities,
+    },
   };
 }
 

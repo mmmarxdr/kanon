@@ -8,10 +8,12 @@ import {
   createConnection,
   getConnection,
   getConnectionDiscovery,
+  getWorkspaceConnection,
   setConnectionLifecycle,
 } from "./service.js";
 
 const ConnectionId = z.object({ id: z.string().uuid() });
+const WorkspaceConnection = z.object({ workspaceId: z.string().uuid() });
 const CreateConnection = z.object({
   workspaceId: z.string().uuid(),
   baseUrl: z.string().url(),
@@ -37,6 +39,12 @@ export default async function integrationRoutes(fastify: FastifyInstance): Promi
     const result = await createConnection(request.body, request.user.userId);
     return reply.status(201).send(result);
   });
+
+  app.get(
+    "/connections",
+    { schema: { querystring: WorkspaceConnection } },
+    async (request) => getWorkspaceConnection(request.query.workspaceId, request.user.userId),
+  );
 
   app.get(
     "/connections/:id",

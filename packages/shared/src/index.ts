@@ -43,6 +43,14 @@ export { notificationPreferenceItemSchema } from "./notifications.js";
 export type { NotificationPreferenceItem } from "./notifications.js";
 
 export {
+  integrationLifecycleSchema,
+  integrationCredentialSchema,
+  integrationDiscoverySchema,
+  integrationConnectionSchema,
+} from "./integrations.js";
+export type { IntegrationConnection, IntegrationDiscovery } from "./integrations.js";
+
+export {
   issueScheduleSchema,
   estimateRevisionSchema,
 } from "./schedule.js";

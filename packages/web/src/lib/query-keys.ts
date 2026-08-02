@@ -134,6 +134,14 @@ export const notificationPreferenceKeys = {
     [...notificationPreferenceKeys.details(), workspaceId] as const,
 };
 
+export const integrationKeys = {
+  all: ["integrations"] as const,
+  connection: (workspaceId: string) =>
+    [...integrationKeys.all, "connection", workspaceId] as const,
+  discovery: (connectionId: string) =>
+    [...integrationKeys.all, "discovery", connectionId] as const,
+};
+
 export const scheduleKeys = {
   all: ["schedules"] as const,
   details: () => [...scheduleKeys.all, "detail"] as const,
