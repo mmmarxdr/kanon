@@ -54,7 +54,7 @@ export interface SafeEndpoint {
 type ResolveHostname = (hostname: string) => Promise<readonly LookupAddress[]>;
 
 interface ResolveSafeEndpointOptions {
-  allowHttp?: boolean;
+  endpointAllowlist?: Readonly<Record<string, readonly string[]>>;
   resolve?: ResolveHostname;
 }
 
@@ -70,15 +70,30 @@ function normalizeHostname(hostname: string): string {
   return unbracketed.toLowerCase().replace(/\.$/, "");
 }
 
-function requirePublicAddress(address: string): { address: string; family: 4 | 6 } {
-  const normalized = normalizeHostname(address);
-  const family = isIP(normalized);
+function allowedAddresses(
+  url: URL,
+  allowlist: ResolveSafeEndpointOptions["endpointAllowlist"],
+): readonly string[] | undefined {
+  return allowlist && Object.hasOwn(allowlist, url.origin) ? allowlist[url.origin] : undefined;
+}
+
+function requireAllowedAddress(
+  address: string,
+  allowed: readonly string[] | undefined,
+): { address: string; family: 4 | 6 } {
+  const candidate = normalizeHostname(address);
+  const family = isIP(candidate);
+  const normalized = family === 6
+    ? new URL(`http://[${candidate}]`).hostname.slice(1, -1)
+    : candidate;
   if (
     (family !== 4 && family !== 6) ||
     normalized.startsWith("::ffff:") ||
-    blockedAddresses.check(normalized, family === 4 ? "ipv4" : "ipv6")
+    (allowed
+      ? !allowed.includes(normalized)
+      : blockedAddresses.check(normalized, family === 4 ? "ipv4" : "ipv6"))
   ) {
-    throw unsafe("address is not publicly routable");
+    throw unsafe(allowed ? "address is not allowed for origin" : "address is not publicly routable");
   }
   return { address: normalized, family };
 }
@@ -95,7 +110,8 @@ export async function resolveSafeEndpoint(
   }
 
   if (url.username || url.password) throw unsafe("URL credentials are forbidden");
-  if (url.protocol !== "https:" && !(options.allowHttp && url.protocol === "http:")) {
+  const allowed = allowedAddresses(url, options.endpointAllowlist);
+  if (url.protocol !== "https:" && !(allowed && url.protocol === "http:")) {
     throw unsafe("HTTPS is required");
   }
 
@@ -106,7 +122,7 @@ export async function resolveSafeEndpoint(
     : await (options.resolve ?? resolveHostname)(hostname);
   if (answers.length === 0) throw unsafe("hostname did not resolve");
 
-  const vetted = answers.map((answer) => requirePublicAddress(answer.address));
+  const vetted = answers.map((answer) => requireAllowedAddress(answer.address, allowed));
   const selected = vetted[0]!;
   return Object.freeze({
     url: url.href,
@@ -116,8 +132,14 @@ export async function resolveSafeEndpoint(
   });
 }
 
-export function createPinnedLookup(endpoint: SafeEndpoint): LookupFunction {
-  const vetted = requirePublicAddress(endpoint.address);
+export function createPinnedLookup(
+  endpoint: SafeEndpoint,
+  endpointAllowlist?: ResolveSafeEndpointOptions["endpointAllowlist"],
+): LookupFunction {
+  const vetted = requireAllowedAddress(
+    endpoint.address,
+    allowedAddresses(new URL(endpoint.url), endpointAllowlist),
+  );
   const hostname = normalizeHostname(endpoint.hostname);
   if (vetted.family !== endpoint.family) throw unsafe("address family mismatch");
 
@@ -151,7 +173,7 @@ type Transport = (
 ) => Promise<{ statusCode: number; body: { text(): Promise<string> } }>;
 
 interface RedmineHttpClientOptions {
-  allowHttp?: boolean;
+  endpointAllowlist?: Readonly<Record<string, readonly string[]>>;
   timeoutMs?: number;
   maxAttempts?: number;
   resolve?: ResolveHostname;
@@ -254,13 +276,13 @@ export class RedmineHttpClient {
       try {
         const endpoint = await withAbort(
           resolveSafeEndpoint(target, {
-            allowHttp: this.options.allowHttp,
+            endpointAllowlist: this.options.endpointAllowlist,
             resolve: this.options.resolve,
           }),
           controller.signal,
         );
         dispatcher = new Agent({
-          connect: { lookup: createPinnedLookup(endpoint) },
+          connect: { lookup: createPinnedLookup(endpoint, this.options.endpointAllowlist) },
           maxRedirections: 0,
         });
         const response = await this.transport(endpoint.url, {

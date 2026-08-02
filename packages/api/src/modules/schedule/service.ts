@@ -2,6 +2,10 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import { AppError } from "../../shared/types.js";
+import {
+  captureIssueScheduleMutationTx,
+  resolveIssueCaptureContext,
+} from "../integrations/issue-tx.js";
 import type { UpsertPlanBody, ReviseEstimateBody, ScheduleConfigBody } from "./schema.js";
 
 // ── getSchedule ────────────────────────────────────────────────────────────
@@ -35,7 +39,7 @@ export async function upsertPlan(
 ) {
   const issue = await prisma.issue.findUnique({
     where: { key: issueKey },
-    select: { id: true, project: { select: { workspaceId: true } } },
+    select: { id: true, projectId: true, project: { select: { workspaceId: true } } },
   });
 
   if (!issue) {
@@ -93,11 +97,25 @@ export async function upsertPlan(
     createData.progress = body.progress;
   }
 
-  const schedule = await prisma.issueSchedule.upsert({
+  const upsert = {
     where: { issueId: issue.id },
     create: createData,
     update: updateData,
-  });
+  };
+  const capture = await resolveIssueCaptureContext(issue.projectId, memberId);
+  const schedule = capture
+    ? await prisma.$transaction(async (transaction) => {
+        const result = await transaction.issueSchedule.upsert(upsert);
+        await captureIssueScheduleMutationTx(transaction, issue.id, capture, {
+          ...(body.startDate !== undefined
+            ? { startDate: result.startDate?.toISOString() ?? null }
+            : {}),
+          ...(body.dueDate !== undefined ? { dueDate: result.dueDate?.toISOString() ?? null } : {}),
+          ...(body.progress !== undefined ? { progress: result.progress } : {}),
+        });
+        return result;
+      })
+    : await prisma.issueSchedule.upsert(upsert);
 
   // Fire-and-forget post-commit event
   try {
@@ -211,7 +229,7 @@ export async function reviseEstimate(
 ) {
   const issue = await prisma.issue.findUnique({
     where: { key: issueKey },
-    select: { id: true, project: { select: { workspaceId: true } } },
+    select: { id: true, projectId: true, project: { select: { workspaceId: true } } },
   });
 
   if (!issue) {
@@ -224,7 +242,9 @@ export async function reviseEstimate(
     throw new AppError(422, "INVALID_ESTIMATE", "hours must be >= 0");
   }
 
-  // Atomic transaction: append revision + upsert estimateHours
+  const capture = await resolveIssueCaptureContext(issue.projectId, memberId);
+
+  // Atomic transaction: append revision + upsert estimateHours + integration work
   const { revision } = await prisma.$transaction(async (tx) => {
     const revision = await tx.estimateRevision.create({
       data: {
@@ -246,6 +266,12 @@ export async function reviseEstimate(
         estimateHours: hoursDecimal,
       },
     });
+
+    if (capture) {
+      await captureIssueScheduleMutationTx(tx, issue.id, capture, {
+        estimateHours: Number(hoursDecimal),
+      });
+    }
 
     return { revision };
   });

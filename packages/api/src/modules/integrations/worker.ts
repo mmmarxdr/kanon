@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Prisma, type IntegrationSyncWork, type PrismaClient } from "@prisma/client";
+import { env } from "../../config/env.js";
 import {
   ProviderDispatchError,
   isRetryableProviderError,
@@ -18,14 +19,20 @@ import {
 } from "./backfill.js";
 import { claimIntegrationWork } from "./claims.js";
 import { decrypt as decryptCredential } from "./core/crypto.js";
-import { ISSUE_CAPTURE_FIELDS } from "./issue-mutation-contract.js";
+import {
+  ISSUE_CAPTURE_FIELDS,
+  ISSUE_SCHEDULE_CAPTURE_FIELDS,
+} from "./issue-mutation-contract.js";
 import { RedmineProviderAdapter } from "./providers/redmine/adapter.js";
 import { RedmineHttpClient } from "./providers/redmine/http-client.js";
 const MAX_ATTEMPTS = 8;
 const BASE_RETRY_MS = 30_000;
 const MAX_RETRY_MS = 3_600_000;
 const DEFAULT_TIME_BUDGET_MS = 90_000;
-const ISSUE_FIELDS = new Set<string>(ISSUE_CAPTURE_FIELDS);
+const ISSUE_FIELDS = new Set<string>([
+  ...ISSUE_CAPTURE_FIELDS,
+  ...ISSUE_SCHEDULE_CAPTURE_FIELDS,
+]);
 type ExternalEntityType = "project" | "cycle" | "issue" | "user";
 export type IntegrationDispatchAdapter = Pick<
   PmProviderAdapter,
@@ -95,7 +102,12 @@ const defaultLogger: IntegrationWorkerLogger = {
   error: (context, message) => console.error(message, context),
 };
 const defaultAdapter = (options: IntegrationWorkerAdapterOptions): IntegrationDispatchAdapter =>
-  new RedmineProviderAdapter(new RedmineHttpClient(options.baseUrl, options.apiKey), options);
+  new RedmineProviderAdapter(
+    new RedmineHttpClient(options.baseUrl, options.apiKey, {
+      endpointAllowlist: env.REDMINE_ENDPOINT_ALLOWLIST,
+    }),
+    options,
+  );
 function deps(value: IntegrationWorkerDependencies): Deps {
   return {
     now: value.now,
@@ -233,7 +245,7 @@ function issueFields(payload: Prisma.JsonValue) {
   ) {
     throw new TerminalError("Unsupported integration issue fields");
   }
-  return new Set(Object.keys(fields));
+  return fields as Record<string, Prisma.JsonValue>;
 }
 const omit = { kind: "omit" } as const;
 const field = <T>(changed: boolean, value: T | null) =>
@@ -336,6 +348,7 @@ async function prepare(
     let ownRef: Awaited<ReturnType<typeof findRef>> = null;
     if (current.entityType === "issue") {
       const fields = issueFields(current.payload);
+      const changed = (name: string) => Object.prototype.hasOwnProperty.call(fields, name);
       const issue = await transaction.issue.findFirst({
         where: { id: current.entityId, projectId: current.binding.projectId },
         include: { assignee: { include: { user: { select: { email: true } } } }, schedule: true },
@@ -346,7 +359,32 @@ async function prepare(
       if (current.refId && current.refId !== ownRef?.id)
         throw new TerminalError("Captured issue reference is stale");
       const creating = !ownRef;
-      if (issue.assignee && (creating || fields.has("assigneeId"))) {
+      const currentValues: Record<string, Prisma.JsonValue> = {
+        title: issue.title,
+        description: issue.description,
+        state: issue.state,
+        assigneeId: issue.assigneeId,
+        cycleId: issue.cycleId,
+        estimate: issue.estimate,
+        estimateHours:
+          issue.schedule?.estimateHours == null ? null : Number(issue.schedule.estimateHours),
+        startDate: issue.schedule?.startDate?.toISOString() ?? null,
+        dueDate: issue.schedule?.dueDate?.toISOString() ?? null,
+        progress: issue.schedule?.progress ?? 0,
+      };
+      if (
+        current.operation !== "create" &&
+        Object.entries(fields).some(([name, captured]) => captured !== currentValues[name])
+      ) {
+        const superseded = await transaction.integrationSyncWork.updateMany({
+          where: { ...fenced(claimed), leaseUntil: { gt: now } },
+          data: { state: "superseded", leaseToken: null, leaseUntil: null },
+        });
+        return superseded.count
+          ? { kind: "skipped", reason: "Captured fields were superseded" }
+          : { kind: "stale" };
+      }
+      if (issue.assignee && (creating || changed("assigneeId"))) {
         const identity = await transaction.integrationExternalIdentity.findUnique({
           where: {
             bindingId_memberId: { bindingId: current.bindingId, memberId: issue.assignee.id },
@@ -355,7 +393,7 @@ async function prepare(
         if (!identity) throw new TerminalError("Missing user identity mapping");
         refs.set(`user:${issue.assignee.id}`, identity.remoteUserId);
       }
-      if (issue.cycleId && (creating || fields.has("cycleId")))
+      if (issue.cycleId && (creating || changed("cycleId")))
         await findRef("cycle", issue.cycleId, true);
       const entity: CanonicalIssue = {
         id: issue.id,
@@ -382,18 +420,21 @@ async function prepare(
         kind: "issue",
         entity,
         patch: {
-          title: fields.has("title") ? { kind: "set", value: entity.title } : omit,
-          description: field(fields.has("description"), entity.description),
+          title: changed("title") ? { kind: "set", value: entity.title } : omit,
+          description: field(changed("description"), entity.description),
           status:
-            fields.has("state") || current.operation === "close"
+            changed("state") || current.operation === "close"
               ? { kind: "set", value: entity.status }
               : omit,
-          assignee: field(fields.has("assigneeId"), entity.assignee),
-          estimateHours: field(fields.has("estimate"), entity.estimateHours),
-          cycleId: field(fields.has("cycleId"), entity.cycleId),
-          startDate: omit,
-          dueDate: omit,
-          progress: omit,
+          assignee: field(changed("assigneeId"), entity.assignee),
+          estimateHours: field(
+            changed("estimate") || changed("estimateHours"),
+            entity.estimateHours,
+          ),
+          cycleId: field(changed("cycleId"), entity.cycleId),
+          startDate: field(changed("startDate"), entity.startDate),
+          dueDate: field(changed("dueDate"), entity.dueDate),
+          progress: changed("progress") ? { kind: "set", value: entity.progress } : omit,
         },
       };
     } else if (current.entityType === "cycle") {

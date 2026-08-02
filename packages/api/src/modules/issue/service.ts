@@ -37,52 +37,11 @@ import type {
 } from "../integrations/issue-mutation-contract.js";
 import {
   captureIssueMutationTx,
+  resolveIssueCaptureContext,
   withIssueMutationTx,
 } from "../integrations/issue-tx.js";
 
 type IssueDatabase = Pick<Prisma.TransactionClient, "issue">;
-type IssueCaptureContext = Omit<
-  IssueCaptureIntent,
-  "operation" | "correlationId" | "fields"
->;
-
-async function issueCaptureContext(
-  projectId: string,
-  memberId: string,
-): Promise<IssueCaptureContext | null> {
-  // ponytail: PM-182 supports one workspace PM connection; fan out when multi-provider ships.
-  const binding = await prisma.integrationProjectBinding.findFirst({
-    where: { projectId },
-    orderBy: { id: "asc" },
-    select: {
-      id: true,
-      connection: {
-        select: {
-          credentials: {
-            where: { memberId, lastAuthStatus: "valid", revokedAt: null },
-            select: { id: true },
-            take: 1,
-          },
-        },
-      },
-    },
-  });
-  if (!binding) return null;
-
-  const actor = await prisma.member.findUnique({
-    where: { id: memberId },
-    select: { isAgent: true },
-  });
-  const credentialId = actor?.isAgent ? undefined : binding.connection.credentials[0]?.id;
-
-  return {
-    bindingId: binding.id,
-    direction: "outbound",
-    actorKey: `member:${memberId}`,
-    actorKind: actor?.isAgent ? "ai" : "user",
-    ...(credentialId ? { authCredentialId: credentialId } : {}),
-  };
-}
 
 async function mutateIssueWithCapture(
   projectId: string,
@@ -91,7 +50,7 @@ async function mutateIssueWithCapture(
   fields: (result: IssueMutationRow) => IssueCaptureFields,
   mutate: (database: IssueDatabase) => Promise<IssueMutationRow>,
 ): Promise<IssueMutationRow> {
-  const capture = await issueCaptureContext(projectId, memberId);
+  const capture = await resolveIssueCaptureContext(projectId, memberId);
   if (!capture) return mutate(prisma);
 
   return withIssueMutationTx(async (transaction) => {
@@ -115,7 +74,7 @@ async function transitionIssuesWithCapture(
   targetState: IssueState,
   activityDetails: Readonly<Record<string, string>>,
 ): Promise<{ count: number; issueIds: string[] }> {
-  const capture = await issueCaptureContext(projectId, memberId);
+  const capture = await resolveIssueCaptureContext(projectId, memberId);
 
   return prisma.$transaction(async (transaction) => {
     const transitioned: Array<{ id: string; state: IssueState }> = [];

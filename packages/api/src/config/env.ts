@@ -1,9 +1,40 @@
 import { z } from "zod";
+import { isIP } from "node:net";
 
 const TRUST_PROXY_PRESETS = new Set(["loopback", "linklocal", "uniquelocal"]);
 // Permissive IP / CIDR token check (v4 or v6, optional /mask). Full validation
 // is left to proxy-addr at boot; this just rejects obvious garbage early.
 const IP_CIDR_TOKEN = /^[0-9a-fA-F:.]+(\/\d{1,3})?$/;
+const REDMINE_ENDPOINT_ALLOWLIST_SCHEMA = z.record(
+  z.string().refine(
+    (origin) => {
+      try {
+        const url = new URL(origin);
+        return url.protocol === "http:" && url.origin === origin && isIP(url.hostname) === 0;
+      } catch {
+        return false;
+      }
+    },
+    "keys must be exact canonical HTTP origins with DNS hostnames",
+  ),
+  z
+    .array(
+      z
+        .string()
+        .refine((address) => isIP(address) !== 0, {
+          message: "values must be exact IP addresses",
+        })
+        .transform((address) =>
+          isIP(address) === 6
+            ? new URL(`http://[${address}]`).hostname.slice(1, -1)
+            : address,
+        )
+        .refine((address) => !address.toLowerCase().startsWith("::ffff:"), {
+          message: "values must not use IPv4-mapped IPv6 notation",
+        }),
+    )
+    .min(1, "each origin must allow at least one IP address"),
+);
 
 /**
  * Validate a string TRUST_PROXY value: a single proxy-addr preset, or a
@@ -136,6 +167,32 @@ export const envSchema = z.object({
     .default("2000")
     .transform((val) => parseInt(val, 10))
     .pipe(z.number().int().min(100)),
+  REDMINE_ENDPOINT_ALLOWLIST: z
+    .string()
+    .optional()
+    .transform((value, ctx) => {
+      if (value === undefined) return undefined;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(value);
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "REDMINE_ENDPOINT_ALLOWLIST must be valid JSON",
+        });
+        return z.NEVER;
+      }
+      const result = REDMINE_ENDPOINT_ALLOWLIST_SCHEMA.safeParse(parsed);
+      if (!result.success) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "REDMINE_ENDPOINT_ALLOWLIST must map exact canonical HTTP origins to non-empty arrays of exact IP addresses",
+        });
+        return z.NEVER;
+      }
+      return result.data;
+    }),
   CORS_ORIGIN: z
     .string()
     .optional()

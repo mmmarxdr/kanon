@@ -199,6 +199,47 @@ describe("RedmineProviderAdapter", () => {
     });
   });
 
+  it("clears Redmine assignee and version with empty identifiers", async () => {
+    const http = client();
+    http.put.mockResolvedValue(undefined);
+    http.get.mockResolvedValue({
+      issue: { id: 99, status: { id: 5 }, updated_on: "2026-07-03T10:00:00Z" },
+    });
+    const adapter = new RedmineProviderAdapter(http, {
+      writeMap: {},
+      resolveExternalId: async (type) => (type === "issue" ? "99" : null),
+    });
+    const clearRelations = {
+      ...noChange,
+      assignee: { kind: "clear", value: null },
+      cycleId: { kind: "clear", value: null },
+    } as const;
+
+    await adapter.pushIssue({ ...issue, assignee: null, cycleId: null }, clearRelations);
+
+    expect(http.put).toHaveBeenCalledWith("/issues/99.json", {
+      issue: { assigned_to_id: "", fixed_version_id: "" },
+    });
+  });
+
+  it("omits an empty version identifier when creating an issue without a cycle", async () => {
+    const http = client();
+    http.post.mockResolvedValue({ issue: { id: 99 } });
+    http.get.mockResolvedValue({
+      issue: { id: 99, status: { id: 5 }, updated_on: "2026-07-03T10:00:00Z" },
+    });
+    const adapter = new RedmineProviderAdapter(http, {
+      writeMap: { in_progress: "5" },
+      resolveExternalId: async (type) => (type === "project" ? "41" : null),
+    });
+
+    await adapter.pushIssue({ ...issue, assignee: null, cycleId: null }, noChange);
+
+    const body = http.post.mock.calls[0]![1] as { issue: Record<string, unknown> };
+    expect(body.issue).not.toHaveProperty("fixed_version_id");
+    expect(body.issue["assigned_to_id"]).toBe("");
+  });
+
   it("reports actual status when Redmine rejects the requested workflow transition", async () => {
     const http = client();
     http.put.mockRejectedValueOnce(new RedmineHttpError(422)).mockResolvedValueOnce(undefined);

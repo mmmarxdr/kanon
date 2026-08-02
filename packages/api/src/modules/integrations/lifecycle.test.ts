@@ -16,6 +16,7 @@ import {
   setConnectionLifecycle,
   type ConnectionServiceDeps,
 } from "./service.js";
+import { runIntegrationWorkerCycle } from "./worker.js";
 
 const remote = {
   whoAmI: vi.fn(async () => ({ id: "remote-owner", displayName: "Owner", login: "owner" })),
@@ -154,6 +155,158 @@ describe("integration connection lifecycle", () => {
     await expect(
       prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
     ).resolves.toMatchObject({ lifecycle: "disabled", lifecycleEpoch: 2, pollLeaseToken: null });
+  });
+
+  it("resumes only the immediate pause cohort and safely fences leased work", async () => {
+    const workspace = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const project = await seedTestProject(workspace.id);
+    const { connection } = await createConnection(
+      { workspaceId: workspace.id, baseUrl: "https://redmine.example.test", apiKey: "secret" },
+      owner.userId,
+      deps,
+    );
+    const binding = await configureConnection(
+      connection.id,
+      { projectId: project.id, remoteProjectId: "remote-project", readMap, writeMap },
+      owner.userId,
+      deps,
+    );
+    await setConnectionLifecycle(connection.id, "active", owner.userId, deps);
+    const credential = await prisma.memberIntegrationCredential.findFirstOrThrow({
+      where: { connectionId: connection.id, memberId: owner.id },
+    });
+    await prisma.externalRef.create({
+      data: {
+        connectionId: connection.id,
+        bindingId: binding.id,
+        entityType: "project",
+        entityId: project.id,
+        externalId: "remote-project",
+      },
+    });
+    await prisma.integrationSyncWork.createMany({
+      data: [
+        {
+          entityType: "project",
+          entityId: project.id,
+          direction: "outbound",
+          operation: "update",
+          dedupeKey: "historical",
+          laneKey: "historical",
+          actorKey: `member:${owner.id}`,
+          actorKind: "user",
+          authCredentialId: credential.id,
+          payload: {},
+          correlationId: "historical",
+          availableAt: new Date("2999-01-01T00:00:00.000Z"),
+          epoch: 0,
+          bindingId: binding.id,
+        },
+        {
+          entityType: "project",
+          entityId: project.id,
+          direction: "outbound",
+          operation: "update",
+          dedupeKey: "before-pause",
+          laneKey: "before-pause",
+          actorKey: `member:${owner.id}`,
+          actorKind: "user",
+          authCredentialId: credential.id,
+          payload: {},
+          correlationId: "before-pause",
+          state: "retry",
+          epoch: 1,
+          bindingId: binding.id,
+        },
+        {
+          entityType: "project",
+          entityId: project.id,
+          direction: "outbound",
+          operation: "update",
+          dedupeKey: "in-flight",
+          laneKey: "in-flight",
+          actorKey: `member:${owner.id}`,
+          actorKind: "user",
+          authCredentialId: credential.id,
+          payload: {},
+          correlationId: "in-flight",
+          state: "leased",
+          leaseToken: "lease-token",
+          leaseUntil: new Date("2999-01-01T00:00:00.000Z"),
+          fence: 1,
+          epoch: 1,
+          bindingId: binding.id,
+        },
+      ],
+    });
+    await setConnectionLifecycle(connection.id, "paused", owner.userId, deps);
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { dedupeKey: "in-flight" } }),
+    ).resolves.toMatchObject({ epoch: 2, state: "leased" });
+    await prisma.integrationSyncWork.update({
+      where: { dedupeKey: "in-flight" },
+      data: { state: "ambiguous", leaseToken: null, leaseUntil: null },
+    });
+    await prisma.integrationSyncWork.create({
+      data: {
+        entityType: "project",
+        entityId: project.id,
+        direction: "outbound",
+        operation: "update",
+        dedupeKey: "during-pause",
+        laneKey: "during-pause",
+        actorKey: `member:${owner.id}`,
+        actorKind: "user",
+        authCredentialId: credential.id,
+        payload: {},
+        correlationId: "during-pause",
+        availableAt: new Date("2999-01-01T00:00:00.000Z"),
+        epoch: 2,
+        bindingId: binding.id,
+      },
+    });
+
+    const resumed = await setConnectionLifecycle(connection.id, "active", owner.userId, deps);
+    const unchanged = await setConnectionLifecycle(connection.id, "active", owner.userId, deps);
+
+    await expect(
+      prisma.integrationSyncWork.findMany({
+        orderBy: { sequence: "asc" },
+        select: { epoch: true, state: true },
+      }),
+    ).resolves.toEqual([
+      { epoch: 0, state: "queued" },
+      { epoch: 3, state: "retry" },
+      { epoch: 3, state: "ambiguous" },
+      { epoch: 3, state: "queued" },
+    ]);
+    expect(resumed.lifecycleEpoch).toBe(3);
+    expect(unchanged.lifecycleEpoch).toBe(3);
+
+    const ensureProject = vi.fn().mockResolvedValue({ externalId: "remote-project" });
+    await runIntegrationWorkerCycle(prisma, {
+      limit: 10,
+      decrypt: () => "secret",
+      createAdapter: () => ({
+        ensureProject,
+        ensureCycle: vi.fn(),
+        pushIssue: vi.fn(),
+        reconcileCreate: vi.fn(),
+      }),
+    });
+
+    expect(ensureProject).toHaveBeenCalledTimes(2);
+    await expect(
+      prisma.integrationSyncWork.findMany({
+        where: { dedupeKey: { in: ["before-pause", "in-flight"] } },
+        orderBy: { sequence: "asc" },
+        select: { epoch: true, state: true },
+      }),
+    ).resolves.toEqual([
+      { epoch: 3, state: "done" },
+      { epoch: 3, state: "done" },
+    ]);
   });
 
   it("rejects activation when a writable Kanon state has no confirmed mapping", async () => {

@@ -42,6 +42,8 @@ describe("Schedule Timeline Routes (integration)", () => {
     await cleanDatabase();
   });
 
+  afterEach(() => vi.useRealTimers());
+
   // ── Helpers ────────────────────────────────────────────────────────────
 
   async function seedProjectContext() {
@@ -475,6 +477,7 @@ describe("Schedule Timeline Routes (integration)", () => {
     });
 
     it("STL-11: ?from=&to= returns issues whose plan OR forecast span overlaps the window", async () => {
+      vi.setSystemTime(new Date("2026-07-15T12:00:00.000Z"));
       const { member, project } = await seedProjectContext();
 
       // Issue whose plan span overlaps [2026-07-01, 2026-07-31]

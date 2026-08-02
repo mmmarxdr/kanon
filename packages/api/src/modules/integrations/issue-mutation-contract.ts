@@ -8,6 +8,12 @@ export const ISSUE_CAPTURE_FIELDS = [
   "cycleId",
   "estimate",
 ] as const;
+export const ISSUE_SCHEDULE_CAPTURE_FIELDS = [
+  "estimateHours",
+  "startDate",
+  "dueDate",
+  "progress",
+] as const;
 export type IssueMutationRow = Prisma.IssueGetPayload<{}>;
 export type IssueCaptureField = (typeof ISSUE_CAPTURE_FIELDS)[number];
 export type IssueCaptureFields = Readonly<Partial<Pick<IssueMutationRow, IssueCaptureField>>>;

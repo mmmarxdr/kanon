@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "../../config/prisma.js";
 import { createIssue, transitionIssue, updateIssue } from "../issue/service.js";
+import { reviseEstimate, upsertPlan } from "../schedule/service.js";
 import {
   cleanDatabase,
   disconnectTestDb,
@@ -132,5 +133,77 @@ describe("issue writer integration capture", () => {
     await expect(
       prisma.integrationSyncWork.findFirstOrThrow({ where: { entityId: issue.id } }),
     ).resolves.toMatchObject({ authCredentialId: null });
+  });
+
+  it("captures schedule and estimate changes in their writer transactions", async () => {
+    const workspace = await seedTestWorkspace();
+    const member = await seedTestMember(workspace.id);
+    const project = await seedTestProject(workspace.id);
+    const { binding, credential } = await bindProject(workspace.id, project.id, member.id);
+    const issue = await prisma.issue.create({
+      data: {
+        key: `${project.key}-1`,
+        sequenceNum: 1,
+        title: "Scheduled issue",
+        projectId: project.id,
+      },
+    });
+
+    await upsertPlan(
+      issue.key,
+      {
+        startDate: "2026-08-04T00:00:00.000Z",
+        dueDate: "2026-08-20T00:00:00.000Z",
+        progress: 65,
+      },
+      member.id,
+    );
+    await reviseEstimate(issue.key, { hours: "7.50" }, member.id);
+
+    const work = await prisma.integrationSyncWork.findMany({
+      where: { bindingId: binding.id, entityId: issue.id },
+      orderBy: { sequence: "asc" },
+    });
+    expect(work).toHaveLength(2);
+    expect(work.every(({ authCredentialId }) => authCredentialId === credential!.id)).toBe(true);
+    expect(work.map(({ payload }) => payload)).toEqual([
+      {
+        version: 1,
+        fields: {
+          startDate: "2026-08-04T00:00:00.000Z",
+          dueDate: "2026-08-20T00:00:00.000Z",
+          progress: 65,
+        },
+      },
+      { version: 1, fields: { estimateHours: 7.5 } },
+    ]);
+  });
+
+  it("rolls schedule and estimate writes back when outbox capture fails", async () => {
+    const workspace = await seedTestWorkspace();
+    const foreignWorkspace = await seedTestWorkspace();
+    const member = await seedTestMember(workspace.id);
+    const project = await seedTestProject(workspace.id);
+    await bindProject(foreignWorkspace.id, project.id);
+    const issue = await prisma.issue.create({
+      data: {
+        key: `${project.key}-1`,
+        sequenceNum: 1,
+        title: "Rollback schedule",
+        projectId: project.id,
+      },
+    });
+
+    await expect(upsertPlan(issue.key, { progress: 25 }, member.id)).rejects.toThrow(
+      "mismatched ownership",
+    );
+    expect(await prisma.issueSchedule.findUnique({ where: { issueId: issue.id } })).toBeNull();
+
+    await expect(reviseEstimate(issue.key, { hours: "3.50" }, member.id)).rejects.toThrow(
+      "mismatched ownership",
+    );
+    expect(await prisma.issueSchedule.findUnique({ where: { issueId: issue.id } })).toBeNull();
+    expect(await prisma.estimateRevision.count({ where: { issueId: issue.id } })).toBe(0);
+    expect(await prisma.integrationSyncWork.count({ where: { entityId: issue.id } })).toBe(0);
   });
 });

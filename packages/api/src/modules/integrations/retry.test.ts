@@ -1,6 +1,31 @@
 import { randomUUID } from "node:crypto";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const defaultAdapterWiring = vi.hoisted(() => {
+  const http = { get: vi.fn(), post: vi.fn(), put: vi.fn() };
+  return {
+    allowlist: { "http://redmine.internal.example": ["10.20.30.40"] },
+    client: vi.fn(function RedmineHttpClient() {
+      return http;
+    }),
+    http,
+  };
+});
+
+vi.mock("../../config/env.js", () => ({
+  env: {
+    DATABASE_URL: process.env["DATABASE_URL"],
+    NODE_ENV: "test",
+    REDMINE_ENDPOINT_ALLOWLIST: defaultAdapterWiring.allowlist,
+  },
+}));
+
+vi.mock("./providers/redmine/http-client.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./providers/redmine/http-client.js")>();
+  return { ...original, RedmineHttpClient: defaultAdapterWiring.client };
+});
+
 import { prisma } from "../../config/prisma.js";
 import type { PmProviderAdapter, PushResult } from "./core/types.js";
 import { RedmineProviderAdapter } from "./providers/redmine/adapter.js";
@@ -106,15 +131,23 @@ async function createIssue(projectId: string, assigneeId: string, title: string)
   });
 }
 
-function createWork(
+async function createWork(
   fixture: Awaited<ReturnType<typeof createFixture>>,
   overrides: Partial<Prisma.IntegrationSyncWorkUncheckedCreateInput> = {}
 ) {
+  const entityId = overrides.entityId ?? fixture.issue.id;
+  const canonical =
+    overrides.payload === undefined && (overrides.entityType ?? "issue") === "issue"
+      ? await prisma.issue.findUniqueOrThrow({
+          where: { id: entityId },
+          select: { title: true, state: true },
+        })
+      : { title: fixture.issue.title, state: fixture.issue.state };
   return prisma.integrationSyncWork.create({
     data: {
       bindingId: fixture.binding.id,
       entityType: "issue",
-      entityId: fixture.issue.id,
+      entityId,
       direction: "outbound",
       operation: "update",
       dedupeKey: randomUUID(),
@@ -124,8 +157,8 @@ function createWork(
       authCredentialId: fixture.credential.id,
       payload: {
         version: 1,
-        fields: { title: "stale payload title", state: "todo" },
-        issue: { title: "stale payload title", state: "todo" },
+        fields: { title: canonical.title, state: canonical.state },
+        issue: { title: canonical.title, state: canonical.state },
       },
       correlationId: randomUUID(),
       availableAt: NOW,
@@ -296,6 +329,32 @@ describe("integration worker retry and completion", () => {
     ).resolves.toMatchObject({
       state: "done",
     });
+  });
+
+  it("passes the env endpoint allowlist through the default worker adapter", async () => {
+    const fixture = await createFixture();
+    const work = await createWork(fixture, { operation: "create" });
+    defaultAdapterWiring.client.mockClear();
+    defaultAdapterWiring.http.post.mockReset().mockResolvedValue({ issue: { id: 42 } });
+    defaultAdapterWiring.http.get.mockReset().mockResolvedValue({
+      issue: { id: 42, status: { id: 2 }, updated_on: "2026-07-30T12:00:01.000Z" },
+    });
+
+    await runIntegrationWorkerCycle(prisma, {
+      now: () => NOW,
+      jitter: () => 0,
+      decrypt: () => "api-key",
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    expect(defaultAdapterWiring.client).toHaveBeenCalledWith(
+      "https://pm.example.test",
+      "api-key",
+      { endpointAllowlist: defaultAdapterWiring.allowlist },
+    );
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } }),
+    ).resolves.toMatchObject({ state: "done" });
   });
 
   it("short-circuits known project and cycle refs before real adapter HTTP", async () => {
@@ -613,6 +672,99 @@ describe("integration worker retry and completion", () => {
       state: "done",
       refId: reference.id,
     });
+  });
+
+  it("dispatches captured schedule fields from the current canonical schedule", async () => {
+    const fixture = await createFixture();
+    await createRef(fixture, "issue", fixture.issue.id, "remote-known");
+    await createWork(fixture, {
+      payload: {
+        version: 1,
+        fields: {
+          estimateHours: 2.5,
+          startDate: "2026-07-29T00:00:00.000Z",
+          dueDate: "2026-08-05T00:00:00.000Z",
+          progress: 40,
+        },
+      },
+    });
+    const pushIssue = vi.fn().mockResolvedValue(success());
+
+    await runIntegrationWorkerCycle(prisma, dependencies(adapter({ pushIssue })).deps);
+
+    expect(pushIssue).toHaveBeenCalledWith(
+      expect.objectContaining({ id: fixture.issue.id }),
+      expect.objectContaining({
+        estimateHours: { kind: "set", value: 2.5 },
+        startDate: { kind: "set", value: new Date("2026-07-29T00:00:00.000Z") },
+        dueDate: { kind: "set", value: new Date("2026-08-05T00:00:00.000Z") },
+        progress: { kind: "set", value: 40 },
+      }),
+    );
+  });
+
+  it("does not attribute a later unconnected actor schedule change to an earlier actor", async () => {
+    const fixture = await createFixture();
+    await createRef(fixture, "issue", fixture.issue.id, "remote-known");
+    const earlier = await createWork(fixture, {
+      state: "retry",
+      payload: {
+        version: 1,
+        fields: {
+          estimateHours: 1,
+          startDate: "2026-07-28T00:00:00.000Z",
+          dueDate: "2026-08-04T00:00:00.000Z",
+          progress: 10,
+        },
+      },
+    });
+    const user = await prisma.user.create({
+      data: { email: `unconnected-${randomUUID()}@kanon.test`, passwordHash: "unused" },
+    });
+    userIds.add(user.id);
+    const member = await prisma.member.create({
+      data: {
+        username: `unconnected-${randomUUID().slice(0, 8)}`,
+        userId: user.id,
+        workspaceId: fixture.workspace.id,
+      },
+    });
+    const later = await createWork(fixture, {
+      dedupeKey: randomUUID(),
+      laneKey: earlier.laneKey,
+      actorKey: `member:${member.id}`,
+      authCredentialId: null,
+      payload: {
+        version: 1,
+        fields: {
+          estimateHours: 2.5,
+          startDate: "2026-07-29T00:00:00.000Z",
+          dueDate: "2026-08-05T00:00:00.000Z",
+          progress: 40,
+        },
+      },
+    });
+    const pushIssue = vi.fn().mockResolvedValue(success());
+
+    await runIntegrationWorkerCycle(prisma, {
+      ...dependencies(adapter({ pushIssue })).deps,
+      limit: 2,
+    });
+
+    expect(pushIssue).not.toHaveBeenCalled();
+    await expect(
+      prisma.integrationSyncWork.findMany({
+        where: { id: { in: [earlier.id, later.id] } },
+        orderBy: { sequence: "asc" },
+        select: { state: true, skippedReason: true },
+      }),
+    ).resolves.toEqual([
+      { state: "superseded", skippedReason: null },
+      {
+        state: "skipped",
+        skippedReason: "User work has no captured credential",
+      },
+    ]);
   });
 
   it("retries known-ref network failures from 30 seconds with capped backoff", async () => {
