@@ -16,7 +16,6 @@ const ConnectionId = z.object({ id: z.string().uuid() });
 const WorkspaceConnection = z.object({ workspaceId: z.string().uuid() });
 const CreateConnection = z.object({
   workspaceId: z.string().uuid(),
-  baseUrl: z.string().url(),
   apiKey: z.string().min(1).max(4096),
 });
 const ConfigureConnection = z.object({

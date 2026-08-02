@@ -931,6 +931,8 @@ model InstanceSettings {
   allowedSignupDomains String[] @default([]) @map("allowed_signup_domains")
   /// Locale used for all outbound transactional emails (KAN-203 Slice 2). "en" | "es".
   defaultLocale        String   @default("en") @map("default_locale")
+  /// Instance-wide Redmine endpoint. Workspace connections inherit this value.
+  redmineBaseUrl       String?  @map("redmine_base_url")
 
   ownerUserId String? @unique @map("owner_user_id") @db.Uuid
   owner       User?   @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)

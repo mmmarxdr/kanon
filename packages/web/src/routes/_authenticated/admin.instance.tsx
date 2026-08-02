@@ -40,6 +40,7 @@ interface InstanceSettings {
   allowedSignupDomains: string[];
   /** Locale used for outbound transactional emails (KAN-203 Slice 2). */
   defaultLocale: string;
+  redmineBaseUrl: string | null;
   ownerUserId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -69,6 +70,7 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
   const [signupMode, setSignupMode] = useState("open");
   const [allowedDomains, setAllowedDomains] = useState("");
   const [defaultLocale, setDefaultLocale] = useState("en");
+  const [redmineBaseUrl, setRedmineBaseUrl] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -89,6 +91,7 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
         setSignupMode(data.signupMode);
         setAllowedDomains(data.allowedSignupDomains.join(", "));
         setDefaultLocale(data.defaultLocale);
+        setRedmineBaseUrl(data.redmineBaseUrl ?? "");
       } catch (err) {
         if (err instanceof ApiError) {
           if (err.status === 403) {
@@ -130,6 +133,7 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
           signupMode,
           allowedSignupDomains: parsedDomains,
           defaultLocale,
+          ...(redmineBaseUrl.trim() ? { redmineBaseUrl: redmineBaseUrl.trim() } : {}),
         }),
       });
       setSettings(updated);
@@ -137,6 +141,7 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
       setSignupMode(updated.signupMode);
       setAllowedDomains(updated.allowedSignupDomains.join(", "));
       setDefaultLocale(updated.defaultLocale);
+      setRedmineBaseUrl(updated.redmineBaseUrl ?? "");
       setSaveSuccess(true);
     } catch (err) {
       if (err instanceof ApiError) {
@@ -514,6 +519,48 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
                   value={allowedDomains}
                   onChange={(e) => setAllowedDomains(e.target.value)}
                   placeholder="acme.com, corp.io"
+                  style={{
+                    flex: 1,
+                    height: "100%",
+                    border: 0,
+                    outline: 0,
+                    background: "transparent",
+                    color: "var(--ink)",
+                    fontSize: 13,
+                  }}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <label
+                htmlFor="redmineBaseUrl"
+                style={{ fontSize: 11, color: "var(--ink-3)", fontWeight: 500 }}
+              >
+                {t("instance.redmineBaseUrl")}
+                <span style={{ marginLeft: 6, fontSize: 10, color: "var(--ink-4)", fontWeight: 400 }}>
+                  {t("instance.redmineBaseUrlHelp")}
+                </span>
+              </label>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  height: 36,
+                  border: "1px solid var(--line-2)",
+                  borderRadius: 5,
+                  background: "var(--panel)",
+                  padding: "0 10px",
+                }}
+              >
+                <input
+                  id="redmineBaseUrl"
+                  data-testid="redmine-base-url-input"
+                  type="url"
+                  value={redmineBaseUrl}
+                  onChange={(e) => setRedmineBaseUrl(e.target.value)}
+                  maxLength={2048}
+                  placeholder="https://redmine.example.com"
                   style={{
                     flex: 1,
                     height: "100%",

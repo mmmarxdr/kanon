@@ -108,18 +108,16 @@ describe("RedmineSection", () => {
     } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
     render(<RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={[]} />);
 
-    fireEvent.change(screen.getByLabelText("Redmine URL"), {
-      target: { value: "https://redmine.example.test/" },
-    });
     fireEvent.change(screen.getByLabelText("API key"), {
       target: { value: "test-key" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Test and create connection" }));
 
     expect(createMutate).toHaveBeenCalledWith(
-      { baseUrl: "https://redmine.example.test", apiKey: "test-key" },
+      "test-key",
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
+    expect(screen.queryByLabelText("Redmine URL")).not.toBeInTheDocument();
   });
 
   it("shows personal identity and workspace coverage to a member", () => {

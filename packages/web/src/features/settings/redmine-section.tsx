@@ -62,7 +62,6 @@ function Card({ children }: { children: React.ReactNode }) {
 function ConnectionSetup({ workspaceId }: { workspaceId: string }) {
   const { t } = useTranslation("settings");
   const create = useCreateRedmineConnectionMutation(workspaceId);
-  const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
 
   return (
@@ -74,22 +73,11 @@ function ConnectionSetup({ workspaceId }: { workspaceId: string }) {
         onSubmit={(event) => {
           event.preventDefault();
           create.mutate(
-            { baseUrl: baseUrl.trim().replace(/\/$/, ""), apiKey },
+            apiKey,
             { onSuccess: () => setApiKey("") },
           );
         }}
       >
-        <label className="block text-sm font-medium text-foreground">
-          {t("redmineBaseUrl")}
-          <input
-            type="url"
-            required
-            value={baseUrl}
-            onChange={(event) => setBaseUrl(event.target.value)}
-            placeholder="https://redmine.example.com"
-            className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25"
-          />
-        </label>
         <label className="block text-sm font-medium text-foreground">
           {t("redmineApiKey")}
           <input
@@ -104,7 +92,7 @@ function ConnectionSetup({ workspaceId }: { workspaceId: string }) {
         {create.isError && <p className="text-sm text-destructive">{create.error.message}</p>}
         <button
           type="submit"
-          disabled={create.isPending || !baseUrl.trim() || !apiKey}
+          disabled={create.isPending || !apiKey}
           className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
         >
           {create.isPending ? t("redmineTesting") : t("redmineTestConnection")}

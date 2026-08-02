@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "../../config/prisma.js";
+import { INSTANCE_SETTINGS_ID } from "../../shared/constants.js";
 import {
   cleanDatabase,
   createTestApp,
@@ -52,6 +53,10 @@ describe("integration connection lifecycle", () => {
   });
   beforeEach(async () => {
     await cleanDatabase();
+    await prisma.instanceSettings.update({
+      where: { id: INSTANCE_SETTINGS_ID },
+      data: { redmineBaseUrl: "https://redmine.example.test" },
+    });
     vi.clearAllMocks();
   });
   afterAll(async () => {
@@ -64,12 +69,12 @@ describe("integration connection lifecycle", () => {
     const owner = await seedTestMemberWithRole(workspace.id, "owner");
 
     const first = await createConnection(
-      { workspaceId: workspace.id, baseUrl: "https://redmine.example.test", apiKey: "secret" },
+      { workspaceId: workspace.id, apiKey: "secret" },
       owner.userId,
       deps,
     );
     const second = await createConnection(
-      { workspaceId: workspace.id, baseUrl: "https://redmine.example.test", apiKey: "secret" },
+      { workspaceId: workspace.id, apiKey: "secret" },
       owner.userId,
       deps,
     );
@@ -93,6 +98,20 @@ describe("integration connection lifecycle", () => {
     expect(first.connection.serviceCredentialId).toBe(credentials[0]!.id);
   });
 
+  it("requires an instance-admin Redmine URL before testing a key", async () => {
+    const workspace = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    await prisma.instanceSettings.update({
+      where: { id: INSTANCE_SETTINGS_ID },
+      data: { redmineBaseUrl: null },
+    });
+
+    await expect(
+      createConnection({ workspaceId: workspace.id, apiKey: "secret" }, owner.userId, deps),
+    ).rejects.toMatchObject({ statusCode: 409, code: "REDMINE_NOT_CONFIGURED" });
+    expect(deps.remote).not.toHaveBeenCalled();
+  });
+
   it("rolls back the connection when credential linkage fails", async () => {
     const workspace = await seedTestWorkspace();
     const owner = await seedTestMemberWithRole(workspace.id, "owner");
@@ -103,7 +122,7 @@ describe("integration connection lifecycle", () => {
     try {
       await expect(
         createConnection(
-          { workspaceId: workspace.id, baseUrl: "https://redmine.example.test", apiKey: "secret" },
+          { workspaceId: workspace.id, apiKey: "secret" },
           owner.userId,
           { ...deps, encrypt: () => marker },
         ),
@@ -127,7 +146,6 @@ describe("integration connection lifecycle", () => {
       headers: { authorization: `Bearer ${admin.token}` },
       payload: {
         workspaceId: workspace.id,
-        baseUrl: "https://redmine.example.test",
         apiKey: "must-not-leave-kanon",
       },
     });
@@ -141,7 +159,7 @@ describe("integration connection lifecycle", () => {
     const owner = await seedTestMemberWithRole(workspace.id, "owner");
     const project = await seedTestProject(workspace.id);
     const { connection } = await createConnection(
-      { workspaceId: workspace.id, baseUrl: "https://redmine.example.test", apiKey: "secret" },
+      { workspaceId: workspace.id, apiKey: "secret" },
       owner.userId,
       deps,
     );
@@ -168,7 +186,7 @@ describe("integration connection lifecycle", () => {
     const owner = await seedTestMemberWithRole(workspace.id, "owner");
     const project = await seedTestProject(workspace.id);
     const { connection } = await createConnection(
-      { workspaceId: workspace.id, baseUrl: "https://redmine.example.test", apiKey: "secret" },
+      { workspaceId: workspace.id, apiKey: "secret" },
       owner.userId,
       deps,
     );
@@ -320,7 +338,7 @@ describe("integration connection lifecycle", () => {
     const owner = await seedTestMemberWithRole(workspace.id, "owner");
     const project = await seedTestProject(workspace.id);
     const { connection } = await createConnection(
-      { workspaceId: workspace.id, baseUrl: "https://redmine.example.test", apiKey: "secret" },
+      { workspaceId: workspace.id, apiKey: "secret" },
       owner.userId,
       deps,
     );
@@ -345,7 +363,7 @@ describe("integration connection lifecycle", () => {
     const owner = await seedTestMemberWithRole(workspace.id, "owner");
     const project = await seedTestProject(workspace.id);
     const { connection } = await createConnection(
-      { workspaceId: workspace.id, baseUrl: "https://redmine.example.test", apiKey: "secret" },
+      { workspaceId: workspace.id, apiKey: "secret" },
       owner.userId,
       deps,
     );

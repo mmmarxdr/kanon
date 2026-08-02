@@ -51,6 +51,7 @@ function makeSettings(instanceName = "My Kanon") {
     signupMode: "open",
     allowedSignupDomains: [],
     defaultLocale: "en",
+    redmineBaseUrl: null,
     ownerUserId: "u1",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -135,5 +136,27 @@ describe("AdminInstanceForm — instance settings page", () => {
         expect.objectContaining({ method: "PATCH" }),
       ),
     );
+  });
+
+  it("stores the instance-wide Redmine URL", async () => {
+    mockFetchApi
+      .mockResolvedValueOnce(makeSettings())
+      .mockResolvedValueOnce({
+        ...makeSettings(),
+        redmineBaseUrl: "https://redmine.example.test",
+      });
+
+    render(<AdminInstanceForm onNavigate={mockNavigate} />);
+
+    fireEvent.change(await screen.findByTestId("redmine-base-url-input"), {
+      target: { value: "https://redmine.example.test" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() => {
+      const patchCall = mockFetchApi.mock.calls.find((call) => call[1]?.method === "PATCH");
+      const body = JSON.parse(patchCall![1].body as string) as Record<string, unknown>;
+      expect(body.redmineBaseUrl).toBe("https://redmine.example.test");
+    });
   });
 });

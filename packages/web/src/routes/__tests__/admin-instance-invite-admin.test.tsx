@@ -53,6 +53,7 @@ function makeSettings() {
     signupMode: "open",
     allowedSignupDomains: [],
     defaultLocale: "en",
+    redmineBaseUrl: null,
     ownerUserId: "u1",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),

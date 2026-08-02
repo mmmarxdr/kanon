@@ -68,8 +68,7 @@
   "notifCycleClosed": "Cycle closed",
   "notifCycleClosedDesc": "Receive an email when a cycle you participate in is closed.",
   "redmineSetupTitle": "Connect Redmine",
-  "redmineSetupHelp": "Test an owner API key and create this workspace's Redmine connection.",
-  "redmineBaseUrl": "Redmine URL",
+  "redmineSetupHelp": "Test an owner API key against the instance-managed Redmine server.",
   "redmineApiKey": "API key",
   "redmineTestConnection": "Test and create connection",
   "redmineTesting": "Testing...",
@@ -140,6 +139,8 @@
   "createProjectSubmit": "Create project",
   "instance": {
     "defaultLocale": "Outbound email language",
-    "defaultLocaleHelp": "(applies to verify, reset, invite, and notification emails)"
+    "defaultLocaleHelp": "(applies to verify, reset, invite, and notification emails)",
+    "redmineBaseUrl": "Redmine URL",
+    "redmineBaseUrlHelp": "(changing it resets existing Redmine connections)"
   }
 }

@@ -25,6 +25,13 @@ export const PatchSettingsBody = z.object({
   allowedSignupDomains: z.array(z.string()).optional(),
   /** Locale for outbound transactional emails (KAN-203 Slice 2). */
   defaultLocale: z.enum(["en", "es"]).optional(),
+  redmineBaseUrl: z
+    .string()
+    .trim()
+    .url()
+    .max(2048)
+    .transform((value) => value.replace(/\/+$/, ""))
+    .optional(),
 });
 export type PatchSettingsBodyType = z.infer<typeof PatchSettingsBody>;
 
@@ -37,6 +44,7 @@ export const SettingsResponse = z.object({
   signupMode: z.string(),
   allowedSignupDomains: z.array(z.string()),
   defaultLocale: z.string(),
+  redmineBaseUrl: z.string().nullable(),
   ownerUserId: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
