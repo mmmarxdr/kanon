@@ -1106,7 +1106,10 @@ describe("WorkSessionService", () => {
     it("stopWork on incident emits interruption.closed for each open interruption closed", async () => {
       mockIssueFind.mockResolvedValue(incidentIssue);
       mockSessionFindUnique.mockResolvedValue({
-        id: "s-inc", startedAt: new Date(Date.now() - 30_000), memberId: "m-1",
+        id: "s-inc",
+        startedAt: new Date(Date.now() - 30_000),
+        lastHeartbeat: new Date(),
+        memberId: "m-1",
       } as any);
       mockSessionDelete.mockResolvedValue({} as any);
       mockInterruptionFindMany.mockResolvedValue([

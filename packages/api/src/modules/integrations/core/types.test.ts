@@ -85,7 +85,7 @@ describe("integrations/core/types", () => {
   });
 
   it("exports canonical entities and keeps issue fields provider-neutral", () => {
-    expect(CANONICAL_ENTITY_TYPES).toEqual(["project", "cycle", "issue", "user"]);
+    expect(CANONICAL_ENTITY_TYPES).toEqual(["project", "cycle", "issue", "time_entry", "user"]);
     expect(CANONICAL_CHANGE_OPERATIONS).toEqual([
       "create",
       "update",

@@ -413,7 +413,10 @@ export async function stopWork(
     return { ok: true, deleted: false, workLog: null };
   }
 
-  const endedAt = new Date();
+  const stoppedAt = new Date();
+  const expired = existing.lastHeartbeat.getTime() <= stoppedAt.getTime() - SESSION_TTL_MS;
+  const endedAt = expired ? existing.lastHeartbeat : stoppedAt;
+  const reason = expired ? "expired" : "stopped";
   const durationS = Math.floor(
     (endedAt.getTime() - existing.startedAt.getTime()) / 1000,
   );
@@ -432,7 +435,7 @@ export async function stopWork(
             startedAt: existing.startedAt,
             endedAt,
             durationS,
-            reason: "stopped",
+            reason,
             // KAN-143 Fix A: fall back to session source when request via is absent.
             // Mirrors cleanupExpired which uses normalizeVia(s.source).
             via: via ?? normalizeVia(existing.source),
@@ -493,7 +496,7 @@ export async function stopWork(
         // work-session-resilience (Slice A): explicit user-driven stop must
         // be distinguishable from cleanupExpired (which emits reason: "expired").
         // Downstream listeners (forecast, telemetry) key off this field.
-        reason: "stopped",
+        reason,
       },
     });
   } catch {
@@ -531,6 +534,27 @@ export async function stopWork(
   }
 
   return { ok: true, deleted: true, workLog };
+}
+
+/** Close every currently active session before an issue completion gate is evaluated. */
+export async function stopActiveWorkSessions(issueKey: string) {
+  const issue = await prisma.issue.findUnique({
+    where: { key: issueKey },
+    select: { id: true },
+  });
+  if (!issue) {
+    throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${issueKey}" not found`);
+  }
+
+  const sessions = await prisma.workSession.findMany({
+    where: { issueId: issue.id },
+    select: { userId: true, memberId: true },
+  });
+  const stopped = [];
+  for (const session of sessions) {
+    stopped.push(await stopWork(issueKey, session.userId, session.memberId, null));
+  }
+  return stopped;
 }
 
 /**

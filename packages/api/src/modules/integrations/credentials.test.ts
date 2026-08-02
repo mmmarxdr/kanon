@@ -25,6 +25,9 @@ const remote = {
   whoAmI: vi.fn(async () => ({ id: "remote-user", displayName: "Remote user", login: "remote" })),
   listStatuses: vi.fn(async () => [{ id: "new", name: "New", writable: true }]),
   listProjects: vi.fn(async () => [{ id: "remote-project", name: "Remote project" }]),
+  listTimeEntryActivities: vi.fn(async () => [
+    { id: "9", name: "Development", isDefault: true },
+  ]),
 };
 const deps: ConnectionServiceDeps = {
   remote: vi.fn(() => remote),
@@ -67,7 +70,7 @@ describe("integration credentials", () => {
     );
     await configureConnection(
       connection.id,
-      { projectId: project.id, remoteProjectId: "remote-project", readMap: { new: "backlog" }, writeMap },
+      { projectId: project.id, remoteProjectId: "remote-project", timeActivityId: "9", readMap: { new: "backlog" }, writeMap },
       owner.userId,
       deps,
     );

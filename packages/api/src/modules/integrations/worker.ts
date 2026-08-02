@@ -8,10 +8,12 @@ import {
   type CanonicalIssue,
   type CanonicalIssuePatch,
   type CanonicalProject,
+  type CanonicalTimeEntry,
   type PmProviderAdapter,
   type ProviderCreateReconciliationRequest,
   type PushResult,
   type StatusWriteMap,
+  TIME_ENTRY_ACTIVITY_MAP_KEY,
 } from "./core/types.js";
 import {
   ExternalRefBackfillInvariantError,
@@ -33,11 +35,11 @@ const ISSUE_FIELDS = new Set<string>([
   ...ISSUE_CAPTURE_FIELDS,
   ...ISSUE_SCHEDULE_CAPTURE_FIELDS,
 ]);
-type ExternalEntityType = "project" | "cycle" | "issue" | "user";
+type ExternalEntityType = "project" | "cycle" | "issue" | "time_entry" | "user";
 export type IntegrationDispatchAdapter = Pick<
   PmProviderAdapter,
   "ensureProject" | "ensureCycle" | "pushIssue" | "reconcileCreate"
->;
+> & Partial<Pick<PmProviderAdapter, "pushTimeEntry">>;
 export interface IntegrationWorkerLogger {
   info(context: unknown, message: string): void;
   warn(context: unknown, message: string): void;
@@ -65,7 +67,8 @@ export interface IntegrationWorkerDependencies {
 type Dispatch =
   | { kind: "project"; entity: CanonicalProject }
   | { kind: "cycle"; entity: CanonicalCycle }
-  | { kind: "issue"; entity: CanonicalIssue; patch: CanonicalIssuePatch };
+  | { kind: "issue"; entity: CanonicalIssue; patch: CanonicalIssuePatch }
+  | { kind: "time_entry"; entity: CanonicalTimeEntry; activityId: string };
 type Prepared = {
   work: IntegrationSyncWork;
   adapter: IntegrationWorkerAdapterOptions;
@@ -225,6 +228,19 @@ async function entityOwned(
       })) === 1
     );
   }
+  if (current.entityType === "time_entry") {
+    return (
+      (await transaction.timeEntry.count({
+        where: {
+          id: current.entityId,
+          issue: {
+            projectId: current.binding.projectId,
+            project: { workspaceId: current.binding.connection.workspaceId },
+          },
+        },
+      })) === 1
+    );
+  }
   return false;
 }
 function issueFields(payload: Prisma.JsonValue) {
@@ -246,6 +262,23 @@ function issueFields(payload: Prisma.JsonValue) {
     throw new TerminalError("Unsupported integration issue fields");
   }
   return fields as Record<string, Prisma.JsonValue>;
+}
+function confirmedTimePayload(payload: Prisma.JsonValue) {
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    Array.isArray(payload) ||
+    payload["version"] !== 1 ||
+    typeof payload["targetHours"] !== "string" ||
+    !Array.isArray(payload["entryIds"]) ||
+    payload["entryIds"].some((id) => typeof id !== "string")
+  ) {
+    throw new TerminalError("Unsupported integration time-entry payload");
+  }
+  return {
+    targetHours: payload["targetHours"],
+    entryIds: [...payload["entryIds"]].sort() as string[],
+  };
 }
 const omit = { kind: "omit" } as const;
 const field = <T>(changed: boolean, value: T | null) =>
@@ -435,6 +468,84 @@ async function prepare(
           startDate: field(changed("startDate"), entity.startDate),
           dueDate: field(changed("dueDate"), entity.dueDate),
           progress: changed("progress") ? { kind: "set", value: entity.progress } : omit,
+        },
+      };
+    } else if (current.entityType === "time_entry") {
+      const captured = confirmedTimePayload(current.payload);
+      const root = await transaction.timeEntry.findFirst({
+        where: {
+          id: current.entityId,
+          status: "approved",
+          issue: { projectId: current.binding.projectId },
+        },
+        select: {
+          id: true,
+          issueId: true,
+          memberId: true,
+          hours: true,
+          workedOn: true,
+          adjustsId: true,
+        },
+      });
+      if (!root || !root.issueId || root.adjustsId) {
+        throw new TerminalError("Canonical time entry no longer exists in the binding project");
+      }
+      const entries = await transaction.timeEntry.findMany({
+        where: { issueId: root.issueId, status: "approved" },
+        select: { id: true, hours: true, adjustsId: true },
+      });
+      const byId = new Map(entries.map((entry) => [entry.id, entry]));
+      const component = entries.filter((entry) => {
+        let currentEntry = entry;
+        const seen = new Set<string>();
+        while (currentEntry.adjustsId) {
+          if (seen.has(currentEntry.id)) throw new TerminalError("Time adjustment cycle detected");
+          seen.add(currentEntry.id);
+          const adjusted = byId.get(currentEntry.adjustsId);
+          if (!adjusted) return false;
+          currentEntry = adjusted;
+        }
+        return currentEntry.id === root.id;
+      });
+      const entryIds = component.map(({ id }) => id).sort();
+      const targetHours = component
+        .reduce((sum, entry) => sum.plus(entry.hours), new Prisma.Decimal(0))
+        .toString();
+      if (
+        captured.targetHours !== targetHours ||
+        captured.entryIds.length !== entryIds.length ||
+        captured.entryIds.some((id, index) => id !== entryIds[index])
+      ) {
+        const superseded = await transaction.integrationSyncWork.updateMany({
+          where: { ...fenced(claimed), leaseUntil: { gt: now } },
+          data: { state: "superseded", leaseToken: null, leaseUntil: null },
+        });
+        return superseded.count
+          ? { kind: "skipped", reason: "Captured time was superseded" }
+          : { kind: "stale" };
+      }
+      if (new Prisma.Decimal(targetHours).lessThan(0)) {
+        throw new TerminalError("Confirmed time total cannot be negative");
+      }
+      ownRef = await findRef("time_entry", root.id, false);
+      if (current.refId && current.refId !== ownRef?.id) {
+        throw new TerminalError("Captured time-entry reference is stale");
+      }
+      const issueRef = await findRef("issue", root.issueId, false);
+      if (!issueRef) throw new Error("Remote issue reference is not ready");
+      const writeMap = current.binding.writeMap as Record<string, unknown>;
+      const activityId = writeMap[TIME_ENTRY_ACTIVITY_MAP_KEY];
+      if (typeof activityId !== "string" || activityId.length === 0) {
+        throw new TerminalError("Missing configured Redmine time-entry activity");
+      }
+      dispatch = {
+        kind: "time_entry",
+        activityId,
+        entity: {
+          id: root.id,
+          issueId: root.issueId,
+          hours: targetHours,
+          workedOn: root.workedOn,
         },
       };
     } else if (current.entityType === "cycle") {
@@ -669,7 +780,11 @@ async function claimAmbiguous(
       );
       return { kind: "handled" };
     }
-    if (current.entityType !== "issue" && current.entityType !== "cycle") {
+    if (
+      current.entityType !== "issue" &&
+      current.entityType !== "cycle" &&
+      current.entityType !== "time_entry"
+    ) {
       await createAmbiguityConflict(
         transaction,
         current,
@@ -677,6 +792,47 @@ async function claimAmbiguous(
         now,
       );
       return { kind: "handled" };
+    }
+
+    let request: ProviderCreateReconciliationRequest;
+    if (current.entityType === "time_entry") {
+      const entry = await transaction.timeEntry.findFirst({
+        where: { id: current.entityId, issue: { projectId: current.binding.projectId } },
+        select: { issueId: true, workedOn: true },
+      });
+      const issueRef = entry?.issueId
+        ? await transaction.externalRef.findUnique({
+            where: {
+              connectionId_entityType_entityId: {
+                connectionId: current.binding.connectionId,
+                entityType: "issue",
+                entityId: entry.issueId,
+              },
+            },
+          })
+        : null;
+      if (!entry?.issueId || !issueRef || issueRef.bindingId !== current.bindingId) {
+        await createAmbiguityConflict(
+          transaction,
+          current,
+          { reason: "missing-time-entry-issue-reference" },
+          now,
+        );
+        return { kind: "handled" };
+      }
+      request = {
+        entityType: "time_entry",
+        entityId: current.entityId,
+        remoteProjectId: current.binding.remoteProjectId,
+        remoteIssueId: issueRef.externalId,
+        spentOn: entry.workedOn.toISOString().slice(0, 10),
+      };
+    } else {
+      request = {
+        entityType: current.entityType,
+        entityId: current.entityId,
+        remoteProjectId: current.binding.remoteProjectId,
+      };
     }
 
     const auth = await credential(transaction, current, d);
@@ -703,11 +859,7 @@ async function claimAmbiguous(
       kind: "claimed",
       value: {
         work: claimed,
-        request: {
-          entityType: current.entityType,
-          entityId: current.entityId,
-          remoteProjectId: current.binding.remoteProjectId,
-        },
+        request,
         adapter: {
           baseUrl: current.binding.connection.baseUrl,
           apiKey: auth.apiKey,
@@ -729,8 +881,29 @@ async function attachResult(
   work: IntegrationSyncWork,
   result: PushResult,
   now: Date,
-): Promise<string> {
+): Promise<string | null> {
   const binding = current.binding;
+  if (result.deleted) {
+    const existing = await transaction.externalRef.findUnique({
+      where: {
+        connectionId_entityType_entityId: {
+          connectionId: binding.connectionId,
+          entityType: work.entityType,
+          entityId: work.entityId,
+        },
+      },
+    });
+    if (existing && existing.bindingId !== binding.id) {
+      throw new AttachConflictError("External reference belongs to another binding");
+    }
+    if (existing) await transaction.externalRef.delete({ where: { id: existing.id } });
+    const done = await transaction.integrationSyncWork.updateMany({
+      where: { ...fenced(work), leaseUntil: { gt: now } },
+      data: { state: "done", refId: null, leaseToken: null, leaseUntil: null },
+    });
+    if (done.count !== 1) throw new StaleFinalizeError();
+    return null;
+  }
   const [existing, remote] = await Promise.all([
     transaction.externalRef.findUnique({
       where: {
@@ -1096,6 +1269,15 @@ async function process(database: PrismaClient, work: IntegrationSyncWork, d: Dep
     pushed =
       prepared.dispatch.kind === "issue"
         ? await adapter.pushIssue(prepared.dispatch.entity, prepared.dispatch.patch)
+        : prepared.dispatch.kind === "time_entry"
+          ? adapter.pushTimeEntry
+            ? await adapter.pushTimeEntry(
+                prepared.dispatch.entity,
+                prepared.dispatch.activityId,
+              )
+            : (() => {
+                throw new TerminalError("Integration adapter cannot write time entries");
+              })()
         : prepared.dispatch.kind === "cycle"
           ? await adapter.ensureCycle(prepared.dispatch.entity)
           : await adapter.ensureProject(prepared.dispatch.entity);

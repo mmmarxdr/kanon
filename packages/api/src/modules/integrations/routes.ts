@@ -20,6 +20,7 @@ const CreateConnection = z.object({
 const ConfigureConnection = z.object({
   projectId: z.string().uuid(),
   remoteProjectId: z.string().min(1),
+  timeActivityId: z.string().min(1),
   readMap: z.record(z.string(), z.string()),
   writeMap: z.record(z.string(), z.string()),
 });

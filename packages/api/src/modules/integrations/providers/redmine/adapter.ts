@@ -5,6 +5,7 @@ import {
   type CanonicalIssue,
   type CanonicalIssuePatch,
   type CanonicalProject,
+  type CanonicalTimeEntry,
   type PmProviderAdapter,
   type ProviderCreateReconciliationRequest,
   type PushResult,
@@ -12,8 +13,8 @@ import {
 } from "../../core/types.js";
 import { RedmineHttpError, type RedmineHttpClient } from "./http-client.js";
 
-type ExternalEntityType = "project" | "cycle" | "issue" | "user";
-type HttpClient = Pick<RedmineHttpClient, "get" | "post" | "put">;
+type ExternalEntityType = "project" | "cycle" | "issue" | "time_entry" | "user";
+type HttpClient = Pick<RedmineHttpClient, "delete" | "get" | "post" | "put">;
 
 interface RedmineProviderOptions {
   writeMap: StatusWriteMap;
@@ -33,10 +34,16 @@ type RemoteVersion = RemoteRef & {
   status?: string;
   updated_on?: string;
 };
+type RemoteTimeEntry = {
+  id: string | number;
+  comments?: string | null;
+  updated_on?: string;
+};
 
 const ISSUE_PAGE_SIZE = 100;
 const MAX_ISSUE_PAGES = 3;
 const MAX_RECONCILIATION_ISSUES = ISSUE_PAGE_SIZE * MAX_ISSUE_PAGES;
+const TIME_ENTRY_MARKER = (id: string) => `[kanon-time-entry:${id}]`;
 
 const externalId = (value: string | number) => String(value);
 const positiveNumericId = (value: unknown): number | null => {
@@ -132,6 +139,17 @@ export class RedmineProviderAdapter implements PmProviderAdapter {
     }));
   }
 
+  async listTimeEntryActivities() {
+    const response = await this.client.get<{
+      time_entry_activities: Array<RemoteRef & { is_default?: boolean }>;
+    }>("/enumerations/time_entry_activities.json");
+    return response.time_entry_activities.map((activity) => ({
+      id: externalId(activity.id),
+      name: activity.name ?? "",
+      isDefault: activity.is_default === true,
+    }));
+  }
+
   async listCycles(projectId: string) {
     const response = await this.client.get<{
       versions: Array<RemoteRef & { due_date?: string | null }>;
@@ -169,6 +187,51 @@ export class RedmineProviderAdapter implements PmProviderAdapter {
   ): Promise<readonly PushResult[]> {
     const marker = `<!-- kanon-${request.entityType}:${request.entityId} -->`;
     const matches = new Map<string, PushResult>();
+
+    if (request.entityType === "time_entry") {
+      const query = new URLSearchParams({
+        issue_id: request.remoteIssueId,
+        from: request.spentOn,
+        to: request.spentOn,
+        limit: String(ISSUE_PAGE_SIZE),
+      });
+      let offset = 0;
+      for (let pageNumber = 0; pageNumber < MAX_ISSUE_PAGES; pageNumber += 1) {
+        query.set("offset", String(offset));
+        const page = await this.client.get<{
+          time_entries: RemoteTimeEntry[];
+          total_count: number;
+          offset: number;
+          limit: number;
+        }>(`/time_entries.json?${query}`);
+        if (
+          !Array.isArray(page.time_entries) ||
+          !Number.isSafeInteger(page.total_count) ||
+          page.total_count < 0 ||
+          page.total_count > MAX_RECONCILIATION_ISSUES ||
+          page.offset !== offset ||
+          !Number.isSafeInteger(page.limit) ||
+          page.limit < 1 ||
+          page.limit > ISSUE_PAGE_SIZE
+        ) {
+          throw new Error("Malformed Redmine time-entry pagination");
+        }
+        for (const entry of page.time_entries) {
+          if (positiveNumericId(entry.id) === null) {
+            throw new Error("Malformed Redmine time-entry response");
+          }
+          if (entry.comments === TIME_ENTRY_MARKER(request.entityId)) {
+            matches.set(
+              externalId(entry.id),
+              result(externalId(entry.id), entry.updated_on ?? null),
+            );
+          }
+        }
+        offset = page.offset + page.limit;
+        if (offset >= page.total_count) return [...matches.values()].sort(byExternalId);
+      }
+      throw new Error("Malformed Redmine time-entry pagination");
+    }
 
     if (request.entityType === "cycle") {
       const response = await this.client.get<{ versions: RemoteVersion[] }>(
@@ -356,6 +419,45 @@ export class RedmineProviderAdapter implements PmProviderAdapter {
       achievedStatusId: observed.issue.status ? externalId(observed.issue.status.id) : null,
       remoteVersion: observed.issue.updated_on ?? null,
     };
+  }
+
+  async pushTimeEntry(entry: CanonicalTimeEntry, activityId: string): Promise<PushResult> {
+    const currentId = await this.options.resolveExternalId("time_entry", entry.id);
+    if (Number(entry.hours) === 0) {
+      if (currentId) {
+        try {
+          await this.client.delete(`/time_entries/${encodeURIComponent(currentId)}.json`);
+        } catch (error) {
+          if (!(error instanceof RedmineHttpError) || error.statusCode !== 404) retryableFailure(error);
+        }
+      }
+      return { ...result(currentId ?? ""), deleted: true };
+    }
+
+    const remoteIssueId = await this.requireExternalId("issue", entry.issueId);
+    const payload = {
+      issue_id: remoteIssueId,
+      hours: entry.hours,
+      activity_id: activityId,
+      spent_on: dateOnly(entry.workedOn),
+      comments: TIME_ENTRY_MARKER(entry.id),
+    };
+    try {
+      if (currentId) {
+        await this.client.put(`/time_entries/${encodeURIComponent(currentId)}.json`, {
+          time_entry: payload,
+        });
+        return result(currentId);
+      }
+      const response = await this.client.post<{ time_entry: RemoteTimeEntry }>("/time_entries.json", {
+        time_entry: payload,
+      });
+      const id = positiveNumericId(response.time_entry?.id);
+      if (id === null) throw new Error("Malformed Redmine time-entry response");
+      return result(externalId(id), response.time_entry.updated_on ?? null);
+    } catch (error) {
+      writeFailure(error, currentId === null);
+    }
   }
 
   private async issuePayload(issue: CanonicalIssue, patch: CanonicalIssuePatch, creating: boolean) {
