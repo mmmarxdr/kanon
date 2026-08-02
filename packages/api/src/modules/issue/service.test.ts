@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../work-session/service.js", () => ({
   getActiveWorkers: vi.fn().mockResolvedValue([]),
   getActiveWorkersForIssues: vi.fn().mockResolvedValue({}),
+  stopActiveWorkSessions: vi.fn().mockResolvedValue([]),
 }));
 
 // Mock issue-subscription service (getStatus used by getIssue for subscribed field)

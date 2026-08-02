@@ -3,7 +3,7 @@ import { Prisma, PrismaClient } from "@prisma/client";
 
 const SCANNABLE_STATES = ["queued", "retry"] as const;
 const DEFAULT_SCAN_LIMIT = 100;
-const SUPPORTED_ENTITY_TYPES = ["issue", "project", "cycle"] as const;
+const SUPPORTED_ENTITY_TYPES = ["issue", "project", "cycle", "time_entry"] as const;
 
 export type IntegrationWorkDirection = "outbound" | "inbound";
 export type IntegrationWorkOperation = "create" | "update" | "delete" | "close";
@@ -87,6 +87,17 @@ async function loadEntityOwnership(
       });
       return cycle
         ? { projectId: cycle.projectId, workspaceId: cycle.project.workspaceId }
+        : null;
+    }
+    case "time_entry": {
+      const entry = await transaction.timeEntry.findUnique({
+        where: { id: entityId },
+        select: {
+          issue: { select: { projectId: true, project: { select: { workspaceId: true } } } },
+        },
+      });
+      return entry?.issue
+        ? { projectId: entry.issue.projectId, workspaceId: entry.issue.project.workspaceId }
         : null;
     }
   }

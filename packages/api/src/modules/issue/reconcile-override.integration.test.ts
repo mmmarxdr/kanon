@@ -119,7 +119,7 @@ describe("KAN-188 reconcile-time confirmedTotalHours override — integration (r
     expect(transitionRes.json().state).toBe("done");
   });
 
-  it("throws RECONCILE_NO_ANCHOR (409) end-to-end when a downward override has no approved entry to anchor to", async () => {
+  it("does not count another member's draft as confirmed time", async () => {
     const ws = await seedTestWorkspace();
     const member = await seedTestMemberWithRole(ws.id, "pm");
     const project = await seedTestProject(ws.id, "RCOB");
@@ -138,12 +138,8 @@ describe("KAN-188 reconcile-time confirmedTotalHours override — integration (r
       },
     });
 
-    // NOTE: reconcileIssueTime bulk-approves the requesting member's own
-    // draft/submitted entries BEFORE evaluating the override (Step 2 runs
-    // before Step 2.5), so this single-member draft entry becomes an
-    // approved anchor and the override succeeds. This test instead uses a
-    // cross-member draft entry, which is never approved by this reconcile
-    // call, to exercise the true no-anchor guard path end-to-end.
+    // A cross-member draft is not approved by this reconcile call and must not
+    // inflate the authoritative confirmed total.
     const other = await seedTestMemberWithRole(ws.id, "member");
     await seedTestProjectMember(other.userId, project.id, "member");
     await prisma.timeEntry.updateMany({
@@ -158,11 +154,13 @@ describe("KAN-188 reconcile-time confirmedTotalHours override — integration (r
       payload: { confirmedTotalHours: "2" },
     });
 
-    expect(reconcileRes.statusCode).toBe(409);
-    expect(reconcileRes.json().code).toBe("RECONCILE_NO_ANCHOR");
+    expect(reconcileRes.statusCode).toBe(200);
+    expect(reconcileRes.json().totalHours).toBe(2);
 
-    // No corrective entry should have been written.
     const entries = await prisma.timeEntry.findMany({ where: { issueId: issue.id } });
-    expect(entries.some((e) => e.via === "reconcile-override")).toBe(false);
+    const correction = entries.find((entry) => entry.via === "reconcile-override");
+    expect(correction).toBeDefined();
+    expect(parseFloat(correction!.hours.toString())).toBe(2);
+    expect(correction!.adjustsId).toBeNull();
   });
 });

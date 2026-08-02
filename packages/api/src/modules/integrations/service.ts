@@ -3,7 +3,13 @@ import { env } from "../../config/env.js";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 import { decrypt as decryptCredential, encrypt as encryptCredential } from "./core/crypto.js";
-import type { DiscoveredProject, DiscoveredStatus, DiscoveredUser } from "./core/types.js";
+import {
+  TIME_ENTRY_ACTIVITY_MAP_KEY,
+  type DiscoveredProject,
+  type DiscoveredStatus,
+  type DiscoveredTimeEntryActivity,
+  type DiscoveredUser,
+} from "./core/types.js";
 import { RedmineProviderAdapter } from "./providers/redmine/adapter.js";
 import { RedmineHttpClient } from "./providers/redmine/http-client.js";
 
@@ -13,6 +19,7 @@ interface RemoteDiscovery {
   whoAmI(): Promise<DiscoveredUser>;
   listStatuses(): Promise<readonly DiscoveredStatus[]>;
   listProjects(): Promise<readonly DiscoveredProject[]>;
+  listTimeEntryActivities(): Promise<readonly DiscoveredTimeEntryActivity[]>;
 }
 
 export interface ConnectionServiceDeps {
@@ -125,10 +132,11 @@ export async function createConnection(
     throw new AppError(409, "INTEGRATION_ALREADY_CONFIGURED", "Only a draft connection can be bootstrapped again");
   }
   const remote = deps.remote(input.baseUrl, input.apiKey);
-  const [identity, statuses, projects] = await Promise.all([
+  const [identity, statuses, projects, timeEntryActivities] = await Promise.all([
     remote.whoAmI(),
     remote.listStatuses(),
     remote.listProjects(),
+    remote.listTimeEntryActivities(),
   ]);
   const encryptedKey = deps.encrypt(input.apiKey);
   const discoveredStatuses = statuses.map(({ id, name, writable }) => ({ id, name, writable }));
@@ -178,7 +186,7 @@ export async function createConnection(
     });
   });
 
-  return { connection, discovery: { statuses, projects } };
+  return { connection, discovery: { statuses, projects, timeEntryActivities } };
 }
 
 async function lockConnection(transaction: Prisma.TransactionClient, connectionId: string) {
@@ -195,14 +203,18 @@ export async function getConnectionDiscovery(
   const connection = await ownedConnection(prisma, connectionId, userId);
   const credential = await serviceCredential(prisma, connection);
   const remote = deps.remote(connection.baseUrl, deps.decrypt(credential.encryptedKey));
-  const [statuses, projects] = await Promise.all([remote.listStatuses(), remote.listProjects()]);
+  const [statuses, projects, timeEntryActivities] = await Promise.all([
+    remote.listStatuses(),
+    remote.listProjects(),
+    remote.listTimeEntryActivities(),
+  ]);
   const discoveredStatuses = statuses.map(({ id, name, writable }) => ({ id, name, writable }));
   await ownedConnection(prisma, connectionId, userId);
   await prisma.integrationConnection.update({
     where: { id: connection.id },
     data: { discoveredStatuses },
   });
-  return { statuses, projects };
+  return { statuses, projects, timeEntryActivities };
 }
 
 export async function configureConnection(
@@ -210,6 +222,7 @@ export async function configureConnection(
   input: {
     projectId: string;
     remoteProjectId: string;
+    timeActivityId: string;
     readMap: Readonly<Record<string, string>>;
     writeMap: Readonly<Record<string, string>>;
   },
@@ -219,9 +232,16 @@ export async function configureConnection(
   const connection = await ownedConnection(prisma, connectionId, userId);
   const credential = await serviceCredential(prisma, connection);
   const remote = deps.remote(connection.baseUrl, deps.decrypt(credential.encryptedKey));
-  const [projects, statuses] = await Promise.all([remote.listProjects(), remote.listStatuses()]);
+  const [projects, statuses, timeEntryActivities] = await Promise.all([
+    remote.listProjects(),
+    remote.listStatuses(),
+    remote.listTimeEntryActivities(),
+  ]);
   if (!projects.some(({ id }) => id === input.remoteProjectId)) {
     throw new AppError(400, "REMOTE_PROJECT_NOT_FOUND", "Select a project returned by discovery");
+  }
+  if (!timeEntryActivities.some(({ id }) => id === input.timeActivityId)) {
+    throw new AppError(400, "REMOTE_TIME_ACTIVITY_NOT_FOUND", "Select a time activity returned by discovery");
   }
   const statusIds = new Set(statuses.map(({ id }) => id));
   const writableStatusIds = new Set(statuses.filter(({ writable }) => writable).map(({ id }) => id));
@@ -243,6 +263,10 @@ export async function configureConnection(
       select: { id: true },
     });
     if (!project) throw new AppError(400, "PROJECT_NOT_FOUND", "Project does not belong to this workspace");
+    const writeMap = {
+      ...input.writeMap,
+      [TIME_ENTRY_ACTIVITY_MAP_KEY]: input.timeActivityId,
+    };
     const binding = await transaction.integrationProjectBinding.upsert({
       where: { connectionId_projectId: { connectionId, projectId: project.id } },
       create: {
@@ -250,12 +274,12 @@ export async function configureConnection(
         projectId: project.id,
         remoteProjectId: input.remoteProjectId,
         readMap: input.readMap as Prisma.InputJsonValue,
-        writeMap: input.writeMap as Prisma.InputJsonValue,
+        writeMap: writeMap as Prisma.InputJsonValue,
       },
       update: {
         remoteProjectId: input.remoteProjectId,
         readMap: input.readMap as Prisma.InputJsonValue,
-        writeMap: input.writeMap as Prisma.InputJsonValue,
+        writeMap: writeMap as Prisma.InputJsonValue,
         lifecycle: "draft",
         lifecycleEpoch: { increment: 1 },
       },
@@ -323,8 +347,11 @@ function hasCompleteMaps(
     return false;
   const writeMap = binding.writeMap as Record<string, unknown>;
   const writableIds = new Set(statuses.filter(({ writable }) => writable).map(({ id }) => id));
-  return WRITABLE_STATES.every(
-    (state) => typeof writeMap[state] === "string" && writableIds.has(writeMap[state] as string),
+  return (
+    typeof writeMap[TIME_ENTRY_ACTIVITY_MAP_KEY] === "string" &&
+    WRITABLE_STATES.every(
+      (state) => typeof writeMap[state] === "string" && writableIds.has(writeMap[state] as string),
+    )
   );
 }
 
