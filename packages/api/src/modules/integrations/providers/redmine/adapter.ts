@@ -498,9 +498,8 @@ export class RedmineProviderAdapter implements PmProviderAdapter {
         : "";
     }
     const cycleId = value(patch.cycleId, issue.cycleId);
-    if (cycleId !== undefined) {
-      payload["fixed_version_id"] = cycleId ? await this.requireExternalId("cycle", cycleId) : "";
-    }
+    if (cycleId) payload["fixed_version_id"] = await this.requireExternalId("cycle", cycleId);
+    else if (!creating && cycleId === null) payload["fixed_version_id"] = "";
     if (creating) payload["project_id"] = await this.requireExternalId("project", issue.projectId);
     return payload;
   }

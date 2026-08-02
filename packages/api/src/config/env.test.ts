@@ -260,6 +260,9 @@ describe("envSchema — REDMINE_ENDPOINT_ALLOWLIST", () => {
     JSON.stringify({ "https://redmine.internal.example": ["10.20.30.40"] }),
     JSON.stringify({ "http://redmine.internal.example/path": ["10.20.30.40"] }),
     JSON.stringify({ "http://redmine.internal.example": ["10.20.30.0/24"] }),
+    JSON.stringify({
+      "http://redmine.internal.example": ["0:0:0:0:0:ffff:192.168.1.100"],
+    }),
     JSON.stringify({ "http://redmine.internal.example": [] }),
   ])("rejects malformed or broad policy %s", (policy) => {
     const result = envSchema.safeParse({ ...base, REDMINE_ENDPOINT_ALLOWLIST: policy });
