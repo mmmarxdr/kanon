@@ -38,6 +38,7 @@ import type {
 } from "../integrations/issue-mutation-contract.js";
 import {
   captureIssueMutationTx,
+  type IssueCaptureOverride,
   resolveIssueCaptureContext,
   withIssueMutationTx,
 } from "../integrations/issue-tx.js";
@@ -50,8 +51,9 @@ async function mutateIssueWithCapture(
   operation: IssueCaptureIntent["operation"],
   fields: (result: IssueMutationRow) => IssueCaptureFields,
   mutate: (database: IssueDatabase) => Promise<IssueMutationRow>,
+  captureOverride?: IssueCaptureOverride,
 ): Promise<IssueMutationRow> {
-  const capture = await resolveIssueCaptureContext(projectId, memberId);
+  const capture = captureOverride ?? (await resolveIssueCaptureContext(projectId, memberId));
   if (!capture) return mutate(prisma);
 
   return withIssueMutationTx(async (transaction) => {
@@ -60,8 +62,8 @@ async function mutateIssueWithCapture(
       result,
       capture: {
         ...capture,
-        operation,
-        correlationId: randomUUID(),
+        operation: captureOverride?.operation ?? operation,
+        correlationId: captureOverride?.correlationId ?? randomUUID(),
         fields: fields(result),
       },
     };
@@ -774,6 +776,7 @@ export async function transitionIssue(
   memberId: string,
   via?: string | null,
   cause?: string,
+  captureOverride?: IssueCaptureOverride,
 ) {
   const issue = await prisma.issue.findUnique({
     where: { key },
@@ -824,6 +827,7 @@ export async function transitionIssue(
           completedAt: toState === "done" ? new Date() : null,
         },
       }),
+    captureOverride,
   );
 
   // Create activity log for state change

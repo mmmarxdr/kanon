@@ -4,6 +4,11 @@ const worker = vi.hoisted(() => {
   return { run: Object.assign(vi.fn().mockResolvedValue(undefined), { stop }), stop };
 });
 const createWorker = vi.hoisted(() => vi.fn(() => worker.run));
+const inboundWorker = vi.hoisted(() => {
+  const stop = vi.fn();
+  return { run: Object.assign(vi.fn().mockResolvedValue(undefined), { stop }), stop };
+});
+const createInboundWorker = vi.hoisted(() => vi.fn(() => inboundWorker.run));
 const startupSnapshot = vi.hoisted(() =>
   vi.fn().mockResolvedValue({
     queued: 1,
@@ -17,6 +22,7 @@ vi.mock("./worker.js", () => ({
   createIntegrationWorkerCycle: createWorker,
   readIntegrationWorkerStartupSnapshot: startupSnapshot,
 }));
+vi.mock("./inbound.js", () => ({ createInboundSyncCycle: createInboundWorker }));
 process.env["COOKIE_SECRET"] =
   process.env["COOKIE_SECRET"] ?? "test-cookie-secret-at-least-32-chars-long";
 import { buildApp } from "../../app.js";
@@ -88,14 +94,17 @@ describe("integration scheduler", () => {
   it("starts on app ready and stops on app close", async () => {
     vi.useFakeTimers();
     const scan = vi.fn().mockResolvedValue([]);
-    const app = await buildApp({ integrationScan: scan });
+    const inboundScan = vi.fn().mockResolvedValue([]);
+    const app = await buildApp({ integrationScan: scan, inboundScan });
     await app.ready();
 
     await vi.advanceTimersByTimeAsync(60_000);
     expect(scan).toHaveBeenCalledOnce();
+    expect(inboundScan).toHaveBeenCalledOnce();
     await app.close();
     await vi.advanceTimersByTimeAsync(300_000);
     expect(scan).toHaveBeenCalledOnce();
+    expect(inboundScan).toHaveBeenCalledOnce();
   });
 
   it("activates one default worker closure and logs the startup snapshot", async () => {
@@ -106,6 +115,11 @@ describe("integration scheduler", () => {
 
     expect(createWorker).toHaveBeenCalledOnce();
     expect(createWorker).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ logger: app.log }),
+    );
+    expect(createInboundWorker).toHaveBeenCalledOnce();
+    expect(createInboundWorker).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ logger: app.log }),
     );
@@ -122,5 +136,6 @@ describe("integration scheduler", () => {
     );
     await app.close();
     expect(worker.stop).toHaveBeenCalledOnce();
+    expect(inboundWorker.stop).toHaveBeenCalledOnce();
   });
 });

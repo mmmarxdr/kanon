@@ -50,12 +50,15 @@ import {
   readIntegrationWorkerStartupSnapshot,
 } from "./modules/integrations/worker.js";
 import integrationRoutes from "./modules/integrations/routes.js";
+import { createInboundSyncCycle } from "./modules/integrations/inbound.js";
 
 export interface BuildAppOptions {
   /** Optional override for the email provider (useful for testing with a spy). */
   emailProvider?: EmailProvider;
   /** Optional durable-work scanner override for lifecycle tests. */
   integrationScan?: () => Promise<unknown>;
+  /** Optional inbound poller override for lifecycle tests. */
+  inboundScan?: () => Promise<unknown>;
   /**
    * Force-enable rate limiting even under NODE_ENV=test (KAN-77). Rate limiting
    * is normally off in test to avoid cross-test interference; integration tests
@@ -216,12 +219,18 @@ export async function buildApp(opts: BuildAppOptions = {}) {
         return current;
       }
     : integrationWorker!;
+  const injectedInboundScan = opts.inboundScan;
+  const inboundWorker = injectedInboundScan
+    ? undefined
+    : createInboundSyncCycle(prisma, { logger: app.log });
+  const inboundScan = injectedInboundScan ?? inboundWorker!;
   const unsubscribeIntegrationSync = registerIntegrationSyncListener(
     eventBus,
     integrationScan,
     app.log
   );
   let stopIntegrationScheduler: (() => Promise<void>) | undefined;
+  let stopInboundScheduler: (() => Promise<void>) | undefined;
   app.addHook("onReady", async () => {
     try {
       app.log.info(
@@ -234,13 +243,19 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     stopIntegrationScheduler = startIntegrationScheduler(integrationScan, (err) =>
       app.log.error({ err }, "Integration work scan failed")
     );
+    stopInboundScheduler = startIntegrationScheduler(inboundScan, (err) =>
+      app.log.error({ err }, "Integration inbound poll failed")
+    );
   });
   app.addHook("onClose", async () => {
     integrationWorker?.stop();
+    inboundWorker?.stop();
     const listenerDrain = unsubscribeIntegrationSync();
     const schedulerDrain = stopIntegrationScheduler?.() ?? Promise.resolve();
+    const inboundDrain = stopInboundScheduler?.() ?? Promise.resolve();
     stopIntegrationScheduler = undefined;
-    await Promise.all([listenerDrain, schedulerDrain]);
+    stopInboundScheduler = undefined;
+    await Promise.all([listenerDrain, schedulerDrain, inboundDrain]);
   });
 
   // Health check with DB connectivity (always public, before auth)
