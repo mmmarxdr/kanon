@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { integrationConnectionSchema } from "@kanon/shared";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "../../config/prisma.js";
 import {
@@ -17,6 +18,7 @@ import {
   createConnection,
   getConnection,
   getConnectionDiscovery,
+  getWorkspaceConnection,
   reencryptCredentials,
   type ConnectionServiceDeps,
 } from "./service.js";
@@ -154,6 +156,38 @@ describe("integration credentials", () => {
       payload: { connectionId: "not-a-uuid", apiKey: "" },
     });
     expect(response.statusCode).toBe(400);
+  });
+
+  it("finds the Redmine connection by workspace only for workspace members", async () => {
+    const workspace = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const member = await seedTestMemberWithRole(workspace.id, "member");
+    const otherWorkspace = await seedTestWorkspace();
+    const outsider = await seedTestMemberWithRole(otherWorkspace.id, "owner");
+
+    await expect(getWorkspaceConnection(workspace.id, owner.userId)).resolves.toBeNull();
+    const { connection } = await createConnection(
+      { workspaceId: workspace.id, baseUrl: "https://redmine.example.test", apiKey: "owner-key" },
+      owner.userId,
+      deps,
+    );
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/integrations/connections?workspaceId=${workspace.id}`,
+      headers: { authorization: `Bearer ${member.token}` },
+    });
+    expect(response.statusCode).toBe(200);
+    const detail = integrationConnectionSchema.parse(response.json());
+    expect(detail).toMatchObject({
+      id: connection.id,
+      connectedMemberIds: [owner.id],
+      counts: { workspaceMembers: 2, validCredentials: 1 },
+    });
+    await expect(getWorkspaceConnection(workspace.id, outsider.userId)).rejects.toMatchObject({
+      statusCode: 403,
+      code: "FORBIDDEN",
+    });
   });
 
   it("dry-runs, rotates, reruns, and reverses mixed-key credentials", async () => {

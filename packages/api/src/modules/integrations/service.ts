@@ -510,9 +510,22 @@ export async function clearCredential(connectionId: string, userId: string) {
   return publicCredential(credential);
 }
 
+export async function getWorkspaceConnection(workspaceId: string, userId: string) {
+  const member = await prisma.member.findUnique({
+    where: { userId_workspaceId: { userId, workspaceId } },
+    select: { id: true },
+  });
+  if (!member) throw new AppError(403, "FORBIDDEN", "Workspace membership is required");
+  const connection = await prisma.integrationConnection.findUnique({
+    where: { workspaceId_provider: { workspaceId, provider: "redmine" } },
+    select: { id: true },
+  });
+  return connection ? getConnection(connection.id, userId) : null;
+}
+
 export async function getConnection(connectionId: string, userId: string) {
   const { connection, member } = await memberConnection(prisma, connectionId, userId);
-  const [credential, bindings, workspaceMembers, validCredentials, externalIdentities] =
+  const [credential, bindings, workspaceMembers, externalIdentities, connectedCredentials] =
     await Promise.all([
       prisma.memberIntegrationCredential.findUnique({
         where: { memberId_connectionId: { memberId: member.id, connectionId } },
@@ -531,11 +544,12 @@ export async function getConnection(connectionId: string, userId: string) {
         },
       }),
       prisma.member.count({ where: { workspaceId: connection.workspaceId } }),
-      prisma.memberIntegrationCredential.count({
-        where: { connectionId, lastAuthStatus: "valid", revokedAt: null },
-      }),
       prisma.integrationExternalIdentity.count({
         where: { binding: { connectionId } },
+      }),
+      prisma.memberIntegrationCredential.findMany({
+        where: { connectionId, lastAuthStatus: "valid", revokedAt: null },
+        select: { memberId: true },
       }),
     ]);
   return {
@@ -547,9 +561,23 @@ export async function getConnection(connectionId: string, userId: string) {
     lifecycleEpoch: connection.lifecycleEpoch,
     serviceFallbackEnabled: connection.serviceFallbackEnabled,
     discoveredStatuses: connection.discoveredStatuses,
-    bindings,
+    bindings: bindings.map((binding) => ({
+      ...binding,
+      timeActivityId:
+        binding.writeMap &&
+        typeof binding.writeMap === "object" &&
+        !Array.isArray(binding.writeMap) &&
+        typeof binding.writeMap[TIME_ENTRY_ACTIVITY_MAP_KEY] === "string"
+          ? binding.writeMap[TIME_ENTRY_ACTIVITY_MAP_KEY]
+          : null,
+    })),
     callerCredential: publicCredential(credential),
-    counts: { workspaceMembers, validCredentials, externalIdentities },
+    connectedMemberIds: connectedCredentials.map(({ memberId }) => memberId),
+    counts: {
+      workspaceMembers,
+      validCredentials: connectedCredentials.length,
+      externalIdentities,
+    },
   };
 }
 
