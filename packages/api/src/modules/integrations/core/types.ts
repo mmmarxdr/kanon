@@ -1,6 +1,6 @@
 import type { IssueState } from "@prisma/client";
 
-export const CANONICAL_ENTITY_TYPES = ["project", "cycle", "issue", "user"] as const;
+export const CANONICAL_ENTITY_TYPES = ["project", "cycle", "issue", "time_entry", "user"] as const;
 export type CanonicalEntityType = (typeof CANONICAL_ENTITY_TYPES)[number];
 
 export const CANONICAL_CHANGE_OPERATIONS = ["create", "update", "delete", "close"] as const;
@@ -63,8 +63,16 @@ export interface CanonicalIssuePatch {
   readonly cycleId: FieldValue<string>;
 }
 
+export interface CanonicalTimeEntry {
+  readonly id: string;
+  readonly issueId: string;
+  readonly hours: string;
+  readonly workedOn: Date;
+}
+
 export type StatusReadMap = Readonly<Record<string, CanonicalIssueState>>;
 export type StatusWriteMap = Readonly<Partial<Record<CanonicalIssueState, string>>>;
+export const TIME_ENTRY_ACTIVITY_MAP_KEY = "_timeEntryActivityId";
 export interface StatusMaps {
   readonly read: StatusReadMap;
   readonly write: StatusWriteMap;
@@ -90,6 +98,11 @@ export interface DiscoveredUser {
   readonly displayName: string;
   readonly login?: string | null;
 }
+export interface DiscoveredTimeEntryActivity {
+  readonly id: string;
+  readonly name: string;
+  readonly isDefault: boolean;
+}
 
 export interface PmProviderCapabilities {
   readonly canCreateProjects: boolean;
@@ -101,13 +114,22 @@ export interface PushResult {
   readonly requestedStatusId: string | null;
   readonly achievedStatusId: string | null;
   readonly remoteVersion: string | null;
+  readonly deleted?: boolean;
 }
 
-export interface ProviderCreateReconciliationRequest {
-  readonly entityType: "issue" | "cycle";
-  readonly entityId: string;
-  readonly remoteProjectId: string;
-}
+export type ProviderCreateReconciliationRequest =
+  | {
+      readonly entityType: "issue" | "cycle";
+      readonly entityId: string;
+      readonly remoteProjectId: string;
+    }
+  | {
+      readonly entityType: "time_entry";
+      readonly entityId: string;
+      readonly remoteProjectId: string;
+      readonly remoteIssueId: string;
+      readonly spentOn: string;
+    };
 
 export interface ProviderCreateReconciler {
   reconcileCreate(
@@ -165,22 +187,26 @@ export interface PmProviderAdapter extends ProviderCreateReconciler {
   listProjects(): Promise<readonly DiscoveredProject[]>;
   listStatuses(): Promise<readonly DiscoveredStatus[]>;
   listCycles(projectId: string): Promise<readonly DiscoveredCycle[]>;
+  listTimeEntryActivities(): Promise<readonly DiscoveredTimeEntryActivity[]>;
   whoAmI(): Promise<DiscoveredUser>;
   ensureProject(project: CanonicalProject): Promise<PushResult>;
   ensureCycle(cycle: CanonicalCycle): Promise<PushResult>;
   pushIssue(issue: CanonicalIssue, patch: CanonicalIssuePatch): Promise<PushResult>;
+  pushTimeEntry(entry: CanonicalTimeEntry, activityId: string): Promise<PushResult>;
 }
 
 export type CanonicalEntity =
   | CanonicalProject
   | CanonicalCycle
   | CanonicalIssue
+  | CanonicalTimeEntry
   | CanonicalUser;
 
 type CanonicalEntityByType = {
   readonly project: CanonicalProject;
   readonly cycle: CanonicalCycle;
   readonly issue: CanonicalIssue;
+  readonly time_entry: CanonicalTimeEntry;
   readonly user: CanonicalUser;
 };
 

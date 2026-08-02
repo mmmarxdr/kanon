@@ -27,7 +27,7 @@ vi.mock("./providers/redmine/http-client.js", async (importOriginal) => {
 });
 
 import { prisma } from "../../config/prisma.js";
-import type { PmProviderAdapter, PushResult } from "./core/types.js";
+import { ProviderDispatchError, type PmProviderAdapter, type PushResult } from "./core/types.js";
 import { RedmineProviderAdapter } from "./providers/redmine/adapter.js";
 import { RedmineHttpError } from "./providers/redmine/http-client.js";
 import {
@@ -42,7 +42,7 @@ import {
 type DispatchAdapter = Pick<
   PmProviderAdapter,
   "ensureProject" | "ensureCycle" | "pushIssue" | "reconcileCreate"
->;
+> & Partial<Pick<PmProviderAdapter, "pushTimeEntry">>;
 
 const NOW = new Date("2026-07-30T12:00:00.000Z");
 const FAR_FUTURE = new Date("2999-01-01T00:00:00.000Z");
@@ -232,6 +232,8 @@ beforeEach(() => prisma.integrationSyncWork.deleteMany());
 
 afterEach(async () => {
   vi.useRealTimers();
+  await prisma.timeEntry.deleteMany({ where: { adjustsId: { not: null } } });
+  await prisma.timeEntry.deleteMany();
   for (const workspaceId of workspaceIds) {
     await prisma.workspace.delete({ where: { id: workspaceId } });
   }
@@ -1330,6 +1332,101 @@ describe("integration worker retry and completion", () => {
     ).resolves.toMatchObject({
       state: "done",
     });
+  });
+
+  it("reconciles an uncertain time-entry create without duplicate hours using the worker credential", async () => {
+    const fixture = await createFixture();
+    const workerUser = await prisma.user.create({
+      data: { email: `time-worker-${randomUUID()}@kanon.test`, passwordHash: "unused" },
+    });
+    userIds.add(workerUser.id);
+    const worker = await prisma.member.create({
+      data: {
+        username: `time-worker-${randomUUID().slice(0, 8)}`,
+        userId: workerUser.id,
+        workspaceId: fixture.workspace.id,
+      },
+    });
+    const workerCredential = await prisma.memberIntegrationCredential.create({
+      data: {
+        encryptedKey: "worker-encrypted-key",
+        externalUserId: "remote-worker",
+        lastAuthStatus: "valid",
+        memberId: worker.id,
+        connectionId: fixture.connection.id,
+      },
+    });
+    await prisma.integrationProjectBinding.update({
+      where: { id: fixture.binding.id },
+      data: {
+        writeMap: { todo: "1", in_progress: "2", done: "3", _timeEntryActivityId: "9" },
+      },
+    });
+    await createRef(fixture, "issue", fixture.issue.id, "remote-issue-99");
+    const entry = await prisma.timeEntry.create({
+      data: {
+        memberId: worker.id,
+        issueId: fixture.issue.id,
+        hours: "1.5",
+        workedOn: new Date("2026-07-29T08:00:00.000Z"),
+        status: "approved",
+      },
+    });
+    const work = await createWork(fixture, {
+      entityType: "time_entry",
+      entityId: entry.id,
+      actorKey: `member:${worker.id}`,
+      authCredentialId: workerCredential.id,
+      payload: { version: 1, targetHours: "1.5", entryIds: [entry.id] },
+    });
+    const pushTimeEntry = vi
+      .fn()
+      .mockRejectedValue(new ProviderDispatchError("ambiguous", new Error("response lost")));
+    const reconcileCreate = vi.fn().mockResolvedValue([success("remote-time-71")]);
+    const provider = adapter({ pushTimeEntry, reconcileCreate });
+    const decrypt = vi.fn(() => "worker-api-key");
+    const { deps, createAdapter } = dependencies(provider, { decrypt });
+
+    await runIntegrationWorkerCycle(prisma, deps);
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } }),
+    ).resolves.toMatchObject({ state: "ambiguous" });
+    expect(pushTimeEntry).toHaveBeenCalledOnce();
+    expect(pushTimeEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ id: entry.id, issueId: fixture.issue.id, hours: "1.5" }),
+      "9",
+    );
+    expect(decrypt).toHaveBeenCalledWith("worker-encrypted-key");
+    expect(createAdapter).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKey: "worker-api-key" }),
+    );
+
+    await runIntegrationWorkerCycle(prisma, deps);
+    expect(reconcileCreate).toHaveBeenCalledWith({
+      entityType: "time_entry",
+      entityId: entry.id,
+      remoteProjectId: "remote-project",
+      remoteIssueId: "remote-issue-99",
+      spentOn: "2026-07-29",
+    });
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } }),
+    ).resolves.toMatchObject({ state: "done" });
+    await expect(
+      prisma.externalRef.findUniqueOrThrow({
+        where: {
+          connectionId_entityType_entityId: {
+            connectionId: fixture.connection.id,
+            entityType: "time_entry",
+            entityId: entry.id,
+          },
+        },
+      }),
+    ).resolves.toMatchObject({ externalId: "remote-time-71" });
+
+    await runIntegrationWorkerCycle(prisma, deps);
+    expect(pushTimeEntry).toHaveBeenCalledOnce();
+    expect(reconcileCreate).toHaveBeenCalledOnce();
   });
 
   it("transactionally requeues dead work exactly once without losing audit fields", async () => {

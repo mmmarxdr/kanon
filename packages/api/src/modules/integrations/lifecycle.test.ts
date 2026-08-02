@@ -25,6 +25,9 @@ const remote = {
     { id: "dev", name: "In Dev", writable: true },
   ]),
   listProjects: vi.fn(async () => [{ id: "remote-project", name: "Remote project" }]),
+  listTimeEntryActivities: vi.fn(async () => [
+    { id: "9", name: "Development", isDefault: true },
+  ]),
 };
 const deps: ConnectionServiceDeps = {
   remote: vi.fn(() => remote),
@@ -76,6 +79,9 @@ describe("integration connection lifecycle", () => {
     expect(first.connection).toMatchObject({ lifecycle: "draft", serviceFallbackEnabled: false });
     expect(first.discovery.projects).toEqual([{ id: "remote-project", name: "Remote project" }]);
     expect(discovery.statuses).toHaveLength(2);
+    expect(discovery.timeEntryActivities).toEqual([
+      { id: "9", name: "Development", isDefault: true },
+    ]);
     const credentials = await prisma.memberIntegrationCredential.findMany();
     expect(credentials).toHaveLength(1);
     expect(credentials[0]).toMatchObject({
@@ -142,7 +148,7 @@ describe("integration connection lifecycle", () => {
 
     const binding = await configureConnection(
       connection.id,
-      { projectId: project.id, remoteProjectId: "remote-project", readMap, writeMap },
+      { projectId: project.id, remoteProjectId: "remote-project", timeActivityId: "9", readMap, writeMap },
       owner.userId,
       deps,
     );
@@ -168,7 +174,7 @@ describe("integration connection lifecycle", () => {
     );
     const binding = await configureConnection(
       connection.id,
-      { projectId: project.id, remoteProjectId: "remote-project", readMap, writeMap },
+      { projectId: project.id, remoteProjectId: "remote-project", timeActivityId: "9", readMap, writeMap },
       owner.userId,
       deps,
     );
@@ -320,7 +326,7 @@ describe("integration connection lifecycle", () => {
     );
     await configureConnection(
       connection.id,
-      { projectId: project.id, remoteProjectId: "remote-project", readMap, writeMap: { backlog: "new" } },
+      { projectId: project.id, remoteProjectId: "remote-project", timeActivityId: "9", readMap, writeMap: { backlog: "new" } },
       owner.userId,
       deps,
     );
@@ -347,7 +353,7 @@ describe("integration connection lifecycle", () => {
     await expect(
       configureConnection(
         connection.id,
-        { projectId: project.id, remoteProjectId: "remote-project", readMap: { new: "invented" }, writeMap },
+        { projectId: project.id, remoteProjectId: "remote-project", timeActivityId: "9", readMap: { new: "invented" }, writeMap },
         owner.userId,
         deps,
       ),
@@ -355,7 +361,7 @@ describe("integration connection lifecycle", () => {
     await expect(
       configureConnection(
         connection.id,
-        { projectId: project.id, remoteProjectId: "invented", readMap, writeMap },
+        { projectId: project.id, remoteProjectId: "invented", timeActivityId: "9", readMap, writeMap },
         owner.userId,
         deps,
       ),

@@ -27,6 +27,7 @@ vi.mock("../../config/prisma.js", () => {
   const activityLog = { create: vi.fn(), createMany: vi.fn() };
   const prisma: any = { issue, workLog, timeEntry, member, project, activityLog };
   prisma.integrationProjectBinding = { findFirst: vi.fn() };
+  prisma.$queryRaw = vi.fn();
   prisma.$transaction = vi.fn((fn: (tx: any) => Promise<any>) => fn(prisma));
   return { prisma };
 });
@@ -50,6 +51,7 @@ vi.mock("../roadmap/roadmap-sync.js", () => ({
 vi.mock("../work-session/service.js", () => ({
   getActiveWorkers: vi.fn().mockResolvedValue([]),
   getActiveWorkersForIssues: vi.fn().mockResolvedValue(new Map()),
+  stopActiveWorkSessions: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("../issue-subscription/service.js", () => ({
@@ -770,15 +772,15 @@ describe("KAN-188 reconcileIssueTime() confirmedTotalHours override", () => {
       makeIssue({ timeConfirmedAt: new Date() }) as any,
     );
 
-    // currentTotal (approved + draft) = 7; override to 4 → delta = -3
+    // Only approved time is confirmed: currentTotal = 6; override to 4 → delta = -2.
     await reconcileIssueTime(ISSUE_ID, MEMBER_ID, { confirmedTotalHours: "4" });
 
     const createCall = vi.mocked(prisma.timeEntry.create).mock.calls[0]![0];
     expect(createCall.data.adjustsId).toBe("te-approved");
+    expect(new Prisma.Decimal(createCall.data.hours).toNumber()).toBe(-2);
   });
 
-  it("throws a domain error when delta < 0 and there is NO approved anchor (guard, defense-in-depth)", async () => {
-    // Only a draft entry exists — no approved entry to anchor the correction to.
+  it("excludes another member's draft from the confirmed total", async () => {
     const draftOnly = makeTimeEntry({
       id: "te-draft-only",
       status: "draft",
@@ -792,14 +794,11 @@ describe("KAN-188 reconcileIssueTime() confirmedTotalHours override", () => {
     vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([draftOnly]);
     vi.mocked(prisma.timeEntry.updateMany).mockResolvedValue({ count: 0 });
 
-    await expect(
-      reconcileIssueTime(ISSUE_ID, MEMBER_ID, { confirmedTotalHours: "2" }),
-    ).rejects.toMatchObject({
-      code: "RECONCILE_NO_ANCHOR",
-    });
+    await reconcileIssueTime(ISSUE_ID, MEMBER_ID, { confirmedTotalHours: "2" });
 
-    // Must NOT write a negative entry with adjustsId: null.
-    expect(prisma.timeEntry.create).not.toHaveBeenCalled();
+    const createCall = vi.mocked(prisma.timeEntry.create).mock.calls[0]![0];
+    expect(new Prisma.Decimal(createCall.data.hours).toNumber()).toBe(2);
+    expect(createCall.data.adjustsId).toBeUndefined();
   });
 
   it("does NOT invoke the addHours top-up branch when confirmedTotalHours is provided (mutual exclusion, defense-in-depth)", async () => {

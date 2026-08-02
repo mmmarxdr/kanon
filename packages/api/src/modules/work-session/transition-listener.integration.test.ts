@@ -24,6 +24,7 @@ import {
 } from "../../test/helpers.js";
 import { prisma } from "../../config/prisma.js";
 import { transitionIssue, batchTransitionByKeys, transitionGroup } from "../issue/service.js";
+import { reconcileIssueTime } from "../issue/reconcile.js";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -155,7 +156,7 @@ describe("transition-listener — end-to-end (KAN-156 Slice 1)", () => {
     expect(session).toBeNull();
   });
 
-  it("closes the WorkSession when issue transitions from in_progress to done", async () => {
+  it("closes the WorkSession before the done reconciliation gate", async () => {
     const { member, issue } = await seedContext("in_progress");
 
     await prisma.workSession.create({
@@ -169,7 +170,9 @@ describe("transition-listener — end-to-end (KAN-156 Slice 1)", () => {
       },
     });
 
-    await transitionIssue(issue.key, "done", member.id, null);
+    await expect(transitionIssue(issue.key, "done", member.id, null)).rejects.toMatchObject({
+      code: "RECONCILIATION_REQUIRED",
+    });
 
     await waitFor(async () => {
       const session = await prisma.workSession.findFirst({
@@ -182,6 +185,11 @@ describe("transition-listener — end-to-end (KAN-156 Slice 1)", () => {
       where: { memberId: member.id, issueId: issue.id },
     });
     expect(session).toBeNull();
+
+    await reconcileIssueTime(issue.id, member.id);
+    await expect(transitionIssue(issue.key, "done", member.id, null)).resolves.toMatchObject({
+      state: "done",
+    });
   });
 
   // ── Idempotency: from-already-active → no extra session ───────────────
@@ -484,7 +492,7 @@ describe("transition-listener — end-to-end (KAN-156 Slice 1)", () => {
 
   // ── FIX 2d: backlog → done WITH existing open session closes it ───────
 
-  it("FIX-2d: backlog → done WITH an existing open session closes it", async () => {
+  it("FIX-2d: backlog → done closes an existing session before reconciliation", async () => {
     const { member, issue } = await seedContext("backlog");
 
     // Seed an open session that pre-exists
@@ -499,7 +507,9 @@ describe("transition-listener — end-to-end (KAN-156 Slice 1)", () => {
       },
     });
 
-    await transitionIssue(issue.key, "done", member.id, null);
+    await expect(transitionIssue(issue.key, "done", member.id, null)).rejects.toMatchObject({
+      code: "RECONCILIATION_REQUIRED",
+    });
 
     await waitFor(async () => {
       const session = await prisma.workSession.findFirst({
@@ -512,6 +522,11 @@ describe("transition-listener — end-to-end (KAN-156 Slice 1)", () => {
       where: { memberId: member.id, issueId: issue.id },
     });
     expect(session).toBeNull();
+
+    await reconcileIssueTime(issue.id, member.id);
+    await expect(transitionIssue(issue.key, "done", member.id, null)).resolves.toMatchObject({
+      state: "done",
+    });
   });
 
   // ── FIX 2e: rapid flapping in_progress → review → in_progress ─────────

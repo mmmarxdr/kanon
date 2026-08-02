@@ -21,6 +21,7 @@ import { eventBus } from "../../services/event-bus/index.js";
 import {
   getActiveWorkers,
   getActiveWorkersForIssues,
+  stopActiveWorkSessions,
 } from "../work-session/service.js";
 import {
   recordCycleScopeEvent,
@@ -792,6 +793,7 @@ export async function transitionIssue(
 
   // KAN-157: reconciliation gate — block →done unless time is confirmed.
   if (toState === "done") {
+    await stopActiveWorkSessions(key);
     const rec = await checkReconciliation(issue.id, issue.timeConfirmedAt ?? null);
     if (rec.needed) {
       throw new AppError(
@@ -962,6 +964,7 @@ export async function transitionGroup(
   if (targetState === "done") {
     const blockedIssues: Array<{ key: string; totalHours: number }> = [];
     for (const issue of issuesToTransition) {
+      await stopActiveWorkSessions(issue.key);
       // Fix 6: timeConfirmedAt is in the select above — no cast needed.
       const rec = await checkReconciliation(issue.id, issue.timeConfirmedAt ?? null);
       if (rec.needed) {
@@ -1146,6 +1149,7 @@ export async function batchTransitionByKeys(
   if (targetState === "done") {
     const blockedIssues: Array<{ key: string; totalHours: number }> = [];
     for (const issue of issuesToTransition) {
+      await stopActiveWorkSessions(issue.key);
       // Fix 6: timeConfirmedAt is in the select above — no cast needed.
       const rec = await checkReconciliation(issue.id, issue.timeConfirmedAt ?? null);
       if (rec.needed) {

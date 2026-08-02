@@ -4,6 +4,7 @@ import type {
   CanonicalIssue,
   CanonicalIssuePatch,
   CanonicalProject,
+  CanonicalTimeEntry,
   PmProviderAdapter,
 } from "../../core/types.js";
 import { RedmineProviderAdapter } from "./adapter.js";
@@ -48,9 +49,15 @@ const noChange: CanonicalIssuePatch = {
   progress: omit,
   cycleId: omit,
 };
+const timeEntry: CanonicalTimeEntry = {
+  id: "time-entry-1",
+  issueId: issue.id,
+  hours: "1.5",
+  workedOn: new Date("2026-07-02T14:00:00.000Z"),
+};
 
 function client() {
-  return { get: vi.fn(), post: vi.fn(), put: vi.fn() };
+  return { delete: vi.fn(), get: vi.fn(), post: vi.fn(), put: vi.fn() };
 }
 
 describe("RedmineProviderAdapter", () => {
@@ -67,6 +74,11 @@ describe("RedmineProviderAdapter", () => {
         return { versions: [{ id: 3, name: "Sprint", due_date: "2026-07-14" }] };
       }
       if (path === "/trackers.json") return { trackers: [{ id: 1, name: "Bug" }] };
+      if (path === "/enumerations/time_entry_activities.json") {
+        return {
+          time_entry_activities: [{ id: 9, name: "Development", is_default: true }],
+        };
+      }
       return { user: { id: 8, firstname: "Ada", lastname: "Lovelace", login: "ada" } };
     });
     const adapter: PmProviderAdapter & { listTrackers(): Promise<unknown> } =
@@ -85,6 +97,9 @@ describe("RedmineProviderAdapter", () => {
       { id: "3", name: "Sprint", startDate: null, endDate: new Date("2026-07-14") },
     ]);
     await expect(adapter.listTrackers()).resolves.toEqual([{ id: "1", name: "Bug" }]);
+    await expect(adapter.listTimeEntryActivities()).resolves.toEqual([
+      { id: "9", name: "Development", isDefault: true },
+    ]);
     await expect(adapter.whoAmI()).resolves.toEqual({
       id: "8",
       displayName: "Ada Lovelace",
@@ -197,6 +212,91 @@ describe("RedmineProviderAdapter", () => {
         done_ratio: 50,
       },
     });
+  });
+
+  it("creates and updates marked time entries with configured activity and original date", async () => {
+    const http = client();
+    http.post.mockResolvedValue({
+      time_entry: { id: 71, updated_on: "2026-07-03T10:00:00Z" },
+    });
+    let remoteTimeEntryId: string | null = null;
+    const adapter = new RedmineProviderAdapter(http, {
+      writeMap: {},
+      resolveExternalId: async (type) =>
+        type === "issue" ? "99" : type === "time_entry" ? remoteTimeEntryId : null,
+    });
+
+    await expect(adapter.pushTimeEntry(timeEntry, "9")).resolves.toMatchObject({
+      externalId: "71",
+    });
+    expect(http.post).toHaveBeenCalledWith("/time_entries.json", {
+      time_entry: {
+        issue_id: "99",
+        hours: "1.5",
+        activity_id: "9",
+        spent_on: "2026-07-02",
+        comments: "[kanon-time-entry:time-entry-1]",
+      },
+    });
+
+    remoteTimeEntryId = "71";
+    await adapter.pushTimeEntry({ ...timeEntry, hours: "1" }, "9");
+    expect(http.put).toHaveBeenCalledWith("/time_entries/71.json", {
+      time_entry: expect.objectContaining({ hours: "1" }),
+    });
+    expect(http.post).toHaveBeenCalledOnce();
+  });
+
+  it("deletes a mapped time entry when corrections reduce its confirmed total to zero", async () => {
+    const http = client();
+    const adapter = new RedmineProviderAdapter(http, {
+      writeMap: {},
+      resolveExternalId: async (type) => (type === "time_entry" ? "71" : "99"),
+    });
+
+    await expect(adapter.pushTimeEntry({ ...timeEntry, hours: "0" }, "9")).resolves.toMatchObject({
+      externalId: "71",
+      deleted: true,
+    });
+    expect(http.delete).toHaveBeenCalledWith("/time_entries/71.json");
+    expect(http.post).not.toHaveBeenCalled();
+  });
+
+  it("reconciles an uncertain time-entry create by its exact stable marker", async () => {
+    const http = client();
+    http.get.mockResolvedValue({
+      total_count: 2,
+      offset: 0,
+      limit: 100,
+      time_entries: [
+        { id: 71, comments: "[kanon-time-entry:time-entry-1]" },
+        { id: 72, comments: "[kanon-time-entry:time-entry-10]" },
+      ],
+    });
+    const adapter = new RedmineProviderAdapter(http, {
+      writeMap: {},
+      resolveExternalId: vi.fn(),
+    });
+
+    await expect(
+      adapter.reconcileCreate({
+        entityType: "time_entry",
+        entityId: "time-entry-1",
+        remoteProjectId: "41",
+        remoteIssueId: "99",
+        spentOn: "2026-07-02",
+      }),
+    ).resolves.toEqual([
+      {
+        externalId: "71",
+        requestedStatusId: null,
+        achievedStatusId: null,
+        remoteVersion: null,
+      },
+    ]);
+    expect(http.get).toHaveBeenCalledWith(
+      "/time_entries.json?issue_id=99&from=2026-07-02&to=2026-07-02&limit=100&offset=0",
+    );
   });
 
   it("clears Redmine assignee and version with empty identifiers", async () => {

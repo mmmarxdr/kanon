@@ -1,6 +1,8 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
+import { TIME_ENTRY_ACTIVITY_MAP_KEY } from "../integrations/core/types.js";
+import { captureIntegrationWorkTx } from "../integrations/outbox.js";
 
 /**
  * KAN-157 — Reconciliation service for the review→done gate.
@@ -29,6 +31,127 @@ export interface ReconcileSummary {
   entries: Array<{ id: string; hours: string; status: string; sourceWorkLogId: string | null }>;
   totalHours: number;
   confirmedAt: Date;
+}
+
+type ConfirmedEntry = {
+  id: string;
+  memberId: string;
+  issueId: string | null;
+  hours: Prisma.Decimal;
+  workedOn: Date;
+  status: string;
+  adjustsId: string | null;
+};
+
+async function captureConfirmedTimeTx(
+  tx: Prisma.TransactionClient,
+  projectId: string,
+  entries: readonly ConfirmedEntry[],
+): Promise<void> {
+  const binding = await tx.integrationProjectBinding.findFirst({
+    where: {
+      projectId,
+      lifecycle: { in: ["active", "paused"] },
+      connection: {
+        provider: "redmine",
+        lifecycle: { in: ["active", "paused"] },
+      },
+    },
+    orderBy: { id: "asc" },
+    select: { id: true, connectionId: true, writeMap: true },
+  });
+  if (!binding) return;
+
+  const writeMap = binding.writeMap as Record<string, unknown>;
+  const activityId = writeMap[TIME_ENTRY_ACTIVITY_MAP_KEY];
+  if (typeof activityId !== "string" || activityId.length === 0) {
+    throw new AppError(
+      409,
+      "INTEGRATION_TIME_ACTIVITY_REQUIRED",
+      "The Redmine binding must configure a time-entry activity before time can be confirmed.",
+    );
+  }
+
+  const approved = entries.filter((entry) => entry.status === "approved");
+  const byId = new Map(approved.map((entry) => [entry.id, entry]));
+  const groups = new Map<string, ConfirmedEntry[]>();
+  for (const entry of approved) {
+    let root = entry;
+    const seen = new Set<string>();
+    while (root.adjustsId) {
+      if (seen.has(root.id)) {
+        throw new AppError(409, "INTEGRATION_TIME_ADJUSTMENT_INVALID", "Time adjustment cycle detected.");
+      }
+      seen.add(root.id);
+      const adjusted = byId.get(root.adjustsId);
+      if (!adjusted) {
+        throw new AppError(
+          409,
+          "INTEGRATION_TIME_ADJUSTMENT_INVALID",
+          "A confirmed time adjustment points outside this issue.",
+        );
+      }
+      root = adjusted;
+    }
+    const group = groups.get(root.id) ?? [];
+    group.push(entry);
+    groups.set(root.id, group);
+  }
+
+  const roots = [...groups.keys()].map((id) => byId.get(id)!);
+  const credentials = await tx.memberIntegrationCredential.findMany({
+    where: {
+      connectionId: binding.connectionId,
+      memberId: { in: [...new Set(roots.map(({ memberId }) => memberId))] },
+      lastAuthStatus: "valid",
+      revokedAt: null,
+    },
+    select: { id: true, memberId: true },
+  });
+  const credentialByMember = new Map(credentials.map((credential) => [credential.memberId, credential.id]));
+
+  for (const root of roots) {
+    if (!root.issueId) continue;
+    const credentialId = credentialByMember.get(root.memberId);
+    if (!credentialId) {
+      throw new AppError(
+        409,
+        "INTEGRATION_CREDENTIAL_REQUIRED",
+        `The member who owns time entry ${root.id} must connect their Redmine credential.`,
+        { memberId: root.memberId, timeEntryId: root.id },
+      );
+    }
+    const component = groups.get(root.id)!.sort((left, right) => left.id.localeCompare(right.id));
+    const targetHours = component.reduce(
+      (sum, entry) => sum.plus(entry.hours),
+      new Prisma.Decimal(0),
+    );
+    if (targetHours.lessThan(0)) {
+      throw new AppError(
+        409,
+        "INTEGRATION_TIME_TOTAL_INVALID",
+        `Time entry ${root.id} has a negative confirmed total that Redmine cannot represent.`,
+      );
+    }
+    const entryIds = component.map(({ id }) => id);
+    await captureIntegrationWorkTx(tx, {
+      bindingId: binding.id,
+      entityType: "time_entry",
+      entityId: root.id,
+      direction: "outbound",
+      operation: "update",
+      actorKey: `member:${root.memberId}`,
+      actorKind: "user",
+      authCredentialId: credentialId,
+      correlationId: `confirmed-time:${root.id}:${entryIds.join(",")}`,
+      marker: `[kanon-time-entry:${root.id}]`,
+      payload: {
+        version: 1,
+        targetHours: targetHours.toString(),
+        entryIds,
+      },
+    });
+  }
 }
 
 // ── needsReconciliation ─────────────────────────────────────────────────────
@@ -123,7 +246,7 @@ export async function reconcileIssueTime(
 ): Promise<ReconcileSummary> {
   const issue = await prisma.issue.findUnique({
     where: { id: issueId },
-    select: { id: true, key: true },
+    select: { id: true, key: true, projectId: true },
   });
 
   if (!issue) {
@@ -148,6 +271,8 @@ export async function reconcileIssueTime(
 
   // Fix 3: wrap all writes in a single transaction so they are all-or-nothing.
   const { finalEntries, confirmedAt } = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "issues" WHERE "id" = ${issueId}::uuid FOR UPDATE`;
+
     // Step 1: find WorkLogs with no linked TimeEntry → promote to approved TimeEntry
     const unpromoted = await tx.workLog.findMany({
       where: { issueId, timeEntry: { is: null } },
@@ -201,51 +326,17 @@ export async function reconcileIssueTime(
     //     still stamped in Step 5 below).
     if (confirmedTotalDecimal !== null) {
       const entriesSoFar = await tx.timeEntry.findMany({
-        where: { issueId },
-        select: { id: true, hours: true, status: true, createdAt: true },
+        where: { issueId, status: "approved" },
+        select: { id: true, hours: true, status: true, adjustsId: true, createdAt: true },
       });
-      const currentTotal = entriesSoFar.reduce(
+      const approvedEntries = entriesSoFar.filter((entry) => entry.status === "approved");
+      const currentTotal = approvedEntries.reduce(
         (sum, e) => sum.plus(e.hours),
         new Prisma.Decimal(0),
       );
       const delta = confirmedTotalDecimal.minus(currentTotal);
 
-      if (!delta.equals(0)) {
-        let adjustsId: string | null = null;
-
-        if (delta.lessThan(0)) {
-          // Review fix (CRITICAL): the anchor MUST come from an APPROVED entry
-          // only. Picking the latest entry by createdAt regardless of status
-          // could link the negative corrective entry to a draft/submitted/
-          // rejected (or cross-member) entry, corrupting the adjustment audit
-          // trail. Among approved entries, pick the latest by createdAt
-          // (existing tie-break style preserved).
-          const approvedAnchor = entriesSoFar
-            .filter((e) => e.status === "approved")
-            .reduce<{ id: string; createdAt: Date } | null>(
-              (latest, e) =>
-                !latest || e.createdAt > latest.createdAt
-                  ? { id: e.id, createdAt: e.createdAt }
-                  : latest,
-              null,
-            );
-
-          if (!approvedAnchor) {
-            // Defense-in-depth: the DB CHECK (hours >= 0 OR adjusts_id IS NOT
-            // NULL, migration 20260614204342_ppm_w1_pr3_timesheet) must never
-            // be violated at runtime, even if a future invariant change makes
-            // this path reachable. Throw instead of writing a negative entry
-            // with adjustsId: null.
-            throw new AppError(
-              409,
-              "RECONCILE_NO_ANCHOR",
-              "Cannot apply a downward time correction: no approved time entry exists to anchor the adjustment to.",
-            );
-          }
-
-          adjustsId = approvedAnchor.id;
-        }
-
+      if (delta.greaterThan(0)) {
         await tx.timeEntry.create({
           data: {
             memberId,
@@ -254,12 +345,66 @@ export async function reconcileIssueTime(
             workedOn: now,
             status: "approved",
             sourceWorkLogId: null,
-            adjustsId,
             approvedById: memberId,
             approvedAt: now,
             via: "reconcile-override",
           },
         });
+      } else if (delta.lessThan(0)) {
+        const byId = new Map(approvedEntries.map((entry) => [entry.id, entry]));
+        const components = new Map<
+          string,
+          { rootId: string; hours: Prisma.Decimal; latestAt: Date }
+        >();
+        for (const entry of approvedEntries) {
+          let root = entry;
+          const seen = new Set<string>();
+          while (root.adjustsId) {
+            if (seen.has(root.id)) break;
+            seen.add(root.id);
+            const adjusted = byId.get(root.adjustsId);
+            if (!adjusted) break;
+            root = adjusted;
+          }
+          const component = components.get(root.id) ?? {
+            rootId: root.id,
+            hours: new Prisma.Decimal(0),
+            latestAt: root.createdAt,
+          };
+          component.hours = component.hours.plus(entry.hours);
+          if (entry.createdAt > component.latestAt) component.latestAt = entry.createdAt;
+          components.set(root.id, component);
+        }
+
+        let remaining = delta.abs();
+        for (const component of [...components.values()].sort(
+          (left, right) => right.latestAt.getTime() - left.latestAt.getTime(),
+        )) {
+          if (!component.hours.greaterThan(0) || !remaining.greaterThan(0)) continue;
+          const reduction = Prisma.Decimal.min(component.hours, remaining);
+          await tx.timeEntry.create({
+            data: {
+              memberId,
+              issueId,
+              hours: reduction.negated(),
+              workedOn: now,
+              status: "approved",
+              sourceWorkLogId: null,
+              adjustsId: component.rootId,
+              approvedById: memberId,
+              approvedAt: now,
+              via: "reconcile-override",
+            },
+          });
+          remaining = remaining.minus(reduction);
+        }
+        if (remaining.greaterThan(0)) {
+          throw new AppError(
+            409,
+            "RECONCILE_NO_ANCHOR",
+            "Cannot apply a downward time correction: no approved time entry exists to anchor the adjustment to.",
+          );
+        }
       }
     }
 
@@ -284,15 +429,21 @@ export async function reconcileIssueTime(
     // consistency. createdAt is selected so Step 5 can stamp timeConfirmedAt
     // strictly AFTER the newest entry.
     const entries = await tx.timeEntry.findMany({
-      where: { issueId },
+      where: { issueId, status: "approved" },
       select: {
         id: true,
+        memberId: true,
+        issueId: true,
         hours: true,
+        workedOn: true,
         status: true,
         sourceWorkLogId: true,
+        adjustsId: true,
         createdAt: true,
       },
     });
+
+    await captureConfirmedTimeTx(tx, issue.projectId, entries);
 
     // Step 5: stamp timeConfirmedAt STRICTLY AFTER every entry's createdAt.
     // KAN-165: the promoted/manual entries created above get their createdAt from

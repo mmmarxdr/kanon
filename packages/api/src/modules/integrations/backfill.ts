@@ -1,6 +1,6 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 
-const SUPPORTED_ENTITY_TYPES = new Set(["issue", "project", "cycle"]);
+const SUPPORTED_ENTITY_TYPES = new Set(["issue", "project", "cycle", "time_entry"]);
 
 /** Stable PostgreSQL transaction-level advisory-lock key for cooperating writers. */
 export const EXTERNAL_REF_BACKFILL_LOCK_KEY = 0x4b414e4f4e5f4136n;
@@ -251,10 +251,11 @@ export async function withExternalRefBackfillWriteGate<T>(
 /** Runs a pre-locked worker ref write and validates only the touched reference. */
 export async function withTargetedExternalRefBackfillWriteGate(
   transaction: Prisma.TransactionClient,
-  callback: (transaction: Prisma.TransactionClient) => Promise<string>,
+  callback: (transaction: Prisma.TransactionClient) => Promise<string | null>,
 ): Promise<void> {
   await acquireExternalRefBackfillWriteGate(transaction);
   const externalRefId = await callback(transaction);
+  if (externalRefId === null) return;
   if ((await transaction.externalRef.count({ where: { id: externalRefId } })) !== 1) {
     throw new Error(`Targeted external reference ${externalRefId} does not exist`);
   }
@@ -442,7 +443,10 @@ async function loadEntityOwnership(
   const cycleIds = refs
     .filter((ref) => ref.entityType === "cycle")
     .map((ref) => ref.entityId);
-  const [projects, issues, cycles] = await Promise.all([
+  const timeEntryIds = refs
+    .filter((ref) => ref.entityType === "time_entry")
+    .map((ref) => ref.entityId);
+  const [projects, issues, cycles, timeEntries] = await Promise.all([
     transaction.project.findMany({
       where: { id: { in: projectIds } },
       select: { id: true, workspaceId: true },
@@ -461,6 +465,13 @@ async function loadEntityOwnership(
         id: true,
         projectId: true,
         project: { select: { workspaceId: true } },
+      },
+    }),
+    transaction.timeEntry.findMany({
+      where: { id: { in: timeEntryIds } },
+      select: {
+        id: true,
+        issue: { select: { projectId: true, project: { select: { workspaceId: true } } } },
       },
     }),
   ]);
@@ -482,6 +493,13 @@ async function loadEntityOwnership(
     ownership.set(`cycle:${cycle.id}`, {
       projectId: cycle.projectId,
       workspaceId: cycle.project.workspaceId,
+    });
+  }
+  for (const entry of timeEntries) {
+    if (!entry.issue) continue;
+    ownership.set(`time_entry:${entry.id}`, {
+      projectId: entry.issue.projectId,
+      workspaceId: entry.issue.project.workspaceId,
     });
   }
   return ownership;
