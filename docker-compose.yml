@@ -36,7 +36,7 @@ services:
       JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET:-dev-local-jwt-refresh-secret-0123456789abcdefghij}"
       COOKIE_SECRET: "${COOKIE_SECRET:-dev-local-cookie-secret-0123456789abcdefghij}"
       METRICS_TOKEN: "${METRICS_TOKEN:-dev-local-metrics-token}"
-      REDMINE_ENDPOINT_ALLOWLIST:
+      REDMINE_ENDPOINT_ALLOWLIST: ${REDMINE_ENDPOINT_ALLOWLIST:-}
       PORT: "${KANON_API_PORT:-3000}"
       HOST: "0.0.0.0"
       NODE_ENV: "production"

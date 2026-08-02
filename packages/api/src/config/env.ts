@@ -21,14 +21,17 @@ const REDMINE_ENDPOINT_ALLOWLIST_SCHEMA = z.record(
     .array(
       z
         .string()
-        .refine((address) => isIP(address) !== 0 && !address.toLowerCase().startsWith("::ffff:"), {
+        .refine((address) => isIP(address) !== 0, {
           message: "values must be exact IP addresses",
         })
         .transform((address) =>
           isIP(address) === 6
             ? new URL(`http://[${address}]`).hostname.slice(1, -1)
             : address,
-        ),
+        )
+        .refine((address) => !address.toLowerCase().startsWith("::ffff:"), {
+          message: "values must not use IPv4-mapped IPv6 notation",
+        }),
     )
     .min(1, "each origin must allow at least one IP address"),
 );
