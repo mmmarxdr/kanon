@@ -34,6 +34,7 @@ describe("Redmine issue decoder", () => {
       nextCheckpoint: {
         updatedAt: new Date("2026-08-02T10:30:00Z"),
         remoteId: "42",
+        pageToken: expect.any(String),
       },
       changes: [
         {
@@ -57,6 +58,82 @@ describe("Redmine issue decoder", () => {
     });
     expect(page.changes[0]?.sourceVersion).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(page.changes[0]).not.toHaveProperty("closedAt");
+  });
+
+  it("binds continuation pages to stable metadata and checkpoint order", () => {
+    const first = decodeRedmineIssueListPage(
+      { issues: [publicIssue], total_count: 2, offset: 0, limit: 1 },
+      "7",
+      0,
+      1,
+    );
+    const nextIssue = {
+      ...publicIssue,
+      id: 43,
+      updated_on: "2026-08-02T10:31:00Z",
+    };
+
+    expect(
+      decodeRedmineIssueListPage(
+        { issues: [nextIssue], total_count: 2, offset: 1, limit: 1 },
+        "7",
+        1,
+        1,
+        first.nextCheckpoint,
+      ),
+    ).toMatchObject({
+      hasMore: false,
+      nextCheckpoint: {
+        updatedAt: new Date("2026-08-02T10:31:00Z"),
+        remoteId: "43",
+        pageToken: null,
+      },
+    });
+    expect(() =>
+      decodeRedmineIssueListPage(
+        {
+          issues: [{ ...nextIssue, id: 41, updated_on: "2026-08-02T10:29:00Z" }],
+          total_count: 2,
+          offset: 1,
+          limit: 1,
+        },
+        "7",
+        1,
+        1,
+        first.nextCheckpoint,
+      ),
+    ).toThrow("Malformed Redmine issue response");
+    expect(() =>
+      decodeRedmineIssueListPage(
+        {
+          issues: [{ ...nextIssue, id: 42 }],
+          total_count: 2,
+          offset: 1,
+          limit: 1,
+        },
+        "7",
+        1,
+        1,
+        first.nextCheckpoint,
+      ),
+    ).toThrow("Malformed Redmine issue response");
+    expect(() =>
+      decodeRedmineIssueListPage(
+        { issues: [nextIssue], total_count: 3, offset: 1, limit: 1 },
+        "7",
+        1,
+        1,
+        first.nextCheckpoint,
+      ),
+    ).toThrow("Malformed Redmine issue response");
+    expect(() =>
+      decodeRedmineIssueListPage(
+        { issues: [nextIssue], total_count: 2, offset: 1, limit: 1 },
+        "7",
+        1,
+        1,
+      ),
+    ).toThrow("Malformed Redmine issue response");
   });
 
   it("emits a content-free tombstone when a visible issue becomes private", () => {
@@ -251,6 +328,19 @@ describe("Redmine issue decoder", () => {
       decodeRedmineIssueListPage(
         {
           issues: [publicIssue, { ...publicIssue, id: 41 }],
+          total_count: 2,
+          offset: 0,
+          limit: 2,
+        },
+        "7",
+        0,
+        2,
+      ),
+    ).toThrow("Malformed Redmine issue response");
+    expect(() =>
+      decodeRedmineIssueListPage(
+        {
+          issues: [publicIssue, { ...publicIssue, updated_on: "2026-08-02T10:31:00Z" }],
           total_count: 2,
           offset: 0,
           limit: 2,

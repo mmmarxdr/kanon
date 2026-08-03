@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type {
+  PollCheckpoint,
   PollPage,
   RemoteActor,
   RemoteChange,
@@ -84,6 +85,11 @@ const issueListSchema = z.object({
 const issueDetailSchema = z.object({
   issue: issueSchema.extend({ journals: z.array(journalSchema) }),
 });
+const pageTokenSchema = z.object({
+  offset: z.number().int().nonnegative(),
+  totalCount: z.number().int().nonnegative(),
+  seenRemoteIds: z.array(remoteIdSchema),
+}).strict();
 
 type RedmineIssue = z.infer<typeof issueSchema>;
 type RedmineJournal = z.infer<typeof journalSchema>;
@@ -129,6 +135,20 @@ function malformed(): never {
 
 function sourceVersion(value: unknown): string {
   return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
+}
+
+function pageToken(offset: number, totalCount: number, seenRemoteIds: readonly string[]): string {
+  return JSON.stringify({ offset, totalCount, seenRemoteIds });
+}
+
+function parsePageToken(value: string): z.infer<typeof pageTokenSchema> {
+  try {
+    const parsed = pageTokenSchema.safeParse(JSON.parse(value));
+    if (parsed.success) return parsed.data;
+  } catch {
+    // Fall through to the same redacted boundary error as malformed provider data.
+  }
+  malformed();
 }
 
 function actor(value: z.infer<typeof remoteActorSchema>): RemoteActor {
@@ -253,13 +273,21 @@ export function decodeRedmineIssueListPage(
   expectedProjectId: string,
   expectedOffset: number,
   expectedLimit: number,
+  previousCheckpoint: PollCheckpoint | null = null,
 ): PollPage<RedmineIssueChange> {
   const parsed = issueListSchema.safeParse(value);
   if (!parsed.success) malformed();
   const { issues, total_count: totalCount, offset, limit } = parsed.data;
+  const continuation = previousCheckpoint?.pageToken
+    ? parsePageToken(previousCheckpoint.pageToken)
+    : null;
+  const seenRemoteIds = new Set(continuation?.seenRemoteIds ?? []);
   if (
     offset !== expectedOffset ||
     limit !== expectedLimit ||
+    (expectedOffset > 0 && !continuation) ||
+    (continuation &&
+      (continuation.offset !== expectedOffset || continuation.totalCount !== totalCount)) ||
     issues.length > limit ||
     offset > totalCount ||
     offset + issues.length > totalCount ||
@@ -275,14 +303,40 @@ export function decodeRedmineIssueListPage(
       malformed();
     }
   }
+  const currentRemoteIds = issues.map(({ id }) => id);
+  if (
+    seenRemoteIds.size !== (continuation?.seenRemoteIds.length ?? 0) ||
+    new Set(currentRemoteIds).size !== currentRemoteIds.length ||
+    currentRemoteIds.some((id) => seenRemoteIds.has(id))
+  ) {
+    malformed();
+  }
+  const first = issues[0];
+  if (continuation && first) {
+    const timestampOrder = first.updated_on.getTime() - previousCheckpoint!.updatedAt.getTime();
+    if (
+      timestampOrder < 0 ||
+      (timestampOrder === 0 && Number(first.id) <= Number(previousCheckpoint!.remoteId))
+    ) {
+      malformed();
+    }
+  }
   const changes = issues.map((issue) => issueChange(issue, expectedProjectId));
+  for (const id of currentRemoteIds) seenRemoteIds.add(id);
   const last = changes.at(-1);
+  const hasMore = offset + issues.length < totalCount;
   return {
     changes,
     nextCheckpoint: last
-      ? { updatedAt: last.changedAt, remoteId: last.identity.remoteId }
+      ? {
+          updatedAt: last.changedAt,
+          remoteId: last.identity.remoteId,
+          pageToken: hasMore
+            ? pageToken(offset + issues.length, totalCount, [...seenRemoteIds])
+            : null,
+        }
       : null,
-    hasMore: offset + issues.length < totalCount,
+    hasMore,
   };
 }
 
