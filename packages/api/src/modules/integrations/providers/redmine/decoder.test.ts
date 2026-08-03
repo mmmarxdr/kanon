@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { decodeRedmineIssueDetail, decodeRedmineIssueListPage } from "./decoder.js";
+import {
+  decodeRedmineIssueDetail,
+  decodeRedmineIssueListPage,
+  RedminePaginationDriftError,
+} from "./decoder.js";
 
 const publicIssue = {
   id: 42,
@@ -125,7 +129,7 @@ describe("Redmine issue decoder", () => {
         1,
         first.nextCheckpoint,
       ),
-    ).toThrow("Malformed Redmine issue response");
+    ).toThrow(RedminePaginationDriftError);
     expect(() =>
       decodeRedmineIssueListPage(
         { issues: [nextIssue], total_count: 2, offset: 1, limit: 1 },
@@ -134,6 +138,68 @@ describe("Redmine issue decoder", () => {
         1,
       ),
     ).toThrow("Malformed Redmine issue response");
+
+    for (const pageToken of [
+      "not-json",
+      JSON.stringify({ offset: 1, totalCount: 2, seenRemoteIds: ["42"], extra: true }),
+      JSON.stringify({ offset: 1, totalCount: 2, seenRemoteIds: ["42", "42"] }),
+    ]) {
+      expect(() =>
+        decodeRedmineIssueListPage(
+          { issues: [nextIssue], total_count: 2, offset: 1, limit: 1 },
+          "7",
+          1,
+          1,
+          { ...first.nextCheckpoint!, pageToken },
+        ),
+      ).toThrow("Malformed Redmine issue response");
+    }
+
+    const emptyCheckpoint = {
+      updatedAt: new Date("2026-08-02T10:30:00Z"),
+      remoteId: "42",
+      pageToken: JSON.stringify({ offset: 1, totalCount: 1, seenRemoteIds: ["42"] }),
+    };
+    expect(
+      decodeRedmineIssueListPage(
+        { issues: [], total_count: 1, offset: 1, limit: 1 },
+        "7",
+        1,
+        1,
+        emptyCheckpoint,
+      ),
+    ).toEqual({
+      changes: [],
+      nextCheckpoint: { ...emptyCheckpoint, pageToken: null },
+      hasMore: false,
+    });
+  });
+
+  it("decodes closed, unassigned issues and remote usernames", () => {
+    const [change] = decodeRedmineIssueListPage(
+      {
+        issues: [
+          {
+            ...publicIssue,
+            author: { ...publicIssue.author, login: "ada" },
+            assigned_to: null,
+            closed_on: "2026-08-03T10:30:00Z",
+          },
+        ],
+        total_count: 1,
+        offset: 0,
+        limit: 100,
+      },
+      "7",
+      0,
+      100,
+    ).changes;
+
+    expect(change).toMatchObject({
+      closedAt: new Date("2026-08-03T10:30:00Z"),
+      actor: { username: "ada" },
+      fields: { assignee: null },
+    });
   });
 
   it("emits a content-free tombstone when a visible issue becomes private", () => {

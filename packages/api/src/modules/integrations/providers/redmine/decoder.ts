@@ -7,6 +7,7 @@ import type {
   RemoteChange,
 } from "../../core/types.js";
 
+const MAX_ISSUES_PER_PASS = 10_000;
 const remoteIdSchema = z
   .union([z.number(), z.string().regex(/^\d+$/)])
   .transform(Number)
@@ -88,7 +89,7 @@ const issueDetailSchema = z.object({
 const pageTokenSchema = z.object({
   offset: z.number().int().nonnegative(),
   totalCount: z.number().int().nonnegative(),
-  seenRemoteIds: z.array(remoteIdSchema),
+  seenRemoteIds: z.array(remoteIdSchema).max(MAX_ISSUES_PER_PASS),
 }).strict();
 
 type RedmineIssue = z.infer<typeof issueSchema>;
@@ -129,8 +130,19 @@ export interface DecodedRedmineIssue {
   readonly comments: readonly RedmineCommentChange[];
 }
 
+export class RedminePaginationDriftError extends Error {
+  constructor() {
+    super("Redmine issue pagination changed during scan");
+    this.name = "RedminePaginationDriftError";
+  }
+}
+
 function malformed(): never {
   throw new Error("Malformed Redmine issue response");
+}
+
+function paginationDrift(): never {
+  throw new RedminePaginationDriftError();
 }
 
 function sourceVersion(value: unknown): string {
@@ -286,14 +298,24 @@ export function decodeRedmineIssueListPage(
     offset !== expectedOffset ||
     limit !== expectedLimit ||
     (expectedOffset > 0 && !continuation) ||
-    (continuation &&
-      (continuation.offset !== expectedOffset || continuation.totalCount !== totalCount)) ||
+    (continuation && continuation.offset !== expectedOffset) ||
+    totalCount > MAX_ISSUES_PER_PASS ||
     issues.length > limit ||
-    offset > totalCount ||
-    offset + issues.length > totalCount ||
-    issues.length !== Math.min(limit, totalCount - offset)
+    (!continuation &&
+      (offset > totalCount ||
+        offset + issues.length > totalCount ||
+        issues.length !== Math.min(limit, totalCount - offset)))
   ) {
     malformed();
+  }
+  if (
+    continuation &&
+    (continuation.totalCount !== totalCount ||
+      offset > totalCount ||
+      offset + issues.length > totalCount ||
+      issues.length !== Math.min(limit, totalCount - offset))
+  ) {
+    paginationDrift();
   }
   for (let index = 1; index < issues.length; index += 1) {
     const previous = issues[index - 1]!;
@@ -325,6 +347,13 @@ export function decodeRedmineIssueListPage(
   for (const id of currentRemoteIds) seenRemoteIds.add(id);
   const last = changes.at(-1);
   const hasMore = offset + issues.length < totalCount;
+  const carriedCheckpoint = previousCheckpoint
+    ? {
+        updatedAt: previousCheckpoint.updatedAt,
+        remoteId: previousCheckpoint.remoteId,
+        pageToken: null,
+      }
+    : null;
   return {
     changes,
     nextCheckpoint: last
@@ -335,7 +364,7 @@ export function decodeRedmineIssueListPage(
             ? pageToken(offset + issues.length, totalCount, [...seenRemoteIds])
             : null,
         }
-      : null,
+      : carriedCheckpoint,
     hasMore,
   };
 }
