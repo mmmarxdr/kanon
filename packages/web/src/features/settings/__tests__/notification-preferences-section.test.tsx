@@ -6,6 +6,7 @@
  * - Toggling a row calls the mutation with the full updated prefs object.
  * - Loading state renders a loading message.
  * - Error state renders an error message.
+ * - Each toggle exposes an accessible name matching its row label (KAN-212 Slice A).
  *
  * Pattern: mock hooks, render component, assert DOM state and mutation calls.
  * Mirrors members-section.test.tsx harness structure.
@@ -147,5 +148,22 @@ describe("NotificationPreferencesSection", () => {
   it("renders error state when error is present", async () => {
     await renderSection({ error: new Error("fetch failed"), data: undefined });
     expect(screen.getByText(/failed/i)).toBeInTheDocument();
+  });
+
+  it("each toggle has an aria-label matching its row label", async () => {
+    await renderSection({ data: DEFAULT_PREFS });
+
+    expect(screen.getByTestId("toggle-emailMention")).toHaveAttribute(
+      "aria-label",
+      "Mentions",
+    );
+    expect(screen.getByTestId("toggle-emailAssignment")).toHaveAttribute(
+      "aria-label",
+      "Assignments",
+    );
+    expect(screen.getByTestId("toggle-emailCycleClosed")).toHaveAttribute(
+      "aria-label",
+      "Cycle closed",
+    );
   });
 });
