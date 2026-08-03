@@ -7,7 +7,6 @@ import { useWorkspaceMembersQuery } from "@/features/settings/use-settings-queri
 import { useAuthStore } from "@/stores/auth-store";
 import { MembersSection } from "@/features/settings/members-section";
 import { InvitesSection } from "@/features/settings/invites-section";
-import { NotificationPreferencesSection } from "@/features/settings/notification-preferences-section";
 import { RedmineSection } from "@/features/settings/redmine-section";
 
 export const settingsRoute = createRoute({
@@ -16,12 +15,11 @@ export const settingsRoute = createRoute({
   component: SettingsPage,
 });
 
-type SettingsTab = "members" | "invites" | "notifications" | "integrations";
+type SettingsTab = "members" | "invites" | "integrations";
 
 const TAB_KEYS: { key: SettingsTab; labelKey: string }[] = [
   { key: "members", labelKey: "tabMembers" },
   { key: "invites", labelKey: "tabInvites" },
-  { key: "notifications", labelKey: "tabNotifications" },
   { key: "integrations", labelKey: "tabIntegrations" },
 ];
 
@@ -141,9 +139,6 @@ function SettingsPage() {
               currentUserRole={currentUserRole}
               allowedDomains={workspace?.allowedDomains ?? []}
             />
-          )}
-          {activeTab === "notifications" && (
-            <NotificationPreferencesSection workspaceId={workspaceId} />
           )}
           {activeTab === "integrations" && (
             <RedmineSection
