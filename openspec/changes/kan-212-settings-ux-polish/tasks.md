@@ -48,11 +48,11 @@ Chain strategy: feature-branch-chain
 
 ## Phase 3: Slice C — Accessible Tabs + Width
 
-- [ ] 3.1 RED `primitives.test.tsx`: `TabList` sets `role="tablist"/"tab"`, `aria-selected`, `id`/`aria-controls`; Right-arrow flips `tabindex`+selection; Home/End jump first/last
-- [ ] 3.2 GREEN add `TabList<T>` to `primitives.tsx`
-- [ ] 3.3 `settings.tsx`: swap tab-strip for `TabList`; unify `maxWidth` to `"min(880px, 100%)"`
-- [ ] 3.4 RED `settings.test.tsx`: exactly 3 tabs, no Domains for any role; panel `aria-labelledby`/`id` match
-- [ ] 3.5 GREEN close gaps; run primitives + settings suites
+- [x] 3.1 RED `primitives.test.tsx`: `TabList` sets `role="tablist"/"tab"`, `aria-selected`, `id`/`aria-controls`; Right-arrow flips `tabindex`+selection; Home/End jump first/last
+- [x] 3.2 GREEN add `TabList<T>` to `primitives.tsx`
+- [x] 3.3 `settings.tsx`: swap tab-strip for `TabList`; unify `maxWidth` to `"min(880px, 100%)"`
+- [x] 3.4 RED `settings.test.tsx`: exactly 3 tabs, no Domains for any role; panel `aria-labelledby`/`id` match
+- [x] 3.5 GREEN close gaps; run primitives + settings suites
 
 ## Phase 4: Slice D — SettingsCard Extraction
 
