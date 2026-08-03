@@ -156,15 +156,15 @@ export async function createConnection(
       "An instance admin must configure the Redmine URL first",
     );
   }
-  const remote = deps.remote(baseUrl, input.apiKey);
-  const [identity, statuses, projects, timeEntryActivities] = await queryRedmine(() =>
-    Promise.all([
+  const [identity, statuses, projects, timeEntryActivities] = await queryRedmine(() => {
+    const remote = deps.remote(baseUrl, input.apiKey);
+    return Promise.all([
       remote.whoAmI(),
       remote.listStatuses(),
       remote.listProjects(),
       remote.listTimeEntryActivities(),
-    ]),
-  );
+    ]);
+  });
   const encryptedKey = deps.encrypt(input.apiKey);
   const discoveredStatuses = statuses.map(({ id, name, writable }) => ({ id, name, writable }));
 
@@ -239,10 +239,10 @@ export async function getConnectionDiscovery(
 ) {
   const connection = await ownedConnection(prisma, connectionId, userId);
   const credential = await serviceCredential(prisma, connection);
-  const remote = deps.remote(connection.baseUrl, deps.decrypt(credential.encryptedKey));
-  const [statuses, projects, timeEntryActivities] = await queryRedmine(() =>
-    Promise.all([remote.listStatuses(), remote.listProjects(), remote.listTimeEntryActivities()]),
-  );
+  const [statuses, projects, timeEntryActivities] = await queryRedmine(() => {
+    const remote = deps.remote(connection.baseUrl, deps.decrypt(credential.encryptedKey));
+    return Promise.all([remote.listStatuses(), remote.listProjects(), remote.listTimeEntryActivities()]);
+  });
   const discoveredStatuses = statuses.map(({ id, name, writable }) => ({ id, name, writable }));
   await ownedConnection(prisma, connectionId, userId);
   await prisma.integrationConnection.update({
@@ -266,10 +266,10 @@ export async function configureConnection(
 ) {
   const connection = await ownedConnection(prisma, connectionId, userId);
   const credential = await serviceCredential(prisma, connection);
-  const remote = deps.remote(connection.baseUrl, deps.decrypt(credential.encryptedKey));
-  const [projects, statuses, timeEntryActivities] = await queryRedmine(() =>
-    Promise.all([remote.listProjects(), remote.listStatuses(), remote.listTimeEntryActivities()]),
-  );
+  const [projects, statuses, timeEntryActivities] = await queryRedmine(() => {
+    const remote = deps.remote(connection.baseUrl, deps.decrypt(credential.encryptedKey));
+    return Promise.all([remote.listProjects(), remote.listStatuses(), remote.listTimeEntryActivities()]);
+  });
   if (!projects.some(({ id }) => id === input.remoteProjectId)) {
     throw new AppError(400, "REMOTE_PROJECT_NOT_FOUND", "Select a project returned by discovery");
   }

@@ -130,6 +130,20 @@ describe("integration connection lifecycle", () => {
     await expect(prisma.memberIntegrationCredential.count()).resolves.toBe(0);
   });
 
+  it("returns an actionable error when the Redmine client cannot be created", async () => {
+    const workspace = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    vi.mocked(deps.remote).mockImplementationOnce(() => {
+      throw new Error("invalid endpoint");
+    });
+
+    await expect(
+      createConnection({ workspaceId: workspace.id, apiKey: "secret" }, owner.userId, deps),
+    ).rejects.toMatchObject({ statusCode: 502, code: "REDMINE_CONNECTION_FAILED" });
+    await expect(prisma.integrationConnection.count()).resolves.toBe(0);
+    await expect(prisma.memberIntegrationCredential.count()).resolves.toBe(0);
+  });
+
   it("cannot persist a stale connection while the instance URL changes", async () => {
     const workspace = await seedTestWorkspace();
     const owner = await seedTestMemberWithRole(workspace.id, "owner");
