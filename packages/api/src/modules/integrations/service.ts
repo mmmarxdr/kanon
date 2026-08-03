@@ -188,50 +188,61 @@ async function upsertExternalIdentities(
         select: { id: true },
       }),
     ]);
-    if (remoteIdentity) {
-      if (memberIdentity && memberIdentity.id !== remoteIdentity.id) {
+    try {
+      if (remoteIdentity) {
+        if (memberIdentity && memberIdentity.id !== remoteIdentity.id) {
+          await database.integrationExternalIdentity.update({
+            where: { id: memberIdentity.id },
+            data: { memberId: null },
+          });
+        }
+        const claimed = await database.integrationExternalIdentity.updateMany({
+          where: {
+            id: remoteIdentity.id,
+            OR: [{ memberId: null }, { memberId }],
+          },
+          data: {
+            memberId,
+            remoteLogin,
+            ...(remoteDisplayName === undefined ? {} : { remoteDisplayName }),
+          },
+        });
+        if (claimed.count !== 1) {
+          throw new AppError(
+            409,
+            "REMOTE_IDENTITY_ALREADY_CONNECTED",
+            "This provider identity is already connected to another workspace member",
+          );
+        }
+      } else if (memberIdentity) {
         await database.integrationExternalIdentity.update({
           where: { id: memberIdentity.id },
-          data: { memberId: null },
+          data: {
+            remoteUserId,
+            remoteLogin,
+            ...(remoteDisplayName === undefined ? {} : { remoteDisplayName }),
+          },
+        });
+      } else {
+        await database.integrationExternalIdentity.create({
+          data: {
+            bindingId: binding.id,
+            memberId,
+            remoteUserId,
+            remoteLogin,
+            remoteDisplayName: remoteDisplayName ?? null,
+          },
         });
       }
-      const claimed = await database.integrationExternalIdentity.updateMany({
-        where: {
-          id: remoteIdentity.id,
-          OR: [{ memberId: null }, { memberId }],
-        },
-        data: {
-          memberId,
-          remoteLogin,
-          ...(remoteDisplayName === undefined ? {} : { remoteDisplayName }),
-        },
-      });
-      if (claimed.count !== 1) {
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
         throw new AppError(
           409,
           "REMOTE_IDENTITY_ALREADY_CONNECTED",
           "This provider identity is already connected to another workspace member",
         );
       }
-    } else if (memberIdentity) {
-      await database.integrationExternalIdentity.update({
-        where: { id: memberIdentity.id },
-        data: {
-          remoteUserId,
-          remoteLogin,
-          ...(remoteDisplayName === undefined ? {} : { remoteDisplayName }),
-        },
-      });
-    } else {
-      await database.integrationExternalIdentity.create({
-        data: {
-          bindingId: binding.id,
-          memberId,
-          remoteUserId,
-          remoteLogin,
-          remoteDisplayName: remoteDisplayName ?? null,
-        },
-      });
+      throw error;
     }
   }
 }
