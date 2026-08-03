@@ -47,7 +47,7 @@ describe("integration service default Redmine wiring", () => {
         },
         "user-1"
       )
-    ).rejects.toBe(wiring.error);
+    ).rejects.toMatchObject({ statusCode: 502, code: "REDMINE_CONNECTION_FAILED" });
 
     expect(wiring.client).toHaveBeenCalledWith("http://redmine.internal.example", "api-key", {
       endpointAllowlist: wiring.allowlist,

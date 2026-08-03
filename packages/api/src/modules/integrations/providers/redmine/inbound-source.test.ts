@@ -76,7 +76,7 @@ describe("RedminePollingInboundSource", () => {
     pool
       .intercept({
         method: "GET",
-        path: "/issues.json?project_id=remote%2Fproject&status_id=*&sort=updated_on%3Aasc%2Cid%3Aasc&limit=100&offset=0&updated_on=%3E%3D2026-08-01T10%3A00%3A00.000Z",
+        path: "/issues.json?project_id=remote%2Fproject&status_id=*&sort=updated_on%3Aasc%2Cid%3Aasc&limit=100&offset=0&updated_on=%3E%3D2026-08-01T10%3A00%3A00Z",
       })
       .reply(200, {
         total_count: 2,

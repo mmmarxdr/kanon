@@ -109,7 +109,10 @@ describe("integration credentials", () => {
     expect(replaced).toMatchObject({ encryptedKey: "encrypted:replacement-key", externalUserId: "remote-user-2" });
 
     remote.whoAmI.mockRejectedValueOnce(new Error("invalid replacement"));
-    await expect(connectCredential(connection.id, "bad-key", member.userId, deps)).rejects.toThrow("invalid replacement");
+    await expect(connectCredential(connection.id, "bad-key", member.userId, deps)).rejects.toMatchObject({
+      statusCode: 502,
+      code: "REDMINE_CONNECTION_FAILED",
+    });
     await expect(prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: original.id } })).resolves.toMatchObject({
       encryptedKey: "encrypted:replacement-key",
       externalUserId: "remote-user-2",

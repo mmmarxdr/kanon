@@ -45,6 +45,18 @@ const defaultDeps: ConnectionServiceDeps = {
   decrypt: decryptCredential,
 };
 
+async function queryRedmine<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch {
+    throw new AppError(
+      502,
+      "REDMINE_CONNECTION_FAILED",
+      "Redmine connection failed. Verify the API key or ask an instance admin to check the URL, endpoint allowlist, and network access",
+    );
+  }
+}
+
 type Database = Pick<
   Prisma.TransactionClient,
   | "member"
@@ -144,13 +156,15 @@ export async function createConnection(
       "An instance admin must configure the Redmine URL first",
     );
   }
-  const remote = deps.remote(baseUrl, input.apiKey);
-  const [identity, statuses, projects, timeEntryActivities] = await Promise.all([
-    remote.whoAmI(),
-    remote.listStatuses(),
-    remote.listProjects(),
-    remote.listTimeEntryActivities(),
-  ]);
+  const [identity, statuses, projects, timeEntryActivities] = await queryRedmine(() => {
+    const remote = deps.remote(baseUrl, input.apiKey);
+    return Promise.all([
+      remote.whoAmI(),
+      remote.listStatuses(),
+      remote.listProjects(),
+      remote.listTimeEntryActivities(),
+    ]);
+  });
   const encryptedKey = deps.encrypt(input.apiKey);
   const discoveredStatuses = statuses.map(({ id, name, writable }) => ({ id, name, writable }));
 
@@ -225,12 +239,10 @@ export async function getConnectionDiscovery(
 ) {
   const connection = await ownedConnection(prisma, connectionId, userId);
   const credential = await serviceCredential(prisma, connection);
-  const remote = deps.remote(connection.baseUrl, deps.decrypt(credential.encryptedKey));
-  const [statuses, projects, timeEntryActivities] = await Promise.all([
-    remote.listStatuses(),
-    remote.listProjects(),
-    remote.listTimeEntryActivities(),
-  ]);
+  const [statuses, projects, timeEntryActivities] = await queryRedmine(() => {
+    const remote = deps.remote(connection.baseUrl, deps.decrypt(credential.encryptedKey));
+    return Promise.all([remote.listStatuses(), remote.listProjects(), remote.listTimeEntryActivities()]);
+  });
   const discoveredStatuses = statuses.map(({ id, name, writable }) => ({ id, name, writable }));
   await ownedConnection(prisma, connectionId, userId);
   await prisma.integrationConnection.update({
@@ -254,12 +266,10 @@ export async function configureConnection(
 ) {
   const connection = await ownedConnection(prisma, connectionId, userId);
   const credential = await serviceCredential(prisma, connection);
-  const remote = deps.remote(connection.baseUrl, deps.decrypt(credential.encryptedKey));
-  const [projects, statuses, timeEntryActivities] = await Promise.all([
-    remote.listProjects(),
-    remote.listStatuses(),
-    remote.listTimeEntryActivities(),
-  ]);
+  const [projects, statuses, timeEntryActivities] = await queryRedmine(() => {
+    const remote = deps.remote(connection.baseUrl, deps.decrypt(credential.encryptedKey));
+    return Promise.all([remote.listProjects(), remote.listStatuses(), remote.listTimeEntryActivities()]);
+  });
   if (!projects.some(({ id }) => id === input.remoteProjectId)) {
     throw new AppError(400, "REMOTE_PROJECT_NOT_FOUND", "Select a project returned by discovery");
   }
@@ -388,7 +398,9 @@ export async function setConnectionLifecycle(
   if (current.lifecycle === lifecycle) return current;
   if (lifecycle === "active") {
     const credential = await assertActivationReady(prisma, current);
-    await deps.remote(current.baseUrl, deps.decrypt(credential.encryptedKey)).whoAmI();
+    await queryRedmine(() =>
+      deps.remote(current.baseUrl, deps.decrypt(credential.encryptedKey)).whoAmI(),
+    );
   }
 
   return prisma.$transaction(async (transaction) => {
@@ -470,7 +482,7 @@ export async function connectCredential(
   deps: ConnectionServiceDeps = defaultDeps,
 ) {
   const { connection } = await memberConnection(prisma, connectionId, userId);
-  const identity = await deps.remote(connection.baseUrl, apiKey).whoAmI();
+  const identity = await queryRedmine(() => deps.remote(connection.baseUrl, apiKey).whoAmI());
   const encryptedKey = deps.encrypt(apiKey);
   const validatedAt = new Date();
 
