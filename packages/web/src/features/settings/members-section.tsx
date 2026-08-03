@@ -81,7 +81,7 @@ export function MembersSection({
   }
 
   return (
-    <SettingsCard title={t("membersTitle")}>
+    <SettingsCard title={t("membersTitle")} insetList>
       {!members || members.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t("membersEmpty")}</p>
       ) : (

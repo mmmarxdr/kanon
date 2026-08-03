@@ -84,6 +84,38 @@ async function renderSection(opts: {
   return { mutateFn };
 }
 
+describe("NotificationPreferencesSection — list layout (KAN-213 Slice B)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("renders toggles inside SettingsList rows without a column header row", async () => {
+    await renderSection({ data: DEFAULT_PREFS });
+
+    expect(screen.queryByTestId("settings-list-header")).not.toBeInTheDocument();
+    const mentionRow = screen.getByTestId("toggle-emailMention").closest('[role="row"]');
+    expect(mentionRow).toHaveStyle({ minHeight: "48px" });
+  });
+
+  it("passes workspaceId to preference hooks for workspace scoping", async () => {
+    await renderSection({ data: DEFAULT_PREFS });
+
+    const { useNotificationPreferencesQuery } = await import(
+      "../use-notification-preferences-query"
+    );
+    const { useUpdateNotificationPreferencesMutation } = await import(
+      "../use-update-notification-preferences-mutation"
+    );
+
+    expect(useNotificationPreferencesQuery).toHaveBeenCalledWith(WORKSPACE_ID);
+    expect(useUpdateNotificationPreferencesMutation).toHaveBeenCalledWith(WORKSPACE_ID);
+  });
+});
+
 describe("NotificationPreferencesSection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
