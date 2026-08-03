@@ -37,11 +37,11 @@ Chain strategy: feature-branch-chain
 
 ## Phase B: Lists (Slice B)
 
-- [ ] B.1 RED: `settings-list.test.tsx` — column headers, 48px rows, grid alignment, mobile collapse (spec: settings-list-layout)
-- [ ] B.2 GREEN: Create `components/ui/settings-list.tsx` with column templates per design
-- [ ] B.3 Add i18n `listCol*` keys in `i18n/locales/{en,es}/settings.json`
-- [ ] B.4 RED→GREEN: `members-section.tsx` — SettingsCard title header + SettingsList/Row; preserve action testIds
-- [ ] B.5 RED→GREEN: `invites-section.tsx` — InviteRow → SettingsListRow; preserve invite testIds
+- [x] B.1 RED: `settings-list.test.tsx` — column headers, 48px rows, grid alignment, mobile collapse (spec: settings-list-layout)
+- [x] B.2 GREEN: Create `components/ui/settings-list.tsx` with column templates per design
+- [x] B.3 Add i18n `listCol*` keys in `i18n/locales/{en,es}/settings.json`
+- [x] B.4 RED→GREEN: `members-section.tsx` — SettingsCard title header + SettingsList/Row; preserve action testIds
+- [x] B.5 RED→GREEN: `invites-section.tsx` — InviteRow → SettingsListRow; preserve invite testIds
 - [ ] B.6 RED→GREEN: `project-members-section.tsx` — SettingsList only; **TODO(PR4) logic untouched**
 - [ ] B.7 RED→GREEN: `notification-preferences-section.tsx` — SettingsListRow; preserve `toggle-${key}` + workspace scoping (delta: profile-notification-preferences)
 
