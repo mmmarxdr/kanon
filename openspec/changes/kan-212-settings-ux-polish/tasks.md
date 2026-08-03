@@ -38,13 +38,13 @@ Chain strategy: feature-branch-chain
 
 ## Phase 2: Slice B — Token/Contrast Fixes
 
-- [ ] 2.1 `invites-section.tsx:43` green badge → `bg-success/10 text-success`
-- [ ] 2.2 `redmine-section.tsx:131,239` emerald → `text-success`/`bg-success/10 text-success`
-- [ ] 2.3 `admin-redmine-section.tsx:208` `text-emerald-600` → `text-success`
-- [ ] 2.4 `profile.tsx:188,284` green banners → `border-success/50 bg-success/10 text-success`
-- [ ] 2.5 `members-section.tsx:183`, `project-members-section.tsx:246` `text-white` → `text-destructive-foreground`
-- [ ] 2.6 `notification-preferences-section.tsx:92` knob `bg-white` → `bg-primary-foreground`
-- [ ] 2.7 Re-run affected suites; QA 8 spots × light/dark × 3 palettes
+- [x] 2.1 `invites-section.tsx:43` green badge → `bg-success/10 text-success`
+- [x] 2.2 `redmine-section.tsx:131,239` emerald → `text-success`/`bg-success/10 text-success`
+- [x] 2.3 `admin-redmine-section.tsx:208` `text-emerald-600` → `text-success`
+- [x] 2.4 `profile.tsx:188,284` green banners → `border-success/50 bg-success/10 text-success`
+- [x] 2.5 `members-section.tsx:183`, `project-members-section.tsx:246` `text-white` → `text-destructive-foreground`
+- [x] 2.6 `notification-preferences-section.tsx:92` knob `bg-white` → `bg-primary-foreground`
+- [x] 2.7 Re-run affected suites; QA 8 spots × light/dark × 3 palettes
 
 ## Phase 3: Slice C — Accessible Tabs + Width
 
