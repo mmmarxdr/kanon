@@ -318,12 +318,14 @@ async function runIdentityUpgradePath() {
     await preMigrationDatabase.$disconnect();
     database = undefined;
 
-    // Deploy the exact checked-in A1.3 migration after seeding the pre-A1.3 rows.
-    await cp(
-      join(migrationsDirectory, identityMigrationName),
-      join(temporaryDirectory, "migrations", identityMigrationName),
-      { recursive: true }
-    );
+    // Deploy A1.3 and every later migration so the current client can verify the full upgrade path.
+    for (const migrationName of migrationNames.slice(identityMigrationIndex)) {
+      await cp(
+        join(migrationsDirectory, migrationName),
+        join(temporaryDirectory, "migrations", migrationName),
+        { recursive: true },
+      );
+    }
     await deployMigrations(temporaryDirectory, isolatedDatabaseUrl.toString());
 
     const upgradedDatabase = new PrismaClient({
@@ -449,7 +451,7 @@ async function runIdentityUpgradePath() {
       await upgradedDatabase.integrationExternalIdentity.findUnique({
         where: { id: secondIdentity.id },
       })
-    ).toBeNull();
+    ).toMatchObject({ memberId: null });
     expect(
       await upgradedDatabase.memberIntegrationCredential.findUnique({
         where: { id: upgradeFixture.credentialId },
@@ -520,13 +522,17 @@ describe("integration identity and credential health schema", () => {
     });
     expect(field("IntegrationExternalIdentity", "memberId")).toMatchObject({
       type: "String",
-      isRequired: true,
+      isRequired: false,
     });
     expect(field("IntegrationExternalIdentity", "remoteUserId")).toMatchObject({
       type: "String",
       isRequired: true,
     });
     expect(field("IntegrationExternalIdentity", "remoteLogin")).toMatchObject({
+      type: "String",
+      isRequired: false,
+    });
+    expect(field("IntegrationExternalIdentity", "remoteDisplayName")).toMatchObject({
       type: "String",
       isRequired: false,
     });
@@ -571,7 +577,7 @@ describe("integration identity and credential health schema", () => {
     expect(healthy).toMatchObject({ lastValidatedAt: validatedAt, lastAuthStatus: "valid" });
   });
 
-  it("enforces identity uniqueness and cascades binding/member deletion", async () => {
+  it("enforces identity uniqueness, cascades binding deletion, and preserves member audit", async () => {
     const workspace = await createWorkspace();
     const firstProject = await createProject(workspace.id, "First Identity Project");
     const secondProject = await createProject(workspace.id, "Second Identity Project");
@@ -621,8 +627,8 @@ describe("integration identity and credential health schema", () => {
     });
     await prisma.member.delete({ where: { id: secondMember.id } });
     expect(
-      await prisma.integrationExternalIdentity.findUnique({ where: { id: secondIdentity.id } })
-    ).toBeNull();
+      await prisma.integrationExternalIdentity.findUnique({ where: { id: secondIdentity.id } }),
+    ).toMatchObject({ memberId: null, remoteUserId: "remote-user-three" });
   });
 
   it("keeps lifecycle immediately before identity in migration order", async () => {

@@ -173,25 +173,22 @@ async function seedPreApplicationRows(database: PrismaClient) {
       connectionId: f.connectionId,
     },
   });
-  await database.integrationProjectBinding.create({
-    data: {
-      id: f.bindingId,
-      remoteProjectId: "remote-a15-project",
-      readMap: { "remote-open": "todo" },
-      writeMap: { todo: "remote-open" },
-      connectionId: f.connectionId,
-      projectId: f.projectId,
-    },
-  });
-  await database.integrationExternalIdentity.create({
-    data: {
-      id: f.identityId,
-      remoteUserId: "remote-a15-user",
-      remoteLogin: "a15-remote-login",
-      bindingId: f.bindingId,
-      memberId: f.memberId,
-    },
-  });
+  await database.$executeRaw(Prisma.sql`
+    INSERT INTO "integration_project_bindings" (
+      "id", "remote_project_id", "read_map", "write_map", "updated_at", "connection_id", "project_id"
+    ) VALUES (
+      ${f.bindingId}::uuid, 'remote-a15-project', '{"remote-open":"todo"}'::jsonb,
+      '{"todo":"remote-open"}'::jsonb, CURRENT_TIMESTAMP, ${f.connectionId}::uuid, ${f.projectId}::uuid
+    )
+  `);
+  await database.$executeRaw(Prisma.sql`
+    INSERT INTO "integration_external_identities" (
+      "id", "remote_user_id", "remote_login", "updated_at", "binding_id", "member_id"
+    ) VALUES (
+      ${f.identityId}::uuid, 'remote-a15-user', 'a15-remote-login', CURRENT_TIMESTAMP,
+      ${f.bindingId}::uuid, ${f.memberId}::uuid
+    )
+  `);
   await database.externalRef.create({
     data: {
       id: f.refId,
@@ -253,11 +250,13 @@ async function runApplicationUpgradePath() {
     await seedPreApplicationRows(database);
     await database.$disconnect();
     database = undefined;
-    await cp(
-      join(migrationsDirectory, applicationMigrationName),
-      join(temporaryDirectory, "migrations", applicationMigrationName),
-      { recursive: true }
-    );
+    for (const migrationName of names.slice(applicationIndex)) {
+      await cp(
+        join(migrationsDirectory, migrationName),
+        join(temporaryDirectory, "migrations", migrationName),
+        { recursive: true },
+      );
+    }
     await deployMigrations(temporaryDirectory, isolatedUrl.toString());
     database = new PrismaClient({ datasourceUrl: isolatedUrl.toString() });
 
@@ -376,8 +375,28 @@ describe("integration inbound application and conflict schema", () => {
     expect(field("IntegrationInboundApplication", "fence")?.default).toBe(0);
     expect(field("IntegrationInboundApplication", "applicationKey")?.isUnique).toBe(true);
     expect(model("IntegrationInboundApplication")?.uniqueFields).toEqual(
-      expect.arrayContaining([["bindingId", "remoteEntityType", "remoteId", "remoteUpdatedAt"]])
+      expect.arrayContaining([
+        [
+          "bindingId",
+          "remoteEntityType",
+          "remoteParentType",
+          "remoteParentId",
+          "remoteId",
+          "remoteUpdatedAt",
+        ],
+        [
+          "bindingId",
+          "remoteEntityType",
+          "remoteParentType",
+          "remoteParentId",
+          "remoteId",
+          "sourceVersion",
+        ],
+      ]),
     );
+    expect(field("IntegrationInboundApplication", "sourceVersion")?.isRequired).toBe(false);
+    expect(field("IntegrationInboundApplication", "remoteParentType")?.default).toBe("");
+    expect(field("IntegrationInboundApplication", "remoteParentId")?.default).toBe("");
     for (const [name, type] of [
       ["kind", "String"],
       ["state", "ConflictState"],
@@ -527,7 +546,8 @@ describe("integration inbound application and conflict schema", () => {
     expect(indexes.map(({ indexname }) => indexname)).toEqual(
       expect.arrayContaining([
         "integration_inbound_applications_application_key_key",
-        "integration_inbound_applications_binding_id_remote_entity_t_key",
+        "uq_inbound_application_remote_timestamp",
+        "uq_inbound_application_source",
         "integration_conflicts_binding_id_state_idx",
       ])
     );
