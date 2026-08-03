@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -325,7 +325,7 @@ export function FilterChipSelect({
         setOpen(false);
       }
     };
-    const onKey = (e: KeyboardEvent) => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
     document.addEventListener("mousedown", onDoc);
@@ -628,7 +628,7 @@ export function TabList<T extends string>({
     tabRefs.current[index]?.focus();
   };
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
     let nextIndex: number | null = null;
     switch (event.key) {
       case "ArrowRight":
