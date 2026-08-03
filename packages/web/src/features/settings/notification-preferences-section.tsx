@@ -75,6 +75,7 @@ export function NotificationPreferencesSection({
                 type="button"
                 role="switch"
                 aria-checked={enabled}
+                aria-label={t(labelKey)}
                 data-testid={`toggle-${key}`}
                 disabled={!data || update.isPending}
                 onClick={() => {
