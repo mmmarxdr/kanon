@@ -2,14 +2,15 @@
 
 **Date**: 2026-08-03
 **Mode**: Strict TDD
-**Status**: Unit 1 complete; Unit 2 not started
-**Delivery**: feature-branch-chain, Unit 1 branch `fix/kan-211-redmine-auth-fence`
+**Status**: Units 1A and 1B complete; Unit 2 not started
+**Delivery**: feature-branch-chain, Unit 1B branch `fix/kan-211-redmine-ambiguity-fence`, base `2bd5baa`
 
 ## Completed Tasks
 
 - [x] 1.1-1.6 Outbound 401-only credential fence and auth-blocked work
 - [x] 2.1-2.4 Inbound 401 fence, immediate stale-version release, and safe logging
 - [x] Unit 1 review fix: auth-blocked service work records the selected credential id
+- [x] 3.1-3.8 Wrapped 401 classification, ambiguity auth-block, and lease-independent invalidation
 
 ## TDD Cycle Evidence
 
@@ -32,18 +33,31 @@
 |-----|-------|----------|
 | Service-fallback 401 and already-invalid rows both received `authCredentialId: null` | Both rows persist the selected service credential id; one provider call total; actor key/kind unchanged | Replaced redundant user-create setup with compact create/update/time-entry coverage; no new helper or schema |
 
+### Unit 1B TDD Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 3.1 | `core/types.test.ts` | Unit | 7/7 | Wrapped cause returned false | 7/7 | Direct, one-level wrapped, nested, message, non-401 | Kept classifier explicit |
+| 3.2 | `core/types.test.ts` | Unit | 7/7 | 3.1 RED | 7/7 | Same classifier matrix | No recursive/message parsing |
+| 3.3 | `retry.test.ts` | Integration | 38/38 | Observed and reconciliation 401 became `dead` and burned attempts | 40/40, final 41/41 | Observed, reconciliation, already-invalid, no reclaim | Parameterized two entry points |
+| 3.4 | `retry.test.ts` | Integration | 38/38 | 3.3 RED | 40/40, final 41/41 | Stable reason/id/future due time; no provider redrive | Explicit `AuthFailureMode` |
+| 3.5 | `retry.test.ts` | Integration | 40/40 | Reclaimed work rolled credential back to `valid` | 41/41 | New owner token/fence/state/attempts unchanged | Reused existing fence predicate |
+| 3.6 | `retry.test.ts` | Integration | 40/40 | 3.5 RED | 41/41 | Fence win, CAS miss, stale owner | Invalidation commits before best-effort work update |
+| 3.7 | `inbound.test.ts` | Integration | 7/7 | Reclaimed lease rolled back invalidation and escaped the cycle | 8/8 | Normal release, CAS miss, reclaimed owner | Existing safe evidence assertion retained |
+| 3.8 | `inbound.test.ts` | Integration | 7/7 | 3.7 RED | 8/8 | Credential truth independent of poll ownership | Removed cross-record transaction |
+
 ## Files Changed
 
 | File | Action | What |
 |------|--------|------|
-| `packages/api/src/modules/integrations/core/types.ts` | Modified | Added 401-only classifier and reusable safe error evidence |
-| `packages/api/src/modules/integrations/core/types.test.ts` | Modified | Added explicit authentication classification coverage |
-| `packages/api/src/modules/integrations/worker.ts` | Modified | Snapshots credential version; CAS-invalidates on 401; records selected credential on auth-blocked work; retries CAS misses immediately |
-| `packages/api/src/modules/integrations/retry.test.ts` | Modified | Covers create/update/time-entry, service fallback audit identity, invalid target, 403, nullable version, late 401, and retained actor/work identity |
-| `packages/api/src/modules/integrations/inbound.ts` | Modified | Snapshots service credential version; fenced invalidation and lease release; safe logs |
-| `packages/api/src/modules/integrations/inbound.test.ts` | Modified | Covers fence win/loss, multi-binding stop, normal failure delay, and redaction |
-| `openspec/changes/kan-211-redmine-credential-recovery/tasks.md` | Modified | Marked only Unit 1 tasks complete |
-| `openspec/changes/kan-211-redmine-credential-recovery/apply-progress.md` | Added | Recorded Unit 1 execution and verification |
+| `packages/api/src/modules/integrations/core/types.ts` | Modified | Classifies direct or one-level `ProviderDispatchError.cause` 401 only |
+| `packages/api/src/modules/integrations/core/types.test.ts` | Modified | Covers wrapped, nested, message-only, direct, and non-401 classification |
+| `packages/api/src/modules/integrations/worker.ts` | Modified | Keeps auth-blocked creates ambiguous; excludes blocked claims; commits invalidation before fenced work transition |
+| `packages/api/src/modules/integrations/retry.test.ts` | Modified | Covers both ambiguity 401 entry points, already-invalid blocking, and reclaimed work ownership |
+| `packages/api/src/modules/integrations/inbound.ts` | Modified | Commits credential invalidation before best-effort poll lease release |
+| `packages/api/src/modules/integrations/inbound.test.ts` | Modified | Covers reclaimed lease containment and new-owner preservation |
+| `openspec/changes/kan-211-redmine-credential-recovery/tasks.md` | Modified | Marked only Units 1A and 1B complete |
+| `openspec/changes/kan-211-redmine-credential-recovery/apply-progress.md` | Modified | Recorded cumulative Unit 1A/1B TDD and verification evidence |
 
 ## Commands And Results
 
@@ -61,27 +75,40 @@
 | `pnpm --filter @kanon/shared build` | Pass; permitted test prerequisite from `openspec/config.yaml` |
 | Focused Unit 1 files, one Vitest process each, isolated migrated database | Core 7/7, worker 38/38, inbound 7/7 pass |
 | `DATABASE_URL=<isolated> pnpm --filter @kanon/api test` | 160/160 files pass; 2181 tests pass, 2 skipped |
+| Unit 1B safety nets, one file/process against `kanon_test_kan211_u1` | Core 7/7, worker 38/38, inbound 7/7 pass |
+| Unit 1B RED: wrapped classifier | Wrapped `ProviderDispatchError.cause` 401 failed classification as expected |
+| Unit 1B RED: ambiguous auth block | Both observed uncertain-create and reconciliation 401 became `dead` and burned attempts |
+| Unit 1B RED: outbound stale owner | Credential incorrectly remained `valid` after fenced transition failed |
+| Unit 1B RED: inbound reclaimed lease | Cycle rejected with stale-lease error and rolled invalidation back |
+| `pnpm --filter @kanon/api exec prisma generate --schema prisma/schema.prisma` | Local Prisma client prerequisite succeeded; no schema/migration changed |
+| `pnpm --filter @kanon/shared build` | Permitted test prerequisite succeeded before Unit 1B edits |
+| Final Unit 1B files, one Vitest process each, dedicated database | Core 7/7, worker 41/41, inbound 8/8; 56/56 pass |
+| `pnpm --filter @kanon/api test:types` and `pnpm --filter @kanon/api exec tsc --noEmit -p tsconfig.json` | Pass |
+| `pnpm exec prettier --check ...` and `git diff --check` | Pass |
+| Resumed verification against `kanon_test_kan211_u1` | Focused 56/56 pass; full API 160/160 files, 2185 tests pass, 2 skipped; type checks, Prettier, and diff check pass |
 
 The first full-suite attempt shared `kanon_test` with another worktree's active Vitest process and produced cross-file foreign-key cleanup races. Verification was repeated against a dedicated migrated database; the complete suite passed there.
 
 ## Workload / PR Boundary
 
-- Forecast: Unit 1 expected near the 400-line review boundary.
-- Actual production + test diff: 400 changed lines (358 additions, 42 deletions).
-- Current slice: tasks 1.1-1.6 and 2.1-2.4 only.
-- Remaining Unit 2 boundary: tasks 3.1-4.4 in `service.ts`, `routes.ts`, shared DTOs, and their tests.
-- Unit 2 was not started. No shared/web/recovery/health/schema/migration work was changed.
+- Unit 1A baseline: 400 changed production + test lines at `2bd5baa`.
+- Unit 1B actual against `2bd5baa`: 217 changed production + test lines (167 additions, 50 deletions), 37 above the 180-line target.
+- The target deviation retains required observed/reconciliation/already-invalid ambiguity and stale-owner assertions; no correctness case was dropped for size.
+- Current slice: tasks 3.1-3.8 only on `fix/kan-211-redmine-ambiguity-fence`.
+- Remaining Unit 2 boundary: tasks 4.1-5.4 in `service.ts`, `routes.ts`, shared DTOs, and their tests.
+- Unit 2 was not started. No service/routes/shared/web/health/schema/migration work was changed.
 
 ## Deviations And Blockers
 
-- Implementation matches the Unit 1 design.
+- Implementation matches the amended Unit 1B behavior; the only deviation is the 217-line actual versus the 120-180 target.
+- The outbound/inbound CAS predicate remains duplicated as the review warning allowed; a shared helper was not smaller or safer for this two-site fix.
 - The executor's temporary source aliases were removed. Parent verification used the config-approved shared build prerequisite and normal package resolution.
 - An isolated database was required because another concurrent worktree was running Vitest against the default shared test database; no other process or worktree was stopped or modified.
 
 ## Full 4R Review
 
-- Review completed for risk, readability, reliability, and resilience; every CRITICAL candidate was refuted through general, correctness, impact, and reproducibility lenses.
-- Confirmed: wrapped observation 401 is missed; ambiguous-create auth handling can redrive duplicate creates; outbound stale leases can roll back credential invalidation; inbound reclaimed leases can roll back invalidation and escape the cycle.
+- All four confirmed CRITICAL findings are addressed: one-level wrapped 401 classification; durable ambiguous auth-blocking; outbound commit-first invalidation; inbound commit-first contained invalidation.
+- Direct definitive 401 remains `dead`/`credential_invalid`; late A→B CAS misses preserve B and retry/reconcile due without attempt burn.
 - Refuted: missing replacement redrive is not a Unit 1 release defect because the selected feature-branch chain cannot ship Unit 1 without Unit 2.
-- Readability warnings: failure metadata currently doubles as a state discriminant, and the CAS predicate is duplicated between outbound and inbound.
-- Unit 1A is a committed internal review boundary only. It MUST NOT be merged into the tracker or opened for final review until Unit 1B tasks 3.1-3.8 close the confirmed findings.
+- Readability warning retained: the CAS predicate is duplicated between outbound and inbound; ambiguity routing now uses an explicit failure discriminant.
+- Units 1A and 1B are internal review boundaries only; Unit 2 replacement/redrive remains required before feature-chain release.

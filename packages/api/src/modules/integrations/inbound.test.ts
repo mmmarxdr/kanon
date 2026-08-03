@@ -305,6 +305,38 @@ describe("Redmine inbound sync", () => {
     ).resolves.toMatchObject({ pollLeaseToken: null, pollLeaseUntil: null });
   });
 
+  it("contains a reclaimed-poll 401 after invalidating the observed credential", async () => {
+    const { credential, binding } = await fixture();
+    const newLeaseUntil = new Date(baseline.getTime() + 120_000);
+    const setup = dependencies([]);
+    setup.createSource.mockReturnValue({
+      poll: vi.fn(async () => {
+        await prisma.integrationProjectBinding.update({
+          where: { id: binding.id },
+          data: {
+            pollLeaseToken: "new-owner",
+            pollLeaseUntil: newLeaseUntil,
+            pollFence: { increment: 1 },
+          },
+        });
+        throw Object.assign(new Error("rejected secret"), { statusCode: 401 });
+      }),
+    });
+
+    await expect(runInboundSyncCycle(prisma, setup)).resolves.toBeUndefined();
+    expect(
+      await prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: credential.id } }),
+    ).toMatchObject({ lastAuthStatus: "invalid" });
+    expect(
+      await prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+    ).toMatchObject({
+      pollLeaseToken: "new-owner",
+      pollLeaseUntil: newLeaseUntil,
+      pollFence: 2,
+    });
+    expect(JSON.stringify(setup.logger.error.mock.calls)).not.toContain("secret");
+  });
+
   it.each([
       Object.assign(new Error("forbidden secret"), { statusCode: 403, apiKey: "forbidden-key" }),
       Object.assign(new Error("network secret"), { code: "ECONNRESET", apiKey: "network-key" }),

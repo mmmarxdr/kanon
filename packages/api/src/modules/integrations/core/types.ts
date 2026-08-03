@@ -161,7 +161,8 @@ const RETRYABLE_NETWORK_CODES = new Set([
 ]);
 
 export function isProviderAuthenticationError(error: unknown): boolean {
-  return !!error && typeof error === "object" && "statusCode" in error && error.statusCode === 401;
+  const value = error instanceof ProviderDispatchError ? error.cause : error;
+  return !!value && typeof value === "object" && "statusCode" in value && value.statusCode === 401;
 }
 
 export function safeErrorEvidence(error: unknown): Record<string, string | number> {

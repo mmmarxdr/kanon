@@ -33,6 +33,7 @@ const MAX_ATTEMPTS = 8;
 const BASE_RETRY_MS = 30_000;
 const MAX_RETRY_MS = 3_600_000;
 const DEFAULT_TIME_BUDGET_MS = 90_000;
+const AUTH_BLOCKED_UNTIL = new Date("9999-12-31T23:59:59.999Z");
 const ISSUE_FIELDS = new Set<string>([
   ...ISSUE_CAPTURE_FIELDS,
   ...ISSUE_SCHEDULE_CAPTURE_FIELDS,
@@ -96,6 +97,7 @@ type AmbiguityClaimResult =
   | { kind: "none" }
   | { kind: "handled" }
   | { kind: "claimed"; value: AmbiguityPrepared };
+type AuthFailureMode = "definitive" | "ambiguous";
 type Deps = Required<
   Pick<IntegrationWorkerDependencies, "jitter" | "decrypt" | "createAdapter" | "claim" | "logger">
 > &
@@ -707,6 +709,7 @@ async function claimAmbiguous(
       JOIN "integration_connections" AS connection ON connection."id" = binding."connection_id"
       WHERE work."direction" = 'outbound'::"SyncDirection"
         AND work."state" = 'ambiguous'::"SyncWorkState"
+        AND work."skipped_reason" IS DISTINCT FROM 'credential_invalid'
         AND work."available_at" <= ${dueAt}
         AND binding."lifecycle" = 'active'::"IntegrationLifecycle"
         AND connection."lifecycle" = 'active'::"IntegrationLifecycle"
@@ -726,6 +729,7 @@ async function claimAmbiguous(
     if (
       !current ||
       current.state !== "ambiguous" ||
+      current.skippedReason === "credential_invalid" ||
       current.availableAt > now ||
       current.binding.lifecycle !== "active" ||
       current.binding.connection.lifecycle !== "active" ||
@@ -850,7 +854,12 @@ async function claimAmbiguous(
       if (auth.credential) {
         await transaction.integrationSyncWork.update({
           where: { id: current.id },
-          data: { state: "dead", skippedReason: "credential_invalid", authCredentialId: auth.credential.id },
+          data: {
+            state: "ambiguous",
+            availableAt: AUTH_BLOCKED_UNTIL,
+            skippedReason: "credential_invalid",
+            authCredentialId: auth.credential.id,
+          },
         });
         return { kind: "handled" };
       }
@@ -1099,7 +1108,7 @@ async function reconcileAmbiguity(
     matches = await d.createAdapter(prepared.adapter).reconcileCreate(prepared.request);
   } catch (error) {
     if (isProviderAuthenticationError(error)) {
-      return failAuthentication(database, prepared.work, prepared.credential, error, d);
+      return failAuthentication(database, prepared.work, prepared.credential, error, "ambiguous", d);
     }
     const safeError = safeErrorEvidence(error);
     if (isRetryableProviderError(error)) {
@@ -1202,40 +1211,44 @@ async function failAuthentication(
   work: IntegrationSyncWork,
   credential: UsedCredential,
   error: unknown,
+  mode: AuthFailureMode,
   d: Deps,
 ) {
   try {
-    const state = await database.$transaction(async (transaction) => {
-      const now = await databaseNow(transaction, d.now);
-      const invalidated = await transaction.memberIntegrationCredential.updateMany({
-        where: {
-          id: credential.id,
-          lastAuthStatus: "valid",
-          revokedAt: null,
-          lastValidatedAt: credential.lastValidatedAt,
-        },
-        data: { lastAuthStatus: "invalid" },
-      });
-      const state = invalidated.count === 1 ? "dead" : "retry";
-      const changed = await transaction.integrationSyncWork.updateMany({
-        where: { ...fenced(work), leaseUntil: { gt: now } },
-        data: {
-          state,
-          ...(state === "dead"
-            ? { attempts: work.attempts + 1, skippedReason: "credential_invalid", authCredentialId: credential.id }
-            : { availableAt: now, skippedReason: null }),
-          leaseToken: null,
-          leaseUntil: null,
-        },
-      });
-      if (changed.count !== 1) throw new StaleFinalizeError();
-      return state;
+    const invalidated = await database.memberIntegrationCredential.updateMany({
+      where: {
+        id: credential.id,
+        lastAuthStatus: "valid",
+        revokedAt: null,
+        lastValidatedAt: credential.lastValidatedAt,
+      },
+      data: { lastAuthStatus: "invalid" },
     });
+    const blocked = invalidated.count === 1;
+    const state = mode === "ambiguous" ? "ambiguous" : blocked ? "dead" : "retry";
+    const now = await databaseNow(database, d.now);
+    const changed = await database.integrationSyncWork.updateMany({
+      where: { ...fenced(work), leaseUntil: { gt: now } },
+      data: {
+        state,
+        ...(blocked
+          ? {
+              ...(mode === "definitive" ? { attempts: work.attempts + 1 } : {}),
+              availableAt: mode === "ambiguous" ? AUTH_BLOCKED_UNTIL : undefined,
+              skippedReason: "credential_invalid",
+              authCredentialId: credential.id,
+            }
+          : { availableAt: now, skippedReason: null }),
+        leaseToken: null,
+        leaseUntil: null,
+      },
+    });
+    if (changed.count !== 1) throw new StaleFinalizeError();
     log(
       d,
-      state === "dead" ? "error" : "warn",
+      blocked ? "error" : "warn",
       { credentialId: credential.id, error: safeErrorEvidence(error), workId: work.id, state },
-      state === "dead" ? "Integration work auth-blocked" : "Integration work retrying new credential",
+      blocked ? "Integration work auth-blocked" : "Integration work retrying new credential",
     );
   } catch (transitionError) {
     log(
@@ -1255,7 +1268,11 @@ async function fail(
   d: Deps
 ) {
   if (prepared && isProviderAuthenticationError(error)) {
-    return failAuthentication(database, work, prepared.credential, error, d);
+    const mode =
+      error instanceof ProviderDispatchError && error.outcome === "ambiguous"
+        ? "ambiguous"
+        : "definitive";
+    return failAuthentication(database, work, prepared.credential, error, mode, d);
   }
   const attempts = work.attempts + 1;
   const explicitOutcome = error instanceof ProviderDispatchError ? error.outcome : null;
