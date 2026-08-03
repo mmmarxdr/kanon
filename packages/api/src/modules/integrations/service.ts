@@ -97,7 +97,7 @@ async function requireOwner(database: Database, workspaceId: string, userId: str
   return member;
 }
 
-/** Service credential holder: caller membership if present, otherwise workspace owner. */
+/** Service credential holder must be the configuring admin's workspace membership. */
 async function resolveServiceCredentialMember(
   database: Database,
   workspaceId: string,
@@ -107,20 +107,14 @@ async function resolveServiceCredentialMember(
     where: { userId_workspaceId: { userId, workspaceId } },
     select: { id: true },
   });
-  if (caller) return caller;
-  const owner = await database.member.findFirst({
-    where: { workspaceId, role: "owner" },
-    orderBy: { createdAt: "asc" },
-    select: { id: true },
-  });
-  if (!owner) {
+  if (!caller) {
     throw new AppError(
       409,
-      "WORKSPACE_OWNER_REQUIRED",
-      "Workspace needs an owner to hold the Redmine service credential",
+      "WORKSPACE_MEMBERSHIP_REQUIRED",
+      "Join the workspace before configuring its Redmine service credential",
     );
   }
-  return owner;
+  return caller;
 }
 
 async function adminConnection(database: Database, connectionId: string, userId: string) {
@@ -396,13 +390,19 @@ export async function configureProviderMaps(
       },
     });
     await transaction.integrationProjectBinding.updateMany({
-      where: { connectionId },
+      where: { connectionId, lifecycle: { not: "draft" } },
       data: {
         readMap: input.readMap as Prisma.InputJsonValue,
         writeMap: writeMap as Prisma.InputJsonValue,
-        ...(current.lifecycle !== "draft"
-          ? { lifecycle: "draft" as const, lifecycleEpoch: { increment: 1 } }
-          : {}),
+        lifecycle: "draft",
+        lifecycleEpoch: { increment: 1 },
+      },
+    });
+    await transaction.integrationProjectBinding.updateMany({
+      where: { connectionId, lifecycle: "draft" },
+      data: {
+        readMap: input.readMap as Prisma.InputJsonValue,
+        writeMap: writeMap as Prisma.InputJsonValue,
       },
     });
     return updated;

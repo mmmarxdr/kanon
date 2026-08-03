@@ -529,7 +529,9 @@ describe("integration connection lifecycle", () => {
   it("lets owners bind projects after instance-admin maps, and redacts maps for members", async () => {
     const workspace = await seedTestWorkspace();
     const owner = await seedTestMemberWithRole(workspace.id, "owner");
-    const instanceAdmin = await seedInstanceAdminUser();
+    const instanceAdmin = await seedTestMemberWithRole(workspace.id, "member", {
+      isInstanceAdmin: true,
+    });
     const member = await seedTestMemberWithRole(workspace.id, "member");
     const project = await seedTestProject(workspace.id);
 
@@ -574,7 +576,6 @@ describe("integration connection lifecycle", () => {
       readMap,
     });
 
-    const { getConnection, getWorkspaceConnection } = await import("./service.js");
     const adminView = await getWorkspaceConnection(workspace.id, instanceAdmin.userId);
     expect(adminView?.providerMaps?.timeActivityId).toBe("9");
     expect(adminView?.bindings[0]?.readMap).toEqual(readMap);
@@ -589,5 +590,54 @@ describe("integration connection lifecycle", () => {
       writeMap: {},
       timeActivityId: null,
     });
+  });
+
+  it("rejects service bootstrap when the instance admin is not a workspace member", async () => {
+    const workspace = await seedTestWorkspace();
+    await seedTestMemberWithRole(workspace.id, "owner");
+    const outsiderAdmin = await seedInstanceAdminUser();
+
+    await expect(
+      createConnection({ workspaceId: workspace.id, apiKey: "secret" }, outsiderAdmin.userId, deps),
+    ).rejects.toMatchObject({ statusCode: 409, code: "WORKSPACE_MEMBERSHIP_REQUIRED" });
+    await expect(prisma.integrationConnection.count()).resolves.toBe(0);
+  });
+
+  it("bumps binding epochs when cascading provider maps onto active bindings", async () => {
+    const workspace = await seedTestWorkspace();
+    const admin = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
+    const project = await seedTestProject(workspace.id);
+    const { connection } = await createConnection(
+      { workspaceId: workspace.id, apiKey: "secret" },
+      admin.userId,
+      deps,
+    );
+    await configureConnection(
+      connection.id,
+      {
+        projectId: project.id,
+        remoteProjectId: "remote-project",
+        timeActivityId: "9",
+        readMap,
+        writeMap,
+      },
+      admin.userId,
+      deps,
+    );
+    await setConnectionLifecycle(connection.id, "active", admin.userId, deps);
+
+    await configureProviderMaps(
+      connection.id,
+      { timeActivityId: "9", readMap, writeMap },
+      admin.userId,
+      deps,
+    );
+
+    await expect(
+      prisma.integrationProjectBinding.findFirstOrThrow({ where: { connectionId: connection.id } }),
+    ).resolves.toMatchObject({ lifecycle: "draft", lifecycleEpoch: 2 });
+    await expect(
+      prisma.integrationConnection.findUniqueOrThrow({ where: { id: connection.id } }),
+    ).resolves.toMatchObject({ lifecycle: "draft", lifecycleEpoch: 2 });
   });
 });

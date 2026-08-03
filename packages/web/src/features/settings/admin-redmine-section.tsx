@@ -326,9 +326,13 @@ export function AdminRedmineSection({ redmineBaseUrl }: { redmineBaseUrl: string
           ) : connection.error ? (
             <p className="mt-4 text-sm text-destructive">{connection.error.message}</p>
           ) : !connection.data ? (
-            <ConnectionSetup workspaceId={selectedId} />
+            <ConnectionSetup key={selectedId} workspaceId={selectedId} />
           ) : (
-            <ConnectedAdminPanel workspaceId={selectedId} connection={connection.data} />
+            <ConnectedAdminPanel
+              key={selectedId}
+              workspaceId={selectedId}
+              connection={connection.data}
+            />
           )}
         </>
       )}
