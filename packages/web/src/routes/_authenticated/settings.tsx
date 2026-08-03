@@ -7,7 +7,6 @@ import { useWorkspaceMembersQuery } from "@/features/settings/use-settings-queri
 import { useAuthStore } from "@/stores/auth-store";
 import { MembersSection } from "@/features/settings/members-section";
 import { InvitesSection } from "@/features/settings/invites-section";
-import { DomainsSection } from "@/features/settings/domains-section";
 import { NotificationPreferencesSection } from "@/features/settings/notification-preferences-section";
 import { RedmineSection } from "@/features/settings/redmine-section";
 
@@ -17,12 +16,11 @@ export const settingsRoute = createRoute({
   component: SettingsPage,
 });
 
-type SettingsTab = "members" | "invites" | "domains" | "notifications" | "integrations";
+type SettingsTab = "members" | "invites" | "notifications" | "integrations";
 
 const TAB_KEYS: { key: SettingsTab; labelKey: string }[] = [
   { key: "members", labelKey: "tabMembers" },
   { key: "invites", labelKey: "tabInvites" },
-  { key: "domains", labelKey: "tabDomains" },
   { key: "notifications", labelKey: "tabNotifications" },
   { key: "integrations", labelKey: "tabIntegrations" },
 ];
@@ -139,12 +137,6 @@ function SettingsPage() {
           )}
           {activeTab === "invites" && (
             <InvitesSection
-              workspaceId={workspaceId}
-              currentUserRole={currentUserRole}
-            />
-          )}
-          {activeTab === "domains" && (
-            <DomainsSection
               workspaceId={workspaceId}
               currentUserRole={currentUserRole}
               allowedDomains={workspace?.allowedDomains ?? []}

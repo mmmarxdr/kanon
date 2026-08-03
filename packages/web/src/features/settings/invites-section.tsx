@@ -6,6 +6,7 @@ import {
   useRevokeInviteMutation,
   type WorkspaceInvite,
 } from "./use-settings-queries";
+import { InviteDomainRestriction } from "./invite-domain-restriction";
 
 const INVITE_ROLES = ["viewer", "member", "admin"] as const;
 
@@ -46,9 +47,11 @@ function statusBadge(
 export function InvitesSection({
   workspaceId,
   currentUserRole,
+  allowedDomains,
 }: {
   workspaceId: string;
   currentUserRole: string | undefined;
+  allowedDomains: string[];
 }) {
   const { t } = useTranslation("settings");
   const { t: tCommon } = useTranslation("common");
@@ -119,6 +122,7 @@ export function InvitesSection({
   const inactiveInvites = (invites ?? []).filter((i) => !isActive(i));
 
   return (
+    <>
     <div className="rounded-lg border border-border bg-card p-6">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-foreground">{t("invitesTitle")}</h2>
@@ -265,6 +269,15 @@ export function InvitesSection({
         </div>
       )}
     </div>
+
+    <div className="mt-4">
+      <InviteDomainRestriction
+        workspaceId={workspaceId}
+        currentUserRole={currentUserRole}
+        allowedDomains={allowedDomains}
+      />
+    </div>
+    </>
   );
 }
 
