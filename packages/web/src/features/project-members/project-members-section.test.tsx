@@ -117,6 +117,25 @@ async function renderSection(members: EffectiveMemberRow[] = [ADMIN_ROW, MEMBER_
   render(<ProjectMembersSection projectKey={PROJECT_KEY} />, { wrapper });
 }
 
+describe("ProjectMembersSection — list layout (KAN-213 Slice B)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("renders SettingsList column headers for the project members grid", async () => {
+    await renderSection();
+    expect(screen.getByTestId("project-members-list")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Member" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Email" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Role" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Actions" })).toBeInTheDocument();
+  });
+});
+
 describe("ProjectMembersSection — row rendering", () => {
   beforeEach(() => {
     vi.clearAllMocks();

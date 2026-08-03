@@ -20,6 +20,7 @@ export interface SettingsListRowProps {
   className?: string;
   /** Accessible label for the row (e.g. primary cell text). */
   label?: string;
+  "data-testid"?: string;
 }
 
 export const WORKSPACE_MEMBERS_GRID = "2fr 1.5fr 1fr auto auto";
@@ -53,6 +54,17 @@ export function workspaceMembersColumns(
     { key: "member", label: t("listColMember") },
     { key: "email", label: t("listColEmail"), hideBelow: "sm" },
     { key: "joined", label: t("listColJoined"), hideBelow: "sm" },
+    { key: "role", label: t("listColRole") },
+    { key: "actions", label: t("listColActions"), className: "text-right" },
+  ];
+}
+
+export function projectMembersColumns(
+  t: (key: string) => string,
+): SettingsListColumn[] {
+  return [
+    { key: "member", label: t("listColMember") },
+    { key: "email", label: t("listColEmail"), hideBelow: "sm" },
     { key: "role", label: t("listColRole") },
     { key: "actions", label: t("listColActions"), className: "text-right" },
   ];
@@ -119,7 +131,12 @@ export function SettingsList({
   );
 }
 
-export function SettingsListRow({ columns, className, label }: SettingsListRowProps) {
+export function SettingsListRow({
+  columns,
+  className,
+  label,
+  "data-testid": testId,
+}: SettingsListRowProps) {
   const ctx = useContext(SettingsListContext);
   if (!ctx) {
     throw new Error("SettingsListRow must be rendered inside SettingsList");
@@ -142,6 +159,7 @@ export function SettingsListRow({ columns, className, label }: SettingsListRowPr
     <div
       role="row"
       aria-label={label}
+      data-testid={testId}
       style={gridStyle}
       className={`border-b border-border/50 last:border-b-0 py-1 hover:bg-secondary/30 transition-colors ${className ?? ""}`}
     >
