@@ -6,6 +6,7 @@ import {
   cleanDatabase,
   createTestApp,
   disconnectTestDb,
+  seedInstanceAdminUser,
   seedTestMemberWithRole,
   seedTestProject,
   seedTestWorkspace,
@@ -15,7 +16,9 @@ import {
   configureConnection,
   configureProviderMaps,
   createConnection,
+  getConnection,
   getConnectionDiscovery,
+  getWorkspaceConnection,
   setConnectionLifecycle,
   type ConnectionServiceDeps,
 } from "./service.js";
@@ -521,5 +524,70 @@ describe("integration connection lifecycle", () => {
       ),
     ).rejects.toMatchObject({ statusCode: 400, code: "REMOTE_PROJECT_NOT_FOUND" });
     await expect(prisma.integrationProjectBinding.count()).resolves.toBe(0);
+  });
+
+  it("lets owners bind projects after instance-admin maps, and redacts maps for members", async () => {
+    const workspace = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const instanceAdmin = await seedInstanceAdminUser();
+    const member = await seedTestMemberWithRole(workspace.id, "member");
+    const project = await seedTestProject(workspace.id);
+
+    const { connection } = await createConnection(
+      { workspaceId: workspace.id, apiKey: "secret" },
+      instanceAdmin.userId,
+      deps,
+    );
+
+    await expect(
+      bindProject(
+        connection.id,
+        { projectId: project.id, remoteProjectId: "remote-project" },
+        owner.userId,
+        deps,
+      ),
+    ).rejects.toMatchObject({ statusCode: 409, code: "PROVIDER_MAPS_REQUIRED" });
+
+    await configureProviderMaps(
+      connection.id,
+      { timeActivityId: "9", readMap, writeMap },
+      instanceAdmin.userId,
+      deps,
+    );
+
+    const ownerDiscovery = await getConnectionDiscovery(connection.id, owner.userId, deps);
+    expect(ownerDiscovery).toEqual({
+      projects: [{ id: "remote-project", name: "Remote project" }],
+      statuses: [],
+      timeEntryActivities: [],
+    });
+
+    const binding = await bindProject(
+      connection.id,
+      { projectId: project.id, remoteProjectId: "remote-project" },
+      owner.userId,
+      deps,
+    );
+    expect(binding).toMatchObject({
+      projectId: project.id,
+      remoteProjectId: "remote-project",
+      readMap,
+    });
+
+    const { getConnection, getWorkspaceConnection } = await import("./service.js");
+    const adminView = await getWorkspaceConnection(workspace.id, instanceAdmin.userId);
+    expect(adminView?.providerMaps?.timeActivityId).toBe("9");
+    expect(adminView?.bindings[0]?.readMap).toEqual(readMap);
+
+    const memberView = await getConnection(connection.id, member.userId);
+    expect(memberView.providerMaps).toBeNull();
+    expect(memberView.discoveredStatuses).toBeNull();
+    expect(memberView.bindings[0]).toMatchObject({
+      projectId: project.id,
+      remoteProjectId: "remote-project",
+      readMap: {},
+      writeMap: {},
+      timeActivityId: null,
+    });
   });
 });

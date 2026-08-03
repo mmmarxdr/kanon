@@ -824,21 +824,14 @@ export async function getConnection(connectionId: string, userId: string) {
   const connection = await prisma.integrationConnection.findUnique({ where: { id: connectionId } });
   if (!connection) throw new AppError(404, "INTEGRATION_NOT_FOUND", "Integration connection not found");
 
-  let memberId: string | null = null;
-  if (!admin) {
-    const member = await prisma.member.findUnique({
-      where: { userId_workspaceId: { userId, workspaceId: connection.workspaceId } },
-      select: { id: true },
-    });
-    if (!member) throw new AppError(403, "FORBIDDEN", "Workspace membership is required");
-    memberId = member.id;
-  } else {
-    const member = await prisma.member.findUnique({
-      where: { userId_workspaceId: { userId, workspaceId: connection.workspaceId } },
-      select: { id: true },
-    });
-    memberId = member?.id ?? null;
+  const member = await prisma.member.findUnique({
+    where: { userId_workspaceId: { userId, workspaceId: connection.workspaceId } },
+    select: { id: true },
+  });
+  if (!admin && !member) {
+    throw new AppError(403, "FORBIDDEN", "Workspace membership is required");
   }
+  const memberId = member?.id ?? null;
 
   const [credential, bindings, workspaceMembers, externalIdentities, connectedCredentials] =
     await Promise.all([
