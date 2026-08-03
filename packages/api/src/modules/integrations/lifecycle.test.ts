@@ -6,14 +6,19 @@ import {
   cleanDatabase,
   createTestApp,
   disconnectTestDb,
+  seedInstanceAdminUser,
   seedTestMemberWithRole,
   seedTestProject,
   seedTestWorkspace,
 } from "../../test/helpers.js";
 import {
+  bindProject,
   configureConnection,
+  configureProviderMaps,
   createConnection,
+  getConnection,
   getConnectionDiscovery,
+  getWorkspaceConnection,
   setConnectionLifecycle,
   type ConnectionServiceDeps,
 } from "./service.js";
@@ -67,7 +72,7 @@ describe("integration connection lifecycle", () => {
 
   it("bootstraps one draft connection and service credential atomically", async () => {
     const workspace = await seedTestWorkspace();
-    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const owner = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
 
     const first = await createConnection(
       { workspaceId: workspace.id, apiKey: "secret" },
@@ -101,7 +106,7 @@ describe("integration connection lifecycle", () => {
 
   it("requires an instance-admin Redmine URL before testing a key", async () => {
     const workspace = await seedTestWorkspace();
-    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const owner = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
     await prisma.instanceSettings.update({
       where: { id: INSTANCE_SETTINGS_ID },
       data: { redmineBaseUrl: null },
@@ -115,7 +120,7 @@ describe("integration connection lifecycle", () => {
 
   it("returns an actionable error when Redmine discovery fails", async () => {
     const workspace = await seedTestWorkspace();
-    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const owner = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
     remote.whoAmI.mockRejectedValueOnce(new Error("Unsafe remote endpoint: HTTPS is required"));
 
     await expect(
@@ -132,7 +137,7 @@ describe("integration connection lifecycle", () => {
 
   it("returns an actionable error when the Redmine client cannot be created", async () => {
     const workspace = await seedTestWorkspace();
-    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const owner = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
     vi.mocked(deps.remote).mockImplementationOnce(() => {
       throw new Error("invalid endpoint");
     });
@@ -146,7 +151,7 @@ describe("integration connection lifecycle", () => {
 
   it("cannot persist a stale connection while the instance URL changes", async () => {
     const workspace = await seedTestWorkspace();
-    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const owner = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
     await prisma.$executeRawUnsafe(`
       CREATE OR REPLACE FUNCTION test_delay_redmine_connection()
       RETURNS trigger AS $$
@@ -207,7 +212,7 @@ describe("integration connection lifecycle", () => {
 
   it("rolls back the connection when credential linkage fails", async () => {
     const workspace = await seedTestWorkspace();
-    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const owner = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
     const marker = "force-bootstrap-rollback";
     await prisma.$executeRawUnsafe(
       `ALTER TABLE "member_integration_credentials" ADD CONSTRAINT "test_bootstrap_rollback" CHECK ("encrypted_key" <> '${marker}')`,
@@ -229,27 +234,68 @@ describe("integration connection lifecycle", () => {
     }
   });
 
-  it("rejects a non-owner over HTTP before remote validation or persistence", async () => {
+  it("rejects non-instance-admins over HTTP before remote validation or persistence", async () => {
     const workspace = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspace.id, "owner");
     const admin = await seedTestMemberWithRole(workspace.id, "admin");
 
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/integrations/connections",
-      headers: { authorization: `Bearer ${admin.token}` },
-      payload: {
-        workspaceId: workspace.id,
-        apiKey: "must-not-leave-kanon",
-      },
-    });
-
-    expect(response.statusCode).toBe(403);
+    for (const actor of [owner, admin]) {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/integrations/connections",
+        headers: { authorization: `Bearer ${actor.token}` },
+        payload: {
+          workspaceId: workspace.id,
+          apiKey: "must-not-leave-kanon",
+        },
+      });
+      expect(response.statusCode).toBe(403);
+    }
     await expect(prisma.integrationConnection.count()).resolves.toBe(0);
+  });
+
+  it("rejects workspace admins from editing provider maps or binding projects", async () => {
+    const workspace = await seedTestWorkspace();
+    const instanceAdmin = await seedTestMemberWithRole(workspace.id, "owner", {
+      isInstanceAdmin: true,
+    });
+    const workspaceAdmin = await seedTestMemberWithRole(workspace.id, "admin");
+    const project = await seedTestProject(workspace.id);
+    const { connection } = await createConnection(
+      { workspaceId: workspace.id, apiKey: "secret" },
+      instanceAdmin.userId,
+      deps,
+    );
+
+    await expect(
+      configureProviderMaps(
+        connection.id,
+        { timeActivityId: "9", readMap, writeMap },
+        workspaceAdmin.userId,
+        deps,
+      ),
+    ).rejects.toMatchObject({ statusCode: 403, code: "FORBIDDEN" });
+
+    await configureProviderMaps(
+      connection.id,
+      { timeActivityId: "9", readMap, writeMap },
+      instanceAdmin.userId,
+      deps,
+    );
+
+    await expect(
+      bindProject(
+        connection.id,
+        { projectId: project.id, remoteProjectId: "remote-project" },
+        workspaceAdmin.userId,
+        deps,
+      ),
+    ).rejects.toMatchObject({ statusCode: 403, code: "FORBIDDEN" });
   });
 
   it("binds only a discovered project, activates complete maps, and fences disablement", async () => {
     const workspace = await seedTestWorkspace();
-    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const owner = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
     const project = await seedTestProject(workspace.id);
     const { connection } = await createConnection(
       { workspaceId: workspace.id, apiKey: "secret" },
@@ -276,7 +322,7 @@ describe("integration connection lifecycle", () => {
 
   it("resumes only the immediate pause cohort and safely fences leased work", async () => {
     const workspace = await seedTestWorkspace();
-    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const owner = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
     const project = await seedTestProject(workspace.id);
     const { connection } = await createConnection(
       { workspaceId: workspace.id, apiKey: "secret" },
@@ -428,7 +474,7 @@ describe("integration connection lifecycle", () => {
 
   it("rejects activation when a writable Kanon state has no confirmed mapping", async () => {
     const workspace = await seedTestWorkspace();
-    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const owner = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
     const project = await seedTestProject(workspace.id);
     const { connection } = await createConnection(
       { workspaceId: workspace.id, apiKey: "secret" },
@@ -453,7 +499,7 @@ describe("integration connection lifecycle", () => {
 
   it("rejects projects and status mappings that discovery did not return", async () => {
     const workspace = await seedTestWorkspace();
-    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const owner = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
     const project = await seedTestProject(workspace.id);
     const { connection } = await createConnection(
       { workspaceId: workspace.id, apiKey: "secret" },
@@ -478,5 +524,120 @@ describe("integration connection lifecycle", () => {
       ),
     ).rejects.toMatchObject({ statusCode: 400, code: "REMOTE_PROJECT_NOT_FOUND" });
     await expect(prisma.integrationProjectBinding.count()).resolves.toBe(0);
+  });
+
+  it("lets owners bind projects after instance-admin maps, and redacts maps for members", async () => {
+    const workspace = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const instanceAdmin = await seedTestMemberWithRole(workspace.id, "member", {
+      isInstanceAdmin: true,
+    });
+    const member = await seedTestMemberWithRole(workspace.id, "member");
+    const project = await seedTestProject(workspace.id);
+
+    const { connection } = await createConnection(
+      { workspaceId: workspace.id, apiKey: "secret" },
+      instanceAdmin.userId,
+      deps,
+    );
+
+    await expect(
+      bindProject(
+        connection.id,
+        { projectId: project.id, remoteProjectId: "remote-project" },
+        owner.userId,
+        deps,
+      ),
+    ).rejects.toMatchObject({ statusCode: 409, code: "PROVIDER_MAPS_REQUIRED" });
+
+    await configureProviderMaps(
+      connection.id,
+      { timeActivityId: "9", readMap, writeMap },
+      instanceAdmin.userId,
+      deps,
+    );
+
+    const ownerDiscovery = await getConnectionDiscovery(connection.id, owner.userId, deps);
+    expect(ownerDiscovery).toEqual({
+      projects: [{ id: "remote-project", name: "Remote project" }],
+      statuses: [],
+      timeEntryActivities: [],
+    });
+
+    const binding = await bindProject(
+      connection.id,
+      { projectId: project.id, remoteProjectId: "remote-project" },
+      owner.userId,
+      deps,
+    );
+    expect(binding).toMatchObject({
+      projectId: project.id,
+      remoteProjectId: "remote-project",
+      readMap,
+    });
+
+    const adminView = await getWorkspaceConnection(workspace.id, instanceAdmin.userId);
+    expect(adminView?.providerMaps?.timeActivityId).toBe("9");
+    expect(adminView?.bindings[0]?.readMap).toEqual(readMap);
+
+    const memberView = await getConnection(connection.id, member.userId);
+    expect(memberView.providerMaps).toBeNull();
+    expect(memberView.discoveredStatuses).toBeNull();
+    expect(memberView.bindings[0]).toMatchObject({
+      projectId: project.id,
+      remoteProjectId: "remote-project",
+      readMap: {},
+      writeMap: {},
+      timeActivityId: null,
+    });
+  });
+
+  it("rejects service bootstrap when the instance admin is not a workspace member", async () => {
+    const workspace = await seedTestWorkspace();
+    await seedTestMemberWithRole(workspace.id, "owner");
+    const outsiderAdmin = await seedInstanceAdminUser();
+
+    await expect(
+      createConnection({ workspaceId: workspace.id, apiKey: "secret" }, outsiderAdmin.userId, deps),
+    ).rejects.toMatchObject({ statusCode: 409, code: "WORKSPACE_MEMBERSHIP_REQUIRED" });
+    await expect(prisma.integrationConnection.count()).resolves.toBe(0);
+  });
+
+  it("bumps binding epochs when cascading provider maps onto active bindings", async () => {
+    const workspace = await seedTestWorkspace();
+    const admin = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
+    const project = await seedTestProject(workspace.id);
+    const { connection } = await createConnection(
+      { workspaceId: workspace.id, apiKey: "secret" },
+      admin.userId,
+      deps,
+    );
+    await configureConnection(
+      connection.id,
+      {
+        projectId: project.id,
+        remoteProjectId: "remote-project",
+        timeActivityId: "9",
+        readMap,
+        writeMap,
+      },
+      admin.userId,
+      deps,
+    );
+    await setConnectionLifecycle(connection.id, "active", admin.userId, deps);
+
+    await configureProviderMaps(
+      connection.id,
+      { timeActivityId: "9", readMap, writeMap },
+      admin.userId,
+      deps,
+    );
+
+    await expect(
+      prisma.integrationProjectBinding.findFirstOrThrow({ where: { connectionId: connection.id } }),
+    ).resolves.toMatchObject({ lifecycle: "draft", lifecycleEpoch: 2 });
+    await expect(
+      prisma.integrationConnection.findUniqueOrThrow({ where: { id: connection.id } }),
+    ).resolves.toMatchObject({ lifecycle: "draft", lifecycleEpoch: 2 });
   });
 });

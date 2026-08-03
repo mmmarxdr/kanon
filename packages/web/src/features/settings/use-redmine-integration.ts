@@ -7,12 +7,15 @@ import {
 import { fetchApi, fetchApiValidated } from "@/lib/api-client";
 import { integrationKeys } from "@/lib/query-keys";
 
-export interface ConfigureRedmineInput {
-  projectId: string;
-  remoteProjectId: string;
+export interface ConfigureRedmineProviderMapsInput {
   timeActivityId: string;
   readMap: Record<string, IssueState>;
   writeMap: Record<IssueState, string>;
+}
+
+export interface BindRedmineProjectInput {
+  projectId: string;
+  remoteProjectId: string;
 }
 
 export function useRedmineConnectionQuery(workspaceId: string | undefined) {
@@ -79,19 +82,42 @@ export function useClearRedmineCredentialMutation(workspaceId: string, connectio
   });
 }
 
-export function useConfigureRedmineMutation(workspaceId: string, connectionId: string) {
+export function useConfigureRedmineProviderMapsMutation(workspaceId: string, connectionId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: ConfigureRedmineInput) => {
-      await fetchApi<unknown>(`/api/integrations/connections/${connectionId}/mapping`, {
+    mutationFn: (input: ConfigureRedmineProviderMapsInput) =>
+      fetchApi<unknown>(`/api/integrations/connections/${connectionId}/provider-maps`, {
         method: "PUT",
         body: JSON.stringify(input),
-      });
-      return fetchApi<unknown>(`/api/integrations/connections/${connectionId}/lifecycle`, {
-        method: "PATCH",
-        body: JSON.stringify({ lifecycle: "active" }),
-      });
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: integrationKeys.connection(workspaceId) });
+      void queryClient.invalidateQueries({ queryKey: integrationKeys.discovery(connectionId) });
     },
+  });
+}
+
+export function useSetRedmineLifecycleMutation(workspaceId: string, connectionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (lifecycle: "active" | "paused" | "disabled") =>
+      fetchApi<unknown>(`/api/integrations/connections/${connectionId}/lifecycle`, {
+        method: "PATCH",
+        body: JSON.stringify({ lifecycle }),
+      }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: integrationKeys.connection(workspaceId) }),
+  });
+}
+
+export function useBindRedmineProjectMutation(workspaceId: string, connectionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: BindRedmineProjectInput) =>
+      fetchApi<unknown>(`/api/integrations/connections/${connectionId}/bindings`, {
+        method: "PUT",
+        body: JSON.stringify(input),
+      }),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: integrationKeys.connection(workspaceId) }),
   });

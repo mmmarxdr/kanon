@@ -42,6 +42,12 @@ vi.mock("@/lib/api-client", async (importOriginal) => {
   };
 });
 
+vi.mock("@/features/settings/admin-redmine-section", () => ({
+  AdminRedmineSection: ({ redmineBaseUrl }: { redmineBaseUrl: string | null }) => (
+    <div data-testid="admin-redmine-section-stub">redmine:{redmineBaseUrl ?? "none"}</div>
+  ),
+}));
+
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 function makeSettings(instanceName = "My Kanon") {

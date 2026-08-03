@@ -240,7 +240,7 @@ export function buildCookieString(cookies: Record<string, string>): string {
 export async function seedTestMemberWithRole(
   workspaceId: string,
   role: "owner" | "admin" | "pm" | "member" | "viewer",
-  overrides?: { email?: string; username?: string }
+  overrides?: { email?: string; username?: string; isInstanceAdmin?: boolean }
 ): Promise<{ id: string; email: string; token: string; userId: string }> {
   const bcrypt = await import("bcryptjs");
   const hash = await bcrypt.hash("password123", 4);
@@ -252,6 +252,7 @@ export async function seedTestMemberWithRole(
       email,
       passwordHash: hash,
       displayName: overrides?.username ?? `user-${randomUUID().slice(0, 8)}`,
+      isInstanceAdmin: overrides?.isInstanceAdmin ?? false,
     },
   });
 

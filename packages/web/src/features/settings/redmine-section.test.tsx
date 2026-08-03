@@ -3,18 +3,17 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import type { IntegrationConnection } from "@kanon/shared";
 import { useProjectsQuery } from "@/hooks/use-projects-query";
 import {
+  useBindRedmineProjectMutation,
   useClearRedmineCredentialMutation,
-  useConfigureRedmineMutation,
   useConnectRedmineCredentialMutation,
-  useCreateRedmineConnectionMutation,
   useRedmineConnectionQuery,
   useRedmineDiscoveryQuery,
 } from "./use-redmine-integration";
 import { RedmineSection } from "./redmine-section";
 
 vi.mock("./use-redmine-integration", () => ({
+  useBindRedmineProjectMutation: vi.fn(),
   useClearRedmineCredentialMutation: vi.fn(),
-  useConfigureRedmineMutation: vi.fn(),
   useConnectRedmineCredentialMutation: vi.fn(),
   useCreateRedmineConnectionMutation: vi.fn(),
   useRedmineConnectionQuery: vi.fn(),
@@ -25,10 +24,9 @@ vi.mock("@/hooks/use-projects-query", () => ({ useProjectsQuery: vi.fn() }));
 
 const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
 const PROJECT_ID = "33333333-3333-4333-8333-333333333333";
-const createMutate = vi.fn();
 const connectMutate = vi.fn();
 const clearMutate = vi.fn();
-const configureMutate = vi.fn();
+const bindMutate = vi.fn();
 const idleMutation = (mutate: ReturnType<typeof vi.fn>) => ({
   mutate,
   isPending: false,
@@ -66,11 +64,6 @@ const members = [
 describe("RedmineSection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(useCreateRedmineConnectionMutation).mockReturnValue(
-      idleMutation(createMutate) as unknown as ReturnType<
-        typeof useCreateRedmineConnectionMutation
-      >,
-    );
     vi.mocked(useConnectRedmineCredentialMutation).mockReturnValue(
       idleMutation(connectMutate) as unknown as ReturnType<
         typeof useConnectRedmineCredentialMutation
@@ -81,10 +74,8 @@ describe("RedmineSection", () => {
         typeof useClearRedmineCredentialMutation
       >,
     );
-    vi.mocked(useConfigureRedmineMutation).mockReturnValue(
-      idleMutation(configureMutate) as unknown as ReturnType<
-        typeof useConfigureRedmineMutation
-      >,
+    vi.mocked(useBindRedmineProjectMutation).mockReturnValue(
+      idleMutation(bindMutate) as unknown as ReturnType<typeof useBindRedmineProjectMutation>,
     );
     vi.mocked(useRedmineDiscoveryQuery).mockReturnValue({
       data: undefined,
@@ -100,7 +91,7 @@ describe("RedmineSection", () => {
     } as unknown as ReturnType<typeof useProjectsQuery>);
   });
 
-  it("lets an owner test and create the workspace connection", () => {
+  it("tells workspace users that instance admin must configure Redmine", () => {
     vi.mocked(useRedmineConnectionQuery).mockReturnValue({
       data: null,
       isLoading: false,
@@ -108,16 +99,8 @@ describe("RedmineSection", () => {
     } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
     render(<RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={[]} />);
 
-    fireEvent.change(screen.getByLabelText("API key"), {
-      target: { value: "test-key" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Test and create connection" }));
-
-    expect(createMutate).toHaveBeenCalledWith(
-      "test-key",
-      expect.objectContaining({ onSuccess: expect.any(Function) }),
-    );
-    expect(screen.queryByLabelText("Redmine URL")).not.toBeInTheDocument();
+    expect(screen.getByText(/instance admin has not configured Redmine/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /test and create connection/i })).not.toBeInTheDocument();
   });
 
   it("shows personal identity and workspace coverage to a member", () => {
@@ -129,7 +112,8 @@ describe("RedmineSection", () => {
       lifecycle: "active",
       lifecycleEpoch: 1,
       serviceFallbackEnabled: false,
-      discoveredStatuses: [],
+      discoveredStatuses: null,
+      providerMaps: null,
       bindings: [],
       callerCredential: {
         connected: true,
@@ -156,9 +140,10 @@ describe("RedmineSection", () => {
     expect(screen.getByText("1 of 2 workspace members connected")).toBeInTheDocument();
     expect(screen.getAllByText("Connected")).toHaveLength(1);
     expect(screen.getByText("Not connected")).toBeInTheDocument();
+    expect(screen.queryByText("Link Redmine project")).not.toBeInTheDocument();
   });
 
-  it("prefills and submits a complete owner mapping from discovery", () => {
+  it("lets an owner associate a Kanon project with a discovered Redmine project", () => {
     const connection = {
       id: "11111111-1111-4111-8111-111111111111",
       workspaceId: WORKSPACE_ID,
@@ -167,7 +152,8 @@ describe("RedmineSection", () => {
       lifecycle: "draft",
       lifecycleEpoch: 0,
       serviceFallbackEnabled: false,
-      discoveredStatuses: [],
+      discoveredStatuses: null,
+      providerMaps: null,
       bindings: [],
       callerCredential: {
         connected: true,
@@ -177,8 +163,8 @@ describe("RedmineSection", () => {
         lastValidatedAt: "2026-08-02T18:00:00.000Z",
         revokedAt: null,
       },
-      connectedMemberIds: [members[0]!.id],
-      counts: { workspaceMembers: 2, validCredentials: 1, externalIdentities: 0 },
+      connectedMemberIds: [],
+      counts: { workspaceMembers: 1, validCredentials: 1, externalIdentities: 0 },
     } satisfies IntegrationConnection;
     vi.mocked(useRedmineConnectionQuery).mockReturnValue({
       data: connection,
@@ -187,13 +173,9 @@ describe("RedmineSection", () => {
     } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
     vi.mocked(useRedmineDiscoveryQuery).mockReturnValue({
       data: {
-        statuses: [
-          { id: "new", name: "New", writable: true },
-          { id: "progress", name: "In Progress", writable: true },
-          { id: "closed", name: "Closed", writable: true },
-        ],
+        statuses: [],
         projects: [{ id: "remote-project", name: "Remote project" }],
-        timeEntryActivities: [{ id: "9", name: "Development", isDefault: true }],
+        timeEntryActivities: [],
       },
       isLoading: false,
       isFetching: false,
@@ -204,21 +186,13 @@ describe("RedmineSection", () => {
     render(
       <RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Save and activate" }));
 
-    expect(configureMutate).toHaveBeenCalledWith({
+    expect(screen.getByText("Link Redmine project")).toBeInTheDocument();
+    expect(screen.queryByText("Redmine to Kanon")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save project link" }));
+    expect(bindMutate).toHaveBeenCalledWith({
       projectId: PROJECT_ID,
       remoteProjectId: "remote-project",
-      timeActivityId: "9",
-      readMap: { new: "backlog", progress: "in_progress", closed: "done" },
-      writeMap: {
-        backlog: "new",
-        analysis: "new",
-        todo: "progress",
-        in_progress: "progress",
-        review: "closed",
-        done: "closed",
-      },
     });
   });
 });

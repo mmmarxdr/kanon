@@ -23,6 +23,7 @@ import { authenticatedRoute } from "../_authenticated";
 import { fetchApi, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/stores/auth-store";
 import { SUPPORTED_LOCALES } from "@kanon/shared";
+import { AdminRedmineSection } from "@/features/settings/admin-redmine-section";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -671,6 +672,8 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
               {saving ? "Saving…" : "Save"}
             </button>
           </form>
+
+          <AdminRedmineSection redmineBaseUrl={settings.redmineBaseUrl} />
         </div>
       </div>
     </div>

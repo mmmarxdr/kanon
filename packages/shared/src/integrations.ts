@@ -37,6 +37,13 @@ export const integrationConnectionSchema = z.object({
   lifecycleEpoch: z.number().int(),
   serviceFallbackEnabled: z.boolean(),
   discoveredStatuses: integrationDiscoverySchema.shape.statuses.nullable(),
+  providerMaps: z
+    .object({
+      readMap: z.record(z.string(), issueStateSchema).nullable(),
+      writeMap: z.record(z.string(), z.string()).nullable(),
+      timeActivityId: z.string().nullable(),
+    })
+    .nullable(),
   bindings: z.array(
     z.object({
       id: z.string().uuid(),

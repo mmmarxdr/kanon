@@ -39,6 +39,10 @@ vi.mock("@/lib/api-client", async (importOriginal) => {
   return { ...actual, fetchApi: mockFetchApi };
 });
 
+vi.mock("@/features/settings/admin-redmine-section", () => ({
+  AdminRedmineSection: () => <div data-testid="admin-redmine-section-stub" />,
+}));
+
 vi.mock("@/stores/auth-store", () => ({
   useAuthStore: (selector: (s: { user: unknown }) => unknown) =>
     selector({ user: mockUser.value }),

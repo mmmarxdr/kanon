@@ -18,7 +18,11 @@ vi.mock("../../config/env.js", () => ({
 
 vi.mock("../../config/prisma.js", () => ({
   prisma: {
-    member: { findUnique: vi.fn().mockResolvedValue({ id: "member-1", role: "owner" }) },
+    user: { findUnique: vi.fn().mockResolvedValue({ isInstanceAdmin: true }) },
+    member: {
+      findUnique: vi.fn().mockResolvedValue({ id: "member-1", role: "owner" }),
+      findFirst: vi.fn().mockResolvedValue({ id: "member-1" }),
+    },
     integrationConnection: { findUnique: vi.fn().mockResolvedValue(null) },
     instanceSettings: {
       findUnique: vi.fn().mockResolvedValue({
