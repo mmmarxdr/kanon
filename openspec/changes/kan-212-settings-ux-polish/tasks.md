@@ -56,13 +56,13 @@ Chain strategy: feature-branch-chain
 
 ## Phase 4: Slice D — SettingsCard Extraction
 
-- [ ] 4.1 RED `settings-card.test.tsx`: renders children, merges `className`, `testId`→`data-testid`, base `p-5 sm:p-6`
-- [ ] 4.2 GREEN create `settings-card.tsx` (`SettingsCard({ children, className?, testId? })`)
-- [ ] 4.3 Migrate `members-section.tsx`, `invites-section.tsx`, `project-members-section.tsx` to `SettingsCard`
-- [ ] 4.4 Migrate `redmine-section.tsx`, `admin-redmine-section.tsx`; drop local `Card`; keep `testId="admin-redmine-section"`
-- [ ] 4.5 Re-run suites
+- [x] 4.1 RED `settings-card.test.tsx`: renders children, merges `className`, `testId`→`data-testid`, base `p-5 sm:p-6`
+- [x] 4.2 GREEN create `settings-card.tsx` (`SettingsCard({ children, className?, testId? })`)
+- [x] 4.3 Migrate `members-section.tsx`, `invites-section.tsx`, `project-members-section.tsx` to `SettingsCard`
+- [x] 4.4 Migrate `redmine-section.tsx`, `admin-redmine-section.tsx`; drop local `Card`; keep `testId="admin-redmine-section"`
+- [x] 4.5 Re-run suites
 
 ## Cross-Slice Verification
 
-- [ ] 5.1 Diff final state against every scenario in both spec files
-- [ ] 5.2 Confirm `TODO(PR4)` and `admin.instance.tsx` shell untouched
+- [x] 5.1 Diff final state against every scenario in both spec files
+- [x] 5.2 Confirm `TODO(PR4)` and `admin.instance.tsx` shell untouched
