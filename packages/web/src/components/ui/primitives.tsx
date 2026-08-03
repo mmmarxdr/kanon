@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -325,7 +325,7 @@ export function FilterChipSelect({
         setOpen(false);
       }
     };
-    const onKey = (e: KeyboardEvent) => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
     document.addEventListener("mousedown", onDoc);
@@ -595,6 +595,103 @@ export function SearchChip({
           </svg>
         </button>
       )}
+    </div>
+  );
+}
+
+/* ====================================================================
+   TabList — accessible horizontal tabs with roving tabindex
+   ==================================================================== */
+
+export interface TabDef<T extends string> {
+  key: T;
+  label: string;
+}
+
+export function TabList<T extends string>({
+  tabs,
+  activeKey,
+  onChange,
+  idPrefix,
+}: {
+  tabs: TabDef<T>[];
+  activeKey: T;
+  onChange: (key: T) => void;
+  idPrefix: string;
+}) {
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  const activateTab = (index: number) => {
+    const tab = tabs[index];
+    if (!tab) return;
+    onChange(tab.key);
+    tabRefs.current[index]?.focus();
+  };
+
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
+    let nextIndex: number | null = null;
+    switch (event.key) {
+      case "ArrowRight":
+        nextIndex = (index + 1) % tabs.length;
+        break;
+      case "ArrowLeft":
+        nextIndex = (index - 1 + tabs.length) % tabs.length;
+        break;
+      case "Home":
+        nextIndex = 0;
+        break;
+      case "End":
+        nextIndex = tabs.length - 1;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    activateTab(nextIndex);
+  };
+
+  return (
+    <div
+      role="tablist"
+      style={{ display: "flex", gap: 2, marginTop: 4, overflowX: "auto" }}
+    >
+      {tabs.map((tab, index) => {
+        const active = tab.key === activeKey;
+        const tabId = `${idPrefix}-tab-${tab.key}`;
+        const panelId = `${idPrefix}-panel-${tab.key}`;
+        return (
+          <button
+            key={tab.key}
+            ref={(el) => {
+              tabRefs.current[index] = el;
+            }}
+            type="button"
+            role="tab"
+            id={tabId}
+            aria-selected={active}
+            aria-controls={panelId}
+            tabIndex={active ? 0 : -1}
+            onClick={() => onChange(tab.key)}
+            onKeyDown={(event) => handleKeyDown(event, index)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              height: 32,
+              padding: "0 12px",
+              borderBottom: active
+                ? "2px solid var(--accent)"
+                : "2px solid transparent",
+              color: active ? "var(--ink)" : "var(--ink-3)",
+              fontSize: 12,
+              fontWeight: active ? 500 : 400,
+              marginBottom: -1,
+            }}
+          >
+            {tab.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
