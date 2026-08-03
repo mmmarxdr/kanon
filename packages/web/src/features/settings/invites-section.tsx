@@ -7,6 +7,12 @@ import {
   type WorkspaceInvite,
 } from "./use-settings-queries";
 import { SettingsCard } from "@/components/ui/settings-card";
+import {
+  SettingsList,
+  SettingsListRow,
+  INVITES_GRID,
+  invitesColumns,
+} from "@/components/ui/settings-list";
 import { InviteDomainRestriction } from "./invite-domain-restriction";
 
 const INVITE_ROLES = ["viewer", "member", "admin"] as const;
@@ -69,6 +75,7 @@ export function InvitesSection({
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const isAdmin = currentUserRole === "admin" || currentUserRole === "owner";
+  const listColumns = invitesColumns(t);
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -103,7 +110,7 @@ export function InvitesSection({
 
   if (isLoading) {
     return (
-      <SettingsCard>
+      <SettingsCard title={t("invitesTitle")}>
         <p className="text-sm text-muted-foreground">{t("invitesLoading")}</p>
       </SettingsCard>
     );
@@ -111,7 +118,7 @@ export function InvitesSection({
 
   if (error) {
     return (
-      <SettingsCard>
+      <SettingsCard title={t("invitesTitle")}>
         <p className="text-sm text-destructive">
           {t("invitesFailed", { message: error.message })}
         </p>
@@ -122,167 +129,173 @@ export function InvitesSection({
   const activeInvites = (invites ?? []).filter(isActive);
   const inactiveInvites = (invites ?? []).filter((i) => !isActive(i));
 
+  const createButton = isAdmin ? (
+    <button
+      onClick={() => setShowForm(!showForm)}
+      className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+    >
+      {showForm ? tCommon("actions.cancel") : t("invitesCreate")}
+    </button>
+  ) : undefined;
+
   return (
     <>
-    <SettingsCard>
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-foreground">{t("invitesTitle")}</h2>
-        {isAdmin && (
-          <button
-            onClick={() => setShowForm(!showForm)}
-            className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-          >
-            {showForm ? tCommon("actions.cancel") : t("invitesCreate")}
-          </button>
-        )}
-      </div>
-
-      {/* Create invite form */}
-      {showForm && (
-        <form onSubmit={handleCreate} className="mb-6 space-y-3 rounded-md border border-border p-4 bg-secondary/30">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-card-foreground">{t("invitesFieldRole")}</label>
-              <div className="relative">
-              <select
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-                className="w-full appearance-none rounded-md border border-input bg-background px-2 py-1.5 pr-7 text-sm text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
-              >
-                {INVITE_ROLES.map((r) => (
-                  <option key={r} value={r}>
-                    {roleLabel(r, t)}
-                  </option>
-                ))}
-              </select>
-              <svg className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      <SettingsCard title={t("invitesTitle")} actions={createButton}>
+        {showForm && (
+          <form onSubmit={handleCreate} className="mb-6 space-y-3 rounded-md border border-border p-4 bg-secondary/30">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-card-foreground">{t("invitesFieldRole")}</label>
+                <div className="relative">
+                  <select
+                    value={role}
+                    onChange={(e) => setRole(e.target.value)}
+                    className="w-full appearance-none rounded-md border border-input bg-background px-2 py-1.5 pr-7 text-sm text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+                  >
+                    {INVITE_ROLES.map((r) => (
+                      <option key={r} value={r}>
+                        {roleLabel(r, t)}
+                      </option>
+                    ))}
+                  </select>
+                  <svg className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-card-foreground">
+                  {t("invitesMaxUses")} <span className="text-muted-foreground">{t("invitesMaxUsesHint")}</span>
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  value={maxUses}
+                  onChange={(e) => setMaxUses(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-card-foreground">{t("invitesFieldExpires")}</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={720}
+                  value={expiresInHours}
+                  onChange={(e) => setExpiresInHours(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-card-foreground">{t("invitesFieldLabel")}</label>
+                <input
+                  type="text"
+                  value={label}
+                  onChange={(e) => setLabel(e.target.value)}
+                  placeholder={t("invitesLabelPlaceholder")}
+                  className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+                />
               </div>
             </div>
+
             <div className="space-y-1">
               <label className="text-xs font-medium text-card-foreground">
-                {t("invitesMaxUses")} <span className="text-muted-foreground">{t("invitesMaxUsesHint")}</span>
+                {t("invitesSendEmail")} <span className="text-muted-foreground">{tCommon("actions.optional")}</span>
               </label>
               <input
-                type="number"
-                min={0}
-                value={maxUses}
-                onChange={(e) => setMaxUses(e.target.value)}
-                className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-card-foreground">{t("invitesFieldExpires")}</label>
-              <input
-                type="number"
-                min={1}
-                max={720}
-                value={expiresInHours}
-                onChange={(e) => setExpiresInHours(e.target.value)}
-                className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-card-foreground">{t("invitesFieldLabel")}</label>
-              <input
-                type="text"
-                value={label}
-                onChange={(e) => setLabel(e.target.value)}
-                placeholder={t("invitesLabelPlaceholder")}
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder={t("invitesEmailPlaceholder")}
                 className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
               />
+              {email && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  {t("invitesWillSendTo")} <span className="font-medium text-foreground">{email}</span>
+                </p>
+              )}
             </div>
-          </div>
 
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-card-foreground">
-              {t("invitesSendEmail")} <span className="text-muted-foreground">{tCommon("actions.optional")}</span>
-            </label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder={t("invitesEmailPlaceholder")}
-              className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
-            />
-            {email && (
-              <p className="text-xs text-muted-foreground mt-1">
-                {t("invitesWillSendTo")} <span className="font-medium text-foreground">{email}</span>
-              </p>
+            {createInvite.isError && (
+              <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {createInvite.error.message}
+              </div>
             )}
-          </div>
 
-          {createInvite.isError && (
-            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {createInvite.error.message}
-            </div>
-          )}
+            <button
+              type="submit"
+              disabled={createInvite.isPending}
+              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200 ease-out"
+            >
+              {createInvite.isPending ? tCommon("actions.creating") : t("invitesCreateLink")}
+            </button>
+          </form>
+        )}
 
-          <button
-            type="submit"
-            disabled={createInvite.isPending}
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200 ease-out"
+        {activeInvites.length === 0 && inactiveInvites.length === 0 && (
+          <p className="text-sm text-muted-foreground">{t("invitesEmpty")}</p>
+        )}
+
+        {activeInvites.length > 0 && (
+          <div className="mb-4">
+          <SettingsList
+            columns={listColumns}
+            gridTemplateColumns={INVITES_GRID}
+            data-testid="workspace-invites-list-active"
           >
-            {createInvite.isPending ? tCommon("actions.creating") : t("invitesCreateLink")}
-          </button>
-        </form>
-      )}
-
-      {/* Active invites */}
-      {activeInvites.length === 0 && inactiveInvites.length === 0 && (
-        <p className="text-sm text-muted-foreground">{t("invitesEmpty")}</p>
-      )}
-
-      {activeInvites.length > 0 && (
-        <div className="space-y-2 mb-4">
-          {activeInvites.map((invite) => (
-            <InviteRow
-              key={invite.id}
-              invite={invite}
-              copiedId={copiedId}
-              isAdmin={isAdmin}
-              onCopy={copyInviteLink}
-              onRevoke={(id) => revokeInvite.mutate(id)}
-              revoking={revokeInvite.isPending}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* Inactive invites */}
-      {inactiveInvites.length > 0 && (
-        <div>
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
-            {t("invitesInactive")}
-          </p>
-          <div className="space-y-2 opacity-60">
-            {inactiveInvites.map((invite) => (
-              <InviteRow
+            {activeInvites.map((invite) => (
+              <InviteListRow
                 key={invite.id}
                 invite={invite}
                 copiedId={copiedId}
-                isAdmin={false}
+                isAdmin={isAdmin}
                 onCopy={copyInviteLink}
-                onRevoke={() => {}}
-                revoking={false}
+                onRevoke={(id) => revokeInvite.mutate(id)}
+                revoking={revokeInvite.isPending}
               />
             ))}
+          </SettingsList>
           </div>
-        </div>
-      )}
-    </SettingsCard>
+        )}
 
-    <div className="mt-4">
-      <InviteDomainRestriction
-        workspaceId={workspaceId}
-        currentUserRole={currentUserRole}
-        allowedDomains={allowedDomains}
-      />
-    </div>
+        {inactiveInvites.length > 0 && (
+          <div>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
+              {t("invitesInactive")}
+            </p>
+            <div className="opacity-60">
+            <SettingsList
+              columns={listColumns}
+              gridTemplateColumns={INVITES_GRID}
+              data-testid="workspace-invites-list-inactive"
+            >
+              {inactiveInvites.map((invite) => (
+                <InviteListRow
+                  key={invite.id}
+                  invite={invite}
+                  copiedId={copiedId}
+                  isAdmin={false}
+                  onCopy={copyInviteLink}
+                  onRevoke={() => {}}
+                  revoking={false}
+                />
+              ))}
+            </SettingsList>
+            </div>
+          </div>
+        )}
+      </SettingsCard>
+
+      <div className="mt-4">
+        <InviteDomainRestriction
+          workspaceId={workspaceId}
+          currentUserRole={currentUserRole}
+          allowedDomains={allowedDomains}
+        />
+      </div>
     </>
   );
 }
 
-function InviteRow({
+function InviteListRow({
   invite,
   copiedId,
   isAdmin,
@@ -300,57 +313,71 @@ function InviteRow({
   const { t } = useTranslation("settings");
   const status = statusBadge(invite, t);
   const active = isActive(invite);
+  const title = invite.label || t("invitesUntitled");
+  const usesText = `${t("invitesUsesLabel")} ${invite.useCount}${invite.maxUses > 0 ? `/${invite.maxUses}` : "/\u221E"}`;
+  const expiresText = `${t("invitesExpiresLabel")} ${new Date(invite.expiresAt).toLocaleDateString()}`;
+  const byText = `${t("invitesByLabel")} ${invite.createdBy.displayName ?? invite.createdBy.email}`;
 
   return (
-    <div className="flex items-center gap-3 py-2 px-3 rounded-md border border-border/50 bg-secondary/20">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <p className="text-sm font-medium text-foreground truncate">
-            {invite.label || t("invitesUntitled")}
-          </p>
-          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${status.className}`}>
-            {status.label}
-          </span>
-          <span className="text-xs text-muted-foreground">
-            {roleLabel(invite.role, t)}
-          </span>
-          {invite.email && (
-            <span className="text-xs text-muted-foreground">
-              &rarr; {invite.email}
+    <SettingsListRow
+      label={title}
+      columns={[
+        <div key="label" className="min-w-0">
+          <p className="text-sm font-medium text-foreground truncate">{title}</p>
+          <div className="sm:hidden flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
+            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${status.className}`}>
+              {status.label}
             </span>
+            <span className="text-xs text-muted-foreground">{roleLabel(invite.role, t)}</span>
+            {invite.email && (
+              <span className="text-xs text-muted-foreground truncate">{invite.email}</span>
+            )}
+            <span className="text-xs text-muted-foreground">{usesText}</span>
+          </div>
+        </div>,
+        <span
+          key="status"
+          className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium w-fit ${status.className}`}
+        >
+          {status.label}
+        </span>,
+        <span key="role" className="text-xs text-muted-foreground">
+          {roleLabel(invite.role, t)}
+        </span>,
+        <span key="email" className="text-xs text-muted-foreground truncate">
+          {invite.email ?? "—"}
+        </span>,
+        <span key="uses" className="text-xs text-muted-foreground">
+          {usesText}
+        </span>,
+        <span key="expires" className="text-xs text-muted-foreground">
+          {expiresText}
+        </span>,
+        <span key="createdBy" className="text-xs text-muted-foreground truncate">
+          {byText}
+        </span>,
+        <div key="actions" className="flex items-center justify-end gap-1">
+          {active && (
+            <button
+              type="button"
+              onClick={() => onCopy(invite)}
+              className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors shrink-0"
+            >
+              {copiedId === invite.id ? t("invitesCopied") : t("invitesCopyLink")}
+            </button>
           )}
-        </div>
-        <div className="flex items-center gap-3 mt-0.5">
-          <p className="text-xs text-muted-foreground">
-            {t("invitesUsesLabel")} {invite.useCount}{invite.maxUses > 0 ? `/${invite.maxUses}` : "/\u221E"}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {t("invitesExpiresLabel")} {new Date(invite.expiresAt).toLocaleDateString()}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {t("invitesByLabel")} {invite.createdBy.displayName ?? invite.createdBy.email}
-          </p>
-        </div>
-      </div>
-
-      {active && (
-        <button
-          onClick={() => onCopy(invite)}
-          className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors shrink-0"
-        >
-          {copiedId === invite.id ? t("invitesCopied") : t("invitesCopyLink")}
-        </button>
-      )}
-
-      {active && isAdmin && (
-        <button
-          onClick={() => onRevoke(invite.id)}
-          disabled={revoking}
-          className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-colors shrink-0 disabled:opacity-50"
-        >
-          {t("invitesRevoke")}
-        </button>
-      )}
-    </div>
+          {active && isAdmin && (
+            <button
+              type="button"
+              onClick={() => onRevoke(invite.id)}
+              disabled={revoking}
+              className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-colors shrink-0 disabled:opacity-50"
+            >
+              {t("invitesRevoke")}
+            </button>
+          )}
+        </div>,
+      ]}
+    />
   );
 }
