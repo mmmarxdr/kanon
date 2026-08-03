@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { IntegrationConnection, IntegrationDiscovery } from "@kanon/shared";
 import { useProjectsQuery } from "@/hooks/use-projects-query";
+import { SettingsCard } from "@/components/ui/settings-card";
 import {
   useBindRedmineProjectMutation,
   useClearRedmineCredentialMutation,
@@ -10,10 +11,6 @@ import {
   useRedmineDiscoveryQuery,
 } from "./use-redmine-integration";
 import type { WorkspaceMember } from "./use-settings-queries";
-
-function Card({ children }: { children: React.ReactNode }) {
-  return <section className="rounded-lg border border-border bg-card p-5 sm:p-6">{children}</section>;
-}
 
 function CredentialCard({
   workspaceId,
@@ -29,7 +26,7 @@ function CredentialCard({
   const credential = connection.callerCredential;
 
   return (
-    <Card>
+    <SettingsCard>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-foreground">{t("redmineMyAccount")}</h2>
@@ -84,7 +81,7 @@ function CredentialCard({
           {(connect.error ?? clear.error)?.message}
         </p>
       )}
-    </Card>
+    </SettingsCard>
   );
 }
 
@@ -128,7 +125,7 @@ function ProjectBindFields({
         </select>
       </label>
       {bind.isError && <p className="text-sm text-destructive">{bind.error.message}</p>}
-      {bind.isSuccess && <p className="text-sm text-emerald-600">{t("redmineProjectBound")}</p>}
+      {bind.isSuccess && <p className="text-sm text-success">{t("redmineProjectBound")}</p>}
       <button
         type="submit"
         disabled={bind.isPending || !complete}
@@ -154,7 +151,7 @@ function ProjectBindCard({
   const selectedProjectId = projectId || projects.data?.[0]?.id || "";
 
   return (
-    <Card>
+    <SettingsCard>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-foreground">{t("redmineProjectBindTitle")}</h2>
@@ -200,7 +197,7 @@ function ProjectBindCard({
           />
         </>
       )}
-    </Card>
+    </SettingsCard>
   );
 }
 
@@ -216,7 +213,7 @@ function CoverageCard({
   const percent = workspaceMembers ? Math.round((validCredentials / workspaceMembers) * 100) : 0;
 
   return (
-    <Card>
+    <SettingsCard>
       <h2 className="text-lg font-semibold text-foreground">{t("redmineCoverageTitle")}</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         {t("redmineCoverageSummary", { connected: validCredentials, total: workspaceMembers })}
@@ -236,7 +233,7 @@ function CoverageCard({
             <span
               className={
                 connection.connectedMemberIds.includes(member.id)
-                  ? "rounded-full bg-emerald-500/10 px-2 py-1 text-xs font-medium text-emerald-600"
+                  ? "rounded-full bg-success/10 px-2 py-1 text-xs font-medium text-success"
                   : "rounded-full bg-secondary px-2 py-1 text-xs text-muted-foreground"
               }
             >
@@ -252,7 +249,7 @@ function CoverageCard({
           {t("redmineProjectsMapped", { count: connection.bindings.length })}
         </p>
       )}
-    </Card>
+    </SettingsCard>
   );
 }
 
@@ -270,23 +267,23 @@ export function RedmineSection({
   const isOwner = currentUserRole === "owner";
 
   if (connection.isLoading) {
-    return <Card><p className="text-sm text-muted-foreground">{t("redmineLoading")}</p></Card>;
+    return <SettingsCard><p className="text-sm text-muted-foreground">{t("redmineLoading")}</p></SettingsCard>;
   }
   if (connection.error) {
-    return <Card><p className="text-sm text-destructive">{connection.error.message}</p></Card>;
+    return <SettingsCard><p className="text-sm text-destructive">{connection.error.message}</p></SettingsCard>;
   }
   if (!connection.data) {
     return (
-      <Card>
+      <SettingsCard>
         <h2 className="text-lg font-semibold text-foreground">Redmine</h2>
         <p className="mt-1 text-sm text-muted-foreground">{t("redmineNotConfigured")}</p>
-      </Card>
+      </SettingsCard>
     );
   }
 
   return (
     <div className="space-y-5">
-      <Card>
+      <SettingsCard>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-lg font-semibold text-foreground">Redmine</h2>
@@ -296,7 +293,7 @@ export function RedmineSection({
             {t(`redmineLifecycle.${connection.data.lifecycle}`)}
           </span>
         </div>
-      </Card>
+      </SettingsCard>
       <CredentialCard workspaceId={workspaceId} connection={connection.data} />
       {isOwner && <ProjectBindCard workspaceId={workspaceId} connection={connection.data} />}
       <CoverageCard connection={connection.data} members={members} />
