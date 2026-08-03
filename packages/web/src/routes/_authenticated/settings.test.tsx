@@ -1,14 +1,16 @@
 /**
  * Settings page tab structure + a11y pairing (KAN-212 Slice C).
+ * SettingsShell integration (KAN-213 Slice A).
  *
  * Covers:
  * - Exactly three tabs (Members, Invites, Integrations) with no Domains tab.
  * - Tab panel id / aria-labelledby pairing with TabList ids.
+ * - Page chrome rendered via SettingsShell with consistent panel ids.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import type { ReactNode } from "react";
+import userEvent from "@testing-library/user-event";
 
 vi.mock("@/hooks/use-workspace-query", () => ({
   useActiveWorkspaceId: vi.fn(),
@@ -121,5 +123,36 @@ describe("SettingsPage — accessible tabs (KAN-212 Slice C)", () => {
     expect(panel).toHaveAttribute("id", "settings-panel-members");
     expect(panel).toHaveAttribute("aria-labelledby", "settings-tab-members");
     expect(screen.getByTestId("members-section")).toBeInTheDocument();
+  });
+
+  it("renders workspace settings inside SettingsShell with eyebrow", async () => {
+    await renderSettings("owner");
+
+    expect(screen.getByRole("heading", { name: "Acme Corp" })).toBeInTheDocument();
+    expect(screen.getByText("workspace settings")).toBeInTheDocument();
+  });
+
+  it("updates settings-panel-* id when switching tabs", async () => {
+    const user = userEvent.setup();
+    await renderSettings("owner");
+
+    await user.click(screen.getByRole("tab", { name: "Invites" }));
+
+    const panel = screen.getByRole("tabpanel");
+    expect(panel).toHaveAttribute("id", "settings-panel-invites");
+    expect(panel).toHaveAttribute("aria-labelledby", "settings-tab-invites");
+    expect(screen.getByTestId("invites-section")).toBeInTheDocument();
+  });
+
+  it("uses settings-panel-integrations id on Integrations tab", async () => {
+    const user = userEvent.setup();
+    await renderSettings("owner");
+
+    await user.click(screen.getByRole("tab", { name: "Integrations" }));
+
+    const panel = screen.getByRole("tabpanel");
+    expect(panel).toHaveAttribute("id", "settings-panel-integrations");
+    expect(panel).toHaveAttribute("aria-labelledby", "settings-tab-integrations");
+    expect(screen.getByTestId("integrations-section")).toBeInTheDocument();
   });
 });
