@@ -9,6 +9,7 @@ import {
   type WorkspaceMember,
   type OnboardingInviteResponse,
 } from "./use-settings-queries";
+import { SettingsCard } from "@/components/ui/settings-card";
 import { OnboardingLinkModal } from "./onboarding-link-modal";
 
 const ROLES = ["viewer", "member", "admin", "owner"] as const;
@@ -56,24 +57,24 @@ export function MembersSection({
 
   if (isLoading) {
     return (
-      <div className="rounded-lg border border-border bg-card p-6">
+      <SettingsCard>
         <p className="text-sm text-muted-foreground">{t("membersLoading")}</p>
-      </div>
+      </SettingsCard>
     );
   }
 
   if (error) {
     return (
-      <div className="rounded-lg border border-border bg-card p-6">
+      <SettingsCard>
         <p className="text-sm text-destructive">
           {t("membersFailed", { message: error.message })}
         </p>
-      </div>
+      </SettingsCard>
     );
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card p-6">
+    <SettingsCard>
       <h2 className="text-lg font-semibold text-foreground mb-4">{t("membersTitle")}</h2>
 
       {!members || members.length === 0 ? (
@@ -215,6 +216,6 @@ export function MembersSection({
           expiresAt={onboardingModal.expiresAt}
         />
       )}
-    </div>
+    </SettingsCard>
   );
 }
