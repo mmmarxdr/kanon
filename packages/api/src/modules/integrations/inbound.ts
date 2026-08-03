@@ -5,11 +5,13 @@ import { AppError } from "../../shared/types.js";
 import { reconcileIssueTime } from "../issue/reconcile.js";
 import { transitionIssue } from "../issue/service.js";
 import { decrypt as decryptCredential } from "./core/crypto.js";
-import type {
-  InboundCursor,
-  InboundIssueStatusChange,
-  InboundSource,
-  StatusReadMap,
+import {
+  isProviderAuthenticationError,
+  safeErrorEvidence,
+  type InboundCursor,
+  type InboundIssueStatusChange,
+  type InboundSource,
+  type StatusReadMap,
 } from "./core/types.js";
 import { RedmineHttpClient } from "./providers/redmine/http-client.js";
 import { RedminePollingInboundSource } from "./providers/redmine/inbound-source.js";
@@ -56,6 +58,8 @@ type ClaimedBinding = {
   readonly pollFence: number;
   readonly baseUrl: string;
   readonly encryptedKey: string;
+  readonly credentialId: string;
+  readonly credentialLastValidatedAt: Date | null;
   readonly actorMemberId: string;
 };
 
@@ -150,6 +154,8 @@ async function claimBinding(
       pollFence: binding.pollFence,
       baseUrl: binding.connection.baseUrl,
       encryptedKey: credential.encryptedKey,
+      credentialId: credential.id,
+      credentialLastValidatedAt: credential.lastValidatedAt,
       actorMemberId: credential.memberId,
     };
   });
@@ -472,6 +478,29 @@ async function pollBinding(
   }
 }
 
+async function rejectCredential(database: PrismaClient, binding: ClaimedBinding) {
+  return database.$transaction(async (transaction) => {
+    await transaction.memberIntegrationCredential.updateMany({
+      where: {
+        id: binding.credentialId,
+        lastAuthStatus: "valid",
+        revokedAt: null,
+        lastValidatedAt: binding.credentialLastValidatedAt,
+      },
+      data: { lastAuthStatus: "invalid" },
+    });
+    const released = await transaction.integrationProjectBinding.updateMany({
+      where: {
+        id: binding.id,
+        pollLeaseToken: binding.pollLeaseToken,
+        pollFence: binding.pollFence,
+      },
+      data: { pollLeaseToken: null, pollLeaseUntil: null },
+    });
+    if (released.count !== 1) throw new Error("Inbound credential rejection lease is stale");
+  });
+}
+
 export async function runInboundSyncCycle(
   database: PrismaClient,
   dependencies: InboundSyncDependencies = {},
@@ -501,21 +530,25 @@ export async function runInboundSyncCycle(
     try {
       await pollBinding(database, binding, d);
     } catch (error) {
-      await database.integrationProjectBinding.updateMany({
-        where: {
-          id: binding.id,
-          pollLeaseToken: binding.pollLeaseToken,
-          pollFence: binding.pollFence,
-        },
-        data: {
-          pollLeaseToken: null,
-          pollLeaseUntil: new Date(d.now().getTime() + FAILED_POLL_DELAY_MS),
-        },
-      });
+      if (isProviderAuthenticationError(error)) {
+        await rejectCredential(database, binding);
+      } else {
+        await database.integrationProjectBinding.updateMany({
+          where: {
+            id: binding.id,
+            pollLeaseToken: binding.pollLeaseToken,
+            pollFence: binding.pollFence,
+          },
+          data: {
+            pollLeaseToken: null,
+            pollLeaseUntil: new Date(d.now().getTime() + FAILED_POLL_DELAY_MS),
+          },
+        });
+      }
       log(
         d.logger,
         "error",
-        { bindingId: binding.id, error },
+        { bindingId: binding.id, credentialId: binding.credentialId, error: safeErrorEvidence(error) },
         "Inbound Redmine poll failed",
       );
     }

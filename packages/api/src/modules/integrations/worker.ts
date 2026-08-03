@@ -3,7 +3,9 @@ import { Prisma, type IntegrationSyncWork, type PrismaClient } from "@prisma/cli
 import { env } from "../../config/env.js";
 import {
   ProviderDispatchError,
+  isProviderAuthenticationError,
   isRetryableProviderError,
+  safeErrorEvidence,
   type CanonicalCycle,
   type CanonicalIssue,
   type CanonicalIssuePatch,
@@ -71,6 +73,7 @@ type Dispatch =
   | { kind: "time_entry"; entity: CanonicalTimeEntry; activityId: string };
 type Prepared = {
   work: IntegrationSyncWork;
+  credential: UsedCredential;
   adapter: IntegrationWorkerAdapterOptions;
   dispatch: Dispatch;
   hasRemoteRef: boolean;
@@ -78,10 +81,14 @@ type Prepared = {
 type PrepareResult =
   | { kind: "ready"; value: Prepared }
   | { kind: "stale" }
-  | { kind: "skipped"; reason: string };
-type CredentialResult = { ok: true; apiKey: string } | { ok: false; reason: string };
+  | { kind: "skipped"; reason: string; state?: "skipped" | "dead" };
+type UsedCredential = { id: string; lastValidatedAt: Date | null };
+type CredentialResult =
+  | { ok: true; apiKey: string; credential: UsedCredential }
+  | { ok: false; reason: string; credential?: UsedCredential };
 type AmbiguityPrepared = {
   work: IntegrationSyncWork;
+  credential: UsedCredential;
   adapter: IntegrationWorkerAdapterOptions;
   request: ProviderCreateReconciliationRequest;
 };
@@ -320,7 +327,6 @@ async function credential(
     !value ||
     value.connectionId !== current.binding.connectionId ||
     value.member.workspaceId !== current.binding.connection.workspaceId ||
-    value.lastAuthStatus !== "valid" ||
     value.revokedAt ||
     (current.actorKind === "user" && current.actorKey !== `member:${value.memberId}`)
   ) {
@@ -329,8 +335,21 @@ async function credential(
       reason: "Captured credential is missing, revoked, invalid, or outside the work scope",
     };
   }
+  if (value.lastAuthStatus === "invalid") {
+    return { ok: false, reason: "credential_invalid", credential: { id, lastValidatedAt: value.lastValidatedAt } };
+  }
+  if (value.lastAuthStatus !== "valid") {
+    return {
+      ok: false,
+      reason: "Captured credential is missing, revoked, invalid, or outside the work scope",
+    };
+  }
   try {
-    return { ok: true, apiKey: d.decrypt(value.encryptedKey) };
+    return {
+      ok: true,
+      apiKey: d.decrypt(value.encryptedKey),
+      credential: { id: value.id, lastValidatedAt: value.lastValidatedAt },
+    };
   } catch {
     return { ok: false, reason: "Captured credential cannot be decrypted" };
   }
@@ -353,11 +372,14 @@ async function prepare(
       return { kind: "stale" };
     const auth = await credential(transaction, current, d);
     if (!auth.ok) {
+      const state = auth.credential ? "dead" : "skipped", authCredentialId = auth.credential?.id;
       const changed = await transaction.integrationSyncWork.updateMany({
         where: { ...fenced(claimed), leaseUntil: { gt: now } },
-        data: { state: "skipped", skippedReason: auth.reason, leaseToken: null, leaseUntil: null },
+        data: { state, skippedReason: auth.reason, authCredentialId, leaseToken: null, leaseUntil: null },
       });
-      return changed.count ? { kind: "skipped", reason: auth.reason } : { kind: "stale" };
+      return changed.count
+        ? { kind: "skipped", reason: auth.reason, state }
+        : { kind: "stale" };
     }
     const refs = new Map<string, string>();
     refs.set(`project:${current.binding.projectId}`, current.binding.remoteProjectId);
@@ -589,6 +611,7 @@ async function prepare(
       kind: "ready",
       value: {
         work: current,
+        credential: auth.credential,
         hasRemoteRef: !!ownRef || current.entityType === "project",
         dispatch,
         adapter: {
@@ -601,19 +624,6 @@ async function prepare(
       },
     };
   });
-}
-
-function safeErrorEvidence(error: unknown): Record<string, string | number> {
-  if (!error || typeof error !== "object") return { name: "UnknownError" };
-  const value = error as { name?: unknown; code?: unknown; statusCode?: unknown };
-  return {
-    name:
-      typeof value.name === "string"
-        ? value.name
-        : error.constructor?.name || "UnknownError",
-    ...(typeof value.code === "string" ? { code: value.code } : {}),
-    ...(typeof value.statusCode === "number" ? { statusCode: value.statusCode } : {}),
-  };
 }
 
 function localAmbiguityEvidence(work: IntegrationSyncWork) {
@@ -837,6 +847,13 @@ async function claimAmbiguous(
 
     const auth = await credential(transaction, current, d);
     if (!auth.ok) {
+      if (auth.credential) {
+        await transaction.integrationSyncWork.update({
+          where: { id: current.id },
+          data: { state: "dead", skippedReason: "credential_invalid", authCredentialId: auth.credential.id },
+        });
+        return { kind: "handled" };
+      }
       await createAmbiguityConflict(
         transaction,
         current,
@@ -859,6 +876,7 @@ async function claimAmbiguous(
       kind: "claimed",
       value: {
         work: claimed,
+        credential: auth.credential,
         request,
         adapter: {
           baseUrl: current.binding.connection.baseUrl,
@@ -1080,6 +1098,9 @@ async function reconcileAmbiguity(
   try {
     matches = await d.createAdapter(prepared.adapter).reconcileCreate(prepared.request);
   } catch (error) {
+    if (isProviderAuthenticationError(error)) {
+      return failAuthentication(database, prepared.work, prepared.credential, error, d);
+    }
     const safeError = safeErrorEvidence(error);
     if (isRetryableProviderError(error)) {
       const changed = await backoffAmbiguity(database, prepared.work, safeError, d);
@@ -1176,6 +1197,56 @@ async function moveAmbiguous(database: PrismaClient, work: IntegrationSyncWork) 
   );
 }
 
+async function failAuthentication(
+  database: PrismaClient,
+  work: IntegrationSyncWork,
+  credential: UsedCredential,
+  error: unknown,
+  d: Deps,
+) {
+  try {
+    const state = await database.$transaction(async (transaction) => {
+      const now = await databaseNow(transaction, d.now);
+      const invalidated = await transaction.memberIntegrationCredential.updateMany({
+        where: {
+          id: credential.id,
+          lastAuthStatus: "valid",
+          revokedAt: null,
+          lastValidatedAt: credential.lastValidatedAt,
+        },
+        data: { lastAuthStatus: "invalid" },
+      });
+      const state = invalidated.count === 1 ? "dead" : "retry";
+      const changed = await transaction.integrationSyncWork.updateMany({
+        where: { ...fenced(work), leaseUntil: { gt: now } },
+        data: {
+          state,
+          ...(state === "dead"
+            ? { attempts: work.attempts + 1, skippedReason: "credential_invalid", authCredentialId: credential.id }
+            : { availableAt: now, skippedReason: null }),
+          leaseToken: null,
+          leaseUntil: null,
+        },
+      });
+      if (changed.count !== 1) throw new StaleFinalizeError();
+      return state;
+    });
+    log(
+      d,
+      state === "dead" ? "error" : "warn",
+      { credentialId: credential.id, error: safeErrorEvidence(error), workId: work.id, state },
+      state === "dead" ? "Integration work auth-blocked" : "Integration work retrying new credential",
+    );
+  } catch (transitionError) {
+    log(
+      d,
+      "error",
+      { error: safeErrorEvidence(transitionError), dispatchError: safeErrorEvidence(error), workId: work.id },
+      "Integration work authentication transition failed",
+    );
+  }
+}
+
 async function fail(
   database: PrismaClient,
   prepared: Prepared | null,
@@ -1183,6 +1254,9 @@ async function fail(
   error: unknown,
   d: Deps
 ) {
+  if (prepared && isProviderAuthenticationError(error)) {
+    return failAuthentication(database, work, prepared.credential, error, d);
+  }
   const attempts = work.attempts + 1;
   const explicitOutcome = error instanceof ProviderDispatchError ? error.outcome : null;
   const retryable = explicitOutcome === "retry" || isRetryableProviderError(error);
@@ -1259,8 +1333,8 @@ async function process(database: PrismaClient, work: IntegrationSyncWork, d: Dep
     return log(
       d,
       "warn",
-      { workId: work.id, reason: result.reason, state: "skipped" },
-      "Integration work skipped"
+      { workId: work.id, reason: result.reason, state: result.state ?? "skipped" },
+      result.state === "dead" ? "Integration work auth-blocked" : "Integration work skipped",
     );
   const prepared = result.value;
   let pushed: PushResult;

@@ -2,24 +2,24 @@
 
 ## Technical Approach
 
-Add 401-only, race-safe credential invalidation and validated replace+redrive on the
-existing integration outbox — no Prisma schema. Fence with credential `id` +
-`lastValidatedAt` CAS (upsert reuses row id). Spec:
-`specs/redmine-credential-recovery/spec.md`. Packages: `@kanon/api`, `@kanon/shared`,
-`@kanon/web`. **Apply gate:** rebase onto `main` after merged KAN-209 PR #248 before
-implementation; do not touch KAN-210 schema work.
+401-only credential invalidation and validated replace+redrive on the integration outbox — no Prisma schema. Connection **stays active**; only rejected credential becomes `invalid`. Snapshot `id`+`lastValidatedAt` before I/O; CAS-invalidate while `valid`. Classify top-level or `ProviderDispatchError.cause` 401 only — no message/deeper parsing. Definitive 401 → `dead`/`credential_invalid`; reconcile 401 → `ambiguous` auth-block (`skippedReason`, far `availableAt`, `claimAmbiguous` exclusion). CAS commits first when lease stale; owner transitions best-effort. Unit 2: `dead`→`retry` + auth-blocked `ambiguous` due now (reconcile only). Spec: `specs/redmine-credential-recovery/spec.md`. Gate: rebase after KAN-209 #248.
 
 ## Architecture Decisions
 
 | Decision | Choice | Rejected | Rationale |
 |---|---|---|---|
-| Auth class | HTTP 401 only via `statusCode` | 403 / all 4xx | 403 is permission, not revoked key |
-| Fence | CAS `id` + `lastValidatedAt` + `valid` | id-only; new version column | Same-row upsert; CAS miss → retry keeps key B; avoids KAN-210 schema churn |
-| Blocked work | `dead` + `skippedReason=credential_invalid` | endless retry / `skipped` | User action resolves; queryable + redriveable |
-| Connection | Stay `active` | pause/disable connection | Credential-scoped; other users keep working |
-| Requeue | In successful replace TX | manual second call | Atomic recovery; preserve identity |
-| Service replace | New admin PUT on #248 surfaces | reuse `createConnection` | Setup has broader side effects; recovery needs replace-sans-discovery |
-| Schema | None | `credentialVersion` | Existing fields suffice |
+| Auth class | top-level or `ProviderDispatchError.cause` 401 | message parse; 403 | Spec; 403 is permission |
+| Connection | remain `active` on personal 401 | auto-pause | Out-of-scope; credential truth only |
+| Definitive 401 | `dead` + `credential_invalid` | retry create | User action required |
+| Ambiguous 401 | `ambiguous` + `credential_invalid` + blocked `availableAt` | `dead`/`retry` | No dupe create |
+| Invalidation | CAS commits first | single TX with work | Stale lease must not roll back truth |
+| CAS miss | immediate retry; no attempt burn | count failure | Late-key race preserves key B |
+| Already-invalid | block without I/O | remote probe | Other skip reasons unchanged |
+| Owner TX | best-effort lease transition | fail auth path | Optional per spec |
+| Redrive (U2) | one TX: valid + dead→retry + ambiguous due-now | manual requeue | Atomic; preserve identity |
+| Replace | `whoAmI` before write; zero writes on fail | save-then-validate | Spec contract |
+| Service replace | `PUT .../service-credential`; admin auth; rebind holder | discovery prerequisite | Fix when discovery 401 |
+| Schema | none | `credentialVersion` | Existing fields suffice |
 
 ## Data Flow
 
@@ -30,81 +30,64 @@ sequenceDiagram
   participant DB
   participant Web
   W->>R: I/O with snapshotted id+lastValidatedAt
-  R-->>W: 401
-  W->>DB: CAS invalid OR miss→immediate retry
-  Web->>DB: redacted health
+  R-->>W: 401 (top-level or wrapped cause)
+  W->>DB: CAS invalidate (always commits)
+  W->>DB: work/poll transition (best-effort)
   Web->>R: whoAmI replacement
-  Web->>DB: save valid + requeue credential_invalid (one TX)
-  W->>R: retry same work identity
+  Web->>DB: valid + redrive dead+ambiguous (one TX)
+  W->>R: retry or reconcile same identity
 ```
 
-Late race: A in flight → B validated → A 401 → CAS 0 rows → keep B; work `retry`
-`availableAt=now` (do not burn attempt budget / do not set `credential_invalid`).
+Late race: A in flight → B validated → A 401 → CAS 0 rows → B stays `valid`; work retries without burning attempts.
 
 ## File Changes
 
 | File | Action | Description |
 |---|---|---|
-| `packages/api/.../core/types.ts` | Modify | `isProviderAuthenticationError` (401-only) |
-| `packages/api/.../worker.ts` | Modify | Snapshot fence in `credential`/`Prepared`; 401 `fail` path; already-`invalid` → dead+reason no I/O; bulk requeue helper |
-| `packages/api/.../inbound.ts` | Modify | Snapshot on claim; 401 CAS invalidate; `safeErrorEvidence` logs |
-| `packages/api/.../service.ts` | Modify | Personal/service replace TX + requeue; extend `getConnection` health |
-| `packages/api/.../routes.ts` | Modify | Admin service-credential replace route |
-| `packages/shared/src/integrations.ts` | Modify | Health / blocked-work DTO |
-| `packages/web/.../redmine-section.tsx` | Modify | Personal invalid + member blocked UX |
-| `packages/web/.../admin-redmine-section.tsx` | Modify | Service replace without discovery; blocked list |
-| `packages/web/.../use-redmine-integration.ts` + i18n | Modify | Mutations/keys en/es |
-| Matching `*.test.ts(x)` | Modify | Unit/integration coverage below |
-| `schema.prisma` / KAN-210 | **None** | Verified: `lastValidatedAt`, `lastAuthStatus`, `skippedReason`, `authCredentialId`, `dedupeKey`, `correlationId` |
+| `packages/api/src/modules/integrations/core/types.ts` | Modify | `isProviderAuthenticationError` (top-level or cause 401) |
+| `packages/api/src/modules/integrations/core/types.test.ts` | Modify | Classifier scenarios |
+| `packages/api/src/modules/integrations/worker.ts` | Modify | CAS invalidate; auth modes; claim skip; redrive (U2) |
+| `packages/api/src/modules/integrations/retry.test.ts` | Modify | Four integration scenarios |
+| `packages/api/src/modules/integrations/inbound.ts` | Modify | `rejectCredential`: invalidate then best-effort lease release |
+| `packages/api/src/modules/integrations/inbound.test.ts` | Modify | Inbound 401 + reclaimed lease |
+| `packages/api/src/modules/integrations/service.ts` | Modify (U2) | `whoAmI` gate; atomic valid + redrive |
+| `packages/api/src/modules/integrations/routes.ts` | Modify (U2) | `PUT .../service-credential` (instance-admin/workspace auth) |
+| `packages/api/src/modules/integrations/credentials.test.ts` | Modify (U2) | Replace validation + redrive |
+| `packages/shared/src/integrations.ts` | Modify (U2) | `serviceCredentialStatus`, `credential_blocked`, blocked-work DTO |
+| `packages/web/src/features/settings/redmine-section.tsx` | Modify (U3) | Blocked/remediation UX; replace sans discovery |
+| `packages/web/src/features/settings/use-redmine-integration.ts` | Modify (U3) | Service-credential mutation hook |
+| `packages/web/src/features/settings/redmine-section.test.tsx` | Modify (U3) | Member redaction; admin replace |
+| `packages/api/prisma/schema.prisma` | **None** | Verified fields suffice |
 
 ## Interfaces / Contracts
 
 ```ts
-// Internal snapshot (prepare/claim) — not a public DTO
 type UsedCredential = { id: string; lastValidatedAt: Date | null };
-
-// CAS (raw or Prisma updateMany): id + lastAuthStatus='valid' + revokedAt null
-// + lastValidatedAt IS NOT DISTINCT FROM snapshot
-
-// Extend IntegrationConnection (post-#248 schema):
-serviceCredentialStatus: "missing"|"unknown"|"valid"|"invalid"|"revoked";
-syncHealth: {
-  state: "healthy"|"credential_blocked";
-  authBlockedWorkCount: number|null; // null for non-owner/non-admin
-  authBlockedWork: Array<{ // ≤20; owners/admins only
-    id: string; entityType: string; operation: string;
-    localKey: string|null; failedAt: string; reason: "credential_invalid";
-  }>;
-};
+function isProviderAuthenticationError(error: unknown): boolean;
+async function invalidateObservedCredential(db, cred: UsedCredential): Promise<boolean>;
+type AuthFailureMode = "definitive" | "ambiguous";
+async function redriveAuthBlockedWork(tx, connectionId, credentialId, scope): Promise<number>;
 ```
 
-- Personal: extend `POST /credentials` (`connectCredential`) — `whoAmI` then TX
-  upsert `valid` + new `lastValidatedAt` + requeue matching rows.
-- Service: `PUT /connections/:id/service-credential` — instance admin + workspace
-  member; validate first; upsert caller credential; set `serviceCredentialId`;
-  requeue service-scoped `credential_invalid` (rebind system/ai rows if holder
-  changes). Failed validation: no writes (`REDMINE_CONNECTION_FAILED`).
-- Already-`invalid` prepare: no provider I/O; `dead`+`credential_invalid`.
-  Missing/revoked/cross-workspace/actor-mismatch: keep existing `skipped` reasons.
-- Requeue preserves work id, `dedupeKey`, `correlationId`, payload, refs, attempts.
-  Other-reason dead untouched. Definitive 401 creates are safe to retry (no auth).
+CAS on `id`+`lastValidatedAt`; redrive preserves id/`dedupeKey`/`correlationId`/payload/refs/attempts; other dead untouched. Personal: `connectCredential` + `whoAmI`. Service: `PUT .../service-credential`; admin auth; rebind holder. Already-`invalid`: no I/O. Health: `serviceCredentialStatus`, `credential_blocked`; admin/owner total + ≤20; members redacted. No secrets in logs/API/UI.
 
 ## Testing Strategy
 
 | Layer | What | Approach |
 |---|---|---|
-| Unit | 401-only class; redaction | `types.test.ts`, http/adapter regressions |
-| Integration | Fence win/lose, already-invalid, inbound stop/resume, replace TX, health ACL | `retry.test.ts`, `inbound.test.ts`, `credentials.test.ts`, routes |
-| Web | Personal invalid, member blocked, admin replace-sans-discovery | `redmine-section.test.tsx`, admin section tests |
-| E2E | Optional smoke after #248 rebase | Playwright only if time |
+| Unit | Classifier | `types.test.ts`: top-level 401; wrapped cause 401; 403 false |
+| Integration 1 | Definitive fence | `retry.test.ts`: 401→dead/`credential_invalid`; A→B race; 403 unchanged |
+| Integration 2 | Ambiguous auth-block | `retry.test.ts`: reconcile 401 stays blocked; `claimAmbiguous` no loop |
+| Integration 3 | Stale leases | `retry.test.ts`+`inbound.test.ts`: cred `invalid` commits; transition best-effort |
+| Integration 4 | Ambiguous resume (U2) | replace TX due-now reconcile only; other dead untouched |
+| Web (U3) | UX | `redmine-section.test.tsx`: member block; admin replace sans discovery; ≤20 |
 
 ## Migration / Rollout
 
-No migration. Code revert restores prior behavior. Delivery: (1) worker/inbound fence,
-(2) replace+health DTO, (3) web UX — chained if >400 LOC. **Hard apply prerequisite:**
-rebase this branch onto `main` (PR #248 merged). Avoid `schema.prisma`.
+No migration. Chain: Unit 1A → 1B → Unit 2 → Unit 3.
+
+**Review guard:** Unit 1A = **400** LOC (done). Unit 1B ~120–180 (cause classifier, ambiguous block, lease split, four scenarios). 1B stacked child on `fix/kan-211-redmine-auth-fence`. Units 2–3 unchanged. Forecast: `Decision needed: No` | `Chained PRs: Yes` | `400-line risk: High` (mitigated).
 
 ## Open Questions
 
-None blocking — residual same-ms `lastValidatedAt` collision accepted; harden later
-only if observed.
+None blocking. Same-millisecond `lastValidatedAt` collision accepted.

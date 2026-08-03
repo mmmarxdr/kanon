@@ -160,6 +160,21 @@ const RETRYABLE_NETWORK_CODES = new Set([
   "ETIMEDOUT",
 ]);
 
+export function isProviderAuthenticationError(error: unknown): boolean {
+  return !!error && typeof error === "object" && "statusCode" in error && error.statusCode === 401;
+}
+
+export function safeErrorEvidence(error: unknown): Record<string, string | number> {
+  const value = error && typeof error === "object"
+    ? error as { name?: unknown; code?: unknown; statusCode?: unknown }
+    : {};
+  return {
+    name: typeof value.name === "string" ? value.name : "UnknownError",
+    ...(typeof value.code === "string" ? { code: value.code } : {}),
+    ...(typeof value.statusCode === "number" ? { statusCode: value.statusCode } : {}),
+  };
+}
+
 export function isRetryableProviderError(error: unknown): boolean {
   if (error instanceof ProviderDispatchError) return error.outcome === "retry";
   if (!error || typeof error !== "object") return false;

@@ -1,113 +1,121 @@
 # Redmine Credential Recovery
 
 ## Purpose
-HTTP 401 recovery: version fence, blocked work, replace+redrive, redacted UX. Apply after KAN-209
-PR #248. `pm-integration-*` absent from `openspec/specs/` (no partial MODIFIED). No Prisma schema
-(KAN-210).
+401 recovery: fence, blocked work, replace+redrive, redacted UX. After KAN-209 #248. No schema.
 
 ## Requirements
 
 ### Requirement: 401-only version fence
 
-MUST treat HTTP 401 as auth failure for outbound+inbound (parity). MUST NOT treat 403/other terminal failures as credential invalidation. MUST snapshot credential id + `lastValidatedAt` before I/O and CAS-invalidate on 401 only while
-that version remains `valid`. Late old-key 401 MUST NOT invalidate a newer validated key; CAS miss
-MUST retry. MUST NOT reuse invalidated credential.
+MUST treat HTTP 401 as auth failure outbound+inbound. MUST NOT treat 403/other terminal failures as invalidation. MUST classify 401 on error or `ProviderDispatchError.cause` only (no message parsing). MUST snapshot credential id + `lastValidatedAt` before I/O; CAS-invalidate on 401 while `valid`. Late old-key 401 MUST NOT invalidate newer key; CAS miss MUST retry; invalid credentials MUST NOT be reused. Invalidation MUST commit when lease stale; stale-owner transitions best-effort—MUST NOT roll back credential truth or escape inbound polling.
 
 #### Scenario: Outbound 401
-- GIVEN outbound work with valid credential version
-- WHEN Redmine returns 401
-- THEN version is `invalid` and not reused
+- GIVEN valid-credential outbound work
+- WHEN top-level 401
+- THEN `invalid`; not reused
+
+#### Scenario: Wrapped observation 401
+- GIVEN GET 401 in `ProviderDispatchError.cause`
+- WHEN classified
+- THEN auth failure; `invalid`
 
 #### Scenario: Inbound 401
-- GIVEN inbound poll with valid service credential
-- WHEN Redmine returns 401
-- THEN version is `invalid`; later claims MUST NOT select it
+- GIVEN valid service-credential poll
+- WHEN 401
+- THEN `invalid`; later claims skip it
 
 #### Scenario: 403 not auth
-- GIVEN Redmine returns 403 for credential
+- GIVEN 403 response
 - WHEN classified
 - THEN status unchanged
 
 #### Scenario: Late 401 race
 - GIVEN key A in flight; key B validated before A 401
-- WHEN A returns 401
-- THEN key B stays `valid`; work retries
+- WHEN A 401
+- THEN B stays `valid`; work retries
+
+#### Scenario: Outbound stale lease
+- GIVEN 401 after work lease reclaimed
+- WHEN CAS invalidates
+- THEN `invalid` commits; work transition best-effort
+
+#### Scenario: Inbound reclaimed lease
+- GIVEN poll lease reclaimed before 401
+- WHEN invalidated
+- THEN cycle stops; no escape
 
 ### Requirement: Auth-blocked work
 
-Outbound 401 MUST mark work `dead` with `skippedReason` `credential_invalid`, retaining id,
-`dedupeKey`, `correlationId`, operation, payload, actor, attempts. Already-`invalid` targets MUST
-block without I/O. Missing/revoked/cross-workspace/actor-mismatched credentials MUST keep existing
-skipped semantics (not `credential_invalid`).
+Definitive 401 MUST mark work `dead` with `skippedReason` `credential_invalid`, retaining id, `dedupeKey`, `correlationId`, operation, payload, actor, attempts. Uncertain-create or reconciliation 401 MUST stay `ambiguous` auth-blocked (no busy claiming) and MUST NOT become `dead`/`retry` redriving create. Already-`invalid` targets block without I/O. Missing/revoked/cross-workspace/actor-mismatch keep existing skipped semantics (not `credential_invalid`).
 
 #### Scenario: Rejected create
-- GIVEN durable create with no remote ref
-- WHEN credential gets 401
-- THEN `dead`/`credential_invalid`; identity unchanged
+- GIVEN definitive create 401, no remote ref
+- WHEN rejected
+- THEN `dead`/`credential_invalid`
+
+#### Scenario: Ambiguous auth block
+- GIVEN `ambiguous` reconciling uncertain create
+- WHEN 401 in reconciliation
+- THEN stays auth-blocked `ambiguous`; no create redrive
 
 #### Scenario: Already-invalid
-- GIVEN work targets `invalid` credential
+- GIVEN `invalid` credential target
 - WHEN prepared
-- THEN no provider request; stays queryable blocked
+- THEN no I/O; blocked
 
 ### Requirement: Validated replace+redrive
 
-Replacement MUST pass Redmine `whoAmI` before save; failed validation MUST mutate nothing. Success
-MUST atomically save as `valid` and requeue matching `credential_invalid` dead work without losing
-durable identity (MUST NOT duplicate Redmine issues when refs/dedupe exist). Other-reason dead MUST
-NOT requeue. Personal replace recovers personal work; admin service replace recovers service work +
-inbound. User work MUST stay on initiating member credential.
+`whoAmI` before save; fail → zero writes. Success atomically `valid` + redrive: `credential_invalid` `dead`→`retry`; `ambiguous`→`ambiguous` now (reconcile only). Preserve `dedupeKey`/`correlationId`/refs; no dupes. Other-reason `dead` MUST NOT requeue. Personal replace recovers personal work; admin service replace recovers service+inbound; user work stays on initiating member credential.
 
 #### Scenario: Personal replace
-- GIVEN invalid member credential with blocked work
-- WHEN replacement passes `whoAmI`
-- THEN `valid` with new timestamp; matching work retries; other dead stays
+- GIVEN invalid member cred; blocked dead+ambiguous
+- WHEN valid replace
+- THEN `valid`; dead retries; ambiguous reconciles
 
 #### Scenario: Failed replace
-- GIVEN invalid credential with blocked work
-- WHEN validation fails
-- THEN stays invalid; no requeue
+- GIVEN invalid cred + blocked work
+- WHEN `whoAmI` fails
+- THEN invalid; no redrive
 
 #### Scenario: Admin replace
-- GIVEN invalid service credential; instance admin in workspace
-- WHEN valid service replacement submitted
-- THEN service credential valid; service work + inbound resume
+- GIVEN invalid service cred; admin
+- WHEN valid replace
+- THEN valid; service work + inbound resume
 
-#### Scenario: No duplicate create
-- GIVEN auth-blocked create retains `dedupeKey`/`correlationId`/refs
-- WHEN redriven after recovery
-- THEN MUST NOT duplicate create for local identity
+#### Scenario: Ambiguous resume
+- GIVEN auth-blocked `ambiguous` create
+- WHEN redrive after replace
+- THEN `ambiguous` now; reconcile; no dupe
 
 ### Requirement: Health and remediation UX
 
-Health MUST expose service credential status and auth-blocked sync. Admins/owners MUST get total + ≤20 recent auth-blocked records (local metadata only). Members MUST see safe blocked state (no cross-user details). Owners MUST get personal replace UX; admins MUST get service replace even if discovery 401.
+Expose service credential status + auth-blocked sync. Admins/owners: total + ≤20 local auth-blocked records. Members: safe blocked state, no cross-user detail. Owners: personal replace; admins: service replace despite discovery 401.
 
 #### Scenario: Member blocked
-- GIVEN invalid service credential
-- WHEN regular member views settings
-- THEN sync blocked until admin reconnects; no secrets/cross-user details
+- GIVEN invalid service cred
+- WHEN member views settings
+- THEN blocked message; no secrets
 
 #### Scenario: Owner remediation
-- GIVEN caller personal credential invalid
-- WHEN viewing settings
-- THEN key rejected; replace offered
+- GIVEN invalid personal cred
+- WHEN owner views settings
+- THEN replace offered
 
 #### Scenario: Operator blocked work
-- GIVEN auth-blocked work exists
-- WHEN admin/owner reads connection health
-- THEN total + ≤20 recent local records reason `credential_invalid`
+- GIVEN auth-blocked work
+- WHEN admin/owner reads health
+- THEN total + ≤20 `credential_invalid` records
 
 #### Scenario: Replace sans discovery
-- GIVEN service key invalid; discovery 401
-- WHEN instance admin opens admin UI
-- THEN replace form available without discovery success
+- GIVEN invalid service key; discovery 401
+- WHEN admin opens UI
+- THEN replace form available
 
 ### Requirement: Secret-safe observability
 
-Logs, durable reasons, API, and UI MUST NOT contain API keys, ciphertext, auth headers, or raw
-provider bodies. MAY include credential/work IDs, provider, status 401, `credential_invalid`.
+Logs, durable reasons, API, UI MUST NOT leak API keys, ciphertext, auth headers, raw provider bodies. MAY expose ids, 401, `credential_invalid`.
 
 #### Scenario: Redacted evidence
-- GIVEN error/context contains credential material
-- WHEN logged and exposed via health
-- THEN no secrets in logs/reason/API/UI; IDs usable
+- GIVEN credential material in error
+- WHEN logged/exposed
+- THEN no secrets; ids ok

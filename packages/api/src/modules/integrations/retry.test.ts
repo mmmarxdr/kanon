@@ -1045,11 +1045,11 @@ describe("integration worker retry and completion", () => {
     });
   });
 
-  it("moves terminal provider 4xx failures to dead", async () => {
+  it("moves terminal provider 403 failures to dead without invalidating credentials", async () => {
     const fixture = await createFixture();
     const work = await createWork(fixture);
     const { deps } = dependencies(
-      adapter({ pushIssue: vi.fn().mockRejectedValue(new RedmineHttpError(400)) })
+      adapter({ pushIssue: vi.fn().mockRejectedValue(new RedmineHttpError(403)) })
     );
 
     await runIntegrationWorkerCycle(prisma, deps);
@@ -1060,6 +1060,77 @@ describe("integration worker retry and completion", () => {
       state: "dead",
       attempts: 1,
       leaseToken: null,
+    });
+    await expect(
+      prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: fixture.credential.id } }),
+    ).resolves.toMatchObject({ lastAuthStatus: "valid" });
+  });
+
+  it("invalidates the observed credential and auth-blocks a time-entry 401", async () => {
+    const fixture = await createFixture();
+    await prisma.integrationProjectBinding.update({
+      where: { id: fixture.binding.id },
+      data: { writeMap: { todo: "1", in_progress: "2", done: "3", _timeEntryActivityId: "9" } },
+    });
+    await createRef(fixture, "issue", fixture.issue.id, "remote-issue");
+    const entry = await prisma.timeEntry.create({
+      data: { memberId: fixture.member.id, issueId: fixture.issue.id, hours: "1", workedOn: NOW, status: "approved" },
+    });
+    const work = await createWork(fixture, {
+      entityType: "time_entry",
+      entityId: entry.id,
+      payload: { version: 1, targetHours: "1", entryIds: [entry.id] },
+    });
+    const pushTimeEntry = vi.fn().mockRejectedValue(new RedmineHttpError(401));
+
+    await runIntegrationWorkerCycle(prisma, dependencies(adapter({ pushTimeEntry })).deps);
+
+    expect(pushTimeEntry).toHaveBeenCalledOnce();
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } }),
+    ).resolves.toMatchObject({
+      state: "dead",
+      skippedReason: "credential_invalid",
+      attempts: 1,
+      correlationId: work.correlationId,
+      payload: work.payload,
+    });
+  });
+
+  it("keeps a newer valid credential and immediately retries a stale 401 without another attempt", async () => {
+    const fixture = await createFixture();
+    const observedAt = new Date("2026-07-30T11:00:00.000Z");
+    const replacementAt = new Date("2026-07-30T11:30:00.000Z");
+    await prisma.memberIntegrationCredential.update({
+      where: { id: fixture.credential.id },
+      data: { lastValidatedAt: observedAt },
+    });
+    const work = await createWork(fixture, { attempts: 2 });
+    await createRef(fixture, "issue", fixture.issue.id, "remote-known");
+    const pushIssue = vi.fn(async () => {
+      await prisma.memberIntegrationCredential.update({
+        where: { id: fixture.credential.id },
+        data: { encryptedKey: "replacement-key", lastValidatedAt: replacementAt },
+      });
+      throw new RedmineHttpError(401);
+    });
+
+    await runIntegrationWorkerCycle(
+      prisma,
+      dependencies(adapter({ pushIssue }), { limit: 1 }).deps,
+    );
+
+    await expect(
+      prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: fixture.credential.id } }),
+    ).resolves.toMatchObject({
+      lastAuthStatus: "valid",
+    });
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } }),
+    ).resolves.toMatchObject({
+      state: "retry",
+      attempts: 2,
+      availableAt: NOW,
     });
   });
 
@@ -1140,6 +1211,35 @@ describe("integration worker retry and completion", () => {
     await expect(
       prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })
     ).resolves.toMatchObject({ state: "done" });
+  });
+
+  it("records the selected service fallback on 401 and already-invalid blocking", async () => {
+    const fixture = await createFixture();
+    await prisma.integrationConnection.update({
+      where: { id: fixture.connection.id },
+      data: { serviceFallbackEnabled: true, serviceCredentialId: fixture.credential.id },
+    });
+    const serviceWork = { actorKey: "system:scheduler", actorKind: "system", authCredentialId: null } as const;
+    const pushIssue = vi.fn().mockRejectedValue(new RedmineHttpError(401));
+    const setup = dependencies(adapter({ pushIssue }));
+
+    const rejected = await createWork(fixture, { ...serviceWork, operation: "create" });
+    await runIntegrationWorkerCycle(prisma, setup.deps);
+    const blocked = await createWork(fixture, serviceWork);
+    await runIntegrationWorkerCycle(prisma, setup.deps);
+
+    expect(pushIssue).toHaveBeenCalledOnce();
+    await expect(
+      prisma.integrationSyncWork.count({
+        where: {
+          id: { in: [rejected.id, blocked.id] },
+          state: "dead",
+          authCredentialId: fixture.credential.id,
+          actorKey: "system:scheduler",
+          actorKind: "system",
+        },
+      }),
+    ).resolves.toBe(2);
   });
 
   it("skips disabled, revoked, and cross-connection service fallbacks", async () => {
