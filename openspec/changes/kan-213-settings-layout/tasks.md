@@ -27,13 +27,13 @@ Chain strategy: feature-branch-chain
 
 ## Phase A: Shell (Slice A)
 
-- [ ] A.1 RED: `settings-shell.test.tsx` — default/wide max-width, tabPanel attrs, narrow viewport (spec: settings-shell)
-- [ ] A.2 GREEN: Create `components/ui/settings-shell.tsx` per design contract
-- [ ] A.3 Migrate `routes/_authenticated/settings.tsx` — SettingsShell, `maxWidth="wide"` on Integrations; preserve TabList + panel ids
-- [ ] A.4 Migrate `project-settings.tsx` — SettingsShell; remove 720px cap
-- [ ] A.5 Migrate `profile.tsx` — SettingsShell; remove `max-w-lg`
-- [ ] A.6 Migrate `admin.instance.tsx` — SettingsShell only; remove 560px wrapper (form grid deferred to C)
-- [ ] A.7 GREEN: Extend `settings.test.tsx` — 3 tabs, no Domains, `settings-panel-*` ids unchanged (delta: workspace-settings-ia)
+- [x] A.1 RED: `settings-shell.test.tsx` — default/wide max-width, tabPanel attrs, narrow viewport (spec: settings-shell)
+- [x] A.2 GREEN: Create `components/ui/settings-shell.tsx` per design contract
+- [x] A.3 Migrate `routes/_authenticated/settings.tsx` — SettingsShell, `maxWidth="wide"` on Integrations; preserve TabList + panel ids
+- [x] A.4 Migrate `project-settings.tsx` — SettingsShell; remove 720px cap
+- [x] A.5 Migrate `profile.tsx` — SettingsShell; remove `max-w-lg`
+- [x] A.6 Migrate `admin.instance.tsx` — SettingsShell only; remove 560px wrapper (form grid deferred to C)
+- [x] A.7 GREEN: Extend `settings.test.tsx` — 3 tabs, no Domains, `settings-panel-*` ids unchanged (delta: workspace-settings-ia)
 
 ## Phase B: Lists (Slice B)
 
