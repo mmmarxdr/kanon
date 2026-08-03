@@ -94,7 +94,9 @@ export class RedminePollingInboundSource
         limit: String(PAGE_SIZE),
         offset: String(offset),
       });
-      if (cursor) query.set("updated_on", `>=${cursor.updatedAt.toISOString()}`);
+      if (cursor) {
+        query.set("updated_on", `>=${cursor.updatedAt.toISOString().replace(/\.\d{3}Z$/, "Z")}`);
+      }
 
       const page = await this.client.get<RemoteIssuePage>(`/issues.json?${query}`);
       if (

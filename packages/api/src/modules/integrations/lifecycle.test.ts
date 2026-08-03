@@ -113,6 +113,23 @@ describe("integration connection lifecycle", () => {
     expect(deps.remote).not.toHaveBeenCalled();
   });
 
+  it("returns an actionable error when Redmine discovery fails", async () => {
+    const workspace = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    remote.whoAmI.mockRejectedValueOnce(new Error("Unsafe remote endpoint: HTTPS is required"));
+
+    await expect(
+      createConnection({ workspaceId: workspace.id, apiKey: "secret" }, owner.userId, deps),
+    ).rejects.toMatchObject({
+      statusCode: 502,
+      code: "REDMINE_CONNECTION_FAILED",
+      message:
+        "Redmine connection failed. Verify the API key or ask an instance admin to check the URL, endpoint allowlist, and network access",
+    });
+    await expect(prisma.integrationConnection.count()).resolves.toBe(0);
+    await expect(prisma.memberIntegrationCredential.count()).resolves.toBe(0);
+  });
+
   it("cannot persist a stale connection while the instance URL changes", async () => {
     const workspace = await seedTestWorkspace();
     const owner = await seedTestMemberWithRole(workspace.id, "owner");
