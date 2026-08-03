@@ -140,7 +140,7 @@ export function InvitesSection({
 
   return (
     <>
-      <SettingsCard title={t("invitesTitle")} actions={createButton}>
+      <SettingsCard title={t("invitesTitle")} actions={createButton} insetList>
         {showForm && (
           <form onSubmit={handleCreate} className="mb-6 space-y-3 rounded-md border border-border p-4 bg-secondary/30">
             <div className="grid grid-cols-2 gap-3">
