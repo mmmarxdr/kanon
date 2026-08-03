@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAuthStore } from "@/stores/auth-store";
+import { SettingsCard } from "@/components/ui/settings-card";
 import { ApiError } from "@/lib/api-client";
 import {
   useProjectMembersQuery,
@@ -110,24 +111,24 @@ export function ProjectMembersSection({
 
   if (isLoading) {
     return (
-      <div className="rounded-lg border border-border bg-card p-6">
+      <SettingsCard>
         <p className="text-sm text-muted-foreground">Loading members...</p>
-      </div>
+      </SettingsCard>
     );
   }
 
   if (error) {
     return (
-      <div className="rounded-lg border border-border bg-card p-6">
+      <SettingsCard>
         <p className="text-sm text-destructive">
           Failed to load members: {error.message}
         </p>
-      </div>
+      </SettingsCard>
     );
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card p-6">
+    <SettingsCard>
       <h2 className="text-lg font-semibold text-foreground mb-4">Members</h2>
 
       {/* Remove mutation error */}
@@ -243,7 +244,7 @@ export function ProjectMembersSection({
                             });
                           }}
                           disabled={removeMember.isPending}
-                          className="rounded-md bg-destructive px-2 py-1 text-xs font-medium text-white hover:bg-destructive/90 disabled:opacity-50 transition-colors"
+                          className="rounded-md bg-destructive px-2 py-1 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50 transition-colors"
                         >
                           {removeMember.isPending ? "..." : "Confirm"}
                         </button>
@@ -351,6 +352,6 @@ export function ProjectMembersSection({
           )}
         </div>
       )}
-    </div>
+    </SettingsCard>
   );
 }

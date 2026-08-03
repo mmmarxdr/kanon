@@ -6,6 +6,7 @@ import {
   useRevokeInviteMutation,
   type WorkspaceInvite,
 } from "./use-settings-queries";
+import { SettingsCard } from "@/components/ui/settings-card";
 import { InviteDomainRestriction } from "./invite-domain-restriction";
 
 const INVITE_ROLES = ["viewer", "member", "admin"] as const;
@@ -41,7 +42,7 @@ function statusBadge(
   if (invite.revokedAt) return { label: t("inviteStatusRevoked"), className: "bg-destructive/10 text-destructive" };
   if (isExpired(invite)) return { label: t("inviteStatusExpired"), className: "bg-muted text-muted-foreground" };
   if (isExhausted(invite)) return { label: t("inviteStatusExhausted"), className: "bg-muted text-muted-foreground" };
-  return { label: t("inviteStatusActive"), className: "bg-green-500/10 text-green-700" };
+  return { label: t("inviteStatusActive"), className: "bg-success/10 text-success" };
 }
 
 export function InvitesSection({
@@ -102,19 +103,19 @@ export function InvitesSection({
 
   if (isLoading) {
     return (
-      <div className="rounded-lg border border-border bg-card p-6">
+      <SettingsCard>
         <p className="text-sm text-muted-foreground">{t("invitesLoading")}</p>
-      </div>
+      </SettingsCard>
     );
   }
 
   if (error) {
     return (
-      <div className="rounded-lg border border-border bg-card p-6">
+      <SettingsCard>
         <p className="text-sm text-destructive">
           {t("invitesFailed", { message: error.message })}
         </p>
-      </div>
+      </SettingsCard>
     );
   }
 
@@ -123,7 +124,7 @@ export function InvitesSection({
 
   return (
     <>
-    <div className="rounded-lg border border-border bg-card p-6">
+    <SettingsCard>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-foreground">{t("invitesTitle")}</h2>
         {isAdmin && (
@@ -268,7 +269,7 @@ export function InvitesSection({
           </div>
         </div>
       )}
-    </div>
+    </SettingsCard>
 
     <div className="mt-4">
       <InviteDomainRestriction

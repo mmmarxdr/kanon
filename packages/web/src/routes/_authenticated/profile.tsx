@@ -192,7 +192,7 @@ export function ProfilePage() {
             </div>
 
             {profileSuccess && (
-              <div className="rounded-md border border-green-500/50 bg-green-500/10 px-3 py-2 text-sm text-green-700">
+              <div className="rounded-md border border-success/50 bg-success/10 px-3 py-2 text-sm text-success">
                 {profileSuccess}
               </div>
             )}
@@ -288,7 +288,7 @@ export function ProfilePage() {
             <PasswordRequirements requirements={pwTouched ? pwRequirements : []} />
 
             {passwordSuccess && (
-              <div className="rounded-md border border-green-500/50 bg-green-500/10 px-3 py-2 text-sm text-green-700">
+              <div className="rounded-md border border-success/50 bg-success/10 px-3 py-2 text-sm text-success">
                 {passwordSuccess}
               </div>
             )}
