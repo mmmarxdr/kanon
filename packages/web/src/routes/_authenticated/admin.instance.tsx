@@ -24,6 +24,7 @@ import { fetchApi, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/stores/auth-store";
 import { SUPPORTED_LOCALES } from "@kanon/shared";
 import { AdminRedmineSection } from "@/features/settings/admin-redmine-section";
+import { SettingsShell } from "@/components/ui/settings-shell";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -219,59 +220,9 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
   }
 
   return (
-    <div
-      style={{
-        height: "100%",
-        display: "flex",
-        flexDirection: "column",
-        background: "var(--bg)",
-      }}
-    >
-      {/* Header */}
-      <div
-        style={{
-          padding: "20px 28px 0",
-          borderBottom: "1px solid var(--line)",
-          flexShrink: 0,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "baseline",
-            gap: 12,
-            marginBottom: 12,
-          }}
-        >
-          <h1
-            style={{
-              margin: 0,
-              fontSize: 20,
-              fontWeight: 600,
-              letterSpacing: "-0.02em",
-            }}
-          >
-            Instance Settings
-          </h1>
-          <span
-            style={{ fontSize: 11, color: "var(--ink-3)", fontFamily: "monospace" }}
-          >
-            super-admin
-          </span>
-        </div>
-      </div>
-
-      {/* Body */}
-      <div
-        style={{
-          flex: 1,
-          overflow: "auto",
-          padding: "24px 28px 28px",
-        }}
-      >
-        <div style={{ maxWidth: 560, display: "flex", flexDirection: "column", gap: 24 }}>
-          {/* ── Invite-admin section (gated on isSuperAdmin — only super-admin may mint invites) ── */}
-          {user?.isSuperAdmin && (
+    <SettingsShell title="Instance Settings" eyebrow="super-admin">
+      {/* ── Invite-admin section (gated on isSuperAdmin — only super-admin may mint invites) ── */}
+      {user?.isSuperAdmin && (
             <div
               data-testid="invite-admin-section"
               style={{
@@ -674,9 +625,7 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
           </form>
 
           <AdminRedmineSection redmineBaseUrl={settings.redmineBaseUrl} />
-        </div>
-      </div>
-    </div>
+    </SettingsShell>
   );
 }
 

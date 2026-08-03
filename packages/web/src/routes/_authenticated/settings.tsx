@@ -8,7 +8,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { MembersSection } from "@/features/settings/members-section";
 import { InvitesSection } from "@/features/settings/invites-section";
 import { RedmineSection } from "@/features/settings/redmine-section";
-import { TabList } from "@/components/ui/primitives";
+import { SettingsShell } from "@/components/ui/settings-shell";
 
 const SETTINGS_TAB_ID_PREFIX = "settings";
 
@@ -50,99 +50,44 @@ export function SettingsPage() {
   }
 
   return (
-    <div
-      style={{
-        height: "100%",
-        display: "flex",
-        flexDirection: "column",
-        background: "var(--bg)",
+    <SettingsShell
+      title={workspace?.name ?? t("workspaceFallback")}
+      eyebrow={t("workspaceSettingsSub")}
+      maxWidth={activeTab === "integrations" ? "wide" : "default"}
+      tabs={{
+        idPrefix: SETTINGS_TAB_ID_PREFIX,
+        tabs: TAB_KEYS.map((tab) => ({
+          key: tab.key,
+          label: t(tab.labelKey),
+        })),
+        activeKey: activeTab,
+        onChange: (key) => setActiveTab(key as SettingsTab),
+      }}
+      tabPanel={{
+        id: `${SETTINGS_TAB_ID_PREFIX}-panel-${activeTab}`,
+        ariaLabelledBy: `${SETTINGS_TAB_ID_PREFIX}-tab-${activeTab}`,
       }}
     >
-      {/* Header */}
-      <div
-        style={{
-          padding: "20px 28px 0",
-          borderBottom: "1px solid var(--line)",
-          flexShrink: 0,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "baseline",
-            gap: 12,
-            marginBottom: 10,
-          }}
-        >
-          <h1
-            style={{
-              margin: 0,
-              fontSize: 20,
-              fontWeight: 600,
-              letterSpacing: "-0.02em",
-            }}
-          >
-            {workspace?.name ?? t("workspaceFallback")}
-          </h1>
-          <span
-            className="mono"
-            style={{ fontSize: 11, color: "var(--ink-3)" }}
-          >
-            {t("workspaceSettingsSub")}
-          </span>
-        </div>
-        <TabList
-          idPrefix={SETTINGS_TAB_ID_PREFIX}
-          tabs={TAB_KEYS.map((tab) => ({
-            key: tab.key,
-            label: t(tab.labelKey),
-          }))}
-          activeKey={activeTab}
-          onChange={setActiveTab}
+      {activeTab === "members" && (
+        <MembersSection
+          workspaceId={workspaceId}
+          currentUserRole={currentUserRole}
         />
-      </div>
-
-      {/* Body */}
-      <div
-        style={{
-          flex: 1,
-          overflow: "auto",
-          padding: "20px 28px 28px",
-        }}
-      >
-        <div
-          role="tabpanel"
-          id={`${SETTINGS_TAB_ID_PREFIX}-panel-${activeTab}`}
-          aria-labelledby={`${SETTINGS_TAB_ID_PREFIX}-tab-${activeTab}`}
-          style={{
-            maxWidth: "min(880px, 100%)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 24,
-          }}
-        >
-          {activeTab === "members" && (
-            <MembersSection
-              workspaceId={workspaceId}
-              currentUserRole={currentUserRole}
-            />
-          )}
-          {activeTab === "invites" && (
-            <InvitesSection
-              workspaceId={workspaceId}
-              currentUserRole={currentUserRole}
-              allowedDomains={workspace?.allowedDomains ?? []}
-            />
-          )}
-          {activeTab === "integrations" && (
-            <RedmineSection
-              workspaceId={workspaceId}
-              currentUserRole={currentUserRole}
-              members={members}
-            />
-          )}
-        </div>
-      </div>
-    </div>
+      )}
+      {activeTab === "invites" && (
+        <InvitesSection
+          workspaceId={workspaceId}
+          currentUserRole={currentUserRole}
+          allowedDomains={workspace?.allowedDomains ?? []}
+        />
+      )}
+      {activeTab === "integrations" && (
+        <RedmineSection
+          workspaceId={workspaceId}
+          currentUserRole={currentUserRole}
+          members={members}
+        />
+      )}
+    </SettingsShell>
   );
 }

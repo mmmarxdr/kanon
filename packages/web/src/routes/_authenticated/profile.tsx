@@ -9,6 +9,7 @@ import { PasswordRequirements } from "@/components/password-requirements";
 import { evaluatePassword, isPasswordValid } from "@/lib/password-policy";
 import { useActiveWorkspaceId, useWorkspacesQuery } from "@/hooks/use-workspace-query";
 import { NotificationPreferencesSection } from "@/features/settings/notification-preferences-section";
+import { SettingsShell } from "@/components/ui/settings-shell";
 
 export const profileRoute = createRoute({
   path: "/profile",
@@ -130,10 +131,8 @@ export function ProfilePage() {
     .slice(0, 2);
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
-      <div className="mx-auto max-w-lg space-y-8">
-        <h1 className="text-2xl font-bold text-foreground">Profile</h1>
-
+    <SettingsShell title="Profile">
+      <div className="space-y-8">
         {/* User Info Card */}
         <div className="rounded-lg border border-border bg-card p-6">
           <div className="flex items-center gap-4 mb-6">
@@ -331,6 +330,6 @@ export function ProfilePage() {
           )}
         </div>
       </div>
-    </div>
+    </SettingsShell>
   );
 }
