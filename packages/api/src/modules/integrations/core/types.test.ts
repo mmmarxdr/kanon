@@ -3,7 +3,9 @@ import {
   CANONICAL_CHANGE_OPERATIONS,
   CANONICAL_ENTITY_TYPES,
   FIELD_VALUE_KINDS,
+  REMOTE_ENTITY_TYPES,
   type CanonicalChange,
+  type CanonicalComment,
   type CanonicalCycle,
   type CanonicalIssue,
   type CanonicalIssuePatch,
@@ -15,6 +17,7 @@ import {
   type PmProviderAdapter,
   type ProviderCreateReconciler,
   type PushResult,
+  type RemoteChange,
   type StatusMaps,
 } from "./types.js";
 
@@ -52,6 +55,13 @@ const pushResult = {
   achievedStatusId: "remote-in-progress",
   remoteVersion: "version-7",
 } satisfies PushResult;
+const comment = {
+  id: "comment-1",
+  issueId: issue.id,
+  body: "Ready for review",
+  author: user,
+  createdAt: new Date("2026-07-24T12:00:00.000Z"),
+} satisfies CanonicalComment;
 const noChangePatch: CanonicalIssuePatch = {
   title: { kind: "omit" },
   description: { kind: "omit" },
@@ -85,7 +95,15 @@ describe("integrations/core/types", () => {
   });
 
   it("exports canonical entities and keeps issue fields provider-neutral", () => {
-    expect(CANONICAL_ENTITY_TYPES).toEqual(["project", "cycle", "issue", "time_entry", "user"]);
+    expect(CANONICAL_ENTITY_TYPES).toEqual([
+      "project",
+      "cycle",
+      "issue",
+      "comment",
+      "time_entry",
+      "user",
+    ]);
+    expect(REMOTE_ENTITY_TYPES).toEqual(["issue", "comment"]);
     expect(CANONICAL_CHANGE_OPERATIONS).toEqual([
       "create",
       "update",
@@ -100,6 +118,7 @@ describe("integrations/core/types", () => {
     });
     expect(issue).not.toHaveProperty("redmineId");
     expect(issue).not.toHaveProperty("remoteStatus");
+    expect(comment).toMatchObject({ issueId: issue.id, author: user });
   });
 
   it("types mapped fields and directional status maps explicitly", () => {
@@ -132,6 +151,13 @@ describe("integrations/core/types", () => {
         canCreateProjects: true,
         canCreateCycles: true,
         canCreateIssues: true,
+        canReadIssues: true,
+        canUpdateIssues: true,
+        canReadPublicComments: true,
+        canCreatePublicComments: true,
+        canMutateComments: false,
+        hasDeletionSignals: false,
+        hasWebhooks: false,
       }),
       listProjects: async () => [{ id: "remote-project-1", name: project.name }],
       listStatuses: async () => [{ id: "remote-new", name: "New", writable: true }],
@@ -197,5 +223,25 @@ describe("integrations/core/types", () => {
       value: issue,
     });
     expect(deletedIssue.value).toBeNull();
+  });
+
+  it("models remote changes before a local entity exists", () => {
+    const change = {
+      identity: {
+        type: "comment",
+        remoteId: "journal-9",
+        remoteProjectId: "project-7",
+        parent: { type: "issue", remoteId: "issue-42" },
+      },
+      operation: "upsert",
+      changedAt: new Date("2026-07-24T12:00:00.000Z"),
+      createdAt: new Date("2026-07-24T11:59:00.000Z"),
+      sourceVersion: "sha256:version-1",
+      actor: { remoteId: "user-5", displayName: "Ada" },
+      fields: { body: "Ready" },
+    } satisfies RemoteChange;
+
+    expect(change.identity.parent).toEqual({ type: "issue", remoteId: "issue-42" });
+    expect(change.fields).toEqual({ body: "Ready" });
   });
 });
