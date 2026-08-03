@@ -156,7 +156,7 @@ describe("integration credentials", () => {
 
   it("allows only one member to reattach a preserved remote identity", async () => {
     const workspace = await seedTestWorkspace();
-    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const owner = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
     const former = await seedTestMemberWithRole(workspace.id, "member");
     const project = await seedTestProject(workspace.id);
     const { connection } = await createConnection(
