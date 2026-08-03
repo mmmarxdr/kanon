@@ -314,11 +314,13 @@ describe("integration lifecycle schema", () => {
         await preMigrationDatabase.$disconnect();
         database = undefined;
 
-        await cp(
-          join(migrationsDirectory, lifecycleMigrationName),
-          join(temporaryDirectory, "migrations", lifecycleMigrationName),
-          { recursive: true }
-        );
+        for (const migrationName of migrationNames.slice(lifecycleMigrationIndex)) {
+          await cp(
+            join(migrationsDirectory, migrationName),
+            join(temporaryDirectory, "migrations", migrationName),
+            { recursive: true },
+          );
+        }
         await deployMigrations(temporaryDirectory, isolatedDatabaseUrl.toString());
 
         const upgradedDatabase = new PrismaClient({

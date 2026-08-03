@@ -154,6 +154,73 @@ describe("integration credentials", () => {
     });
   });
 
+  it("allows only one member to reattach a preserved remote identity", async () => {
+    const workspace = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
+    const former = await seedTestMemberWithRole(workspace.id, "member");
+    const project = await seedTestProject(workspace.id);
+    const { connection } = await createConnection(
+      { workspaceId: workspace.id, apiKey: "owner-key" },
+      owner.userId,
+      deps,
+    );
+    await configureConnection(
+      connection.id,
+      {
+        projectId: project.id,
+        remoteProjectId: "remote-project",
+        timeActivityId: "9",
+        readMap: { new: "backlog" },
+        writeMap,
+      },
+      owner.userId,
+      deps,
+    );
+    remote.whoAmI.mockResolvedValue({
+      id: "returning-remote-user",
+      displayName: "Returning User",
+      login: "returning",
+    });
+    await connectCredential(connection.id, "former-key", former.userId, deps);
+    const identity = await prisma.integrationExternalIdentity.findFirstOrThrow({
+      where: { memberId: former.id, remoteUserId: "returning-remote-user" },
+    });
+
+    await prisma.member.delete({ where: { id: former.id } });
+    const returning = await seedTestMemberWithRole(workspace.id, "member");
+    const competitor = await seedTestMemberWithRole(workspace.id, "member");
+    const candidates = [returning, competitor];
+    const attempts = await Promise.allSettled(
+      candidates.map((candidate) =>
+        connectCredential(connection.id, "returning-key", candidate.userId, deps),
+      ),
+    );
+    const winner = candidates[attempts.findIndex(({ status }) => status === "fulfilled")]!;
+
+    expect(attempts.map(({ status }) => status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(attempts.find(({ status }) => status === "rejected")).toMatchObject({
+      reason: { code: "REMOTE_IDENTITY_ALREADY_CONNECTED" },
+    });
+
+    await expect(
+      prisma.integrationExternalIdentity.findUniqueOrThrow({ where: { id: identity.id } }),
+    ).resolves.toMatchObject({
+      memberId: winner.id,
+      remoteUserId: "returning-remote-user",
+      remoteDisplayName: "Returning User",
+    });
+    await expect(
+      prisma.integrationExternalIdentity.count({
+        where: { bindingId: identity.bindingId, remoteUserId: "returning-remote-user" },
+      }),
+    ).resolves.toBe(1);
+    await expect(
+      prisma.memberIntegrationCredential.count({
+        where: { connectionId: connection.id, memberId: { in: candidates.map(({ id }) => id) } },
+      }),
+    ).resolves.toBe(1);
+  });
+
   it("rejects malformed credential requests at the HTTP boundary", async () => {
     const workspace = await seedTestWorkspace();
     const member = await seedTestMemberWithRole(workspace.id, "member");

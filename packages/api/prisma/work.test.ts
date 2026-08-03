@@ -164,25 +164,22 @@ async function seedPreWorkRows(database: PrismaClient) {
       connectionId: f.connectionId,
     },
   });
-  await database.integrationProjectBinding.create({
-    data: {
-      id: f.bindingId,
-      remoteProjectId: "remote-a14-project",
-      readMap: { "remote-open": "todo" },
-      writeMap: { todo: "remote-open" },
-      connectionId: f.connectionId,
-      projectId: f.projectId,
-    },
-  });
-  await database.integrationExternalIdentity.create({
-    data: {
-      id: f.identityId,
-      remoteUserId: "remote-a14-user",
-      remoteLogin: "a14-remote-login",
-      bindingId: f.bindingId,
-      memberId: f.memberId,
-    },
-  });
+  await database.$executeRaw(Prisma.sql`
+    INSERT INTO "integration_project_bindings" (
+      "id", "remote_project_id", "read_map", "write_map", "updated_at", "connection_id", "project_id"
+    ) VALUES (
+      ${f.bindingId}::uuid, 'remote-a14-project', '{"remote-open":"todo"}'::jsonb,
+      '{"todo":"remote-open"}'::jsonb, CURRENT_TIMESTAMP, ${f.connectionId}::uuid, ${f.projectId}::uuid
+    )
+  `);
+  await database.$executeRaw(Prisma.sql`
+    INSERT INTO "integration_external_identities" (
+      "id", "remote_user_id", "remote_login", "updated_at", "binding_id", "member_id"
+    ) VALUES (
+      ${f.identityId}::uuid, 'remote-a14-user', 'a14-remote-login', CURRENT_TIMESTAMP,
+      ${f.bindingId}::uuid, ${f.memberId}::uuid
+    )
+  `);
   await database.externalRef.create({
     data: {
       id: f.refId,
@@ -241,11 +238,13 @@ async function runWorkUpgradePath() {
     await preMigrationDatabase.$disconnect();
     database = undefined;
 
-    await cp(
-      join(migrationsDirectory, workMigrationName),
-      join(temporaryDirectory, "migrations", workMigrationName),
-      { recursive: true }
-    );
+    for (const migrationName of migrationNames.slice(workMigrationIndex)) {
+      await cp(
+        join(migrationsDirectory, migrationName),
+        join(temporaryDirectory, "migrations", migrationName),
+        { recursive: true }
+      );
+    }
     await deployMigrations(temporaryDirectory, isolatedDatabaseUrl.toString());
 
     const upgradedDatabase = new PrismaClient({
