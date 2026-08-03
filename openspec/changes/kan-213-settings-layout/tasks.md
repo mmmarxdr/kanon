@@ -49,14 +49,14 @@ Chain strategy: feature-branch-chain
 
 ## Phase C: Admin (Slice C)
 
-- [ ] C.1 RED: Extend `settings-card.test.tsx` — title/description/actions header, `insetList`, legacy compat (spec: settings-card-v2)
-- [ ] C.2 GREEN: `settings-card.tsx` v2 props; apply `insetList` to members/invites cards
-- [ ] C.3 RED: `settings-field.test.tsx` — label, htmlFor, span full/half
-- [ ] C.4 GREEN: Create `components/ui/settings-field.tsx`; Tailwind inputs match `profile.tsx`
-- [ ] C.5 GREEN: `admin.instance.tsx` — invite → SettingsCard; md two-column grid via SettingsField; preserve all data-testids (spec: instance-admin-layout)
-- [ ] C.6 Verify: existing `admin-instance*.test.tsx` green; AdminRedmineSection card language unchanged
+- [x] C.1 RED: Extend `settings-card.test.tsx` — title/description/actions header, `insetList`, legacy compat (spec: settings-card-v2)
+- [x] C.2 GREEN: `settings-card.tsx` v2 props; apply `insetList` to members/invites cards
+- [x] C.3 RED: `settings-field.test.tsx` — label, htmlFor, span full/half
+- [x] C.4 GREEN: Create `components/ui/settings-field.tsx`; Tailwind inputs match `profile.tsx`
+- [x] C.5 GREEN: `admin.instance.tsx` — invite → SettingsCard; md two-column grid via SettingsField; preserve all data-testids (spec: instance-admin-layout)
+- [x] C.6 Verify: existing `admin-instance*.test.tsx` green; AdminRedmineSection card language unchanged
 
 ## Verification
 
-- [ ] V.1 Run `pnpm --filter @kanon/web test` on all touched files
+- [x] V.1 Run `pnpm --filter @kanon/web test` on all touched files
 - [ ] V.2 Manual QA: 4 surfaces × 3 palettes × 2 appearances; no horizontal scroll on mobile lists
