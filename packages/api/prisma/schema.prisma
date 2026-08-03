@@ -55,6 +55,16 @@ enum IntegrationLifecycle {
   disabled
 }
 
+enum IntegrationBootstrapState {
+  not_required
+  pending
+  previewed
+  bootstrapping
+  converging
+  ready
+  failed
+}
+
 enum CredentialAuthStatus {
   unknown
   valid
@@ -1194,6 +1204,15 @@ model IntegrationProjectBinding {
   pollLeaseToken  String?              @map("poll_lease_token")
   pollLeaseUntil  DateTime?            @map("poll_lease_until")
   pollFence       Int                  @default(0) @map("poll_fence")
+  inboundEnabled      Boolean                   @default(false) @map("inbound_enabled")
+  bootstrapState      IntegrationBootstrapState @default(not_required) @map("bootstrap_state")
+  bootstrapCutoff     DateTime?                 @map("bootstrap_cutoff")
+  bootstrapPageToken  Json?                     @map("bootstrap_page_token")
+  bootstrapLeaseToken String?                   @map("bootstrap_lease_token")
+  bootstrapLeaseUntil DateTime?                 @map("bootstrap_lease_until")
+  bootstrapFence      Int                       @default(0) @map("bootstrap_fence")
+  auditCursorRemoteId String?                   @map("audit_cursor_remote_id")
+  auditCompletedAt    DateTime?                 @map("audit_completed_at")
   createdAt       DateTime             @default(now()) @map("created_at")
   updatedAt       DateTime             @updatedAt @map("updated_at")
 
@@ -1210,6 +1229,7 @@ model IntegrationProjectBinding {
   @@unique([connectionId, projectId])
   @@unique([connectionId, remoteProjectId])
   @@index([lifecycle, pollLeaseUntil])
+  @@index([bootstrapState, bootstrapLeaseUntil])
   @@index([projectId])
   @@map("integration_project_bindings")
 }
@@ -1217,16 +1237,17 @@ model IntegrationProjectBinding {
 // Provider identity mapping is scoped to a project binding. Credentials remain
 // authentication material only; this model maps a Kanon member to a remote user.
 model IntegrationExternalIdentity {
-  id            String   @id @default(uuid()) @db.Uuid
-  remoteUserId  String   @map("remote_user_id")
-  remoteLogin   String?  @map("remote_login")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  id                String   @id @default(uuid()) @db.Uuid
+  remoteUserId      String   @map("remote_user_id")
+  remoteLogin       String?  @map("remote_login")
+  remoteDisplayName String?  @map("remote_display_name")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
 
   bindingId String                    @map("binding_id") @db.Uuid
   binding   IntegrationProjectBinding @relation(fields: [bindingId], references: [id], onDelete: Cascade)
-  memberId  String                    @map("member_id") @db.Uuid
-  member    Member                    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  memberId  String?                   @map("member_id") @db.Uuid
+  member    Member?                   @relation(fields: [memberId], references: [id], onDelete: SetNull)
 
   @@unique([bindingId, memberId])
   @@unique([bindingId, remoteUserId])
@@ -1337,8 +1358,11 @@ model IntegrationSyncWork {
 model IntegrationInboundApplication {
   id               String                  @id @default(uuid()) @db.Uuid
   remoteEntityType String                  @map("remote_entity_type")
+  remoteParentType String                  @default("") @map("remote_parent_type")
+  remoteParentId   String                  @default("") @map("remote_parent_id")
   remoteId         String                  @map("remote_id")
   remoteUpdatedAt  DateTime                @map("remote_updated_at")
+  sourceVersion    String?                 @map("source_version")
   applicationKey   String                  @unique @map("application_key")
   correlationId    String                  @map("correlation_id")
   state            InboundApplicationState @default(claimed)
@@ -1357,7 +1381,8 @@ model IntegrationInboundApplication {
   work             IntegrationSyncWork?      @relation(fields: [workId], references: [id], onDelete: SetNull)
   conflicts        IntegrationConflict[]
 
-  @@unique([bindingId, remoteEntityType, remoteId, remoteUpdatedAt])
+  @@unique([bindingId, remoteEntityType, remoteParentType, remoteParentId, remoteId, remoteUpdatedAt], map: "uq_inbound_application_remote_timestamp")
+  @@unique([bindingId, remoteEntityType, remoteParentType, remoteParentId, remoteId, sourceVersion], map: "uq_inbound_application_source")
   @@map("integration_inbound_applications")
 }
 
