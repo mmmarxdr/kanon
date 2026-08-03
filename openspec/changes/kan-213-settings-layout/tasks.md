@@ -42,8 +42,8 @@ Chain strategy: feature-branch-chain
 - [x] B.3 Add i18n `listCol*` keys in `i18n/locales/{en,es}/settings.json`
 - [x] B.4 RED→GREEN: `members-section.tsx` — SettingsCard title header + SettingsList/Row; preserve action testIds
 - [x] B.5 RED→GREEN: `invites-section.tsx` — InviteRow → SettingsListRow; preserve invite testIds
-- [ ] B.6 RED→GREEN: `project-members-section.tsx` — SettingsList only; **TODO(PR4) logic untouched**
-- [ ] B.7 RED→GREEN: `notification-preferences-section.tsx` — SettingsListRow; preserve `toggle-${key}` + workspace scoping (delta: profile-notification-preferences)
+- [x] B.6 RED→GREEN: `project-members-section.tsx` — SettingsList only; **TODO(PR4) logic untouched**
+- [x] B.7 RED→GREEN: `notification-preferences-section.tsx` — SettingsListRow; preserve `toggle-${key}` + workspace scoping (delta: profile-notification-preferences)
 
 **Slice B sub-split (400-line High):** PR2a = B.3–B.5; PR2b = B.6–B.7.
 
