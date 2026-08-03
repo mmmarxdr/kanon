@@ -25,16 +25,16 @@ Chain strategy: feature-branch-chain
 
 ## Phase 1: Slice A — IA Relocation
 
-- [ ] 1.1 RED `invite-domain-restriction.test.tsx`: owner add/remove calls mutation; non-owner sees nothing
-- [ ] 1.2 GREEN create `invite-domain-restriction.tsx` (`<details>` collapsed, owner-gated, `inviteDomainRestriction*` keys)
-- [ ] 1.3 Wire into `invites-section.tsx`; delete `domains-section.tsx`
-- [ ] 1.4 RED `profile.test.tsx`: renders section + "For workspace: {name}" when active; empty state if none; loading if pending
-- [ ] 1.5 GREEN `profile.tsx`: add `useActiveWorkspaceId()`/`useWorkspacesQuery()` (mirrors `settings.tsx`), render label + section/empty/loading
-- [ ] 1.6 `settings.tsx`: drop `"domains"`/`"notifications"` from `SettingsTab`/`TAB_KEYS`/render + imports
-- [ ] 1.7 `i18n/{en,es}/settings.json`: add `inviteDomainRestriction*` + `profileNotificationsFor`; drop `domains*`/`tabDomains`/`tabNotifications`
-- [ ] 1.8 RED extend `notification-preferences-section.test.tsx`: each toggle has `aria-label` matching its row label
-- [ ] 1.9 GREEN add matching `aria-label={t(labelKey)}` to the toggle button
-- [ ] 1.10 Run web settings+profile and api invite-service suites (`DOMAIN_NOT_ALLOWED` unchanged)
+- [x] 1.1 RED `invite-domain-restriction.test.tsx`: owner add/remove calls mutation; non-owner sees nothing
+- [x] 1.2 GREEN create `invite-domain-restriction.tsx` (`<details>` collapsed, owner-gated, `inviteDomainRestriction*` keys)
+- [x] 1.3 Wire into `invites-section.tsx`; delete `domains-section.tsx`
+- [x] 1.4 RED `profile.test.tsx`: renders section + "For workspace: {name}" when active; empty state if none; loading if pending
+- [x] 1.5 GREEN `profile.tsx`: add `useActiveWorkspaceId()`/`useWorkspacesQuery()` (mirrors `settings.tsx`), render label + section/empty/loading
+- [x] 1.6 `settings.tsx`: drop `"domains"`/`"notifications"` from `SettingsTab`/`TAB_KEYS`/render + imports
+- [x] 1.7 `i18n/{en,es}/settings.json`: add `inviteDomainRestriction*` + `profileNotificationsFor`; drop `domains*`/`tabDomains`/`tabNotifications`
+- [x] 1.8 RED extend `notification-preferences-section.test.tsx`: each toggle has `aria-label` matching its row label
+- [x] 1.9 GREEN add matching `aria-label={t(labelKey)}` to the toggle button
+- [x] 1.10 Run web settings+profile and api invite-service suites (`DOMAIN_NOT_ALLOWED` unchanged)
 
 ## Phase 2: Slice B — Token/Contrast Fixes
 
