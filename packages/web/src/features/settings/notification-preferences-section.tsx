@@ -90,7 +90,7 @@ export function NotificationPreferencesSection({
                 <span
                   aria-hidden="true"
                   className={[
-                    "pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out",
+                    "pointer-events-none inline-block h-4 w-4 rounded-full bg-primary-foreground shadow ring-0 transition duration-200 ease-in-out",
                     enabled ? "translate-x-4" : "translate-x-0",
                   ].join(" ")}
                 />

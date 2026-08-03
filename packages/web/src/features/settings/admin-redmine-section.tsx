@@ -205,7 +205,7 @@ function ProviderMapsForm({
         </div>
 
         {configure.isError && <p className="text-sm text-destructive">{configure.error.message}</p>}
-        {configure.isSuccess && <p className="text-sm text-emerald-600">{t("redmineMapsSaved")}</p>}
+        {configure.isSuccess && <p className="text-sm text-success">{t("redmineMapsSaved")}</p>}
         <button
           type="submit"
           disabled={configure.isPending || !complete}

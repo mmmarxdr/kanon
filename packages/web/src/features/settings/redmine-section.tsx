@@ -128,7 +128,7 @@ function ProjectBindFields({
         </select>
       </label>
       {bind.isError && <p className="text-sm text-destructive">{bind.error.message}</p>}
-      {bind.isSuccess && <p className="text-sm text-emerald-600">{t("redmineProjectBound")}</p>}
+      {bind.isSuccess && <p className="text-sm text-success">{t("redmineProjectBound")}</p>}
       <button
         type="submit"
         disabled={bind.isPending || !complete}
@@ -236,7 +236,7 @@ function CoverageCard({
             <span
               className={
                 connection.connectedMemberIds.includes(member.id)
-                  ? "rounded-full bg-emerald-500/10 px-2 py-1 text-xs font-medium text-emerald-600"
+                  ? "rounded-full bg-success/10 px-2 py-1 text-xs font-medium text-success"
                   : "rounded-full bg-secondary px-2 py-1 text-xs text-muted-foreground"
               }
             >

@@ -41,7 +41,7 @@ function statusBadge(
   if (invite.revokedAt) return { label: t("inviteStatusRevoked"), className: "bg-destructive/10 text-destructive" };
   if (isExpired(invite)) return { label: t("inviteStatusExpired"), className: "bg-muted text-muted-foreground" };
   if (isExhausted(invite)) return { label: t("inviteStatusExhausted"), className: "bg-muted text-muted-foreground" };
-  return { label: t("inviteStatusActive"), className: "bg-green-500/10 text-green-700" };
+  return { label: t("inviteStatusActive"), className: "bg-success/10 text-success" };
 }
 
 export function InvitesSection({

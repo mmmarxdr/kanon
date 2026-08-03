@@ -243,7 +243,7 @@ export function ProjectMembersSection({
                             });
                           }}
                           disabled={removeMember.isPending}
-                          className="rounded-md bg-destructive px-2 py-1 text-xs font-medium text-white hover:bg-destructive/90 disabled:opacity-50 transition-colors"
+                          className="rounded-md bg-destructive px-2 py-1 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50 transition-colors"
                         >
                           {removeMember.isPending ? "..." : "Confirm"}
                         </button>
