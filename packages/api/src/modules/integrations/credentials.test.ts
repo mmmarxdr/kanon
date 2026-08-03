@@ -67,7 +67,7 @@ describe("integration credentials", () => {
 
   it("connects, replaces, reports, and clears only the caller credential", async () => {
     const workspace = await seedTestWorkspace();
-    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const owner = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
     const member = await seedTestMemberWithRole(workspace.id, "member");
     const project = await seedTestProject(workspace.id);
     const { connection } = await createConnection(
@@ -168,7 +168,7 @@ describe("integration credentials", () => {
 
   it("finds the Redmine connection by workspace only for workspace members", async () => {
     const workspace = await seedTestWorkspace();
-    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const owner = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
     const member = await seedTestMemberWithRole(workspace.id, "member");
     const otherWorkspace = await seedTestWorkspace();
     const outsider = await seedTestMemberWithRole(otherWorkspace.id, "owner");
@@ -200,7 +200,7 @@ describe("integration credentials", () => {
 
   it("dry-runs, rotates, reruns, and reverses mixed-key credentials", async () => {
     const workspace = await seedTestWorkspace();
-    const first = await seedTestMemberWithRole(workspace.id, "owner");
+    const first = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
     const second = await seedTestMemberWithRole(workspace.id, "member");
     const connection = await prisma.integrationConnection.create({
       data: { workspaceId: workspace.id, provider: "redmine", baseUrl: "https://redmine.example.test" },
@@ -237,7 +237,7 @@ describe("integration credentials", () => {
 
   it("reports every undecryptable row before writing any rotation", async () => {
     const workspace = await seedTestWorkspace();
-    const first = await seedTestMemberWithRole(workspace.id, "owner");
+    const first = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
     const second = await seedTestMemberWithRole(workspace.id, "member");
     const connection = await prisma.integrationConnection.create({
       data: { workspaceId: workspace.id, provider: "redmine", baseUrl: "https://redmine.example.test" },

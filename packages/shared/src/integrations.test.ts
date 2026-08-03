@@ -21,6 +21,11 @@ describe("integrationConnectionSchema", () => {
       lifecycleEpoch: 1,
       serviceFallbackEnabled: false,
       discoveredStatuses: [{ id: "1", name: "New", writable: true }],
+      providerMaps: {
+        readMap: { "1": "backlog" },
+        writeMap: { backlog: "1" },
+        timeActivityId: "9",
+      },
       bindings: [
         {
           id: "33333333-3333-4333-8333-333333333333",
@@ -52,6 +57,7 @@ describe("integrationConnectionSchema", () => {
       lifecycleEpoch: 1,
       serviceFallbackEnabled: false,
       discoveredStatuses: [],
+      providerMaps: null,
       bindings: [
         {
           id: "33333333-3333-4333-8333-333333333333",

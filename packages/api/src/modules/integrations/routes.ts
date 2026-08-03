@@ -2,8 +2,10 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import {
+  bindProject,
   clearCredential,
   configureConnection,
+  configureProviderMaps,
   connectCredential,
   createConnection,
   getConnection,
@@ -24,6 +26,15 @@ const ConfigureConnection = z.object({
   timeActivityId: z.string().min(1),
   readMap: z.record(z.string(), z.string()),
   writeMap: z.record(z.string(), z.string()),
+});
+const ConfigureProviderMaps = z.object({
+  timeActivityId: z.string().min(1),
+  readMap: z.record(z.string(), z.string()),
+  writeMap: z.record(z.string(), z.string()),
+});
+const BindProject = z.object({
+  projectId: z.string().uuid(),
+  remoteProjectId: z.string().min(1),
 });
 const SetLifecycle = z.object({ lifecycle: z.enum(["active", "paused", "disabled"]) });
 const ConnectCredential = z.object({
@@ -61,6 +72,18 @@ export default async function integrationRoutes(fastify: FastifyInstance): Promi
     "/connections/:id/mapping",
     { schema: { params: ConnectionId, body: ConfigureConnection } },
     async (request) => configureConnection(request.params.id, request.body, request.user.userId),
+  );
+
+  app.put(
+    "/connections/:id/provider-maps",
+    { schema: { params: ConnectionId, body: ConfigureProviderMaps } },
+    async (request) => configureProviderMaps(request.params.id, request.body, request.user.userId),
+  );
+
+  app.put(
+    "/connections/:id/bindings",
+    { schema: { params: ConnectionId, body: BindProject } },
+    async (request) => bindProject(request.params.id, request.body, request.user.userId),
   );
 
   app.patch(
