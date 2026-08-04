@@ -56,6 +56,8 @@ async function fixture(state = "review" as const) {
       },
       lifecycle: "active",
       lifecycleEpoch: 1,
+      inboundEnabled: true,
+      bootstrapState: "ready",
     },
   });
   const issue = await prisma.issue.create({
@@ -121,6 +123,32 @@ function dependencies(changes: readonly InboundIssueStatusChange[]) {
 describe("Redmine inbound sync", () => {
   beforeEach(cleanDatabase);
   afterAll(disconnectTestDb);
+
+  it("claims only inbound-enabled bindings with a ready bootstrap", async () => {
+    const { binding } = await fixture();
+    const disabled = dependencies([]);
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: { inboundEnabled: false, bootstrapState: "not_required" },
+    });
+
+    await runInboundSyncCycle(prisma, disabled);
+
+    expect(disabled.createSource).not.toHaveBeenCalled();
+
+    const pending = dependencies([]);
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: { inboundEnabled: true, bootstrapState: "pending" },
+    });
+
+    await runInboundSyncCycle(prisma, pending);
+
+    expect(pending.createSource).not.toHaveBeenCalled();
+    await expect(
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+    ).resolves.toMatchObject({ pollLeaseToken: null, pollFence: 0 });
+  });
 
   it("skips an equal correlated version and applies only a greater remote version", async () => {
     const { binding, issue, ref } = await fixture();

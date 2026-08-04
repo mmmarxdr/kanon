@@ -526,7 +526,7 @@ describe("integration connection lifecycle", () => {
     await expect(prisma.integrationProjectBinding.count()).resolves.toBe(0);
   });
 
-  it("lets owners bind projects after instance-admin maps, and redacts maps for members", async () => {
+  it("lets owners bind projects, redacts maps, and resets inbound state on rebind", async () => {
     const workspace = await seedTestWorkspace();
     const owner = await seedTestMemberWithRole(workspace.id, "owner");
     const instanceAdmin = await seedTestMemberWithRole(workspace.id, "member", {
@@ -589,6 +589,60 @@ describe("integration connection lifecycle", () => {
       readMap: {},
       writeMap: {},
       timeActivityId: null,
+    });
+
+    const cutoff = new Date("2026-08-04T10:00:00.000Z");
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: {
+        inboundEnabled: true,
+        bootstrapState: "ready",
+        bootstrapCutoff: cutoff,
+        bootstrapPageToken: { complete: true },
+        bootstrapLeaseToken: "bootstrap-lease",
+        bootstrapLeaseUntil: cutoff,
+        bootstrapFence: 3,
+        cursorUpdatedAt: cutoff,
+        cursorRemoteId: "42",
+        pageToken: "poll-page",
+        pollLeaseToken: "poll-lease",
+        pollLeaseUntil: cutoff,
+        pollFence: 4,
+        auditCursorRemoteId: "42",
+        auditCompletedAt: cutoff,
+      },
+    });
+    remote.listProjects.mockResolvedValueOnce([
+      { id: "remote-project", name: "Remote project" },
+      { id: "remote-project-2", name: "Replacement project" },
+    ]);
+
+    await bindProject(
+      connection.id,
+      { projectId: project.id, remoteProjectId: "remote-project-2" },
+      owner.userId,
+      deps,
+    );
+
+    await expect(
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+    ).resolves.toMatchObject({
+      remoteProjectId: "remote-project-2",
+      inboundEnabled: false,
+      bootstrapState: "not_required",
+      bootstrapCutoff: null,
+      bootstrapPageToken: null,
+      bootstrapLeaseToken: null,
+      bootstrapLeaseUntil: null,
+      bootstrapFence: 4,
+      cursorUpdatedAt: null,
+      cursorRemoteId: null,
+      pageToken: null,
+      pollLeaseToken: null,
+      pollLeaseUntil: null,
+      pollFence: 5,
+      auditCursorRemoteId: null,
+      auditCompletedAt: null,
     });
   });
 
