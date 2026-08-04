@@ -44,7 +44,9 @@ export function SettingsCard({
         </div>
       )}
       {insetList ? (
-        <div className="-mx-5 sm:-mx-6 bg-secondary/20">{children}</div>
+        // Bleed the inset background to the card edges, but keep content padded
+        // so it stays aligned with the header (KAN-213 follow-up).
+        <div className="-mx-5 sm:-mx-6 px-5 sm:px-6 bg-secondary/20">{children}</div>
       ) : (
         children
       )}

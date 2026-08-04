@@ -11,6 +11,7 @@ import {
   SettingsList,
   SettingsListRow,
   INVITES_GRID,
+  INVITES_GRID_MOBILE,
   invitesColumns,
 } from "@/components/ui/settings-list";
 import { InviteDomainRestriction } from "./invite-domain-restriction";
@@ -239,6 +240,7 @@ export function InvitesSection({
           <SettingsList
             columns={listColumns}
             gridTemplateColumns={INVITES_GRID}
+            mobileGridTemplateColumns={INVITES_GRID_MOBILE}
             data-testid="workspace-invites-list-active"
           >
             {activeInvites.map((invite) => (
@@ -265,6 +267,7 @@ export function InvitesSection({
             <SettingsList
               columns={listColumns}
               gridTemplateColumns={INVITES_GRID}
+              mobileGridTemplateColumns={INVITES_GRID_MOBILE}
               data-testid="workspace-invites-list-inactive"
             >
               {inactiveInvites.map((invite) => (
