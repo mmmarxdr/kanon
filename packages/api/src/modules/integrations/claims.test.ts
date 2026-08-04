@@ -250,6 +250,28 @@ describe("claimIntegrationWork", () => {
     );
   });
 
+  it("holds outbound work until an inbound bootstrap is ready", async () => {
+    const { binding } = await createFixture();
+    const work = await createWork(binding);
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: { bootstrapState: "pending" },
+    });
+
+    await expect(claimIntegrationWork(prisma, { limit: 1 })).resolves.toEqual([]);
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } }),
+    ).resolves.toMatchObject({ state: "queued", leaseToken: null });
+
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: { bootstrapState: "ready" },
+    });
+    await expect(claimIntegrationWork(prisma, { limit: 1 })).resolves.toEqual([
+      expect.objectContaining({ id: work.id, state: "leased" }),
+    ]);
+  });
+
   it("uses the oldest genuinely claimable head before the parent UUID", async () => {
     const fixtures = [await createFixture(), await createFixture(), await createFixture()].sort(
       (left, right) => left.connection.id.localeCompare(right.connection.id)

@@ -124,7 +124,7 @@ async function adminConnection(database: Database, connectionId: string, userId:
   return connection;
 }
 
-async function ownedConnection(database: Database, connectionId: string, userId: string) {
+export async function ownedConnection(database: Database, connectionId: string, userId: string) {
   const connection = await database.integrationConnection.findUnique({ where: { id: connectionId } });
   if (!connection) throw new AppError(404, "INTEGRATION_NOT_FOUND", "Integration connection not found");
   await requireOwner(database, connection.workspaceId, userId);
@@ -247,7 +247,7 @@ async function upsertExternalIdentities(
   }
 }
 
-async function serviceCredential(database: Database, connection: { id: string; serviceCredentialId: string | null }) {
+export async function serviceCredential(database: Database, connection: { id: string; serviceCredentialId: string | null }) {
   const credential = connection.serviceCredentialId
     ? await database.memberIntegrationCredential.findUnique({ where: { id: connection.serviceCredentialId } })
     : null;
@@ -573,6 +573,21 @@ export async function bindProject(
         writeMap: currentMaps.writeMap as Prisma.InputJsonValue,
         lifecycle: "draft",
         lifecycleEpoch: { increment: 1 },
+        inboundEnabled: false,
+        bootstrapState: "not_required",
+        bootstrapCutoff: null,
+        bootstrapPageToken: Prisma.DbNull,
+        bootstrapLeaseToken: null,
+        bootstrapLeaseUntil: null,
+        bootstrapFence: { increment: 1 },
+        cursorUpdatedAt: null,
+        cursorRemoteId: null,
+        pageToken: null,
+        pollLeaseToken: null,
+        pollLeaseUntil: null,
+        pollFence: { increment: 1 },
+        auditCursorRemoteId: null,
+        auditCompletedAt: null,
       },
     });
     const credentials = await transaction.memberIntegrationCredential.findMany({
@@ -682,6 +697,21 @@ async function bindProjectAsAdmin(
         writeMap: currentMaps.writeMap as Prisma.InputJsonValue,
         lifecycle: "draft",
         lifecycleEpoch: { increment: 1 },
+        inboundEnabled: false,
+        bootstrapState: "not_required",
+        bootstrapCutoff: null,
+        bootstrapPageToken: Prisma.DbNull,
+        bootstrapLeaseToken: null,
+        bootstrapLeaseUntil: null,
+        bootstrapFence: { increment: 1 },
+        cursorUpdatedAt: null,
+        cursorRemoteId: null,
+        pageToken: null,
+        pollLeaseToken: null,
+        pollLeaseUntil: null,
+        pollFence: { increment: 1 },
+        auditCursorRemoteId: null,
+        auditCompletedAt: null,
       },
     });
     const credentials = await transaction.memberIntegrationCredential.findMany({

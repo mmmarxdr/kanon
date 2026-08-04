@@ -15,6 +15,10 @@ function genuinelyClaimable(at: Prisma.Sql): Prisma.Sql {
   return Prisma.sql`
     connection."lifecycle" = 'active'::"IntegrationLifecycle"
     AND binding."lifecycle" = 'active'::"IntegrationLifecycle"
+    AND binding."bootstrap_state" IN (
+      'not_required'::"IntegrationBootstrapState",
+      'ready'::"IntegrationBootstrapState"
+    )
     AND work."direction" = 'outbound'::"SyncDirection"
     AND work."state" IN ('queued'::"SyncWorkState", 'retry'::"SyncWorkState")
     AND work."available_at" <= ${at}

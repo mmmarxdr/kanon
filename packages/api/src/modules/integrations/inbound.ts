@@ -112,6 +112,8 @@ async function claimBinding(
       WHERE connection."provider" = 'redmine'
         AND connection."lifecycle" = 'active'::"IntegrationLifecycle"
         AND binding."lifecycle" = 'active'::"IntegrationLifecycle"
+        AND binding."inbound_enabled" = true
+        AND binding."bootstrap_state" = 'ready'::"IntegrationBootstrapState"
         AND credential."connection_id" = connection."id"
         AND credential."last_auth_status" = 'valid'::"CredentialAuthStatus"
         AND credential."revoked_at" IS NULL
@@ -438,6 +440,8 @@ async function pollBinding(
       where: {
         id: binding.id,
         lifecycle: "active",
+        inboundEnabled: true,
+        bootstrapState: "ready",
         lifecycleEpoch: binding.lifecycleEpoch,
         pollLeaseToken: binding.pollLeaseToken,
         pollFence: binding.pollFence,
@@ -455,6 +459,8 @@ async function pollBinding(
     where: {
       id: binding.id,
       lifecycle: "active",
+      inboundEnabled: true,
+      bootstrapState: "ready",
       lifecycleEpoch: binding.lifecycleEpoch,
       pollLeaseToken: binding.pollLeaseToken,
       pollFence: binding.pollFence,
