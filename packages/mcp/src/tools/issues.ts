@@ -17,6 +17,7 @@ import { formatList, formatEntity, formatAck } from "../transforms.js";
 import type { Format } from "../transforms.js";
 import { resolveProjectKey } from "../binding-resolver.js";
 import type { InvalidBinding } from "../binding-resolver.js";
+import { normalizeDate } from "./cycles.js";
 import type { KanonBinding } from "../kanon-binding.js";
 import { KanonApiError } from "../kanon-client.js";
 
@@ -92,7 +93,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
 
   server.tool(
     "create_issue",
-    "Create issue. Title: [Area] imperative verb (e.g. [Auth] Fix OAuth redirect). Call list_groups for groupKey. cycleId attaches on create. Returns ack {ok,id,key}; format:'full' for entity.",
+    "Create PM-facing issue; no local paths/worktrees. Title: [Area] imperative verb. Call list_groups for groupKey; if starting now pass list_members.memberId as assigneeId. Returns ack; format:'full' for entity.",
     CreateIssueInputShape,
     async (input) => {
       try {
@@ -128,7 +129,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
 
   server.tool(
     "update_issue",
-    "Update issue fields. Read first, append don't overwrite. cycleId=null detaches. Returns ack {ok,id,key}; format:'full' for entity.",
+    "Update issue and plan fields. Read first, append don't overwrite. Dates accept YYYY-MM-DD or ISO; cycleId=null detaches. Returns ack {ok,id,key}; format:'full' for entity.",
     UpdateIssueInput.shape,
     async ({
       issueKey,
@@ -142,6 +143,9 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
       cycleId,
       parentId,
       roadmapItemId,
+      startDate,
+      dueDate,
+      progress,
       format,
     }) => {
       try {
@@ -157,7 +161,18 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
         if (parentId !== undefined) body["parentId"] = parentId;
         if (roadmapItemId !== undefined) body["roadmapItemId"] = roadmapItemId;
 
-        const issue = await client.updateIssue(issueKey, body);
+        const schedule = {
+          ...(startDate !== undefined ? { startDate: normalizeDate(startDate) } : {}),
+          ...(dueDate !== undefined ? { dueDate: normalizeDate(dueDate) } : {}),
+          ...(progress !== undefined ? { progress } : {}),
+        };
+        let issue = Object.keys(body).length > 0
+          ? await client.updateIssue(issueKey, body)
+          : await client.getIssue(issueKey);
+        if (Object.keys(schedule).length > 0) {
+          await client.updateIssueSchedule(issueKey, schedule);
+          issue = await client.getIssue(issueKey);
+        }
         const fmt = format ?? "ack";
         if (fmt === "ack") return dataResult(formatAck(issue, "issue"));
         return dataResult(formatEntity(issue, "issue-write", fmt as Format));

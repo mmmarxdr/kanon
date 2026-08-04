@@ -92,6 +92,22 @@ async function renderMembersSection(currentUserRole = "admin") {
   );
 }
 
+describe("MembersSection — list layout (KAN-213 Slice B)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("renders SettingsList column headers for the members grid", async () => {
+    await renderMembersSection("admin");
+    expect(screen.getByTestId("workspace-members-list")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Member" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Email" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Joined" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Role" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Actions" })).toBeInTheDocument();
+  });
+});
+
 describe("MembersSection — Generate onboarding link button", () => {
   beforeEach(() => {
     vi.clearAllMocks();

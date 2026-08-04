@@ -132,10 +132,35 @@ export const ListGroupsInput = z.object({
 });
 
 /** create_issue */
+const ISSUE_DESCRIPTION_GUIDANCE =
+  "PM-facing issue description (markdown): ## Context / ## Acceptance Criteria / ## Notes. " +
+  "Include durable problem, evidence, decisions, solution, risks, and verification; exclude local paths, worktrees, branches, agent/model/session metadata, and command transcripts.";
+
+const LOCAL_ISSUE_METADATA = [
+  /(?:^|[^\w/])\/(?:home|Users)\/[^/\s`]+\//i,
+  /(?:^|[^\w/])\/tmp\/[^\s`]+/i,
+  /[A-Za-z]:\\Users\\[^\\\s]+\\/i,
+  /^\s*(?:[-*]\s*)?(?:isolated\s+)?(?:worktree|branch|session(?: id)?|agent(?: id)?|model(?: id)?|memory(?: id)?)\s*:/im,
+  /\b(?:feat|fix|chore|refactor|test)\/[a-z0-9._/-]+\b/i,
+  /(?:\.claude\/worktrees|kanon-worktrees\/)/i,
+] as const;
+
+const IssueDescription = z.string().max(50000).superRefine((value, ctx) => {
+  if (LOCAL_ISSUE_METADATA.some((pattern) => pattern.test(value))) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "Keep issue descriptions PM-facing: remove local paths, worktrees, temporary branches, and agent/session metadata.",
+    });
+  }
+});
+
+const ScheduleDate = z.union([z.string().date(), z.string().datetime({ offset: true })]);
+
 export const CreateIssueInput = z.object({
   projectKey: z.string().optional().describe("Project key to create the issue in. Resolved from .kanon if omitted."),
   title: IssueTitle,
-  description: z.string().optional().describe("Issue description (markdown). Recommended: ## Context / ## Acceptance Criteria / ## Notes"),
+  description: IssueDescription.optional().describe(ISSUE_DESCRIPTION_GUIDANCE),
   type: z.enum(ISSUE_TYPES).optional().describe("Issue type"),
   priority: z.enum(ISSUE_PRIORITIES).optional().describe("Issue priority"),
   labels: z.array(z.string()).optional().describe("Labels to attach"),
@@ -154,7 +179,7 @@ export const CreateIssueInput = z.object({
 export const UpdateIssueInput = z.object({
   issueKey: z.string().describe("Issue key (e.g. 'KAN-42')"),
   title: IssueTitle.optional(),
-  description: z.string().nullable().optional().describe("New description (markdown). Preserve ## Context / ## Acceptance Criteria / ## Notes when replacing"),
+  description: IssueDescription.nullable().optional().describe(ISSUE_DESCRIPTION_GUIDANCE),
   type: z.enum(ISSUE_TYPES).optional().describe("New issue type"),
   priority: z.enum(ISSUE_PRIORITIES).optional().describe("New priority"),
   labels: z.array(z.string()).optional().describe("New labels"),
@@ -163,6 +188,9 @@ export const UpdateIssueInput = z.object({
   cycleId: NullableOptionalUuid.describe("Cycle ID to attach (or null/empty to detach)"),
   parentId: NullableOptionalUuid.describe("Parent issue ID (UUID, null/empty unlinks)"),
   roadmapItemId: NullableOptionalUuid.describe("Roadmap item ID to link (UUID, null/empty unlinks)"),
+  startDate: ScheduleDate.optional().describe("Planned start date (YYYY-MM-DD or ISO datetime)"),
+  dueDate: ScheduleDate.optional().describe("Planned due date (YYYY-MM-DD or ISO datetime)"),
+  progress: z.number().int().min(0).max(100).optional().describe("Completion percentage (0-100)"),
   ...WriteFormatField,
 });
 

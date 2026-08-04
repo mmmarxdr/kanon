@@ -24,6 +24,9 @@ import { fetchApi, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/stores/auth-store";
 import { SUPPORTED_LOCALES } from "@kanon/shared";
 import { AdminRedmineSection } from "@/features/settings/admin-redmine-section";
+import { SettingsShell } from "@/components/ui/settings-shell";
+import { SettingsCard } from "@/components/ui/settings-card";
+import { SettingsField, SETTINGS_INPUT_CLASS } from "@/components/ui/settings-field";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -219,464 +222,182 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
   }
 
   return (
-    <div
-      style={{
-        height: "100%",
-        display: "flex",
-        flexDirection: "column",
-        background: "var(--bg)",
-      }}
-    >
-      {/* Header */}
-      <div
-        style={{
-          padding: "20px 28px 0",
-          borderBottom: "1px solid var(--line)",
-          flexShrink: 0,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "baseline",
-            gap: 12,
-            marginBottom: 12,
-          }}
+    <SettingsShell title="Instance Settings" eyebrow="super-admin">
+      {user?.isSuperAdmin && (
+        <SettingsCard
+          testId="invite-admin-section"
+          title="Invite instance admin"
+          description="Generate a kanon:// onboarding link that grants the instance-admin role."
         >
-          <h1
-            style={{
-              margin: 0,
-              fontSize: 20,
-              fontWeight: 600,
-              letterSpacing: "-0.02em",
-            }}
-          >
-            Instance Settings
-          </h1>
-          <span
-            style={{ fontSize: 11, color: "var(--ink-3)", fontFamily: "monospace" }}
-          >
-            super-admin
-          </span>
-        </div>
-      </div>
-
-      {/* Body */}
-      <div
-        style={{
-          flex: 1,
-          overflow: "auto",
-          padding: "24px 28px 28px",
-        }}
-      >
-        <div style={{ maxWidth: 560, display: "flex", flexDirection: "column", gap: 24 }}>
-          {/* ── Invite-admin section (gated on isSuperAdmin — only super-admin may mint invites) ── */}
-          {user?.isSuperAdmin && (
-            <div
-              data-testid="invite-admin-section"
-              style={{
-                padding: "16px",
-                background: "var(--bg-2)",
-                border: "1px solid var(--line)",
-                borderRadius: 6,
-                display: "flex",
-                flexDirection: "column",
-                gap: 12,
-              }}
-            >
-              <div>
-                <h2
-                  style={{
-                    margin: 0,
-                    fontSize: 13,
-                    fontWeight: 600,
-                    color: "var(--ink)",
-                    marginBottom: 4,
-                  }}
-                >
-                  Invite instance admin
-                </h2>
-                <p style={{ margin: 0, fontSize: 11, color: "var(--ink-3)" }}>
-                  Generate a kanon:// onboarding link that grants the instance-admin role.
-                </p>
-              </div>
-
-              <form
-                onSubmit={(e) => { void handleInviteAdmin(e); }}
-                style={{ display: "flex", flexDirection: "column", gap: 10 }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    height: 36,
-                    border: "1px solid var(--line-2)",
-                    borderRadius: 5,
-                    background: "var(--panel)",
-                    padding: "0 10px",
-                  }}
-                >
-                  <input
-                    id="inviteAdminEmail"
-                    data-testid="invite-admin-email"
-                    type="email"
-                    value={inviteEmail}
-                    onChange={(e) => setInviteEmail(e.target.value)}
-                    placeholder="newadmin@company.com"
-                    required
-                    style={{
-                      flex: 1,
-                      height: "100%",
-                      border: 0,
-                      outline: 0,
-                      background: "transparent",
-                      color: "var(--ink)",
-                      fontSize: 13,
-                    }}
-                  />
-                </div>
-
-                {inviteError && (
-                  <div
-                    data-testid="invite-admin-error"
-                    style={{
-                      padding: "6px 10px",
-                      background: "color-mix(in oklch, var(--bad) 12%, transparent)",
-                      border: "1px solid color-mix(in oklch, var(--bad) 40%, transparent)",
-                      borderRadius: 4,
-                      color: "var(--bad)",
-                      fontSize: 12,
-                    }}
-                  >
-                    {inviteError}
-                  </div>
-                )}
-
-                {inviteResult && (
-                  <div
-                    data-testid="invite-admin-result"
-                    style={{
-                      padding: "8px 10px",
-                      background: "color-mix(in oklch, var(--ok) 10%, transparent)",
-                      border: "1px solid color-mix(in oklch, var(--ok) 35%, transparent)",
-                      borderRadius: 4,
-                      fontSize: 12,
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 4,
-                    }}
-                  >
-                    <span style={{ color: "var(--ok)", fontWeight: 500 }}>
-                      Invite link generated — share with the new admin:
-                    </span>
-                    <code
-                      style={{
-                        fontSize: 11,
-                        color: "var(--ink-2)",
-                        wordBreak: "break-all",
-                        fontFamily: "monospace",
-                      }}
-                    >
-                      {inviteResult.url}
-                    </code>
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  data-testid="invite-admin-submit"
-                  disabled={inviting || !inviteEmail.trim()}
-                  style={{
-                    alignSelf: "flex-start",
-                    height: 32,
-                    padding: "0 16px",
-                    background: "var(--accent)",
-                    color: "var(--btn-ink)",
-                    borderRadius: 4,
-                    fontSize: 12,
-                    fontWeight: 500,
-                    opacity: inviting || !inviteEmail.trim() ? 0.55 : 1,
-                    cursor: inviting || !inviteEmail.trim() ? "not-allowed" : "pointer",
-                  }}
-                >
-                  {inviting ? "Sending…" : "Generate invite link"}
-                </button>
-              </form>
-            </div>
-          )}
-
           <form
-            onSubmit={(e) => { void handleSave(e); }}
-            data-testid="admin-instance-form"
-            style={{ display: "flex", flexDirection: "column", gap: 16 }}
+            onSubmit={(e) => { void handleInviteAdmin(e); }}
+            className="flex flex-col gap-3"
           >
-            {/* instanceName */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <label
-                htmlFor="instanceName"
-                style={{ fontSize: 11, color: "var(--ink-3)", fontWeight: 500 }}
-              >
-                Instance name
-              </label>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  height: 36,
-                  border: "1px solid var(--line-2)",
-                  borderRadius: 5,
-                  background: "var(--panel)",
-                  padding: "0 10px",
-                }}
-              >
-                <input
-                  id="instanceName"
-                  data-testid="instance-name-input"
-                  type="text"
-                  value={instanceName}
-                  onChange={(e) => setInstanceName(e.target.value)}
-                  maxLength={120}
-                  placeholder="e.g. Acme Corp Kanon"
-                  style={{
-                    flex: 1,
-                    height: "100%",
-                    border: 0,
-                    outline: 0,
-                    background: "transparent",
-                    color: "var(--ink)",
-                    fontSize: 13,
-                  }}
-                />
-              </div>
-            </div>
+            <SettingsField label="Email" htmlFor="inviteAdminEmail" span="full">
+              <input
+                id="inviteAdminEmail"
+                data-testid="invite-admin-email"
+                type="email"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="newadmin@company.com"
+                required
+                className={SETTINGS_INPUT_CLASS}
+              />
+            </SettingsField>
 
-            {/* Signup mode — editable select */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <label
-                htmlFor="signupMode"
-                style={{ fontSize: 11, color: "var(--ink-3)", fontWeight: 500 }}
-              >
-                Signup mode
-              </label>
+            {inviteError && (
               <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  height: 36,
-                  border: "1px solid var(--line-2)",
-                  borderRadius: 5,
-                  background: "var(--panel)",
-                  padding: "0 10px",
-                }}
+                data-testid="invite-admin-error"
+                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
               >
-                <select
-                  id="signupMode"
-                  data-testid="signup-mode-select"
-                  value={signupMode}
-                  onChange={(e) => setSignupMode(e.target.value)}
-                  style={{
-                    flex: 1,
-                    height: "100%",
-                    border: 0,
-                    outline: 0,
-                    background: "transparent",
-                    color: "var(--ink)",
-                    fontSize: 13,
-                  }}
-                >
-                  <option value="open">open — anyone can register</option>
-                  <option value="invite">invite — invite token required</option>
-                  <option value="closed">closed — no new registrations</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Allowed signup domains — editable */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <label
-                htmlFor="allowedDomains"
-                style={{ fontSize: 11, color: "var(--ink-3)", fontWeight: 500 }}
-              >
-                Allowed signup domains
-                <span style={{ marginLeft: 6, fontSize: 10, color: "var(--ink-4)", fontWeight: 400 }}>
-                  (comma-separated, leave empty to allow all)
-                </span>
-              </label>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  height: 36,
-                  border: "1px solid var(--line-2)",
-                  borderRadius: 5,
-                  background: "var(--panel)",
-                  padding: "0 10px",
-                }}
-              >
-                <input
-                  id="allowedDomains"
-                  data-testid="allowed-domains-input"
-                  type="text"
-                  value={allowedDomains}
-                  onChange={(e) => setAllowedDomains(e.target.value)}
-                  placeholder="acme.com, corp.io"
-                  style={{
-                    flex: 1,
-                    height: "100%",
-                    border: 0,
-                    outline: 0,
-                    background: "transparent",
-                    color: "var(--ink)",
-                    fontSize: 13,
-                  }}
-                />
-              </div>
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <label
-                htmlFor="redmineBaseUrl"
-                style={{ fontSize: 11, color: "var(--ink-3)", fontWeight: 500 }}
-              >
-                {t("instance.redmineBaseUrl")}
-                <span style={{ marginLeft: 6, fontSize: 10, color: "var(--ink-4)", fontWeight: 400 }}>
-                  {t("instance.redmineBaseUrlHelp")}
-                </span>
-              </label>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  height: 36,
-                  border: "1px solid var(--line-2)",
-                  borderRadius: 5,
-                  background: "var(--panel)",
-                  padding: "0 10px",
-                }}
-              >
-                <input
-                  id="redmineBaseUrl"
-                  data-testid="redmine-base-url-input"
-                  type="url"
-                  value={redmineBaseUrl}
-                  onChange={(e) => setRedmineBaseUrl(e.target.value)}
-                  maxLength={2048}
-                  placeholder="https://redmine.example.com"
-                  style={{
-                    flex: 1,
-                    height: "100%",
-                    border: 0,
-                    outline: 0,
-                    background: "transparent",
-                    color: "var(--ink)",
-                    fontSize: 13,
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Default email locale — instance-wide, selects language of outbound emails */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <label
-                htmlFor="defaultLocale"
-                style={{ fontSize: 11, color: "var(--ink-3)", fontWeight: 500 }}
-              >
-                {t("instance.defaultLocale")}
-                <span style={{ marginLeft: 6, fontSize: 10, color: "var(--ink-4)", fontWeight: 400 }}>
-                  {t("instance.defaultLocaleHelp")}
-                </span>
-              </label>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  height: 36,
-                  border: "1px solid var(--line-2)",
-                  borderRadius: 5,
-                  background: "var(--panel)",
-                  padding: "0 10px",
-                }}
-              >
-                <select
-                  id="defaultLocale"
-                  data-testid="default-locale-select"
-                  value={defaultLocale}
-                  onChange={(e) => setDefaultLocale(e.target.value)}
-                  style={{
-                    flex: 1,
-                    height: "100%",
-                    border: 0,
-                    outline: 0,
-                    background: "transparent",
-                    color: "var(--ink)",
-                    fontSize: 13,
-                  }}
-                >
-                  {SUPPORTED_LOCALES.map((locale) => (
-                    <option key={locale.code} value={locale.code}>
-                      {locale.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {saveError && (
-              <div
-                data-testid="save-error"
-                style={{
-                  padding: "8px 12px",
-                  background: "color-mix(in oklch, var(--bad) 12%, transparent)",
-                  border: "1px solid color-mix(in oklch, var(--bad) 40%, transparent)",
-                  borderRadius: 5,
-                  color: "var(--bad)",
-                  fontSize: 12,
-                }}
-              >
-                {saveError}
+                {inviteError}
               </div>
             )}
 
-            {saveSuccess && (
+            {inviteResult && (
               <div
-                data-testid="save-success"
-                style={{
-                  padding: "8px 12px",
-                  background: "color-mix(in oklch, var(--ok) 12%, transparent)",
-                  border: "1px solid color-mix(in oklch, var(--ok) 40%, transparent)",
-                  borderRadius: 5,
-                  color: "var(--ok)",
-                  fontSize: 12,
-                }}
+                data-testid="invite-admin-result"
+                className="rounded-md border border-success/50 bg-success/10 px-3 py-2 text-sm flex flex-col gap-1"
               >
-                Settings saved.
+                <span className="font-medium text-success">
+                  Invite link generated — share with the new admin:
+                </span>
+                <code className="text-xs text-muted-foreground break-all font-mono">
+                  {inviteResult.url}
+                </code>
               </div>
             )}
 
             <button
               type="submit"
+              data-testid="invite-admin-submit"
+              disabled={inviting || !inviteEmail.trim()}
+              className="self-start rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200 ease-out"
+            >
+              {inviting ? "Sending…" : "Generate invite link"}
+            </button>
+          </form>
+        </SettingsCard>
+      )}
+
+      <SettingsCard testId="admin-instance-form">
+        <form
+          onSubmit={(e) => { void handleSave(e); }}
+          className="md:grid md:grid-cols-2 md:gap-x-6 md:gap-y-4"
+        >
+          <SettingsField label="Instance name" htmlFor="instanceName" span="full">
+            <input
+              id="instanceName"
+              data-testid="instance-name-input"
+              type="text"
+              value={instanceName}
+              onChange={(e) => setInstanceName(e.target.value)}
+              maxLength={120}
+              placeholder="e.g. Acme Corp Kanon"
+              className={SETTINGS_INPUT_CLASS}
+            />
+          </SettingsField>
+
+          <SettingsField label="Signup mode" htmlFor="signupMode">
+            <select
+              id="signupMode"
+              data-testid="signup-mode-select"
+              value={signupMode}
+              onChange={(e) => setSignupMode(e.target.value)}
+              className={SETTINGS_INPUT_CLASS}
+            >
+              <option value="open">open — anyone can register</option>
+              <option value="invite">invite — invite token required</option>
+              <option value="closed">closed — no new registrations</option>
+            </select>
+          </SettingsField>
+
+          <SettingsField
+            label="Allowed signup domains"
+            htmlFor="allowedDomains"
+            hint="(comma-separated, leave empty to allow all)"
+          >
+            <input
+              id="allowedDomains"
+              data-testid="allowed-domains-input"
+              type="text"
+              value={allowedDomains}
+              onChange={(e) => setAllowedDomains(e.target.value)}
+              placeholder="acme.com, corp.io"
+              className={SETTINGS_INPUT_CLASS}
+            />
+          </SettingsField>
+
+          <SettingsField
+            label={t("instance.redmineBaseUrl")}
+            htmlFor="redmineBaseUrl"
+            hint={t("instance.redmineBaseUrlHelp")}
+          >
+            <input
+              id="redmineBaseUrl"
+              data-testid="redmine-base-url-input"
+              type="url"
+              value={redmineBaseUrl}
+              onChange={(e) => setRedmineBaseUrl(e.target.value)}
+              maxLength={2048}
+              placeholder="https://redmine.example.com"
+              className={SETTINGS_INPUT_CLASS}
+            />
+          </SettingsField>
+
+          <SettingsField
+            label={t("instance.defaultLocale")}
+            htmlFor="defaultLocale"
+            hint={t("instance.defaultLocaleHelp")}
+          >
+            <select
+              id="defaultLocale"
+              data-testid="default-locale-select"
+              value={defaultLocale}
+              onChange={(e) => setDefaultLocale(e.target.value)}
+              className={SETTINGS_INPUT_CLASS}
+            >
+              {SUPPORTED_LOCALES.map((locale) => (
+                <option key={locale.code} value={locale.code}>
+                  {locale.label}
+                </option>
+              ))}
+            </select>
+          </SettingsField>
+
+          {saveError && (
+            <div
+              data-testid="save-error"
+              className="md:col-span-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            >
+              {saveError}
+            </div>
+          )}
+
+          {saveSuccess && (
+            <div
+              data-testid="save-success"
+              className="md:col-span-2 rounded-md border border-success/50 bg-success/10 px-3 py-2 text-sm text-success"
+            >
+              Settings saved.
+            </div>
+          )}
+
+          <div className="md:col-span-2">
+            <button
+              type="submit"
               disabled={saving}
-              style={{
-                alignSelf: "flex-start",
-                height: 34,
-                padding: "0 18px",
-                background: "var(--accent)",
-                color: "var(--btn-ink)",
-                borderRadius: 5,
-                fontSize: 13,
-                fontWeight: 500,
-                opacity: saving ? 0.55 : 1,
-                cursor: saving ? "not-allowed" : "pointer",
-              }}
+              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200 ease-out"
             >
               {saving ? "Saving…" : "Save"}
             </button>
-          </form>
+          </div>
+        </form>
+      </SettingsCard>
 
-          <AdminRedmineSection redmineBaseUrl={settings.redmineBaseUrl} />
-        </div>
-      </div>
-    </div>
+      <AdminRedmineSection redmineBaseUrl={settings.redmineBaseUrl} />
+    </SettingsShell>
   );
 }
 

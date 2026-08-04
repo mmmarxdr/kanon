@@ -1,7 +1,17 @@
 import type { IssueState } from "@prisma/client";
 
-export const CANONICAL_ENTITY_TYPES = ["project", "cycle", "issue", "time_entry", "user"] as const;
+export const CANONICAL_ENTITY_TYPES = [
+  "project",
+  "cycle",
+  "issue",
+  "comment",
+  "time_entry",
+  "user",
+] as const;
 export type CanonicalEntityType = (typeof CANONICAL_ENTITY_TYPES)[number];
+
+export const REMOTE_ENTITY_TYPES = ["issue", "comment"] as const;
+export type RemoteEntityType = (typeof REMOTE_ENTITY_TYPES)[number];
 
 export const CANONICAL_CHANGE_OPERATIONS = ["create", "update", "delete", "close"] as const;
 export type CanonicalChangeOperation = (typeof CANONICAL_CHANGE_OPERATIONS)[number];
@@ -63,6 +73,14 @@ export interface CanonicalIssuePatch {
   readonly cycleId: FieldValue<string>;
 }
 
+export interface CanonicalComment {
+  readonly id: string;
+  readonly issueId: string;
+  readonly body: string;
+  readonly author: CanonicalUser;
+  readonly createdAt: Date;
+}
+
 export interface CanonicalTimeEntry {
   readonly id: string;
   readonly issueId: string;
@@ -108,6 +126,13 @@ export interface PmProviderCapabilities {
   readonly canCreateProjects: boolean;
   readonly canCreateCycles: boolean;
   readonly canCreateIssues: boolean;
+  readonly canReadIssues: boolean;
+  readonly canUpdateIssues: boolean;
+  readonly canReadPublicComments: boolean;
+  readonly canCreatePublicComments: boolean;
+  readonly canMutateComments: boolean;
+  readonly hasDeletionSignals: boolean;
+  readonly hasWebhooks: boolean;
 }
 export interface PushResult {
   readonly externalId: string;
@@ -215,6 +240,7 @@ export type CanonicalEntity =
   | CanonicalProject
   | CanonicalCycle
   | CanonicalIssue
+  | CanonicalComment
   | CanonicalTimeEntry
   | CanonicalUser;
 
@@ -222,6 +248,7 @@ type CanonicalEntityByType = {
   readonly project: CanonicalProject;
   readonly cycle: CanonicalCycle;
   readonly issue: CanonicalIssue;
+  readonly comment: CanonicalComment;
   readonly time_entry: CanonicalTimeEntry;
   readonly user: CanonicalUser;
 };
@@ -252,6 +279,45 @@ export type CanonicalChange = {
     | CanonicalChangeWithValue<TEntityType>
     | CanonicalDeleteChange<TEntityType>;
 }[CanonicalEntityType];
+
+export interface RemoteIdentity {
+  readonly type: RemoteEntityType;
+  readonly remoteId: string;
+  readonly remoteProjectId: string;
+  readonly parent?: {
+    readonly type: RemoteEntityType;
+    readonly remoteId: string;
+  };
+}
+
+export interface RemoteActor {
+  readonly remoteId: string;
+  readonly displayName: string;
+  readonly username?: string | null;
+}
+
+export interface RemoteChange<TFields = Readonly<Record<string, unknown>>> {
+  readonly identity: RemoteIdentity;
+  readonly operation: "upsert" | "tombstone";
+  readonly changedAt: Date;
+  readonly createdAt?: Date;
+  readonly closedAt?: Date;
+  readonly sourceVersion: string;
+  readonly actor?: RemoteActor;
+  readonly fields: TFields;
+}
+
+export interface PollCheckpoint {
+  readonly updatedAt: Date;
+  readonly remoteId: string;
+  readonly pageToken?: string | null;
+}
+
+export interface PollPage<TChange = RemoteChange> {
+  readonly changes: readonly TChange[];
+  readonly nextCheckpoint: PollCheckpoint | null;
+  readonly hasMore: boolean;
+}
 
 export interface InboundCursor {
   readonly updatedAt: Date;

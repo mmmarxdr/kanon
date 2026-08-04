@@ -179,12 +179,18 @@ describe("update_issue — format tier", () => {
 // ─── update_issue — field forwarding (KAN-187) ─────────────────────────────
 
 describe("update_issue — field forwarding", () => {
-  let mockClient: { updateIssue: ReturnType<typeof vi.fn> };
+  let mockClient: {
+    updateIssue: ReturnType<typeof vi.fn>;
+    updateIssueSchedule: ReturnType<typeof vi.fn>;
+    getIssue: ReturnType<typeof vi.fn>;
+  };
   let updateTool: RegisteredTool;
 
   beforeEach(() => {
     mockClient = {
       updateIssue: vi.fn().mockResolvedValue(makeFullIssue()),
+      updateIssueSchedule: vi.fn().mockResolvedValue({}),
+      getIssue: vi.fn().mockResolvedValue(makeFullIssue()),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
     const tool = tools.get("update_issue");
@@ -230,6 +236,23 @@ describe("update_issue — field forwarding", () => {
     await updateTool.handler({ issueKey: "KAN-1", groupKey: null });
 
     expect(mockClient.updateIssue).toHaveBeenCalledWith("KAN-1", { groupKey: null });
+  });
+
+  it("writes plan dates and progress through the schedule endpoint", async () => {
+    await updateTool.handler({
+      issueKey: "KAN-1",
+      startDate: "2026-08-03",
+      dueDate: "2026-08-10",
+      progress: 25,
+    });
+
+    expect(mockClient.updateIssue).not.toHaveBeenCalled();
+    expect(mockClient.updateIssueSchedule).toHaveBeenCalledWith("KAN-1", {
+      startDate: "2026-08-03T00:00:00.000Z",
+      dueDate: "2026-08-10T00:00:00.000Z",
+      progress: 25,
+    });
+    expect(mockClient.getIssue).toHaveBeenCalledWith("KAN-1");
   });
 
   it("ack remains default when updating parentId", async () => {

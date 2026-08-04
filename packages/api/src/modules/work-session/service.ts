@@ -1,9 +1,7 @@
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
-import { createActivityLog } from "../activity/service.js";
 import { normalizeVia } from "../../shared/via.js";
 import { AppError } from "../../shared/types.js";
-import { autoSubscribe } from "../issue-subscription/service.js";
 import { ORDERED_STATES } from "../../shared/constants.js";
 
 /** Sessions with lastHeartbeat older than this are considered expired. */
@@ -269,41 +267,15 @@ export async function startWork(
   // cards). Auto-assign stays the default for explicit start_work.
   let autoAssigned = false;
   if (!issue.assigneeId && opts?.autoAssign !== false) {
-    await prisma.issue.update({
-      where: { id: issue.id },
-      data: { assignee: { connect: { id: memberId } } },
-    });
+    const { updateIssue } = await import("../issue/service.js");
+    await updateIssue(issueKey, { assigneeId: memberId }, memberId, via ?? null);
     autoAssigned = true;
-
-    await createActivityLog({
-      issueId: issue.id,
-      memberId,
-      action: "assigned",
-      details: { from: null, to: memberId, source: "auto" },
-    });
-
-    // Auto-subscribe auto-assigned member (best-effort, D9)
-    void autoSubscribe(issue.id, memberId, "assignee");
-
-    // Emit issue.assigned event
-    try {
-      eventBus.emit({
-        type: "issue.assigned",
-        workspaceId: issue.project.workspaceId,
-        actorId: memberId,
-        payload: {
-          issueKey,
-          issueId: issue.id,
-          issueTitle: issue.title,
-          from: null,
-          to: memberId,
-          autoAssigned: true,
-        },
-      });
-    } catch {
-      // Never let event emission break the mutation
-    }
   }
+
+  const { upsertPlan } = await import("../schedule/service.js");
+  await upsertPlan(issueKey, { startDate: now.toISOString() }, memberId, via ?? null, {
+    startDateIfMissing: true,
+  });
 
   // KAN-143 Fix B: auto-advance issue state → in_progress when the issue is in any
   // pre-in_progress state (backlog, analysis, todo). Uses ORDERED_STATES index comparison

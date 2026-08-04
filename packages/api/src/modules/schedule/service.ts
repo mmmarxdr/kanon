@@ -36,6 +36,7 @@ export async function upsertPlan(
   body: UpsertPlanBody,
   memberId: string,
   via?: string | null,
+  options?: { startDateIfMissing?: boolean },
 ) {
   const issue = await prisma.issue.findUnique({
     where: { key: issueKey },
@@ -54,7 +55,7 @@ export async function upsertPlan(
   // Guard: startDate ≤ dueDate — partial-update safe.
   // If only one date is in the body, read the persisted row to get the other
   // so we can validate the combined range before writing.
-  if (body.startDate !== undefined || body.dueDate !== undefined) {
+  if (!options?.startDateIfMissing && (body.startDate !== undefined || body.dueDate !== undefined)) {
     let effectiveStart: Date | null = body.startDate ? new Date(body.startDate) : null;
     let effectiveDue: Date | null = body.dueDate ? new Date(body.dueDate) : null;
 
@@ -103,19 +104,87 @@ export async function upsertPlan(
     update: updateData,
   };
   const capture = await resolveIssueCaptureContext(issue.projectId, memberId);
-  const schedule = capture
-    ? await prisma.$transaction(async (transaction) => {
-        const result = await transaction.issueSchedule.upsert(upsert);
-        await captureIssueScheduleMutationTx(transaction, issue.id, capture, {
-          ...(body.startDate !== undefined
-            ? { startDate: result.startDate?.toISOString() ?? null }
-            : {}),
-          ...(body.dueDate !== undefined ? { dueDate: result.dueDate?.toISOString() ?? null } : {}),
-          ...(body.progress !== undefined ? { progress: result.progress } : {}),
+  const captureFields = (result: { startDate: Date | null; dueDate: Date | null; progress: number }) => ({
+    ...(body.startDate !== undefined
+      ? { startDate: result.startDate?.toISOString() ?? null }
+      : {}),
+    ...(body.dueDate !== undefined ? { dueDate: result.dueDate?.toISOString() ?? null } : {}),
+    ...(body.progress !== undefined ? { progress: result.progress } : {}),
+  });
+  const writeSchedule = async (transaction: Prisma.TransactionClient) => {
+    if (options?.startDateIfMissing && body.startDate !== undefined) {
+      const startDate = new Date(body.startDate);
+      const existing = await transaction.issueSchedule.findUnique({
+        where: { issueId: issue.id },
+      });
+      if (existing?.startDate) return existing;
+      if (existing?.dueDate && startDate > existing.dueDate) {
+        throw new AppError(422, "INVALID_DATE_RANGE", "startDate must not be after dueDate");
+      }
+
+      let written = existing
+        ? (
+            await transaction.issueSchedule.updateMany({
+              where: { issueId: issue.id, startDate: null },
+              data: { startDate },
+            })
+          ).count
+        : (
+            await transaction.issueSchedule.createMany({
+              data: [{ issueId: issue.id, startDate }],
+              skipDuplicates: true,
+            })
+          ).count;
+      if (written === 0) {
+        const raced = await transaction.issueSchedule.findUniqueOrThrow({
+          where: { issueId: issue.id },
         });
-        return result;
-      })
-    : await prisma.issueSchedule.upsert(upsert);
+        if (raced.startDate) return raced;
+        if (raced.dueDate && startDate > raced.dueDate) {
+          throw new AppError(422, "INVALID_DATE_RANGE", "startDate must not be after dueDate");
+        }
+        written = (
+          await transaction.issueSchedule.updateMany({
+            where: { issueId: issue.id, startDate: null },
+            data: { startDate },
+          })
+        ).count;
+      }
+
+      const result = await transaction.issueSchedule.findUniqueOrThrow({
+        where: { issueId: issue.id },
+      });
+      if (capture && written > 0) {
+        await captureIssueScheduleMutationTx(transaction, issue.id, capture, captureFields(result));
+      }
+      return result;
+    }
+
+    const result = await transaction.issueSchedule.upsert(upsert);
+    if (capture) {
+      await captureIssueScheduleMutationTx(transaction, issue.id, capture, captureFields(result));
+    }
+    return result;
+  };
+  const write = () =>
+    options?.startDateIfMissing || capture
+      ? prisma.$transaction(writeSchedule)
+      : prisma.issueSchedule.upsert(upsert);
+  let schedule;
+  try {
+    schedule = await write();
+  } catch (error) {
+    const target =
+      error instanceof Prisma.PrismaClientKnownRequestError ? error.meta?.["target"] : undefined;
+    if (error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002" &&
+        Array.isArray(target) &&
+        target.includes("issueId")) {
+      schedule = await write();
+    } else {
+      throw error;
+    }
+  }
 
   // Fire-and-forget post-commit event
   try {

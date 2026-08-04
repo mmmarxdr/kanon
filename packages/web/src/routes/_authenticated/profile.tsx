@@ -1,11 +1,15 @@
 import { createRoute } from "@tanstack/react-router";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { authenticatedRoute } from "../_authenticated";
 import { useAuthStore } from "@/stores/auth-store";
 import { fetchApi, ApiError } from "@/lib/api-client";
 import type { AuthUser } from "@/stores/auth-store";
 import { PasswordRequirements } from "@/components/password-requirements";
 import { evaluatePassword, isPasswordValid } from "@/lib/password-policy";
+import { useActiveWorkspaceId, useWorkspacesQuery } from "@/hooks/use-workspace-query";
+import { NotificationPreferencesSection } from "@/features/settings/notification-preferences-section";
+import { SettingsShell } from "@/components/ui/settings-shell";
 
 export const profileRoute = createRoute({
   path: "/profile",
@@ -20,9 +24,13 @@ interface ProfileData {
   avatarUrl: string | null;
 }
 
-function ProfilePage() {
+export function ProfilePage() {
+  const { t } = useTranslation("settings");
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
+  const activeWorkspaceId = useActiveWorkspaceId();
+  const { data: workspaces, isLoading: workspacesLoading } = useWorkspacesQuery();
+  const activeWorkspace = workspaces?.find((w) => w.id === activeWorkspaceId);
 
   // Profile form state
   const [displayName, setDisplayName] = useState(user?.displayName ?? "");
@@ -123,10 +131,8 @@ function ProfilePage() {
     .slice(0, 2);
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
-      <div className="mx-auto max-w-lg space-y-8">
-        <h1 className="text-2xl font-bold text-foreground">Profile</h1>
-
+    <SettingsShell title="Profile">
+      <div className="space-y-8">
         {/* User Info Card */}
         <div className="rounded-lg border border-border bg-card p-6">
           <div className="flex items-center gap-4 mb-6">
@@ -185,7 +191,7 @@ function ProfilePage() {
             </div>
 
             {profileSuccess && (
-              <div className="rounded-md border border-green-500/50 bg-green-500/10 px-3 py-2 text-sm text-green-700">
+              <div className="rounded-md border border-success/50 bg-success/10 px-3 py-2 text-sm text-success">
                 {profileSuccess}
               </div>
             )}
@@ -281,7 +287,7 @@ function ProfilePage() {
             <PasswordRequirements requirements={pwTouched ? pwRequirements : []} />
 
             {passwordSuccess && (
-              <div className="rounded-md border border-green-500/50 bg-green-500/10 px-3 py-2 text-sm text-green-700">
+              <div className="rounded-md border border-success/50 bg-success/10 px-3 py-2 text-sm text-success">
                 {passwordSuccess}
               </div>
             )}
@@ -301,7 +307,29 @@ function ProfilePage() {
             </button>
           </form>
         </div>
+
+        {/* Notification Preferences */}
+        <div className="space-y-2">
+          {workspacesLoading ? (
+            <div className="rounded-lg border border-border bg-card p-6">
+              <p className="text-sm text-muted-foreground">
+                {t("profileNotificationsLoading")}
+              </p>
+            </div>
+          ) : activeWorkspace ? (
+            <>
+              <p className="px-1 text-sm text-muted-foreground">
+                {t("profileNotificationsFor", { name: activeWorkspace.name })}
+              </p>
+              <NotificationPreferencesSection workspaceId={activeWorkspace.id} />
+            </>
+          ) : (
+            <div className="rounded-lg border border-border bg-card p-6">
+              <p className="text-sm text-muted-foreground">{t("noWorkspace")}</p>
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </SettingsShell>
   );
 }
