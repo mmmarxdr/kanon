@@ -70,6 +70,24 @@ export function useConnectRedmineCredentialMutation(workspaceId: string, connect
   });
 }
 
+export function useReplaceRedmineServiceCredentialMutation(
+  workspaceId: string,
+  connectionId: string,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (apiKey: string) =>
+      fetchApi<unknown>(`/api/integrations/connections/${connectionId}/service-credential`, {
+        method: "PUT",
+        body: JSON.stringify({ apiKey }),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: integrationKeys.connection(workspaceId) });
+      void queryClient.invalidateQueries({ queryKey: integrationKeys.discovery(connectionId) });
+    },
+  });
+}
+
 export function useClearRedmineCredentialMutation(workspaceId: string, connectionId: string) {
   const queryClient = useQueryClient();
   return useMutation({

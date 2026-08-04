@@ -2,8 +2,8 @@
 
 **Date**: 2026-08-04
 **Mode**: Strict TDD
-**Status**: Units 1A, 1B, and 2 complete; Unit 3 not started
-**Delivery**: feature-branch-chain, Unit 2 branch `fix/kan-211-redmine-replace-health`, base `3bcbbde`
+**Status**: Complete; PR chain open as #266 → #264 → #265
+**Delivery**: feature-branch-chain, Unit 3 branch `fix/kan-211-redmine-remediation-ui`, base `08b423a`
 
 ## Completed Tasks
 
@@ -13,6 +13,7 @@
 - [x] 3.1-3.8 Wrapped 401 classification, ambiguity auth-block, and lease-independent invalidation
 - [x] 4.1-4.5 Validated personal/service replacement and atomic scoped redrive
 - [x] 5.1-5.4 Redacted credential health with operator ACL and 20-row cap
+- [x] 6.1-6.4 Personal/service remediation UI with safe member state and en/es copy
 
 ## TDD Cycle Evidence
 
@@ -58,6 +59,15 @@
 | Replacement race | Replacement between invalidation and work transition stranded `dead` work | Connection lock serializes transition and redrive; deterministic trigger regression passes | Reused existing parent-first `lockWork` order |
 | Health/ACL | DTO stripped fields and accepted >20 items | Service status + `credential_blocked`; owner/admin total and 20 safe rows; member detail null | No payload, actor, correlation, ciphertext, or raw errors exposed |
 
+### Unit 3 TDD Evidence
+
+| Area | RED | GREEN | REFACTOR |
+|------|-----|-------|----------|
+| Member state | No visible sync-blocked state | Safe remediation notice renders without counts or work records | Detail remains controlled by API `blockedWork: null` |
+| Personal owner | Invalid credential looked disconnected and offered generic connect | Rejected-key copy and replacement action render; 20-row display cap enforced | Existing credential form reused |
+| Instance admin | Discovery failure hid every service-key action | Service replacement form remains available before discovery content | Password input; no credential/provider-body output |
+| i18n/a11y | New copy and blocked list absent | en/es parity passes; blocked records use a labelled list | Existing responsive cards and focus styles retained |
+
 ## Files Changed
 
 | File | Action | What |
@@ -73,7 +83,11 @@
 | `packages/api/src/modules/integrations/credentials.test.ts` | Modified | Covers zero-write failure, redrive identity, authz, ACL, cap, and redaction |
 | `packages/shared/src/integrations.ts` | Modified | Adds service credential and blocked-work health contract |
 | `packages/shared/src/integrations.test.ts` | Modified | Covers DTO parsing and 20-item cap |
-| `packages/web/src/features/settings/redmine-section.test.tsx` | Modified | Keeps existing typed fixtures compatible with Unit 2 DTO |
+| `packages/web/src/features/settings/redmine-section.tsx` | Modified | Safe blocked-health notice and personal rejected-key remediation |
+| `packages/web/src/features/settings/admin-redmine-section.tsx` | Modified | Service-key replacement independent of discovery success |
+| `packages/web/src/features/settings/use-redmine-integration.ts` | Modified | Service replacement mutation and cache invalidation |
+| `packages/web/src/features/settings/redmine-section.test.tsx` | Modified | Covers member redaction, personal/admin replacement, and 20-row cap |
+| `packages/web/src/i18n/locales/{en,es}/settings.json` | Modified | Remediation and health copy |
 | `openspec/changes/kan-211-redmine-credential-recovery/tasks.md` | Modified | Marks Units 1A, 1B, and 2 complete |
 | `openspec/changes/kan-211-redmine-credential-recovery/apply-progress.md` | Modified | Records cumulative Unit 1A/1B/2 TDD and verification evidence |
 
@@ -108,6 +122,13 @@
 | Unit 2 focused verification | API credential recovery 67/67; shared contract 3/3; Redmine settings consumer 3/3; API/shared/web type checks pass |
 | Unit 2 full verification | API 160/160 files, 2190 passed, 2 skipped; shared 7/7 files, 103 passed; web 122/122 files, 962 passed, 5 todo |
 | Unit 2 formatting | Prettier and `git diff --check` pass; no Prisma schema or migration change |
+| Unit 3 RED/GREEN | Three remediation scenarios failed before implementation; final component suite 6/6 |
+| Unit 3 focused verification | Redmine UI + i18n parity 18/18; web typecheck and Prettier pass |
+| Unit 3 full verification | Web 122/122 files, 965 passed, 5 todo; production build succeeds |
+| Final adversarial correction | Epoch-aware redrive, dual-role service credential auth/recovery, and discovery-independent replacement regressions pass |
+| Final complete verification | API 160/160 files, 2190 passed, 2 skipped; shared 103/103; web 122/122 files, 965 passed, 5 todo |
+| Live credential recovery smoke | Real Redmine project `71`: rejected credential produced one `dead` and one `ambiguous` auth block; validated service replacement redrove them to `retry` and `ambiguous`, cleared blocked health 2→0, and made no remote write |
+| Current-main integration | Merged current `main` including KAN-216/KAN-217; focused API 95/95, shared 103/103, Redmine UI 6/6, and API/web typechecks pass |
 
 The first full-suite attempt shared `kanon_test` with another worktree's active Vitest process and produced cross-file foreign-key cleanup races. Verification was repeated against a dedicated migrated database; the complete suite passed there.
 
@@ -117,8 +138,9 @@ The first full-suite attempt shared `kanon_test` with another worktree's active 
 - Unit 1B actual against `2bd5baa`: 217 changed production + test lines (167 additions, 50 deletions), 37 above the 180-line target.
 - The target deviation retains required observed/reconciliation/already-invalid ambiguity and stale-owner assertions; no correctness case was dropped for size.
 - Unit 2 actual against `3bcbbde`: 805 additions and 71 deletions in production/test files; 548 additions are focused credential/retry contract tests.
-- Current slice: tasks 4.1-5.4 on `fix/kan-211-redmine-replace-health`.
-- Remaining Unit 3 boundary: tasks 6.1-6.4 in the Redmine settings UI, hook, and i18n.
+- Final child boundary against `16ca665`: 363 additions and 64 deletions in API/web production, tests, and locales.
+- Current slice: tasks 6.1-6.4 on `fix/kan-211-redmine-remediation-ui`.
+- Remaining delivery: merge PRs #266, #264, and #265 in stack order.
 
 ## Deviations And Blockers
 
@@ -126,6 +148,8 @@ The first full-suite attempt shared `kanon_test` with another worktree's active 
 - The outbound/inbound CAS predicate remains duplicated as the review warning allowed; a shared helper was not smaller or safer for this two-site fix.
 - The executor's temporary source aliases were removed. Parent verification used the config-approved shared build prerequisite and normal package resolution.
 - An isolated database was required because another concurrent worktree was running Vitest against the default shared test database; no other process or worktree was stopped or modified.
+- The live smoke used an isolated migrated database and a one-use mode-0600 FIFO for the replacement key. A generated rejected credential exercised Redmine's real 401 path without revoking the operator's valid key; the temporary script, database, and FIFO were removed after the successful redrive.
+- Integrating current `main` produced one UI conflict in `redmine-section.tsx`; resolution retained the KAN-213 `SettingsCard` layout and the KAN-211 health/remediation behavior, then passed the focused web regression.
 
 ## Full 4R Review
 
@@ -135,3 +159,5 @@ The first full-suite attempt shared `kanon_test` with another worktree's active 
 - Readability warning retained: the CAS predicate is duplicated between outbound and inbound; ambiguity routing now uses an explicit failure discriminant.
 - Units 1A, 1B, and 2 are internal review boundaries; Unit 3 remains required before feature-chain release.
 - Unit 2 final focused review found and fixed the invalidation-to-transition replacement race and orphaned service-work recovery.
+- All specification scenarios are mapped to Unit 1-3 regressions; the live replacement smoke passed without remote writes.
+- Final adversarial review found and fixed stale-epoch redrive, service-holder personal-endpoint bypass, dual-role personal work recovery, and discovery-hidden service replacement.
