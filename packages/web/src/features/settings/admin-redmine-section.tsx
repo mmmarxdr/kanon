@@ -12,8 +12,10 @@ import {
   useCreateRedmineConnectionMutation,
   useRedmineConnectionQuery,
   useRedmineDiscoveryQuery,
+  useReplaceRedmineServiceCredentialMutation,
   useSetRedmineLifecycleMutation,
 } from "./use-redmine-integration";
+import { RedmineCredentialHealth } from "./redmine-section";
 
 const ISSUE_STATES = issueStateSchema.options;
 
@@ -240,6 +242,8 @@ function ConnectedAdminPanel({
 }) {
   const { t } = useTranslation("settings");
   const discovery = useRedmineDiscoveryQuery(connection.id, true);
+  const replace = useReplaceRedmineServiceCredentialMutation(workspaceId, connection.id);
+  const [apiKey, setApiKey] = useState("");
 
   return (
     <div className="mt-4">
@@ -261,6 +265,46 @@ function ConnectedAdminPanel({
             {t("redmineRefresh")}
           </button>
         </div>
+      </div>
+      <div className="mt-4 space-y-4">
+        <RedmineCredentialHealth connection={connection} />
+        <form
+          className="rounded-lg border border-border p-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            replace.mutate(apiKey, { onSuccess: () => setApiKey("") });
+          }}
+        >
+          <p className="text-sm text-muted-foreground">
+            {t("redmineServiceCredentialBlocked")}
+          </p>
+          <label className="mt-3 block text-sm font-medium text-foreground">
+            {t("redmineServiceApiKey")}
+            <input
+              type="password"
+              required
+              value={apiKey}
+              onChange={(event) => setApiKey(event.target.value)}
+              autoComplete="off"
+              className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/25"
+            />
+          </label>
+          {replace.isError && (
+            <p className="mt-2 text-sm text-destructive">{replace.error.message}</p>
+          )}
+          {replace.isSuccess && (
+            <p className="mt-2 text-sm text-emerald-600">{t("redmineServiceKeyReplaced")}</p>
+          )}
+          <button
+            type="submit"
+            disabled={replace.isPending || !apiKey}
+            className="mt-3 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
+          >
+            {replace.isPending
+              ? t("redmineReplacingServiceKey")
+              : t("redmineReplaceServiceKey")}
+          </button>
+        </form>
       </div>
       {discovery.isLoading ? (
         <p className="mt-4 text-sm text-muted-foreground">{t("redmineLoading")}</p>

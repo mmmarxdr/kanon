@@ -15,6 +15,46 @@ function Card({ children }: { children: React.ReactNode }) {
   return <section className="rounded-lg border border-border bg-card p-5 sm:p-6">{children}</section>;
 }
 
+export function RedmineCredentialHealth({
+  connection,
+}: {
+  connection: IntegrationConnection;
+}) {
+  const { t } = useTranslation("settings");
+  if (connection.syncHealth.status !== "credential_blocked") return null;
+  const blocked = connection.syncHealth.blockedWork;
+
+  return (
+    <section className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-5 sm:p-6">
+      <h2 className="font-semibold text-foreground">{t("redmineSyncBlockedTitle")}</h2>
+      <p className="mt-1 text-sm text-muted-foreground">{t("redmineSyncBlockedHelp")}</p>
+      {blocked && (
+        <div className="mt-4">
+          <p className="text-sm font-medium text-foreground">
+            {t("redmineBlockedCount", { count: blocked.total })}
+          </p>
+          {blocked.items.length > 0 && (
+            <ul
+              aria-label={t("redmineBlockedWorkLabel")}
+              className="mt-2 divide-y divide-border rounded-md border border-border"
+            >
+              {blocked.items.slice(0, 20).map((work) => (
+                <li key={work.id} className="px-3 py-2 text-xs text-muted-foreground">
+                  {t("redmineBlockedWorkItem", {
+                    entityType: work.entityType,
+                    operation: work.operation,
+                    id: work.entityId,
+                  })}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function CredentialCard({
   workspaceId,
   connection,
@@ -27,6 +67,7 @@ function CredentialCard({
   const clear = useClearRedmineCredentialMutation(workspaceId, connection.id);
   const [apiKey, setApiKey] = useState("");
   const credential = connection.callerCredential;
+  const rejected = credential.status === "invalid";
 
   return (
     <Card>
@@ -34,7 +75,9 @@ function CredentialCard({
         <div>
           <h2 className="text-lg font-semibold text-foreground">{t("redmineMyAccount")}</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {credential.connected
+            {rejected
+              ? t("redminePersonalCredentialInvalid")
+              : credential.connected
               ? t("redmineConnectedAs", { login: credential.externalLogin ?? credential.externalUserId })
               : t("redmineMyAccountHelp")}
           </p>
@@ -74,7 +117,7 @@ function CredentialCard({
         >
           {connect.isPending
             ? t("redmineConnecting")
-            : credential.connected
+            : credential.connected || rejected
               ? t("redmineReplaceKey")
               : t("redmineConnect")}
         </button>
@@ -297,6 +340,7 @@ export function RedmineSection({
           </span>
         </div>
       </Card>
+      <RedmineCredentialHealth connection={connection.data} />
       <CredentialCard workspaceId={workspaceId} connection={connection.data} />
       {isOwner && <ProjectBindCard workspaceId={workspaceId} connection={connection.data} />}
       <CoverageCard connection={connection.data} members={members} />
