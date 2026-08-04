@@ -151,6 +151,7 @@ describe("getIssue()", () => {
     // The include block MUST contain a cycle key so the relation is fetched
     expect(callArg.include).toHaveProperty("cycle");
     expect(callArg.include.cycle).toEqual({ select: { id: true, name: true } });
+    expect(callArg.include).toHaveProperty("schedule", true);
   });
 
   it("returns cycle: { id, name } when the issue has a cycleId", async () => {

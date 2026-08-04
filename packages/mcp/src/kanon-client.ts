@@ -374,6 +374,13 @@ export class KanonClient {
     return this.request<KanonIssue>("PATCH", `/api/issues/${issueKey}`, body);
   }
 
+  async updateIssueSchedule(
+    issueKey: string,
+    body: { startDate?: string; dueDate?: string; progress?: number },
+  ): Promise<unknown> {
+    return this.request<unknown>("PUT", `/api/issues/${issueKey}/schedule`, body);
+  }
+
   /**
    * Transition an issue to a new state.
    * Route: POST /api/issues/:key/transition

@@ -65,6 +65,7 @@ describe("KAN-17: Project Member Management", () => {
       const explicitRow = members.find((m: any) => m.source === "project");
       expect(explicitRow).toBeDefined();
       expect((explicitRow as any).pmId).toBe(pm.id);
+      expect((explicitRow as any).memberId).toBe(pmMember.id);
       expect((explicitRow as any).role).toBe("member");
 
       // Implicit ws-owner row
@@ -72,6 +73,7 @@ describe("KAN-17: Project Member Management", () => {
         (m: any) => m.source === "workspace" && m.userId === wsOwner.userId,
       );
       expect(implicitRow).toBeDefined();
+      expect((implicitRow as any).memberId).toBe(wsOwner.id);
       expect((implicitRow as any).pmId).toBeUndefined();
       expect((implicitRow as any).implicit).toBe(true);
     });
@@ -120,6 +122,7 @@ describe("KAN-17: Project Member Management", () => {
       const { members } = res.json() as { members: any[] };
 
       for (const row of members) {
+        expect(typeof row.memberId).toBe("string");
         if (row.source === "project") {
           expect(typeof row.pmId).toBe("string");
           expect(row.implicit).toBeUndefined();

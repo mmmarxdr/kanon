@@ -2,7 +2,7 @@
 //
 // MCP tool for listing project members (id ↔ name resolution).
 // Wraps GET /api/projects/:key/members — returns each member's userId,
-// displayName, email, and role so agents can resolve assigneeId values.
+// memberId, displayName, email, and role so agents can resolve assigneeId values.
 //
 // Declared DEFERRED: member listing is a resolution helper (used when reading
 // activity logs or picking assignees), not a daily board-flow action. Keeping
@@ -39,7 +39,7 @@ export function registerMemberTools(server: McpServer, client: KanonClient): voi
 
   server.tool(
     "list_members",
-    "List members of project projectKey. Returns userId, displayName, email, role per member. Use to resolve assigneeId↔name or pick an assignee.",
+    "List project members. Returns assignable memberId plus userId, displayName, email, and role; pass memberId as issue assigneeId.",
     ListMembersInput.shape,
     async ({ projectKey }) => {
       try {

@@ -36,6 +36,7 @@ export async function upsertPlan(
   body: UpsertPlanBody,
   memberId: string,
   via?: string | null,
+  options?: { startDateIfMissing?: boolean },
 ) {
   const issue = await prisma.issue.findUnique({
     where: { key: issueKey },
@@ -103,18 +104,56 @@ export async function upsertPlan(
     update: updateData,
   };
   const capture = await resolveIssueCaptureContext(issue.projectId, memberId);
-  const schedule = capture
-    ? await prisma.$transaction(async (transaction) => {
-        const result = await transaction.issueSchedule.upsert(upsert);
-        await captureIssueScheduleMutationTx(transaction, issue.id, capture, {
-          ...(body.startDate !== undefined
-            ? { startDate: result.startDate?.toISOString() ?? null }
-            : {}),
-          ...(body.dueDate !== undefined ? { dueDate: result.dueDate?.toISOString() ?? null } : {}),
-          ...(body.progress !== undefined ? { progress: result.progress } : {}),
-        });
-        return result;
-      })
+  const captureFields = (result: { startDate: Date | null; dueDate: Date | null; progress: number }) => ({
+    ...(body.startDate !== undefined
+      ? { startDate: result.startDate?.toISOString() ?? null }
+      : {}),
+    ...(body.dueDate !== undefined ? { dueDate: result.dueDate?.toISOString() ?? null } : {}),
+    ...(body.progress !== undefined ? { progress: result.progress } : {}),
+  });
+  const writeSchedule = async (transaction: Prisma.TransactionClient) => {
+    if (options?.startDateIfMissing && body.startDate !== undefined) {
+      const startDate = new Date(body.startDate);
+      let written = (
+        await transaction.issueSchedule.updateMany({
+          where: { issueId: issue.id, startDate: null },
+          data: { startDate },
+        })
+      ).count;
+      if (written === 0) {
+        written = (
+          await transaction.issueSchedule.createMany({
+            data: [{ issueId: issue.id, startDate }],
+            skipDuplicates: true,
+          })
+        ).count;
+      }
+      if (written === 0) {
+        written = (
+          await transaction.issueSchedule.updateMany({
+            where: { issueId: issue.id, startDate: null },
+            data: { startDate },
+          })
+        ).count;
+      }
+
+      const result = await transaction.issueSchedule.findUniqueOrThrow({
+        where: { issueId: issue.id },
+      });
+      if (capture && written > 0) {
+        await captureIssueScheduleMutationTx(transaction, issue.id, capture, captureFields(result));
+      }
+      return result;
+    }
+
+    const result = await transaction.issueSchedule.upsert(upsert);
+    if (capture) {
+      await captureIssueScheduleMutationTx(transaction, issue.id, capture, captureFields(result));
+    }
+    return result;
+  };
+  const schedule = options?.startDateIfMissing || capture
+    ? await prisma.$transaction(writeSchedule)
     : await prisma.issueSchedule.upsert(upsert);
 
   // Fire-and-forget post-commit event

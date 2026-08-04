@@ -285,6 +285,13 @@ describe("PR-2 — description field coaching annotations", () => {
     expect(description).toContain("## Notes");
   });
 
+  it("description coaching requires durable PM-facing content", () => {
+    const description = CreateIssueInput.shape.description._def.description as string;
+
+    expect(description).toMatch(/PM-facing/i);
+    expect(description).toMatch(/local paths|worktrees/i);
+  });
+
   it("UpdateIssueInput.description describe contains preserve structure hint", () => {
     const schema = UpdateIssueInput.shape.description;
     const description = schema._def.description as string;
@@ -316,6 +323,52 @@ describe("PR-2 — description field coaching annotations", () => {
       title: "[Auth] Fix OAuth redirect",
       projectKey: "KAN",
     });
+    expect(result.success).toBe(true);
+  });
+
+  it("UpdateIssueInput accepts plan dates and progress", () => {
+    const result = UpdateIssueInput.safeParse({
+      issueKey: "KAN-42",
+      startDate: "2026-08-03",
+      dueDate: "2026-08-10T00:00:00.000Z",
+      progress: 25,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.startDate).toBe("2026-08-03");
+      expect(result.data.dueDate).toBe("2026-08-10T00:00:00.000Z");
+      expect(result.data.progress).toBe(25);
+    }
+  });
+
+  it.each([
+    "## Notes\nWorktree: /home/alice/work/project-wt",
+    "## Notes\nIsolated branch: feat/local-experiment",
+    "## Notes\nSession ID: agent-123",
+    "Failure reproduced at `/home/alice/project/tmp.log`",
+    "Failure reproduced at `/tmp/result.json`",
+    "Failure reproduced at C:\\Users\\alice\\project\\tmp.log",
+  ])("rejects developer-local issue metadata: %s", (description) => {
+    const result = CreateIssueInput.safeParse({
+      projectKey: "KAN",
+      title: "[Agents] Keep cards durable",
+      description,
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("allows useful repository-relative evidence", () => {
+    const result = CreateIssueInput.safeParse({
+      projectKey: "KAN",
+      title: "[Agents] Keep cards durable",
+      description:
+        "## Context\nThe issue contract leaks local execution metadata.\n\n" +
+        "## Acceptance Criteria\n- Keep PM-facing evidence.\n\n" +
+        "## Notes\nDecision rationale is documented in docs/agent-content.md and openspec/changes/agent-content/spec.md.",
+    });
+
     expect(result.success).toBe(true);
   });
 });
