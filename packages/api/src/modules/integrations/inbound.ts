@@ -479,25 +479,22 @@ async function pollBinding(
 }
 
 async function rejectCredential(database: PrismaClient, binding: ClaimedBinding) {
-  return database.$transaction(async (transaction) => {
-    await transaction.memberIntegrationCredential.updateMany({
-      where: {
-        id: binding.credentialId,
-        lastAuthStatus: "valid",
-        revokedAt: null,
-        lastValidatedAt: binding.credentialLastValidatedAt,
-      },
-      data: { lastAuthStatus: "invalid" },
-    });
-    const released = await transaction.integrationProjectBinding.updateMany({
-      where: {
-        id: binding.id,
-        pollLeaseToken: binding.pollLeaseToken,
-        pollFence: binding.pollFence,
-      },
-      data: { pollLeaseToken: null, pollLeaseUntil: null },
-    });
-    if (released.count !== 1) throw new Error("Inbound credential rejection lease is stale");
+  await database.memberIntegrationCredential.updateMany({
+    where: {
+      id: binding.credentialId,
+      lastAuthStatus: "valid",
+      revokedAt: null,
+      lastValidatedAt: binding.credentialLastValidatedAt,
+    },
+    data: { lastAuthStatus: "invalid" },
+  });
+  await database.integrationProjectBinding.updateMany({
+    where: {
+      id: binding.id,
+      pollLeaseToken: binding.pollLeaseToken,
+      pollFence: binding.pollFence,
+    },
+    data: { pollLeaseToken: null, pollLeaseUntil: null },
   });
 }
 

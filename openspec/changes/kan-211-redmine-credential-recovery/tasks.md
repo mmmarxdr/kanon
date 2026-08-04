@@ -23,6 +23,9 @@ Chain strategy: feature-branch-chain
 | 2 | Replace+health | 2 | Unit 1B tip |
 | 3 | Web+i18n | 3 | Unit 2 tip |
 
+- Unit 1B branch: `fix/kan-211-redmine-ambiguity-fence`
+- Unit 1B base: `2bd5baa` (committed Unit 1A)
+
 ## Phase 1: Outbound (Unit 1A)
 
 - [x] 1.1 **RED** — `types.test.ts`: 401 yes; 403/404/429/5xx no.
@@ -41,14 +44,14 @@ Chain strategy: feature-branch-chain
 
 ## Phase 3: Unit 1B fixes
 
-- [ ] 3.1 **RED** — `types.test.ts`: `ProviderDispatchError.cause` 401; no message parsing.
-- [ ] 3.2 **GREEN** — `types.ts`: top-level or `cause` 401 only.
-- [ ] 3.3 **RED** — `retry.test.ts`: reconcile 401→auth-blocked `ambiguous`; no busy-loop/redrive.
-- [ ] 3.4 **GREEN** — `worker.ts`: ambiguous block; reconcile-only.
-- [ ] 3.5 **RED** — `retry.test.ts`: outbound stale work lease; cred `invalid` commits first.
-- [ ] 3.6 **GREEN** — `worker.ts`: commit-first CAS; stale lease best-effort.
-- [ ] 3.7 **RED** — `inbound.test.ts`: reclaimed poll lease; cycle contained.
-- [ ] 3.8 **GREEN** — `inbound.ts`: commit-first invalidate; poll lease best-effort.
+- [x] 3.1 **RED** — `types.test.ts`: `ProviderDispatchError.cause` 401; no message parsing.
+- [x] 3.2 **GREEN** — `types.ts`: top-level or `cause` 401 only.
+- [x] 3.3 **RED** — `retry.test.ts`: reconcile 401→auth-blocked `ambiguous`; no busy-loop/redrive.
+- [x] 3.4 **GREEN** — `worker.ts`: ambiguous block; reconcile-only.
+- [x] 3.5 **RED** — `retry.test.ts`: outbound stale work lease; cred `invalid` commits first.
+- [x] 3.6 **GREEN** — `worker.ts`: commit-first CAS; stale lease best-effort.
+- [x] 3.7 **RED** — `inbound.test.ts`: reclaimed poll lease; cycle contained.
+- [x] 3.8 **GREEN** — `inbound.ts`: commit-first invalidate; poll lease best-effort.
 
 ## Phase 4: Replace+redrive (Unit 2)
 

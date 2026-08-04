@@ -885,6 +885,39 @@ describe("integration worker retry and completion", () => {
     });
   });
 
+  it.each([
+    ["observed uncertain-create", new ProviderDispatchError("ambiguous", new RedmineHttpError(401)), 1],
+    ["reconciliation", new ProviderDispatchError("ambiguous", new Error("response lost")), 2],
+  ] as const)("auth-blocks a %s 401 as ambiguous without reclaiming it", async (_, error, cycles) => {
+    const fixture = await createFixture();
+    const work = await createWork(fixture, { operation: "create" });
+    const pushIssue = vi.fn().mockRejectedValue(error);
+    const reconcileCreate = vi.fn().mockRejectedValue(new RedmineHttpError(401));
+    const { deps } = dependencies(adapter({ pushIssue, reconcileCreate }));
+
+    for (let cycle = 0; cycle < cycles; cycle += 1) await runIntegrationWorkerCycle(prisma, deps);
+    const blocked = await prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } });
+    expect(blocked).toMatchObject({
+      state: "ambiguous",
+      skippedReason: "credential_invalid",
+      authCredentialId: fixture.credential.id,
+      attempts: cycles - 1,
+    });
+    expect(blocked.availableAt.getTime()).toBeGreaterThan(NOW.getTime());
+
+    const alreadyInvalid = await createWork(fixture, { operation: "create", state: "ambiguous" });
+    await runIntegrationWorkerCycle(prisma, deps);
+    expect(pushIssue).toHaveBeenCalledOnce();
+    expect(reconcileCreate).toHaveBeenCalledTimes(cycles - 1);
+    expect(
+      await prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: alreadyInvalid.id } }),
+    ).toMatchObject({
+      state: "ambiguous",
+      skippedReason: "credential_invalid",
+      authCredentialId: fixture.credential.id,
+    });
+  });
+
   it("finalizes a touched ref without scanning unrelated legacy refs", async () => {
     const fixture = await createFixture();
     const work = await createWork(fixture, { operation: "create" });
@@ -1131,6 +1164,33 @@ describe("integration worker retry and completion", () => {
       state: "retry",
       attempts: 2,
       availableAt: NOW,
+    });
+  });
+
+  it("commits credential invalidation without mutating work reclaimed after a 401", async () => {
+    const fixture = await createFixture();
+    const work = await createWork(fixture);
+    await createRef(fixture, "issue", fixture.issue.id, "remote-known");
+    const pushIssue = vi.fn(async () => {
+      await prisma.integrationSyncWork.update({
+        where: { id: work.id },
+        data: { leaseToken: "new-owner", leaseUntil: FAR_FUTURE, fence: { increment: 1 } },
+      });
+      throw new RedmineHttpError(401);
+    });
+
+    await runIntegrationWorkerCycle(prisma, dependencies(adapter({ pushIssue })).deps);
+
+    expect(
+      await prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: fixture.credential.id } }),
+    ).toMatchObject({ lastAuthStatus: "invalid" });
+    expect(await prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).toMatchObject({
+      state: "leased",
+      leaseToken: "new-owner",
+      leaseUntil: FAR_FUTURE,
+      fence: 2,
+      attempts: 0,
+      skippedReason: null,
     });
   });
 

@@ -14,6 +14,7 @@ import {
   isProviderAuthenticationError,
   isRetryableProviderError,
   type PmProviderAdapter,
+  ProviderDispatchError,
   type ProviderCreateReconciler,
   type PushResult,
   type StatusMaps,
@@ -68,6 +69,15 @@ const noChangePatch: CanonicalIssuePatch = {
 describe("integrations/core/types", () => {
   it("classifies only HTTP 401 as a provider authentication failure", () => {
     expect(isProviderAuthenticationError({ statusCode: 401 })).toBe(true);
+    expect(
+      isProviderAuthenticationError(new ProviderDispatchError("ambiguous", { statusCode: 401 })),
+    ).toBe(true);
+    expect(
+      isProviderAuthenticationError(
+        new ProviderDispatchError("ambiguous", new ProviderDispatchError("retry", { statusCode: 401 })),
+      ),
+    ).toBe(false);
+    expect(isProviderAuthenticationError(new Error("provider returned 401"))).toBe(false);
     for (const statusCode of [403, 404, 429, 500, 503]) {
       expect(isProviderAuthenticationError({ statusCode }), String(statusCode)).toBe(false);
     }
