@@ -155,6 +155,8 @@ const IssueDescription = z.string().max(50000).superRefine((value, ctx) => {
   }
 });
 
+const ScheduleDate = z.union([z.string().date(), z.string().datetime({ offset: true })]);
+
 export const CreateIssueInput = z.object({
   projectKey: z.string().optional().describe("Project key to create the issue in. Resolved from .kanon if omitted."),
   title: IssueTitle,
@@ -186,8 +188,8 @@ export const UpdateIssueInput = z.object({
   cycleId: NullableOptionalUuid.describe("Cycle ID to attach (or null/empty to detach)"),
   parentId: NullableOptionalUuid.describe("Parent issue ID (UUID, null/empty unlinks)"),
   roadmapItemId: NullableOptionalUuid.describe("Roadmap item ID to link (UUID, null/empty unlinks)"),
-  startDate: z.string().optional().describe("Planned start date (YYYY-MM-DD or ISO datetime)"),
-  dueDate: z.string().optional().describe("Planned due date (YYYY-MM-DD or ISO datetime)"),
+  startDate: ScheduleDate.optional().describe("Planned start date (YYYY-MM-DD or ISO datetime)"),
+  dueDate: ScheduleDate.optional().describe("Planned due date (YYYY-MM-DD or ISO datetime)"),
   progress: z.number().int().min(0).max(100).optional().describe("Completion percentage (0-100)"),
   ...WriteFormatField,
 });

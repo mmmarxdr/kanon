@@ -144,7 +144,11 @@ describe("issue writer integration capture", () => {
     const explicitStart = "2026-08-01T00:00:00.000Z";
 
     await Promise.all([
-      upsertPlan(issue.key, { startDate: explicitStart }, member.id),
+      upsertPlan(
+        issue.key,
+        { startDate: explicitStart, dueDate: "2026-08-02T00:00:00.000Z" },
+        member.id,
+      ),
       upsertPlan(
         issue.key,
         { startDate: "2026-08-04T00:00:00.000Z" },

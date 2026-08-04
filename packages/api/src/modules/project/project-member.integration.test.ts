@@ -154,6 +154,25 @@ describe("KAN-17: Project Member Management", () => {
       expect(adminRows[0].pmId).toBe(pm.id);
       expect(adminRows[0].role).toBe("viewer");
     });
+
+    it("omits project members without an assignable workspace member", async () => {
+      const admin = await seedTestMemberWithRole(workspaceId, "admin");
+      const target = await seedTestMemberWithRole(workspaceId, "member");
+      const project = await seedTestProject(workspaceId, "ORPHAN");
+      await seedTestProjectMember(target.userId, project.id, "member");
+      await prisma.member.delete({ where: { id: target.id } });
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/projects/${project.key}/members`,
+        headers: { authorization: `Bearer ${admin.token}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().members).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ userId: target.userId })]),
+      );
+    });
   });
 
   // ── R-PMM-add ──────────────────────────────────────────────────────────────
@@ -374,6 +393,31 @@ describe("KAN-17: Project Member Management", () => {
       });
 
       expect(res.statusCode).toBe(404);
+    });
+
+    it("does not change a project role when the workspace member is missing", async () => {
+      const admin = await seedTestMemberWithRole(workspaceId, "admin");
+      const target = await seedTestMemberWithRole(workspaceId, "member");
+      const project = await seedTestProject(workspaceId, "PAT6");
+      await seedTestProjectMember(admin.userId, project.id, "admin");
+      const targetPm = await seedTestProjectMember(target.userId, project.id, "member");
+      await prisma.member.delete({ where: { id: target.id } });
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/projects/${project.key}/members/${targetPm.id}`,
+        headers: {
+          authorization: `Bearer ${admin.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ role: "admin" }),
+      });
+
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe("NOT_WORKSPACE_MEMBER");
+      await expect(
+        prisma.projectMember.findUniqueOrThrow({ where: { id: targetPm.id } }),
+      ).resolves.toMatchObject({ role: "member" });
     });
   });
 

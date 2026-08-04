@@ -55,7 +55,7 @@ export async function upsertPlan(
   // Guard: startDate ≤ dueDate — partial-update safe.
   // If only one date is in the body, read the persisted row to get the other
   // so we can validate the combined range before writing.
-  if (body.startDate !== undefined || body.dueDate !== undefined) {
+  if (!options?.startDateIfMissing && (body.startDate !== undefined || body.dueDate !== undefined)) {
     let effectiveStart: Date | null = body.startDate ? new Date(body.startDate) : null;
     let effectiveDue: Date | null = body.dueDate ? new Date(body.dueDate) : null;
 
@@ -114,21 +114,35 @@ export async function upsertPlan(
   const writeSchedule = async (transaction: Prisma.TransactionClient) => {
     if (options?.startDateIfMissing && body.startDate !== undefined) {
       const startDate = new Date(body.startDate);
-      let written = (
-        await transaction.issueSchedule.updateMany({
-          where: { issueId: issue.id, startDate: null },
-          data: { startDate },
-        })
-      ).count;
-      if (written === 0) {
-        written = (
-          await transaction.issueSchedule.createMany({
-            data: [{ issueId: issue.id, startDate }],
-            skipDuplicates: true,
-          })
-        ).count;
+      const existing = await transaction.issueSchedule.findUnique({
+        where: { issueId: issue.id },
+      });
+      if (existing?.startDate) return existing;
+      if (existing?.dueDate && startDate > existing.dueDate) {
+        throw new AppError(422, "INVALID_DATE_RANGE", "startDate must not be after dueDate");
       }
+
+      let written = existing
+        ? (
+            await transaction.issueSchedule.updateMany({
+              where: { issueId: issue.id, startDate: null },
+              data: { startDate },
+            })
+          ).count
+        : (
+            await transaction.issueSchedule.createMany({
+              data: [{ issueId: issue.id, startDate }],
+              skipDuplicates: true,
+            })
+          ).count;
       if (written === 0) {
+        const raced = await transaction.issueSchedule.findUniqueOrThrow({
+          where: { issueId: issue.id },
+        });
+        if (raced.startDate) return raced;
+        if (raced.dueDate && startDate > raced.dueDate) {
+          throw new AppError(422, "INVALID_DATE_RANGE", "startDate must not be after dueDate");
+        }
         written = (
           await transaction.issueSchedule.updateMany({
             where: { issueId: issue.id, startDate: null },

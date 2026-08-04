@@ -82,9 +82,11 @@ export async function listEffectiveMembers(
 
   // Add explicit PM rows second (override ws rows for same userId)
   for (const pm of pmRows) {
+    const memberId = memberIds.get(pm.userId);
+    if (!memberId) continue;
     merged.set(pm.userId, {
       userId: pm.userId,
-      memberId: memberIds.get(pm.userId)!,
+      memberId,
       email: pm.user.email,
       displayName: pm.user.displayName,
       role: pm.role,
@@ -208,12 +210,18 @@ export async function changeProjectMemberRole(
     throw new AppError(403, "FORBIDDEN", "Insufficient permissions to change this member's role");
   }
 
-  const updated = await prisma.projectMember.update({
-    where: { id: pmId },
-    data: { role: newRole },
-  });
-  const member = await prisma.member.findUniqueOrThrow({
-    where: { userId_workspaceId: { userId: pm.userId, workspaceId: pm.project.workspaceId } },
+  const { member, updated } = await prisma.$transaction(async (transaction) => {
+    const member = await transaction.member.findUnique({
+      where: { userId_workspaceId: { userId: pm.userId, workspaceId: pm.project.workspaceId } },
+    });
+    if (!member) {
+      throw new AppError(422, "NOT_WORKSPACE_MEMBER", "Target user is not a member of this workspace");
+    }
+    const updated = await transaction.projectMember.update({
+      where: { id: pmId },
+      data: { role: newRole },
+    });
+    return { member, updated };
   });
 
   return {

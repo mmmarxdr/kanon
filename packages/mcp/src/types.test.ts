@@ -342,6 +342,15 @@ describe("PR-2 — description field coaching annotations", () => {
     }
   });
 
+  it.each(["tomorrow", "2026-02-30", "2026-08-03 12:00:00"])(
+    "UpdateIssueInput rejects invalid plan date: %s",
+    (date) => {
+      expect(UpdateIssueInput.safeParse({ issueKey: "KAN-42", startDate: date }).success).toBe(
+        false,
+      );
+    },
+  );
+
   it.each([
     "## Notes\nWorktree: /home/alice/work/project-wt",
     "## Notes\nIsolated branch: feat/local-experiment",
