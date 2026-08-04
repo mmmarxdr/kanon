@@ -281,13 +281,12 @@ describe("Redmine inbound sync", () => {
 
   it("keeps a replacement credential valid and releases the lease immediately after a stale 401", async () => {
     const { credential, binding } = await fixture();
-    const replacementAt = new Date("2026-08-01T10:01:00.000Z");
     const setup = dependencies([]);
     setup.createSource.mockReturnValue({
       poll: vi.fn(async () => {
         await prisma.memberIntegrationCredential.update({
           where: { id: credential.id },
-          data: { encryptedKey: "replacement-key", lastValidatedAt: replacementAt },
+          data: { encryptedKey: "replacement-key", lastValidatedAt: baseline },
         });
         throw Object.assign(new Error("rejected"), { statusCode: 401 });
       }),

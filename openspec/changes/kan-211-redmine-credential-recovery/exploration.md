@@ -10,7 +10,7 @@ Credential replacement already validates with Redmine `whoAmI()` before persiste
 
 `getConnection` exposes redacted `callerCredential` and aggregate coverage counts, but no service-credential health and no authentication-blocked work summary. Workspace settings UI (`redmine-section.tsx`) treats credentials as connected/not connected; there is no actionable `invalid` / blocked-work state. Outbound worker logs already use `safeErrorEvidence` (name/code/statusCode only); inbound failure logging does not.
 
-**Late-401 fence (focus):** Because key A→B replacement reuses the same credential id, invalidating by id alone would mark validated key B invalid. `Prepared` today snapshots only the plaintext api key into adapter options — not `credentialId` + `lastValidatedAt`. Existing fields are enough for a compare-and-set fence: snapshot id + `lastValidatedAt` before I/O; on 401, `UPDATE … SET lastAuthStatus='invalid' WHERE id=? AND lastValidatedAt IS NOT DISTINCT FROM ? AND lastAuthStatus='valid'`. CAS miss means a newer validation won → do **not** invalidate; requeue/retry the work so prepare picks up key B. No Prisma migration required. Residual risk: same-millisecond double validation (low); optional hardening is DB `RETURNING` timestamps or a future version column (avoid while KAN-210 owns schema churn).
+**Late-401 fence (focus):** Because key A→B replacement reuses the same credential id, invalidating by id alone would mark validated key B invalid. Snapshot id + encrypted key + `lastValidatedAt` before I/O; on 401, CAS-invalidate only that exact observed version while it remains `valid`. The ciphertext comparison keeps same-millisecond replacement safe without a migration. CAS miss means a newer validation won → do **not** invalidate; requeue/retry the work so prepare picks up key B.
 
 ### Affected Areas
 
@@ -25,7 +25,7 @@ Credential replacement already validates with Redmine `whoAmI()` before persiste
 
 ### Approaches
 
-1. **Fenced invalidate + durable auth-blocked dead work (no schema)** — On Redmine 401 only, CAS-invalidate by credential id + `lastValidatedAt`; mark affected outbound work `dead` with stable reason (e.g. `credential_invalid`); inbound stops via existing `valid` claim gate; on successful replacement, atomically requeue matching dead rows (preserve `dedupeKey` / `correlationId` / external refs); extend connection health + settings/admin UX.
+1. **Fenced invalidate + durable auth-blocked work (no schema)** — On Redmine 401 only, CAS-invalidate by credential id + ciphertext + `lastValidatedAt`; definitive failures become `dead`, while uncertain-create or reconciliation failures remain auth-blocked `ambiguous` with stable reason `credential_invalid`. Inbound stops via the existing `valid` claim gate. Successful replacement requeues definitive work and resumes ambiguous work through reconciliation, preserving `dedupeKey` / `correlationId` / external refs; extend connection health + settings/admin UX.
    - Pros: Matches existing enums/fields; no migration conflict with KAN-210; prevents late-401 from poisoning key B; resume without duplicate creates when refs exist
    - Cons: Touches worker/inbound/service/shared/web; must rebase after PR #248; reason string convention must stay stable
    - Effort: Medium

@@ -1133,7 +1133,6 @@ describe("integration worker retry and completion", () => {
   it("keeps a newer valid credential and immediately retries a stale 401 without another attempt", async () => {
     const fixture = await createFixture();
     const observedAt = new Date("2026-07-30T11:00:00.000Z");
-    const replacementAt = new Date("2026-07-30T11:30:00.000Z");
     await prisma.memberIntegrationCredential.update({
       where: { id: fixture.credential.id },
       data: { lastValidatedAt: observedAt },
@@ -1143,7 +1142,7 @@ describe("integration worker retry and completion", () => {
     const pushIssue = vi.fn(async () => {
       await prisma.memberIntegrationCredential.update({
         where: { id: fixture.credential.id },
-        data: { encryptedKey: "replacement-key", lastValidatedAt: replacementAt },
+        data: { encryptedKey: "replacement-key", lastValidatedAt: observedAt },
       });
       throw new RedmineHttpError(401);
     });

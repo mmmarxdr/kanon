@@ -83,7 +83,7 @@ type PrepareResult =
   | { kind: "ready"; value: Prepared }
   | { kind: "stale" }
   | { kind: "skipped"; reason: string; state?: "skipped" | "dead" };
-type UsedCredential = { id: string; lastValidatedAt: Date | null };
+type UsedCredential = { id: string; encryptedKey: string; lastValidatedAt: Date | null };
 type CredentialResult =
   | { ok: true; apiKey: string; credential: UsedCredential }
   | { ok: false; reason: string; credential?: UsedCredential };
@@ -338,7 +338,11 @@ async function credential(
     };
   }
   if (value.lastAuthStatus === "invalid") {
-    return { ok: false, reason: "credential_invalid", credential: { id, lastValidatedAt: value.lastValidatedAt } };
+    return {
+      ok: false,
+      reason: "credential_invalid",
+      credential: { id, encryptedKey: value.encryptedKey, lastValidatedAt: value.lastValidatedAt },
+    };
   }
   if (value.lastAuthStatus !== "valid") {
     return {
@@ -350,7 +354,11 @@ async function credential(
     return {
       ok: true,
       apiKey: d.decrypt(value.encryptedKey),
-      credential: { id: value.id, lastValidatedAt: value.lastValidatedAt },
+      credential: {
+        id: value.id,
+        encryptedKey: value.encryptedKey,
+        lastValidatedAt: value.lastValidatedAt,
+      },
     };
   } catch {
     return { ok: false, reason: "Captured credential cannot be decrypted" };
@@ -1218,6 +1226,7 @@ async function failAuthentication(
     const invalidated = await database.memberIntegrationCredential.updateMany({
       where: {
         id: credential.id,
+        encryptedKey: credential.encryptedKey,
         lastAuthStatus: "valid",
         revokedAt: null,
         lastValidatedAt: credential.lastValidatedAt,
