@@ -129,7 +129,7 @@ describe("Redmine inbound sync", () => {
     const disabled = dependencies([]);
     await prisma.integrationProjectBinding.update({
       where: { id: binding.id },
-      data: { inboundEnabled: false, bootstrapState: "not_required" },
+      data: { inboundEnabled: false, bootstrapState: "ready" },
     });
 
     await runInboundSyncCycle(prisma, disabled);

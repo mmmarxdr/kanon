@@ -207,6 +207,32 @@ describe("Redmine-created issue import", () => {
     ).resolves.toMatchObject({ bootstrapState: "previewed", bootstrapFence: 2 });
   });
 
+  it("restarts a preview when persisted resume evidence is invalid", async () => {
+    const { owner, connection, binding } = await fixture();
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: {
+        bootstrapState: "pending",
+        bootstrapCutoff: new Date("2026-08-03T12:00:00.000Z"),
+        bootstrapPageToken: { version: 999 },
+      },
+    });
+    const transport = remote({ issues: [], total_count: 0, offset: 0, limit: 100 });
+
+    await expect(
+      previewRedmineIssueImport(
+        connection.id,
+        binding.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).resolves.toMatchObject({ cutoff, eligibleUnlinkedCount: 0 });
+    expect(transport.get).toHaveBeenCalledWith(expect.stringContaining("offset=0"));
+    await expect(
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+    ).resolves.toMatchObject({ bootstrapState: "previewed", bootstrapCutoff: cutoff });
+  });
+
   it("rejects non-owners, cross-connection bindings, inactive bindings, and invalid credentials", async () => {
     const first = await fixture();
     const second = await fixture();

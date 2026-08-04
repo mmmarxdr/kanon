@@ -214,10 +214,11 @@ export async function previewRedmineIssueImport(
     ) {
       throw new AppError(409, "REDMINE_PREVIEW_IN_PROGRESS", "A Redmine import preview is running");
     }
-    const stored =
+    const storedEvidence =
       current.binding.bootstrapState === "pending" && current.binding.bootstrapCutoff
-        ? parseEvidence(current.binding.bootstrapPageToken)
+        ? PreviewEvidence.safeParse(current.binding.bootstrapPageToken)
         : null;
+    const stored = storedEvidence?.success ? storedEvidence.data : null;
     const resumable = stored && stored.nextOffset < MAX_ISSUES ? stored : null;
     const evidence = resumable?.complete ? emptyEvidence() : (resumable ?? emptyEvidence());
 
