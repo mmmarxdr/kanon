@@ -1,9 +1,9 @@
 # Apply Progress: KAN-211 - Redmine credential recovery
 
-**Date**: 2026-08-03
+**Date**: 2026-08-04
 **Mode**: Strict TDD
-**Status**: Units 1A and 1B complete; Unit 2 not started
-**Delivery**: feature-branch-chain, Unit 1B branch `fix/kan-211-redmine-ambiguity-fence`, base `2bd5baa`
+**Status**: Units 1A, 1B, and 2 complete; Unit 3 not started
+**Delivery**: feature-branch-chain, Unit 2 branch `fix/kan-211-redmine-replace-health`, base `3bcbbde`
 
 ## Completed Tasks
 
@@ -11,6 +11,8 @@
 - [x] 2.1-2.4 Inbound 401 fence, immediate stale-version release, and safe logging
 - [x] Unit 1 review fix: auth-blocked service work records the selected credential id
 - [x] 3.1-3.8 Wrapped 401 classification, ambiguity auth-block, and lease-independent invalidation
+- [x] 4.1-4.5 Validated personal/service replacement and atomic scoped redrive
+- [x] 5.1-5.4 Redacted credential health with operator ACL and 20-row cap
 
 ## TDD Cycle Evidence
 
@@ -46,18 +48,34 @@
 | 3.7 | `inbound.test.ts` | Integration | 7/7 | Reclaimed lease rolled back invalidation and escaped the cycle | 8/8 | Normal release, CAS miss, reclaimed owner | Existing safe evidence assertion retained |
 | 3.8 | `inbound.test.ts` | Integration | 7/7 | 3.7 RED | 8/8 | Credential truth independent of poll ownership | Removed cross-record transaction |
 
+### Unit 2 TDD Evidence
+
+| Area | RED | GREEN | REFACTOR |
+|------|-----|-------|----------|
+| Failed replacement | Invalid credential/work could not prove zero-write behavior | Failed `whoAmI` leaves credential, identity, and work untouched | Validation remains before encryption/transaction |
+| Personal redrive | `dead`/`ambiguous` work stayed auth-blocked | Only matching user work resumes; identity, payload, refs, correlation, and attempts persist | One transaction; other reasons/service work untouched |
+| Service replacement | Route absent; old holder and service work stayed bound | Instance-admin route validates, rebinds holder, resumes system/AI and orphaned work | Personal work remains on initiating credential |
+| Replacement race | Replacement between invalidation and work transition stranded `dead` work | Connection lock serializes transition and redrive; deterministic trigger regression passes | Reused existing parent-first `lockWork` order |
+| Health/ACL | DTO stripped fields and accepted >20 items | Service status + `credential_blocked`; owner/admin total and 20 safe rows; member detail null | No payload, actor, correlation, ciphertext, or raw errors exposed |
+
 ## Files Changed
 
 | File | Action | What |
 |------|--------|------|
 | `packages/api/src/modules/integrations/core/types.ts` | Modified | Classifies direct or one-level `ProviderDispatchError.cause` 401 only |
 | `packages/api/src/modules/integrations/core/types.test.ts` | Modified | Covers wrapped, nested, message-only, direct, and non-401 classification |
-| `packages/api/src/modules/integrations/worker.ts` | Modified | Keeps auth-blocked creates ambiguous; excludes blocked claims; commits invalidation before fenced work transition |
-| `packages/api/src/modules/integrations/retry.test.ts` | Modified | Covers both ambiguity 401 entry points, already-invalid blocking, and reclaimed work ownership |
+| `packages/api/src/modules/integrations/worker.ts` | Modified | Keeps auth-blocked creates ambiguous, commits invalidation first, and serializes replacement against the work transition |
+| `packages/api/src/modules/integrations/retry.test.ts` | Modified | Covers ambiguity, reclaimed work, and the invalidation-to-replacement race |
 | `packages/api/src/modules/integrations/inbound.ts` | Modified | Commits credential invalidation before best-effort poll lease release |
 | `packages/api/src/modules/integrations/inbound.test.ts` | Modified | Covers reclaimed lease containment and new-owner preservation |
-| `openspec/changes/kan-211-redmine-credential-recovery/tasks.md` | Modified | Marked only Units 1A and 1B complete |
-| `openspec/changes/kan-211-redmine-credential-recovery/apply-progress.md` | Modified | Recorded cumulative Unit 1A/1B TDD and verification evidence |
+| `packages/api/src/modules/integrations/service.ts` | Modified | Validated scoped replace+redrive, service holder rebind, and redacted health projection |
+| `packages/api/src/modules/integrations/routes.ts` | Modified | Adds validated instance-admin service credential replacement route |
+| `packages/api/src/modules/integrations/credentials.test.ts` | Modified | Covers zero-write failure, redrive identity, authz, ACL, cap, and redaction |
+| `packages/shared/src/integrations.ts` | Modified | Adds service credential and blocked-work health contract |
+| `packages/shared/src/integrations.test.ts` | Modified | Covers DTO parsing and 20-item cap |
+| `packages/web/src/features/settings/redmine-section.test.tsx` | Modified | Keeps existing typed fixtures compatible with Unit 2 DTO |
+| `openspec/changes/kan-211-redmine-credential-recovery/tasks.md` | Modified | Marks Units 1A, 1B, and 2 complete |
+| `openspec/changes/kan-211-redmine-credential-recovery/apply-progress.md` | Modified | Records cumulative Unit 1A/1B/2 TDD and verification evidence |
 
 ## Commands And Results
 
@@ -86,6 +104,10 @@
 | `pnpm --filter @kanon/api test:types` and `pnpm --filter @kanon/api exec tsc --noEmit -p tsconfig.json` | Pass |
 | `pnpm exec prettier --check ...` and `git diff --check` | Pass |
 | Resumed verification against `kanon_test_kan211_u1` | Focused 56/56 pass; full API 160/160 files, 2185 tests pass, 2 skipped; type checks, Prettier, and diff check pass |
+| Unit 2 RED | Missing contract/route/redrive/health failed as expected; concurrent replacement left work `dead`; orphaned service work stayed blocked |
+| Unit 2 focused verification | API credential recovery 67/67; shared contract 3/3; Redmine settings consumer 3/3; API/shared/web type checks pass |
+| Unit 2 full verification | API 160/160 files, 2190 passed, 2 skipped; shared 7/7 files, 103 passed; web 122/122 files, 962 passed, 5 todo |
+| Unit 2 formatting | Prettier and `git diff --check` pass; no Prisma schema or migration change |
 
 The first full-suite attempt shared `kanon_test` with another worktree's active Vitest process and produced cross-file foreign-key cleanup races. Verification was repeated against a dedicated migrated database; the complete suite passed there.
 
@@ -94,9 +116,9 @@ The first full-suite attempt shared `kanon_test` with another worktree's active 
 - Unit 1A baseline: 400 changed production + test lines at `2bd5baa`.
 - Unit 1B actual against `2bd5baa`: 217 changed production + test lines (167 additions, 50 deletions), 37 above the 180-line target.
 - The target deviation retains required observed/reconciliation/already-invalid ambiguity and stale-owner assertions; no correctness case was dropped for size.
-- Current slice: tasks 3.1-3.8 only on `fix/kan-211-redmine-ambiguity-fence`.
-- Remaining Unit 2 boundary: tasks 4.1-5.4 in `service.ts`, `routes.ts`, shared DTOs, and their tests.
-- Unit 2 was not started. No service/routes/shared/web/health/schema/migration work was changed.
+- Unit 2 actual against `3bcbbde`: 805 additions and 71 deletions in production/test files; 548 additions are focused credential/retry contract tests.
+- Current slice: tasks 4.1-5.4 on `fix/kan-211-redmine-replace-health`.
+- Remaining Unit 3 boundary: tasks 6.1-6.4 in the Redmine settings UI, hook, and i18n.
 
 ## Deviations And Blockers
 
@@ -111,4 +133,5 @@ The first full-suite attempt shared `kanon_test` with another worktree's active 
 - Direct definitive 401 remains `dead`/`credential_invalid`; late A→B CAS misses preserve B and retry/reconcile due without attempt burn.
 - Refuted: missing replacement redrive is not a Unit 1 release defect because the selected feature-branch chain cannot ship Unit 1 without Unit 2.
 - Readability warning retained: the CAS predicate is duplicated between outbound and inbound; ambiguity routing now uses an explicit failure discriminant.
-- Units 1A and 1B are internal review boundaries only; Unit 2 replacement/redrive remains required before feature-chain release.
+- Units 1A, 1B, and 2 are internal review boundaries; Unit 3 remains required before feature-chain release.
+- Unit 2 final focused review found and fixed the invalidation-to-transition replacement race and orphaned service-work recovery.

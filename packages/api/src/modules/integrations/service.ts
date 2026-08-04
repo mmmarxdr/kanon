@@ -368,6 +368,53 @@ async function lockConnection(transaction: Prisma.TransactionClient, connectionI
   );
 }
 
+async function redriveAuthBlockedWork(
+  transaction: Prisma.TransactionClient,
+  connectionId: string,
+  replacementCredentialId: string,
+  scope:
+    | { kind: "personal"; memberId: string; rejectedCredentialId: string }
+    | { kind: "service" },
+) {
+  const now = new Date();
+  const where: Prisma.IntegrationSyncWorkWhereInput = {
+    binding: { connectionId },
+    skippedReason: "credential_invalid",
+    ...(scope.kind === "personal"
+      ? {
+          actorKind: "user",
+          actorKey: `member:${scope.memberId}`,
+          authCredentialId: scope.rejectedCredentialId,
+        }
+      : { actorKind: { in: ["system", "ai"] } }),
+  };
+  const bindings = await transaction.integrationProjectBinding.findMany({
+    where: { connectionId },
+    select: { id: true, lifecycleEpoch: true },
+  });
+  for (const binding of bindings) {
+    await transaction.integrationSyncWork.updateMany({
+      where: { ...where, bindingId: binding.id, state: "dead" },
+      data: {
+        state: "retry",
+        epoch: binding.lifecycleEpoch,
+        availableAt: now,
+        skippedReason: null,
+        authCredentialId: replacementCredentialId,
+      },
+    });
+    await transaction.integrationSyncWork.updateMany({
+      where: { ...where, bindingId: binding.id, state: "ambiguous" },
+      data: {
+        epoch: binding.lifecycleEpoch,
+        availableAt: now,
+        skippedReason: null,
+        authCredentialId: replacementCredentialId,
+      },
+    });
+  }
+}
+
 export async function getConnectionDiscovery(
   connectionId: string,
   userId: string,
@@ -801,14 +848,35 @@ export async function connectCredential(
   userId: string,
   deps: ConnectionServiceDeps = defaultDeps,
 ) {
-  const { connection } = await memberConnection(prisma, connectionId, userId);
+  const { connection, member } = await memberConnection(prisma, connectionId, userId);
+  const existing = await prisma.memberIntegrationCredential.findUnique({
+    where: { memberId_connectionId: { memberId: member.id, connectionId } },
+    select: { id: true },
+  });
+  if (existing?.id === connection.serviceCredentialId) {
+    return replaceServiceCredential(connectionId, apiKey, userId, deps);
+  }
   const identity = await queryRedmine(() => deps.remote(connection.baseUrl, apiKey).whoAmI());
   const encryptedKey = deps.encrypt(apiKey);
   const validatedAt = new Date();
 
   try {
     const credential = await prisma.$transaction(async (transaction) => {
+      await lockConnection(transaction, connectionId);
       const current = await memberConnection(transaction, connectionId, userId);
+      const currentCredential = await transaction.memberIntegrationCredential.findUnique({
+        where: {
+          memberId_connectionId: { memberId: current.member.id, connectionId },
+        },
+        select: { id: true },
+      });
+      if (currentCredential?.id === current.connection.serviceCredentialId) {
+        throw new AppError(
+          409,
+          "SERVICE_CREDENTIAL_REQUIRES_ADMIN",
+          "Replace the service credential from instance administration",
+        );
+      }
       const saved = await transaction.memberIntegrationCredential.upsert({
         where: {
           memberId_connectionId: { memberId: current.member.id, connectionId },
@@ -839,6 +907,93 @@ export async function connectCredential(
         identity.login ?? null,
         identity.displayName,
       );
+      await redriveAuthBlockedWork(transaction, connectionId, saved.id, {
+        kind: "personal",
+        memberId: current.member.id,
+        rejectedCredentialId: saved.id,
+      });
+      return saved;
+    });
+    return publicCredential(credential);
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      throw new AppError(
+        409,
+        "REMOTE_IDENTITY_ALREADY_CONNECTED",
+        "This provider identity is already connected to another workspace member",
+      );
+    }
+    throw error;
+  }
+}
+
+export async function replaceServiceCredential(
+  connectionId: string,
+  apiKey: string,
+  userId: string,
+  deps: ConnectionServiceDeps = defaultDeps,
+) {
+  const connection = await adminConnection(prisma, connectionId, userId);
+  await resolveServiceCredentialMember(prisma, connection.workspaceId, userId);
+  const identity = await queryRedmine(() => deps.remote(connection.baseUrl, apiKey).whoAmI());
+  const encryptedKey = deps.encrypt(apiKey);
+  const validatedAt = new Date();
+
+  try {
+    const credential = await prisma.$transaction(async (transaction) => {
+      await lockConnection(transaction, connectionId);
+      const current = await adminConnection(transaction, connectionId, userId);
+      const serviceMember = await resolveServiceCredentialMember(
+        transaction,
+        current.workspaceId,
+        userId,
+      );
+      const saved = await transaction.memberIntegrationCredential.upsert({
+        where: { memberId_connectionId: { memberId: serviceMember.id, connectionId } },
+        create: {
+          memberId: serviceMember.id,
+          connectionId,
+          encryptedKey,
+          externalUserId: identity.id,
+          externalLogin: identity.login ?? null,
+          lastValidatedAt: validatedAt,
+          lastAuthStatus: "valid",
+        },
+        update: {
+          encryptedKey,
+          externalUserId: identity.id,
+          externalLogin: identity.login ?? null,
+          lastValidatedAt: validatedAt,
+          lastAuthStatus: "valid",
+          revokedAt: null,
+        },
+      });
+      await transaction.integrationExternalIdentity.updateMany({
+        where: {
+          binding: { connectionId },
+          memberId: { not: serviceMember.id },
+          remoteUserId: identity.id,
+        },
+        data: { memberId: null },
+      });
+      await upsertExternalIdentities(
+        transaction,
+        connectionId,
+        serviceMember.id,
+        identity.id,
+        identity.login ?? null,
+        identity.displayName,
+      );
+      await transaction.integrationConnection.update({
+        where: { id: connectionId },
+        data: { serviceCredentialId: saved.id },
+      });
+      await redriveAuthBlockedWork(transaction, connectionId, saved.id, { kind: "service" });
+      await redriveAuthBlockedWork(transaction, connectionId, saved.id, {
+        kind: "personal",
+        memberId: serviceMember.id,
+        rejectedCredentialId: saved.id,
+      });
       return saved;
     });
     return publicCredential(credential);
@@ -889,15 +1044,29 @@ export async function getConnection(connectionId: string, userId: string) {
 
   const member = await prisma.member.findUnique({
     where: { userId_workspaceId: { userId, workspaceId: connection.workspaceId } },
-    select: { id: true },
+    select: { id: true, role: true },
   });
   if (!admin && !member) {
     throw new AppError(403, "FORBIDDEN", "Workspace membership is required");
   }
   const memberId = member?.id ?? null;
+  const operator = admin || member?.role === "owner";
+  const authBlockedWhere = {
+    binding: { connectionId },
+    skippedReason: "credential_invalid",
+    state: { in: ["dead", "ambiguous"] },
+  } satisfies Prisma.IntegrationSyncWorkWhereInput;
 
-  const [credential, bindings, workspaceMembers, externalIdentities, connectedCredentials] =
-    await Promise.all([
+  const [
+    credential,
+    bindings,
+    workspaceMembers,
+    externalIdentities,
+    connectedCredentials,
+    serviceCredentialRecord,
+    blockedWorkTotal,
+    blockedWork,
+  ] = await Promise.all([
       memberId
         ? prisma.memberIntegrationCredential.findUnique({
             where: { memberId_connectionId: { memberId, connectionId } },
@@ -924,8 +1093,35 @@ export async function getConnection(connectionId: string, userId: string) {
         where: { connectionId, lastAuthStatus: "valid", revokedAt: null },
         select: { memberId: true },
       }),
+      connection.serviceCredentialId
+        ? prisma.memberIntegrationCredential.findFirst({
+            where: { id: connection.serviceCredentialId, connectionId },
+            select: { lastAuthStatus: true, revokedAt: true },
+          })
+        : Promise.resolve(null),
+      prisma.integrationSyncWork.count({ where: authBlockedWhere }),
+      operator
+        ? prisma.integrationSyncWork.findMany({
+            where: authBlockedWhere,
+            orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
+            take: 20,
+            select: {
+              id: true,
+              entityType: true,
+              entityId: true,
+              operation: true,
+              state: true,
+              updatedAt: true,
+            },
+          })
+        : Promise.resolve([]),
     ]);
   const providerMaps = providerMapsFromConnection(connection);
+  const serviceCredentialStatus = serviceCredentialRecord
+    ? serviceCredentialRecord.revokedAt
+      ? "revoked"
+      : serviceCredentialRecord.lastAuthStatus
+    : "missing";
   return {
     id: connection.id,
     workspaceId: connection.workspaceId,
@@ -934,6 +1130,14 @@ export async function getConnection(connectionId: string, userId: string) {
     lifecycle: connection.lifecycle,
     lifecycleEpoch: connection.lifecycleEpoch,
     serviceFallbackEnabled: connection.serviceFallbackEnabled,
+    serviceCredentialStatus,
+    syncHealth: {
+      status:
+        serviceCredentialStatus !== "valid" || blockedWorkTotal > 0
+          ? ("credential_blocked" as const)
+          : ("healthy" as const),
+      blockedWork: operator ? { total: blockedWorkTotal, items: blockedWork } : null,
+    },
     discoveredStatuses: admin ? connection.discoveredStatuses : null,
     providerMaps: admin
       ? {
