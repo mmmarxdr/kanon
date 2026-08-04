@@ -14,11 +14,14 @@ When running SDD phases in the kanon project, the orchestrator MUST integrate Ka
 <!-- Audience: orchestrator (kanon-agent) — ships via setup package -->
 | Phase completes | Issue action |
 |-----------------|-------------|
-| sdd-explore | Update issue description with exploration summary |
-| sdd-spec | Transition issue to in_progress; enrich with spec link |
-| sdd-apply | Update issue with apply-progress artifact reference |
-| sdd-verify | Transition to review; note verify report result |
-| sdd-archive | Transition to done; link archive report |
+| sdd-explore | Add a PM-facing outcome summary: problem, evidence, options |
+| sdd-spec | Transition to in_progress; summarize accepted behavior |
+| sdd-apply | Summarize implemented behavior and material decisions |
+| sdd-verify | Transition to review; summarize verification and residual risk |
+| sdd-archive | Transition to done; summarize final outcome |
+
+Use a repository-relative design reference only when it helps the reader. Never publish worktree,
+temporary branch, absolute path, agent/model/session, memory, harness, or command metadata.
 
 ## deferred_items Processing
 

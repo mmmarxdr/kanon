@@ -44,6 +44,7 @@ const fakeMemberList = {
   members: [
     {
       userId: "user-uuid-1",
+      memberId: "member-uuid-1",
       email: "alice@example.com",
       displayName: "Alice",
       role: "admin",
@@ -52,6 +53,7 @@ const fakeMemberList = {
     },
     {
       userId: "user-uuid-2",
+      memberId: "member-uuid-2",
       email: "bob@example.com",
       displayName: null,
       role: "member",
@@ -60,6 +62,7 @@ const fakeMemberList = {
     },
     {
       userId: "user-uuid-3",
+      memberId: "member-uuid-3",
       email: "carol@example.com",
       displayName: "Carol Owner",
       role: "owner",
@@ -109,13 +112,14 @@ describe("list_members", () => {
     expect(parsed.members).toHaveLength(3);
   });
 
-  it("returns members with userId, displayName, email, and role fields", async () => {
+  it("returns the assignable memberId with member details", async () => {
     const result = await tool.handler({ projectKey: "KAN" });
 
     const parsed = JSON.parse(result.content[0]!.text);
     const alice = parsed.members.find((m: { userId: string }) => m.userId === "user-uuid-1");
     expect(alice).toBeDefined();
     expect(alice).toHaveProperty("userId", "user-uuid-1");
+    expect(alice).toHaveProperty("memberId", "member-uuid-1");
     expect(alice).toHaveProperty("displayName", "Alice");
     expect(alice).toHaveProperty("email", "alice@example.com");
     expect(alice).toHaveProperty("role", "admin");

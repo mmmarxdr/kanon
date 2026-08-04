@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "../../config/prisma.js";
 import { createIssue, transitionIssue, updateIssue } from "../issue/service.js";
 import { reviseEstimate, upsertPlan } from "../schedule/service.js";
+import { startWork } from "../work-session/service.js";
 import {
   cleanDatabase,
   disconnectTestDb,
@@ -99,6 +100,88 @@ describe("issue writer integration capture", () => {
     ]);
   });
 
+  it("captures start_work autoassignment and its missing start date", async () => {
+    const workspace = await seedTestWorkspace();
+    const member = await seedTestMember(workspace.id);
+    const project = await seedTestProject(workspace.id);
+    const { binding } = await bindProject(workspace.id, project.id, member.id);
+    const created = await createIssue(project.id, { title: "Started issue", labels: [] }, member.id);
+
+    await startWork(created.key, member.id, member.userId, "mcp");
+
+    const work = await prisma.integrationSyncWork.findMany({
+      where: { bindingId: binding.id, entityId: created.id },
+      orderBy: { sequence: "asc" },
+    });
+    const fields = work.flatMap((row) => {
+      const payload = row.payload as { fields?: Record<string, unknown> };
+      return Object.keys(payload.fields ?? {});
+    });
+    expect(fields).toContain("assigneeId");
+    expect(fields).toContain("startDate");
+
+    const issue = await prisma.issue.findUniqueOrThrow({
+      where: { id: created.id },
+      include: { schedule: true },
+    });
+    expect(issue.assigneeId).toBe(member.id);
+    expect(issue.schedule?.startDate).toBeInstanceOf(Date);
+  });
+
+  it("preserves an explicit start date across concurrent and repeated starts", async () => {
+    const workspace = await seedTestWorkspace();
+    const member = await seedTestMember(workspace.id);
+    const project = await seedTestProject(workspace.id);
+    const { binding } = await bindProject(workspace.id, project.id, member.id);
+    const issue = await prisma.issue.create({
+      data: {
+        key: `${project.key}-1`,
+        sequenceNum: 1,
+        title: "Concurrent plan",
+        projectId: project.id,
+      },
+    });
+    const explicitStart = "2026-08-01T00:00:00.000Z";
+
+    await Promise.all([
+      upsertPlan(
+        issue.key,
+        { startDate: explicitStart, dueDate: "2026-08-02T00:00:00.000Z" },
+        member.id,
+      ),
+      upsertPlan(
+        issue.key,
+        { startDate: "2026-08-04T00:00:00.000Z" },
+        member.id,
+        null,
+        { startDateIfMissing: true },
+      ),
+    ]);
+    const startDateCapturesBeforeRepeatedStarts = (
+      await prisma.integrationSyncWork.findMany({
+        where: { bindingId: binding.id, entityId: issue.id },
+      })
+    ).filter(({ payload }) =>
+      Object.hasOwn((payload as { fields?: Record<string, unknown> }).fields ?? {}, "startDate"),
+    ).length;
+    await startWork(issue.key, member.id, member.userId, "mcp");
+    await startWork(issue.key, member.id, member.userId, "mcp");
+
+    const schedule = await prisma.issueSchedule.findUniqueOrThrow({ where: { issueId: issue.id } });
+    expect(schedule.startDate?.toISOString()).toBe(explicitStart);
+
+    const capturedStartDates = (
+      await prisma.integrationSyncWork.findMany({
+        where: { bindingId: binding.id, entityId: issue.id },
+      })
+    ).flatMap(({ payload }) => {
+      const fields = (payload as { fields?: { startDate?: string } }).fields;
+      return fields?.startDate ? [fields.startDate] : [];
+    });
+    expect(capturedStartDates.at(-1)).toBe(explicitStart);
+    expect(capturedStartDates).toHaveLength(startDateCapturesBeforeRepeatedStarts);
+  });
+
   it("keeps unbound projects inert and rolls back when bound capture fails", async () => {
     const workspace = await seedTestWorkspace();
     const member = await seedTestMember(workspace.id);
@@ -194,9 +277,15 @@ describe("issue writer integration capture", () => {
       },
     });
 
-    await expect(upsertPlan(issue.key, { progress: 25 }, member.id)).rejects.toThrow(
-      "mismatched ownership",
-    );
+    await expect(
+      upsertPlan(
+        issue.key,
+        { startDate: "2026-08-04T00:00:00.000Z" },
+        member.id,
+        null,
+        { startDateIfMissing: true },
+      ),
+    ).rejects.toThrow("mismatched ownership");
     expect(await prisma.issueSchedule.findUnique({ where: { issueId: issue.id } })).toBeNull();
 
     await expect(reviseEstimate(issue.key, { hours: "3.50" }, member.id)).rejects.toThrow(

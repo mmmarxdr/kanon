@@ -11,15 +11,24 @@ trigger: list issues, create issue, update issue, close issue, board management,
 One issue = one unit of work. Every card must be readable by a teammate who never touched the code.
 Human-readable titles, not internal paths.
 
+## Issue Content Contract
+
+Descriptions are durable, PM-facing records replicated to external systems.
+Include problem, impact, acceptance criteria, evidence, decisions, solution, risks, and verification.
+Never include absolute local paths, worktrees, temporary branches, agent/model/session identifiers,
+memory internals, harness mechanics, or local command transcripts. Repository-relative design
+references are allowed only when they help a teammate understand the ticket.
+
 ## Issue Lifecycle
 
 1. kanon_list_groups(projectKey) → pick groupKey
-2. kanon_create_issue with [Area] title + group + description
-3. kanon_start_work(issue_key)
-4. kanon_transition_issue: backlog → analysis → todo → in_progress → review → done
-5. kanon_update_issue: enrich description as work evolves
-6. Deferred/later work → kanon_create_roadmap_item, NOT backlog
-7. kanon_stop_work(issue_key) when done
+2. If work starts now, kanon_list_members → pass its memberId as assigneeId
+3. kanon_create_issue with [Area] title + group + description
+4. kanon_start_work(issue_key); a missing startDate becomes today
+5. kanon_transition_issue: backlog → analysis → todo → in_progress → review → done
+6. kanon_update_issue: enrich description as work evolves; never invent dueDate
+7. Deferred/later work → kanon_create_roadmap_item, NOT backlog
+8. kanon_stop_work(issue_key) when done
 
 ## Title Format
 
