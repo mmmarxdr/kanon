@@ -2,8 +2,8 @@
 
 **Date**: 2026-08-04
 **Mode**: Strict TDD
-**Status**: Units 1A, 1B, 2, and 3 complete; live smoke and publication pending
-**Delivery**: feature-branch-chain, Unit 3 branch `fix/kan-211-redmine-remediation-ui`, base `16ca665`
+**Status**: Units 1A, 1B, 2, and 3 complete; live smoke passed; PR publication pending
+**Delivery**: feature-branch-chain, Unit 3 branch `fix/kan-211-redmine-remediation-ui`, base `63778b1`
 
 ## Completed Tasks
 
@@ -127,6 +127,7 @@
 | Unit 3 full verification | Web 122/122 files, 965 passed, 5 todo; production build succeeds |
 | Final adversarial correction | Epoch-aware redrive, dual-role service credential auth/recovery, and discovery-independent replacement regressions pass |
 | Final complete verification | API 160/160 files, 2190 passed, 2 skipped; shared 103/103; web 122/122 files, 965 passed, 5 todo |
+| Live credential recovery smoke | Real Redmine project `71`: rejected credential produced one `dead` and one `ambiguous` auth block; validated service replacement redrove them to `retry` and `ambiguous`, cleared blocked health 2→0, and made no remote write |
 
 The first full-suite attempt shared `kanon_test` with another worktree's active Vitest process and produced cross-file foreign-key cleanup races. Verification was repeated against a dedicated migrated database; the complete suite passed there.
 
@@ -138,7 +139,7 @@ The first full-suite attempt shared `kanon_test` with another worktree's active 
 - Unit 2 actual against `3bcbbde`: 805 additions and 71 deletions in production/test files; 548 additions are focused credential/retry contract tests.
 - Final child boundary against `16ca665`: 363 additions and 64 deletions in API/web production, tests, and locales.
 - Current slice: tasks 6.1-6.4 on `fix/kan-211-redmine-remediation-ui`.
-- Remaining verification: live revoke→replace smoke and PR publication.
+- Remaining verification: PR publication.
 
 ## Deviations And Blockers
 
@@ -146,6 +147,7 @@ The first full-suite attempt shared `kanon_test` with another worktree's active 
 - The outbound/inbound CAS predicate remains duplicated as the review warning allowed; a shared helper was not smaller or safer for this two-site fix.
 - The executor's temporary source aliases were removed. Parent verification used the config-approved shared build prerequisite and normal package resolution.
 - An isolated database was required because another concurrent worktree was running Vitest against the default shared test database; no other process or worktree was stopped or modified.
+- The live smoke used an isolated migrated database and a one-use mode-0600 FIFO for the replacement key. A generated rejected credential exercised Redmine's real 401 path without revoking the operator's valid key; the temporary script, database, and FIFO were removed after the successful redrive.
 
 ## Full 4R Review
 
@@ -155,5 +157,5 @@ The first full-suite attempt shared `kanon_test` with another worktree's active 
 - Readability warning retained: the CAS predicate is duplicated between outbound and inbound; ambiguity routing now uses an explicit failure discriminant.
 - Units 1A, 1B, and 2 are internal review boundaries; Unit 3 remains required before feature-chain release.
 - Unit 2 final focused review found and fixed the invalidation-to-transition replacement race and orphaned service-work recovery.
-- All specification scenarios are mapped to Unit 1-3 regressions; only the live replacement smoke remains unchecked.
+- All specification scenarios are mapped to Unit 1-3 regressions; the live replacement smoke passed without remote writes.
 - Final adversarial review found and fixed stale-epoch redrive, service-holder personal-endpoint bypass, dual-role personal work recovery, and discovery-hidden service replacement.
