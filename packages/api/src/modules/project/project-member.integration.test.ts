@@ -65,6 +65,7 @@ describe("KAN-17: Project Member Management", () => {
       const explicitRow = members.find((m: any) => m.source === "project");
       expect(explicitRow).toBeDefined();
       expect((explicitRow as any).pmId).toBe(pm.id);
+      expect((explicitRow as any).memberId).toBe(pmMember.id);
       expect((explicitRow as any).role).toBe("member");
 
       // Implicit ws-owner row
@@ -72,6 +73,7 @@ describe("KAN-17: Project Member Management", () => {
         (m: any) => m.source === "workspace" && m.userId === wsOwner.userId,
       );
       expect(implicitRow).toBeDefined();
+      expect((implicitRow as any).memberId).toBe(wsOwner.id);
       expect((implicitRow as any).pmId).toBeUndefined();
       expect((implicitRow as any).implicit).toBe(true);
     });
@@ -120,6 +122,7 @@ describe("KAN-17: Project Member Management", () => {
       const { members } = res.json() as { members: any[] };
 
       for (const row of members) {
+        expect(typeof row.memberId).toBe("string");
         if (row.source === "project") {
           expect(typeof row.pmId).toBe("string");
           expect(row.implicit).toBeUndefined();
@@ -150,6 +153,25 @@ describe("KAN-17: Project Member Management", () => {
       expect(adminRows[0].source).toBe("project");
       expect(adminRows[0].pmId).toBe(pm.id);
       expect(adminRows[0].role).toBe("viewer");
+    });
+
+    it("omits project members without an assignable workspace member", async () => {
+      const admin = await seedTestMemberWithRole(workspaceId, "admin");
+      const target = await seedTestMemberWithRole(workspaceId, "member");
+      const project = await seedTestProject(workspaceId, "ORPHAN");
+      await seedTestProjectMember(target.userId, project.id, "member");
+      await prisma.member.delete({ where: { id: target.id } });
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/projects/${project.key}/members`,
+        headers: { authorization: `Bearer ${admin.token}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().members).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ userId: target.userId })]),
+      );
     });
   });
 
@@ -371,6 +393,31 @@ describe("KAN-17: Project Member Management", () => {
       });
 
       expect(res.statusCode).toBe(404);
+    });
+
+    it("does not change a project role when the workspace member is missing", async () => {
+      const admin = await seedTestMemberWithRole(workspaceId, "admin");
+      const target = await seedTestMemberWithRole(workspaceId, "member");
+      const project = await seedTestProject(workspaceId, "PAT6");
+      await seedTestProjectMember(admin.userId, project.id, "admin");
+      const targetPm = await seedTestProjectMember(target.userId, project.id, "member");
+      await prisma.member.delete({ where: { id: target.id } });
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/projects/${project.key}/members/${targetPm.id}`,
+        headers: {
+          authorization: `Bearer ${admin.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ role: "admin" }),
+      });
+
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe("NOT_WORKSPACE_MEMBER");
+      await expect(
+        prisma.projectMember.findUniqueOrThrow({ where: { id: targetPm.id } }),
+      ).resolves.toMatchObject({ role: "member" });
     });
   });
 

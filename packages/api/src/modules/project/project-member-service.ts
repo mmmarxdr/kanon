@@ -15,10 +15,11 @@ export function roleLevel(role: MemberRole): number {
  *
  * R-INV1: pmId is ONLY present on source:'project' rows.
  *         source:'workspace' rows MUST NOT carry a pmId.
- *         workspaceMember.id MUST NEVER appear in any response field.
+ *         memberId is the workspace Member.id accepted by issue assigneeId.
  */
 export interface EffectiveMemberRow {
   userId: string;
+  memberId: string;
   email: string;
   displayName: string | null;
   role: MemberRole;
@@ -36,8 +37,8 @@ export interface EffectiveMemberRow {
  *
  * Merge key: userId — explicit PM row wins on collision.
  *
- * R-INV1: pmId is ONLY set on source:'project' rows. Workspace Member.id
- *          MUST NEVER appear in any response field.
+ * R-INV1: pmId is ONLY set on source:'project' rows. memberId is returned for
+ *          every row so callers can assign issues without guessing IDs.
  */
 export async function listEffectiveMembers(
   projectId: string,
@@ -51,9 +52,10 @@ export async function listEffectiveMembers(
     },
   });
 
-  // Step 2: ws owner/admin rows
+  // Step 2: all workspace members provide assignable member IDs. Only
+  // owner/admin rows become implicit project members below.
   const wsRows = await prisma.member.findMany({
-    where: { workspaceId, role: { in: ["owner", "admin"] } },
+    where: { workspaceId },
     include: {
       user: { select: { email: true, displayName: true } },
     },
@@ -61,11 +63,14 @@ export async function listEffectiveMembers(
 
   // Step 3: merge keyed by userId — explicit wins
   const merged = new Map<string, EffectiveMemberRow>();
+  const memberIds = new Map(wsRows.map((member) => [member.userId, member.id]));
 
   // Add ws implicit rows first (lower priority)
   for (const ws of wsRows) {
+    if (ws.role !== "owner" && ws.role !== "admin") continue;
     merged.set(ws.userId, {
       userId: ws.userId,
+      memberId: ws.id,
       email: ws.user.email,
       displayName: ws.user.displayName,
       role: ws.role,
@@ -77,8 +82,11 @@ export async function listEffectiveMembers(
 
   // Add explicit PM rows second (override ws rows for same userId)
   for (const pm of pmRows) {
+    const memberId = memberIds.get(pm.userId);
+    if (!memberId) continue;
     merged.set(pm.userId, {
       userId: pm.userId,
+      memberId,
       email: pm.user.email,
       displayName: pm.user.displayName,
       role: pm.role,
@@ -145,6 +153,7 @@ export async function addProjectMember(
 
   return {
     userId: user.id,
+    memberId: wsMember.id,
     email: user.email,
     displayName: user.displayName,
     role: pm.role,
@@ -172,7 +181,10 @@ export async function changeProjectMemberRole(
   // 1. Find PM row scoped to this project (R-INV1: ws Member.id won't match → 404)
   const pm = await prisma.projectMember.findFirst({
     where: { id: pmId, projectId },
-    include: { user: { select: { email: true, displayName: true } } },
+    include: {
+      user: { select: { email: true, displayName: true } },
+      project: { select: { workspaceId: true } },
+    },
   });
   if (!pm) {
     throw new AppError(404, "PM_NOT_FOUND", "Project member not found");
@@ -198,13 +210,23 @@ export async function changeProjectMemberRole(
     throw new AppError(403, "FORBIDDEN", "Insufficient permissions to change this member's role");
   }
 
-  const updated = await prisma.projectMember.update({
-    where: { id: pmId },
-    data: { role: newRole },
+  const { member, updated } = await prisma.$transaction(async (transaction) => {
+    const member = await transaction.member.findUnique({
+      where: { userId_workspaceId: { userId: pm.userId, workspaceId: pm.project.workspaceId } },
+    });
+    if (!member) {
+      throw new AppError(422, "NOT_WORKSPACE_MEMBER", "Target user is not a member of this workspace");
+    }
+    const updated = await transaction.projectMember.update({
+      where: { id: pmId },
+      data: { role: newRole },
+    });
+    return { member, updated };
   });
 
   return {
     userId: pm.userId,
+    memberId: member.id,
     email: pm.user.email,
     displayName: pm.user.displayName,
     role: updated.role,

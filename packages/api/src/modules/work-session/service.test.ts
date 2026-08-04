@@ -33,12 +33,18 @@ vi.mock("../activity/service.js", () => ({
 // ── Mock issue service (for Fix B: auto-transition) ────────────────────────
 vi.mock("../issue/service.js", () => ({
   transitionIssue: vi.fn(),
+  updateIssue: vi.fn(),
+}));
+
+vi.mock("../schedule/service.js", () => ({
+  upsertPlan: vi.fn(),
 }));
 
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import { startWork, heartbeat, stopWork, getActiveWorkers, cleanupExpired, recordInterruption } from "./service.js";
-import { transitionIssue } from "../issue/service.js";
+import { transitionIssue, updateIssue } from "../issue/service.js";
+import { upsertPlan } from "../schedule/service.js";
 
 const mockIssueFind = vi.mocked(prisma.issue.findUnique);
 const mockIssueUpdate = vi.mocked(prisma.issue.update);
@@ -50,11 +56,15 @@ const mockSessionDelete = vi.mocked(prisma.workSession.delete);
 const mockTransaction = vi.mocked(prisma.$transaction);
 const mockWorkLogCreate = vi.mocked(prisma.workLog.create);
 const mockEmit = vi.mocked(eventBus.emit);
+const mockUpdateIssue = vi.mocked(updateIssue);
+const mockUpsertPlan = vi.mocked(upsertPlan);
 
 const fakeIssue = {
   id: "issue-1",
   key: "KAN-42",
-  assigneeId: null,
+  projectId: "project-1",
+  assigneeId: "existing",
+  schedule: { startDate: new Date("2026-01-01T00:00:00.000Z") },
   // state: "in_progress" so pre-existing startWork tests deterministically
   // do NOT trigger the auto-transition guard (Fix B test hygiene).
   state: "in_progress",
@@ -83,6 +93,8 @@ describe("WorkSessionService", () => {
     mockInterruptionUpdateManyGlobal.mockResolvedValue({ count: 0 } as any);
     // KAN-160: default — no other active worker on the issue unless a test sets one.
     mockSessionFindFirst.mockResolvedValue(null as any);
+    mockUpdateIssue.mockResolvedValue({} as any);
+    mockUpsertPlan.mockResolvedValue({} as any);
   });
 
   // ── startWork ──────────────────────────────────────────────────────────
@@ -175,16 +187,15 @@ describe("WorkSessionService", () => {
       mockIssueFind.mockResolvedValue(unassignedIssue);
       mockSessionUpsert.mockResolvedValue(fakeSession);
       mockSessionFindMany.mockResolvedValue([]);
-      mockIssueUpdate.mockResolvedValue({} as any);
 
       const result = await startWork("KAN-42", "member-1", "user-1", "mcp");
 
       expect(result.autoAssigned).toBe(true);
-      expect(mockIssueUpdate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: "issue-1" },
-          data: { assignee: { connect: { id: "member-1" } } },
-        })
+      expect(mockUpdateIssue).toHaveBeenCalledWith(
+        "KAN-42",
+        { assigneeId: "member-1" },
+        "member-1",
+        null,
       );
     });
 
@@ -197,7 +208,26 @@ describe("WorkSessionService", () => {
       const result = await startWork("KAN-42", "member-1", "user-1", "mcp");
 
       expect(result.autoAssigned).toBe(false);
-      expect(mockIssueUpdate).not.toHaveBeenCalled();
+      expect(mockUpdateIssue).not.toHaveBeenCalled();
+    });
+
+    it("sets the current start date when work begins without a plan", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-08-03T12:34:56.000Z"));
+      mockIssueFind.mockResolvedValue({ ...fakeIssue, schedule: null });
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockSessionFindMany.mockResolvedValue([]);
+
+      await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      expect(mockUpsertPlan).toHaveBeenCalledWith(
+        "KAN-42",
+        { startDate: "2026-08-03T12:34:56.000Z" },
+        "member-1",
+        null,
+        { startDateIfMissing: true },
+      );
+      vi.useRealTimers();
     });
 
     it("emits work_session.started event", async () => {
@@ -1398,7 +1428,7 @@ describe("WorkSessionService", () => {
       mockSessionFindMany.mockResolvedValue([]);
 
       const callOrder: string[] = [];
-      mockIssueUpdate.mockImplementation(async () => { callOrder.push("assign"); return {} as any; });
+      mockUpdateIssue.mockImplementation(async () => { callOrder.push("assign"); return {} as any; });
       mockTransitionIssue.mockImplementation(async () => { callOrder.push("transition"); return {} as any; });
 
       await startWork("KAN-42", "member-1", "user-1", "mcp");

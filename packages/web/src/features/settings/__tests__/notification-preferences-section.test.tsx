@@ -6,6 +6,7 @@
  * - Toggling a row calls the mutation with the full updated prefs object.
  * - Loading state renders a loading message.
  * - Error state renders an error message.
+ * - Each toggle exposes an accessible name matching its row label (KAN-212 Slice A).
  *
  * Pattern: mock hooks, render component, assert DOM state and mutation calls.
  * Mirrors members-section.test.tsx harness structure.
@@ -83,6 +84,38 @@ async function renderSection(opts: {
   return { mutateFn };
 }
 
+describe("NotificationPreferencesSection — list layout (KAN-213 Slice B)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("renders toggles inside SettingsList rows without a column header row", async () => {
+    await renderSection({ data: DEFAULT_PREFS });
+
+    expect(screen.queryByTestId("settings-list-header")).not.toBeInTheDocument();
+    const mentionRow = screen.getByTestId("toggle-emailMention").closest('[role="row"]');
+    expect(mentionRow).toHaveStyle({ minHeight: "48px" });
+  });
+
+  it("passes workspaceId to preference hooks for workspace scoping", async () => {
+    await renderSection({ data: DEFAULT_PREFS });
+
+    const { useNotificationPreferencesQuery } = await import(
+      "../use-notification-preferences-query"
+    );
+    const { useUpdateNotificationPreferencesMutation } = await import(
+      "../use-update-notification-preferences-mutation"
+    );
+
+    expect(useNotificationPreferencesQuery).toHaveBeenCalledWith(WORKSPACE_ID);
+    expect(useUpdateNotificationPreferencesMutation).toHaveBeenCalledWith(WORKSPACE_ID);
+  });
+});
+
 describe("NotificationPreferencesSection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -147,5 +180,22 @@ describe("NotificationPreferencesSection", () => {
   it("renders error state when error is present", async () => {
     await renderSection({ error: new Error("fetch failed"), data: undefined });
     expect(screen.getByText(/failed/i)).toBeInTheDocument();
+  });
+
+  it("each toggle has an aria-label matching its row label", async () => {
+    await renderSection({ data: DEFAULT_PREFS });
+
+    expect(screen.getByTestId("toggle-emailMention")).toHaveAttribute(
+      "aria-label",
+      "Mentions",
+    );
+    expect(screen.getByTestId("toggle-emailAssignment")).toHaveAttribute(
+      "aria-label",
+      "Assignments",
+    );
+    expect(screen.getByTestId("toggle-emailCycleClosed")).toHaveAttribute(
+      "aria-label",
+      "Cycle closed",
+    );
   });
 });

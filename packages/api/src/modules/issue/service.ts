@@ -538,6 +538,7 @@ export async function getIssue(key: string, memberId?: string) {
       cycle: {
         select: { id: true, name: true },
       },
+      schedule: true,
     },
   });
   if (!issue) {

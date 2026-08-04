@@ -118,7 +118,18 @@ export class RedmineProviderAdapter implements PmProviderAdapter {
   ) {}
 
   async capabilities() {
-    return { canCreateProjects: true, canCreateCycles: true, canCreateIssues: true } as const;
+    return {
+      canCreateProjects: true,
+      canCreateCycles: true,
+      canCreateIssues: true,
+      canReadIssues: true,
+      canUpdateIssues: true,
+      canReadPublicComments: true,
+      canCreatePublicComments: true,
+      canMutateComments: false,
+      hasDeletionSignals: false,
+      hasWebhooks: false,
+    } as const;
   }
 
   async listProjects() {
