@@ -55,6 +55,16 @@ type PreviewEvidence = z.infer<typeof PreviewEvidence>;
 type Database = Prisma.TransactionClient;
 type Client = Pick<RedmineHttpClient, "get">;
 
+export interface RedmineIssueImportContext {
+  readonly connectionId: string;
+  readonly bindingId: string;
+  readonly projectId: string;
+  readonly projectKey: string;
+  readonly workspaceId: string;
+  readonly readMap: Prisma.JsonValue;
+  readonly provenance: "redmine-inbound-bootstrap" | "redmine-inbound-discovery";
+}
+
 export interface RedmineImportDependencies {
   readonly now?: () => Date;
   readonly decrypt?: (ciphertext: string) => string;
@@ -170,6 +180,181 @@ function applicationKey(bindingId: string, change: RedmineIssueChange): string {
   return createHash("sha256")
     .update(`${bindingId}|issue|${change.identity.remoteId}|${change.sourceVersion}`)
     .digest("hex");
+}
+
+export async function persistRedmineIssueImportsTx(
+  database: Database,
+  context: RedmineIssueImportContext,
+  changes: readonly RedmineIssueChange[],
+): Promise<string[]> {
+  const readMap =
+    context.readMap && typeof context.readMap === "object" && !Array.isArray(context.readMap)
+      ? (context.readMap as Record<string, unknown>)
+      : {};
+  const imports = changes.map((change) => {
+    if (change.operation !== "upsert" || !("statusId" in change.fields)) {
+      throw new AppError(409, "REDMINE_PREVIEW_STALE", "A Redmine issue became private");
+    }
+    const state = IssueState.safeParse(readMap[change.fields.statusId]);
+    if (!state.success) {
+      throw new AppError(
+        409,
+        "REDMINE_STATUS_UNMAPPED",
+        `Redmine status ${change.fields.statusId} has no inbound mapping`,
+      );
+    }
+    return { change, fields: change.fields, state: state.data };
+  });
+  if (!imports.length) return [];
+
+  const assigneeIds = imports.flatMap(({ fields }) =>
+    fields.assignee ? [fields.assignee.remoteId] : [],
+  );
+  const existingIdentities = assigneeIds.length
+    ? await database.integrationExternalIdentity.findMany({
+        where: { bindingId: context.bindingId, remoteUserId: { in: assigneeIds } },
+        select: {
+          remoteUserId: true,
+          memberId: true,
+          member: { select: { workspaceId: true } },
+        },
+      })
+    : [];
+  const assignees = new Map(
+    existingIdentities.map((identity) => [
+      identity.remoteUserId,
+      identity.member?.workspaceId === context.workspaceId ? identity.memberId : null,
+    ]),
+  );
+  const actors = new Map<string, NonNullable<RedmineIssueChange["actor"]>>();
+  for (const { change, fields } of imports) {
+    if (change.actor) actors.set(change.actor.remoteId, change.actor);
+    if (fields.assignee) actors.set(fields.assignee.remoteId, fields.assignee);
+  }
+  for (const actor of actors.values()) {
+    await database.integrationExternalIdentity.upsert({
+      where: {
+        bindingId_remoteUserId: { bindingId: context.bindingId, remoteUserId: actor.remoteId },
+      },
+      create: {
+        bindingId: context.bindingId,
+        remoteUserId: actor.remoteId,
+        remoteLogin: actor.username ?? null,
+        remoteDisplayName: actor.displayName,
+      },
+      update: {
+        ...(actor.username === undefined ? {} : { remoteLogin: actor.username }),
+        remoteDisplayName: actor.displayName,
+      },
+    });
+  }
+
+  const project = await database.project.update({
+    where: { id: context.projectId },
+    data: { lastSequenceNum: { increment: imports.length } },
+    select: { lastSequenceNum: true },
+  });
+  const firstSequence = project.lastSequenceNum - imports.length + 1;
+  const issueKeys: string[] = [];
+
+  for (const [index, entry] of imports.entries()) {
+    const { change, fields, state } = entry;
+    const correlationId = applicationKey(context.bindingId, change);
+    const assigneeId = fields.assignee
+      ? (assignees.get(fields.assignee.remoteId) ?? null)
+      : null;
+    const sequenceNum = firstSequence + index;
+    const issue = await database.issue.create({
+      data: {
+        key: `${context.projectKey}-${sequenceNum}`,
+        sequenceNum,
+        title: fields.title,
+        description: fields.description,
+        state,
+        projectId: context.projectId,
+        assigneeId,
+        createdAt: change.createdAt ?? change.changedAt,
+        completedAt: state === "done" ? (change.closedAt ?? change.changedAt) : null,
+      },
+    });
+    const ref = await database.externalRef.create({
+      data: {
+        connectionId: context.connectionId,
+        bindingId: context.bindingId,
+        entityType: "issue",
+        entityId: issue.id,
+        externalId: change.identity.remoteId,
+        remoteUpdatedAt: change.changedAt,
+        localVersion: 1,
+        lastCorrelationId: correlationId,
+        metadata: {
+          remoteVersion: change.sourceVersion,
+          baseline: {
+            version: 1,
+            sourceVersion: change.sourceVersion,
+            changedAt: change.changedAt.toISOString(),
+            createdAt: (change.createdAt ?? change.changedAt).toISOString(),
+            completedAt:
+              state === "done" ? (change.closedAt ?? change.changedAt).toISOString() : null,
+            fields: {
+              title: fields.title,
+              description: fields.description,
+              state,
+              assigneeId,
+              startDate: fields.startDate,
+              dueDate: fields.dueDate,
+              progress: fields.progress,
+            },
+          },
+        },
+      },
+    });
+    await captureIssueMutationTx(database, {
+      result: issue,
+      capture: {
+        bindingId: context.bindingId,
+        direction: "inbound",
+        operation: "create",
+        actorKey: `redmine:user:${change.actor?.remoteId ?? "unknown"}`,
+        actorKind: "remote",
+        correlationId,
+        refId: ref.id,
+        fields: {
+          title: issue.title,
+          description: issue.description,
+          state: issue.state,
+          assigneeId: issue.assigneeId,
+        },
+      },
+    });
+    const work = await database.integrationSyncWork.findFirstOrThrow({
+      where: {
+        bindingId: context.bindingId,
+        direction: "inbound",
+        correlationId,
+        entityId: issue.id,
+      },
+      select: { id: true },
+    });
+    await database.integrationInboundApplication.create({
+      data: {
+        bindingId: context.bindingId,
+        remoteEntityType: "issue",
+        remoteId: change.identity.remoteId,
+        remoteUpdatedAt: change.changedAt,
+        sourceVersion: change.sourceVersion,
+        applicationKey: correlationId,
+        correlationId,
+        state: "applied",
+        refId: ref.id,
+        workId: work.id,
+        outcome: { provenance: context.provenance, issueKey: issue.key },
+      },
+    });
+    issueKeys.push(issue.key);
+  }
+
+  return issueKeys;
 }
 
 export async function previewRedmineIssueImport(
@@ -444,27 +629,6 @@ export async function activateRedmineIssueImport(
     throw remoteFailure();
   }
 
-  const readMap =
-    current.binding.readMap &&
-    typeof current.binding.readMap === "object" &&
-    !Array.isArray(current.binding.readMap)
-      ? (current.binding.readMap as Record<string, unknown>)
-      : {};
-  const imports = changes.map((change) => {
-    if (!("statusId" in change.fields)) {
-      throw new AppError(409, "REDMINE_PREVIEW_STALE", "A Redmine issue became private");
-    }
-    const state = IssueState.safeParse(readMap[change.fields.statusId]);
-    if (!state.success) {
-      throw new AppError(
-        409,
-        "REDMINE_STATUS_UNMAPPED",
-        `Redmine status ${change.fields.statusId} has no inbound mapping`,
-      );
-    }
-    return { change, fields: change.fields, state: state.data };
-  });
-
   try {
     return await prisma.$transaction(
       async (transaction) => {
@@ -492,7 +656,7 @@ export async function activateRedmineIssueImport(
           throw new AppError(409, "REDMINE_PREVIEW_STALE", "The Redmine import preview changed");
         }
 
-        const remoteIds = imports.map(({ change }) => change.identity.remoteId);
+        const remoteIds = changes.map((change) => change.identity.remoteId);
         const existingRefs = remoteIds.length
           ? await transaction.externalRef.findMany({
               where: { connectionId, entityType: "issue", externalId: { in: remoteIds } },
@@ -519,151 +683,19 @@ export async function activateRedmineIssueImport(
           },
         });
 
-        const assigneeIds = imports.flatMap(({ fields }) =>
-          fields.assignee ? [fields.assignee.remoteId] : [],
+        const issueKeys = await persistRedmineIssueImportsTx(
+          transaction,
+          {
+            connectionId,
+            bindingId,
+            projectId: locked.binding.projectId,
+            projectKey: locked.binding.project.key,
+            workspaceId: locked.connection.workspaceId,
+            readMap: locked.binding.readMap,
+            provenance: "redmine-inbound-bootstrap",
+          },
+          changes,
         );
-        const existingIdentities = assigneeIds.length
-          ? await transaction.integrationExternalIdentity.findMany({
-              where: { bindingId, remoteUserId: { in: assigneeIds } },
-              select: {
-                remoteUserId: true,
-                memberId: true,
-                member: { select: { workspaceId: true } },
-              },
-            })
-          : [];
-        const assignees = new Map(
-          existingIdentities.map((identity) => [
-            identity.remoteUserId,
-            identity.member?.workspaceId === locked.connection.workspaceId
-              ? identity.memberId
-              : null,
-          ]),
-        );
-        const actors = new Map<string, NonNullable<RedmineIssueChange["actor"]>>();
-        for (const { change, fields } of imports) {
-          if (change.actor) actors.set(change.actor.remoteId, change.actor);
-          if (fields.assignee) actors.set(fields.assignee.remoteId, fields.assignee);
-        }
-        for (const actor of actors.values()) {
-          await transaction.integrationExternalIdentity.upsert({
-            where: { bindingId_remoteUserId: { bindingId, remoteUserId: actor.remoteId } },
-            create: {
-              bindingId,
-              remoteUserId: actor.remoteId,
-              remoteLogin: actor.username ?? null,
-              remoteDisplayName: actor.displayName,
-            },
-            update: {
-              ...(actor.username === undefined ? {} : { remoteLogin: actor.username }),
-              remoteDisplayName: actor.displayName,
-            },
-          });
-        }
-
-        const project = imports.length
-          ? await transaction.project.update({
-              where: { id: locked.binding.projectId },
-              data: { lastSequenceNum: { increment: imports.length } },
-              select: { key: true, lastSequenceNum: true },
-            })
-          : { key: locked.binding.project.key, lastSequenceNum: 0 };
-        const firstSequence = project.lastSequenceNum - imports.length + 1;
-        const issueKeys: string[] = [];
-
-        for (const [index, entry] of imports.entries()) {
-          const { change, fields, state } = entry;
-          const correlationId = applicationKey(bindingId, change);
-          const assigneeId = fields.assignee
-            ? (assignees.get(fields.assignee.remoteId) ?? null)
-            : null;
-          const sequenceNum = firstSequence + index;
-          const issue = await transaction.issue.create({
-            data: {
-              key: `${project.key}-${sequenceNum}`,
-              sequenceNum,
-              title: fields.title,
-              description: fields.description,
-              state,
-              projectId: locked.binding.projectId,
-              assigneeId,
-              createdAt: change.createdAt ?? change.changedAt,
-              completedAt: state === "done" ? (change.closedAt ?? change.changedAt) : null,
-            },
-          });
-          const ref = await transaction.externalRef.create({
-            data: {
-              connectionId,
-              bindingId,
-              entityType: "issue",
-              entityId: issue.id,
-              externalId: change.identity.remoteId,
-              remoteUpdatedAt: change.changedAt,
-              localVersion: 1,
-              lastCorrelationId: correlationId,
-              metadata: {
-                remoteVersion: change.sourceVersion,
-                baseline: {
-                  version: 1,
-                  sourceVersion: change.sourceVersion,
-                  changedAt: change.changedAt.toISOString(),
-                  createdAt: (change.createdAt ?? change.changedAt).toISOString(),
-                  completedAt:
-                    state === "done"
-                      ? (change.closedAt ?? change.changedAt).toISOString()
-                      : null,
-                  fields: {
-                    title: fields.title,
-                    description: fields.description,
-                    state,
-                    assigneeId,
-                    startDate: fields.startDate,
-                    dueDate: fields.dueDate,
-                    progress: fields.progress,
-                  },
-                },
-              },
-            },
-          });
-          await captureIssueMutationTx(transaction, {
-            result: issue,
-            capture: {
-              bindingId,
-              direction: "inbound",
-              operation: "create",
-              actorKey: `redmine:user:${change.actor?.remoteId ?? "unknown"}`,
-              actorKind: "remote",
-              correlationId,
-              refId: ref.id,
-              fields: {
-                title: issue.title,
-                description: issue.description,
-                state: issue.state,
-                assigneeId: issue.assigneeId,
-              },
-            },
-          });
-          const work = await transaction.integrationSyncWork.findFirstOrThrow({
-            where: { bindingId, direction: "inbound", correlationId, entityId: issue.id },
-            select: { id: true },
-          });
-          await transaction.integrationInboundApplication.create({
-            data: {
-              bindingId,
-              remoteEntityType: "issue",
-              remoteId: change.identity.remoteId,
-              remoteUpdatedAt: change.changedAt,
-              sourceVersion: change.sourceVersion,
-              applicationKey: correlationId,
-              correlationId,
-              state: "applied",
-              refId: ref.id,
-              workId: work.id,
-              outcome: { provenance: "redmine-inbound-bootstrap", issueKey: issue.key },
-            },
-          });
-          issueKeys.push(issue.key);
-        }
 
         const cursor = checkpoint(evidence.checkpoint) ?? {
           updatedAt: new Date(0),
