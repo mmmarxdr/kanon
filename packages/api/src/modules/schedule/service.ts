@@ -152,9 +152,25 @@ export async function upsertPlan(
     }
     return result;
   };
-  const schedule = options?.startDateIfMissing || capture
-    ? await prisma.$transaction(writeSchedule)
-    : await prisma.issueSchedule.upsert(upsert);
+  const write = () =>
+    options?.startDateIfMissing || capture
+      ? prisma.$transaction(writeSchedule)
+      : prisma.issueSchedule.upsert(upsert);
+  let schedule;
+  try {
+    schedule = await write();
+  } catch (error) {
+    const target =
+      error instanceof Prisma.PrismaClientKnownRequestError ? error.meta?.["target"] : undefined;
+    if (error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002" &&
+        Array.isArray(target) &&
+        target.includes("issueId")) {
+      schedule = await write();
+    } else {
+      throw error;
+    }
+  }
 
   // Fire-and-forget post-commit event
   try {

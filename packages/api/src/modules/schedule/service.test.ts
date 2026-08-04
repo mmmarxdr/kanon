@@ -114,6 +114,25 @@ describe("ScheduleService", () => {
       );
     });
 
+    it("retries an issue schedule create race once", async () => {
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      const schedule = makeSchedule({ startDate: new Date("2026-08-01T00:00:00.000Z") });
+      mockScheduleUpsert
+        .mockRejectedValueOnce(
+          new Prisma.PrismaClientKnownRequestError("IssueSchedule create race", {
+            code: "P2002",
+            clientVersion: "6.0.0",
+            meta: { target: ["issueId"] },
+          }),
+        )
+        .mockResolvedValueOnce(schedule);
+
+      await expect(
+        upsertPlan("KAN-99", { startDate: "2026-08-01T00:00:00.000Z" }, "member-1"),
+      ).resolves.toEqual(schedule);
+      expect(mockScheduleUpsert).toHaveBeenCalledTimes(2);
+    });
+
     it("throws 422 INVALID_PROGRESS when progress > 100", async () => {
       mockIssueFind.mockResolvedValue(fakeIssue);
 
