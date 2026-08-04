@@ -334,3 +334,24 @@ input, textarea, select { font: inherit; color: inherit; }
     height: min(300px, 40vh);
   }
 }
+
+/* ===========================================================================
+   Settings list — responsive column templates (KAN-213 follow-up)
+   ---------------------------------------------------------------------------
+   Mobile and desktop track counts differ because hideBelow columns use
+   display:none (which does not remove CSS grid tracks). Templates are set via
+   CSS variables from SettingsList so media queries can switch them.
+   --------------------------------------------------------------------------- */
+.settings-list-grid {
+  display: grid;
+  column-gap: 12px;
+  align-items: center;
+  min-width: 0;
+  grid-template-columns: var(--settings-list-cols-mobile);
+}
+
+@media (min-width: 640px) {
+  .settings-list-grid {
+    grid-template-columns: var(--settings-list-cols);
+  }
+}

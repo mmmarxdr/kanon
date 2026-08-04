@@ -14,6 +14,7 @@ import {
   SettingsList,
   SettingsListRow,
   WORKSPACE_MEMBERS_GRID,
+  WORKSPACE_MEMBERS_GRID_MOBILE,
   workspaceMembersColumns,
 } from "@/components/ui/settings-list";
 import { OnboardingLinkModal } from "./onboarding-link-modal";
@@ -88,6 +89,7 @@ export function MembersSection({
         <SettingsList
           columns={listColumns}
           gridTemplateColumns={WORKSPACE_MEMBERS_GRID}
+          mobileGridTemplateColumns={WORKSPACE_MEMBERS_GRID_MOBILE}
           data-testid="workspace-members-list"
         >
           {members.map((member) => {
