@@ -6,6 +6,7 @@ import {
   SettingsList,
   SettingsListRow,
   PROJECT_MEMBERS_GRID,
+  PROJECT_MEMBERS_GRID_MOBILE,
   projectMembersColumns,
 } from "@/components/ui/settings-list";
 import { ApiError } from "@/lib/api-client";
@@ -168,6 +169,7 @@ export function ProjectMembersSection({
         <SettingsList
           columns={listColumns}
           gridTemplateColumns={PROJECT_MEMBERS_GRID}
+          mobileGridTemplateColumns={PROJECT_MEMBERS_GRID_MOBILE}
           data-testid="project-members-list"
         >
           {members.map((member) => {

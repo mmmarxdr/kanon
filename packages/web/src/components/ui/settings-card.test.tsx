@@ -80,7 +80,15 @@ describe("SettingsCard v2 (KAN-213 Slice C)", () => {
 
     const listRegion = screen.getByTestId("list-region");
     const insetWrapper = listRegion.parentElement;
-    expect(insetWrapper).toHaveClass("bg-secondary/20", "-mx-5", "sm:-mx-6");
+    // Background bleeds to card edges; content padding is restored so rows
+    // stay aligned with the title (not flush/clipped against the border).
+    expect(insetWrapper).toHaveClass(
+      "bg-secondary/20",
+      "-mx-5",
+      "sm:-mx-6",
+      "px-5",
+      "sm:px-6",
+    );
     expect(screen.getByRole("heading", { name: "Members" }).closest("div")).not.toHaveClass(
       "bg-secondary/20",
     );

@@ -1,5 +1,5 @@
 /**
- * SettingsList layout primitive (KAN-213 Slice B).
+ * SettingsList layout primitive (KAN-213 Slice B + inset/responsive follow-up).
  */
 
 import { describe, it, expect } from "vitest";
@@ -8,7 +8,10 @@ import {
   SettingsList,
   SettingsListRow,
   WORKSPACE_MEMBERS_GRID,
+  WORKSPACE_MEMBERS_GRID_MOBILE,
+  INVITES_GRID_MOBILE,
   workspaceMembersColumns,
+  invitesColumns,
 } from "./settings-list";
 
 const MEMBER_COLUMNS = [
@@ -25,6 +28,7 @@ describe("SettingsList (KAN-213 Slice B)", () => {
       <SettingsList
         columns={MEMBER_COLUMNS}
         gridTemplateColumns={WORKSPACE_MEMBERS_GRID}
+        mobileGridTemplateColumns={WORKSPACE_MEMBERS_GRID_MOBILE}
         data-testid="members-list"
       >
         <SettingsListRow
@@ -53,6 +57,7 @@ describe("SettingsList (KAN-213 Slice B)", () => {
       <SettingsList
         columns={MEMBER_COLUMNS}
         gridTemplateColumns={WORKSPACE_MEMBERS_GRID}
+        mobileGridTemplateColumns={WORKSPACE_MEMBERS_GRID_MOBILE}
       >
         <SettingsListRow
           columns={[
@@ -67,10 +72,16 @@ describe("SettingsList (KAN-213 Slice B)", () => {
     );
 
     const header = screen.getByTestId("settings-list-header");
-    expect(header).toHaveStyle({ gridTemplateColumns: WORKSPACE_MEMBERS_GRID });
+    expect(header).toHaveClass("settings-list-grid");
+    expect(header.style.getPropertyValue("--settings-list-cols")).toBe(WORKSPACE_MEMBERS_GRID);
+    expect(header.style.getPropertyValue("--settings-list-cols-mobile")).toBe(
+      WORKSPACE_MEMBERS_GRID_MOBILE,
+    );
 
     const row = screen.getByRole("row", { name: /Bob/ });
-    expect(row).toHaveStyle({ minHeight: "48px", gridTemplateColumns: WORKSPACE_MEMBERS_GRID });
+    expect(row).toHaveClass("settings-list-grid");
+    expect(row).toHaveStyle({ minHeight: "48px" });
+    expect(row.style.getPropertyValue("--settings-list-cols")).toBe(WORKSPACE_MEMBERS_GRID);
     expect(screen.getByText("bob@example.com")).toBeInTheDocument();
   });
 
@@ -79,6 +90,7 @@ describe("SettingsList (KAN-213 Slice B)", () => {
       <SettingsList
         columns={MEMBER_COLUMNS}
         gridTemplateColumns={WORKSPACE_MEMBERS_GRID}
+        mobileGridTemplateColumns={WORKSPACE_MEMBERS_GRID_MOBILE}
       >
         <SettingsListRow
           columns={[
@@ -110,7 +122,11 @@ describe("SettingsList (KAN-213 Slice B)", () => {
     });
 
     render(
-      <SettingsList columns={columns} gridTemplateColumns={WORKSPACE_MEMBERS_GRID}>
+      <SettingsList
+        columns={columns}
+        gridTemplateColumns={WORKSPACE_MEMBERS_GRID}
+        mobileGridTemplateColumns={WORKSPACE_MEMBERS_GRID_MOBILE}
+      >
         <SettingsListRow
           columns={[
             <span key="m">Ana</span>,
@@ -140,5 +156,16 @@ describe("SettingsList (KAN-213 Slice B)", () => {
 
     expect(screen.queryByTestId("settings-list-header")).not.toBeInTheDocument();
     expect(screen.getByText("Mentions")).toBeInTheDocument();
+  });
+
+  it("hides invite meta columns below sm and exposes a 2-track mobile grid", () => {
+    const columns = invitesColumns((key) => key);
+    const metaKeys = ["status", "role", "email", "uses", "expires", "createdBy"];
+
+    for (const key of metaKeys) {
+      expect(columns.find((c) => c.key === key)?.hideBelow).toBe("sm");
+    }
+    expect(INVITES_GRID_MOBILE.split(/\s+/).filter(Boolean)).toHaveLength(2);
+    expect(WORKSPACE_MEMBERS_GRID_MOBILE.split(/\s+/).filter(Boolean)).toHaveLength(3);
   });
 });
