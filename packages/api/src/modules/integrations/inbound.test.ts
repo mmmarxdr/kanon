@@ -32,7 +32,7 @@ async function fixture(state = "review" as const) {
       memberId: owner.id,
       encryptedKey: "encrypted-service-key",
       lastAuthStatus: "valid",
-      lastValidatedAt: new Date(),
+      lastValidatedAt: baseline,
     },
   });
   await prisma.integrationConnection.update({
@@ -78,7 +78,7 @@ async function fixture(state = "review" as const) {
       lastCorrelationId: "outbound-correlation",
     },
   });
-  return { owner, binding, issue, ref };
+  return { workspace, owner, connection, credential, binding, issue, ref };
 }
 
 function change(
@@ -100,6 +100,7 @@ function change(
 function dependencies(changes: readonly InboundIssueStatusChange[]) {
   return {
     limit: 1,
+    now: () => baseline,
     decrypt: vi.fn(() => "service-secret"),
     createSource: vi.fn(() => ({
       poll: vi.fn(async () => ({
@@ -240,4 +241,120 @@ describe("Redmine inbound sync", () => {
       { direction: "outbound", state: "queued", correlationId: expect.any(String) },
     ]);
   });
+
+  it("invalidates a rejected service credential, releases its lease, and stops every binding", async () => {
+    const { workspace, connection, credential } = await fixture();
+    const secondProject = await seedTestProject(workspace.id);
+    await prisma.integrationProjectBinding.create({
+      data: {
+        connectionId: connection.id,
+        projectId: secondProject.id,
+        remoteProjectId: "42",
+        readMap: {},
+        writeMap: {},
+        lifecycle: "active",
+        lifecycleEpoch: 1,
+      },
+    });
+    const setup = dependencies([]);
+    const poll = vi.fn().mockRejectedValue({
+      name: "RedmineHttpError",
+      statusCode: 401,
+      apiKey: "must-not-be-logged",
+    });
+    setup.createSource.mockReturnValue({ poll });
+
+    await runInboundSyncCycle(prisma, { ...setup, limit: 2 });
+
+    expect(poll).toHaveBeenCalledOnce();
+    await expect(
+      prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: credential.id } }),
+    ).resolves.toMatchObject({ lastAuthStatus: "invalid" });
+    await expect(
+      prisma.integrationProjectBinding.count({
+        where: { connectionId: connection.id, OR: [{ pollLeaseToken: { not: null } }, { pollLeaseUntil: { not: null } }] },
+      }),
+    ).resolves.toBe(0);
+
+    expect(JSON.stringify(setup.logger.error.mock.calls)).not.toContain("must-not-be-logged");
+  });
+
+  it("keeps a replacement credential valid and releases the lease immediately after a stale 401", async () => {
+    const { credential, binding } = await fixture();
+    const setup = dependencies([]);
+    setup.createSource.mockReturnValue({
+      poll: vi.fn(async () => {
+        await prisma.memberIntegrationCredential.update({
+          where: { id: credential.id },
+          data: { encryptedKey: "replacement-key", lastValidatedAt: baseline },
+        });
+        throw Object.assign(new Error("rejected"), { statusCode: 401 });
+      }),
+    });
+
+    await runInboundSyncCycle(prisma, setup);
+
+    await expect(
+      prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: credential.id } }),
+    ).resolves.toMatchObject({
+      lastAuthStatus: "valid",
+    });
+    await expect(
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+    ).resolves.toMatchObject({ pollLeaseToken: null, pollLeaseUntil: null });
+  });
+
+  it("contains a reclaimed-poll 401 after invalidating the observed credential", async () => {
+    const { credential, binding } = await fixture();
+    const newLeaseUntil = new Date(baseline.getTime() + 120_000);
+    const setup = dependencies([]);
+    setup.createSource.mockReturnValue({
+      poll: vi.fn(async () => {
+        await prisma.integrationProjectBinding.update({
+          where: { id: binding.id },
+          data: {
+            pollLeaseToken: "new-owner",
+            pollLeaseUntil: newLeaseUntil,
+            pollFence: { increment: 1 },
+          },
+        });
+        throw Object.assign(new Error("rejected secret"), { statusCode: 401 });
+      }),
+    });
+
+    await expect(runInboundSyncCycle(prisma, setup)).resolves.toBeUndefined();
+    expect(
+      await prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: credential.id } }),
+    ).toMatchObject({ lastAuthStatus: "invalid" });
+    expect(
+      await prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+    ).toMatchObject({
+      pollLeaseToken: "new-owner",
+      pollLeaseUntil: newLeaseUntil,
+      pollFence: 2,
+    });
+    expect(JSON.stringify(setup.logger.error.mock.calls)).not.toContain("secret");
+  });
+
+  it.each([
+      Object.assign(new Error("forbidden secret"), { statusCode: 403, apiKey: "forbidden-key" }),
+      Object.assign(new Error("network secret"), { code: "ECONNRESET", apiKey: "network-key" }),
+    ])("keeps non-auth failures on the normal failed-poll delay without leaking errors", async (error) => {
+      const { credential, binding } = await fixture();
+      const setup = dependencies([]);
+      setup.createSource.mockReturnValue({ poll: vi.fn().mockRejectedValue(error) });
+
+      await runInboundSyncCycle(prisma, setup);
+
+      await expect(
+        prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: credential.id } }),
+      ).resolves.toMatchObject({ lastAuthStatus: "valid" });
+      await expect(
+        prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+      ).resolves.toMatchObject({
+        pollLeaseToken: null,
+        pollLeaseUntil: new Date(baseline.getTime() + 60_000),
+      });
+      expect(JSON.stringify(setup.logger.error.mock.calls)).not.toMatch(/secret|-key/);
+    });
 });

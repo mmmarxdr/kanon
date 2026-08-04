@@ -13,8 +13,10 @@ import {
   type CanonicalUser,
   type FieldValue,
   type InboundSource,
+  isProviderAuthenticationError,
   isRetryableProviderError,
   type PmProviderAdapter,
+  ProviderDispatchError,
   type ProviderCreateReconciler,
   type PushResult,
   type RemoteChange,
@@ -75,6 +77,22 @@ const noChangePatch: CanonicalIssuePatch = {
 };
 
 describe("integrations/core/types", () => {
+  it("classifies only HTTP 401 as a provider authentication failure", () => {
+    expect(isProviderAuthenticationError({ statusCode: 401 })).toBe(true);
+    expect(
+      isProviderAuthenticationError(new ProviderDispatchError("ambiguous", { statusCode: 401 })),
+    ).toBe(true);
+    expect(
+      isProviderAuthenticationError(
+        new ProviderDispatchError("ambiguous", new ProviderDispatchError("retry", { statusCode: 401 })),
+      ),
+    ).toBe(false);
+    expect(isProviderAuthenticationError(new Error("provider returned 401"))).toBe(false);
+    for (const statusCode of [403, 404, 429, 500, 503]) {
+      expect(isProviderAuthenticationError({ statusCode }), String(statusCode)).toBe(false);
+    }
+  });
+
   it("does not let network heuristics override a definitive HTTP status", () => {
     expect(isRetryableProviderError({ statusCode: 400, name: "TimeoutError", message: "socket timed out" })).toBe(false);
     expect(isRetryableProviderError({ statusCode: 429, message: "rate limited" })).toBe(true);
