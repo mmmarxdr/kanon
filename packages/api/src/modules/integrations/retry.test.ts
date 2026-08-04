@@ -30,6 +30,7 @@ import { prisma } from "../../config/prisma.js";
 import { ProviderDispatchError, type PmProviderAdapter, type PushResult } from "./core/types.js";
 import { RedmineProviderAdapter } from "./providers/redmine/adapter.js";
 import { RedmineHttpError } from "./providers/redmine/http-client.js";
+import { connectCredential, type ConnectionServiceDeps } from "./service.js";
 import {
   createIntegrationWorkerCycle,
   requeueDeadIntegrationWork,
@@ -227,6 +228,17 @@ const success = (externalId = "remote-42"): PushResult => ({
   achievedStatusId: "3",
   remoteVersion: "2026-07-30T12:00:01.000Z",
 });
+
+const replacementDeps: ConnectionServiceDeps = {
+  remote: () => ({
+    whoAmI: async () => ({ id: "remote-user", displayName: "Remote user", login: "remote" }),
+    listStatuses: async () => [],
+    listProjects: async () => [],
+    listTimeEntryActivities: async () => [],
+  }),
+  encrypt: (value) => `encrypted:${value}`,
+  decrypt: (value) => value,
+};
 
 beforeEach(() => prisma.integrationSyncWork.deleteMany());
 
@@ -1165,6 +1177,63 @@ describe("integration worker retry and completion", () => {
       attempts: 2,
       availableAt: NOW,
     });
+  });
+
+  it("does not strand work when replacement lands between invalidation and auth blocking", async () => {
+    const fixture = await createFixture();
+    const work = await createWork(fixture);
+    await createRef(fixture, "issue", fixture.issue.id, "remote-known");
+    await prisma.$executeRawUnsafe(`
+      CREATE OR REPLACE FUNCTION test_delay_auth_block_transition()
+      RETURNS trigger AS $$
+      BEGIN
+        IF NEW.skipped_reason = 'credential_invalid' THEN
+          PERFORM pg_sleep(0.5);
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TRIGGER test_delay_auth_block_transition
+      BEFORE UPDATE ON "integration_sync_work"
+      FOR EACH ROW EXECUTE FUNCTION test_delay_auth_block_transition()
+    `);
+    let running: Promise<void> | undefined;
+
+    try {
+      running = runIntegrationWorkerCycle(
+        prisma,
+        dependencies(adapter({ pushIssue: vi.fn().mockRejectedValue(new RedmineHttpError(401)) })).deps,
+      );
+      await vi.waitFor(async () => {
+        const credential = await prisma.memberIntegrationCredential.findUniqueOrThrow({
+          where: { id: fixture.credential.id },
+        });
+        expect(credential.lastAuthStatus).toBe("invalid");
+      });
+
+      await connectCredential(
+        fixture.connection.id,
+        "replacement-key",
+        fixture.user.id,
+        replacementDeps,
+      );
+      await running;
+
+      await expect(
+        prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: fixture.credential.id } }),
+      ).resolves.toMatchObject({ lastAuthStatus: "valid", encryptedKey: "encrypted:replacement-key" });
+      await expect(
+        prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } }),
+      ).resolves.toMatchObject({ state: "retry", skippedReason: null, attempts: 1 });
+    } finally {
+      await running?.catch(() => undefined);
+      await prisma.$executeRawUnsafe(
+        `DROP TRIGGER IF EXISTS test_delay_auth_block_transition ON "integration_sync_work"`,
+      );
+      await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS test_delay_auth_block_transition()`);
+    }
   });
 
   it("commits credential invalidation without mutating work reclaimed after a 401", async () => {

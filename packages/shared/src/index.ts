@@ -44,6 +44,7 @@ export type { NotificationPreferenceItem } from "./notifications.js";
 
 export {
   integrationLifecycleSchema,
+  integrationCredentialStatusSchema,
   integrationCredentialSchema,
   integrationDiscoverySchema,
   integrationConnectionSchema,

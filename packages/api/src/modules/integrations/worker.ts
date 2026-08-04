@@ -1224,26 +1224,46 @@ async function failAuthentication(
       },
       data: { lastAuthStatus: "invalid" },
     });
-    const blocked = invalidated.count === 1;
-    const state = mode === "ambiguous" ? "ambiguous" : blocked ? "dead" : "retry";
-    const now = await databaseNow(database, d.now);
-    const changed = await database.integrationSyncWork.updateMany({
-      where: { ...fenced(work), leaseUntil: { gt: now } },
-      data: {
-        state,
-        ...(blocked
-          ? {
-              ...(mode === "definitive" ? { attempts: work.attempts + 1 } : {}),
-              availableAt: mode === "ambiguous" ? AUTH_BLOCKED_UNTIL : undefined,
-              skippedReason: "credential_invalid",
-              authCredentialId: credential.id,
-            }
-          : { availableAt: now, skippedReason: null }),
-        leaseToken: null,
-        leaseUntil: null,
-      },
+    const { blocked, state } = await database.$transaction(async (transaction) => {
+      const current = await lockWork(transaction, work);
+      const now = await databaseNow(transaction, d.now);
+      if (!current || !leased(current, work, now)) throw new StaleFinalizeError();
+      const currentCredential = await transaction.memberIntegrationCredential.findUnique({
+        where: { id: credential.id },
+        select: { lastAuthStatus: true, lastValidatedAt: true, revokedAt: true },
+      });
+      const sameValidation =
+        currentCredential?.lastValidatedAt?.getTime() === credential.lastValidatedAt?.getTime() ||
+        (currentCredential?.lastValidatedAt === null && credential.lastValidatedAt === null);
+      const stillSelected =
+        current.actorKind === "user" ||
+        current.binding.connection.serviceCredentialId === credential.id;
+      const blocked =
+        invalidated.count === 1 &&
+        currentCredential?.lastAuthStatus === "invalid" &&
+        currentCredential.revokedAt === null &&
+        sameValidation &&
+        stillSelected;
+      const state = mode === "ambiguous" ? "ambiguous" : blocked ? "dead" : "retry";
+      const changed = await transaction.integrationSyncWork.updateMany({
+        where: { ...fenced(work), leaseUntil: { gt: now } },
+        data: {
+          state,
+          ...(blocked
+            ? {
+                ...(mode === "definitive" ? { attempts: work.attempts + 1 } : {}),
+                availableAt: mode === "ambiguous" ? AUTH_BLOCKED_UNTIL : undefined,
+                skippedReason: "credential_invalid",
+                authCredentialId: credential.id,
+              }
+            : { availableAt: now, skippedReason: null }),
+          leaseToken: null,
+          leaseUntil: null,
+        },
+      });
+      if (changed.count !== 1) throw new StaleFinalizeError();
+      return { blocked, state };
     });
-    if (changed.count !== 1) throw new StaleFinalizeError();
     log(
       d,
       blocked ? "error" : "warn",

@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
 import { integrationConnectionSchema } from "@kanon/shared";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -21,6 +23,7 @@ import {
   getConnectionDiscovery,
   getWorkspaceConnection,
   reencryptCredentials,
+  replaceServiceCredential,
   type ConnectionServiceDeps,
 } from "./service.js";
 
@@ -45,6 +48,43 @@ const writeMap = {
   review: "new",
   done: "new",
 };
+
+function blockedWorkData(input: {
+  bindingId: string;
+  credentialId: string;
+  entityId: string;
+  actorKey: string;
+  actorKind?: "user" | "system" | "ai";
+  state?: "dead" | "ambiguous";
+  skippedReason?: string;
+  operation?: "create" | "update" | "delete" | "close";
+  attempts?: number;
+  refId?: string | null;
+  payload?: Prisma.InputJsonValue;
+}): Prisma.IntegrationSyncWorkCreateManyInput {
+  const id = randomUUID();
+  return {
+    id,
+    bindingId: input.bindingId,
+    entityType: "issue",
+    entityId: input.entityId,
+    direction: "outbound",
+    operation: input.operation ?? "update",
+    dedupeKey: `credential-recovery:${id}`,
+    laneKey: `issue:${input.entityId}`,
+    actorKey: input.actorKey,
+    actorKind: input.actorKind ?? "user",
+    payload: input.payload ?? { version: 1 },
+    correlationId: `correlation:${id}`,
+    state: input.state ?? "dead",
+    attempts: input.attempts ?? 3,
+    availableAt: new Date("2999-01-01T00:00:00.000Z"),
+    epoch: 0,
+    authCredentialId: input.credentialId,
+    refId: input.refId ?? null,
+    skippedReason: input.skippedReason ?? "credential_invalid",
+  };
+}
 
 describe("integration credentials", () => {
   let app: FastifyInstance;
@@ -154,6 +194,364 @@ describe("integration credentials", () => {
     });
   });
 
+  it("does not write or redrive when replacement validation fails", async () => {
+    const workspace = await seedTestWorkspace();
+    const member = await seedTestMemberWithRole(workspace.id, "member");
+    const project = await seedTestProject(workspace.id);
+    const connection = await prisma.integrationConnection.create({
+      data: { workspaceId: workspace.id, provider: "redmine", baseUrl: "https://redmine.example.test" },
+    });
+    const binding = await prisma.integrationProjectBinding.create({
+      data: { connectionId: connection.id, projectId: project.id, remoteProjectId: "remote-project", readMap: {}, writeMap: {} },
+    });
+    const credential = await prisma.memberIntegrationCredential.create({
+      data: {
+        connectionId: connection.id,
+        memberId: member.id,
+        encryptedKey: "encrypted:rejected-key",
+        externalUserId: "remote-user",
+        lastAuthStatus: "invalid",
+      },
+    });
+    const work = await prisma.integrationSyncWork.create({
+      data: blockedWorkData({
+        bindingId: binding.id,
+        credentialId: credential.id,
+        entityId: project.id,
+        actorKey: `member:${member.id}`,
+      }),
+    });
+    const before = await prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } });
+    remote.whoAmI.mockRejectedValueOnce(new Error("rejected secret: replacement-key"));
+
+    await expect(
+      connectCredential(connection.id, "replacement-key", member.userId, deps),
+    ).rejects.toMatchObject({
+      statusCode: 502,
+      code: "REDMINE_CONNECTION_FAILED",
+      message: expect.not.stringContaining("replacement-key"),
+    });
+
+    expect(deps.encrypt).not.toHaveBeenCalled();
+    await expect(
+      prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: credential.id } }),
+    ).resolves.toMatchObject({ encryptedKey: "encrypted:rejected-key", lastAuthStatus: "invalid" });
+    expect(await prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).toEqual(before);
+  });
+
+  it("atomically redrives only personal work blocked by the replaced credential", async () => {
+    const workspace = await seedTestWorkspace();
+    const member = await seedTestMemberWithRole(workspace.id, "member");
+    const project = await seedTestProject(workspace.id);
+    const connection = await prisma.integrationConnection.create({
+      data: { workspaceId: workspace.id, provider: "redmine", baseUrl: "https://redmine.example.test" },
+    });
+    const binding = await prisma.integrationProjectBinding.create({
+      data: { connectionId: connection.id, projectId: project.id, remoteProjectId: "remote-project", readMap: {}, writeMap: {} },
+    });
+    const credential = await prisma.memberIntegrationCredential.create({
+      data: {
+        connectionId: connection.id,
+        memberId: member.id,
+        encryptedKey: "encrypted:old-key",
+        externalUserId: "member-remote",
+        lastAuthStatus: "invalid",
+      },
+    });
+    const ref = await prisma.externalRef.create({
+      data: {
+        connectionId: connection.id,
+        bindingId: binding.id,
+        entityType: "issue",
+        entityId: project.id,
+        externalId: "remote-issue",
+      },
+    });
+    const personal = `member:${member.id}`;
+    const [dead, ambiguous, otherDead, serviceDead] = await Promise.all([
+      prisma.integrationSyncWork.create({
+        data: blockedWorkData({
+          bindingId: binding.id,
+          credentialId: credential.id,
+          entityId: project.id,
+          actorKey: personal,
+          operation: "create",
+          attempts: 5,
+          refId: ref.id,
+          payload: { version: 1, title: "preserved" },
+        }),
+      }),
+      prisma.integrationSyncWork.create({
+        data: blockedWorkData({
+          bindingId: binding.id,
+          credentialId: credential.id,
+          entityId: project.id,
+          actorKey: personal,
+          state: "ambiguous",
+        }),
+      }),
+      prisma.integrationSyncWork.create({
+        data: blockedWorkData({
+          bindingId: binding.id,
+          credentialId: credential.id,
+          entityId: project.id,
+          actorKey: personal,
+          skippedReason: "provider_failure",
+        }),
+      }),
+      prisma.integrationSyncWork.create({
+        data: blockedWorkData({
+          bindingId: binding.id,
+          credentialId: credential.id,
+          entityId: project.id,
+          actorKey: "system:scheduler",
+          actorKind: "system",
+        }),
+      }),
+    ]);
+    remote.whoAmI.mockResolvedValueOnce({
+      id: "member-remote",
+      displayName: "Member Remote",
+      login: "member",
+    });
+    const startedAt = Date.now();
+
+    await connectCredential(connection.id, "replacement-key", member.userId, deps);
+
+    await expect(
+      prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: credential.id } }),
+    ).resolves.toMatchObject({ encryptedKey: "encrypted:replacement-key", lastAuthStatus: "valid" });
+    const recoveredDead = await prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: dead.id } });
+    expect(recoveredDead).toMatchObject({
+      id: dead.id,
+      dedupeKey: dead.dedupeKey,
+      correlationId: dead.correlationId,
+      operation: dead.operation,
+      payload: dead.payload,
+      actorKey: dead.actorKey,
+      actorKind: dead.actorKind,
+      refId: dead.refId,
+      attempts: dead.attempts,
+      state: "retry",
+      skippedReason: null,
+      authCredentialId: credential.id,
+    });
+    expect(recoveredDead.availableAt.getTime()).toBeGreaterThanOrEqual(startedAt);
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: ambiguous.id } }),
+    ).resolves.toMatchObject({ state: "ambiguous", skippedReason: null, attempts: ambiguous.attempts });
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: otherDead.id } }),
+    ).resolves.toMatchObject({ state: "dead", skippedReason: "provider_failure" });
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: serviceDead.id } }),
+    ).resolves.toMatchObject({ state: "dead", skippedReason: "credential_invalid" });
+  });
+
+  it("lets only an instance admin replace and rebind the service credential", async () => {
+    const workspace = await seedTestWorkspace();
+    const previousAdmin = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
+    const replacementAdmin = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
+    const nonAdminOwner = await seedTestMemberWithRole(workspace.id, "owner");
+    const project = await seedTestProject(workspace.id);
+    const connection = await prisma.integrationConnection.create({
+      data: { workspaceId: workspace.id, provider: "redmine", baseUrl: "https://redmine.example.test" },
+    });
+    const previousCredential = await prisma.memberIntegrationCredential.create({
+      data: {
+        connectionId: connection.id,
+        memberId: previousAdmin.id,
+        encryptedKey: "encrypted:old-service-key",
+        externalUserId: "remote-user",
+        lastAuthStatus: "invalid",
+      },
+    });
+    await prisma.integrationConnection.update({
+      where: { id: connection.id },
+      data: { serviceCredentialId: previousCredential.id },
+    });
+    const binding = await prisma.integrationProjectBinding.create({
+      data: { connectionId: connection.id, projectId: project.id, remoteProjectId: "remote-project", readMap: {}, writeMap: {} },
+    });
+    const identity = await prisma.integrationExternalIdentity.create({
+      data: {
+        bindingId: binding.id,
+        memberId: previousAdmin.id,
+        remoteUserId: "remote-user",
+        remoteLogin: "remote",
+      },
+    });
+    const [dead, ambiguous, personal, orphaned] = await Promise.all([
+      prisma.integrationSyncWork.create({
+        data: blockedWorkData({
+          bindingId: binding.id,
+          credentialId: previousCredential.id,
+          entityId: project.id,
+          actorKey: "system:scheduler",
+          actorKind: "system",
+        }),
+      }),
+      prisma.integrationSyncWork.create({
+        data: blockedWorkData({
+          bindingId: binding.id,
+          credentialId: previousCredential.id,
+          entityId: project.id,
+          actorKey: "ai:agent",
+          actorKind: "ai",
+          state: "ambiguous",
+        }),
+      }),
+      prisma.integrationSyncWork.create({
+        data: blockedWorkData({
+          bindingId: binding.id,
+          credentialId: previousCredential.id,
+          entityId: project.id,
+          actorKey: `member:${previousAdmin.id}`,
+        }),
+      }),
+      prisma.integrationSyncWork.create({
+        data: {
+          ...blockedWorkData({
+            bindingId: binding.id,
+            credentialId: previousCredential.id,
+            entityId: project.id,
+            actorKey: "system:orphaned",
+            actorKind: "system",
+          }),
+          authCredentialId: null,
+        },
+      }),
+    ]);
+
+    const forbidden = await app.inject({
+      method: "PUT",
+      url: `/api/integrations/connections/${connection.id}/service-credential`,
+      headers: { authorization: `Bearer ${nonAdminOwner.token}` },
+      payload: { apiKey: "replacement-service-key" },
+    });
+    expect(forbidden.statusCode).toBe(403);
+    expect((await prisma.integrationConnection.findUniqueOrThrow({ where: { id: connection.id } })).serviceCredentialId).toBe(previousCredential.id);
+
+    await replaceServiceCredential(connection.id, "replacement-service-key", replacementAdmin.userId, deps);
+
+    const replacement = await prisma.memberIntegrationCredential.findUniqueOrThrow({
+      where: { memberId_connectionId: { memberId: replacementAdmin.id, connectionId: connection.id } },
+    });
+    expect(replacement).toMatchObject({
+      encryptedKey: "encrypted:replacement-service-key",
+      externalUserId: "remote-user",
+      lastAuthStatus: "valid",
+    });
+    expect((await prisma.integrationConnection.findUniqueOrThrow({ where: { id: connection.id } })).serviceCredentialId).toBe(replacement.id);
+    await expect(
+      prisma.integrationExternalIdentity.findUniqueOrThrow({ where: { id: identity.id } }),
+    ).resolves.toMatchObject({ memberId: replacementAdmin.id, remoteUserId: "remote-user" });
+    await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: dead.id } })).resolves.toMatchObject({
+      state: "retry",
+      skippedReason: null,
+      authCredentialId: replacement.id,
+    });
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: ambiguous.id } }),
+    ).resolves.toMatchObject({
+      state: "ambiguous",
+      skippedReason: null,
+      authCredentialId: replacement.id,
+    });
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: personal.id } }),
+    ).resolves.toMatchObject({
+      state: "dead",
+      skippedReason: "credential_invalid",
+      authCredentialId: previousCredential.id,
+    });
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: orphaned.id } }),
+    ).resolves.toMatchObject({
+      state: "retry",
+      skippedReason: null,
+      authCredentialId: replacement.id,
+    });
+  });
+
+  it("caps blocked-work health details and redacts them from regular members", async () => {
+    const workspace = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const member = await seedTestMemberWithRole(workspace.id, "member");
+    const project = await seedTestProject(workspace.id);
+    const connection = await prisma.integrationConnection.create({
+      data: { workspaceId: workspace.id, provider: "redmine", baseUrl: "https://redmine.example.test" },
+    });
+    const credential = await prisma.memberIntegrationCredential.create({
+      data: {
+        connectionId: connection.id,
+        memberId: owner.id,
+        encryptedKey: "encrypted:must-not-leak",
+        externalUserId: "remote-user",
+        lastAuthStatus: "invalid",
+      },
+    });
+    await prisma.integrationConnection.update({
+      where: { id: connection.id },
+      data: { serviceCredentialId: credential.id },
+    });
+    const binding = await prisma.integrationProjectBinding.create({
+      data: { connectionId: connection.id, projectId: project.id, remoteProjectId: "remote-project", readMap: {}, writeMap: {} },
+    });
+    await prisma.integrationSyncWork.createMany({
+      data: Array.from({ length: 22 }, () =>
+        blockedWorkData({
+          bindingId: binding.id,
+          credentialId: credential.id,
+          entityId: project.id,
+          actorKey: `member:${owner.id}`,
+          payload: { apiKey: "raw-api-key-must-not-leak" },
+        }),
+      ),
+    });
+    await prisma.integrationSyncWork.create({
+      data: blockedWorkData({
+        bindingId: binding.id,
+        credentialId: credential.id,
+        entityId: project.id,
+        actorKey: `member:${owner.id}`,
+        skippedReason: "provider_failure",
+      }),
+    });
+
+    const ownerResponse = await app.inject({
+      method: "GET",
+      url: `/api/integrations/connections/${connection.id}`,
+      headers: { authorization: `Bearer ${owner.token}` },
+    });
+    const ownerDetail = integrationConnectionSchema.parse(ownerResponse.json());
+    expect(ownerDetail.serviceCredentialStatus).toBe("invalid");
+    expect(ownerDetail.syncHealth).toMatchObject({
+      status: "credential_blocked",
+      blockedWork: { total: 22 },
+    });
+    expect(ownerDetail.syncHealth.blockedWork?.items).toHaveLength(20);
+    expect(Object.keys(ownerDetail.syncHealth.blockedWork!.items[0]!).sort()).toEqual([
+      "entityId",
+      "entityType",
+      "id",
+      "operation",
+      "state",
+      "updatedAt",
+    ]);
+
+    const memberResponse = await app.inject({
+      method: "GET",
+      url: `/api/integrations/connections/${connection.id}`,
+      headers: { authorization: `Bearer ${member.token}` },
+    });
+    const memberDetail = integrationConnectionSchema.parse(memberResponse.json());
+    expect(memberDetail.syncHealth).toEqual({ status: "credential_blocked", blockedWork: null });
+    expect(memberResponse.body).not.toContain("must-not-leak");
+    expect(memberResponse.body).not.toContain("actorKey");
+    expect(memberResponse.body).not.toContain("correlationId");
+  });
+
   it("allows only one member to reattach a preserved remote identity", async () => {
     const workspace = await seedTestWorkspace();
     const owner = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
@@ -231,6 +629,13 @@ describe("integration credentials", () => {
       payload: { connectionId: "not-a-uuid", apiKey: "" },
     });
     expect(response.statusCode).toBe(400);
+    const serviceResponse = await app.inject({
+      method: "PUT",
+      url: `/api/integrations/connections/${randomUUID()}/service-credential`,
+      headers: { authorization: `Bearer ${member.token}` },
+      payload: { apiKey: "" },
+    });
+    expect(serviceResponse.statusCode).toBe(400);
   });
 
   it("finds the Redmine connection by workspace only for workspace members", async () => {
