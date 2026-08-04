@@ -482,6 +482,7 @@ async function rejectCredential(database: PrismaClient, binding: ClaimedBinding)
   await database.memberIntegrationCredential.updateMany({
     where: {
       id: binding.credentialId,
+      encryptedKey: binding.encryptedKey,
       lastAuthStatus: "valid",
       revokedAt: null,
       lastValidatedAt: binding.credentialLastValidatedAt,

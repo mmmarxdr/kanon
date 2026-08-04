@@ -28,7 +28,7 @@ Devs/PMs see Redmine as connected while sync silently dies after an externally r
 ### Modified Capabilities
 
 - `pm-integration-connection`: rejected → `invalid` until revalidated; validate before save.
-- `pm-integration-outbound-sync`: auth-blocked dead work queryable/redriven (`credential_invalid`).
+- `pm-integration-outbound-sync`: auth-blocked definitive and ambiguous work queryable/recoverable (`credential_invalid`).
 - `pm-integration-inbound-sync`: rejected service credential stops polling; redacted logs.
 - `pm-integration-admin-ui`: blocked state + authorized replace actions.
 
@@ -36,9 +36,9 @@ Devs/PMs see Redmine as connected while sync silently dies after an externally r
 
 ## Approach
 
-- Classify 401 only. Snapshot credential id + `lastValidatedAt` before I/O; CAS-invalidate while `valid`. CAS miss → retry (keep key B; upsert reuses row id).
-- Outbound: `dead` + `skippedReason` `credential_invalid`. Inbound stops via `valid`-only `claimBinding`.
-- Successful `whoAmI()` replace: atomic save-as-valid + requeue matching rows; preserve `dedupeKey`/`correlationId`/refs. Failed replace mutates nothing.
+- Classify 401 only. Snapshot credential id + ciphertext + `lastValidatedAt` before I/O; CAS-invalidate that exact version while `valid`. CAS miss → retry (keep key B; upsert reuses row id).
+- Definitive outbound failures become `dead`; uncertain-create or reconciliation failures stay auth-blocked `ambiguous`, both with `skippedReason` `credential_invalid`. Inbound stops via `valid`-only `claimBinding`.
+- Successful `whoAmI()` replace: atomic save-as-valid + requeue definitive work while ambiguous work resumes reconciliation only; preserve `dedupeKey`/`correlationId`/refs. Failed replace mutates nothing.
 - Extend health DTOs + web settings after #248 rebase. Packages: `@kanon/api`, `@kanon/shared`, `@kanon/web`.
 
 ## Affected Areas
