@@ -388,23 +388,31 @@ async function redriveAuthBlockedWork(
         }
       : { actorKind: { in: ["system", "ai"] } }),
   };
-  await transaction.integrationSyncWork.updateMany({
-    where: { ...where, state: "dead" },
-    data: {
-      state: "retry",
-      availableAt: now,
-      skippedReason: null,
-      authCredentialId: replacementCredentialId,
-    },
+  const bindings = await transaction.integrationProjectBinding.findMany({
+    where: { connectionId },
+    select: { id: true, lifecycleEpoch: true },
   });
-  await transaction.integrationSyncWork.updateMany({
-    where: { ...where, state: "ambiguous" },
-    data: {
-      availableAt: now,
-      skippedReason: null,
-      authCredentialId: replacementCredentialId,
-    },
-  });
+  for (const binding of bindings) {
+    await transaction.integrationSyncWork.updateMany({
+      where: { ...where, bindingId: binding.id, state: "dead" },
+      data: {
+        state: "retry",
+        epoch: binding.lifecycleEpoch,
+        availableAt: now,
+        skippedReason: null,
+        authCredentialId: replacementCredentialId,
+      },
+    });
+    await transaction.integrationSyncWork.updateMany({
+      where: { ...where, bindingId: binding.id, state: "ambiguous" },
+      data: {
+        epoch: binding.lifecycleEpoch,
+        availableAt: now,
+        skippedReason: null,
+        authCredentialId: replacementCredentialId,
+      },
+    });
+  }
 }
 
 export async function getConnectionDiscovery(
@@ -840,7 +848,14 @@ export async function connectCredential(
   userId: string,
   deps: ConnectionServiceDeps = defaultDeps,
 ) {
-  const { connection } = await memberConnection(prisma, connectionId, userId);
+  const { connection, member } = await memberConnection(prisma, connectionId, userId);
+  const existing = await prisma.memberIntegrationCredential.findUnique({
+    where: { memberId_connectionId: { memberId: member.id, connectionId } },
+    select: { id: true },
+  });
+  if (existing?.id === connection.serviceCredentialId) {
+    return replaceServiceCredential(connectionId, apiKey, userId, deps);
+  }
   const identity = await queryRedmine(() => deps.remote(connection.baseUrl, apiKey).whoAmI());
   const encryptedKey = deps.encrypt(apiKey);
   const validatedAt = new Date();
@@ -849,6 +864,19 @@ export async function connectCredential(
     const credential = await prisma.$transaction(async (transaction) => {
       await lockConnection(transaction, connectionId);
       const current = await memberConnection(transaction, connectionId, userId);
+      const currentCredential = await transaction.memberIntegrationCredential.findUnique({
+        where: {
+          memberId_connectionId: { memberId: current.member.id, connectionId },
+        },
+        select: { id: true },
+      });
+      if (currentCredential?.id === current.connection.serviceCredentialId) {
+        throw new AppError(
+          409,
+          "SERVICE_CREDENTIAL_REQUIRES_ADMIN",
+          "Replace the service credential from instance administration",
+        );
+      }
       const saved = await transaction.memberIntegrationCredential.upsert({
         where: {
           memberId_connectionId: { memberId: current.member.id, connectionId },
@@ -961,6 +989,11 @@ export async function replaceServiceCredential(
         data: { serviceCredentialId: saved.id },
       });
       await redriveAuthBlockedWork(transaction, connectionId, saved.id, { kind: "service" });
+      await redriveAuthBlockedWork(transaction, connectionId, saved.id, {
+        kind: "personal",
+        memberId: serviceMember.id,
+        rejectedCredentialId: saved.id,
+      });
       return saved;
     });
     return publicCredential(credential);

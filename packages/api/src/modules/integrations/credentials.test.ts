@@ -309,6 +309,10 @@ describe("integration credentials", () => {
         }),
       }),
     ]);
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: { lifecycleEpoch: 2 },
+    });
     remote.whoAmI.mockResolvedValueOnce({
       id: "member-remote",
       displayName: "Member Remote",
@@ -333,13 +337,19 @@ describe("integration credentials", () => {
       refId: dead.refId,
       attempts: dead.attempts,
       state: "retry",
+      epoch: 2,
       skippedReason: null,
       authCredentialId: credential.id,
     });
     expect(recoveredDead.availableAt.getTime()).toBeGreaterThanOrEqual(startedAt);
     await expect(
       prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: ambiguous.id } }),
-    ).resolves.toMatchObject({ state: "ambiguous", skippedReason: null, attempts: ambiguous.attempts });
+    ).resolves.toMatchObject({
+      state: "ambiguous",
+      epoch: 2,
+      skippedReason: null,
+      attempts: ambiguous.attempts,
+    });
     await expect(
       prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: otherDead.id } }),
     ).resolves.toMatchObject({ state: "dead", skippedReason: "provider_failure" });
@@ -381,7 +391,15 @@ describe("integration credentials", () => {
         remoteLogin: "remote",
       },
     });
-    const [dead, ambiguous, personal, orphaned] = await Promise.all([
+    const replacementPersonalCredential = await prisma.memberIntegrationCredential.create({
+      data: {
+        connectionId: connection.id,
+        memberId: replacementAdmin.id,
+        encryptedKey: "encrypted:old-personal-key",
+        lastAuthStatus: "invalid",
+      },
+    });
+    const [dead, ambiguous, personal, replacementPersonal, orphaned] = await Promise.all([
       prisma.integrationSyncWork.create({
         data: blockedWorkData({
           bindingId: binding.id,
@@ -410,6 +428,14 @@ describe("integration credentials", () => {
         }),
       }),
       prisma.integrationSyncWork.create({
+        data: blockedWorkData({
+          bindingId: binding.id,
+          credentialId: replacementPersonalCredential.id,
+          entityId: project.id,
+          actorKey: `member:${replacementAdmin.id}`,
+        }),
+      }),
+      prisma.integrationSyncWork.create({
         data: {
           ...blockedWorkData({
             bindingId: binding.id,
@@ -422,6 +448,10 @@ describe("integration credentials", () => {
         },
       }),
     ]);
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: { lifecycleEpoch: 3 },
+    });
 
     const forbidden = await app.inject({
       method: "PUT",
@@ -448,6 +478,7 @@ describe("integration credentials", () => {
     ).resolves.toMatchObject({ memberId: replacementAdmin.id, remoteUserId: "remote-user" });
     await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: dead.id } })).resolves.toMatchObject({
       state: "retry",
+      epoch: 3,
       skippedReason: null,
       authCredentialId: replacement.id,
     });
@@ -455,6 +486,7 @@ describe("integration credentials", () => {
       prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: ambiguous.id } }),
     ).resolves.toMatchObject({
       state: "ambiguous",
+      epoch: 3,
       skippedReason: null,
       authCredentialId: replacement.id,
     });
@@ -466,12 +498,31 @@ describe("integration credentials", () => {
       authCredentialId: previousCredential.id,
     });
     await expect(
-      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: orphaned.id } }),
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: replacementPersonal.id } }),
     ).resolves.toMatchObject({
       state: "retry",
+      epoch: 3,
       skippedReason: null,
       authCredentialId: replacement.id,
     });
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: orphaned.id } }),
+    ).resolves.toMatchObject({
+      state: "retry",
+      epoch: 3,
+      skippedReason: null,
+      authCredentialId: replacement.id,
+    });
+
+    await prisma.user.update({
+      where: { id: replacementAdmin.userId },
+      data: { isInstanceAdmin: false },
+    });
+    vi.clearAllMocks();
+    await expect(
+      connectCredential(connection.id, "unauthorized-service-key", replacementAdmin.userId, deps),
+    ).rejects.toMatchObject({ statusCode: 403, code: "FORBIDDEN" });
+    expect(deps.remote).not.toHaveBeenCalled();
   });
 
   it("caps blocked-work health details and redacts them from regular members", async () => {
