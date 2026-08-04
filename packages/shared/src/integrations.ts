@@ -9,9 +9,17 @@ export const integrationLifecycleSchema = z.enum([
   "disabled",
 ]);
 
+export const integrationCredentialStatusSchema = z.enum([
+  "missing",
+  "unknown",
+  "valid",
+  "invalid",
+  "revoked",
+]);
+
 export const integrationCredentialSchema = z.object({
   connected: z.boolean(),
-  status: z.enum(["missing", "unknown", "valid", "invalid", "revoked"]),
+  status: integrationCredentialStatusSchema,
   externalUserId: z.string().nullable(),
   externalLogin: z.string().nullable(),
   lastValidatedAt: z.string().nullable(),
@@ -36,6 +44,27 @@ export const integrationConnectionSchema = z.object({
   lifecycle: integrationLifecycleSchema,
   lifecycleEpoch: z.number().int(),
   serviceFallbackEnabled: z.boolean(),
+  serviceCredentialStatus: integrationCredentialStatusSchema,
+  syncHealth: z.object({
+    status: z.enum(["healthy", "credential_blocked"]),
+    blockedWork: z
+      .object({
+        total: z.number().int().nonnegative(),
+        items: z
+          .array(
+            z.object({
+              id: z.string().uuid(),
+              entityType: z.string().min(1),
+              entityId: z.string().uuid(),
+              operation: z.enum(["create", "update", "delete", "close"]),
+              state: z.enum(["dead", "ambiguous"]),
+              updatedAt: z.string(),
+            }),
+          )
+          .max(20),
+      })
+      .nullable(),
+  }),
   discoveredStatuses: integrationDiscoverySchema.shape.statuses.nullable(),
   providerMaps: z
     .object({

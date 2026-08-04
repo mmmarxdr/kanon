@@ -12,6 +12,7 @@ import {
   getConnection,
   getConnectionDiscovery,
   getWorkspaceConnection,
+  replaceServiceCredential,
   setConnectionLifecycle,
 } from "./service.js";
 
@@ -43,6 +44,7 @@ const ConnectCredential = z.object({
   connectionId: z.string().uuid(),
   apiKey: z.string().min(1).max(4096),
 });
+const ReplaceServiceCredential = z.object({ apiKey: z.string().min(1).max(4096) });
 
 export default async function integrationRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -131,5 +133,12 @@ export default async function integrationRoutes(fastify: FastifyInstance): Promi
       await clearCredential(request.params.id, request.user.userId);
       return reply.status(204).send();
     },
+  );
+
+  app.put(
+    "/connections/:id/service-credential",
+    { schema: { params: ConnectionId, body: ReplaceServiceCredential } },
+    async (request) =>
+      replaceServiceCredential(request.params.id, request.body.apiKey, request.user.userId),
   );
 }

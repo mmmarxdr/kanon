@@ -55,18 +55,18 @@ Chain strategy: feature-branch-chain
 
 ## Phase 4: Replace+redrive (Unit 2)
 
-- [ ] 4.1 **RED** — `credentials.test.ts`: `whoAmI` fail→zero writes.
-- [ ] 4.2 **RED** — TX: dead `credential_invalid`→`retry`; ambiguous due now; keep id/dedupe/correlation/op/payload/actor/refs/attempts; other dead untouched.
-- [ ] 4.3 **RED** — `routes.ts`: `PUT .../service-credential` authz/rebind; personal vs service.
-- [ ] 4.4 **GREEN** — `service.ts`/`routes.ts`: `whoAmI` gate; atomic valid+redrive.
-- [ ] 4.5 **REFACTOR** — no schema.
+- [x] 4.1 **RED** — `credentials.test.ts`: `whoAmI` fail→zero writes.
+- [x] 4.2 **RED** — TX: dead `credential_invalid`→`retry`; ambiguous due now; keep id/dedupe/correlation/op/payload/actor/refs/attempts; other dead untouched.
+- [x] 4.3 **RED** — `routes.ts`: `PUT .../service-credential` authz/rebind; personal vs service.
+- [x] 4.4 **GREEN** — `service.ts`/`routes.ts`: `whoAmI` gate; atomic valid+redrive.
+- [x] 4.5 **REFACTOR** — no schema.
 
 ## Phase 5: Health (Unit 2)
 
-- [ ] 5.1 **RED** — `integrations.ts`: DTO; `credential_blocked`; ≤20 cap.
-- [ ] 5.2 **RED** — ACL: admin total; member redact; ≤20.
-- [ ] 5.3 **GREEN** — health projection.
-- [ ] 5.4 **REFACTOR** — API/log redaction.
+- [x] 5.1 **RED** — `integrations.ts`: DTO; `credential_blocked`; ≤20 cap.
+- [x] 5.2 **RED** — ACL: admin total; member redact; ≤20.
+- [x] 5.3 **GREEN** — health projection.
+- [x] 5.4 **REFACTOR** — API/log redaction.
 
 ## Phase 6: Web UX (Unit 3)
 
