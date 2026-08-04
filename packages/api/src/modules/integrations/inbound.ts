@@ -13,12 +13,18 @@ import {
   type InboundSource,
   type StatusReadMap,
 } from "./core/types.js";
+import { persistRedmineIssueImportsTx } from "./redmine-import.js";
+import {
+  decodeRedmineIssueDetail,
+  type RedmineIssueChange,
+} from "./providers/redmine/decoder.js";
 import { RedmineHttpClient } from "./providers/redmine/http-client.js";
 import { RedminePollingInboundSource } from "./providers/redmine/inbound-source.js";
 
 const DEFAULT_LIMIT = 10;
 const DEFAULT_LEASE_MS = 120_000;
 const FAILED_POLL_DELAY_MS = 60_000;
+const MAX_DETAIL_READS = 10;
 
 export interface InboundSyncLogger {
   info(context: unknown, message: string): void;
@@ -33,12 +39,20 @@ interface InboundSourceOptions {
   readonly readMap: StatusReadMap;
 }
 
+export interface InboundIssueDetailOptions {
+  readonly baseUrl: string;
+  readonly apiKey: string;
+  readonly remoteProjectId: string;
+  readonly remoteIssueId: string;
+}
+
 export interface InboundSyncDependencies {
   readonly now?: () => Date;
   readonly decrypt?: (ciphertext: string) => string;
   readonly createSource?: (
     options: InboundSourceOptions,
   ) => InboundSource<InboundIssueStatusChange>;
+  readonly loadIssueDetail?: (options: InboundIssueDetailOptions) => Promise<RedmineIssueChange>;
   readonly logger?: InboundSyncLogger;
   readonly limit?: number;
   readonly leaseMs?: number;
@@ -76,6 +90,16 @@ const defaultSource = (options: InboundSourceOptions) =>
     }),
     options,
   );
+
+const defaultDetailLoader = async (options: InboundIssueDetailOptions) => {
+  const client = new RedmineHttpClient(options.baseUrl, options.apiKey, {
+    endpointAllowlist: env.REDMINE_ENDPOINT_ALLOWLIST,
+  });
+  const value = await client.get<unknown>(
+    `/issues/${encodeURIComponent(options.remoteIssueId)}.json?include=journals`,
+  );
+  return decodeRedmineIssueDetail(value, options.remoteProjectId).issue;
+};
 
 function log(
   logger: InboundSyncLogger,
@@ -169,6 +193,76 @@ function applicationIdentity(bindingId: string, change: InboundIssueStatusChange
     .digest("hex");
 }
 
+function outboundIssueIds(description: string | null): string[] {
+  if (!description) return [];
+  return [...description.matchAll(/<!-- kanon-issue:([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}) -->/gi)].map(
+    (match) => match[1]!,
+  );
+}
+
+async function lockPollSnapshot(
+  transaction: Prisma.TransactionClient,
+  binding: ClaimedBinding,
+) {
+  await transaction.$queryRaw(
+    Prisma.sql`SELECT "id" FROM "integration_connections" WHERE "id" = ${binding.connectionId}::uuid FOR UPDATE`,
+  );
+  await transaction.$queryRaw(
+    Prisma.sql`SELECT "id" FROM "integration_project_bindings" WHERE "id" = ${binding.id}::uuid FOR UPDATE`,
+  );
+  await transaction.$queryRaw(
+    Prisma.sql`SELECT "id" FROM "member_integration_credentials" WHERE "id" = ${binding.credentialId}::uuid FOR UPDATE`,
+  );
+  const active = await transaction.integrationProjectBinding.findFirst({
+    where: {
+      id: binding.id,
+      connectionId: binding.connectionId,
+      lifecycle: "active",
+      inboundEnabled: true,
+      bootstrapState: "ready",
+      lifecycleEpoch: binding.lifecycleEpoch,
+      pollLeaseToken: binding.pollLeaseToken,
+      pollFence: binding.pollFence,
+      connection: { lifecycle: "active" },
+    },
+    include: {
+      project: { select: { key: true } },
+      connection: { select: { serviceCredentialId: true, workspaceId: true } },
+    },
+  });
+  if (!active) return null;
+
+  const credential = await transaction.memberIntegrationCredential.findUnique({
+    where: { id: binding.credentialId },
+    select: {
+      connectionId: true,
+      encryptedKey: true,
+      lastAuthStatus: true,
+      lastValidatedAt: true,
+      revokedAt: true,
+    },
+  });
+  const sameValidation =
+    credential?.lastValidatedAt?.getTime() === binding.credentialLastValidatedAt?.getTime() ||
+    (credential?.lastValidatedAt === null && binding.credentialLastValidatedAt === null);
+  if (
+    !credential ||
+    active.connection.serviceCredentialId !== binding.credentialId ||
+    credential.connectionId !== binding.connectionId ||
+    credential.encryptedKey !== binding.encryptedKey ||
+    !sameValidation ||
+    credential.lastAuthStatus !== "valid" ||
+    credential.revokedAt !== null
+  ) {
+    throw new AppError(
+      409,
+      "INBOUND_CREDENTIAL_STALE",
+      "Inbound service credential changed during polling",
+    );
+  }
+  return active;
+}
+
 async function finishApplication(
   database: PrismaClient,
   applicationId: string,
@@ -246,6 +340,9 @@ async function applyChange(
   database: PrismaClient,
   binding: ClaimedBinding,
   change: InboundIssueStatusChange,
+  loadIssueDetail: (options: InboundIssueDetailOptions) => Promise<RedmineIssueChange>,
+  apiKey: string,
+  allowDetail: boolean,
 ) {
   const ref = await database.externalRef.findUnique({
     where: {
@@ -256,7 +353,92 @@ async function applyChange(
       },
     },
   });
-  if (!ref) return;
+  if (!ref) {
+    if (!allowDetail) return "detail-limit" as const;
+    const detail = await loadIssueDetail({
+      baseUrl: binding.baseUrl,
+      apiKey,
+      remoteProjectId: binding.remoteProjectId,
+      remoteIssueId: change.entityId,
+    });
+    if (
+      detail.identity.remoteId !== change.entityId ||
+      detail.identity.remoteProjectId !== binding.remoteProjectId ||
+      detail.changedAt < change.changedAt
+    ) {
+      throw new Error("Redmine issue detail did not match the poll observation");
+    }
+    if (detail.operation === "tombstone") return "detail" as const;
+
+    return database.$transaction(async (transaction) => {
+      const active = await lockPollSnapshot(transaction, binding);
+      if (!active) return "stale" as const;
+
+      const linked = await transaction.externalRef.findUnique({
+        where: {
+          connectionId_entityType_externalId: {
+            connectionId: binding.connectionId,
+            entityType: "issue",
+            externalId: change.entityId,
+          },
+        },
+        select: { id: true },
+      });
+      if (linked) return "detail" as const;
+
+      const localIssueIds =
+        "description" in detail.fields ? outboundIssueIds(detail.fields.description) : [];
+      const outboundCreate = localIssueIds.length
+        ? await transaction.integrationSyncWork.findFirst({
+            where: {
+              bindingId: binding.id,
+              entityType: "issue",
+              entityId: { in: localIssueIds },
+              direction: "outbound",
+              operation: "create",
+              state: { in: ["queued", "retry", "leased", "ambiguous"] },
+            },
+            select: { id: true },
+          })
+        : null;
+      if (outboundCreate) {
+        throw new AppError(
+          409,
+          "OUTBOUND_CREATE_UNSETTLED",
+          "Outbound issue creation is awaiting finalization",
+        );
+      }
+
+      await persistRedmineIssueImportsTx(
+        transaction,
+        {
+          connectionId: binding.connectionId,
+          bindingId: binding.id,
+          projectId: binding.projectId,
+          projectKey: active.project.key,
+          workspaceId: active.connection.workspaceId,
+          readMap: active.readMap,
+          provenance: "redmine-inbound-discovery",
+        },
+        [detail],
+      );
+      return "detail" as const;
+    });
+  }
+
+  if (ref.remoteUpdatedAt && ref.remoteUpdatedAt >= change.changedAt) {
+    const imported = await database.integrationInboundApplication.findFirst({
+      where: {
+        bindingId: binding.id,
+        refId: ref.id,
+        state: "applied",
+        sourceVersion: { not: null },
+        remoteUpdatedAt: { gte: change.changedAt },
+      },
+      select: { id: true },
+    });
+    if (imported) return "processed" as const;
+  }
 
   const correlationId = applicationIdentity(binding.id, change);
   await database.integrationInboundApplication.createMany({
@@ -274,7 +456,9 @@ async function applyChange(
   const application = await database.integrationInboundApplication.findUniqueOrThrow({
     where: { applicationKey: correlationId },
   });
-  if (["applied", "conflict", "skipped"].includes(application.state)) return;
+  if (["applied", "conflict", "skipped"].includes(application.state)) {
+    return "processed" as const;
+  }
 
   if (ref.bindingId !== binding.id) {
     await conflictApplication(
@@ -290,7 +474,7 @@ async function applyChange(
         "External reference belongs to another binding",
       ),
     );
-    return;
+    return "processed" as const;
   }
   if (ref.remoteUpdatedAt && ref.remoteUpdatedAt >= change.changedAt) {
     await database.integrationInboundApplication.update({
@@ -304,7 +488,7 @@ async function applyChange(
         },
       },
     });
-    return;
+    return "processed" as const;
   }
 
   const issue = await database.issue.findFirst({
@@ -321,7 +505,7 @@ async function applyChange(
       null,
       new AppError(409, "LOCAL_ISSUE_MISSING", "Linked Kanon issue no longer exists"),
     );
-    return;
+    return "processed" as const;
   }
 
   let timeReconciled = false;
@@ -351,7 +535,7 @@ async function applyChange(
       if (!(error instanceof AppError)) throw error;
       if (error.code !== "RECONCILIATION_REQUIRED") {
         await conflictApplication(database, application.id, binding, ref.id, change, issue, error);
-        return;
+        return "processed" as const;
       }
       try {
         const reconciled = await reconcileIssueTime(issue.id, binding.actorMemberId);
@@ -383,7 +567,7 @@ async function applyChange(
           issue,
           retryError,
         );
-        return;
+        return "processed" as const;
       }
     }
   }
@@ -409,22 +593,27 @@ async function applyChange(
     work?.id ?? null,
     changed,
   );
+  return "processed" as const;
 }
 
 async function pollBinding(
   database: PrismaClient,
   binding: ClaimedBinding,
   dependencies: Required<
-    Pick<InboundSyncDependencies, "decrypt" | "createSource" | "logger" | "now">
+    Pick<
+      InboundSyncDependencies,
+      "decrypt" | "createSource" | "loadIssueDetail" | "logger" | "now"
+    >
   > & { leaseMs: number },
 ) {
   const readMap = binding.readMap;
   if (!readMap || typeof readMap !== "object" || Array.isArray(readMap)) {
     throw new Error("Invalid inbound status map");
   }
+  const apiKey = dependencies.decrypt(binding.encryptedKey);
   const source = dependencies.createSource({
     baseUrl: binding.baseUrl,
-    apiKey: dependencies.decrypt(binding.encryptedKey),
+    apiKey,
     remoteProjectId: binding.remoteProjectId,
     readMap: readMap as StatusReadMap,
   });
@@ -434,7 +623,13 @@ async function pollBinding(
       : null;
   const page = await source.poll(cursor);
   if (page.hasMore) throw new Error("Inbound source returned an incomplete poll page");
+  if (!(await database.$transaction((transaction) => lockPollSnapshot(transaction, binding)))) {
+    return;
+  }
 
+  let detailReads = 0;
+  let processedChanges = 0;
+  let processedCursor = cursor;
   for (const change of page.changes) {
     const active = await database.integrationProjectBinding.updateMany({
       where: {
@@ -452,33 +647,56 @@ async function pollBinding(
       },
     });
     if (active.count !== 1) return;
-    await applyChange(database, binding, change);
+    let result;
+    try {
+      result = await applyChange(
+        database,
+        binding,
+        change,
+        dependencies.loadIssueDetail,
+        apiKey,
+        detailReads < MAX_DETAIL_READS,
+      );
+    } catch (error) {
+      log(
+        dependencies.logger,
+        "warn",
+        { bindingId: binding.id, remoteIssueId: change.entityId, error: safeErrorEvidence(error) },
+        "Inbound Redmine issue processing failed",
+      );
+      throw error;
+    }
+    if (result === "stale") return;
+    if (result === "detail-limit") break;
+    if (result === "detail") detailReads += 1;
+    processedChanges += 1;
+    processedCursor = { updatedAt: change.changedAt, entityId: change.entityId };
   }
 
-  const advanced = await database.integrationProjectBinding.updateMany({
-    where: {
-      id: binding.id,
-      lifecycle: "active",
-      inboundEnabled: true,
-      bootstrapState: "ready",
-      lifecycleEpoch: binding.lifecycleEpoch,
-      pollLeaseToken: binding.pollLeaseToken,
-      pollFence: binding.pollFence,
-      connection: { lifecycle: "active" },
-    },
-    data: {
-      cursorUpdatedAt: page.nextCursor?.updatedAt ?? cursor?.updatedAt ?? null,
-      cursorRemoteId: page.nextCursor?.entityId ?? cursor?.entityId ?? null,
-      pageToken: null,
-      pollLeaseToken: null,
-      pollLeaseUntil: null,
-    },
+  const advanced = await database.$transaction(async (transaction) => {
+    if (!(await lockPollSnapshot(transaction, binding))) return false;
+    await transaction.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: {
+        cursorUpdatedAt: processedCursor?.updatedAt ?? null,
+        cursorRemoteId: processedCursor?.entityId ?? null,
+        pageToken: null,
+        pollLeaseToken: null,
+        pollLeaseUntil: null,
+      },
+    });
+    return true;
   });
-  if (advanced.count === 1) {
+  if (advanced) {
     log(
       dependencies.logger,
       "info",
-      { bindingId: binding.id, changes: page.changes.length },
+      {
+        bindingId: binding.id,
+        changes: processedChanges,
+        detailReads,
+        partial: processedChanges < page.changes.length,
+      },
       "Inbound Redmine poll completed",
     );
   }
@@ -520,6 +738,7 @@ export async function runInboundSyncCycle(
   const d = {
     decrypt: dependencies.decrypt ?? decryptCredential,
     createSource: dependencies.createSource ?? defaultSource,
+    loadIssueDetail: dependencies.loadIssueDetail ?? defaultDetailLoader,
     logger: dependencies.logger ?? defaultLogger,
     now: dependencies.now ?? (() => new Date()),
     leaseMs,
