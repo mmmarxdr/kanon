@@ -88,6 +88,13 @@ describe("RedmineProviderAdapter", () => {
       canCreateProjects: true,
       canCreateCycles: true,
       canCreateIssues: true,
+      canReadIssues: true,
+      canUpdateIssues: true,
+      canReadPublicComments: true,
+      canCreatePublicComments: true,
+      canMutateComments: false,
+      hasDeletionSignals: false,
+      hasWebhooks: false,
     });
     await expect(adapter.listProjects()).resolves.toEqual([{ id: "4", name: "Project" }]);
     await expect(adapter.listStatuses()).resolves.toEqual([

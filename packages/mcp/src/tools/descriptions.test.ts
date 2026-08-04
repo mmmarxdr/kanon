@@ -213,4 +213,13 @@ describe("Win C — description byte budget and firing pins", () => {
     expect(t).toBeDefined();
     expect(t!.description).toMatch(/\[Area\].*[Vv]erb|\[Area\]/);
   });
+
+  it("create_issue keeps descriptions PM-facing", () => {
+    const tools = collectDescriptions();
+    const t = tools.find((tool) => tool.toolName === "create_issue");
+
+    expect(t).toBeDefined();
+    expect(t!.description).toMatch(/PM-facing/i);
+    expect(t!.description).toMatch(/local|worktree/i);
+  });
 });

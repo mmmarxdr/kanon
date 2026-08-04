@@ -1,5 +1,13 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useAuthStore } from "@/stores/auth-store";
+import { SettingsCard } from "@/components/ui/settings-card";
+import {
+  SettingsList,
+  SettingsListRow,
+  PROJECT_MEMBERS_GRID,
+  projectMembersColumns,
+} from "@/components/ui/settings-list";
 import { ApiError } from "@/lib/api-client";
 import {
   useProjectMembersQuery,
@@ -87,6 +95,7 @@ export function ProjectMembersSection({
 }: {
   projectKey: string;
 }) {
+  const { t } = useTranslation("settings");
   const currentUser = useAuthStore((s) => s.user);
   const { data: members, isLoading, error } = useProjectMembersQuery(projectKey);
   const addMember = useAddProjectMemberMutation(projectKey);
@@ -107,27 +116,28 @@ export function ProjectMembersSection({
   const isOwner = currentUserRole === "owner";
 
   const availableRoles = isOwner ? ROLES_WITH_OWNER : ROLES_BASE;
+  const listColumns = projectMembersColumns(t);
 
   if (isLoading) {
     return (
-      <div className="rounded-lg border border-border bg-card p-6">
+      <SettingsCard>
         <p className="text-sm text-muted-foreground">Loading members...</p>
-      </div>
+      </SettingsCard>
     );
   }
 
   if (error) {
     return (
-      <div className="rounded-lg border border-border bg-card p-6">
+      <SettingsCard>
         <p className="text-sm text-destructive">
           Failed to load members: {error.message}
         </p>
-      </div>
+      </SettingsCard>
     );
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card p-6">
+    <SettingsCard>
       <h2 className="text-lg font-semibold text-foreground mb-4">Members</h2>
 
       {/* Remove mutation error */}
@@ -154,121 +164,136 @@ export function ProjectMembersSection({
       {!members || members.length === 0 ? (
         <p className="text-sm text-muted-foreground">No members found.</p>
       ) : (
-        <div className="space-y-3 mb-6">
+        <div className="mb-6">
+        <SettingsList
+          columns={listColumns}
+          gridTemplateColumns={PROJECT_MEMBERS_GRID}
+          data-testid="project-members-list"
+        >
           {members.map((member) => {
             const isCurrentUser = member.userId === currentUser?.id;
             const isExplicit = member.source === "project" && !!member.pmId;
             const isImplicit = member.source === "workspace" || !member.pmId;
             const isOwnerRow = member.role === "owner";
+            const displayName = member.displayName ?? member.email;
             // Key for DOM: explicit rows use pmId, implicit use userId
             const rowKey = isExplicit ? member.pmId! : member.userId;
 
             return (
-              <div
+              <SettingsListRow
                 key={rowKey}
                 data-testid={`member-row-${rowKey}`}
-                className="flex items-center gap-3 py-2 px-3 rounded-md hover:bg-secondary/50 transition-colors"
-              >
-                {/* Avatar */}
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-semibold shrink-0">
-                  {initials(member)}
-                </div>
-
-                {/* Name + Email */}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-foreground truncate">
-                    {member.displayName ?? member.email}
-                    {isCurrentUser && (
-                      <span className="ml-1 text-xs text-muted-foreground">
-                        (you)
-                      </span>
-                    )}
-                  </p>
-                  <p className="text-xs text-muted-foreground truncate">
+                label={displayName}
+                columns={[
+                  <div key="member" className="flex items-center gap-3 min-w-0">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-semibold shrink-0">
+                      {initials(member)}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-foreground truncate">
+                        {displayName}
+                        {isCurrentUser && (
+                          <span className="ml-1 text-xs text-muted-foreground">
+                            (you)
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate sm:hidden">
+                        {member.email}
+                      </p>
+                    </div>
+                  </div>,
+                  <p key="email" className="text-sm text-muted-foreground truncate">
                     {member.email}
-                  </p>
-                </div>
-
-                {/* Implicit badge — workspace admin/owner via workspace membership */}
-                {isImplicit && (
-                  <span
-                    data-testid={`implicit-badge-${member.userId}`}
-                    className="px-2 py-0.5 rounded text-xs font-medium bg-secondary text-muted-foreground shrink-0"
-                  >
-                    workspace {roleLabel(member.role)}
-                  </span>
-                )}
-
-                {/* Role select — explicit rows, admin actor, not current user, not owner row */}
-                {isExplicit && isAdmin && !isCurrentUser && !isOwnerRow && (
-                  <div className="relative">
-                  <select
-                    value={member.role}
-                    onChange={(e) => {
-                      changeRole.mutate({
-                        pmId: member.pmId!,
-                        role: e.target.value as MemberRole,
-                      });
-                    }}
-                    className="appearance-none rounded-md border border-input bg-background px-2 py-1 pr-7 text-xs text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
-                  >
-                    {availableRoles.map((r) => (
-                      <option key={r} value={r}>
-                        {roleLabel(r)}
-                      </option>
-                    ))}
-                  </select>
-                  <svg className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                  </div>
-                )}
-
-                {/* Role badge for rows without a select */}
-                {(!isExplicit || !isAdmin || isCurrentUser || isOwnerRow) &&
-                  !isImplicit && (
-                    <span className="text-xs font-medium text-muted-foreground px-2 py-1 rounded-md bg-secondary shrink-0">
+                  </p>,
+                  isImplicit ? (
+                    <span
+                      key="role"
+                      data-testid={`implicit-badge-${member.userId}`}
+                      className="px-2 py-0.5 rounded text-xs font-medium bg-secondary text-muted-foreground shrink-0"
+                    >
+                      workspace {roleLabel(member.role)}
+                    </span>
+                  ) : isExplicit && isAdmin && !isCurrentUser && !isOwnerRow ? (
+                    <div key="role" className="relative">
+                      <select
+                        value={member.role}
+                        onChange={(e) => {
+                          changeRole.mutate({
+                            pmId: member.pmId!,
+                            role: e.target.value as MemberRole,
+                          });
+                        }}
+                        className="appearance-none rounded-md border border-input bg-background px-2 py-1 pr-7 text-xs text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25 transition-all duration-150 ease-out"
+                      >
+                        {availableRoles.map((r) => (
+                          <option key={r} value={r}>
+                            {roleLabel(r)}
+                          </option>
+                        ))}
+                      </select>
+                      <svg
+                        className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
+                    </div>
+                  ) : (
+                    <span
+                      key="role"
+                      className="text-xs font-medium text-muted-foreground px-2 py-1 rounded-md bg-secondary shrink-0"
+                    >
                       {roleLabel(member.role)}
                     </span>
-                  )}
-
-                {/* Remove button — explicit rows, admin actor, not current user, not owner */}
-                {isExplicit && isAdmin && !isCurrentUser && !isOwnerRow && (
-                  <>
-                    {confirmRemoveId === member.pmId ? (
-                      <div className="flex items-center gap-1">
-                        <button
-                          data-testid={`confirm-remove-${member.pmId}`}
-                          onClick={() => {
-                            removeMember.mutate(member.pmId!, {
-                              onSettled: () => setConfirmRemoveId(null),
-                            });
-                          }}
-                          disabled={removeMember.isPending}
-                          className="rounded-md bg-destructive px-2 py-1 text-xs font-medium text-white hover:bg-destructive/90 disabled:opacity-50 transition-colors"
-                        >
-                          {removeMember.isPending ? "..." : "Confirm"}
-                        </button>
-                        <button
-                          data-testid={`cancel-remove-${member.pmId}`}
-                          onClick={() => setConfirmRemoveId(null)}
-                          className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-secondary transition-colors"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        data-testid={`remove-btn-${member.pmId}`}
-                        onClick={() => setConfirmRemoveId(member.pmId!)}
-                        className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-colors"
-                      >
-                        Remove
-                      </button>
+                  ),
+                  <div key="actions" className="flex items-center justify-end gap-1 flex-wrap">
+                    {isExplicit && isAdmin && !isCurrentUser && !isOwnerRow && (
+                      <>
+                        {confirmRemoveId === member.pmId ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              data-testid={`confirm-remove-${member.pmId}`}
+                              onClick={() => {
+                                removeMember.mutate(member.pmId!, {
+                                  onSettled: () => setConfirmRemoveId(null),
+                                });
+                              }}
+                              disabled={removeMember.isPending}
+                              className="rounded-md bg-destructive px-2 py-1 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50 transition-colors"
+                            >
+                              {removeMember.isPending ? "..." : "Confirm"}
+                            </button>
+                            <button
+                              data-testid={`cancel-remove-${member.pmId}`}
+                              onClick={() => setConfirmRemoveId(null)}
+                              className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-secondary transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            data-testid={`remove-btn-${member.pmId}`}
+                            onClick={() => setConfirmRemoveId(member.pmId!)}
+                            className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-colors"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </>
                     )}
-                  </>
-                )}
-              </div>
+                  </div>,
+                ]}
+              />
             );
           })}
+        </SettingsList>
         </div>
       )}
 
@@ -351,6 +376,6 @@ export function ProjectMembersSection({
           )}
         </div>
       )}
-    </div>
+    </SettingsCard>
   );
 }

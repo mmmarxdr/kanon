@@ -7,6 +7,7 @@ import {
   type IssueState,
 } from "@kanon/shared";
 import { useWorkspacesQuery } from "@/hooks/use-workspace-query";
+import { SettingsCard } from "@/components/ui/settings-card";
 import {
   useConfigureRedmineProviderMapsMutation,
   useCreateRedmineConnectionMutation,
@@ -51,17 +52,6 @@ function initialWriteMap(
       return [state, existing?.[state] ?? exact ?? fallback];
     }),
   ) as Record<IssueState, string>;
-}
-
-function Card({ children }: { children: React.ReactNode }) {
-  return (
-    <section
-      data-testid="admin-redmine-section"
-      className="rounded-lg border border-border bg-card p-5 sm:p-6"
-    >
-      {children}
-    </section>
-  );
 }
 
 function ConnectionSetup({ workspaceId }: { workspaceId: string }) {
@@ -205,7 +195,7 @@ function ProviderMapsForm({
         </div>
 
         {configure.isError && <p className="text-sm text-destructive">{configure.error.message}</p>}
-        {configure.isSuccess && <p className="text-sm text-emerald-600">{t("redmineMapsSaved")}</p>}
+        {configure.isSuccess && <p className="text-sm text-success">{t("redmineMapsSaved")}</p>}
         <button
           type="submit"
           disabled={configure.isPending || !complete}
@@ -289,15 +279,15 @@ export function AdminRedmineSection({ redmineBaseUrl }: { redmineBaseUrl: string
 
   if (!redmineBaseUrl) {
     return (
-      <Card>
+      <SettingsCard testId="admin-redmine-section">
         <h2 className="text-lg font-semibold text-foreground">{t("redmineAdminTitle")}</h2>
         <p className="mt-1 text-sm text-muted-foreground">{t("redmineAdminNeedsUrl")}</p>
-      </Card>
+      </SettingsCard>
     );
   }
 
   return (
-    <Card>
+    <SettingsCard testId="admin-redmine-section">
       <h2 className="text-lg font-semibold text-foreground">{t("redmineAdminTitle")}</h2>
       <p className="mt-1 text-sm text-muted-foreground">{t("redmineAdminHelp")}</p>
 
@@ -336,6 +326,6 @@ export function AdminRedmineSection({ redmineBaseUrl }: { redmineBaseUrl: string
           )}
         </>
       )}
-    </Card>
+    </SettingsCard>
   );
 }
