@@ -70,15 +70,15 @@ Chain strategy: feature-branch-chain
 
 ## Phase 6: Web UX (Unit 3)
 
-- [ ] 6.1 **RED** — `redmine-section.test.tsx`: replace/block/admin UX; ≤20 health.
-- [ ] 6.2 **GREEN** — `redmine-section.tsx`+`use-redmine-integration.ts`.
-- [ ] 6.3 **GREEN** — en/es i18n.
-- [ ] 6.4 **REFACTOR** — a11y; UI redaction.
+- [x] 6.1 **RED** — `redmine-section.test.tsx`: replace/block/admin UX; ≤20 health.
+- [x] 6.2 **GREEN** — `redmine-section.tsx`+`use-redmine-integration.ts`.
+- [x] 6.3 **GREEN** — en/es i18n.
+- [x] 6.4 **REFACTOR** — a11y; UI redaction.
 
 ## Verify
 
-- [ ] 7.1 vitest api/shared/web; diff-check.
-- [ ] 7.2 spec scenario map; gaps=critical.
-- [ ] 7.3 smoke: revoke→replace→dead+ambiguous redrive.
-- [ ] 7.4 403 no replace offer.
-- [ ] 7.5 adversarial review/PR.
+- [x] 7.1 vitest api/shared/web; diff-check.
+- [x] 7.2 spec scenario map; gaps=critical.
+- [x] 7.3 smoke: revoke→replace→dead+ambiguous redrive.
+- [x] 7.4 403 no replace offer.
+- [x] 7.5 adversarial review/PR.
