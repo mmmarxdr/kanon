@@ -81,4 +81,4 @@ Chain strategy: feature-branch-chain
 - [x] 7.2 spec scenario map; gaps=critical.
 - [x] 7.3 smoke: revoke→replace→dead+ambiguous redrive.
 - [x] 7.4 403 no replace offer.
-- [ ] 7.5 adversarial review/PR.
+- [x] 7.5 adversarial review/PR.
