@@ -90,4 +90,4 @@ No migration. Chain: Unit 1A → 1B → Unit 2 → Unit 3.
 
 ## Open Questions
 
-None blocking. Same-millisecond `lastValidatedAt` collision accepted.
+None blocking. The CAS matches both `lastValidatedAt` and the observed ciphertext, so a replacement with distinct credential material cannot collide at timestamp precision.
