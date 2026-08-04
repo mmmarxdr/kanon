@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useProjectsQuery } from "@/hooks/use-projects-query";
 import {
   useWorkspaceInvitesQuery,
   useCreateInviteMutation,
@@ -17,6 +18,7 @@ import {
 import { InviteDomainRestriction } from "./invite-domain-restriction";
 
 const INVITE_ROLES = ["viewer", "member", "admin"] as const;
+type ProjectAccess = "workspace" | "all" | "selected";
 
 const ROLE_KEYS: Record<string, string> = {
   viewer: "roleViewer",
@@ -64,6 +66,7 @@ export function InvitesSection({
   const { t } = useTranslation("settings");
   const { t: tCommon } = useTranslation("common");
   const { data: invites, isLoading, error } = useWorkspaceInvitesQuery(workspaceId);
+  const { data: projects = [], isLoading: projectsLoading } = useProjectsQuery(workspaceId);
   const createInvite = useCreateInviteMutation(workspaceId);
   const revokeInvite = useRevokeInviteMutation(workspaceId);
 
@@ -73,6 +76,8 @@ export function InvitesSection({
   const [expiresInHours, setExpiresInHours] = useState<string>("168");
   const [label, setLabel] = useState("");
   const [email, setEmail] = useState("");
+  const [projectAccess, setProjectAccess] = useState<ProjectAccess>("workspace");
+  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const isAdmin = currentUserRole === "admin" || currentUserRole === "owner";
@@ -80,6 +85,10 @@ export function InvitesSection({
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
+    const projectIds = projectAccess === "all"
+      ? projects.map((project) => project.id)
+      : selectedProjectIds;
+
     createInvite.mutate(
       {
         role,
@@ -87,6 +96,9 @@ export function InvitesSection({
         expiresInHours: parseInt(expiresInHours, 10) || 168,
         label: label || undefined,
         email: email || undefined,
+        projectAssignments: projectAccess === "workspace"
+          ? undefined
+          : projectIds.map((projectId) => ({ projectId, role })),
       },
       {
         onSuccess: () => {
@@ -96,6 +108,8 @@ export function InvitesSection({
           setExpiresInHours("168");
           setLabel("");
           setEmail("");
+          setProjectAccess("workspace");
+          setSelectedProjectIds([]);
         },
       },
     );
@@ -215,6 +229,52 @@ export function InvitesSection({
               )}
             </div>
 
+            <fieldset className="space-y-2 rounded-md border border-border p-3">
+              <legend className="px-1 text-xs font-medium text-card-foreground">
+                {t("invitesProjectAccess")}
+              </legend>
+              <select
+                data-testid="invite-project-access"
+                value={projectAccess}
+                onChange={(e) => setProjectAccess(e.target.value as ProjectAccess)}
+                className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25"
+              >
+                <option value="workspace">{t("invitesAccessWorkspace")}</option>
+                <option value="all" disabled={projectsLoading || projects.length === 0}>
+                  {t("invitesAccessAll")}
+                </option>
+                <option value="selected" disabled={projectsLoading || projects.length === 0}>
+                  {t("invitesAccessSelected")}
+                </option>
+              </select>
+              <p className="text-xs text-muted-foreground">{t("invitesAccessHint")}</p>
+
+              {projectAccess === "all" && (
+                <p className="text-xs text-foreground">
+                  {t("invitesAccessAllSummary", { count: projects.length })}
+                </p>
+              )}
+
+              {projectAccess === "selected" && (
+                <div className="max-h-40 space-y-1 overflow-auto rounded-md bg-background p-2">
+                  {projects.map((project) => (
+                    <label key={project.id} className="flex items-center gap-2 text-sm text-foreground">
+                      <input
+                        type="checkbox"
+                        checked={selectedProjectIds.includes(project.id)}
+                        onChange={(e) => setSelectedProjectIds((current) =>
+                          e.target.checked
+                            ? [...current, project.id]
+                            : current.filter((id) => id !== project.id),
+                        )}
+                      />
+                      {project.name} ({project.key})
+                    </label>
+                  ))}
+                </div>
+              )}
+            </fieldset>
+
             {createInvite.isError && (
               <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 {createInvite.error.message}
@@ -223,7 +283,7 @@ export function InvitesSection({
 
             <button
               type="submit"
-              disabled={createInvite.isPending}
+              disabled={createInvite.isPending || (projectAccess === "selected" && selectedProjectIds.length === 0)}
               className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200 ease-out"
             >
               {createInvite.isPending ? tCommon("actions.creating") : t("invitesCreateLink")}
