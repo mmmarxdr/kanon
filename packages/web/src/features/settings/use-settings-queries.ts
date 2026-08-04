@@ -49,6 +49,7 @@ interface CreateInviteInput {
   expiresInHours?: number;
   label?: string;
   email?: string;
+  projectAssignments?: Array<{ projectId: string; role: string }>;
 }
 
 // ── Queries ─────────────────────────────────────────────────────────────────
