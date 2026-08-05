@@ -177,6 +177,25 @@ describe("RedmineSection", () => {
     expect(screen.queryByText("Link Redmine project")).not.toBeInTheDocument();
   });
 
+  it("warns that a draft connection is not synchronizing", () => {
+    vi.mocked(useRedmineConnectionQuery).mockReturnValue({
+      data: {
+        ...healthyConnection,
+        lifecycle: "draft",
+        syncHealth: { status: "inactive", blockedWork: null },
+      },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
+
+    render(
+      <RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />,
+    );
+
+    expect(screen.getByText("Redmine sync is inactive")).toBeInTheDocument();
+    expect(screen.getByText(/no issues or time entries are being synchronized/i)).toBeInTheDocument();
+  });
+
   it("lets an owner associate a Kanon project with a discovered Redmine project", () => {
     const connection = {
       ...healthyConnection,

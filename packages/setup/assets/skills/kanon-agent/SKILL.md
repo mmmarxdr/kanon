@@ -24,11 +24,12 @@ references are allowed only when they help a teammate understand the ticket.
 1. kanon_list_groups(projectKey) → pick groupKey
 2. If work starts now, kanon_list_members → pass its memberId as assigneeId
 3. kanon_create_issue with [Area] title + group + description
-4. kanon_start_work(issue_key); a missing startDate becomes today
-5. kanon_transition_issue: backlog → analysis → todo → in_progress → review → done
-6. kanon_update_issue: enrich description as work evolves; never invent dueDate
-7. Deferred/later work → kanon_create_roadmap_item, NOT backlog
-8. kanon_stop_work(issue_key) when done
+4. Before active work, set dueDate from the user, plan, or cycle; ask if unknown
+5. kanon_start_work(issue_key); a missing startDate becomes today
+6. kanon_transition_issue: backlog → analysis → todo → in_progress → review → done
+7. kanon_update_issue: enrich description as work evolves
+8. Deferred/later work → kanon_create_roadmap_item, NOT backlog
+9. kanon_stop_work(issue_key) when done
 
 ## Title Format
 

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { IssueDetail } from "@/types/issue";
 import type { Cycle } from "@/types/cycle";
+import type { EffectiveMemberRow } from "@/features/project-members/use-project-members-queries";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -16,6 +17,10 @@ vi.mock("focus-trap-react", () => ({
 // Mock useCyclesQuery used inside MetadataSection
 vi.mock("@/features/cycles/use-cycles-query", () => ({
   useCyclesQuery: vi.fn(),
+}));
+
+vi.mock("@/features/project-members/use-project-members-queries", () => ({
+  useProjectMembersQuery: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -82,12 +87,14 @@ async function renderMetadataSection({
   onCycleChange = vi.fn(),
   onFieldChange = vi.fn(),
   onTransition = vi.fn(),
+  members = [],
 }: {
   issue: IssueDetail;
   cycles: Cycle[];
   onCycleChange?: ReturnType<typeof vi.fn>;
   onFieldChange?: ReturnType<typeof vi.fn>;
   onTransition?: ReturnType<typeof vi.fn>;
+  members?: EffectiveMemberRow[];
 }) {
   const { useCyclesQuery } = await import("@/features/cycles/use-cycles-query");
   vi.mocked(useCyclesQuery).mockReturnValue({
@@ -95,6 +102,14 @@ async function renderMetadataSection({
     isLoading: false,
     isError: false,
   } as unknown as ReturnType<typeof useCyclesQuery>);
+  const { useProjectMembersQuery } = await import(
+    "@/features/project-members/use-project-members-queries"
+  );
+  vi.mocked(useProjectMembersQuery).mockReturnValue({
+    data: members,
+    isLoading: false,
+    isError: false,
+  } as unknown as ReturnType<typeof useProjectMembersQuery>);
 
   const { MetadataSection } = await import("./metadata-section");
   const wrapper = createWrapper();
@@ -194,5 +209,36 @@ describe("MetadataSection — Cycle dropdown", () => {
 
     expect(onCycleChange).toHaveBeenCalledOnce();
     expect(onCycleChange).toHaveBeenCalledWith("cycle-b", null);
+  });
+});
+
+describe("MetadataSection — Assignee dropdown", () => {
+  it("lists assignable project members even when they have no assigned issue", async () => {
+    const onFieldChange = vi.fn();
+    await renderMetadataSection({
+      issue: makeIssue(),
+      cycles: [],
+      onFieldChange,
+      members: [
+        {
+          userId: "user-gda",
+          memberId: "member-gda",
+          email: "gda@example.com",
+          displayName: "Gustavo",
+          role: "owner",
+          source: "project",
+          pmId: "pm-gda",
+        },
+      ],
+    });
+
+    const select = screen.getByTestId("metadata-assignee-select");
+    expect(Array.from(select.querySelectorAll("option")).map((option) => option.textContent)).toEqual([
+      "Unassigned",
+      "Gustavo",
+    ]);
+
+    fireEvent.change(select, { target: { value: "member-gda" } });
+    expect(onFieldChange).toHaveBeenCalledWith({ assigneeId: "member-gda" });
   });
 });

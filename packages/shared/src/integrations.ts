@@ -47,7 +47,7 @@ export const integrationConnectionSchema = z.object({
   serviceFallbackEnabled: z.boolean(),
   serviceCredentialStatus: integrationCredentialStatusSchema,
   syncHealth: z.object({
-    status: z.enum(["healthy", "credential_blocked"]),
+    status: z.enum(["healthy", "inactive", "credential_blocked"]),
     blockedWork: z
       .object({
         total: z.number().int().nonnegative(),

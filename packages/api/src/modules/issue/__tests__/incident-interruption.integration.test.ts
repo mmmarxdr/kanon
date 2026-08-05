@@ -8,6 +8,7 @@ import {
 } from "../../../test/helpers.js";
 import { prisma } from "../../../config/prisma.js";
 import { issueTypeSchema } from "@kanon/shared";
+import { CreateIssueBody } from "../schema.js";
 
 /**
  * KAN-103 PR1 (ADR-0005 D6): data model only — the `incident` issue type and the
@@ -53,6 +54,9 @@ describe("KAN-103 PR1: incident issue type + Interruption model", () => {
 
   it("the shared issueTypeSchema accepts 'incident'", () => {
     expect(issueTypeSchema.parse("incident")).toBe("incident");
+    expect(CreateIssueBody.parse({ title: "Production outage", type: "incident" }).type).toBe(
+      "incident",
+    );
   });
 
   it("an issue can be created with type=incident (enum migration applied)", async () => {

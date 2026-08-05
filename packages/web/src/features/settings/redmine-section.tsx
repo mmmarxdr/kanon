@@ -18,7 +18,15 @@ export function RedmineCredentialHealth({
   connection: IntegrationConnection;
 }) {
   const { t } = useTranslation("settings");
-  if (connection.syncHealth.status !== "credential_blocked") return null;
+  if (connection.syncHealth.status === "healthy") return null;
+  if (connection.syncHealth.status === "inactive") {
+    return (
+      <SettingsCard className="border-amber-500/40 bg-amber-500/5">
+        <h2 className="font-semibold text-foreground">{t("redmineSyncInactiveTitle")}</h2>
+        <p className="mt-1 text-sm text-muted-foreground">{t("redmineSyncInactiveHelp")}</p>
+      </SettingsCard>
+    );
+  }
   const blocked = connection.syncHealth.blockedWork;
 
   return (

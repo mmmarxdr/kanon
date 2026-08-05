@@ -420,6 +420,50 @@ describe("RedmineProviderAdapter", () => {
     expect(http.put).toHaveBeenCalledOnce();
   });
 
+  it("walks allowed Redmine workflow states after a silent no-op", async () => {
+    const http = client();
+    http.put.mockResolvedValue(undefined);
+    http.get
+      .mockResolvedValueOnce({
+        issue: { id: 99, status: { id: 1 }, updated_on: "2026-08-05T10:00:00Z" },
+      })
+      .mockResolvedValueOnce({
+        issue_statuses: [{ id: 1 }, { id: 3 }, { id: 10 }, { id: 2 }, { id: 8 }],
+      })
+      .mockResolvedValueOnce({ issue: { id: 99, status: { id: 1 }, allowed_statuses: [{ id: 1 }, { id: 3 }] } })
+      .mockResolvedValueOnce({ issue: { id: 99, status: { id: 3 }, allowed_statuses: [{ id: 3 }, { id: 10 }] } })
+      .mockResolvedValueOnce({ issue: { id: 99, status: { id: 10 }, allowed_statuses: [{ id: 10 }, { id: 2 }] } })
+      .mockResolvedValueOnce({ issue: { id: 99, status: { id: 2 }, allowed_statuses: [{ id: 2 }, { id: 8 }] } })
+      .mockResolvedValueOnce({
+        issue: {
+          id: 99,
+          status: { id: 8 },
+          allowed_statuses: [{ id: 8 }],
+          updated_on: "2026-08-05T10:05:00Z",
+        },
+      });
+    const adapter = new RedmineProviderAdapter(http, {
+      writeMap: { in_progress: "8" },
+      resolveExternalId: async (type) => (type === "issue" ? "99" : null),
+    });
+    const statusPatch = {
+      ...noChange,
+      status: { kind: "set", value: "in_progress" },
+    } as const;
+
+    await expect(adapter.pushIssue(issue, statusPatch)).resolves.toMatchObject({
+      requestedStatusId: "8",
+      achievedStatusId: "8",
+    });
+    expect(http.put.mock.calls.map((call) => call[1])).toEqual([
+      { issue: { status_id: "8" } },
+      { issue: { status_id: "3" } },
+      { issue: { status_id: "10" } },
+      { issue: { status_id: "2" } },
+      { issue: { status_id: "8" } },
+    ]);
+  });
+
   it("rejects a requested status without a Redmine mapping", async () => {
     const http = client();
     const adapter = new RedmineProviderAdapter(http, {

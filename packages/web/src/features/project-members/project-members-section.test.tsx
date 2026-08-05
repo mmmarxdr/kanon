@@ -39,6 +39,7 @@ const PROJECT_KEY = "MY-PROJECT";
 // Explicit member (source:'project', has pmId) — current user, admin
 const ADMIN_ROW: EffectiveMemberRow = {
   userId: "u-admin",
+  memberId: "member-admin",
   email: "admin@example.com",
   displayName: "Admin User",
   role: "admin",
@@ -49,6 +50,7 @@ const ADMIN_ROW: EffectiveMemberRow = {
 // Explicit member (source:'project', has pmId) — another member
 const MEMBER_ROW: EffectiveMemberRow = {
   userId: "u-alice",
+  memberId: "member-alice",
   email: "alice@example.com",
   displayName: "Alice",
   role: "member",
@@ -59,6 +61,7 @@ const MEMBER_ROW: EffectiveMemberRow = {
 // Implicit member (source:'workspace', no pmId) — workspace admin
 const IMPLICIT_ROW: EffectiveMemberRow = {
   userId: "u-bob",
+  memberId: "member-bob",
   email: "bob@example.com",
   displayName: "Bob",
   role: "admin",
@@ -69,6 +72,7 @@ const IMPLICIT_ROW: EffectiveMemberRow = {
 // Owner row
 const OWNER_ROW: EffectiveMemberRow = {
   userId: "u-owner",
+  memberId: "member-owner",
   email: "owner@example.com",
   displayName: "Owner",
   role: "owner",
@@ -169,6 +173,7 @@ describe("ProjectMembersSection — row rendering", () => {
     // Render with current user as a plain member
     const memberAsCurrentUser: EffectiveMemberRow = {
       userId: "u-admin",
+      memberId: "member-admin",
       email: "admin@example.com",
       displayName: "Admin User",
       role: "member",
@@ -503,6 +508,7 @@ describe("ProjectMembersSection — owner cap on role select", () => {
     // Current user is owner
     const ownerAsCurrentUser: EffectiveMemberRow = {
       userId: "u-admin",
+      memberId: "member-admin",
       email: "admin@example.com",
       displayName: "Admin User",
       role: "owner",
@@ -533,6 +539,7 @@ describe("ProjectMembersSection — owner cap on role select", () => {
   it("owner option visible in add form when current user is owner", async () => {
     const ownerAsCurrentUser: EffectiveMemberRow = {
       userId: "u-admin",
+      memberId: "member-admin",
       email: "admin@example.com",
       displayName: "Admin User",
       role: "owner",

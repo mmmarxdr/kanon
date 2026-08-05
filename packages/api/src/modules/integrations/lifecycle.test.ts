@@ -96,9 +96,11 @@ describe("integration connection lifecycle", () => {
       deps,
     );
     const discovery = await getConnectionDiscovery(first.connection.id, owner.userId, deps);
+    const detail = await getConnection(first.connection.id, owner.userId);
 
     expect(second.connection.id).toBe(first.connection.id);
     expect(first.connection).toMatchObject({ lifecycle: "draft", serviceFallbackEnabled: false });
+    expect(detail.syncHealth.status).toBe("inactive");
     expect(first.discovery.projects).toEqual([{ id: "remote-project", name: "Remote project" }]);
     expect(discovery.statuses).toHaveLength(2);
     expect(discovery.priorities).toHaveLength(2);

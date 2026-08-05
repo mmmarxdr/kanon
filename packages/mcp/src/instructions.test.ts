@@ -144,6 +144,10 @@ describe("KAN-188 — reconcile_time discoverability", () => {
   it("R2: SERVER_INSTRUCTIONS documents the done-transition reconcile gate", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/reconcile/i);
   });
+
+  it("requires a due date before active work", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/Before start_work: dueDate/);
+  });
 });
 
 describe("PR-4a review — document tools discoverability", () => {

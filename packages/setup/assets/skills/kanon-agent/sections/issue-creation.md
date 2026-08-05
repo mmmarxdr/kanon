@@ -44,6 +44,6 @@ kanon_list_issues({ projectKey, groupKey?, limit: 3, format: compact })
 3. If work starts now → kanon_list_members; pass the selected memberId as assigneeId
 4. kanon_create_issue({ projectKey, title: "[Area] Verb phrase", groupKey, description, type, priority, assigneeId? })
 5. If cycleId known → kanon_update_cycle_scope({ cycleId, add: [issueKey], remove: [], reason })
-6. kanon_start_work sets a missing startDate to today; preserve an existing plan
-7. Set dueDate only from an explicit user/plan/cycle decision — never invent it
+6. Before active work, set dueDate from an explicit user/plan/cycle decision; ask if unknown
+7. kanon_start_work sets a missing startDate to today; preserve an existing plan
 8. Confirm with format: ack response

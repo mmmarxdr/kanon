@@ -1,5 +1,12 @@
 # Changelog — @kanon/mcp
 
+## v0.12.0 (2026-08-05)
+
+- Adds issue start date, due date, and progress to `get_issue` and `update_issue`.
+- Returns assignable workspace member IDs from `list_members`.
+- Requires an explicit due date before active work and keeps issue descriptions PM-facing.
+- Includes current Redmine recovery, time reconciliation, and triage tool contracts.
+
 ## v0.11.0 (2026-07-30)
 
 Breaking naming cleanup: the configured MCP server and `serverInfo.name` are

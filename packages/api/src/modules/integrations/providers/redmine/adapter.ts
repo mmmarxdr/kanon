@@ -28,6 +28,7 @@ type RemoteIssue = {
   id: string | number;
   description?: string | null;
   status?: RemoteRef;
+  allowed_statuses?: RemoteRef[];
   updated_on?: string;
 };
 type RemoteVersion = RemoteRef & {
@@ -405,10 +406,6 @@ export class RedmineProviderAdapter implements PmProviderAdapter {
         writeFailure(error, creating);
       }
       const { status_id: _rejected, ...withoutStatus } = payload;
-      this.options.warn?.(
-        { issueId: issue.id, requestedStatusId },
-        "Redmine rejected status transition"
-      );
       try {
         if (creating) {
           const response = await this.client.post<{ issue: RemoteIssue }>("/issues.json", {
@@ -435,12 +432,84 @@ export class RedmineProviderAdapter implements PmProviderAdapter {
       if (creating) throw new ProviderDispatchError("ambiguous", error);
       retryableFailure(error);
     }
+    if (
+      requestedStatusId &&
+      externalId(observed.issue.status?.id ?? "") !== requestedStatusId
+    ) {
+      try {
+        observed = await this.advanceIssueStatus(id, requestedStatusId, observed);
+      } catch (error) {
+        writeFailure(error, creating);
+      }
+      if (externalId(observed.issue.status?.id ?? "") !== requestedStatusId) {
+        this.options.warn?.(
+          {
+            issueId: issue.id,
+            requestedStatusId,
+            achievedStatusId: observed.issue.status?.id ?? null,
+          },
+          "Redmine did not reach the requested status",
+        );
+      }
+    }
     return {
       externalId: id,
       requestedStatusId,
       achievedStatusId: observed.issue.status ? externalId(observed.issue.status.id) : null,
       remoteVersion: observed.issue.updated_on ?? null,
     };
+  }
+
+  private async advanceIssueStatus(
+    issueId: string,
+    targetStatusId: string,
+    observed: { issue: RemoteIssue },
+  ): Promise<{ issue: RemoteIssue }> {
+    const catalog = await this.client.get<{ issue_statuses?: RemoteRef[] }>(
+      "/issue_statuses.json",
+    );
+    if (!Array.isArray(catalog.issue_statuses)) return observed;
+
+    const order = new Map(
+      catalog.issue_statuses.map((status, index) => [externalId(status.id), index]),
+    );
+    const targetIndex = order.get(targetStatusId);
+    if (targetIndex === undefined) return observed;
+
+    const visited = new Set<string>();
+    let current = observed;
+    for (let step = 0; step < catalog.issue_statuses.length; step += 1) {
+      current = await this.client.get<{ issue: RemoteIssue }>(
+        `/issues/${encodeURIComponent(issueId)}.json?include=allowed_statuses`,
+      );
+      const currentStatusId = externalId(current.issue.status?.id ?? "");
+      if (currentStatusId === targetStatusId) return current;
+      visited.add(currentStatusId);
+
+      const currentIndex = order.get(currentStatusId);
+      if (currentIndex === undefined || !Array.isArray(current.issue.allowed_statuses)) return current;
+      const forward = targetIndex > currentIndex;
+      const candidates = current.issue.allowed_statuses
+        .map((status) => ({ id: externalId(status.id), index: order.get(externalId(status.id)) }))
+        .filter(
+          (candidate): candidate is { id: string; index: number } =>
+            candidate.index !== undefined &&
+            !visited.has(candidate.id) &&
+            (forward
+              ? candidate.index > currentIndex && candidate.index <= targetIndex
+              : candidate.index < currentIndex && candidate.index >= targetIndex),
+        )
+        .sort((left, right) =>
+          forward ? right.index - left.index : left.index - right.index,
+        );
+      const next = candidates[0];
+      if (!next) return current;
+
+      await this.client.put(`/issues/${encodeURIComponent(issueId)}.json`, {
+        issue: { status_id: next.id },
+      });
+    }
+    return current;
   }
 
   async pushTimeEntry(entry: CanonicalTimeEntry, activityId: string): Promise<PushResult> {

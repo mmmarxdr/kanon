@@ -215,19 +215,19 @@ describe("KAN-157 reconciliation gate — transitionIssue →done", () => {
     ).rejects.toMatchObject({ code: "RECONCILIATION_REQUIRED" });
   });
 
-  // ── (e) Zero captured time → auto-pass ─────────────────────────────────
-  it("(e) allows →done when issue has NO WorkLogs and NO TimeEntries (zero captured time)", async () => {
+  // ── (e) Zero captured time still requires explicit confirmation ─────────
+  it("(e) blocks →done until zero captured time is explicitly confirmed", async () => {
     vi.mocked(prisma.issue.findUnique).mockResolvedValue(
       makeIssue({ timeConfirmedAt: null }),
     );
     vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
     vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([]);
-    vi.mocked(prisma.issue.update).mockResolvedValue({ ...makeIssue(), state: "done" } as any);
-    vi.mocked(prisma.member.findUnique).mockResolvedValue(null);
-
     await expect(
       transitionIssue(ISSUE_KEY, "done", MEMBER_ID),
-    ).resolves.toBeDefined();
+    ).rejects.toMatchObject({
+      code: "RECONCILIATION_REQUIRED",
+      details: { totalHours: 0 },
+    });
   });
 
   // ── (c) Staleness — new WorkLog after confirm blocks again ──────────────

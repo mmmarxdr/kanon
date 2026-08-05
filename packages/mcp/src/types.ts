@@ -5,7 +5,7 @@ import { z } from "zod";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-export const ISSUE_TYPES = ["feature", "bug", "task", "spike"] as const;
+export const ISSUE_TYPES = ["feature", "bug", "task", "spike", "incident"] as const;
 export const ISSUE_PRIORITIES = ["critical", "high", "medium", "low"] as const;
 // KAN-99 PR1: "analysis" added at index 1 (between backlog and todo).
 export const ISSUE_STATES = [

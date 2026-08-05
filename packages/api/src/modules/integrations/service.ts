@@ -1252,6 +1252,8 @@ export async function getConnection(connectionId: string, userId: string) {
       status:
         serviceCredentialStatus !== "valid" || blockedWorkTotal > 0
           ? ("credential_blocked" as const)
+          : connection.lifecycle !== "active"
+            ? ("inactive" as const)
           : ("healthy" as const),
       blockedWork: operator ? { total: blockedWorkTotal, items: blockedWork } : null,
     },

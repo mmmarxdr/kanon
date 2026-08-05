@@ -1,7 +1,5 @@
 import { useTranslation } from "react-i18next";
 import { useCallback } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { issueKeys } from "@/lib/query-keys";
 import {
   ISSUE_STATES,
   type IssueState,
@@ -10,9 +8,9 @@ import type {
   IssueDetail,
   IssueType,
   IssuePriority,
-  Issue,
 } from "@/types/issue";
 import { useCyclesQuery } from "@/features/cycles/use-cycles-query";
+import { useProjectMembersQuery } from "@/features/project-members/use-project-members-queries";
 import type { Cycle } from "@/types/cycle";
 
 const ISSUE_TYPES: IssueType[] = ["feature", "bug", "task", "spike"];
@@ -38,8 +36,7 @@ interface MetadataSectionProps {
  * - type, priority, assignee, labels: onFieldChange (PATCH)
  * - state: onTransition (POST /transition)
  *
- * Assignee list is derived from the board issues cache
- * (unique assignees already loaded on the board).
+ * Assignee list comes from the project's effective members.
  */
 export function MetadataSection({
   issue,
@@ -50,10 +47,10 @@ export function MetadataSection({
 }: MetadataSectionProps) {
   const { t } = useTranslation("issue");
   const { t: tCommon } = useTranslation("common");
-  const queryClient = useQueryClient();
-
-  // Derive unique assignees from the board issues cache
-  const assignees = useAssigneesFromCache(projectKey, queryClient);
+  const { data: members } = useProjectMembersQuery(projectKey);
+  const assignees = [...(members ?? [])].sort((a, b) =>
+    (a.displayName ?? a.email).localeCompare(b.displayName ?? b.email),
+  );
 
   // Fetch all cycles for this project to populate the cycle picker
   const { data: allCycles } = useCyclesQuery(projectKey);
@@ -161,17 +158,18 @@ export function MetadataSection({
         </select>
       </MetadataField>
 
-      {/* Assignee (derived from board cache) */}
+      {/* Assignee */}
       <MetadataField label={t("fieldAssignee")}>
         <select
+          data-testid="metadata-assignee-select"
           value={issue.assigneeId ?? ""}
           onChange={handleAssigneeChange}
           className="w-full rounded bg-secondary text-sm text-foreground border border-border px-2 py-1 outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
         >
           <option value="">{tCommon("actions.unassigned")}</option>
           {assignees.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.username}
+            <option key={a.memberId} value={a.memberId}>
+              {a.displayName ?? a.email}
             </option>
           ))}
         </select>
@@ -223,40 +221,6 @@ function MetadataField({
       </span>
       {children}
     </div>
-  );
-}
-
-interface CachedAssignee {
-  id: string;
-  username: string;
-}
-
-/**
- * Derives unique assignees from the board issues list cache.
- * Falls back to empty array if cache is not populated.
- */
-function useAssigneesFromCache(
-  projectKey: string,
-  queryClient: ReturnType<typeof import("@tanstack/react-query").useQueryClient>,
-): CachedAssignee[] {
-  const issues = queryClient.getQueryData<Issue[]>(
-    issueKeys.list(projectKey),
-  );
-
-  if (!issues) return [];
-
-  const map = new Map<string, CachedAssignee>();
-  for (const issue of issues) {
-    if (issue.assigneeId && issue.assignee) {
-      map.set(issue.assigneeId, {
-        id: issue.assigneeId,
-        username: issue.assignee.username,
-      });
-    }
-  }
-
-  return Array.from(map.values()).sort((a, b) =>
-    a.username.localeCompare(b.username),
   );
 }
 

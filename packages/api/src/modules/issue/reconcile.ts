@@ -162,10 +162,9 @@ async function captureConfirmedTimeTx(
  * Returns a descriptor that the caller uses to either throw RECONCILIATION_REQUIRED
  * or allow the transition.
  *
- * "needs reconciliation" = has any WorkLog OR TimeEntry AND
- *   (timeConfirmedAt is null OR some row.createdAt > timeConfirmedAt).
- *
- * Zero captured time → auto-pass (returns { needed: false }).
+ * "needs reconciliation" = time has never been confirmed, or a WorkLog/TimeEntry
+ * was created at or after the last confirmation. Zero hours still require an
+ * explicit confirmation so completed tickets never have unknown time.
  */
 export async function checkReconciliation(issueId: string, timeConfirmedAt: Date | null): Promise<{
   needed: boolean;
@@ -184,9 +183,14 @@ export async function checkReconciliation(issueId: string, timeConfirmedAt: Date
     }),
   ]);
 
-  // Zero captured time → auto-pass
+  // Zero captured time still needs one explicit confirmation.
   if (workLogs.length === 0 && timeEntries.length === 0) {
-    return { needed: false, workLogs: [], timeEntries: [], totalHours: 0 };
+    return {
+      needed: timeConfirmedAt === null,
+      workLogs: [],
+      timeEntries: [],
+      totalHours: 0,
+    };
   }
 
   // If confirmed, check staleness: any row created at or after confirmation?
