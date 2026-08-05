@@ -11,6 +11,7 @@
   "profile": "Profile",
   "issue": "Issue",
   "admin": "Admin",
+  "adminUsers": "Users",
   "logout": "Logout",
   "createProject": "New project",
   "projects": "Projects",

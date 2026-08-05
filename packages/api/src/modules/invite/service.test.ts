@@ -211,6 +211,7 @@ const mockInviteCreatedBy = {
   kind: "MEMBER",
   consumedAt: null,
   projectAssignments: null,
+  projectAccess: "workspace" as const,
   createdAt: new Date(),
   createdBy: { email: "admin@example.com", displayName: "Admin" },
   workspace: { name: "Test Workspace" },
@@ -261,6 +262,7 @@ describe("createInvite() — project-assignment validation + owner-cap", () => {
     });
     const createCall = mockPrisma.workspaceInvite.create.mock.calls[0][0];
     expect(createCall.data.projectAssignments).toEqual(assignments);
+    expect(createCall.data.projectAccess).toBe("assigned");
   });
 
   // 2.1-T3: projectId from another workspace → 422 INVALID_PROJECT, no invite persisted
@@ -484,6 +486,9 @@ const BASE_MEMBER_ROW = {
   revoked_at: null,
   workspace_id: WORKSPACE_ID,
   kind: "MEMBER",
+  project_access: "workspace",
+  project_assignments: null,
+  email: null,
 };
 
 const PROJECT_ID_C = "dddddddd-dddd-dddd-dddd-dddddddddddd";
@@ -539,17 +544,8 @@ function makeTxWithPM(
 
 // Base row with project_assignments (for Phase 5 tests)
 const BASE_MEMBER_ROW_WITH_ASSIGNMENTS = {
-  ...{
-    id: INVITE_ID,
-    token: "member-token",
-    role: "MEMBER",
-    max_uses: 10,
-    use_count: 0,
-    expires_at: new Date(Date.now() + 72 * 60 * 60 * 1000),
-    revoked_at: null,
-    workspace_id: WORKSPACE_ID,
-    kind: "MEMBER",
-  },
+  ...BASE_MEMBER_ROW,
+  project_access: "assigned",
   project_assignments: [
     { projectId: PROJECT_ID_A, role: "member" },
     { projectId: PROJECT_ID_B, role: "viewer" },

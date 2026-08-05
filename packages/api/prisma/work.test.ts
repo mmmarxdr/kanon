@@ -145,9 +145,16 @@ async function seedPreWorkRows(database: PrismaClient) {
   const f = upgradeFixture;
   await database.workspace.create({ data: { id: f.workspaceId, name: "A1.4 upgrade", slug: "a14-upgrade" } });
   await database.user.create({ data: { id: f.userId, email: "a14-upgrade@kanon.test", passwordHash: "unused" } });
-  await database.member.create({
-    data: { id: f.memberId, username: "a14-member", userId: f.userId, workspaceId: f.workspaceId },
-  });
+  // Raw insert: pre-work schema has no project_access (KAN-222), but the
+  // generated Prisma client always targets the current schema.
+  await database.$executeRaw(Prisma.sql`
+    INSERT INTO "members" (
+      "id", "username", "role", "is_agent", "created_at", "updated_at", "user_id", "workspace_id"
+    ) VALUES (
+      ${f.memberId}::uuid, 'a14-member', 'member', false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+      ${f.userId}::uuid, ${f.workspaceId}::uuid
+    )
+  `);
   await database.project.create({
     data: { id: f.projectId, key: "UPG14", name: "A1.4 project", workspaceId: f.workspaceId },
   });

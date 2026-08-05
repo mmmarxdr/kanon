@@ -41,6 +41,14 @@ enum MemberRole {
   viewer
 }
 
+/// How a workspace member may access projects (KAN-222).
+/// workspace = all active projects in the workspace (incl. future).
+/// assigned  = only projects with an explicit ProjectMember row.
+enum ProjectAccess {
+  workspace
+  assigned
+}
+
 enum CycleState {
   upcoming
   active
@@ -615,12 +623,14 @@ model CycleScopeEvent {
 }
 
 model Member {
-  id        String     @id @default(uuid()) @db.Uuid
-  username  String
-  role      MemberRole @default(member)
-  isAgent   Boolean    @default(false) @map("is_agent")
-  createdAt DateTime   @default(now()) @map("created_at")
-  updatedAt DateTime   @updatedAt @map("updated_at")
+  id            String        @id @default(uuid()) @db.Uuid
+  username      String
+  role          MemberRole    @default(member)
+  /// KAN-222: workspace = all projects; assigned = ProjectMember rows only.
+  projectAccess ProjectAccess @default(assigned) @map("project_access")
+  isAgent       Boolean       @default(false) @map("is_agent")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
 
   userId      String    @map("user_id") @db.Uuid
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -814,11 +824,13 @@ model WorkspaceInvite {
   revokedAt  DateTime?  @map("revoked_at")
   label      String?                                   // optional description
   email      String?    @map("email")                  // optional recipient email
-  kind               InviteKind @default(MEMBER)
-  consumedAt         DateTime?  @map("consumed_at")
-  projectAssignments Json?      @map("project_assignments")
-  createdAt          DateTime   @default(now()) @map("created_at")
-  updatedAt          DateTime   @updatedAt @map("updated_at")
+  kind               InviteKind    @default(MEMBER)
+  consumedAt         DateTime?     @map("consumed_at")
+  projectAssignments Json?         @map("project_assignments")
+  /// KAN-222: persisted so accept can set Member.projectAccess when assignments are empty.
+  projectAccess      ProjectAccess @default(workspace) @map("project_access")
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
 
   workspaceId String    @map("workspace_id") @db.Uuid
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)

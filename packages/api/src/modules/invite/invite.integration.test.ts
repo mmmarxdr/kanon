@@ -701,6 +701,7 @@ describe("Workspace Invites", () => {
           expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
           workspaceId,
           createdById,
+          projectAccess: "assigned",
           projectAssignments: projectAssignments as any,
         },
       });
@@ -811,12 +812,13 @@ describe("Workspace Invites", () => {
       expect(pmRows).toHaveLength(1);
     });
 
-    // 5.3-T4: accept with no assignments → only Member row (existing behavior)
-    it("invite with no assignments → only Member created, zero PM rows", async () => {
+    // 5.3-T4: workspace-scope invite → Member.projectAccess=workspace, zero PM rows
+    it("workspace-scope invite → Member.projectAccess=workspace and can open projects", async () => {
       const ws = await seedTestWorkspace();
       const owner = await seedTestMemberWithRole(ws.id, "owner");
+      const project = await seedTestProject(ws.id, "WSACC");
 
-      // Invite with no projectAssignments
+      // Invite with no projectAssignments (default projectAccess=workspace)
       const invite = await createInviteDirectly(ws.id, owner.userId);
       const { user, token } = await createStandaloneUser();
 
@@ -829,10 +831,53 @@ describe("Workspace Invites", () => {
 
       expect(res.statusCode).toBe(201);
 
+      const member = await prisma.member.findUniqueOrThrow({
+        where: { userId_workspaceId: { userId: user.id, workspaceId: ws.id } },
+      });
+      expect(member.projectAccess).toBe("workspace");
+
       const pmRows = await prisma.projectMember.findMany({
         where: { userId: user.id },
       });
       expect(pmRows).toHaveLength(0);
+
+      const open = await app.inject({
+        method: "GET",
+        url: `/api/projects/${project.key}`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(open.statusCode).toBe(200);
+
+      const list = await app.inject({
+        method: "GET",
+        url: `/api/workspaces/${ws.id}/projects`,
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(list.statusCode).toBe(200);
+      expect(list.json().map((p: { key: string }) => p.key)).toEqual(["WSACC"]);
+    });
+
+    it("assigned-scope invite → Member.projectAccess=assigned", async () => {
+      const ws = await seedTestWorkspace();
+      const owner = await seedTestMemberWithRole(ws.id, "owner");
+      const project = await seedTestProject(ws.id, "ASG1");
+      const invite = await createInviteWithAssignments(ws.id, owner.userId, [
+        { projectId: project.id, role: "member" },
+      ]);
+      const { user, token } = await createStandaloneUser();
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/invites/${invite.token}/accept`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: {},
+      });
+      expect(res.statusCode).toBe(201);
+
+      const member = await prisma.member.findUniqueOrThrow({
+        where: { userId_workspaceId: { userId: user.id, workspaceId: ws.id } },
+      });
+      expect(member.projectAccess).toBe("assigned");
     });
   });
 });

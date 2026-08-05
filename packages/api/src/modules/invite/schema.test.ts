@@ -46,6 +46,25 @@ describe("CreateInviteBody — projectAssignments", () => {
     expect(result.data?.projectAssignments).toBeUndefined();
   });
 
+  it("rejects projectAccess=assigned without projectAssignments", () => {
+    const result = CreateInviteBody.safeParse({
+      role: "member",
+      projectAccess: "assigned",
+      expiresInHours: 48,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts projectAccess=workspace without assignments", () => {
+    const result = CreateInviteBody.safeParse({
+      role: "member",
+      projectAccess: "workspace",
+      expiresInHours: 48,
+    });
+    expect(result.success).toBe(true);
+    expect(result.data?.projectAccess).toBe("workspace");
+  });
+
   it("accepts a body with valid projectAssignments", () => {
     const result = CreateInviteBody.safeParse({
       role: "member",

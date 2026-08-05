@@ -50,6 +50,8 @@ export interface MemberContext {
   role: MemberRole;    // from @prisma/client
   workspaceId: string;
   userId: string;
+  /** KAN-222: workspace = all projects; assigned = ProjectMember only */
+  projectAccess: "workspace" | "assigned";
 }
 
 /**

@@ -149,9 +149,16 @@ async function seedPreApplicationRows(database: PrismaClient) {
   await database.user.create({
     data: { id: f.userId, email: "a15-upgrade@kanon.test", passwordHash: "unused" },
   });
-  await database.member.create({
-    data: { id: f.memberId, username: "a15-member", userId: f.userId, workspaceId: f.workspaceId },
-  });
+  // Raw insert: pre-application schema has no project_access (KAN-222), but the
+  // generated Prisma client always targets the current schema.
+  await database.$executeRaw(Prisma.sql`
+    INSERT INTO "members" (
+      "id", "username", "role", "is_agent", "created_at", "updated_at", "user_id", "workspace_id"
+    ) VALUES (
+      ${f.memberId}::uuid, 'a15-member', 'member', false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+      ${f.userId}::uuid, ${f.workspaceId}::uuid
+    )
+  `);
   await database.project.create({
     data: { id: f.projectId, key: "UPG15", name: "A1.5 project", workspaceId: f.workspaceId },
   });

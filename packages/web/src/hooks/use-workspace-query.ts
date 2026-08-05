@@ -13,6 +13,8 @@ export interface Workspace {
   slug: string;
   allowedDomains: string[];
   createdAt: string;
+  /** Caller's membership role in this workspace (KAN-222) */
+  role?: string | null;
 }
 
 /**

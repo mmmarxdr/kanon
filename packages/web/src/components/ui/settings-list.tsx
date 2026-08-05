@@ -1,8 +1,13 @@
-import { createContext, useContext, type CSSProperties, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 
 export interface SettingsListColumn {
   key: string;
-  label: string;
+  label: ReactNode;
   className?: string;
   hideBelow?: "sm" | "md";
 }

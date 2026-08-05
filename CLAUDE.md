@@ -26,3 +26,7 @@ pnpm bootstrap && pnpm dev:start
 Kanon skills are installed globally via `pnpm setup:mcp`. They are available in any project. Run the setup script to configure your AI tool.
 
 The `_shared/kanon-phase-common.md` in `.claude/skills/` is kanon-development-specific and is NOT part of the global install.
+
+## Deploy
+
+Live hosting is **Dokploy** (auto after images publish). AWS/`kanon-infra`/SSM runbooks are obsolete — do not use them. Shipping = PR + green CI (+ merge if asked); do not trigger manual deploys.
