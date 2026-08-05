@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
+import { z } from "zod";
 import {
   CreateIssueBody,
   UpdateIssueBody,
@@ -12,13 +13,16 @@ import {
   IssueFilterQuery,
   ReconcileTimeBody,
 } from "./schema.js";
+import { IssueSearchInputSchema } from "../triage/contracts.js";
 import {
   requireProjectMember,
   requireProjectRole,
   requireIssueMember,
   requireIssueRole,
+  requireMember,
 } from "../../middleware/require-role.js";
 import * as issueService from "./service.js";
+import { searchIssues } from "../triage/search.js";
 import { reconcileIssueTime } from "./reconcile.js";
 
 /**
@@ -29,6 +33,28 @@ export default async function issueRoutes(
   fastify: FastifyInstance,
 ): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  /**
+   * POST /api/workspaces/:workspaceId/issue-search.v1
+   */
+  app.post(
+    "/workspaces/:workspaceId/issue-search.v1",
+    {
+      preHandler: [requireMember("workspaceId")],
+      schema: {
+        params: z.object({ workspaceId: z.string() }),
+        body: IssueSearchInputSchema,
+      },
+    },
+    async (request, reply) => {
+      const response = await searchIssues(
+        request.params.workspaceId,
+        request.member!.userId,
+        request.body
+      );
+      return reply.status(200).send(response);
+    }
+  );
 
   /**
    * POST /api/projects/:key/issues

@@ -948,3 +948,139 @@ describe("KanonClient — X-Kanon-Client header injection (S1)", () => {
     expect(headers["X-Kanon-Client"]).toBeUndefined();
   });
 });
+
+// ─── Triage client methods (KAN-193 PR10) ────────────────────────────────────
+
+describe("KanonClient triage methods", () => {
+  const correlationId = "550e8400-e29b-41d4-a716-446655440000";
+
+  it("previewIssueTriage posts to /triage/preview with correlation + timeout", async () => {
+    const fetchMock = mockFetch({ previewSeal: "seal" });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await client.previewIssueTriage(
+      "KAN-42",
+      { phase: "prepare", aiIntent: "none" },
+      { timeoutMs: 2900, correlationId },
+    );
+
+    const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/api/issues/KAN-42/triage/preview`);
+    expect(opts.method).toBe("POST");
+    const headers = opts.headers as Record<string, string>;
+    expect(headers["X-Kanon-Correlation-ID"]).toBe(correlationId);
+    expect(JSON.parse(opts.body as string)).toEqual({
+      phase: "prepare",
+      aiIntent: "none",
+    });
+  });
+
+  it("persistTriageProposal posts exact preview+seal path", async () => {
+    const fetchMock = mockFetch({ id: "p1" }, 201);
+    vi.stubGlobal("fetch", fetchMock);
+    await client.persistTriageProposal("KAN-42", {
+      preview: { a: 1 },
+      previewSeal: "seal",
+    });
+    const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/api/issues/KAN-42/triage-proposals`);
+    expect(opts.method).toBe("POST");
+  });
+
+  it("listTriageProposals encodes degraded as true|false and passes cursor", async () => {
+    const fetchMock = mockFetch({ rows: [] });
+    vi.stubGlobal("fetch", fetchMock);
+    await client.listTriageProposals("KAN", {
+      degraded: false,
+      cursor: "cur+1/x",
+      limit: 20,
+      targetIssueKey: "KAN-42",
+    });
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const parsed = new URL(url);
+    expect(parsed.pathname).toBe("/api/projects/KAN/triage-proposals");
+    expect(parsed.searchParams.get("degraded")).toBe("false");
+    expect(parsed.searchParams.get("cursor")).toBe("cur+1/x");
+    expect(parsed.searchParams.get("limit")).toBe("20");
+    expect(parsed.searchParams.get("targetIssueKey")).toBe("KAN-42");
+  });
+
+  it("getTriageProposal and dismissTriageProposal hit designed paths", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const fetchMock = mockFetch({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await client.getTriageProposal(id, "compact");
+    expect((fetchMock.mock.calls[0] as [string])[0]).toContain(
+      `/api/triage-proposals/${id}?format=compact`,
+    );
+
+    await client.dismissTriageProposal(id, { reason: "duplicate" }, { timeoutMs: 2000 });
+    const [url, opts] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/api/triage-proposals/${id}/dismiss`);
+    expect(opts.method).toBe("POST");
+  });
+
+  it("parses semantic error fields from triage error bodies", async () => {
+    const fetchMock = mockFetch(
+      {
+        code: "SOURCE_CONFLICT",
+        message: "stale",
+        category: "source_conflict",
+        retry: "rerun_preview",
+        correlationId,
+        apiContractVersion: "triage-api.v1",
+      },
+      409,
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const err = await client
+      .previewIssueTriage("KAN-42", { phase: "prepare" })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(KanonApiError);
+    expect(err.category).toBe("source_conflict");
+    expect(err.retry).toBe("rerun_preview");
+    expect(err.correlationId).toBe(correlationId);
+  });
+
+  it("does not auto-retry non-401 POSTs (including triage persist)", async () => {
+    process.env["KANON_REFRESH_TOKEN"] = "refresh-token";
+    const refreshClient = new KanonClient({ baseUrl: BASE_URL, apiKey: "access" });
+    const fetchMock = mockFetch({ code: "SOURCE_CONFLICT", message: "stale" }, 409);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      refreshClient.persistTriageProposal("KAN-42", { preview: {}, previewSeal: "s" }),
+    ).rejects.toBeInstanceOf(KanonApiError);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    delete process.env["KANON_REFRESH_TOKEN"];
+  });
+
+  it("unrelated calls still use the 10-second default timeout", async () => {
+    const fetchMock = mockFetch([]);
+    vi.stubGlobal("fetch", fetchMock);
+    const abortSpy = vi.spyOn(AbortSignal, "timeout");
+    await client.listWorkspaces();
+    expect(abortSpy).toHaveBeenCalledWith(10_000);
+    abortSpy.mockRestore();
+  });
+
+  it("privacy: correlation header only — no query/cursor/model headers on triage calls", async () => {
+    const fetchMock = mockFetch({ rows: [] });
+    vi.stubGlobal("fetch", fetchMock);
+    await client.listTriageProposals(
+      "KAN",
+      { cursor: "opaque", limit: 20 },
+      { correlationId, timeoutMs: 2900 },
+    );
+    const [, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = opts.headers as Record<string, string>;
+    expect(headers["X-Kanon-Correlation-ID"]).toBe(correlationId);
+    expect(headers["X-Query"]).toBeUndefined();
+    expect(headers["X-Cursor"]).toBeUndefined();
+    expect(headers["X-Model"]).toBeUndefined();
+    // Cursor stays in the query string (API wire), never as a metric/log label here.
+    expect((fetchMock.mock.calls[0] as [string])[0]).toContain("cursor=");
+  });
+});

@@ -15,6 +15,7 @@ import { registerTimesheetTools } from "./tools/timesheet.js";
 import { registerMemberTools } from "./tools/members.js";
 import { registerCommentTools } from "./tools/comments.js";
 import { registerCaptureTools } from "./tools/capture.js";
+import { registerTriageTools } from "./tools/triage.js";
 import { shutdownAllHeartbeats, wrapHandlerWithActivity } from "./heartbeat.js";
 import { startSseClient, stopSseClient } from "./sse-client.js";
 import { SERVER_INSTRUCTIONS, DEFERRED_TOOLS } from "./instructions.js";
@@ -114,6 +115,7 @@ registerTimesheetTools(server, client);
 registerMemberTools(server, client);
 registerCommentTools(server, client);
 registerCaptureTools(server, client);
+registerTriageTools(server, client);
 
 // ─── Connect ────────────────────────────────────────────────────────────────
 

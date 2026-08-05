@@ -50,6 +50,13 @@ export async function createWorkspace(body: CreateWorkspaceBody, userId: string)
       data: {
         name: body.name,
         slug: body.slug,
+        triagePolicies: {
+          create: {
+            version: "1",
+            retentionDays: 365,
+            dispositionListVisibility: "hidden",
+          },
+        },
       },
     });
 
