@@ -156,6 +156,7 @@ export async function cleanDatabase(): Promise<void> {
   await prisma.interruption.deleteMany();
   // WorkLog depends on Issue (Cascade) — delete before issues for explicit ordering
   await prisma.workLog.deleteMany();
+  await prisma.externalRef.deleteMany();
   await prisma.issue.deleteMany();
   await prisma.roadmapItem.deleteMany();
   await prisma.cycle.deleteMany();
