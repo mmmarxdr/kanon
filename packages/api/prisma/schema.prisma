@@ -1459,6 +1459,13 @@ model TriageProposal {
   createdAt         DateTime @default(now()) @map("created_at")
   expiresAt         DateTime @map("expires_at")
   disposedAt        DateTime? @map("disposed_at")
+
+  /// Captured at creation from workspace policy — later policy edits must not shorten this.
+  retentionEligibleAt     DateTime @map("retention_eligible_at")
+  capturedRetentionDays   Int      @map("captured_retention_days")
+  capturedPolicyVersion   String   @map("captured_policy_version")
+  /// Captured from policy at disposition time (null until disposed).
+  dispositionListVisible  Boolean? @map("disposition_list_visible")
   
   supersedesId      String?  @map("supersedes_id") @db.Uuid
   
@@ -1473,6 +1480,7 @@ model TriageProposal {
   @@index([workspaceId, lifecycle])
   @@index([projectId, lifecycle])
   @@index([expiresAt])
+  @@index([retentionEligibleAt])
   @@map("triage_proposals")
 }
 
@@ -1492,6 +1500,8 @@ model TriageProposalLifecycleEvent {
   proposalId        String   @map("proposal_id") @db.Uuid
   state             TriageProposalLifecycleState
   reason            String?
+  /// Bounded safe details (e.g. policy id/version on retention disposition).
+  details           Json?
   actorId           String?  @map("actor_id") @db.Uuid
   createdAt         DateTime @default(now()) @map("created_at")
   

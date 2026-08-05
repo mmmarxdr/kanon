@@ -9,10 +9,12 @@ import {
   DEFAULT_RETENTION_DAYS,
   registerRetentionHousekeeping,
   parseRetentionDays,
+  captureRetentionFromPolicy,
+  disposedListDiscoveryAllowed,
+  disposedTombstoneProjection,
 } from "./retention.js";
 import {
   seedTestWorkspace,
-  seedTestMember,
   seedTestProject,
   cleanDatabase,
   disconnectTestDb,
@@ -34,7 +36,7 @@ async function createPolicy(
   });
 }
 
-/** Helper to create a proposal with content */
+/** Helper to create a proposal with content + captured retention snapshot */
 async function createProposal(
   workspaceId: string,
   projectId: string,
@@ -47,8 +49,17 @@ async function createProposal(
     identityDigest?: string;
     withContent?: boolean;
     targetIssueId?: string;
+    supersedesId?: string;
+    dispositionListVisible?: boolean | null;
+    /** Override captured eligibility (defaults from policy at createdAt). */
+    retentionEligibleAt?: Date;
+    capturedRetentionDays?: number;
   } = {}
 ) {
+  const policy = await prisma.triagePolicy.findUniqueOrThrow({ where: { id: policyId } });
+  const createdAt = opts.createdAt ?? new Date();
+  const captured = captureRetentionFromPolicy(policy, createdAt);
+
   const data: any = {
     workspaceId,
     projectId,
@@ -57,10 +68,17 @@ async function createProposal(
     targetIssueId: opts.targetIssueId ?? randomUUID(),
     lifecycle: opts.lifecycle ?? "pending",
     listSummary: { title: "test proposal" },
-    expiresAt: opts.expiresAt ?? new Date(Date.now() + 86400_000),
+    createdAt,
+    expiresAt: opts.expiresAt ?? new Date(createdAt.getTime() + 7 * 86400_000),
+    retentionEligibleAt: opts.retentionEligibleAt ?? captured.retentionEligibleAt,
+    capturedRetentionDays: opts.capturedRetentionDays ?? captured.capturedRetentionDays,
+    capturedPolicyVersion: captured.capturedPolicyVersion,
   };
-  if (opts.createdAt) data.createdAt = opts.createdAt;
   if (opts.disposedAt) data.disposedAt = opts.disposedAt;
+  if (opts.supersedesId) data.supersedesId = opts.supersedesId;
+  if (opts.dispositionListVisible !== undefined) {
+    data.dispositionListVisible = opts.dispositionListVisible;
+  }
 
   if (opts.withContent !== false) {
     data.content = {
@@ -73,7 +91,6 @@ async function createProposal(
 
 describe("Triage Retention (KAN-193 PR9)", () => {
   let workspaceId: string;
-  let userId: string;
   let projectId: string;
   let policyId: string;
 
@@ -81,9 +98,8 @@ describe("Triage Retention (KAN-193 PR9)", () => {
     await cleanDatabase();
     const ws = await seedTestWorkspace();
     workspaceId = ws.id;
-    const u = await seedTestMember(workspaceId);
-    userId = u.userId;
-    const p = await seedTestProject(workspaceId, "R" + Math.floor(Math.random() * 99));
+    // Project keys are short (≤3–4 chars in this schema); let helper pick a unique one.
+    const p = await seedTestProject(workspaceId);
     projectId = p.id;
 
     const policy = await createPolicy(workspaceId, { retentionDays: 365 });
@@ -357,33 +373,60 @@ describe("Triage Retention (KAN-193 PR9)", () => {
     });
 
     it("policy change does not silently shorten retention for existing rows", async () => {
-      // Create with a 365-day policy
+      // Captured under 365-day policy at creation — 200 days old is not yet eligible
       const proposal = await createProposal(workspaceId, projectId, policyId, {
         lifecycle: "expired",
-        createdAt: new Date(Date.now() - 200 * 86400_000), // 200 days old
+        createdAt: new Date(Date.now() - 200 * 86400_000),
         expiresAt: new Date(Date.now() - 199 * 86400_000),
       });
+      expect(proposal.capturedRetentionDays).toBe(365);
 
-      // Now update the policy to 7 days — this should NOT retroactively
-      // affect the row, because retention uses the policy's current retentionDays
-      // joined via the policy_id FK. The key is: changing retentionDays affects
-      // all future evaluations. However, the test documents that the row IS
-      // affected since retention is evaluated at sweep time against the policy.
-      // The spec says "policy changes affecting only future rows absent explicit
-      // audited reevaluation" — but since the sweep JOIN uses the policy's
-      // current value, we must verify that row's eligibility changes.
+      // Shorten the live workspace policy — must NOT change captured eligibility
       await prisma.triagePolicy.update({
         where: { id: policyId },
         data: { retentionDays: 7 },
       });
 
-      // Under a 7-day policy, a 200-day-old expired proposal IS eligible
       const count = await sweepRetention({ limit: 10 });
-      // This verifies the join-time evaluation behavior
-      expect(count).toBe(1);
+      expect(count).toBe(0);
 
-      const updated = await prisma.triageProposal.findUnique({ where: { id: proposal.id } });
-      expect(updated?.lifecycle).toBe("disposed");
+      const unchanged = await prisma.triageProposal.findUnique({ where: { id: proposal.id } });
+      expect(unchanged?.lifecycle).toBe("expired");
+      expect(unchanged?.capturedRetentionDays).toBe(365);
+      expect(unchanged?.content).toBeUndefined(); // relation not loaded
+      const content = await prisma.triageProposalContent.findUnique({
+        where: { proposalId: proposal.id },
+      });
+      expect(content).not.toBeNull();
+    });
+
+    it("records policy id/version in disposition audit details", async () => {
+      const policy = await createPolicy(workspaceId, {
+        retentionDays: 7,
+        version: "pol-v9",
+        dispositionListVisibility: "visible",
+      });
+      const proposal = await createProposal(workspaceId, projectId, policy.id, {
+        lifecycle: "expired",
+        createdAt: new Date(Date.now() - 20 * 86400_000),
+        expiresAt: new Date(Date.now() - 19 * 86400_000),
+      });
+
+      await sweepRetention({ limit: 10 });
+
+      const event = await prisma.triageProposalLifecycleEvent.findFirst({
+        where: { proposalId: proposal.id, state: "disposed" },
+      });
+      expect(event?.details).toMatchObject({
+        action: "retention_disposed",
+        policyId: policy.id,
+        policyVersion: "pol-v9",
+        retentionDays: 7,
+        dispositionListVisible: true,
+      });
+
+      const tombstone = await prisma.triageProposal.findUnique({ where: { id: proposal.id } });
+      expect(tombstone?.dispositionListVisible).toBe(true);
     });
   });
 
@@ -708,6 +751,101 @@ describe("Triage Retention (KAN-193 PR9)", () => {
 
       const longResult = await prisma.triageProposal.findUnique({ where: { id: longProposal.id } });
       expect(longResult?.lifecycle).toBe("expired");
+    });
+  });
+
+  // ── TRIANGULATE: superseded + partial failure + tombstone surfaces ──
+
+  describe("superseded eligibility (TRIANGULATE)", () => {
+    it("disposes a superseded predecessor past captured eligibility", async () => {
+      const shortPolicy = await createPolicy(workspaceId, { retentionDays: 7 });
+      const predecessor = await createProposal(workspaceId, projectId, shortPolicy.id, {
+        lifecycle: "pending",
+        createdAt: new Date(Date.now() - 20 * 86400_000),
+        expiresAt: new Date(Date.now() + 86400_000), // still pending by clock
+      });
+      await createProposal(workspaceId, projectId, shortPolicy.id, {
+        lifecycle: "pending",
+        createdAt: new Date(Date.now() - 10 * 86400_000),
+        expiresAt: new Date(Date.now() + 86400_000),
+        supersedesId: predecessor.id,
+      });
+
+      const count = await sweepRetention({ limit: 10 });
+      expect(count).toBeGreaterThanOrEqual(1);
+
+      const updated = await prisma.triageProposal.findUnique({ where: { id: predecessor.id } });
+      expect(updated?.lifecycle).toBe("disposed");
+    });
+  });
+
+  describe("partial batch failure (TRIANGULATE)", () => {
+    it("skips a row with a pre-existing disposed audit and continues the batch", async () => {
+      const shortPolicy = await createPolicy(workspaceId, { retentionDays: 7 });
+
+      const broken = await createProposal(workspaceId, projectId, shortPolicy.id, {
+        lifecycle: "expired",
+        createdAt: new Date(Date.now() - 20 * 86400_000),
+        expiresAt: new Date(Date.now() - 19 * 86400_000),
+      });
+      // Simulate a prior partial failure: audit exists, content still present, not disposed
+      await prisma.triageProposalLifecycleEvent.create({
+        data: {
+          proposalId: broken.id,
+          state: "disposed",
+          reason: "retention_policy",
+        },
+      });
+
+      const healthy = await createProposal(workspaceId, projectId, shortPolicy.id, {
+        lifecycle: "expired",
+        createdAt: new Date(Date.now() - 20 * 86400_000),
+        expiresAt: new Date(Date.now() - 19 * 86400_000),
+      });
+
+      const count = await sweepRetention({ limit: 10 });
+      // Broken row is recovered (finish dispose after pre-existing audit); healthy also disposed
+      expect(count).toBe(2);
+
+      const brokenAfter = await prisma.triageProposal.findUnique({ where: { id: broken.id } });
+      expect(brokenAfter?.lifecycle).toBe("disposed");
+      expect(
+        await prisma.triageProposalContent.findUnique({ where: { proposalId: broken.id } }),
+      ).toBeNull();
+
+      const healthyAfter = await prisma.triageProposal.findUnique({ where: { id: healthy.id } });
+      expect(healthyAfter?.lifecycle).toBe("disposed");
+    });
+  });
+
+  describe("disposed get/list privacy helpers (TRIANGULATE)", () => {
+    it("hides disposed from list unless filter and captured visibility allow", () => {
+      expect(disposedListDiscoveryAllowed("current", true)).toBe(false);
+      expect(disposedListDiscoveryAllowed("disposed", false)).toBe(false);
+      expect(disposedListDiscoveryAllowed("disposed", null)).toBe(false);
+      expect(disposedListDiscoveryAllowed("disposed", true)).toBe(true);
+      expect(disposedListDiscoveryAllowed("all", true)).toBe(true);
+    });
+
+    it("authorized disposed lookup returns 410 tombstone without content", () => {
+      const projection = disposedTombstoneProjection({
+        id: "prop-1",
+        lifecycle: "disposed",
+        disposedAt: new Date("2026-01-01T00:00:00Z"),
+        policyId: "pol-1",
+        capturedPolicyVersion: "v1",
+        capturedRetentionDays: 365,
+        dispositionListVisible: false,
+        targetIssueId: "issue-1",
+      });
+      expect(projection.httpStatus).toBe(410);
+      expect(projection).toMatchObject({
+        id: "prop-1",
+        lifecycle: "disposed",
+        retentionPolicy: { id: "pol-1", version: "v1", retentionDays: 365 },
+      });
+      expect(projection).not.toHaveProperty("content");
+      expect(projection).not.toHaveProperty("payload");
     });
   });
 });

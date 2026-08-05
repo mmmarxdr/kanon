@@ -39,12 +39,73 @@ export function parseRetentionDays(value: unknown): number {
   return n;
 }
 
+/** Compute captured eligibility timestamp: createdAt + retentionDays. */
+export function computeRetentionEligibleAt(
+  createdAt: Date,
+  retentionDays: number,
+): Date {
+  const days = parseRetentionDays(retentionDays);
+  return new Date(createdAt.getTime() + days * 86_400_000);
+}
+
+export interface CapturedRetentionSnapshot {
+  retentionEligibleAt: Date;
+  capturedRetentionDays: number;
+  capturedPolicyVersion: string;
+}
+
+/** Snapshot retention fields from a workspace policy at proposal creation. */
+export function captureRetentionFromPolicy(
+  policy: { retentionDays: number; version: string },
+  createdAt: Date = new Date(),
+): CapturedRetentionSnapshot {
+  const capturedRetentionDays = parseRetentionDays(policy.retentionDays);
+  return {
+    retentionEligibleAt: computeRetentionEligibleAt(createdAt, capturedRetentionDays),
+    capturedRetentionDays,
+    capturedPolicyVersion: policy.version,
+  };
+}
+
+/** Pure helper: disposed rows appear in list only for disposed|all when captured visible. */
+export function disposedListDiscoveryAllowed(
+  filter: string,
+  dispositionListVisible: boolean | null | undefined,
+): boolean {
+  if (filter !== "disposed" && filter !== "all") return false;
+  return dispositionListVisible === true;
+}
+
+/** Authorized disposed lookup projection (no content). Status 410 semantics for get. */
+export function disposedTombstoneProjection(proposal: {
+  id: string;
+  lifecycle: string;
+  disposedAt: Date | null;
+  policyId: string;
+  capturedPolicyVersion: string;
+  capturedRetentionDays: number;
+  dispositionListVisible: boolean | null;
+  targetIssueId: string;
+}) {
+  return {
+    httpStatus: 410 as const,
+    id: proposal.id,
+    lifecycle: "disposed" as const,
+    disposedAt: proposal.disposedAt,
+    targetIssueId: proposal.targetIssueId,
+    dispositionListVisible: proposal.dispositionListVisible === true,
+    retentionPolicy: {
+      id: proposal.policyId,
+      version: proposal.capturedPolicyVersion,
+      retentionDays: proposal.capturedRetentionDays,
+    },
+  };
+}
+
 function isRetryableConcurrencyError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const e = err as { code?: string; message?: string };
-  // P2034 = Prisma serialization failure; P2002 = unique (terminal event already written)
   if (e.code === "P2034" || e.code === "P2002") return true;
-  // Raw SQL under SERIALIZABLE often surfaces as P2010 + Postgres 40001
   const msg = e.message ?? "";
   return (
     msg.includes("40001") ||
@@ -59,11 +120,6 @@ type ClaimResult = "done" | "empty" | "skipped";
 
 // ── Expiry sweep ──────────────────────────────────────────────────────────────
 
-/**
- * Claim one pending-past-expiry proposal with `FOR UPDATE SKIP LOCKED` and
- * transition it inside the same transaction so concurrent workers cannot
- * double-process.
- */
 async function claimAndExpireOne(): Promise<ClaimResult> {
   try {
     return await prisma.$transaction(
@@ -97,8 +153,6 @@ async function claimAndExpireOne(): Promise<ClaimResult> {
 
         return "done";
       },
-      // READ COMMITTED + SKIP LOCKED is the standard queue claim pattern;
-      // SERIALIZABLE causes spurious 40001 conflicts under parallel workers.
       { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
     );
   } catch (err) {
@@ -109,9 +163,7 @@ async function claimAndExpireOne(): Promise<ClaimResult> {
 
 /**
  * Sweep pending proposals past `expiresAt` and transition them to `expired`.
- *
- * Each row is claimed with `FOR UPDATE SKIP LOCKED` inside its own transaction
- * so concurrent workers skip locked rows without double-processing.
+ * Each row is claimed with `FOR UPDATE SKIP LOCKED` inside its own transaction.
  */
 export async function sweepExpiry(options?: { limit?: number }): Promise<number> {
   const limit = options?.limit ?? EXPIRY_BATCH_LIMIT;
@@ -128,23 +180,25 @@ export async function sweepExpiry(options?: { limit?: number }): Promise<number>
 
 // ── Retention sweep ───────────────────────────────────────────────────────────
 
-/**
- * Claim one retention-eligible proposal and dispose it (audit → delete content →
- * tombstone) inside the same transaction that holds `FOR UPDATE SKIP LOCKED`.
- */
 async function claimAndDisposeOne(): Promise<ClaimResult> {
   try {
     return await prisma.$transaction(
       async (tx) => {
-        // FOR UPDATE OF p — lock proposal rows only (not the joined policy).
+        // Eligibility uses captured retention_eligible_at (not live policy days).
+        // Non-current: expired/dismissed, effectively expired pending, or superseded.
         const claimed = await tx.$queryRaw<{ id: string }[]>`
           SELECT p.id
           FROM triage_proposals p
-          JOIN triage_policies pol ON p.policy_id = pol.id
-          WHERE p.lifecycle IN ('expired', 'dismissed')
-            AND p.disposed_at IS NULL
-            AND p.created_at < NOW() - (pol.retention_days * interval '1 day')
-          ORDER BY p.created_at ASC
+          WHERE p.disposed_at IS NULL
+            AND p.retention_eligible_at < NOW()
+            AND (
+              p.lifecycle IN ('expired', 'dismissed')
+              OR (p.lifecycle = 'pending' AND p.expires_at < NOW())
+              OR EXISTS (
+                SELECT 1 FROM triage_proposals s WHERE s.supersedes_id = p.id
+              )
+            )
+          ORDER BY p.retention_eligible_at ASC
           LIMIT 1
           FOR UPDATE OF p SKIP LOCKED
         `;
@@ -154,36 +208,61 @@ async function claimAndDisposeOne(): Promise<ClaimResult> {
 
         const proposal = await tx.triageProposal.findUnique({
           where: { id: row.id },
-          select: { lifecycle: true, disposedAt: true },
-        });
-
-        if (!proposal) return "empty";
-        if (proposal.lifecycle !== "expired" && proposal.lifecycle !== "dismissed") {
-          return "skipped";
-        }
-        if (proposal.disposedAt !== null) return "skipped";
-
-        // Step 1: Audit event FIRST (append-only)
-        await tx.triageProposalLifecycleEvent.create({
-          data: {
-            proposalId: row.id,
-            state: "disposed",
-            reason: "retention_policy",
-            actorId: null,
+          include: {
+            policy: {
+              select: {
+                id: true,
+                version: true,
+                dispositionListVisibility: true,
+              },
+            },
           },
         });
 
-        // Step 2: Delete content (RESTRICT FK — content must go before tombstone keep)
+        if (!proposal || proposal.disposedAt !== null) return "skipped";
+
+        const listVisible = proposal.policy.dispositionListVisibility === "visible";
+        const dispositionDetails = {
+          action: "retention_disposed",
+          policyId: proposal.policyId,
+          policyVersion: proposal.capturedPolicyVersion,
+          retentionDays: proposal.capturedRetentionDays,
+          dispositionListVisible: listVisible,
+        };
+
+        // Step 1: Audit event FIRST. If a prior partial failure already wrote the
+        // unique disposed event, skip create (cannot catch unique inside the same
+        // PG transaction — it aborts the tx) and finish content delete + tombstone.
+        const existingDisposedEvent = await tx.triageProposalLifecycleEvent.findUnique({
+          where: {
+            proposalId_state: { proposalId: row.id, state: "disposed" },
+          },
+          select: { id: true },
+        });
+        if (!existingDisposedEvent) {
+          await tx.triageProposalLifecycleEvent.create({
+            data: {
+              proposalId: row.id,
+              state: "disposed",
+              reason: "retention_policy",
+              actorId: null,
+              details: dispositionDetails,
+            },
+          });
+        }
+
+        // Step 2: Delete content
         await tx.triageProposalContent.deleteMany({
           where: { proposalId: row.id },
         });
 
-        // Step 3: Mark as disposed tombstone
+        // Step 3: Mark as disposed tombstone; capture list visibility now
         await tx.triageProposal.update({
           where: { id: row.id },
           data: {
             lifecycle: "disposed",
             disposedAt: new Date(),
+            dispositionListVisible: listVisible,
           },
         });
 
@@ -198,15 +277,9 @@ async function claimAndDisposeOne(): Promise<ClaimResult> {
 }
 
 /**
- * Sweep terminal-state proposals past their policy-defined retention period.
- *
- * For each eligible row (claimed under `FOR UPDATE SKIP LOCKED`):
- * 1. Create audit lifecycle event (`reason: "retention_policy"`)
- * 2. Delete content
- * 3. Mark proposal as disposed tombstone with `disposedAt`
- *
- * One row per transaction so a single failure does not roll back the batch and
- * concurrent workers cannot double-dispose.
+ * Sweep non-current proposals past their captured retention eligibility.
+ * Uses `retention_eligible_at` captured at creation — live policy edits cannot
+ * silently shorten existing rows.
  */
 export async function sweepRetention(options?: { limit?: number }): Promise<number> {
   const limit = options?.limit ?? RETENTION_BATCH_LIMIT;
@@ -230,14 +303,8 @@ interface HousekeepingLogger {
 }
 
 /**
- * Register retention housekeeping workers.
- *
- * Creates two self-rescheduling timers:
- * 1. Expiry sweep — every 60s, max 100 per tick
- * 2. Retention sweep — every 24h (with startup jitter), max 100 per tick
- *
- * Both use `unref()` so the process can exit even if timers are pending.
- * Returns a stop function that clears all pending timers.
+ * Register retention housekeeping workers (expiry 60s / retention 24h + jitter).
+ * Both timers use `unref()`. Returns a stop function.
  */
 export function registerRetentionHousekeeping(logger: HousekeepingLogger): () => void {
   let expiryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -293,10 +360,8 @@ export function registerRetentionHousekeeping(logger: HousekeepingLogger): () =>
     retentionTimer.unref?.();
   };
 
-  // Start expiry sweep immediately on schedule
   scheduleExpiryTick();
 
-  // Start retention sweep with jitter to avoid thundering herd
   const jitter = Math.floor(Math.random() * RETENTION_JITTER_MS);
   retentionTimer = setTimeout(() => {
     scheduleRetentionTick();

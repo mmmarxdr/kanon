@@ -34,6 +34,7 @@ describe("Triage Proposal Migration Schema", () => {
   });
 
   it("should prevent cascade delete from policy to proposal (ON DELETE RESTRICT)", async () => {
+    const createdAt = new Date();
     const proposal = await prisma.triageProposal.create({
       data: {
         identityDigest: crypto.randomBytes(32).toString("hex"),
@@ -43,7 +44,11 @@ describe("Triage Proposal Migration Schema", () => {
         policyId: policy.id,
         lifecycle: "pending",
         listSummary: { title: "test" },
+        createdAt,
         expiresAt: new Date(Date.now() + 86400000),
+        retentionEligibleAt: new Date(createdAt.getTime() + 365 * 86400000),
+        capturedRetentionDays: 365,
+        capturedPolicyVersion: "1",
       },
     });
 
@@ -57,6 +62,7 @@ describe("Triage Proposal Migration Schema", () => {
   });
 
   it("should maintain terminal-event uniqueness", async () => {
+    const createdAt = new Date();
     const proposal = await prisma.triageProposal.create({
       data: {
         identityDigest: crypto.randomBytes(32).toString("hex"),
@@ -66,7 +72,11 @@ describe("Triage Proposal Migration Schema", () => {
         policyId: policy.id,
         lifecycle: "pending",
         listSummary: { title: "test" },
+        createdAt,
         expiresAt: new Date(Date.now() + 86400000),
+        retentionEligibleAt: new Date(createdAt.getTime() + 365 * 86400000),
+        capturedRetentionDays: 365,
+        capturedPolicyVersion: "1",
       },
     });
 
@@ -106,6 +116,7 @@ describe("Triage Proposal Migration Schema", () => {
   });
 
   it("accepts disposed lifecycle for retention tombstones", async () => {
+    const createdAt = new Date(Date.now() - 400 * 86400000);
     const proposal = await prisma.triageProposal.create({
       data: {
         identityDigest: crypto.randomBytes(32).toString("hex"),
@@ -115,8 +126,13 @@ describe("Triage Proposal Migration Schema", () => {
         policyId: policy.id,
         lifecycle: "disposed",
         listSummary: { title: "tombstone" },
-        expiresAt: new Date(Date.now() - 86400000),
+        createdAt,
+        expiresAt: new Date(createdAt.getTime() + 7 * 86400000),
+        retentionEligibleAt: new Date(createdAt.getTime() + 365 * 86400000),
+        capturedRetentionDays: 365,
+        capturedPolicyVersion: "1",
         disposedAt: new Date(),
+        dispositionListVisible: false,
       },
     });
 

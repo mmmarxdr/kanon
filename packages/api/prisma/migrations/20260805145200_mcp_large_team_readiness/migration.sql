@@ -27,9 +27,14 @@ CREATE TABLE "triage_proposals" (
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "expires_at" TIMESTAMP(3) NOT NULL,
     "disposed_at" TIMESTAMP(3),
+    "retention_eligible_at" TIMESTAMP(3) NOT NULL,
+    "captured_retention_days" INTEGER NOT NULL,
+    "captured_policy_version" TEXT NOT NULL,
+    "disposition_list_visible" BOOLEAN,
     "supersedes_id" UUID,
 
-    CONSTRAINT "triage_proposals_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "triage_proposals_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "triage_proposals_captured_retention_days_min" CHECK ("captured_retention_days" >= 7)
 );
 
 -- CreateTable
@@ -48,6 +53,7 @@ CREATE TABLE "triage_proposal_lifecycle_events" (
     "proposal_id" UUID NOT NULL,
     "state" "TriageProposalLifecycleState" NOT NULL,
     "reason" TEXT,
+    "details" JSONB,
     "actor_id" UUID,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -68,6 +74,9 @@ CREATE INDEX "triage_proposals_project_id_lifecycle_idx" ON "triage_proposals"("
 
 -- CreateIndex
 CREATE INDEX "triage_proposals_expires_at_idx" ON "triage_proposals"("expires_at");
+
+-- CreateIndex
+CREATE INDEX "triage_proposals_retention_eligible_at_idx" ON "triage_proposals"("retention_eligible_at");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "triage_proposal_contents_proposal_id_key" ON "triage_proposal_contents"("proposal_id");

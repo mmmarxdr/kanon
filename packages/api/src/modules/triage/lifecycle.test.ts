@@ -76,6 +76,7 @@ describe("POST /api/triage-proposals/:id/dismiss (KAN-193 PR8)", () => {
   });
 
   const createProposal = async (status: 'pending' | 'dismissed' | 'expired' | 'disposed' = 'pending', expired: boolean = false) => {
+    const createdAt = new Date();
     return await prisma.triageProposal.create({
       data: {
         workspaceId,
@@ -85,7 +86,11 @@ describe("POST /api/triage-proposals/:id/dismiss (KAN-193 PR8)", () => {
         identityDigest: `digest-${Math.random().toString(36).substring(2, 15)}`,
         lifecycle: status,
         listSummary: { summary: "Test proposal" },
+        createdAt,
         expiresAt: expired ? new Date(Date.now() - 100000) : new Date(Date.now() + 100000),
+        retentionEligibleAt: new Date(createdAt.getTime() + 365 * 86400_000),
+        capturedRetentionDays: 365,
+        capturedPolicyVersion: "v1",
         content: {
           create: {
             payload: {},

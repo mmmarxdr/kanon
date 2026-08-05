@@ -179,6 +179,9 @@ describe("GET /api/issues/:key/triage-history (KAN-193 PR7)", () => {
           listSummary: {},
           createdAt: new Date(now.getTime() - 10000),
           expiresAt: new Date(now.getTime() - 5000), // explicitly expired in the past
+          retentionEligibleAt: new Date(now.getTime() + 365 * 86400000),
+          capturedRetentionDays: 365,
+          capturedPolicyVersion: "1.0",
         },
         {
           identityDigest: "digest2",
@@ -191,6 +194,9 @@ describe("GET /api/issues/:key/triage-history (KAN-193 PR7)", () => {
           listSummary: {},
           createdAt: new Date(now.getTime() - 5000),
           expiresAt: new Date(now.getTime() + 10000),
+          retentionEligibleAt: new Date(now.getTime() + 365 * 86400000),
+          capturedRetentionDays: 365,
+          capturedPolicyVersion: "1.0",
         },
       ]
     });
