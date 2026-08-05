@@ -15,7 +15,14 @@ import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-import { SERVER_INSTRUCTIONS, DEFERRED_TOOLS } from "./instructions.js";
+import {
+  SERVER_INSTRUCTIONS,
+  DEFERRED_TOOLS,
+  MCP_TOOL_COUNT,
+  MCP_CORE_TOOL_COUNT,
+  MCP_DEFERRED_TOOL_COUNT,
+  INSTRUCTION_CEILING_BYTES,
+} from "./instructions.js";
 
 describe("Win B — SERVER_INSTRUCTIONS deferred tools block", () => {
   it("B1: SERVER_INSTRUCTIONS contains DEFERRED TOOLS heading", () => {
@@ -60,16 +67,18 @@ describe("Win B — SERVER_INSTRUCTIONS deferred tools block", () => {
 // ─── PM Persona — byte ceiling and firing pins ───────────────────────────────
 
 describe("PM Persona — byte ceiling and firing pins", () => {
-  it("P1: SERVER_INSTRUCTIONS byte length ≤ 1950", () => {
-    // ceiling re-anchored for 38-tool surface with 10 deferred (was 1,600 @ 8 deferred);
-    // KAN-104 timesheet: +2 deferred names (~54 B) + 2 core tool lines (~105 B) → ~159 B added.
-    // KAN-104 capture tools: +3 deferred names (report_incident, propose_estimate, apply_proposal)
-    //   → ~72 B added; ceiling bumped to 1900 (CORE section unchanged, only DEFERRED list grows).
-    // KAN-188: +reconcile_time in CORE TOOLS + 1 short reconcile-gate hint line
-    //   → ~92 B added; ceiling bumped to 1950 (actual at landing: 1901 B, margin: 49 B).
+  it("P1: SERVER_INSTRUCTIONS byte length ≤ INSTRUCTION_CEILING_BYTES (1950)", () => {
+    // Fixed ceiling unchanged by KAN-193. Target ≤1900 after triage guidance + prose trim.
+    expect(INSTRUCTION_CEILING_BYTES).toBe(1950);
     expect(Buffer.byteLength(SERVER_INSTRUCTIONS, "utf8")).toBeLessThanOrEqual(
-      1950,
+      INSTRUCTION_CEILING_BYTES,
     );
+  });
+
+  it("P1b: inventory constants are 49/26/23", () => {
+    expect(MCP_TOOL_COUNT).toBe(49);
+    expect(MCP_CORE_TOOL_COUNT).toBe(26);
+    expect(MCP_DEFERRED_TOOL_COUNT).toBe(23);
   });
 
   it("P2: SERVER_INSTRUCTIONS matches /PM Persona/i", () => {

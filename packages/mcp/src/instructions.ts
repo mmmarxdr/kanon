@@ -7,25 +7,20 @@
 //
 // The server still registers every tool normally — hosts that ignore
 // `instructions` simply surface every tool. No SDK feature detection needed.
-// See design ADR-1 and ADR-2 for rationale.
-// 5 admin/rare tools + 3 document tools (rare-path, design-coherent)
-// + 2 PM-only timesheet tools (approve/reject)
-// + 3 occasion-only tools (add/remove dependency, adjust time entry)
-// + 1 resolution helper (list_members)
-// + 1 agent communication tool (create_issue_comment)
-// + 3 capture tools (report_incident, propose_estimate, apply_proposal)
-// + 5 triage tools (preview/persist/get/list/dismiss) = 23 deferred.
+// Exact inventory: 49 tools = 26 core + 23 deferred (KAN-193).
+
+/** Exact post-change inventory (KAN-193). Do not re-anchor without design review. */
+export const MCP_TOOL_COUNT = 49;
+export const MCP_CORE_TOOL_COUNT = 26;
+export const MCP_DEFERRED_TOOL_COUNT = 23;
+/** Fixed instruction ceiling — unchanged by KAN-193. */
+export const INSTRUCTION_CEILING_BYTES = 1950;
+/** Fixed topline description ceiling (DESCRIPTION_BASELINE_BYTES − 300). */
+export const DESCRIPTION_TOPLINE_CEILING_BYTES = 5350;
 
 /**
  * The 23 admin/rare/PM-gated/occasion-only/resolution-helper/agent-comms/capture/triage tools deferred behind ToolSearch.
  * Canonical list — consumed by index.ts and instructions.test.ts.
- * Document tools are deferred: most issues need none; propose before creating.
- * Timesheet approve/reject are PM-only — keep dev-agent context lean.
- * Dependency and adjust tools are occasion-only — not part of daily board flow.
- * list_members is a resolution helper (assigneeId lookup, activity id→name) — not daily board flow.
- * create_issue_comment is agent communication — occasional, not daily board flow.
- * Capture tools are occasion-only: incident reporting and estimation proposals.
- * Triage tools are host-mediated review — never auto-apply; retrieve via ToolSearch.
  */
 export const DEFERRED_TOOLS = [
   "create_project",
@@ -61,6 +56,7 @@ export const DEFERRED_TOOLS = [
 export const SERVER_INSTRUCTIONS = `
 ## PM Persona
 
+<<<<<<< HEAD
 Senior PM assistant. Cards readable by new teammates.
 
 TITLE FORMAT (required): [Area] Imperative verb phrase
@@ -75,9 +71,23 @@ Before create_issue: list_groups(projectKey) -> assign groupKey.
 If work starts now: list_members -> pass memberId as assigneeId before start_work.
 Before update_issue: get_issue first — never overwrite blindly.
 start_work sets a missing startDate to today. Never invent dueDate.
+=======
+Senior PM. Cards readable by teammates.
+TITLE: [Area] Imperative verb — Good: [Auth] Fix OAuth | Bad: fix thing
+DESCRIPTION: ## Context / ## Acceptance Criteria / ## Notes.
+Design records: most issues need none; propose before creating.
+create_issue: list_groups → groupKey. update_issue: get first.
+>>>>>>> 9f02c7a (docs(mcp): lock 49/26/23 inventory and triage enablement (KAN-193 PR11))
 Lists: format: compact, limit: 10. Writes: format: ack.
-Deferred work (later/someday) -> roadmap, not backlog.
-Done blocked by unconfirmed time -> reconcile_time, then retry.
+Deferred → roadmap. Done + unconfirmed time → reconcile_time.
+
+## Triage (ToolSearch)
+
+Order: preview/search → get/list → persist/dismiss → retention.
+preview_issue_triage prepare (none|host_assisted) → optional validate.
+persist needs preview+seal. list_triage_proposals: one projectKey only
+(project-only compact; no workspace-wide queue). dismiss needs reason.
+Triage non-executable; legacy apply_proposal is not triage execution.
 
 ## DEFERRED TOOLS (use ToolSearch when needed)
 
@@ -87,7 +97,6 @@ Retrieve via ToolSearch only when explicitly requested:
 
 ## CORE TOOLS (always available)
 
-Standard issue and project management flows use these tools:
 list_issues, get_issue, create_issue, update_issue,
 transition_issue, transition_issues, list_groups,
 start_work, stop_work,

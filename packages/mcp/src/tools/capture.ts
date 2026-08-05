@@ -59,7 +59,7 @@ export function registerCaptureTools(server: McpServer, client: KanonClient): vo
 
   server.tool(
     "report_incident",
-    "Create incident issue in projectKey + start work session. Forces type:incident. Returns {ok,issueKey,sessionId}. Auto-switches active session (KAN-103).",
+    "Create incident issue in projectKey + start work. Forces type:incident. Returns {ok,issueKey,sessionId}. Auto-switches session (KAN-103).",
     ReportIncidentInput.shape,
     async ({ projectKey, title, description, groupKey, via }) => {
       // Step 1: create the incident issue
@@ -101,7 +101,7 @@ export function registerCaptureTools(server: McpServer, client: KanonClient): vo
 
   server.tool(
     "propose_estimate",
-    "Propose estimate for issueKey (confirm via apply_proposal). Pending generic; re-propose while pending → 409. Not triage.",
+    "Propose estimate for issueKey via apply_proposal confirm. Pending generic; re-propose while pending → 409. Not triage.",
     ProposeEstimateInput.shape,
     async ({ workspaceId, issueKey, estimateHours, rationale }) => {
       try {

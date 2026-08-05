@@ -22,7 +22,18 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { parseAllToolDescriptions } from "./descriptions-parser.js";
 import { LimitParam } from "../types.js";
-import { DESCRIPTION_BASELINE_BYTES } from "./__tests__/baseline.fixture.js";
+import {
+  DESCRIPTION_BASELINE_BYTES,
+  PRE_TRIAGE_VERBOSE_DESCRIPTION_BYTES,
+  VERBOSE_DESCRIPTION_TRIM_MIN_BYTES,
+} from "./__tests__/baseline.fixture.js";
+import {
+  DEFERRED_TOOLS,
+  MCP_TOOL_COUNT,
+  MCP_CORE_TOOL_COUNT,
+  MCP_DEFERRED_TOOL_COUNT,
+  DESCRIPTION_TOPLINE_CEILING_BYTES,
+} from "../instructions.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TOOLS_DIR = __dirname;
@@ -155,11 +166,47 @@ describe("Win F — LimitParam default is 10", () => {
 // ─── Phase 2 / Win C — byte budget + firing pins ─────────────────────────────
 
 describe("Win C — description byte budget and firing pins", () => {
-  it("C1: total topline bytes ≤ DESCRIPTION_BASELINE_BYTES − 300", () => {
+  it("C1: total topline bytes ≤ DESCRIPTION_BASELINE_BYTES − 300 (fixed 5350)", () => {
     const tools = collectDescriptions();
     const total = tools.reduce((s, t) => s + t.byteLength, 0);
     const ceiling = DESCRIPTION_BASELINE_BYTES - 300;
+    expect(DESCRIPTION_BASELINE_BYTES).toBe(5650);
+    expect(ceiling).toBe(DESCRIPTION_TOPLINE_CEILING_BYTES);
+    expect(ceiling).toBe(5350);
     expect(total).toBeLessThanOrEqual(ceiling);
+  });
+
+  it("C1b: inventory 49/26/23 and ≥445 B verbose trim", () => {
+    const tools = collectDescriptions();
+    expect(tools).toHaveLength(MCP_TOOL_COUNT);
+    const deferred = new Set<string>(DEFERRED_TOOLS);
+    expect(tools.filter((t) => deferred.has(t.toolName))).toHaveLength(MCP_DEFERRED_TOOL_COUNT);
+    expect(tools.filter((t) => !deferred.has(t.toolName))).toHaveLength(MCP_CORE_TOOL_COUNT);
+
+    const verbose = parseAllToolDescriptions(
+      ["capture.ts", "groups.ts", "cycles.ts", "timesheet.ts"].map((f) => join(TOOLS_DIR, f)),
+    ).reduce((s, t) => s + t.byteLength, 0);
+    expect(PRE_TRIAGE_VERBOSE_DESCRIPTION_BYTES - verbose).toBeGreaterThanOrEqual(
+      VERBOSE_DESCRIPTION_TRIM_MIN_BYTES,
+    );
+  });
+
+  it("C1c: triage descriptions avoid apply/execution/autonomous claims", () => {
+    const tools = collectDescriptions().filter((t) =>
+      [
+        "preview_issue_triage",
+        "persist_triage_proposal",
+        "get_triage_proposal",
+        "list_triage_proposals",
+        "dismiss_triage_proposal",
+      ].includes(t.toolName),
+    );
+    expect(tools).toHaveLength(5);
+    for (const t of tools) {
+      expect(t.description).not.toMatch(/\b(apply|approval|execution|autonomous)\b/i);
+    }
+    const list = tools.find((t) => t.toolName === "list_triage_proposals");
+    expect(list!.description).toMatch(/not workspace-wide|projectKey/i);
   });
 
   it("C2: create_issue — groups lookup firing pin", () => {

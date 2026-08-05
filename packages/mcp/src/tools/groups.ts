@@ -12,7 +12,7 @@ import type { KanonBinding } from "../kanon-binding.js";
 export function registerGroupTools(server: McpServer, client: KanonClient, binding: KanonBinding | InvalidBinding | null = null): void {
   server.tool(
     "list_groups",
-    "List issue groups for projectKey. Call before create_issue to get valid groupKey values.",
+    "List issue groups for projectKey. Call before create_issue for valid groupKey values.",
     ListGroupsInput.shape,
     async ({ projectKey, format, limit, offset }) => {
       try {

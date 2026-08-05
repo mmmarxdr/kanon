@@ -32,3 +32,10 @@ Task 10.1: RED - Added failing MCP tests in `triage.test.ts`, `kanon-client.test
 Task 10.2: GREEN - Implemented wire types in `types.ts`, semantic `errorResult`/`triageDataResult` in `errors.ts`, triage client methods with per-call timeout/correlation in `kanon-client.ts`, five adapters in `tools/triage.ts`, registration in `index.ts`, and `DEFERRED_TOOLS` 18→23.
 Task 10.3: TRIANGULATE - Contract coverage for prepare-only fallback, validate hostOutcome/suggestion rules, seal forwarding, list filter encoding (`degraded=true|false`, cursor pass-through), 1..50/default-20 limits, Unicode-trimmed 1..1000-codepoint dismiss reason, output budgets (16/48/32/64/8 KiB), and no apply/approval/execution/autonomous wording.
 Task 10.4: REFACTOR - Compensating description trims to keep ≤5,350-byte topline ceiling; unrelated calls keep 10s default; `pnpm --filter @kanon/mcp test` green (498 passed). Branch: `feat/kan-193-mcp-triage-tools` (stacked on PR9 retention).
+
+# MCP large-team readiness PR11 Apply Progress
+
+Task 11.1: RED - Added `inventory.test.ts` plus extended instructions/descriptions/baseline asserts for 49/26/23, fixed 5350/1950 ceilings, triage deferred discovery, firing pins, and docs checks for `docs/modules/mcp.mdx` + `packages/mcp/agents/kanon.md`.
+Task 11.2: GREEN - Updated instructions with Triage (ToolSearch) enablement order; compressed persona; exported inventory/ceiling constants; documented protocol in mcp.mdx and kanon.md; trimmed ≥445 B from capture/groups/cycles/timesheet vs pre-triage (measured 487 B); instructions ≤1900 under fixed 1950 ceiling.
+Task 11.3: TRIANGULATE - Adversarial checks preserve all 44 legacy tool names, core/deferred classification, non-executable/legacy-apply guidance, and explicit "no workspace-wide queue".
+Task 11.4: REFACTOR - Consolidated count/ceiling constants without re-anchoring DESCRIPTION_BASELINE_BYTES=5650; `pnpm --filter @kanon/mcp test` green (514 passed). Branch: `feat/kan-193-mcp-inventory-docs`.

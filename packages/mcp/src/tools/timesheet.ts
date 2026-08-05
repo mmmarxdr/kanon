@@ -108,7 +108,7 @@ export function registerTimesheetTools(server: McpServer, client: KanonClient): 
 
   server.tool(
     "promote_worklog",
-    "Promote WorkLog worklogId to a draft TimeEntry (idempotent). Optional hours/issueId/workedOn override service defaults.",
+    "Promote WorkLog worklogId to draft TimeEntry (idempotent). Optional hours/issueId/workedOn overrides.",
     PromoteWorklogInput.shape,
     async ({ worklogId, hours, issueId, workedOn }) => {
       try {
@@ -128,7 +128,7 @@ export function registerTimesheetTools(server: McpServer, client: KanonClient): 
 
   server.tool(
     "update_time_entry",
-    "Patch draft/submitted TimeEntry timeEntryId (owner-only). Partial: supply only changed fields (hours,issueId,workedOn).",
+    "Patch draft/submitted TimeEntry timeEntryId (owner-only). Partial hours/issueId/workedOn only.",
     UpdateTimeEntryInput.shape,
     async ({ timeEntryId, hours, issueId, workedOn }) => {
       try {

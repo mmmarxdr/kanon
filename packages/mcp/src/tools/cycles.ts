@@ -222,7 +222,7 @@ export function registerCycleTools(server: McpServer, client: KanonClient, bindi
 
   server.tool(
     "get_cycle",
-    "Get cycle detail (burnup,scope events,risks,issues) by cycleId. includeAllScopeEvents for full audit. Returns slim; format:'full' for entity.",
+    "Get cycle detail (burnup,scope events,risks,issues) by cycleId. includeAllScopeEvents for full audit. Returns slim.",
     GetCycleInput.shape,
     async ({ cycleId, includeAllScopeEvents, format }) => {
       try {
@@ -236,7 +236,7 @@ export function registerCycleTools(server: McpServer, client: KanonClient, bindi
 
   server.tool(
     "create_cycle",
-    "Create cycle (name,startDate,endDate,state,attachIssueKeys[]). Dates YYYY-MM-DD/ISO. state:active demotes current active. Returns ack {ok,id,name,state}.",
+    "Create cycle (name,startDate,endDate,state,attachIssueKeys[]). Dates YYYY-MM-DD/ISO. state:active demotes current. Ack {ok,id,name,state}.",
     CreateCycleInput.shape,
     async ({ projectKey, name, goal, startDate, endDate, state, attachIssueKeys, format }) => {
       try {

@@ -6,6 +6,10 @@ icon: "robot"
 
 `@kanon/mcp` exposes Kanon as Model Context Protocol tools for coding agents. The process uses stdio for the host-tool connection and REST for all communication with the Kanon API.
 
+## Inventory
+
+Exact surface: **49 tools = 26 core + 23 deferred**. Five deferred triage tools are retrieved via ToolSearch; all existing 44 contracts remain unchanged. Fixed ceilings: 5,350-byte topline descriptions and 1,950-byte server instructions.
+
 ## Startup
 
 The entry point validates `KANON_API_URL` and `KANON_API_KEY`, resolves the optional client identity, finds the nearest `.kanon` binding, creates a typed API client, registers tool families, connects the stdio transport, and optionally starts an SSE client for workspace events.
@@ -20,7 +24,19 @@ The entry point validates `KANON_API_URL` and `KANON_API_KEY`, resolves the opti
 - Timesheets
 - Documents and comments
 - Members
-- Capture-oriented helper operations
+- Capture-oriented helpers (including legacy `apply_proposal`)
+- Issue triage (deferred): preview, persist, get, project list, dismiss
+
+## Issue triage (host-mediated)
+
+Enablement order: preview/search → get/list → persist/dismiss → retention.
+
+1. **`preview_issue_triage`** — read-only `prepare` (deterministic; `aiIntent=none` or `host_assisted`) then optional `validate` with host suggestions. No Sampling assumption; hosts without a model stop after prepare.
+2. **`persist_triage_proposal`** — explicit write of the exact returned preview + seal. Creates or deduplicates a typed proposal; never applies or mutates the Issue.
+3. **`get_triage_proposal` / `list_triage_proposals`** — authorized read. List requires exactly one `projectKey` (compact project review queue only; no workspace-wide MCP queue).
+4. **`dismiss_triage_proposal`** — terminal lifecycle write with an explicit reason.
+
+Legacy `apply_proposal` remains for estimate/generic MCP proposals and must not be advertised as triage execution. Triage proposals are non-executable.
 
 ## Repository binding
 
