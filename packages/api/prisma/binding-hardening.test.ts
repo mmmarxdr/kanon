@@ -421,9 +421,11 @@ describe("ExternalRef binding hardening", () => {
     );
     expect(sql).not.toContain('"milestones"');
     expect(sql).not.toContain('"time_entries"');
-    expect(dockerfile.indexOf("dist/modules/integrations/backfill.js")).toBeLessThan(
-      dockerfile.indexOf("prisma migrate deploy"),
-    );
+    const proofIndex = dockerfile.indexOf("dist/modules/integrations/backfill.js");
+    const deployIndex = dockerfile.indexOf("prisma migrate deploy");
+    expect(proofIndex).toBeGreaterThanOrEqual(0);
+    expect(deployIndex).toBeGreaterThanOrEqual(0);
+    expect(proofIndex).toBeLessThan(deployIndex);
   });
 
   it("upgrades valid references without changing their data", { timeout: 120_000 }, async () => {

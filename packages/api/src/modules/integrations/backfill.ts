@@ -330,5 +330,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       }
       process.exitCode = 1;
     })
-    .finally(() => database.$disconnect());
+    .finally(() =>
+      database.$disconnect().catch((error: unknown) => {
+        console.error(error instanceof Error ? error.message : "Prisma disconnect failed");
+        process.exitCode = 1;
+      }),
+    );
 }
