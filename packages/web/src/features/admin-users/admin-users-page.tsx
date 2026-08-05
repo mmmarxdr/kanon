@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuthStore } from "@/stores/auth-store";
@@ -29,18 +29,46 @@ import {
 const PAGE_SIZE = 20;
 const ROLES = ["viewer", "member", "pm", "admin", "owner"] as const;
 
-const USERS_GRID = "auto minmax(0,2fr) minmax(0,1.2fr) auto auto auto";
-const USERS_GRID_MOBILE = "auto minmax(0,1fr) auto";
+/**
+ * Fixed tracks (not `auto`): each SettingsList row is its own grid, so `auto`
+ * columns size independently and headers drift away from cells.
+ */
+const USERS_GRID = "2rem minmax(0,2.2fr) minmax(0,1.2fr) 5.5rem minmax(0,1.4fr) 6rem";
+const USERS_GRID_MOBILE = "2rem minmax(0,1fr) 4.5rem";
 
-function usersColumns(t: (key: string) => string): SettingsListColumn[] {
+function usersColumns(
+  t: (key: string) => string,
+  selectAll: ReactNode,
+): SettingsListColumn[] {
   return [
-    { key: "select", label: "" },
+    { key: "select", label: selectAll },
     { key: "email", label: t("colEmail") },
     { key: "name", label: t("colName"), hideBelow: "sm" },
     { key: "verified", label: t("colVerified") },
     { key: "workspaces", label: t("colWorkspaces"), hideBelow: "sm" },
     { key: "created", label: t("colCreated"), hideBelow: "sm" },
   ];
+}
+
+function sharedWorkspacesForSelection(
+  selectedWorkspaces: Map<string, Array<{ id: string; name: string }>>,
+): Array<{ id: string; name: string }> {
+  const lists = [...selectedWorkspaces.values()];
+  if (lists.length === 0) return [];
+
+  const counts = new Map<string, { name: string; hits: number }>();
+  for (const workspaces of lists) {
+    for (const ws of workspaces) {
+      const prev = counts.get(ws.id);
+      if (prev) prev.hits += 1;
+      else counts.set(ws.id, { name: ws.name, hits: 1 });
+    }
+  }
+
+  return [...counts.entries()]
+    .filter(([, v]) => v.hits === lists.length)
+    .map(([id, v]) => ({ id, name: v.name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function MembershipEditor({
@@ -355,6 +383,10 @@ export function AdminUsersPage() {
   );
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  /** Workspace memberships for selected users (survives pagination). */
+  const [selectedWorkspaces, setSelectedWorkspaces] = useState<
+    Map<string, Array<{ id: string; name: string }>>
+  >(new Map());
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [bulkMode, setBulkMode] = useState<"verify_email" | "remove_from_workspace" | null>(
     null,
@@ -387,9 +419,9 @@ export function AdminUsersPage() {
     enabled: isInstanceAdmin,
   });
 
-  const workspaces = useAdminWorkspacesQuery(isInstanceAdmin && bulkMode === "remove_from_workspace");
   const bulk = useAdminUsersBulkMutation();
-  const columns = useMemo(() => usersColumns(t), [t]);
+  // Keep catalog warm for add-membership in detail; bulk remove uses selection intersection.
+  useAdminWorkspacesQuery(isInstanceAdmin);
 
   if (!isInstanceAdmin) {
     return (
@@ -403,17 +435,52 @@ export function AdminUsersPage() {
   const total = listQuery.data?.total ?? 0;
   const from = total === 0 ? 0 : offset + 1;
   const to = Math.min(offset + PAGE_SIZE, total);
+  const pageSelected = users.length > 0 && users.every((u) => selected.has(u.id));
+  const sharedWorkspaces = sharedWorkspacesForSelection(selectedWorkspaces);
+  const selectedWorkspaceName =
+    sharedWorkspaces.find((w) => w.id === bulkWorkspaceId)?.name ?? "";
 
-  function toggleAll(rows: AdminUserListItem[]) {
+  function clearBulkUi() {
+    setBulkMode(null);
+    setBulkWorkspaceId("");
+    setBulkError(null);
+  }
+
+  function toggleUser(u: AdminUserListItem) {
     setSelected((prev) => {
       const next = new Set(prev);
-      const allSelected = rows.every((u) => next.has(u.id));
+      if (next.has(u.id)) next.delete(u.id);
+      else next.add(u.id);
+      return next;
+    });
+    setSelectedWorkspaces((prev) => {
+      const next = new Map(prev);
+      if (next.has(u.id)) next.delete(u.id);
+      else next.set(u.id, u.workspaces ?? []);
+      return next;
+    });
+    clearBulkUi();
+  }
+
+  function toggleAll(rows: AdminUserListItem[]) {
+    const allSelected = rows.every((u) => selected.has(u.id));
+    setSelected((prev) => {
+      const next = new Set(prev);
       for (const u of rows) {
         if (allSelected) next.delete(u.id);
         else next.add(u.id);
       }
       return next;
     });
+    setSelectedWorkspaces((prev) => {
+      const next = new Map(prev);
+      for (const u of rows) {
+        if (allSelected) next.delete(u.id);
+        else next.set(u.id, u.workspaces ?? []);
+      }
+      return next;
+    });
+    clearBulkUi();
   }
 
   async function applyBulk() {
@@ -433,9 +500,13 @@ export function AdminUsersPage() {
         for (const id of succeeded) next.delete(id);
         return next;
       });
+      setSelectedWorkspaces((prev) => {
+        const next = new Map(prev);
+        for (const id of succeeded) next.delete(id);
+        return next;
+      });
       if (failed.length === 0) {
-        setBulkMode(null);
-        setBulkWorkspaceId("");
+        clearBulkUi();
       } else {
         setBulkError(
           t("bulkPartialFailed", {
@@ -448,6 +519,17 @@ export function AdminUsersPage() {
       setBulkError(err instanceof ApiError ? err.message : "Bulk request failed");
     }
   }
+
+  const columns = usersColumns(
+    t,
+    <input
+      type="checkbox"
+      aria-label={t("selectAllPage")}
+      data-testid="admin-users-select-all"
+      checked={pageSelected}
+      onChange={() => toggleAll(users)}
+    />,
+  );
 
   return (
     <SettingsShell title={t("usersTitle")} eyebrow={t("usersEyebrow")} maxWidth="wide">
@@ -479,76 +561,154 @@ export function AdminUsersPage() {
           {selected.size > 0 && (
             <div
               data-testid="admin-users-bulk-bar"
-              className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2"
+              className="flex flex-col gap-3 rounded-md border border-border bg-muted/30 px-3 py-3"
             >
-              <span className="text-xs text-muted-foreground">
-                {t("selected", { count: selected.size })}
-              </span>
-              <button
-                type="button"
-                className="rounded-md border border-border px-2 py-1 text-xs"
-                onClick={() => setBulkMode("verify_email")}
-              >
-                {t("bulkVerify")}
-              </button>
-              <button
-                type="button"
-                className="rounded-md border border-border px-2 py-1 text-xs"
-                onClick={() => setBulkMode("remove_from_workspace")}
-              >
-                {t("bulkRemove")}
-              </button>
-              {bulkMode && (
-                <>
-                  {bulkMode === "remove_from_workspace" && (
-                    <select
-                      data-testid="bulk-workspace-select"
-                      className={`${SETTINGS_INPUT_CLASS} max-w-[220px]`}
-                      value={bulkWorkspaceId}
-                      onChange={(e) => setBulkWorkspaceId(e.target.value)}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm text-muted-foreground">
+                  {t("selected", { count: selected.size })}
+                </span>
+                <button
+                  type="button"
+                  data-testid="bulk-verify-btn"
+                  className="rounded-md border border-border px-3 py-1.5 text-xs"
+                  onClick={() => {
+                    setBulkMode("verify_email");
+                    setBulkWorkspaceId("");
+                    setBulkError(null);
+                  }}
+                >
+                  {t("bulkVerify")}
+                </button>
+                <button
+                  type="button"
+                  data-testid="bulk-remove-btn"
+                  className="rounded-md border border-border px-3 py-1.5 text-xs"
+                  onClick={() => {
+                    setBulkMode("remove_from_workspace");
+                    setBulkWorkspaceId("");
+                    setBulkError(null);
+                  }}
+                >
+                  {t("bulkRemove")}
+                </button>
+              </div>
+
+              {bulkMode === "verify_email" && (
+                <div
+                  data-testid="bulk-verify-panel"
+                  className="flex flex-col gap-2 rounded-md border border-border bg-background px-3 py-3"
+                >
+                  <p className="text-sm">
+                    {t("bulkVerifyConfirm", { count: selected.size })}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      data-testid="bulk-apply"
+                      className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+                      disabled={bulk.isPending}
+                      onClick={() => {
+                        void applyBulk();
+                      }}
                     >
-                      <option value="">{t("bulkWorkspace")}</option>
-                      {workspaces.data?.map((w) => (
-                        <option key={w.id} value={w.id}>
-                          {w.name}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  <button
-                    type="button"
-                    data-testid="bulk-apply"
-                    className="rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-50"
-                    disabled={
-                      bulk.isPending ||
-                      (bulkMode === "remove_from_workspace" && !bulkWorkspaceId)
-                    }
-                    onClick={() => {
-                      void applyBulk();
-                    }}
-                  >
-                    {t("bulkApply")}
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-md px-2 py-1 text-xs text-muted-foreground"
-                    onClick={() => {
-                      setBulkMode(null);
-                      setBulkWorkspaceId("");
-                      setBulkError(null);
-                    }}
-                  >
-                    {t("bulkCancel")}
-                  </button>
-                  {bulkError && (
-                    <span
-                      data-testid="bulk-error"
-                      className="text-xs text-destructive"
+                      {t("bulkApply")}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-md px-3 py-1.5 text-xs text-muted-foreground"
+                      onClick={() => {
+                        setBulkMode(null);
+                        setBulkError(null);
+                      }}
                     >
-                      {bulkError}
-                    </span>
+                      {t("bulkCancel")}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {bulkMode === "remove_from_workspace" && (
+                <div
+                  data-testid="bulk-remove-panel"
+                  className="flex flex-col gap-3 rounded-md border border-border bg-background px-3 py-3"
+                >
+                  <div>
+                    <div className="text-sm font-medium">{t("bulkRemoveTitle")}</div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t("bulkRemoveHelp")}
+                    </p>
+                  </div>
+
+                  {sharedWorkspaces.length === 0 ? (
+                    <p
+                      data-testid="bulk-no-shared-workspaces"
+                      className="text-sm text-destructive"
+                    >
+                      {t("bulkNoSharedWorkspaces")}
+                    </p>
+                  ) : (
+                    <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+                      {t("bulkWorkspace")}
+                      <select
+                        data-testid="bulk-workspace-select"
+                        className={SETTINGS_INPUT_CLASS}
+                        value={bulkWorkspaceId}
+                        onChange={(e) => setBulkWorkspaceId(e.target.value)}
+                      >
+                        <option value="">{t("bulkWorkspacePlaceholder")}</option>
+                        {sharedWorkspaces.map((w) => (
+                          <option key={w.id} value={w.id}>
+                            {w.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                   )}
-                </>
+
+                  {bulkWorkspaceId && selectedWorkspaceName && (
+                    <p className="text-sm" data-testid="bulk-remove-summary">
+                      {t("bulkRemoveConfirm", {
+                        count: selected.size,
+                        workspace: selectedWorkspaceName,
+                      })}
+                    </p>
+                  )}
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      data-testid="bulk-apply"
+                      className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+                      disabled={
+                        bulk.isPending ||
+                        !bulkWorkspaceId ||
+                        sharedWorkspaces.length === 0
+                      }
+                      onClick={() => {
+                        void applyBulk();
+                      }}
+                    >
+                      {t("bulkApply")}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-md px-3 py-1.5 text-xs text-muted-foreground"
+                      onClick={() => {
+                        setBulkMode(null);
+                        setBulkWorkspaceId("");
+                        setBulkError(null);
+                      }}
+                    >
+                      {t("bulkCancel")}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {bulkError && (
+                <span data-testid="bulk-error" className="text-xs text-destructive">
+                  {bulkError}
+                </span>
               )}
             </div>
           )}
@@ -568,53 +728,26 @@ export function AdminUsersPage() {
               mobileGridTemplateColumns={USERS_GRID_MOBILE}
               data-testid="admin-users-list"
             >
-              <SettingsListRow
-                label="select-all"
-                columns={[
-                  <input
-                    key="all"
-                    type="checkbox"
-                    aria-label="select all"
-                    checked={users.every((u) => selected.has(u.id))}
-                    onChange={() => toggleAll(users)}
-                  />,
-                  <span key="h" className="text-xs text-muted-foreground">
-                    —
-                  </span>,
-                  <span key="n" />,
-                  <span key="v" />,
-                  <span key="w" />,
-                  <span key="c" />,
-                ]}
-              />
               {users.map((u) => (
                 <SettingsListRow
                   key={u.id}
                   data-testid={`admin-user-row-${u.id}`}
                   label={u.email}
                   className={
-                    selectedUserId === u.id ? "bg-muted/40 cursor-pointer" : "cursor-pointer"
+                    selectedUserId === u.id ? "bg-muted/40" : undefined
                   }
                   columns={[
                     <input
                       key="sel"
                       type="checkbox"
+                      aria-label={u.email}
                       checked={selected.has(u.id)}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        setSelected((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(u.id)) next.delete(u.id);
-                          else next.add(u.id);
-                          return next;
-                        });
-                      }}
-                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => toggleUser(u)}
                     />,
                     <button
                       key="email"
                       type="button"
-                      className="text-left text-sm truncate"
+                      className="text-left text-sm truncate w-full"
                       onClick={() => setSelectedUserId(u.id)}
                     >
                       {u.email}
@@ -625,8 +758,14 @@ export function AdminUsersPage() {
                     <span key="ver" className="text-sm">
                       {u.emailVerified ? t("verifiedYes") : t("verifiedNo")}
                     </span>,
-                    <span key="ws" className="text-sm">
-                      {u.workspaceCount}
+                    <span
+                      key="ws"
+                      className="text-sm truncate"
+                      title={(u.workspaces ?? []).map((w) => w.name).join(", ")}
+                    >
+                      {(u.workspaces ?? []).length === 0
+                        ? t("workspacesNone")
+                        : (u.workspaces ?? []).map((w) => w.name).join(", ")}
                     </span>,
                     <span key="created" className="text-xs text-muted-foreground">
                       {new Date(u.createdAt).toLocaleDateString()}

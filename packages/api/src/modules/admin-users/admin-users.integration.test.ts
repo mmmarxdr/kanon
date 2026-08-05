@@ -86,7 +86,12 @@ describe("GET /api/admin/users — list + detail", () => {
       email: expect.any(String),
       emailVerified: expect.any(Boolean),
       workspaceCount: expect.any(Number),
+      workspaces: expect.any(Array),
     });
+    const aliceRow = body.users.find((u: { id: string }) => u.id === verified.userId);
+    expect(aliceRow.workspaces).toEqual([
+      expect.objectContaining({ id: ws.id, name: ws.name }),
+    ]);
 
     const search = await app.inject({
       method: "GET",

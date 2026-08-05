@@ -20,6 +20,7 @@ See proposal. Bulk body:
 - `verified`: `true` | `false` | omit
 - `limit` default 20 max 50, `offset` default 0
 - Response: `{ users, total, limit, offset }`
+- List user rows include `workspaces: [{ id, name }]` (for bulk-remove intersection) plus `workspaceCount`
 
 ## Detail
 

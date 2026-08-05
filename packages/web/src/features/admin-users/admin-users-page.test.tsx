@@ -64,6 +64,7 @@ const USERS = [
     isInstanceAdmin: false,
     createdAt: "2026-01-01T00:00:00Z",
     workspaceCount: 1,
+    workspaces: [{ id: "ws1", name: "Acme" }],
   },
   {
     id: "u2",
@@ -73,6 +74,10 @@ const USERS = [
     isInstanceAdmin: false,
     createdAt: "2026-01-02T00:00:00Z",
     workspaceCount: 2,
+    workspaces: [
+      { id: "ws1", name: "Acme" },
+      { id: "ws2", name: "Beta" },
+    ],
   },
 ];
 
@@ -99,7 +104,10 @@ async function mockHooks(overrides?: {
   } as unknown as ReturnType<typeof hooks.useAdminUserDetailQuery>);
 
   vi.mocked(hooks.useAdminWorkspacesQuery).mockReturnValue({
-    data: [{ id: "ws1", name: "Acme", slug: "acme" }],
+    data: [
+      { id: "ws1", name: "Acme", slug: "acme" },
+      { id: "ws2", name: "Beta", slug: "beta" },
+    ],
     isLoading: false,
     error: null,
   } as unknown as ReturnType<typeof hooks.useAdminWorkspacesQuery>);
@@ -158,26 +166,37 @@ describe("AdminUsersPage", () => {
     expect(mockNavigate).toHaveBeenCalledWith({ to: "/" });
   });
 
-  it("renders searchable user list for instance admins", async () => {
+  it("renders searchable user list with workspace names", async () => {
     await mockHooks();
     render(<AdminUsersPage />, { wrapper: createWrapper() });
 
     expect(screen.getByTestId("admin-users-page")).toBeTruthy();
     expect(screen.getByText("alice@example.com")).toBeTruthy();
-    expect(screen.getByText("bob@example.com")).toBeTruthy();
-    expect(screen.getByTestId("admin-users-search")).toBeTruthy();
+    expect(screen.getByText("Acme")).toBeTruthy();
+    expect(screen.getByTestId("admin-users-select-all")).toBeTruthy();
   });
 
-  it("shows bulk bar when rows are selected", async () => {
+  it("shows remove panel with shared workspace picker after selecting users", async () => {
     await mockHooks();
     render(<AdminUsersPage />, { wrapper: createWrapper() });
 
-    const checkboxes = screen.getAllByRole("checkbox");
-    // first checkbox is select-all; second is first user
-    fireEvent.click(checkboxes[1]!);
+    fireEvent.click(screen.getByRole("checkbox", { name: "alice@example.com" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "bob@example.com" }));
 
     expect(screen.getByTestId("admin-users-bulk-bar")).toBeTruthy();
-    expect(screen.getByText(/1 selected/i)).toBeTruthy();
+    fireEvent.click(screen.getByTestId("bulk-remove-btn"));
+
+    expect(screen.getByTestId("bulk-remove-panel")).toBeTruthy();
+    const select = screen.getByTestId("bulk-workspace-select") as HTMLSelectElement;
+    expect(select).toBeTruthy();
+    // Intersection of alice+bob is only Acme
+    expect([...select.options].map((o) => o.text)).toEqual([
+      "Select a workspace…",
+      "Acme",
+    ]);
+
+    fireEvent.change(select, { target: { value: "ws1" } });
+    expect(screen.getByTestId("bulk-remove-summary").textContent).toMatch(/Acme/);
   });
 
   it("opens detail panel when clicking a user email", async () => {

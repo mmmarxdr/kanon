@@ -10,6 +10,7 @@ export interface AdminUserListItem {
   isInstanceAdmin: boolean;
   createdAt: string;
   workspaceCount: number;
+  workspaces: Array<{ id: string; name: string }>;
 }
 
 export interface AdminUserListResponse {

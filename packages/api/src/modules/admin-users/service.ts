@@ -66,7 +66,12 @@ export async function listUsers(query: AdminUserListQuery) {
         emailVerifiedAt: true,
         isInstanceAdmin: true,
         createdAt: true,
-        _count: { select: { members: true } },
+        members: {
+          select: {
+            workspace: { select: { id: true, name: true } },
+          },
+          orderBy: { createdAt: "asc" },
+        },
       },
     }),
   ]);
@@ -79,7 +84,11 @@ export async function listUsers(query: AdminUserListQuery) {
       emailVerified: u.emailVerifiedAt !== null,
       isInstanceAdmin: u.isInstanceAdmin,
       createdAt: u.createdAt.toISOString(),
-      workspaceCount: u._count.members,
+      workspaceCount: u.members.length,
+      workspaces: u.members.map((m) => ({
+        id: m.workspace.id,
+        name: m.workspace.name,
+      })),
     })),
     total,
     limit: query.limit,
