@@ -35,7 +35,11 @@ import issueSubscriptionRoutes from "./modules/issue-subscription/routes.js";
 import { workspaceInviteRoutes, publicInviteRoutes } from "./modules/invite/routes.js";
 import projectMemberRoutes from "./modules/project/project-member-routes.js";
 import instanceRoutes from "./modules/instance/routes.js";
+<<<<<<< HEAD
 import adminUsersRoutes from "./modules/admin-users/routes.js";
+=======
+import { triageProposalReadRoutes } from "./modules/triage/routes.js";
+>>>>>>> 1d235a8 (feat(triage): add target issue history and timeline API (KAN-193 PR7))
 import { bootstrapSetupToken } from "./modules/instance/service.js";
 import { eventBus } from "./services/event-bus/index.js";
 import { cleanupExpired } from "./modules/work-session/service.js";
@@ -299,6 +303,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(instanceRoutes, { prefix: "/api/instance" });
   await app.register(adminUsersRoutes, { prefix: "/api/admin/users" });
   await app.register(integrationRoutes, { prefix: "/api/integrations" });
+  await app.register(triageProposalReadRoutes, { prefix: "/" });
 
   // ─── Instance Setup Token (first-boot onReady hook) ───────────────────
   app.addHook("onReady", async () => {
