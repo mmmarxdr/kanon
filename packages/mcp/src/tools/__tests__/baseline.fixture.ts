@@ -51,5 +51,18 @@ export const SKILL_BASELINE_BYTES = 6659;
  *   kanon_transition_issue description addendum surfacing the reconcile
  *   gate). Ceiling: 5650 − 300 = 5350; actual at landing: 5300 B (44 tools;
  *   margin: 50 B).
+ * KAN-193 (PR11): ceiling unchanged at 5350. Five deferred triage tools added
+ *   with compensating trims in capture/groups/cycles/timesheet (≥445 B vs
+ *   pre-triage toplines). Do NOT re-anchor DESCRIPTION_BASELINE_BYTES.
+ *
+ * PRE_TRIAGE_VERBOSE_DESCRIPTION_BYTES: sum of topline bytes in capture.ts,
+ *   groups.ts, cycles.ts, and timesheet.ts at commit 27c4093 (pre-PR10).
+ *   Used to prove the ≥445 B compensating trim required by PR11.
  */
 export const DESCRIPTION_BASELINE_BYTES = 5650;
+
+/** Pre-KAN-193 topline bytes in capture + groups + cycles + timesheet. */
+export const PRE_TRIAGE_VERBOSE_DESCRIPTION_BYTES = 2478;
+
+/** Minimum bytes that must be trimmed from those four files for PR11. */
+export const VERBOSE_DESCRIPTION_TRIM_MIN_BYTES = 445;

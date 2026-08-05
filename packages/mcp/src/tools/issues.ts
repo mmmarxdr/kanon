@@ -184,7 +184,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
 
   server.tool(
     "transition_issue",
-    "Transition issueKey to state (backlog,todo,in_progress,review,done). Returns ack {ok,id,key}; format:'full' for entity. Done with unconfirmed time is blocked — call reconcile_time then retry.",
+    "Transition issueKey to state (backlog,todo,in_progress,review,done). Ack {ok,id,key}. Done with unconfirmed time blocked — call reconcile_time then retry.",
     TransitionIssueInput.shape,
     async ({ issueKey, state, format }) => {
       try {
@@ -223,7 +223,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
 
   server.tool(
     "reconcile_time",
-    "Reconcile captured time on issueKey — clears the review→done gate. confirmedTotalHours accepts reported hours as-is or corrects up/down, then retry transition_issue to done.",
+    "Reconcile captured time on issueKey — clears review→done gate. confirmedTotalHours accepts or corrects hours; then retry transition_issue to done.",
     ReconcileTimeInput.shape,
     async ({ issueKey, confirmedTotalHours }) => {
       try {

@@ -140,6 +140,24 @@ export async function seedTestProject(
   return { id: project.id, key: project.key };
 }
 
+/** Best-effort triage cleanup when the additive ledger migration is present. */
+async function deleteTriageLedgerIfPresent(): Promise<void> {
+  try {
+    await prisma.triageProposalLifecycleEvent.deleteMany();
+    await prisma.triageProposalContent.deleteMany();
+    await prisma.triageProposal.deleteMany();
+    await prisma.triagePolicy.deleteMany();
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    const code = (err as { code?: string }).code;
+    // P2021 = table does not exist (shared kanon_test reset by another worktree)
+    if (code === "P2021" || message.includes("does not exist")) {
+      return;
+    }
+    throw err;
+  }
+}
+
 /**
  * Clean all test data from the database.
  * Deletes in reverse dependency order.
@@ -167,6 +185,8 @@ export async function cleanDatabase(): Promise<void> {
   await prisma.issue.deleteMany();
   await prisma.roadmapItem.deleteMany();
   await prisma.cycle.deleteMany();
+  // Triage ledger may be absent when another worktree reset kanon_test mid-run.
+  await deleteTriageLedgerIfPresent();
   await prisma.project.deleteMany();
   await prisma.workspaceInvite.deleteMany();
   await prisma.passwordResetToken.deleteMany();

@@ -5,9 +5,11 @@
 
 // Set test env vars BEFORE any module imports (env.ts validates at load time)
 process.env["NODE_ENV"] = "test";
+// Prefer an isolated DB for this stacked triage branch so shared kanon_test
+// resets from other worktrees do not drop the additive ledger mid-suite.
 process.env["DATABASE_URL"] =
   process.env["DATABASE_URL"] ??
-  "postgresql://kanon:kanon@localhost:5432/kanon_test";
+  "postgresql://kanon:kanon@localhost:5432/kanon_test_pr9";
 process.env["JWT_SECRET"] =
   process.env["JWT_SECRET"] ?? "test-jwt-secret-at-least-16-chars";
 process.env["JWT_REFRESH_SECRET"] =

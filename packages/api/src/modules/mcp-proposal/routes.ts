@@ -132,7 +132,29 @@ export async function proposalActionRoutes(
 
   app.post(
     "/proposals/:id/apply",
-    { preHandler: [requireProposalRole("id", "member")], schema: { params: ProposalIdParam } },
+    {
+      preHandler: [
+        // Triage-first UUID resolution: never treat a triage proposal id as legacy apply.
+        async (request, _reply) => {
+          const id = (request.params as Record<string, string>)["id"];
+          if (!id) throw new AppError(400, "PROPOSAL_ID_REQUIRED", "Proposal ID is required");
+
+          const tp = await prisma.triageProposal.findUnique({ where: { id }, select: { id: true } });
+          if (!tp) return;
+
+          if (process.env["FF_MCP_TRIAGE_APPLY"] !== "true") {
+            throw new AppError(403, "CAPABILITY_DISABLED", "Triage capability is disabled");
+          }
+          throw new AppError(
+            422,
+            "TRIAGE_PROPOSAL_NON_EXECUTABLE",
+            "Cannot execute triage proposal here",
+          );
+        },
+        requireProposalRole("id", "member"),
+      ],
+      schema: { params: ProposalIdParam },
+    },
     async (request, _reply) => {
       const p = await prisma.mcpProposal.findUnique({
         where: { id: request.params.id },

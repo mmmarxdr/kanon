@@ -36,9 +36,11 @@ import { workspaceInviteRoutes, publicInviteRoutes } from "./modules/invite/rout
 import projectMemberRoutes from "./modules/project/project-member-routes.js";
 import instanceRoutes from "./modules/instance/routes.js";
 import adminUsersRoutes from "./modules/admin-users/routes.js";
+import { triageProposalReadRoutes } from "./modules/triage/routes.js";
 import { bootstrapSetupToken } from "./modules/instance/service.js";
 import { eventBus } from "./services/event-bus/index.js";
 import { cleanupExpired } from "./modules/work-session/service.js";
+import { registerRetentionHousekeeping } from "./modules/triage/retention.js";
 import { registerNotificationService } from "./services/notification/index.js";
 import { createEmailProvider } from "./services/email/index.js";
 import type { EmailProvider } from "./services/email/types.js";
@@ -52,6 +54,11 @@ import {
 } from "./modules/integrations/worker.js";
 import integrationRoutes from "./modules/integrations/routes.js";
 import { createInboundSyncCycle } from "./modules/integrations/inbound.js";
+import {
+  isCorrelationUuid,
+  TRIAGE_PINO_REDACT_PATHS,
+} from "./modules/triage/observability.js";
+import { randomUUID } from "node:crypto";
 
 export interface BuildAppOptions {
   /** Optional override for the email provider (useful for testing with a spy). */
@@ -81,6 +88,15 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     // users as a single bucket. Default (env.TRUST_PROXY=uniquelocal) is correct
     // for both the caddy→nginx→api and nginx→api topologies.
     trustProxy: env.TRUST_PROXY,
+    // KAN-193: accept X-Kanon-Correlation-ID (UUID) or mint one; used as Pino reqId.
+    genReqId: (req) => {
+      const raw = req.headers["x-kanon-correlation-id"];
+      const header = Array.isArray(raw) ? raw[0] : raw;
+      if (typeof header === "string" && isCorrelationUuid(header)) return header;
+      return randomUUID();
+    },
+    requestIdHeader: "x-kanon-correlation-id",
+    requestIdLogLabel: "reqId",
     logger: {
       level: process.env["NODE_ENV"] === "production" ? "info" : "debug",
       transport: process.env["NODE_ENV"] !== "production" ? { target: "pino-pretty" } : undefined,
@@ -88,11 +104,13 @@ export async function buildApp(opts: BuildAppOptions = {}) {
       // they never reach log aggregators. Pino replaces matched paths with
       // "[Redacted]". Paths are pino-style dot-notation; Authorization and
       // cookie cover auth material; password covers login-request bodies.
+      // KAN-193: also redact triage preview/suggestion bodies (defense in depth).
       redact: [
         "req.headers.authorization",
         "req.headers.cookie",
         "req.body.password",
         "req.body.apiKey",
+        ...TRIAGE_PINO_REDACT_PATHS,
       ],
       // ^ceiling: extend redact list if new sensitive fields are added (e.g.
       // req.body.token, req.body.refreshToken).
@@ -103,6 +121,11 @@ export async function buildApp(opts: BuildAppOptions = {}) {
         level: (label: string) => ({ level: label }),
       },
     },
+  });
+
+  // Echo correlation ID on every response for MCP/API continuity.
+  app.addHook("onRequest", async (request, reply) => {
+    reply.header("X-Kanon-Correlation-ID", request.id);
   });
 
   // Zod type provider for request/response validation
@@ -299,6 +322,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(instanceRoutes, { prefix: "/api/instance" });
   await app.register(adminUsersRoutes, { prefix: "/api/admin/users" });
   await app.register(integrationRoutes, { prefix: "/api/integrations" });
+  await app.register(triageProposalReadRoutes, { prefix: "/" });
 
   // ─── Instance Setup Token (first-boot onReady hook) ───────────────────
   app.addHook("onReady", async () => {
@@ -354,11 +378,18 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     cleanupTimer.unref?.();
   };
 
+  // ─── Triage Retention Housekeeping (self-rescheduling, non-overlapping) ──
+  // Expiry sweep every 60s (max 100) and retention sweep every 24h (max 100)
+  // with startup jitter. Uses `FOR UPDATE SKIP LOCKED` for concurrent safety
+  // and `unref()` so timers don't keep the process alive.
+  let stopRetention: (() => void) | undefined;
+
   app.addHook("onReady", async () => {
     scheduleCleanupTick();
     app.log.info(
       `Work session cleanup interval started (every ${CLEANUP_INTERVAL_MS / 1000}s, non-overlapping)`
     );
+    stopRetention = registerRetentionHousekeeping(app.log);
   });
 
   app.addHook("onClose", async () => {
@@ -366,6 +397,10 @@ export async function buildApp(opts: BuildAppOptions = {}) {
       clearTimeout(cleanupTimer);
       cleanupTimer = undefined;
       app.log.info("Work session cleanup interval stopped");
+    }
+    if (stopRetention) {
+      stopRetention();
+      stopRetention = undefined;
     }
   });
 

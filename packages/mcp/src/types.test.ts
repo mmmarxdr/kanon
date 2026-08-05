@@ -9,6 +9,13 @@ import {
   UpdateIssueInput,
   TITLE_COACHING,
   CreateDocumentInput,
+  PreviewIssueTriageInput,
+  PersistTriageProposalInput,
+  GetTriageProposalInput,
+  ListTriageProposalsInput,
+  DismissTriageProposalInput,
+  TRIAGE_PREVIEW_TIMEOUT_MS,
+  TRIAGE_DISMISS_TIMEOUT_MS,
 } from "./types.js";
 
 // ─── ListWorkspacesInput ─────────────────────────────────────────────────────
@@ -615,5 +622,138 @@ describe("UpdateIssueInput.title refine", () => {
       const msg = result.error.issues[0]?.message ?? "";
       expect(msg).toBe(TITLE_COACHING);
     }
+  });
+});
+
+// ─── Triage tool input schemas (KAN-193 PR10) ────────────────────────────────
+
+describe("PreviewIssueTriageInput", () => {
+  it("accepts prepare with defaults", () => {
+    const result = PreviewIssueTriageInput.safeParse({
+      phase: "prepare",
+      issueKey: "KAN-42",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.format).toBe("compact");
+      expect(result.data.aiIntent).toBe("none");
+    }
+  });
+
+  it("accepts prepare with workspace scope", () => {
+    const result = PreviewIssueTriageInput.safeParse({
+      phase: "prepare",
+      issueKey: "KAN-42",
+      scope: { kind: "workspace", workspaceId: "550e8400-e29b-41d4-a716-446655440000" },
+      aiIntent: "host_assisted",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects validate completed without suggestions", () => {
+    const result = PreviewIssueTriageInput.safeParse({
+      phase: "validate",
+      issueKey: "KAN-42",
+      contextToken: "ctx",
+      hostOutcome: {
+        status: "completed",
+        provider: "p",
+        model: "m",
+        modelVersion: "1",
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts validate timed_out without suggestions", () => {
+    const result = PreviewIssueTriageInput.safeParse({
+      phase: "validate",
+      issueKey: "KAN-42",
+      contextToken: "ctx",
+      hostOutcome: { status: "timed_out" },
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("PersistTriageProposalInput / GetTriageProposalInput", () => {
+  it("requires preview + seal", () => {
+    expect(
+      PersistTriageProposalInput.safeParse({
+        issueKey: "KAN-42",
+        preview: { contractVersion: "triage-preview.v1" },
+        previewSeal: "seal",
+      }).success,
+    ).toBe(true);
+    expect(PersistTriageProposalInput.safeParse({ issueKey: "KAN-42" }).success).toBe(false);
+  });
+
+  it("get requires UUID", () => {
+    expect(
+      GetTriageProposalInput.safeParse({
+        proposalId: "11111111-1111-4111-8111-111111111111",
+      }).success,
+    ).toBe(true);
+    expect(GetTriageProposalInput.safeParse({ proposalId: "not-a-uuid" }).success).toBe(false);
+  });
+});
+
+describe("ListTriageProposalsInput", () => {
+  it("requires exactly one projectKey", () => {
+    expect(ListTriageProposalsInput.safeParse({}).success).toBe(false);
+    const ok = ListTriageProposalsInput.safeParse({ projectKey: "KAN" });
+    expect(ok.success).toBe(true);
+    if (ok.success) expect(ok.data.limit).toBe(20);
+  });
+
+  it("enforces limit 1..50", () => {
+    expect(ListTriageProposalsInput.safeParse({ projectKey: "KAN", limit: 0 }).success).toBe(false);
+    expect(ListTriageProposalsInput.safeParse({ projectKey: "KAN", limit: 51 }).success).toBe(false);
+    expect(ListTriageProposalsInput.safeParse({ projectKey: "KAN", limit: 1 }).success).toBe(true);
+  });
+
+  it("rejects workspace-wide fields", () => {
+    expect(
+      ListTriageProposalsInput.safeParse({
+        projectKey: "KAN",
+        workspaceId: "550e8400-e29b-41d4-a716-446655440000",
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("DismissTriageProposalInput", () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+
+  it("trims Unicode whitespace and counts codepoints", () => {
+    const ok = DismissTriageProposalInput.safeParse({
+      proposalId: id,
+      reason: "\u00A0duplicate\u00A0",
+    });
+    expect(ok.success).toBe(true);
+    if (ok.success) expect(ok.data.reason).toBe("duplicate");
+
+    expect(
+      DismissTriageProposalInput.safeParse({ proposalId: id, reason: "   " }).success,
+    ).toBe(false);
+    expect(
+      DismissTriageProposalInput.safeParse({
+        proposalId: id,
+        reason: "😀".repeat(1001),
+      }).success,
+    ).toBe(false);
+    expect(
+      DismissTriageProposalInput.safeParse({
+        proposalId: id,
+        reason: "😀".repeat(1000),
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe("triage deadline constants", () => {
+  it("uses design MCP hard timeouts", () => {
+    expect(TRIAGE_PREVIEW_TIMEOUT_MS).toBe(2900);
+    expect(TRIAGE_DISMISS_TIMEOUT_MS).toBe(2000);
   });
 });

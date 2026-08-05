@@ -17,6 +17,15 @@ export interface KanonCycleDeleteResult {
 }
 
 /**
+ * Optional per-request overrides (triage deadlines / correlation).
+ * Unrelated calls keep the client-level 10s default when omitted.
+ */
+export interface KanonRequestOptions {
+  timeoutMs?: number;
+  correlationId?: string;
+}
+
+/**
  * Typed error for Kanon API failures.
  */
 export class KanonApiError extends Error {
@@ -29,13 +38,36 @@ export class KanonApiError extends Error {
    * so the reconcile confirm-or-adjust flow can surface it without a round-trip.
    */
   public readonly details?: Record<string, unknown>;
+  /** Triage semantic category when the API returns a versioned semantic error body. */
+  public readonly category?: string;
+  public readonly retry?: string;
+  public readonly correlationId?: string;
+  public readonly apiContractVersion?: string;
+  public readonly provenance?: Record<string, unknown>;
 
-  constructor(statusCode: number, code: string, message: string, details?: Record<string, unknown>) {
+  constructor(
+    statusCode: number,
+    code: string,
+    message: string,
+    details?: Record<string, unknown>,
+    semantic?: {
+      category?: string;
+      retry?: string;
+      correlationId?: string;
+      apiContractVersion?: string;
+      provenance?: Record<string, unknown>;
+    },
+  ) {
     super(message);
     this.name = "KanonApiError";
     this.statusCode = statusCode;
     this.code = code;
     this.details = details;
+    this.category = semantic?.category;
+    this.retry = semantic?.retry;
+    this.correlationId = semantic?.correlationId;
+    this.apiContractVersion = semantic?.apiContractVersion;
+    this.provenance = semantic?.provenance;
   }
 }
 
@@ -920,6 +952,109 @@ export class KanonClient {
     );
   }
 
+  // ─── Issue triage (KAN-193) ─────────────────────────────────────────────
+
+  /**
+   * Read-only triage preview (prepare or validate).
+   * Route: POST /api/issues/:key/triage/preview
+   */
+  async previewIssueTriage(
+    issueKey: string,
+    body: Record<string, unknown>,
+    options?: KanonRequestOptions,
+  ): Promise<unknown> {
+    return this.request<unknown>(
+      "POST",
+      `/api/issues/${encodeURIComponent(issueKey)}/triage/preview`,
+      body,
+      options,
+    );
+  }
+
+  /**
+   * Persist an exact preview + seal as a typed triage proposal.
+   * Route: POST /api/issues/:key/triage-proposals
+   */
+  async persistTriageProposal(
+    issueKey: string,
+    body: Record<string, unknown>,
+    options?: KanonRequestOptions,
+  ): Promise<unknown> {
+    return this.request<unknown>(
+      "POST",
+      `/api/issues/${encodeURIComponent(issueKey)}/triage-proposals`,
+      body,
+      options,
+    );
+  }
+
+  /**
+   * Get one triage proposal by UUID.
+   * Route: GET /api/triage-proposals/:id
+   */
+  async getTriageProposal(
+    proposalId: string,
+    format: "compact" | "full" = "compact",
+    options?: KanonRequestOptions,
+  ): Promise<unknown> {
+    const params = new URLSearchParams({ format });
+    return this.request<unknown>(
+      "GET",
+      `/api/triage-proposals/${encodeURIComponent(proposalId)}?${params.toString()}`,
+      undefined,
+      options,
+    );
+  }
+
+  /**
+   * List compact triage proposals for exactly one project.
+   * Route: GET /api/projects/:key/triage-proposals
+   */
+  async listTriageProposals(
+    projectKey: string,
+    filters: {
+      state?: string;
+      targetIssueKey?: string;
+      generatorSource?: string;
+      degraded?: boolean;
+      limit?: number;
+      cursor?: string;
+    } = {},
+    options?: KanonRequestOptions,
+  ): Promise<unknown> {
+    const params = new URLSearchParams();
+    if (filters.state !== undefined) params.set("state", filters.state);
+    if (filters.targetIssueKey !== undefined) params.set("targetIssueKey", filters.targetIssueKey);
+    if (filters.generatorSource !== undefined) {
+      params.set("generatorSource", filters.generatorSource);
+    }
+    if (filters.degraded !== undefined) {
+      params.set("degraded", filters.degraded ? "true" : "false");
+    }
+    if (filters.limit !== undefined) params.set("limit", String(filters.limit));
+    if (filters.cursor !== undefined) params.set("cursor", filters.cursor);
+    const qs = params.toString();
+    const path = `/api/projects/${encodeURIComponent(projectKey)}/triage-proposals${qs ? `?${qs}` : ""}`;
+    return this.request<unknown>("GET", path, undefined, options);
+  }
+
+  /**
+   * Dismiss a triage proposal (terminal lifecycle write).
+   * Route: POST /api/triage-proposals/:id/dismiss
+   */
+  async dismissTriageProposal(
+    proposalId: string,
+    body: { reason: string },
+    options?: KanonRequestOptions,
+  ): Promise<unknown> {
+    return this.request<unknown>(
+      "POST",
+      `/api/triage-proposals/${encodeURIComponent(proposalId)}/dismiss`,
+      body,
+      options,
+    );
+  }
+
   // ─── Health ─────────────────────────────────────────────────────────────
 
   /**
@@ -944,8 +1079,10 @@ export class KanonClient {
     method: string,
     path: string,
     body?: unknown,
+    options?: KanonRequestOptions,
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
+    const timeoutMs = options?.timeoutMs ?? this.timeoutMs;
 
     const headers: Record<string, string> = {
       Accept: "application/json",
@@ -963,6 +1100,9 @@ export class KanonClient {
     if (this.clientIdentity) {
       headers["X-Kanon-Client"] = this.clientIdentity;
     }
+    if (options?.correlationId) {
+      headers["X-Kanon-Correlation-ID"] = options.correlationId;
+    }
 
     let response: Response;
     try {
@@ -970,7 +1110,7 @@ export class KanonClient {
         method,
         headers,
         body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(this.timeoutMs),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
       throw new KanonApiError(
@@ -985,15 +1125,42 @@ export class KanonClient {
       let code = "API_ERROR";
       let message = `Kanon API returned HTTP ${response.status}: ${text}`;
       let details: Record<string, unknown> | undefined;
+      let semantic:
+        | {
+            category?: string;
+            retry?: string;
+            correlationId?: string;
+            apiContractVersion?: string;
+            provenance?: Record<string, unknown>;
+          }
+        | undefined;
       try {
-        const parsed = JSON.parse(text) as { code?: string; message?: string; details?: Record<string, unknown> };
+        const parsed = JSON.parse(text) as {
+          code?: string;
+          message?: string;
+          details?: Record<string, unknown>;
+          category?: string;
+          retry?: string;
+          correlationId?: string;
+          apiContractVersion?: string;
+          provenance?: Record<string, unknown>;
+        };
         if (parsed.code) code = parsed.code;
         if (parsed.message) message = parsed.message;
         if (parsed.details) details = parsed.details;
+        if (parsed.category) {
+          semantic = {
+            category: parsed.category,
+            retry: parsed.retry,
+            correlationId: parsed.correlationId,
+            apiContractVersion: parsed.apiContractVersion,
+            provenance: parsed.provenance,
+          };
+        }
       } catch {
         // use raw text
       }
-      throw new KanonApiError(response.status, code, message, details);
+      throw new KanonApiError(response.status, code, message, details, semantic);
     }
 
     if (response.status === 204) {
@@ -1012,9 +1179,10 @@ export class KanonClient {
     method: string,
     path: string,
     body?: unknown,
+    options?: KanonRequestOptions,
   ): Promise<T> {
     try {
-      return await this.doRequest<T>(method, path, body);
+      return await this.doRequest<T>(method, path, body, options);
     } catch (err) {
       if (
         err instanceof KanonApiError &&
@@ -1032,7 +1200,7 @@ export class KanonClient {
         }
         // Retry once using doRequest (never loops — doRequest never retries)
         try {
-          return await this.doRequest<T>(method, path, body);
+          return await this.doRequest<T>(method, path, body, options);
         } catch (retryErr) {
           // Retry 401 → boundary error (spec R1d)
           // Non-401 errors propagate as-is (spec R1c principle: non-401 never intercepted)

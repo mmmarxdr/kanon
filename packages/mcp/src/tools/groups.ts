@@ -12,7 +12,7 @@ import type { KanonBinding } from "../kanon-binding.js";
 export function registerGroupTools(server: McpServer, client: KanonClient, binding: KanonBinding | InvalidBinding | null = null): void {
   server.tool(
     "list_groups",
-    "List issue groups for projectKey. Call before create_issue to get valid groupKey values.",
+    "List issue groups for projectKey. Call before create_issue for valid groupKey values.",
     ListGroupsInput.shape,
     async ({ projectKey, format, limit, offset }) => {
       try {
@@ -28,7 +28,7 @@ export function registerGroupTools(server: McpServer, client: KanonClient, bindi
 
   server.tool(
     "transition_issues",
-    "Batch-transition (projectKey,state,groupKey|keys[]). groupKey or keys — mutually exclusive. Returns ack {ok,count,keys}; format:'full' for raw.",
+    "Batch-transition (projectKey,state,groupKey|keys[]). groupKey XOR keys. Returns ack {ok,count,keys}.",
     BatchTransitionInputShape.shape,
     async (rawInput: unknown) => {
       try {
