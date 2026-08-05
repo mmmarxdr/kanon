@@ -358,6 +358,37 @@ describe("POST/PATCH/DELETE admin user mutations", () => {
     expect(adminId).toBeTruthy();
   });
 
+  it("moves a membership to another workspace", async () => {
+    const { token } = await seedInstanceAdminUser();
+    const source = await seedTestWorkspace();
+    const target = await seedTestWorkspace();
+    await seedTestMemberWithRole(source.id, "owner");
+    const member = await seedTestMemberWithRole(source.id, "member", {
+      email: `move-${randomUUID().slice(0, 8)}@example.com`,
+      projectAccess: "assigned",
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/admin/users/${member.userId}/memberships/${member.id}/move`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { workspaceId: target.id, role: "admin", projectAccess: "workspace" },
+    });
+    expect(res.statusCode).toBe(200);
+    const memberships = res.json().memberships as Array<{
+      workspaceId: string;
+      role: string;
+      projectAccess: string;
+    }>;
+    expect(memberships).toHaveLength(1);
+    expect(memberships[0]).toMatchObject({
+      workspaceId: target.id,
+      role: "admin",
+      projectAccess: "workspace",
+      projects: null,
+    });
+  });
+
   it("422 when replacing projects on workspace-mode membership", async () => {
     const { token } = await seedInstanceAdminUser();
     const ws = await seedTestWorkspace();

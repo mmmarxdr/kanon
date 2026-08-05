@@ -147,11 +147,36 @@ export function useAddAdminMembershipMutation(userId: string) {
       workspaceId: string;
       role?: string;
       projectAccess?: "workspace" | "assigned";
+      projects?: Array<{ projectId: string; role?: string }>;
     }) =>
       fetchApi<AdminUserDetail>(`/api/admin/users/${userId}/memberships`, {
         method: "POST",
         body: JSON.stringify(body),
       }),
+    onSuccess: () => invalidateAdminUsers(qc, userId),
+  });
+}
+
+export function useMoveAdminMembershipMutation(userId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      memberId: string;
+      workspaceId: string;
+      role?: string;
+      projectAccess?: "workspace" | "assigned";
+    }) =>
+      fetchApi<AdminUserDetail>(
+        `/api/admin/users/${userId}/memberships/${input.memberId}/move`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            workspaceId: input.workspaceId,
+            role: input.role,
+            projectAccess: input.projectAccess,
+          }),
+        },
+      ),
     onSuccess: () => invalidateAdminUsers(qc, userId),
   });
 }

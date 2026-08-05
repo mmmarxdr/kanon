@@ -31,8 +31,25 @@ export const AddMembershipBody = z.object({
   workspaceId: z.string().uuid(),
   role: MemberRoleEnum.optional().default("member"),
   projectAccess: ProjectAccessEnum.optional().default("assigned"),
+  /** Optional initial ProjectMember rows when projectAccess is assigned. */
+  projects: z
+    .array(
+      z.object({
+        projectId: z.string().uuid(),
+        role: MemberRoleEnum.optional().default("member"),
+      }),
+    )
+    .max(200)
+    .optional(),
 });
 export type AddMembershipBody = z.infer<typeof AddMembershipBody>;
+
+export const MoveMembershipBody = z.object({
+  workspaceId: z.string().uuid(),
+  role: MemberRoleEnum.optional(),
+  projectAccess: ProjectAccessEnum.optional(),
+});
+export type MoveMembershipBody = z.infer<typeof MoveMembershipBody>;
 
 export const PatchMembershipBody = z
   .object({

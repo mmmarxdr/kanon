@@ -12,22 +12,14 @@ import {
 } from "@/components/ui/settings-list";
 import { SETTINGS_INPUT_CLASS } from "@/components/ui/settings-field";
 import {
-  useAddAdminMembershipMutation,
-  useAdminUserDetailQuery,
   useAdminUsersBulkMutation,
   useAdminUsersQuery,
-  useAdminWorkspaceProjectsQuery,
   useAdminWorkspacesQuery,
-  usePatchAdminMembershipMutation,
-  useRemoveAdminMembershipMutation,
-  useReplaceAdminProjectsMutation,
-  useVerifyAdminUserEmailMutation,
-  type AdminMembership,
   type AdminUserListItem,
 } from "./use-admin-users";
+import { UserDetailPanel } from "./user-detail-panel";
 
 const PAGE_SIZE = 20;
-const ROLES = ["viewer", "member", "pm", "admin", "owner"] as const;
 
 /**
  * Fixed tracks (not `auto`): each SettingsList row is its own grid, so `auto`
@@ -69,305 +61,6 @@ function sharedWorkspacesForSelection(
     .filter(([, v]) => v.hits === lists.length)
     .map(([id, v]) => ({ id, name: v.name }))
     .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-function MembershipEditor({
-  userId,
-  membership,
-}: {
-  userId: string;
-  membership: AdminMembership;
-}) {
-  const { t } = useTranslation("admin");
-  const [role, setRole] = useState(membership.role);
-  const [projectAccess, setProjectAccess] = useState(membership.projectAccess);
-  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>(
-    (membership.projects ?? []).map((p) => p.projectId),
-  );
-
-  const patch = usePatchAdminMembershipMutation(userId);
-  const remove = useRemoveAdminMembershipMutation(userId);
-  const replaceProjects = useReplaceAdminProjectsMutation(userId);
-  const projectsQuery = useAdminWorkspaceProjectsQuery(
-    projectAccess === "assigned" ? membership.workspaceId : null,
-  );
-
-  useEffect(() => {
-    setRole(membership.role);
-    setProjectAccess(membership.projectAccess);
-    setSelectedProjectIds((membership.projects ?? []).map((p) => p.projectId));
-  }, [membership]);
-
-  return (
-    <div
-      data-testid={`membership-${membership.memberId}`}
-      className="rounded-md border border-border px-3 py-3 flex flex-col gap-3"
-    >
-      <div className="text-sm font-medium">{membership.workspaceName}</div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          {t("role")}
-          <select
-            className={SETTINGS_INPUT_CLASS}
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            data-testid={`membership-role-${membership.memberId}`}
-          >
-            {ROLES.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          {t("projectAccess")}
-          <select
-            className={SETTINGS_INPUT_CLASS}
-            value={projectAccess}
-            onChange={(e) =>
-              setProjectAccess(e.target.value as "workspace" | "assigned")
-            }
-            data-testid={`membership-access-${membership.memberId}`}
-          >
-            <option value="workspace">{t("accessWorkspace")}</option>
-            <option value="assigned">{t("accessAssigned")}</option>
-          </select>
-        </label>
-      </div>
-
-      {projectAccess === "assigned" && (
-        <div className="flex flex-col gap-2">
-          <div className="text-xs text-muted-foreground">{t("projects")}</div>
-          {projectsQuery.isLoading ? (
-            <p className="text-xs text-muted-foreground">{t("loading")}</p>
-          ) : !projectsQuery.data?.length ? (
-            <p className="text-xs text-muted-foreground">{t("noAssignedProjects")}</p>
-          ) : (
-            <div className="flex flex-col gap-1 max-h-40 overflow-auto">
-              {projectsQuery.data.map((p) => {
-                const checked = selectedProjectIds.includes(p.id);
-                return (
-                  <label
-                    key={p.id}
-                    className="flex items-center gap-2 text-sm"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => {
-                        setSelectedProjectIds((prev) =>
-                          checked
-                            ? prev.filter((id) => id !== p.id)
-                            : [...prev, p.id],
-                        );
-                      }}
-                    />
-                    <span>
-                      {p.key} — {p.name}
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
-          )}
-          <button
-            type="button"
-            className="self-start rounded-md border border-border px-3 py-1.5 text-xs"
-            disabled={replaceProjects.isPending}
-            onClick={() => {
-              replaceProjects.mutate({
-                memberId: membership.memberId,
-                projects: selectedProjectIds.map((projectId) => ({
-                  projectId,
-                  role:
-                    membership.projects?.find((p) => p.projectId === projectId)
-                      ?.role ?? role,
-                })),
-              });
-            }}
-          >
-            {t("saveProjects")}
-          </button>
-        </div>
-      )}
-
-      <div className="flex gap-2">
-        <button
-          type="button"
-          className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
-          disabled={patch.isPending}
-          onClick={() =>
-            patch.mutate({
-              memberId: membership.memberId,
-              role,
-              projectAccess,
-            })
-          }
-        >
-          {t("saveMembership")}
-        </button>
-        <button
-          type="button"
-          className="rounded-md border border-destructive/40 px-3 py-1.5 text-xs text-destructive disabled:opacity-50"
-          disabled={remove.isPending}
-          onClick={() => remove.mutate(membership.memberId)}
-        >
-          {t("removeMembership")}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function UserDetailPanel({
-  userId,
-  onClose,
-}: {
-  userId: string;
-  onClose: () => void;
-}) {
-  const { t } = useTranslation("admin");
-  const detail = useAdminUserDetailQuery(userId);
-  const verify = useVerifyAdminUserEmailMutation();
-  const workspaces = useAdminWorkspacesQuery(true);
-  const addMembership = useAddAdminMembershipMutation(userId);
-  const [addWorkspaceId, setAddWorkspaceId] = useState("");
-  const [addRole, setAddRole] = useState<string>("member");
-  const [addAccess, setAddAccess] = useState<"workspace" | "assigned">("assigned");
-
-  if (detail.isLoading) {
-    return (
-      <SettingsCard title={t("detailTitle")} testId="admin-user-detail">
-        <p className="text-sm text-muted-foreground">{t("loading")}</p>
-      </SettingsCard>
-    );
-  }
-
-  if (detail.error || !detail.data) {
-    return (
-      <SettingsCard title={t("detailTitle")} testId="admin-user-detail">
-        <p className="text-sm text-destructive">
-          {t("detailFailed", { message: detail.error?.message ?? "error" })}
-        </p>
-      </SettingsCard>
-    );
-  }
-
-  const user = detail.data;
-
-  return (
-    <SettingsCard title={t("detailTitle")} testId="admin-user-detail">
-      <div className="flex flex-col gap-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-sm font-medium">{user.email}</div>
-            <div className="text-xs text-muted-foreground">
-              {user.displayName ?? "—"}
-            </div>
-            {user.isInstanceAdmin && (
-              <div className="mt-1 text-xs text-muted-foreground">
-                {t("instanceAdminBadge")}
-              </div>
-            )}
-          </div>
-          <button
-            type="button"
-            className="text-xs text-muted-foreground underline"
-            onClick={onClose}
-          >
-            {t("detailClose")}
-          </button>
-        </div>
-
-        {user.emailVerified ? (
-          <p className="text-sm text-muted-foreground">{t("alreadyVerified")}</p>
-        ) : (
-          <button
-            type="button"
-            data-testid="verify-email-btn"
-            className="self-start rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
-            disabled={verify.isPending}
-            onClick={() => verify.mutate(userId)}
-          >
-            {t("verifyEmail")}
-          </button>
-        )}
-
-        <div className="flex flex-col gap-2">
-          <div className="text-sm font-medium">{t("memberships")}</div>
-          {user.memberships.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t("noMemberships")}</p>
-          ) : (
-            user.memberships.map((m) => (
-              <MembershipEditor key={m.memberId} userId={userId} membership={m} />
-            ))
-          )}
-        </div>
-
-        <div className="flex flex-col gap-2 border-t border-border pt-3">
-          <div className="text-sm font-medium">{t("addMembership")}</div>
-          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-            {t("selectWorkspace")}
-            <select
-              className={SETTINGS_INPUT_CLASS}
-              value={addWorkspaceId}
-              onChange={(e) => setAddWorkspaceId(e.target.value)}
-              data-testid="add-membership-workspace"
-            >
-              <option value="">—</option>
-              {workspaces.data?.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <select
-              className={SETTINGS_INPUT_CLASS}
-              value={addRole}
-              onChange={(e) => setAddRole(e.target.value)}
-            >
-              {ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-            <select
-              className={SETTINGS_INPUT_CLASS}
-              value={addAccess}
-              onChange={(e) =>
-                setAddAccess(e.target.value as "workspace" | "assigned")
-              }
-            >
-              <option value="workspace">{t("accessWorkspace")}</option>
-              <option value="assigned">{t("accessAssigned")}</option>
-            </select>
-          </div>
-          <button
-            type="button"
-            data-testid="add-membership-btn"
-            className="self-start rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
-            disabled={!addWorkspaceId || addMembership.isPending}
-            onClick={() => {
-              addMembership.mutate(
-                {
-                  workspaceId: addWorkspaceId,
-                  role: addRole,
-                  projectAccess: addAccess,
-                },
-                { onSuccess: () => setAddWorkspaceId("") },
-              );
-            }}
-          >
-            {t("add")}
-          </button>
-        </div>
-      </div>
-    </SettingsCard>
-  );
 }
 
 export function AdminUsersPage() {
@@ -533,6 +226,7 @@ export function AdminUsersPage() {
 
   return (
     <SettingsShell title={t("usersTitle")} eyebrow={t("usersEyebrow")} maxWidth="wide">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,440px)] xl:items-start">
       <SettingsCard testId="admin-users-page">
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -802,12 +496,17 @@ export function AdminUsersPage() {
         </div>
       </SettingsCard>
 
-      {selectedUserId && (
+      {selectedUserId ? (
         <UserDetailPanel
           userId={selectedUserId}
           onClose={() => setSelectedUserId(null)}
         />
+      ) : (
+        <SettingsCard testId="admin-user-detail-empty">
+          <p className="text-sm text-muted-foreground">{t("detailEmpty")}</p>
+        </SettingsCard>
       )}
+      </div>
     </SettingsShell>
   );
 }

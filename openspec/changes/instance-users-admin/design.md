@@ -40,4 +40,6 @@ Instance admins are not necessarily members of every workspace, so the page cann
 
 ## UI
 
-`/admin/users`: search, table, selection + bulk bar, detail panel. i18n en/es (`admin` namespace).
+`/admin/users`: search, table, selection + bulk bar, side detail hub. i18n en/es (`admin` namespace).
+
+Detail hub (per user): verify email; per-membership role/`projectAccess`/project checklists; remove; **move** to another workspace (`POST .../memberships/:memberId/move`); add to workspace with optional initial projects.

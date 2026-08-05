@@ -7,6 +7,7 @@ import type {
   AddMembershipBody,
   AdminUserListQuery,
   BulkBody,
+  MoveMembershipBody,
   PatchMembershipBody,
   ReplaceProjectsBody,
 } from "./schema.js";
@@ -253,6 +254,96 @@ export async function addMembership(
       where: { id: member.id },
       data: { projectAccess: body.projectAccess },
     });
+  }
+
+  if (
+    body.projectAccess === "assigned" &&
+    body.projects &&
+    body.projects.length > 0
+  ) {
+    await replaceMembershipProjects(userId, member.id, {
+      projects: body.projects,
+    });
+  }
+
+  return getUserDetail(userId);
+}
+
+export async function moveMembership(
+  userId: string,
+  memberId: string,
+  body: MoveMembershipBody,
+  actorUserId: string,
+) {
+  const member = await assertMembershipOwnedByUser(memberId, userId);
+
+  if (member.workspaceId === body.workspaceId) {
+    throw new AppError(
+      422,
+      "SAME_WORKSPACE",
+      "Target workspace must be different from the current membership",
+    );
+  }
+
+  const existingTarget = await prisma.member.findUnique({
+    where: {
+      userId_workspaceId: { userId, workspaceId: body.workspaceId },
+    },
+    select: { id: true },
+  });
+  if (existingTarget) {
+    throw new AppError(
+      409,
+      "ALREADY_MEMBER",
+      "User is already a member of the target workspace",
+    );
+  }
+
+  if (member.role === "owner") {
+    const ownerCount = await prisma.member.count({
+      where: { workspaceId: member.workspaceId, role: "owner" },
+    });
+    if (ownerCount <= 1) {
+      throw new AppError(
+        422,
+        "LAST_OWNER",
+        "Cannot move the last owner out of a workspace",
+      );
+    }
+  }
+
+  const role = body.role ?? member.role;
+  const projectAccess = body.projectAccess ?? member.projectAccess;
+
+  await addMembership(
+    userId,
+    {
+      workspaceId: body.workspaceId,
+      role,
+      projectAccess,
+    },
+    actorUserId,
+  );
+
+  try {
+    await removeMembership(userId, memberId, actorUserId);
+  } catch (err) {
+    // Compensate: drop the target membership we just created so move is atomic-ish.
+    const created = await prisma.member.findUnique({
+      where: {
+        userId_workspaceId: { userId, workspaceId: body.workspaceId },
+      },
+      select: { id: true },
+    });
+    if (created) {
+      await memberService.removeMember(
+        body.workspaceId,
+        created.id,
+        actorUserId,
+        INSTANCE_ACTING_ROLE,
+      );
+    }
+    throw err;
   }
 
   return getUserDetail(userId);
