@@ -82,4 +82,4 @@ EXPOSE 3000
 # Install prisma CLI for runtime migrations
 RUN npm install -g prisma@6
 
-CMD ["sh", "-c", "prisma generate --schema=prisma/schema.prisma && prisma migrate deploy --schema=prisma/schema.prisma && node dist/index.js"]
+CMD ["sh", "-c", "prisma generate --schema=prisma/schema.prisma && node dist/modules/integrations/backfill.js && prisma migrate deploy --schema=prisma/schema.prisma && node dist/index.js"]

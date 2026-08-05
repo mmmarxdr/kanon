@@ -1302,8 +1302,8 @@ model ExternalRef {
   externalId  String   @map("external_id")
   externalUrl String?  @map("external_url")
   metadata    Json?
-  bindingId   String?  @map("binding_id") @db.Uuid
-  binding     IntegrationProjectBinding? @relation(fields: [bindingId], references: [id], onDelete: SetNull)
+  bindingId   String   @map("binding_id") @db.Uuid
+  binding     IntegrationProjectBinding @relation(fields: [bindingId], references: [id], onDelete: Restrict)
   works       IntegrationSyncWork[]
   applications IntegrationInboundApplication[]
   conflicts   IntegrationConflict[]
@@ -1321,6 +1321,7 @@ model ExternalRef {
   // use independent id sequences per type, so issue #42 and project #42 collide
   // on externalId alone.
   @@unique([connectionId, entityType, externalId])
+  @@unique([bindingId, entityType, externalId])
   @@index([entityType, entityId])
   @@index([bindingId])
   @@map("external_refs")

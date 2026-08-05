@@ -25,6 +25,7 @@ const prismaDirectory = dirname(fileURLToPath(import.meta.url));
 const apiDirectory = dirname(prismaDirectory);
 const migrationsDirectory = join(prismaDirectory, "migrations");
 const lifecycleMigrationName = "20260720_pm_lifecycle_binding";
+const hardeningMigrationName = "20260805125112_external_ref_binding_hardening";
 const previousMigrationName = "20260626120000_integration_tables";
 
 const upgradeFixture = {
@@ -34,8 +35,7 @@ const upgradeFixture = {
   connectionId: "00000000-0000-4000-8000-000000000104",
   existingRefId: "00000000-0000-4000-8000-000000000105",
   existingEntityId: "00000000-0000-4000-8000-000000000106",
-  boundRefId: "00000000-0000-4000-8000-000000000107",
-  boundEntityId: "00000000-0000-4000-8000-000000000108",
+  bindingId: "00000000-0000-4000-8000-000000000107",
 };
 
 function model(name: string) {
@@ -130,6 +130,23 @@ async function seedPreLifecycleRows(database: PrismaClient) {
       'A1.2 second project',
       CURRENT_TIMESTAMP,
       ${upgradeFixture.workspaceId}::uuid
+    )
+  `;
+  await database.$executeRaw`
+    INSERT INTO "issues" (
+      "id", "key", "sequence_num", "title", "type", "priority", "state", "labels",
+      "updated_at", "project_id"
+    ) VALUES (
+      ${upgradeFixture.existingEntityId}::uuid,
+      'UPG1-1',
+      1,
+      'A1.2 existing issue',
+      'task',
+      'medium',
+      'todo',
+      ARRAY[]::text[],
+      CURRENT_TIMESTAMP,
+      ${upgradeFixture.firstProjectId}::uuid
     )
   `;
   await database.$executeRaw`
@@ -290,12 +307,14 @@ describe("integration lifecycle schema", () => {
 
         const migrationNames = await listMigrationNames();
         const lifecycleMigrationIndex = migrationNames.indexOf(lifecycleMigrationName);
+        const hardeningMigrationIndex = migrationNames.indexOf(hardeningMigrationName);
         if (
           lifecycleMigrationIndex < 1 ||
+          hardeningMigrationIndex <= lifecycleMigrationIndex ||
           migrationNames[lifecycleMigrationIndex - 1] !== previousMigrationName
         ) {
           throw new Error(
-            `Expected ${previousMigrationName} to immediately precede ${lifecycleMigrationName}`
+            `Expected ${previousMigrationName}, ${lifecycleMigrationName}, and ${hardeningMigrationName} in order`
           );
         }
 
@@ -314,7 +333,45 @@ describe("integration lifecycle schema", () => {
         await preMigrationDatabase.$disconnect();
         database = undefined;
 
-        for (const migrationName of migrationNames.slice(lifecycleMigrationIndex)) {
+        for (const migrationName of migrationNames.slice(
+          lifecycleMigrationIndex,
+          hardeningMigrationIndex,
+        )) {
+          await cp(
+            join(migrationsDirectory, migrationName),
+            join(temporaryDirectory, "migrations", migrationName),
+            { recursive: true },
+          );
+        }
+        await deployMigrations(temporaryDirectory, isolatedDatabaseUrl.toString());
+
+        const preHardeningDatabase = new PrismaClient({
+          datasourceUrl: isolatedDatabaseUrl.toString(),
+        });
+        database = preHardeningDatabase;
+        await preHardeningDatabase.$executeRaw`
+          INSERT INTO "integration_project_bindings" (
+            "id", "remote_project_id", "read_map", "write_map", "updated_at",
+            "connection_id", "project_id"
+          ) VALUES (
+            ${upgradeFixture.bindingId}::uuid,
+            'remote-project-upgrade',
+            '{"remote-open":"todo"}'::jsonb,
+            '{"todo":"remote-open"}'::jsonb,
+            CURRENT_TIMESTAMP,
+            ${upgradeFixture.connectionId}::uuid,
+            ${upgradeFixture.firstProjectId}::uuid
+          )
+        `;
+        await preHardeningDatabase.$executeRaw`
+          UPDATE "external_refs"
+          SET "binding_id" = ${upgradeFixture.bindingId}::uuid
+          WHERE "id" = ${upgradeFixture.existingRefId}::uuid
+        `;
+        await preHardeningDatabase.$disconnect();
+        database = undefined;
+
+        for (const migrationName of migrationNames.slice(hardeningMigrationIndex)) {
           await cp(
             join(migrationsDirectory, migrationName),
             join(temporaryDirectory, "migrations", migrationName),
@@ -348,23 +405,17 @@ describe("integration lifecycle schema", () => {
           connectionId: upgradeFixture.connectionId,
           entityType: "issue",
           externalId: "42",
-          bindingId: null,
+          bindingId: upgradeFixture.bindingId,
           remoteUpdatedAt: null,
           localVersion: 0n,
           lastCorrelationId: null,
         });
         expect(existingRef?.metadata).toEqual({ source: "kan-181" });
 
-        const setNullBinding = await upgradedDatabase.integrationProjectBinding.create({
-          data: {
-            connectionId: upgradeFixture.connectionId,
-            projectId: upgradeFixture.firstProjectId,
-            remoteProjectId: "remote-project-set-null",
-            readMap: { "remote-open": "todo" },
-            writeMap: { todo: "remote-open" },
-          },
+        const hardenedBinding = await upgradedDatabase.integrationProjectBinding.findUniqueOrThrow({
+          where: { id: upgradeFixture.bindingId },
         });
-        expect(setNullBinding).toMatchObject({
+        expect(hardenedBinding).toMatchObject({
           connectionId: upgradeFixture.connectionId,
           projectId: upgradeFixture.firstProjectId,
           lifecycle: "draft",
@@ -373,49 +424,11 @@ describe("integration lifecycle schema", () => {
           cursorUpdatedAt: null,
           pollLeaseUntil: null,
         });
-
-        await upgradedDatabase.externalRef.create({
-          data: {
-            id: upgradeFixture.boundRefId,
-            entityType: "issue",
-            entityId: upgradeFixture.boundEntityId,
-            externalId: "43",
-            metadata: { source: "upgrade-test" },
-            connectionId: upgradeFixture.connectionId,
-            bindingId: setNullBinding.id,
-          },
-        });
-        await upgradedDatabase.integrationProjectBinding.delete({
-          where: { id: setNullBinding.id },
-        });
-
-        const detachedRef = await upgradedDatabase.externalRef.findUnique({
-          where: { id: upgradeFixture.boundRefId },
-        });
-        expect(detachedRef).toMatchObject({
-          id: upgradeFixture.boundRefId,
-          connectionId: upgradeFixture.connectionId,
-          bindingId: null,
-        });
-
-        const cascadeBinding = await upgradedDatabase.integrationProjectBinding.create({
-          data: {
-            connectionId: upgradeFixture.connectionId,
-            projectId: upgradeFixture.secondProjectId,
-            remoteProjectId: "remote-project-cascade",
-            readMap: { "remote-open": "todo" },
-            writeMap: { todo: "remote-open" },
-          },
-        });
-        expect(cascadeBinding.connectionId).toBe(upgradeFixture.connectionId);
-        await upgradedDatabase.integrationConnection.delete({
-          where: { id: upgradeFixture.connectionId },
-        });
-
-        const deletedCascadeBinding = await upgradedDatabase.integrationProjectBinding.findUnique({
-          where: { id: cascadeBinding.id },
-        });
-        expect(deletedCascadeBinding).toBeNull();
+        await expect(
+          upgradedDatabase.integrationProjectBinding.delete({
+            where: { id: hardenedBinding.id },
+          }),
+        ).rejects.toMatchObject({ code: "P2003" });
       } finally {
         if (database) {
           await database.$disconnect().catch(() => undefined);

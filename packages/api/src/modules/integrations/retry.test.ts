@@ -1001,22 +1001,23 @@ describe("integration worker retry and completion", () => {
     });
   });
 
-  it("finalizes a touched ref without scanning unrelated legacy refs", async () => {
+  it("finalizes a touched ref without scanning unrelated invalid refs", async () => {
     const fixture = await createFixture();
     const work = await createWork(fixture, { operation: "create" });
     const unrelated = await prisma.project.create({
       data: {
         key: `U${randomUUID().slice(0, 5).toUpperCase()}`,
-        name: "Unbound ref project",
+        name: "Mismatched ref project",
         workspaceId: fixture.workspace.id,
       },
     });
     await prisma.externalRef.create({
       data: {
         connectionId: fixture.connection.id,
+        bindingId: fixture.binding.id,
         entityType: "project",
         entityId: unrelated.id,
-        externalId: "unbound-remote",
+        externalId: "mismatched-remote",
       },
     });
     const { deps, logger } = dependencies(
