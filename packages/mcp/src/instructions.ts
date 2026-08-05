@@ -61,7 +61,7 @@ TITLE: [Area] Imperative verb — Good: [Auth] Fix OAuth | Bad: fix thing.
 DESCRIPTION: ## Context / ## Acceptance Criteria / ## Notes. No local paths/IDs.
 Design records: most need none; propose before creating.
 create_issue: list_groups → groupKey. Starting now: list_members → assigneeId.
-Before start_work: dueDate from plan/cycle; ask if unknown. startDate defaults today.
+Before start_work: dueDate required; ask if unknown.
 update_issue: get first. Lists: format: compact, limit: 10. Writes: format: ack.
 Deferred → roadmap. Done + unconfirmed time → reconcile_time.
 
