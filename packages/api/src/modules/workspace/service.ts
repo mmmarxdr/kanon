@@ -93,14 +93,27 @@ export async function getWorkspace(id: string) {
  * List all workspaces for the authenticated user.
  */
 export async function listWorkspaces(userId: string) {
-  return prisma.workspace.findMany({
+  const workspaces = await prisma.workspace.findMany({
     where: {
       members: {
         some: { userId },
       },
     },
+    include: {
+      members: {
+        where: { userId },
+        select: { role: true },
+        take: 1,
+      },
+    },
     orderBy: { createdAt: "asc" },
   });
+
+  // Surface caller's role for invite workspace picker / UI gating (KAN-222).
+  return workspaces.map(({ members, ...workspace }) => ({
+    ...workspace,
+    role: members[0]?.role ?? null,
+  }));
 }
 
 /**

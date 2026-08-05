@@ -54,11 +54,14 @@ export default async function projectRoutes(
       },
     },
     async (request, _reply) => {
-      // KAN-79: scoped tokens only see their allowed projects.
-      return projectService.listProjects(
-        request.params.wid,
-        scopedProjectIds(request.user.allowedProjectIds),
-      );
+      // KAN-222: list equals openable set; KAN-79: token scope still intersects.
+      const member = request.member!;
+      return projectService.listProjects(request.params.wid, {
+        role: member.role,
+        projectAccess: member.projectAccess,
+        userId: request.user.userId,
+        allowedProjectIds: scopedProjectIds(request.user.allowedProjectIds),
+      });
     },
   );
 

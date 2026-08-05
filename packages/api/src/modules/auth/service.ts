@@ -662,11 +662,12 @@ export async function onboard(token: string) {
       workspace_id: string;
       role: string;
       project_assignments: unknown;
+      project_access: "workspace" | "assigned";
       revoked_at: Date | null;
       consumed_at: Date | null;
       expires_at: Date;
     }>>`
-      SELECT id, kind, email, workspace_id, role, project_assignments, revoked_at, consumed_at, expires_at
+      SELECT id, kind, email, workspace_id, role, project_assignments, project_access, revoked_at, consumed_at, expires_at
       FROM workspace_invites
       WHERE id = ${inviteId}::uuid
       FOR UPDATE
@@ -729,6 +730,7 @@ export async function onboard(token: string) {
         data: {
           username,
           role: row.role as import("@prisma/client").MemberRole,
+          projectAccess: row.project_access ?? "workspace",
           userId: user.id,
           workspaceId: row.workspace_id,
         },

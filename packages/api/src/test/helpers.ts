@@ -25,10 +25,17 @@ export async function createTestApp(opts: BuildAppOptions = {}): Promise<Fastify
  * Generate a valid JWT access token for testing.
  * Token payload: { sub: userId, email }
  */
-export function generateTestToken(overrides?: { userId?: string; email?: string }): string {
+export function generateTestToken(overrides?: {
+  userId?: string;
+  email?: string;
+  allowedProjectIds?: string[];
+}): string {
   const payload = {
     sub: overrides?.userId ?? randomUUID(),
     email: overrides?.email ?? `test-${randomUUID().slice(0, 8)}@kanon.test`,
+    ...(overrides?.allowedProjectIds
+      ? { allowedProjectIds: overrides.allowedProjectIds, scope: "access" }
+      : {}),
   };
 
   return jwt.sign(payload, process.env["JWT_SECRET"]!, {
@@ -240,7 +247,12 @@ export function buildCookieString(cookies: Record<string, string>): string {
 export async function seedTestMemberWithRole(
   workspaceId: string,
   role: "owner" | "admin" | "pm" | "member" | "viewer",
-  overrides?: { email?: string; username?: string; isInstanceAdmin?: boolean }
+  overrides?: {
+    email?: string;
+    username?: string;
+    isInstanceAdmin?: boolean;
+    projectAccess?: "workspace" | "assigned";
+  },
 ): Promise<{ id: string; email: string; token: string; userId: string }> {
   const bcrypt = await import("bcryptjs");
   const hash = await bcrypt.hash("password123", 4);
@@ -260,6 +272,7 @@ export async function seedTestMemberWithRole(
     data: {
       username: overrides?.username ?? `user-${randomUUID().slice(0, 8)}`,
       role,
+      projectAccess: overrides?.projectAccess ?? "assigned",
       userId: user.id,
       workspaceId,
     },

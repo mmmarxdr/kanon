@@ -37,7 +37,7 @@ async function resolveAndCheckMember(
         workspaceId,
       },
     },
-    select: { id: true, role: true },
+    select: { id: true, role: true, projectAccess: true },
   });
 
   if (!member) {
@@ -57,6 +57,7 @@ async function resolveAndCheckMember(
     role: member.role,
     workspaceId,
     userId,
+    projectAccess: member.projectAccess,
   };
 }
 
@@ -98,7 +99,7 @@ export async function enforceProjectAccess(
     where: {
       userId_workspaceId: { userId, workspaceId },
     },
-    select: { id: true, role: true },
+    select: { id: true, role: true, projectAccess: true },
   });
 
   if (!wsMember) {
@@ -110,6 +111,7 @@ export async function enforceProjectAccess(
     role: wsMember.role,
     workspaceId,
     userId,
+    projectAccess: wsMember.projectAccess,
   };
 
   // Step 2: owner/admin bypass — no ProjectMember lookup required
@@ -125,7 +127,20 @@ export async function enforceProjectAccess(
     return { member: memberContext, projectRole: effectiveRole };
   }
 
-  // Step 3: member/viewer — require explicit ProjectMember row
+  // Step 2b (KAN-222): workspace-wide project access — no ProjectMember required
+  if (wsMember.projectAccess === "workspace") {
+    const effectiveRole = wsMember.role;
+    if (minRole && !meetsMinimumRole(effectiveRole, minRole)) {
+      throw new AppError(
+        403,
+        "FORBIDDEN",
+        `This action requires at least the "${minRole}" role`,
+      );
+    }
+    return { member: memberContext, projectRole: effectiveRole };
+  }
+
+  // Step 3: assigned mode — require explicit ProjectMember row
   const pm = await prisma.projectMember.findUnique({
     where: {
       userId_projectId: { userId, projectId },
