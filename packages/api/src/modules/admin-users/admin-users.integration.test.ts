@@ -181,6 +181,55 @@ describe("GET /api/admin/users — list + detail", () => {
       expect.objectContaining({ id: project.id, key: "PK" }),
     ]);
   });
+
+  it("404 when workspace projects picker targets unknown workspace", async () => {
+    const { token } = await seedInstanceAdminUser();
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/admin/users/workspaces/${randomUUID()}/projects`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().code).toBe("WORKSPACE_NOT_FOUND");
+  });
+
+  it("filters verified=true and returns workspace-mode memberships without project rows", async () => {
+    const { token } = await seedInstanceAdminUser();
+    const ws = await seedTestWorkspace();
+    const member = await seedTestMemberWithRole(ws.id, "member", {
+      email: `verified-${randomUUID().slice(0, 8)}@example.com`,
+      projectAccess: "workspace",
+    });
+    await prisma.user.update({
+      where: { id: member.userId },
+      data: { emailVerifiedAt: new Date("2026-01-15T12:00:00.000Z") },
+    });
+
+    const list = await app.inject({
+      method: "GET",
+      url: "/api/admin/users?verified=true&limit=50",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(list.statusCode).toBe(200);
+    expect(
+      list.json().users.every((u: { emailVerified: boolean }) => u.emailVerified),
+    ).toBe(true);
+    expect(list.json().users.some((u: { id: string }) => u.id === member.userId)).toBe(
+      true,
+    );
+
+    const detail = await app.inject({
+      method: "GET",
+      url: `/api/admin/users/${member.userId}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json().emailVerifiedAt).toBe("2026-01-15T12:00:00.000Z");
+    expect(detail.json().memberships[0]).toMatchObject({
+      projectAccess: "workspace",
+      projects: [],
+    });
+  });
 });
 
 describe("POST/PATCH/DELETE admin user mutations", () => {
@@ -364,6 +413,103 @@ describe("POST/PATCH/DELETE admin user mutations", () => {
     expect(results.find((r) => r.userId !== a.userId)).toMatchObject({
       ok: false,
       error: "NOT_A_MEMBER",
+    });
+  });
+
+  it("covers mutation error paths and workspace-mode add", async () => {
+    const { token } = await seedInstanceAdminUser();
+    const ws = await seedTestWorkspace();
+    await seedTestMemberWithRole(ws.id, "owner");
+    const target = await prisma.user.create({
+      data: {
+        email: `err-${randomUUID().slice(0, 8)}@example.com`,
+        passwordHash: "$2b$04$placeholder",
+      },
+    });
+
+    const verifyMissing = await app.inject({
+      method: "POST",
+      url: `/api/admin/users/${randomUUID()}/verify-email`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(verifyMissing.statusCode).toBe(404);
+
+    const addMissingUser = await app.inject({
+      method: "POST",
+      url: `/api/admin/users/${randomUUID()}/memberships`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { workspaceId: ws.id, role: "member" },
+    });
+    expect(addMissingUser.statusCode).toBe(404);
+    expect(addMissingUser.json().code).toBe("USER_NOT_FOUND");
+
+    const addMissingWs = await app.inject({
+      method: "POST",
+      url: `/api/admin/users/${target.id}/memberships`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { workspaceId: randomUUID(), role: "member" },
+    });
+    expect(addMissingWs.statusCode).toBe(404);
+    expect(addMissingWs.json().code).toBe("WORKSPACE_NOT_FOUND");
+
+    const addWorkspaceAccess = await app.inject({
+      method: "POST",
+      url: `/api/admin/users/${target.id}/memberships`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        workspaceId: ws.id,
+        role: "member",
+        projectAccess: "workspace",
+      },
+    });
+    expect(addWorkspaceAccess.statusCode).toBe(201);
+    expect(addWorkspaceAccess.json().memberships[0].projectAccess).toBe("workspace");
+
+    const emptyPatch = await app.inject({
+      method: "PATCH",
+      url: `/api/admin/users/${target.id}/memberships/${addWorkspaceAccess.json().memberships[0].memberId}`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: {},
+    });
+    expect(emptyPatch.statusCode).toBe(400);
+
+    const wrongMember = await app.inject({
+      method: "DELETE",
+      url: `/api/admin/users/${target.id}/memberships/${randomUUID()}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(wrongMember.statusCode).toBe(404);
+    expect(wrongMember.json().code).toBe("MEMBER_NOT_FOUND");
+
+    const bulkMissingWs = await app.inject({
+      method: "POST",
+      url: "/api/admin/users/bulk",
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        action: "remove_from_workspace",
+        userIds: [target.id],
+      },
+    });
+    expect(bulkMissingWs.statusCode).toBe(400);
+
+    // Sole owner removal surfaces as AppError in bulk catch path
+    const soleWs = await seedTestWorkspace();
+    const soleOwner = await seedTestMemberWithRole(soleWs.id, "owner");
+    const bulkLastOwner = await app.inject({
+      method: "POST",
+      url: "/api/admin/users/bulk",
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        action: "remove_from_workspace",
+        userIds: [soleOwner.userId],
+        workspaceId: soleWs.id,
+      },
+    });
+    expect(bulkLastOwner.statusCode).toBe(200);
+    expect(bulkLastOwner.json().results[0]).toMatchObject({
+      userId: soleOwner.userId,
+      ok: false,
+      error: "LAST_OWNER",
     });
   });
 });
