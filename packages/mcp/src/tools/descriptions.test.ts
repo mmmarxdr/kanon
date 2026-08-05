@@ -82,6 +82,11 @@ const EXPECTED_TOOL_NAMES = [
   "list_workspaces",
   "promote_roadmap_item",
   "promote_worklog",
+  "dismiss_triage_proposal",
+  "get_triage_proposal",
+  "list_triage_proposals",
+  "persist_triage_proposal",
+  "preview_issue_triage",
   "propose_estimate",
   "reconcile_time",
   "reject_time_entry",
@@ -100,11 +105,10 @@ const EXPECTED_TOOL_NAMES = [
 ] as const;
 
 describe("tool descriptions — trim ≥ 30% (Batch E)", () => {
-  it("E1: parses 44 tools (43 pre-KAN-188 + reconcile_time added in KAN-188); BASELINE_BYTES is 7600", () => {
+  it("E1: parses 49 tools (44 prior + 5 triage); BASELINE_BYTES is 7600", () => {
     const tools = collectDescriptions();
-    // Verify the parser finds exactly 44 tools (was 43 before KAN-188 added
-    // reconcile_time).
-    expect(tools).toHaveLength(44);
+    // Verify the parser finds exactly 49 tools (44 pre-KAN-193 + 5 triage).
+    expect(tools).toHaveLength(49);
     // BASELINE_BYTES is the historical pre-trim value — used only as the
     // threshold denominator in E2. We don't assert the current total equals it
     // (E3 trimmed descriptions are in the same files the parser reads).

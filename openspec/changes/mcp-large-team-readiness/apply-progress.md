@@ -25,3 +25,10 @@ Follow-up (resume after rate-limit): Fixed concurrent `sweepRetention` double-di
 Follow-up (OpenSpec gaps): Captured retention at creation (`retention_eligible_at`, `captured_retention_days`, `captured_policy_version`); sweep uses captured eligibility so live policy edits cannot silently shorten. Disposition audit `details` include policy id/version; `disposition_list_visible` captured at dispose. Superseded/pending-past-expiry eligibility; partial-failure recovery when disposed audit already exists; `disposedListDiscoveryAllowed` + `disposedTombstoneProjection` (410) helpers for get/list.
 
 Stabilize: Wired `proposal-read.ts` / `proposal-list.ts` into routes — authorized get returns 410 tombstone (no content) for disposed; list discovers disposed only for `disposed|all` when `dispositionListVisible`. Isolated vitest default DB to `kanon_test_pr9`; `cleanDatabase` tolerates missing triage tables.
+
+# MCP large-team readiness PR10 Apply Progress
+
+Task 10.1: RED - Added failing MCP tests in `triage.test.ts`, `kanon-client.test.ts`, `errors.test.ts`, `types.test.ts` for five deferred triage tools (prepare/validate, persist, get, required-one-project list, dismiss), annotations, correlation/deadlines, semantic errors, and no non-401 POST retry.
+Task 10.2: GREEN - Implemented wire types in `types.ts`, semantic `errorResult`/`triageDataResult` in `errors.ts`, triage client methods with per-call timeout/correlation in `kanon-client.ts`, five adapters in `tools/triage.ts`, registration in `index.ts`, and `DEFERRED_TOOLS` 18→23.
+Task 10.3: TRIANGULATE - Contract coverage for prepare-only fallback, validate hostOutcome/suggestion rules, seal forwarding, list filter encoding (`degraded=true|false`, cursor pass-through), 1..50/default-20 limits, Unicode-trimmed 1..1000-codepoint dismiss reason, output budgets (16/48/32/64/8 KiB), and no apply/approval/execution/autonomous wording.
+Task 10.4: REFACTOR - Compensating description trims to keep ≤5,350-byte topline ceiling; unrelated calls keep 10s default; `pnpm --filter @kanon/mcp test` green (498 passed). Branch: `feat/kan-193-mcp-triage-tools` (stacked on PR9 retention).

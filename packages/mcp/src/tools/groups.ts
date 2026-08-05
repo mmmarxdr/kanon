@@ -28,7 +28,7 @@ export function registerGroupTools(server: McpServer, client: KanonClient, bindi
 
   server.tool(
     "transition_issues",
-    "Batch-transition (projectKey,state,groupKey|keys[]). groupKey or keys — mutually exclusive. Returns ack {ok,count,keys}; format:'full' for raw.",
+    "Batch-transition (projectKey,state,groupKey|keys[]). groupKey XOR keys. Returns ack {ok,count,keys}.",
     BatchTransitionInputShape.shape,
     async (rawInput: unknown) => {
       try {

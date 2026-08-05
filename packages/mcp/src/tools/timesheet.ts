@@ -198,7 +198,7 @@ export function registerTimesheetTools(server: McpServer, client: KanonClient): 
 
   server.tool(
     "adjust_time_entry",
-    "Create adjustment TimeEntry for approved timeEntryId (owner-only). hours signed ('-1.00' reduces, '0.50' adds), workedOn required. Original must be approved.",
+    "Adjust approved timeEntryId (owner-only). hours signed ('-1.00'/'0.50'), workedOn required. Original must be approved.",
     AdjustTimeEntryInput.shape,
     async ({ timeEntryId, hours, workedOn, issueId }) => {
       try {

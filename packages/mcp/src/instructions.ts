@@ -13,10 +13,11 @@
 // + 3 occasion-only tools (add/remove dependency, adjust time entry)
 // + 1 resolution helper (list_members)
 // + 1 agent communication tool (create_issue_comment)
-// + 3 capture tools (report_incident, propose_estimate, apply_proposal) = 18 deferred.
+// + 3 capture tools (report_incident, propose_estimate, apply_proposal)
+// + 5 triage tools (preview/persist/get/list/dismiss) = 23 deferred.
 
 /**
- * The 18 admin/rare/PM-gated/occasion-only/resolution-helper/agent-comms/capture tools deferred behind ToolSearch.
+ * The 23 admin/rare/PM-gated/occasion-only/resolution-helper/agent-comms/capture/triage tools deferred behind ToolSearch.
  * Canonical list — consumed by index.ts and instructions.test.ts.
  * Document tools are deferred: most issues need none; propose before creating.
  * Timesheet approve/reject are PM-only — keep dev-agent context lean.
@@ -24,6 +25,7 @@
  * list_members is a resolution helper (assigneeId lookup, activity id→name) — not daily board flow.
  * create_issue_comment is agent communication — occasional, not daily board flow.
  * Capture tools are occasion-only: incident reporting and estimation proposals.
+ * Triage tools are host-mediated review — never auto-apply; retrieve via ToolSearch.
  */
 export const DEFERRED_TOOLS = [
   "create_project",
@@ -44,6 +46,11 @@ export const DEFERRED_TOOLS = [
   "report_incident",
   "propose_estimate",
   "apply_proposal",
+  "preview_issue_triage",
+  "persist_triage_proposal",
+  "get_triage_proposal",
+  "list_triage_proposals",
+  "dismiss_triage_proposal",
 ] as const;
 
 /**

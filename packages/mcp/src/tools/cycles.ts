@@ -236,7 +236,7 @@ export function registerCycleTools(server: McpServer, client: KanonClient, bindi
 
   server.tool(
     "create_cycle",
-    "Create cycle (name,startDate,endDate,state,attachIssueKeys[]). Dates: YYYY-MM-DD or ISO. state:active demotes current active cycle. Returns ack {ok,id,name,state}; format:'full' for entity.",
+    "Create cycle (name,startDate,endDate,state,attachIssueKeys[]). Dates YYYY-MM-DD/ISO. state:active demotes current active. Returns ack {ok,id,name,state}.",
     CreateCycleInput.shape,
     async ({ projectKey, name, goal, startDate, endDate, state, attachIssueKeys, format }) => {
       try {
@@ -271,7 +271,7 @@ export function registerCycleTools(server: McpServer, client: KanonClient, bindi
 
   server.tool(
     "update_cycle_scope",
-    "Add/remove issues in a cycle (add[],remove[],reason). reason logged in audit trail. Returns ack {ok,cycleId,added,removed,scope,completed}; format:'full' for cycle detail.",
+    "Add/remove issues in a cycle (add[],remove[],reason). reason audited. Returns ack {ok,cycleId,added,removed}.",
     AttachIssuesToCycleShape,
     async ({ cycleId, add, remove, reason, format }) => {
       try {
@@ -304,7 +304,7 @@ export function registerCycleTools(server: McpServer, client: KanonClient, bindi
 
   server.tool(
     "close_cycle",
-    "Close cycle with disposition: move_to_next (needs projectKey), move_to_backlog, leave. Returns ack {ok,cycleId,disposition,movedIssueKeys}; format:'full' for detail.",
+    "Close cycle with disposition: move_to_next (needs projectKey), move_to_backlog, leave. Returns ack {ok,cycleId,disposition,movedIssueKeys}.",
     CloseCycleShape,
     async (args) => {
       try {
@@ -347,7 +347,7 @@ export function registerCycleTools(server: McpServer, client: KanonClient, bindi
 
   server.tool(
     "delete_cycle",
-    "Hard-delete a cycle. Active cycles always refused (409). Non-terminal issues block unless force:true. Returns ack with detach count; slim adds detachedIssueKeys; full adds auditLogId.",
+    "Hard-delete a cycle. Active refused (409). Non-terminal issues block unless force:true. Returns ack + detach count; slim adds detachedIssueKeys.",
     DeleteCycleShape,
     async (args) => {
       try {

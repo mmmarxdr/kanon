@@ -22,13 +22,14 @@ describe("Win B — SERVER_INSTRUCTIONS deferred tools block", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/DEFERRED TOOLS/i);
   });
 
-  it("B2: DEFERRED_TOOLS array has exactly 18 entries", () => {
+  it("B2: DEFERRED_TOOLS array has exactly 23 entries", () => {
     // Updated for KAN-104: +2 PM-only timesheet tools (approve/reject).
     // Updated for KAN-118: +3 occasion-only tools (add/remove dependency, adjust time entry).
     // Updated for KAN-119: +1 resolution helper (list_members).
     // Updated for KAN-120: +1 agent communication tool (create_issue_comment).
     // Updated for KAN-104 capture tools: +3 (report_incident, propose_estimate, apply_proposal).
-    expect(DEFERRED_TOOLS).toHaveLength(18);
+    // Updated for KAN-193 triage: +5 (preview/persist/get/list/dismiss).
+    expect(DEFERRED_TOOLS).toHaveLength(23);
   });
 
   it("B3: each deferred tool name appears verbatim in SERVER_INSTRUCTIONS", () => {

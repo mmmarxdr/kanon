@@ -435,3 +435,186 @@ export const ListDocumentsInput = z.object({
 export const GetDocumentInput = z.object({
   documentId: z.string().uuid().describe("Document ID (UUID)"),
 });
+
+// ─── Triage Tools (KAN-193 / mcp-large-team-readiness PR10) ──────────────────
+
+/** Deadline constants — MCP hard timeouts (API budgets are shorter; see design.md). */
+export const TRIAGE_PREVIEW_TIMEOUT_MS = 2_900;
+export const TRIAGE_PERSIST_TIMEOUT_MS = 2_900;
+export const TRIAGE_GET_TIMEOUT_MS = 2_900;
+export const TRIAGE_LIST_TIMEOUT_MS = 2_900;
+export const TRIAGE_DISMISS_TIMEOUT_MS = 2_000;
+
+/** Output budget ceilings (serialized JSON bytes). */
+export const TRIAGE_PREVIEW_COMPACT_BUDGET_BYTES = 16 * 1024;
+export const TRIAGE_PREVIEW_FULL_BUDGET_BYTES = 48 * 1024;
+export const TRIAGE_LIST_BUDGET_BYTES = 32 * 1024;
+export const TRIAGE_GET_BUDGET_BYTES = 64 * 1024;
+export const TRIAGE_DISMISS_BUDGET_BYTES = 8 * 1024;
+
+export const TRIAGE_MCP_CONTRACT_VERSION = "triage-mcp.v1" as const;
+
+const TriageScopeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("project") }).strict(),
+  z
+    .object({
+      kind: z.literal("workspace"),
+      workspaceId: z.string().uuid().describe("Workspace UUID for explicit workspace scope"),
+    })
+    .strict(),
+]);
+
+const PreviewPrepareInput = z
+  .object({
+    phase: z.literal("prepare"),
+    issueKey: z.string().min(1).describe("Target issue key (e.g. 'KAN-42')"),
+    scope: TriageScopeSchema.optional().describe("Search scope; default project of the target"),
+    format: z.enum(["compact", "full"]).default("compact"),
+    aiIntent: z
+      .enum(["none", "host_assisted"])
+      .default("none")
+      .describe("none = deterministic only; host_assisted returns contextToken for validate"),
+    correlationId: z.string().uuid().optional().describe("Optional correlation UUID"),
+  })
+  .strict();
+
+const HostOutcomeSchema = z
+  .object({
+    status: z.enum(["completed", "unavailable", "timed_out", "invalid"]),
+    provider: z.string().min(1).max(200).optional(),
+    model: z.string().min(1).max(200).optional(),
+    modelVersion: z.string().min(1).max(200).optional(),
+  })
+  .strict();
+
+const PreviewValidateInput = z
+  .object({
+    phase: z.literal("validate"),
+    issueKey: z.string().min(1).describe("Target issue key (e.g. 'KAN-42')"),
+    contextToken: z.string().min(1).describe("Opaque contextToken from prepare"),
+    hostOutcome: HostOutcomeSchema,
+    suggestions: z.array(z.record(z.unknown())).max(10).optional(),
+    format: z.enum(["compact", "full"]).default("compact"),
+    correlationId: z.string().uuid().optional().describe("Optional correlation UUID"),
+  })
+  .strict();
+
+/** preview_issue_triage — prepare | validate (union + refine; ZodEffects break discriminatedUnion) */
+export const PreviewIssueTriageInput = z
+  .union([PreviewPrepareInput, PreviewValidateInput])
+  .superRefine((value, ctx) => {
+    if (value.phase !== "validate") return;
+    if (value.hostOutcome.status === "completed") {
+      if (!value.suggestions || value.suggestions.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["suggestions"],
+          message: "completed hostOutcome requires non-empty suggestions",
+        });
+      }
+      if (!value.hostOutcome.provider || !value.hostOutcome.model || !value.hostOutcome.modelVersion) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["hostOutcome"],
+          message: "completed hostOutcome requires provider, model, and modelVersion",
+        });
+      }
+    } else if (value.suggestions !== undefined && value.suggestions.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["suggestions"],
+        message: "failed hostOutcome must not include suggestions",
+      });
+    }
+  });
+
+/** Shape-only registration (bypass union refine); handler parses PreviewIssueTriageInput. */
+export const PreviewIssueTriageInputShape = z.object({
+  phase: z.enum(["prepare", "validate"]),
+  issueKey: z.string().min(1),
+  scope: z.unknown().optional(),
+  format: z.enum(["compact", "full"]).optional(),
+  aiIntent: z.enum(["none", "host_assisted"]).optional(),
+  contextToken: z.string().optional(),
+  hostOutcome: z.unknown().optional(),
+  suggestions: z.array(z.record(z.unknown())).optional(),
+  correlationId: z.string().uuid().optional(),
+});
+
+/** persist_triage_proposal */
+export const PersistTriageProposalInput = z
+  .object({
+    issueKey: z.string().min(1).describe("Target issue key matching the preview"),
+    preview: z.record(z.unknown()).describe("Exact preview envelope returned by preview_issue_triage"),
+    previewSeal: z.string().min(1).describe("Authenticated previewSeal from the preview response"),
+    retainedItemIds: z
+      .array(z.string().min(1))
+      .max(20)
+      .optional()
+      .describe("Optional subset of recommendation/candidate item IDs to retain"),
+    supersedesId: z.string().uuid().optional().describe("Optional prior proposal UUID to supersede"),
+    correlationId: z.string().uuid().optional(),
+  })
+  .strict();
+
+/** get_triage_proposal */
+export const GetTriageProposalInput = z
+  .object({
+    proposalId: z.string().uuid().describe("Triage proposal UUID"),
+    format: z.enum(["compact", "full"]).default("compact"),
+    correlationId: z.string().uuid().optional(),
+  })
+  .strict();
+
+/** list_triage_proposals — exactly one required projectKey; no workspace/multi-project form */
+export const ListTriageProposalsInput = z
+  .object({
+    projectKey: z.string().min(1).describe("Required project key (exactly one project)"),
+    state: z
+      .enum(["current", "superseded", "dismissed", "expired", "disposed", "all"])
+      .optional()
+      .describe("Effective-state filter; default current"),
+    targetIssueKey: z
+      .string()
+      .min(1)
+      .max(120)
+      .optional()
+      .describe("Exact target issue key filter"),
+    generatorSource: z
+      .enum(["deterministic_policy", "host_ai", "mixed"])
+      .optional(),
+    degraded: z.boolean().optional().describe("Wire-encoded as true|false query string"),
+    limit: z.number().int().min(1).max(50).default(20),
+    cursor: z.string().min(1).max(2048).optional(),
+    correlationId: z.string().uuid().optional(),
+  })
+  .strict();
+
+/** dismiss_triage_proposal — Unicode-trimmed reason, 1..1000 codepoints */
+export const DismissTriageProposalInput = z
+  .object({
+    proposalId: z.string().uuid().describe("Triage proposal UUID"),
+    reason: z
+      .string()
+      .describe("Dismissal reason (1..1000 Unicode codepoints after trim)")
+      .superRefine((value, ctx) => {
+        const trimmed = value.normalize("NFKC").replace(/^\s+|\s+$/gu, "");
+        const len = [...trimmed].length;
+        if (len < 1 || len > 1000) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "reason must be 1..1000 Unicode codepoints after trim",
+          });
+        }
+      })
+      .transform((value) => value.normalize("NFKC").replace(/^\s+|\s+$/gu, "")),
+    correlationId: z.string().uuid().optional(),
+  })
+  .strict();
+
+/** Shape without transform for MCP SDK registration. */
+export const DismissTriageProposalInputShape = z.object({
+  proposalId: z.string().uuid(),
+  reason: z.string().min(1),
+  correlationId: z.string().uuid().optional(),
+});
