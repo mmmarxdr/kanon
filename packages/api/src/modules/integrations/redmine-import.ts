@@ -7,6 +7,7 @@ import { AppError } from "../../shared/types.js";
 import { decrypt as decryptCredential } from "./core/crypto.js";
 import type { PollCheckpoint } from "./core/types.js";
 import { captureIssueMutationTx } from "./issue-tx.js";
+import { priorityReadKey } from "./issue-convergence.js";
 import {
   decodeRedmineIssueDetail,
   decodeRedmineIssueListPage,
@@ -20,6 +21,7 @@ const PAGE_SIZE = 100;
 const MAX_ISSUES = PAGE_SIZE;
 const BOOTSTRAP_LEASE_MS = 120_000;
 const IssueState = z.enum(["backlog", "analysis", "todo", "in_progress", "review", "done"]);
+const IssuePriority = z.enum(["critical", "high", "medium", "low"]);
 const Checkpoint = z
   .object({
     updatedAt: z.string().datetime(),
@@ -47,6 +49,7 @@ const PreviewEvidence = z
       )
       .max(MAX_ISSUES),
     unmappedStatusIds: z.array(z.string().regex(/^\d+$/)).max(MAX_ISSUES),
+    unmappedPriorityIds: z.array(z.string().regex(/^\d+$/)).max(MAX_ISSUES).default([]),
     unmappedAssigneeIds: z.array(z.string().regex(/^\d+$/)).max(MAX_ISSUES),
   })
   .strict();
@@ -115,6 +118,7 @@ function emptyEvidence(): PreviewEvidence {
     checkpoint: null,
     candidates: [],
     unmappedStatusIds: [],
+    unmappedPriorityIds: [],
     unmappedAssigneeIds: [],
   };
 }
@@ -203,7 +207,15 @@ export async function persistRedmineIssueImportsTx(
         `Redmine status ${change.fields.statusId} has no inbound mapping`,
       );
     }
-    return { change, fields: change.fields, state: state.data };
+    const priority = IssuePriority.safeParse(readMap[priorityReadKey(change.fields.priorityId)]);
+    if (!priority.success) {
+      throw new AppError(
+        409,
+        "REDMINE_PRIORITY_UNMAPPED",
+        `Redmine priority ${change.fields.priorityId} has no inbound mapping`,
+      );
+    }
+    return { change, fields: change.fields, state: state.data, priority: priority.data };
   });
   if (!imports.length) return [];
 
@@ -258,7 +270,7 @@ export async function persistRedmineIssueImportsTx(
   const issueKeys: string[] = [];
 
   for (const [index, entry] of imports.entries()) {
-    const { change, fields, state } = entry;
+    const { change, fields, state, priority } = entry;
     const correlationId = applicationKey(context.bindingId, change);
     const assigneeId = fields.assignee
       ? (assignees.get(fields.assignee.remoteId) ?? null)
@@ -271,12 +283,23 @@ export async function persistRedmineIssueImportsTx(
         title: fields.title,
         description: fields.description,
         state,
+        priority,
         projectId: context.projectId,
         assigneeId,
         createdAt: change.createdAt ?? change.changedAt,
         completedAt: state === "done" ? (change.closedAt ?? change.changedAt) : null,
       },
     });
+    if (fields.startDate || fields.dueDate || fields.progress !== 0) {
+      await database.issueSchedule.create({
+        data: {
+          issueId: issue.id,
+          startDate: fields.startDate ? new Date(`${fields.startDate}T00:00:00.000Z`) : null,
+          dueDate: fields.dueDate ? new Date(`${fields.dueDate}T00:00:00.000Z`) : null,
+          progress: fields.progress,
+        },
+      });
+    }
     const ref = await database.externalRef.create({
       data: {
         connectionId: context.connectionId,
@@ -300,6 +323,7 @@ export async function persistRedmineIssueImportsTx(
               title: fields.title,
               description: fields.description,
               state,
+              priority,
               assigneeId,
               startDate: fields.startDate,
               dueDate: fields.dueDate,
@@ -323,6 +347,7 @@ export async function persistRedmineIssueImportsTx(
           title: issue.title,
           description: issue.description,
           state: issue.state,
+          priority: issue.priority,
           assigneeId: issue.assigneeId,
         },
       },
@@ -465,6 +490,7 @@ export async function previewRedmineIssueImport(
     const linkedIds = new Set(linked.map((ref) => ref.externalId));
     const candidates = [...evidence.candidates];
     const unmappedStatusIds = new Set(evidence.unmappedStatusIds);
+    const unmappedPriorityIds = new Set(evidence.unmappedPriorityIds);
     const assigneeIds = new Set<string>();
     let excludedPrivateCount = evidence.excludedPrivateCount;
     let linkedCount = evidence.linkedCount;
@@ -490,6 +516,9 @@ export async function previewRedmineIssueImport(
       });
       if (!IssueState.safeParse(readMap[change.fields.statusId]).success) {
         unmappedStatusIds.add(change.fields.statusId);
+      }
+      if (!IssuePriority.safeParse(readMap[priorityReadKey(change.fields.priorityId)]).success) {
+        unmappedPriorityIds.add(change.fields.priorityId);
       }
       if (change.fields.assignee) assigneeIds.add(change.fields.assignee.remoteId);
     }
@@ -524,6 +553,7 @@ export async function previewRedmineIssueImport(
       checkpoint: storedCheckpoint(page.nextCheckpoint),
       candidates,
       unmappedStatusIds: sortRemoteIds(unmappedStatusIds),
+      unmappedPriorityIds: sortRemoteIds(unmappedPriorityIds),
       unmappedAssigneeIds: sortRemoteIds(unmappedAssigneeIds),
     };
     const persisted = await prisma.integrationProjectBinding.updateMany({
@@ -564,6 +594,7 @@ export async function previewRedmineIssueImport(
       linkedCount: evidence.linkedCount,
       mappingGaps: {
         statusIds: evidence.unmappedStatusIds,
+        priorityIds: evidence.unmappedPriorityIds,
         assigneeRemoteUserIds: evidence.unmappedAssigneeIds,
       },
     };

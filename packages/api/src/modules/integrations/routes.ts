@@ -29,11 +29,15 @@ const ConfigureConnection = z.object({
   timeActivityId: z.string().min(1),
   readMap: z.record(z.string(), z.string()),
   writeMap: z.record(z.string(), z.string()),
+  priorityReadMap: z.record(z.string(), z.string()).optional(),
+  priorityWriteMap: z.record(z.string(), z.string()).optional(),
 });
 const ConfigureProviderMaps = z.object({
   timeActivityId: z.string().min(1),
   readMap: z.record(z.string(), z.string()),
   writeMap: z.record(z.string(), z.string()),
+  priorityReadMap: z.record(z.string(), z.string()).optional(),
+  priorityWriteMap: z.record(z.string(), z.string()).optional(),
 });
 const BindProject = z.object({
   projectId: z.string().uuid(),

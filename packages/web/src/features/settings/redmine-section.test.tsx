@@ -177,6 +177,7 @@ describe("RedmineSection", () => {
     vi.mocked(useRedmineDiscoveryQuery).mockReturnValue({
       data: {
         statuses: [],
+        priorities: [],
         projects: [{ id: "remote-project", name: "Remote project" }],
         timeEntryActivities: [],
       },

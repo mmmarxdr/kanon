@@ -31,6 +31,7 @@ const issue: CanonicalIssue = {
   title: "Ship adapter",
   description: "Details",
   status: "in_progress",
+  priority: "high",
   assignee: { id: "user-1", displayName: "Ada" },
   estimateHours: 2.5,
   startDate: cycle.startDate,
@@ -42,6 +43,7 @@ const noChange: CanonicalIssuePatch = {
   title: omit,
   description: omit,
   status: omit,
+  priority: omit,
   assignee: omit,
   estimateHours: omit,
   startDate: omit,
@@ -69,6 +71,9 @@ describe("RedmineProviderAdapter", () => {
       }
       if (path === "/issue_statuses.json") {
         return { issue_statuses: [{ id: 2, name: "New" }] };
+      }
+      if (path === "/enumerations/issue_priorities.json") {
+        return { issue_priorities: [{ id: 4, name: "High" }] };
       }
       if (path === "/projects/4/versions.json") {
         return { versions: [{ id: 3, name: "Sprint", due_date: "2026-07-14" }] };
@@ -100,6 +105,7 @@ describe("RedmineProviderAdapter", () => {
     await expect(adapter.listStatuses()).resolves.toEqual([
       { id: "2", name: "New", writable: true },
     ]);
+    await expect(adapter.listPriorities()).resolves.toEqual([{ id: "4", name: "High" }]);
     await expect(adapter.listCycles("4")).resolves.toEqual([
       { id: "3", name: "Sprint", startDate: null, endDate: new Date("2026-07-14") },
     ]);
@@ -195,7 +201,7 @@ describe("RedmineProviderAdapter", () => {
       "user:user-1": "8",
     };
     const adapter = new RedmineProviderAdapter(http, {
-      writeMap: { in_progress: "5" },
+      writeMap: { in_progress: "5", "priority:high": "4" },
       resolveExternalId: async (type, id) => ids[`${type}:${id}`] ?? null,
     });
 
@@ -211,6 +217,7 @@ describe("RedmineProviderAdapter", () => {
         subject: "Ship adapter",
         description: "Details\n\n<!-- kanon-issue:issue-1 -->",
         status_id: "5",
+        priority_id: "4",
         assigned_to_id: "8",
         fixed_version_id: "12",
         estimated_hours: 2.5,
@@ -329,6 +336,25 @@ describe("RedmineProviderAdapter", () => {
     });
   });
 
+  it("maps an explicit Kanon priority update to Redmine", async () => {
+    const http = client();
+    http.put.mockResolvedValue(undefined);
+    http.get.mockResolvedValue({
+      issue: { id: 99, status: { id: 5 }, updated_on: "2026-07-03T10:00:00Z" },
+    });
+    const adapter = new RedmineProviderAdapter(http, {
+      writeMap: { "priority:high": "4" },
+      resolveExternalId: async (type) => (type === "issue" ? "99" : null),
+    });
+
+    await adapter.pushIssue(issue, {
+      ...noChange,
+      priority: { kind: "set", value: "high" },
+    });
+
+    expect(http.put).toHaveBeenCalledWith("/issues/99.json", { issue: { priority_id: "4" } });
+  });
+
   it("omits an empty version identifier when creating an issue without a cycle", async () => {
     const http = client();
     http.post.mockResolvedValue({ issue: { id: 99 } });
@@ -336,7 +362,7 @@ describe("RedmineProviderAdapter", () => {
       issue: { id: 99, status: { id: 5 }, updated_on: "2026-07-03T10:00:00Z" },
     });
     const adapter = new RedmineProviderAdapter(http, {
-      writeMap: { in_progress: "5" },
+      writeMap: { in_progress: "5", "priority:high": "4" },
       resolveExternalId: async (type) => (type === "project" ? "41" : null),
     });
 
@@ -345,6 +371,19 @@ describe("RedmineProviderAdapter", () => {
     const body = http.post.mock.calls[0]![1] as { issue: Record<string, unknown> };
     expect(body.issue).not.toHaveProperty("fixed_version_id");
     expect(body.issue["assigned_to_id"]).toBe("");
+  });
+
+  it("rejects issue creation without a priority mapping", async () => {
+    const http = client();
+    const adapter = new RedmineProviderAdapter(http, {
+      writeMap: { in_progress: "5" },
+      resolveExternalId: async (type) => (type === "project" ? "41" : null),
+    });
+
+    await expect(
+      adapter.pushIssue({ ...issue, assignee: null, cycleId: null }, noChange),
+    ).rejects.toThrow("Missing Redmine priority mapping for high");
+    expect(http.post).not.toHaveBeenCalled();
   });
 
   it("reports actual status when Redmine rejects the requested workflow transition", async () => {

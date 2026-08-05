@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  issuePrioritySchema,
   issueStateSchema,
   type IntegrationConnection,
   type IntegrationDiscovery,
+  type IssuePriority,
   type IssueState,
 } from "@kanon/shared";
 import { useWorkspacesQuery } from "@/hooks/use-workspace-query";
@@ -19,6 +21,7 @@ import {
 import { RedmineCredentialHealth } from "./redmine-section";
 
 const ISSUE_STATES = issueStateSchema.options;
+const ISSUE_PRIORITIES = issuePrioritySchema.options;
 
 function guessState(name: string): IssueState {
   const value = name.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
@@ -54,6 +57,42 @@ function initialWriteMap(
       return [state, existing?.[state] ?? exact ?? fallback];
     }),
   ) as Record<IssueState, string>;
+}
+
+function guessPriority(name: string): IssuePriority {
+  const value = name.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+  if (/urgent|immediate|critical|urgente|inmediata|critica/.test(value)) return "critical";
+  if (/high|alta/.test(value)) return "high";
+  if (/low|baja/.test(value)) return "low";
+  return "medium";
+}
+
+function initialPriorityReadMap(
+  priorities: IntegrationDiscovery["priorities"],
+  existing?: Record<string, IssuePriority> | null,
+) {
+  return Object.fromEntries(
+    priorities.map((priority) => [
+      priority.id,
+      existing?.[priority.id] ?? guessPriority(priority.name),
+    ]),
+  ) as Record<string, IssuePriority>;
+}
+
+function initialPriorityWriteMap(
+  priorities: IntegrationDiscovery["priorities"],
+  readMap: Record<string, IssuePriority>,
+  existing?: Partial<Record<IssuePriority, string>> | null,
+) {
+  return Object.fromEntries(
+    ISSUE_PRIORITIES.map((priority) => [
+      priority,
+      existing?.[priority] ??
+        priorities.find((remote) => readMap[remote.id] === priority)?.id ??
+        priorities[0]?.id ??
+        "",
+    ]),
+  ) as Record<IssuePriority, string>;
 }
 
 function ConnectionSetup({ workspaceId }: { workspaceId: string }) {
@@ -109,6 +148,10 @@ function ProviderMapsForm({
   const { t } = useTranslation("settings");
   const existing = connection.providerMaps;
   const readInitial = initialReadMap(discovery.statuses, existing?.readMap);
+  const priorityReadInitial = initialPriorityReadMap(
+    discovery.priorities,
+    existing?.priorityReadMap,
+  );
   const [timeActivityId, setTimeActivityId] = useState(
     existing?.timeActivityId ??
       discovery.timeEntryActivities.find((activity) => activity.isDefault)?.id ??
@@ -119,10 +162,22 @@ function ProviderMapsForm({
   const [writeMap, setWriteMap] = useState(
     initialWriteMap(discovery.statuses, readInitial, existing?.writeMap),
   );
+  const [priorityReadMap, setPriorityReadMap] = useState(priorityReadInitial);
+  const [priorityWriteMap, setPriorityWriteMap] = useState(
+    initialPriorityWriteMap(
+      discovery.priorities,
+      priorityReadInitial,
+      existing?.priorityWriteMap,
+    ),
+  );
   const configure = useConfigureRedmineProviderMapsMutation(workspaceId, connection.id);
   const lifecycle = useSetRedmineLifecycleMutation(workspaceId, connection.id);
   const writableStatuses = discovery.statuses.filter((status) => status.writable);
-  const complete = timeActivityId && Object.values(writeMap).every(Boolean);
+  const complete =
+    timeActivityId &&
+    discovery.priorities.length > 0 &&
+    Object.values(writeMap).every(Boolean) &&
+    Object.values(priorityWriteMap).every(Boolean);
   const canActivate = connection.bindings.length > 0 && connection.providerMaps?.timeActivityId;
 
   return (
@@ -131,7 +186,13 @@ function ProviderMapsForm({
         className="space-y-6"
         onSubmit={(event) => {
           event.preventDefault();
-          configure.mutate({ timeActivityId, readMap, writeMap });
+          configure.mutate({
+            timeActivityId,
+            readMap,
+            writeMap,
+            priorityReadMap,
+            priorityWriteMap,
+          });
         }}
       >
         <label className="block text-sm font-medium text-foreground">
@@ -166,6 +227,58 @@ function ProviderMapsForm({
                 >
                   {ISSUE_STATES.map((state) => (
                     <option key={state} value={state}>{t(`redmineState.${state}`)}</option>
+                  ))}
+                </select>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">{t("redminePriorityInboundMap")}</h3>
+          <p className="mt-1 text-xs text-muted-foreground">{t("redminePriorityInboundMapHelp")}</p>
+          <div className="mt-3 divide-y divide-border rounded-md border border-border">
+            {discovery.priorities.map((priority) => (
+              <label key={priority.id} className="grid gap-2 p-3 sm:grid-cols-2 sm:items-center">
+                <span className="text-sm text-foreground">{priority.name}</span>
+                <select
+                  value={priorityReadMap[priority.id]}
+                  onChange={(event) =>
+                    setPriorityReadMap((current) => ({
+                      ...current,
+                      [priority.id]: event.target.value as IssuePriority,
+                    }))
+                  }
+                  className="rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+                >
+                  {ISSUE_PRIORITIES.map((value) => (
+                    <option key={value} value={value}>{t(`redminePriority.${value}`)}</option>
+                  ))}
+                </select>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">{t("redminePriorityOutboundMap")}</h3>
+          <p className="mt-1 text-xs text-muted-foreground">{t("redminePriorityOutboundMapHelp")}</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {ISSUE_PRIORITIES.map((priority) => (
+              <label key={priority} className="text-sm text-foreground">
+                {t(`redminePriority.${priority}`)}
+                <select
+                  value={priorityWriteMap[priority]}
+                  onChange={(event) =>
+                    setPriorityWriteMap((current) => ({
+                      ...current,
+                      [priority]: event.target.value,
+                    }))
+                  }
+                  className="mt-1 w-full rounded-md border border-input bg-background px-2 py-1.5"
+                >
+                  {discovery.priorities.map((remote) => (
+                    <option key={remote.id} value={remote.id}>{remote.name}</option>
                   ))}
                 </select>
               </label>
@@ -304,7 +417,7 @@ function ConnectedAdminPanel({
         <p className="mt-4 text-sm text-muted-foreground">{t("redmineLoading")}</p>
       ) : (
         <ProviderMapsForm
-          key={discovery.data.statuses.map((status) => status.id).join(",")}
+          key={`${discovery.data.statuses.map((status) => status.id).join(",")}:${discovery.data.priorities.map((priority) => priority.id).join(",")}`}
           workspaceId={workspaceId}
           connection={connection}
           discovery={discovery.data}

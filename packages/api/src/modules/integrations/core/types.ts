@@ -1,4 +1,4 @@
-import type { IssueState } from "@prisma/client";
+import type { IssuePriority, IssueState } from "@prisma/client";
 
 export const CANONICAL_ENTITY_TYPES = [
   "project",
@@ -54,6 +54,7 @@ export interface CanonicalIssue {
   readonly title: string;
   readonly description: string | null;
   readonly status: CanonicalIssueState;
+  readonly priority: IssuePriority;
   readonly assignee: CanonicalUser | null;
   readonly estimateHours: number | null;
   readonly startDate: Date | null;
@@ -65,6 +66,7 @@ export interface CanonicalIssuePatch {
   readonly title: SettableFieldValue<string>;
   readonly description: FieldValue<string>;
   readonly status: SettableFieldValue<CanonicalIssueState>;
+  readonly priority: SettableFieldValue<IssuePriority>;
   readonly assignee: FieldValue<CanonicalUser>;
   readonly estimateHours: FieldValue<number>;
   readonly startDate: FieldValue<Date>;
@@ -104,6 +106,10 @@ export interface DiscoveredStatus {
   readonly id: string;
   readonly name: string;
   readonly writable: boolean;
+}
+export interface DiscoveredPriority {
+  readonly id: string;
+  readonly name: string;
 }
 export interface DiscoveredCycle {
   readonly id: string;
@@ -227,6 +233,7 @@ export interface PmProviderAdapter extends ProviderCreateReconciler {
   capabilities(): Promise<PmProviderCapabilities>;
   listProjects(): Promise<readonly DiscoveredProject[]>;
   listStatuses(): Promise<readonly DiscoveredStatus[]>;
+  listPriorities(): Promise<readonly DiscoveredPriority[]>;
   listCycles(projectId: string): Promise<readonly DiscoveredCycle[]>;
   listTimeEntryActivities(): Promise<readonly DiscoveredTimeEntryActivity[]>;
   whoAmI(): Promise<DiscoveredUser>;

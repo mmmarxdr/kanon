@@ -31,6 +31,10 @@ const remote = {
     { id: "new", name: "New", writable: true },
     { id: "dev", name: "In Dev", writable: true },
   ]),
+  listPriorities: vi.fn(async () => [
+    { id: "normal", name: "Normal" },
+    { id: "high", name: "High" },
+  ]),
   listProjects: vi.fn(async () => [{ id: "remote-project", name: "Remote project" }]),
   listTimeEntryActivities: vi.fn(async () => [
     { id: "9", name: "Development", isDefault: true },
@@ -50,6 +54,13 @@ const writeMap = {
   review: "dev",
   done: "dev",
 };
+const priorityReadMap = { normal: "medium", high: "high" } as const;
+const priorityWriteMap = {
+  critical: "high",
+  high: "high",
+  medium: "normal",
+  low: "normal",
+} as const;
 
 describe("integration connection lifecycle", () => {
   let app: FastifyInstance;
@@ -90,6 +101,7 @@ describe("integration connection lifecycle", () => {
     expect(first.connection).toMatchObject({ lifecycle: "draft", serviceFallbackEnabled: false });
     expect(first.discovery.projects).toEqual([{ id: "remote-project", name: "Remote project" }]);
     expect(discovery.statuses).toHaveLength(2);
+    expect(discovery.priorities).toHaveLength(2);
     expect(discovery.timeEntryActivities).toEqual([
       { id: "9", name: "Development", isDefault: true },
     ]);
@@ -278,7 +290,13 @@ describe("integration connection lifecycle", () => {
 
     await configureProviderMaps(
       connection.id,
-      { timeActivityId: "9", readMap, writeMap },
+      {
+        timeActivityId: "9",
+        readMap,
+        writeMap,
+        priorityReadMap,
+        priorityWriteMap,
+      },
       instanceAdmin.userId,
       deps,
     );
@@ -305,7 +323,15 @@ describe("integration connection lifecycle", () => {
 
     const binding = await configureConnection(
       connection.id,
-      { projectId: project.id, remoteProjectId: "remote-project", timeActivityId: "9", readMap, writeMap },
+      {
+        projectId: project.id,
+        remoteProjectId: "remote-project",
+        timeActivityId: "9",
+        readMap,
+        writeMap,
+        priorityReadMap,
+        priorityWriteMap,
+      },
       owner.userId,
       deps,
     );
@@ -331,7 +357,15 @@ describe("integration connection lifecycle", () => {
     );
     const binding = await configureConnection(
       connection.id,
-      { projectId: project.id, remoteProjectId: "remote-project", timeActivityId: "9", readMap, writeMap },
+      {
+        projectId: project.id,
+        remoteProjectId: "remote-project",
+        timeActivityId: "9",
+        readMap,
+        writeMap,
+        priorityReadMap,
+        priorityWriteMap,
+      },
       owner.userId,
       deps,
     );
@@ -483,7 +517,15 @@ describe("integration connection lifecycle", () => {
     );
     await configureConnection(
       connection.id,
-      { projectId: project.id, remoteProjectId: "remote-project", timeActivityId: "9", readMap, writeMap: { backlog: "new" } },
+      {
+        projectId: project.id,
+        remoteProjectId: "remote-project",
+        timeActivityId: "9",
+        readMap,
+        writeMap: { backlog: "new" },
+        priorityReadMap,
+        priorityWriteMap,
+      },
       owner.userId,
       deps,
     );
@@ -510,7 +552,15 @@ describe("integration connection lifecycle", () => {
     await expect(
       configureConnection(
         connection.id,
-        { projectId: project.id, remoteProjectId: "remote-project", timeActivityId: "9", readMap: { new: "invented" }, writeMap },
+        {
+          projectId: project.id,
+          remoteProjectId: "remote-project",
+          timeActivityId: "9",
+          readMap: { new: "invented" },
+          writeMap,
+          priorityReadMap,
+          priorityWriteMap,
+        },
         owner.userId,
         deps,
       ),
@@ -518,7 +568,15 @@ describe("integration connection lifecycle", () => {
     await expect(
       configureConnection(
         connection.id,
-        { projectId: project.id, remoteProjectId: "invented", timeActivityId: "9", readMap, writeMap },
+        {
+          projectId: project.id,
+          remoteProjectId: "invented",
+          timeActivityId: "9",
+          readMap,
+          writeMap,
+          priorityReadMap,
+          priorityWriteMap,
+        },
         owner.userId,
         deps,
       ),
@@ -552,7 +610,13 @@ describe("integration connection lifecycle", () => {
 
     await configureProviderMaps(
       connection.id,
-      { timeActivityId: "9", readMap, writeMap },
+      {
+        timeActivityId: "9",
+        readMap,
+        writeMap,
+        priorityReadMap,
+        priorityWriteMap,
+      },
       instanceAdmin.userId,
       deps,
     );
@@ -561,6 +625,7 @@ describe("integration connection lifecycle", () => {
     expect(ownerDiscovery).toEqual({
       projects: [{ id: "remote-project", name: "Remote project" }],
       statuses: [],
+      priorities: [],
       timeEntryActivities: [],
     });
 
@@ -573,11 +638,13 @@ describe("integration connection lifecycle", () => {
     expect(binding).toMatchObject({
       projectId: project.id,
       remoteProjectId: "remote-project",
-      readMap,
+      readMap: { ...readMap, "priority:normal": "medium", "priority:high": "high" },
     });
 
     const adminView = await getWorkspaceConnection(workspace.id, instanceAdmin.userId);
     expect(adminView?.providerMaps?.timeActivityId).toBe("9");
+    expect(adminView?.providerMaps?.priorityReadMap).toEqual({ normal: "medium", high: "high" });
+    expect(adminView?.providerMaps?.priorityWriteMap).toEqual(priorityWriteMap);
     expect(adminView?.bindings[0]?.readMap).toEqual(readMap);
 
     const memberView = await getConnection(connection.id, member.userId);
@@ -674,6 +741,8 @@ describe("integration connection lifecycle", () => {
         timeActivityId: "9",
         readMap,
         writeMap,
+        priorityReadMap,
+        priorityWriteMap,
       },
       admin.userId,
       deps,

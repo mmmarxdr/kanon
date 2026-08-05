@@ -27,6 +27,13 @@ import {
   ISSUE_CAPTURE_FIELDS,
   ISSUE_SCHEDULE_CAPTURE_FIELDS,
 } from "./issue-mutation-contract.js";
+import {
+  issueSyncMetadata,
+  readIssueSyncBaseline,
+  type IssueSyncBaselineFields,
+  type IssueSyncField,
+  type IssueSyncValue,
+} from "./issue-convergence.js";
 import { RedmineProviderAdapter } from "./providers/redmine/adapter.js";
 import { RedmineHttpClient } from "./providers/redmine/http-client.js";
 const MAX_ATTEMPTS = 8;
@@ -428,6 +435,7 @@ async function prepare(
         title: issue.title,
         description: issue.description,
         state: issue.state,
+        priority: issue.priority,
         assigneeId: issue.assigneeId,
         cycleId: issue.cycleId,
         estimate: issue.estimate,
@@ -468,6 +476,7 @@ async function prepare(
         title: issue.title,
         description: issue.description,
         status: issue.state,
+        priority: issue.priority,
         assignee: issue.assignee
           ? {
               id: issue.assignee.id,
@@ -491,6 +500,7 @@ async function prepare(
             changed("state") || current.operation === "close"
               ? { kind: "set", value: entity.status }
               : omit,
+          priority: changed("priority") ? { kind: "set", value: entity.priority } : omit,
           assignee: field(changed("assigneeId"), entity.assignee),
           estimateHours: field(
             changed("estimate") || changed("estimateHours"),
@@ -972,11 +982,53 @@ async function attachResult(
     result.remoteVersion && !Number.isNaN(Date.parse(result.remoteVersion))
       ? new Date(result.remoteVersion)
       : undefined;
+  if (
+    existing?.remoteUpdatedAt &&
+    remoteUpdatedAt &&
+    existing.remoteUpdatedAt > remoteUpdatedAt &&
+    existing.lastCorrelationId !== work.correlationId
+  ) {
+    throw new StaleFinalizeError();
+  }
+  let metadata: Prisma.InputJsonObject = { remoteVersion: result.remoteVersion };
+  if (work.entityType === "issue") {
+    const captured = issueFields(work.payload);
+    const baselineFields: Partial<Record<IssueSyncField, IssueSyncValue>> = {
+      ...(readIssueSyncBaseline(existing?.metadata)?.fields ?? {}),
+    };
+    for (const field of [
+      "title",
+      "description",
+      "state",
+      "priority",
+      "assigneeId",
+      "startDate",
+      "dueDate",
+      "progress",
+    ] as const) {
+      if (!Object.prototype.hasOwnProperty.call(captured, field)) continue;
+      const value = captured[field];
+      if (field === "startDate" || field === "dueDate") {
+        baselineFields[field] = typeof value === "string" ? value.slice(0, 10) : null;
+      } else if (typeof value === "string" || typeof value === "number" || value === null) {
+        baselineFields[field] = value;
+      }
+    }
+    if (result.achievedStatusId) {
+      const achieved = (current.binding.readMap as Record<string, unknown>)[result.achievedStatusId];
+      if (typeof achieved === "string") baselineFields.state = achieved;
+    }
+    metadata = issueSyncMetadata(existing?.metadata, {
+      sourceVersion: result.remoteVersion,
+      changedAt: remoteUpdatedAt ?? now,
+      fields: baselineFields as IssueSyncBaselineFields,
+    });
+  }
   const common = {
     externalId: result.externalId,
     bindingId: binding.id,
     lastCorrelationId: work.correlationId,
-    metadata: { remoteVersion: result.remoteVersion },
+    metadata,
     ...(remoteUpdatedAt ? { remoteUpdatedAt } : {}),
   };
   const ref = existing

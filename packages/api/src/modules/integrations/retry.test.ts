@@ -78,7 +78,7 @@ async function createFixture() {
       projectId: project.id,
       remoteProjectId: "remote-project",
       readMap: { "1": "todo" },
-      writeMap: { todo: "1", in_progress: "2", done: "3" },
+      writeMap: { todo: "1", in_progress: "2", done: "3", "priority:medium": "4" },
       lifecycle: "active",
       lifecycleEpoch: 3,
     },
@@ -669,12 +669,30 @@ describe("integration worker retry and completion", () => {
       bindingId: fixture.binding.id,
       externalId: "remote-42",
       lastCorrelationId: "create-correlation",
-      metadata: { remoteVersion: "2026-07-30T12:00:01.000Z" },
+      metadata: expect.objectContaining({
+        remoteVersion: "2026-07-30T12:00:01.000Z",
+        baseline: expect.objectContaining({
+          sourceVersion: "2026-07-30T12:00:01.000Z",
+          fields: expect.objectContaining({
+            title: "Current canonical title",
+            state: "in_progress",
+          }),
+        }),
+      }),
     });
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({ workId: first.id, state: "done" }),
       "Integration work completed"
     );
+    await prisma.externalRef.update({
+      where: { id: reference.id },
+      data: {
+        metadata: {
+          ...(reference.metadata as Prisma.JsonObject),
+          custom: "keep",
+        },
+      },
+    });
 
     const second = await createWork(fixture, { correlationId: "update-correlation" });
     await runIntegrationWorkerCycle(prisma, deps);
@@ -686,6 +704,59 @@ describe("integration worker retry and completion", () => {
       state: "done",
       refId: reference.id,
     });
+    await expect(
+      prisma.externalRef.findUniqueOrThrow({ where: { id: reference.id } }),
+    ).resolves.toMatchObject({
+      metadata: expect.objectContaining({
+        custom: "keep",
+        baseline: expect.objectContaining({
+          fields: expect.objectContaining({ title: "Current canonical title" }),
+        }),
+      }),
+    });
+  });
+
+  it("does not regress a newer inbound baseline during stale provider finalization", async () => {
+    const fixture = await createFixture();
+    const ref = await createRef(fixture, "issue", fixture.issue.id, "remote-42");
+    const work = await createWork(fixture, { correlationId: "outbound-stale" });
+    const inboundAt = new Date("2026-07-30T12:00:02.000Z");
+    const pushIssue = vi.fn(async () => {
+      await prisma.externalRef.update({
+        where: { id: ref.id },
+        data: {
+          remoteUpdatedAt: inboundAt,
+          lastCorrelationId: "inbound-newer",
+          metadata: {
+            remoteVersion: inboundAt.toISOString(),
+            baseline: {
+              version: 1,
+              sourceVersion: inboundAt.toISOString(),
+              changedAt: inboundAt.toISOString(),
+              createdAt: null,
+              completedAt: null,
+              fields: { title: "Newer remote title" },
+            },
+          },
+        },
+      });
+      return success();
+    });
+
+    await runIntegrationWorkerCycle(prisma, dependencies(adapter({ pushIssue })).deps);
+
+    await expect(
+      prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } }),
+    ).resolves.toMatchObject({
+      remoteUpdatedAt: inboundAt,
+      lastCorrelationId: "inbound-newer",
+      metadata: expect.objectContaining({
+        baseline: expect.objectContaining({ fields: { title: "Newer remote title" } }),
+      }),
+    });
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } }),
+    ).resolves.toMatchObject({ state: "ambiguous" });
   });
 
   it("dispatches captured schedule fields from the current canonical schedule", async () => {

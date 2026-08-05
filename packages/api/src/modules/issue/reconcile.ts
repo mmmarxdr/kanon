@@ -243,8 +243,10 @@ export async function reconcileIssueTime(
   issueId: string,
   memberId: string,
   opts?: ReconcileOpts,
+  transaction?: Prisma.TransactionClient,
 ): Promise<ReconcileSummary> {
-  const issue = await prisma.issue.findUnique({
+  const database = transaction ?? prisma;
+  const issue = await database.issue.findUnique({
     where: { id: issueId },
     select: { id: true, key: true, projectId: true },
   });
@@ -270,7 +272,7 @@ export async function reconcileIssueTime(
     : null;
 
   // Fix 3: wrap all writes in a single transaction so they are all-or-nothing.
-  const { finalEntries, confirmedAt } = await prisma.$transaction(async (tx) => {
+  const reconcile = async (tx: Prisma.TransactionClient) => {
     await tx.$queryRaw`SELECT "id" FROM "issues" WHERE "id" = ${issueId}::uuid FOR UPDATE`;
 
     // Step 1: find WorkLogs with no linked TimeEntry → promote to approved TimeEntry
@@ -471,7 +473,10 @@ export async function reconcileIssueTime(
     });
 
     return { finalEntries: entries, confirmedAt };
-  });
+  };
+  const { finalEntries, confirmedAt } = transaction
+    ? await reconcile(transaction)
+    : await prisma.$transaction(reconcile);
 
   const totalHours = finalEntries.reduce(
     (sum, te) => sum + parseFloat(te.hours.toString()),

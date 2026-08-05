@@ -6,19 +6,23 @@ import { INSTANCE_SETTINGS_ID } from "../../shared/constants.js";
 import { decrypt as decryptCredential, encrypt as encryptCredential } from "./core/crypto.js";
 import {
   TIME_ENTRY_ACTIVITY_MAP_KEY,
+  type DiscoveredPriority,
   type DiscoveredProject,
   type DiscoveredStatus,
   type DiscoveredTimeEntryActivity,
   type DiscoveredUser,
 } from "./core/types.js";
+import { PRIORITY_MAP_PREFIX, priorityReadKey, priorityWriteKey } from "./issue-convergence.js";
 import { RedmineProviderAdapter } from "./providers/redmine/adapter.js";
 import { RedmineHttpClient } from "./providers/redmine/http-client.js";
 
 const WRITABLE_STATES = ["backlog", "analysis", "todo", "in_progress", "review", "done"] as const;
+const ISSUE_PRIORITIES = ["critical", "high", "medium", "low"] as const;
 
 interface RemoteDiscovery {
   whoAmI(): Promise<DiscoveredUser>;
   listStatuses(): Promise<readonly DiscoveredStatus[]>;
+  listPriorities?(): Promise<readonly DiscoveredPriority[]>;
   listProjects(): Promise<readonly DiscoveredProject[]>;
   listTimeEntryActivities(): Promise<readonly DiscoveredTimeEntryActivity[]>;
 }
@@ -430,9 +434,14 @@ export async function getConnectionDiscovery(
   }
 
   const credential = await serviceCredential(prisma, connection);
-  const [statuses, projects, timeEntryActivities] = await queryRedmine(() => {
+  const [statuses, priorities, projects, timeEntryActivities] = await queryRedmine(() => {
     const remote = deps.remote(connection.baseUrl, deps.decrypt(credential.encryptedKey));
-    return Promise.all([remote.listStatuses(), remote.listProjects(), remote.listTimeEntryActivities()]);
+    return Promise.all([
+      remote.listStatuses(),
+      remote.listPriorities?.() ?? Promise.resolve([]),
+      remote.listProjects(),
+      remote.listTimeEntryActivities(),
+    ]);
   });
   const discoveredStatuses = statuses.map(({ id, name, writable }) => ({ id, name, writable }));
   await prisma.integrationConnection.update({
@@ -441,9 +450,9 @@ export async function getConnectionDiscovery(
   });
 
   if (!admin) {
-    return { projects, statuses: [], timeEntryActivities: [] };
+    return { projects, statuses: [], priorities: [], timeEntryActivities: [] };
   }
-  return { statuses, projects, timeEntryActivities };
+  return { statuses, priorities, projects, timeEntryActivities };
 }
 
 /** Instance-admin: persist global status/activity maps on the connection and cascade to bindings. */
@@ -453,15 +462,21 @@ export async function configureProviderMaps(
     timeActivityId: string;
     readMap: Readonly<Record<string, string>>;
     writeMap: Readonly<Record<string, string>>;
+    priorityReadMap?: Readonly<Record<string, string>>;
+    priorityWriteMap?: Readonly<Record<string, string>>;
   },
   userId: string,
   deps: ConnectionServiceDeps = defaultDeps,
 ) {
   const connection = await adminConnection(prisma, connectionId, userId);
   const credential = await serviceCredential(prisma, connection);
-  const [statuses, timeEntryActivities] = await queryRedmine(() => {
+  const [statuses, priorities, timeEntryActivities] = await queryRedmine(() => {
     const remote = deps.remote(connection.baseUrl, deps.decrypt(credential.encryptedKey));
-    return Promise.all([remote.listStatuses(), remote.listTimeEntryActivities()]);
+    return Promise.all([
+      remote.listStatuses(),
+      remote.listPriorities?.() ?? Promise.resolve([]),
+      remote.listTimeEntryActivities(),
+    ]);
   });
   if (!timeEntryActivities.some(({ id }) => id === input.timeActivityId)) {
     throw new AppError(400, "REMOTE_TIME_ACTIVITY_NOT_FOUND", "Select a time activity returned by discovery");
@@ -478,8 +493,62 @@ export async function configureProviderMaps(
     throw new AppError(400, "INVALID_STATUS_MAP", "Status maps must use discovered statuses and Kanon states");
   }
 
+  const existingMaps = providerMapsFromConnection(connection);
+  const existingRead = existingMaps.readMap ?? {};
+  const existingWrite = existingMaps.writeMap ?? {};
+  const priorityReadMap =
+    input.priorityReadMap ??
+    Object.fromEntries(
+      Object.entries(existingRead)
+        .filter(([key]) => key.startsWith(PRIORITY_MAP_PREFIX))
+        .map(([key, value]) => [key.slice(PRIORITY_MAP_PREFIX.length), value]),
+    );
+  const priorityWriteMap =
+    input.priorityWriteMap ??
+    Object.fromEntries(
+      Object.entries(existingWrite)
+        .filter(([key]) => key.startsWith(PRIORITY_MAP_PREFIX))
+        .map(([key, value]) => [key.slice(PRIORITY_MAP_PREFIX.length), value]),
+    );
+  const priorityIds = new Set(priorities.map(({ id }) => id));
+  const validPriority = (value: unknown) =>
+    ISSUE_PRIORITIES.includes(value as (typeof ISSUE_PRIORITIES)[number]);
+  if (
+    priorities.length === 0 ||
+    priorities.some(({ id }) => !validPriority(priorityReadMap[id])) ||
+    ISSUE_PRIORITIES.some((priority) => {
+      const remoteId = priorityWriteMap[priority];
+      return typeof remoteId !== "string" || !priorityIds.has(remoteId);
+    }) ||
+    Object.entries(priorityReadMap).some(
+      ([remoteId, priority]) => !priorityIds.has(remoteId) || !validPriority(priority),
+    ) ||
+    Object.entries(priorityWriteMap).some(
+      ([priority, remoteId]) => !validPriority(priority) || !priorityIds.has(remoteId),
+    )
+  ) {
+    throw new AppError(
+      400,
+      "INVALID_PRIORITY_MAP",
+      "Priority maps must cover every discovered and Kanon priority",
+    );
+  }
+
+  const readMap = {
+    ...input.readMap,
+    ...Object.fromEntries(
+      Object.entries(priorityReadMap).map(([remoteId, priority]) => [priorityReadKey(remoteId), priority]),
+    ),
+  };
+
   const writeMap = {
     ...input.writeMap,
+    ...Object.fromEntries(
+      Object.entries(priorityWriteMap).map(([priority, remoteId]) => [
+        priorityWriteKey(priority as (typeof ISSUE_PRIORITIES)[number]),
+        remoteId,
+      ]),
+    ),
     [TIME_ENTRY_ACTIVITY_MAP_KEY]: input.timeActivityId,
   };
   const discoveredStatuses = statuses.map(({ id, name, writable }) => ({ id, name, writable }));
@@ -491,7 +560,7 @@ export async function configureProviderMaps(
       where: { id: connectionId },
       data: {
         discoveredStatuses,
-        statusMapRead: input.readMap as Prisma.InputJsonValue,
+        statusMapRead: readMap as Prisma.InputJsonValue,
         statusMapWrite: writeMap as Prisma.InputJsonValue,
         ...(current.lifecycle !== "draft"
           ? { lifecycle: "draft" as const, lifecycleEpoch: { increment: 1 } }
@@ -501,7 +570,7 @@ export async function configureProviderMaps(
     await transaction.integrationProjectBinding.updateMany({
       where: { connectionId, lifecycle: { not: "draft" } },
       data: {
-        readMap: input.readMap as Prisma.InputJsonValue,
+        readMap: readMap as Prisma.InputJsonValue,
         writeMap: writeMap as Prisma.InputJsonValue,
         lifecycle: "draft",
         lifecycleEpoch: { increment: 1 },
@@ -510,7 +579,7 @@ export async function configureProviderMaps(
     await transaction.integrationProjectBinding.updateMany({
       where: { connectionId, lifecycle: "draft" },
       data: {
-        readMap: input.readMap as Prisma.InputJsonValue,
+        readMap: readMap as Prisma.InputJsonValue,
         writeMap: writeMap as Prisma.InputJsonValue,
       },
     });
@@ -625,6 +694,8 @@ export async function configureConnection(
     timeActivityId: string;
     readMap: Readonly<Record<string, string>>;
     writeMap: Readonly<Record<string, string>>;
+    priorityReadMap?: Readonly<Record<string, string>>;
+    priorityWriteMap?: Readonly<Record<string, string>>;
   },
   userId: string,
   deps: ConnectionServiceDeps = defaultDeps,
@@ -635,6 +706,8 @@ export async function configureConnection(
       timeActivityId: input.timeActivityId,
       readMap: input.readMap,
       writeMap: input.writeMap,
+      priorityReadMap: input.priorityReadMap,
+      priorityWriteMap: input.priorityWriteMap,
     },
     userId,
     deps,
@@ -777,11 +850,25 @@ function hasCompleteMaps(
     return false;
   const writeMap = binding.writeMap as Record<string, unknown>;
   const writableIds = new Set(statuses.filter(({ writable }) => writable).map(({ id }) => id));
-  return (
-    typeof writeMap[TIME_ENTRY_ACTIVITY_MAP_KEY] === "string" &&
-    WRITABLE_STATES.every(
+  if (
+    typeof writeMap[TIME_ENTRY_ACTIVITY_MAP_KEY] !== "string" ||
+    !WRITABLE_STATES.every(
       (state) => typeof writeMap[state] === "string" && writableIds.has(writeMap[state] as string),
     )
+  ) {
+    return false;
+  }
+  const priorityIds = new Set(
+    Object.entries(readMap)
+      .filter(([key, priority]) => key.startsWith(PRIORITY_MAP_PREFIX) && ISSUE_PRIORITIES.includes(priority as (typeof ISSUE_PRIORITIES)[number]))
+      .map(([key]) => key.slice(PRIORITY_MAP_PREFIX.length)),
+  );
+  return (
+    priorityIds.size > 0 &&
+    ISSUE_PRIORITIES.every((priority) => {
+      const remoteId = writeMap[priorityWriteKey(priority)];
+      return typeof remoteId === "string" && priorityIds.has(remoteId);
+    })
   );
 }
 
@@ -1171,10 +1258,33 @@ export async function getConnection(connectionId: string, userId: string) {
     discoveredStatuses: admin ? connection.discoveredStatuses : null,
     providerMaps: admin
       ? {
-          readMap: providerMaps.readMap,
+          readMap: providerMaps.readMap
+            ? Object.fromEntries(
+                Object.entries(providerMaps.readMap).filter(
+                  ([key]) => !key.startsWith(PRIORITY_MAP_PREFIX),
+                ),
+              )
+            : null,
           writeMap: providerMaps.writeMap
             ? Object.fromEntries(
-                Object.entries(providerMaps.writeMap).filter(([key]) => key !== TIME_ENTRY_ACTIVITY_MAP_KEY),
+                Object.entries(providerMaps.writeMap).filter(
+                  ([key]) =>
+                    key !== TIME_ENTRY_ACTIVITY_MAP_KEY && !key.startsWith(PRIORITY_MAP_PREFIX),
+                ),
+              )
+            : null,
+          priorityReadMap: providerMaps.readMap
+            ? Object.fromEntries(
+                Object.entries(providerMaps.readMap)
+                  .filter(([key]) => key.startsWith(PRIORITY_MAP_PREFIX))
+                  .map(([key, value]) => [key.slice(PRIORITY_MAP_PREFIX.length), value]),
+              )
+            : null,
+          priorityWriteMap: providerMaps.writeMap
+            ? Object.fromEntries(
+                Object.entries(providerMaps.writeMap)
+                  .filter(([key]) => key.startsWith(PRIORITY_MAP_PREFIX))
+                  .map(([key, value]) => [key.slice(PRIORITY_MAP_PREFIX.length), value]),
               )
             : null,
           timeActivityId: providerMaps.timeActivityId,
@@ -1184,8 +1294,23 @@ export async function getConnection(connectionId: string, userId: string) {
       id: binding.id,
       projectId: binding.projectId,
       remoteProjectId: binding.remoteProjectId,
-      readMap: admin ? binding.readMap : {},
-      writeMap: admin ? binding.writeMap : {},
+      readMap:
+        admin && binding.readMap && typeof binding.readMap === "object" && !Array.isArray(binding.readMap)
+          ? Object.fromEntries(
+              Object.entries(binding.readMap).filter(
+                ([key]) => !key.startsWith(PRIORITY_MAP_PREFIX),
+              ),
+            )
+          : {},
+      writeMap:
+        admin && binding.writeMap && typeof binding.writeMap === "object" && !Array.isArray(binding.writeMap)
+          ? Object.fromEntries(
+              Object.entries(binding.writeMap).filter(
+                ([key]) =>
+                  key !== TIME_ENTRY_ACTIVITY_MAP_KEY && !key.startsWith(PRIORITY_MAP_PREFIX),
+              ),
+            )
+          : {},
       timeActivityId: admin
         ? binding.writeMap &&
           typeof binding.writeMap === "object" &&

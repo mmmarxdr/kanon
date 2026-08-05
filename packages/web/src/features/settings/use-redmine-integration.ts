@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   integrationConnectionSchema,
   integrationDiscoverySchema,
+  type IssuePriority,
   type IssueState,
 } from "@kanon/shared";
 import { fetchApi, fetchApiValidated } from "@/lib/api-client";
@@ -11,6 +12,8 @@ export interface ConfigureRedmineProviderMapsInput {
   timeActivityId: string;
   readMap: Record<string, IssueState>;
   writeMap: Record<IssueState, string>;
+  priorityReadMap: Record<string, IssuePriority>;
+  priorityWriteMap: Record<IssuePriority, string>;
 }
 
 export interface BindRedmineProjectInput {

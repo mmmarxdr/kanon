@@ -4,6 +4,7 @@ import { eventBus } from "../../services/event-bus/index.js";
 import { AppError } from "../../shared/types.js";
 import {
   captureIssueScheduleMutationTx,
+  lockIssueCaptureBindingTx,
   resolveIssueCaptureContext,
 } from "../integrations/issue-tx.js";
 import type { UpsertPlanBody, ReviseEstimateBody, ScheduleConfigBody } from "./schema.js";
@@ -112,6 +113,7 @@ export async function upsertPlan(
     ...(body.progress !== undefined ? { progress: result.progress } : {}),
   });
   const writeSchedule = async (transaction: Prisma.TransactionClient) => {
+    if (capture) await lockIssueCaptureBindingTx(transaction, capture.bindingId);
     if (options?.startDateIfMissing && body.startDate !== undefined) {
       const startDate = new Date(body.startDate);
       const existing = await transaction.issueSchedule.findUnique({
@@ -315,6 +317,7 @@ export async function reviseEstimate(
 
   // Atomic transaction: append revision + upsert estimateHours + integration work
   const { revision } = await prisma.$transaction(async (tx) => {
+    if (capture) await lockIssueCaptureBindingTx(tx, capture.bindingId);
     const revision = await tx.estimateRevision.create({
       data: {
         issueId: issue.id,

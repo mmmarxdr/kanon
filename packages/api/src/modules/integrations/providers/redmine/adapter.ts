@@ -12,6 +12,7 @@ import {
   type StatusWriteMap,
 } from "../../core/types.js";
 import { RedmineHttpError, type RedmineHttpClient } from "./http-client.js";
+import { priorityWriteKey } from "../../issue-convergence.js";
 
 type ExternalEntityType = "project" | "cycle" | "issue" | "time_entry" | "user";
 type HttpClient = Pick<RedmineHttpClient, "delete" | "get" | "post" | "put">;
@@ -147,6 +148,16 @@ export class RedmineProviderAdapter implements PmProviderAdapter {
       id: externalId(status.id),
       name: status.name ?? "",
       writable: true,
+    }));
+  }
+
+  async listPriorities() {
+    const response = await this.client.get<{ issue_priorities: RemoteRef[] }>(
+      "/enumerations/issue_priorities.json",
+    );
+    return response.issue_priorities.map((priority) => ({
+      id: externalId(priority.id),
+      name: priority.name ?? "",
     }));
   }
 
@@ -494,6 +505,16 @@ export class RedmineProviderAdapter implements PmProviderAdapter {
       if (mappedStatus === undefined)
         throw new Error(`Missing Redmine status mapping for ${status}`);
       assign("status_id", mappedStatus);
+    }
+    const priorityPatch = patch.priority ?? ({ kind: "omit" } as const);
+    const priority = value(priorityPatch, issue.priority);
+    if (priority) {
+      const mappedPriority = (this.options.writeMap as Record<string, string | undefined>)[
+        priorityWriteKey(priority)
+      ];
+      if (mappedPriority === undefined)
+        throw new Error(`Missing Redmine priority mapping for ${priority}`);
+      assign("priority_id", mappedPriority);
     }
     assign("estimated_hours", value(patch.estimateHours, issue.estimateHours));
     const startDate = value(patch.startDate, issue.startDate);
