@@ -65,9 +65,17 @@ New workspace-scoped invites set `workspace`.
 
 ## Rollback Plan
 
-Revert deploy. Down-migration drops `project_access` columns and `ProjectAccess` enum.
-List reverts to member-only gate; open reverts to PM-only for member/viewer.
-Invite UI loses picker/metadata if web reverted.
+Do **not** drop `project_access` while workspace-mode members exist without a
+backfill — those members have no `ProjectMember` rows and would lose all
+project access under the pre-KAN-222 PM-only gate.
+
+Safe rollback sequence:
+1. Keep `project_access` schema and a compatible authorization path, **or**
+2. Before reverting authz: for each `Member.projectAccess = workspace`, insert
+   `ProjectMember` rows for every active project in that workspace (snapshot —
+   future projects will not be covered), then set those members to `assigned`.
+3. Only then revert list/open gates / UI. Dropping the enum without step 2 is
+   unsafe.
 
 ## Success Criteria
 

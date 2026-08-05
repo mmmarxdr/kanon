@@ -143,4 +143,82 @@ describe("InvitesSection project access", () => {
       expect.any(Object),
     );
   });
+
+  it("falls back to workspace access when all projects vanish", async () => {
+    const mutate = vi.fn();
+    const {
+      useWorkspaceInvitesQuery,
+      useCreateInviteMutation,
+      useRevokeInviteMutation,
+    } = await import("./use-settings-queries");
+    const { useProjectsQuery } = await import("@/hooks/use-projects-query");
+    const { useWorkspacesQuery } = await import("@/hooks/use-workspace-query");
+
+    vi.mocked(useWorkspaceInvitesQuery).mockReturnValue({
+      data: [],
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useWorkspaceInvitesQuery>);
+    vi.mocked(useWorkspacesQuery).mockReturnValue({
+      data: [
+        { id: "workspace-1", name: "Primary", slug: "primary", role: "admin", allowedDomains: [], createdAt: "" },
+      ],
+      isLoading: false,
+    } as unknown as ReturnType<typeof useWorkspacesQuery>);
+    vi.mocked(useCreateInviteMutation).mockReturnValue({
+      mutate,
+      isPending: false,
+      isError: false,
+    } as unknown as ReturnType<typeof useCreateInviteMutation>);
+    vi.mocked(useRevokeInviteMutation).mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+    } as unknown as ReturnType<typeof useRevokeInviteMutation>);
+
+    const { InvitesSection } = await import("./invites-section");
+    const { rerender } = render(
+      <InvitesSection
+        workspaceId="workspace-1"
+        currentUserRole="admin"
+        allowedDomains={[]}
+      />,
+    );
+
+    vi.mocked(useProjectsQuery).mockReturnValue({
+      data: projects,
+      isLoading: false,
+    } as unknown as ReturnType<typeof useProjectsQuery>);
+    rerender(
+      <InvitesSection
+        workspaceId="workspace-1"
+        currentUserRole="admin"
+        allowedDomains={[]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Create Invite" }));
+    fireEvent.change(screen.getByTestId("invite-project-access"), {
+      target: { value: "all" },
+    });
+
+    vi.mocked(useProjectsQuery).mockReturnValue({
+      data: [],
+      isLoading: false,
+    } as unknown as ReturnType<typeof useProjectsQuery>);
+    rerender(
+      <InvitesSection
+        workspaceId="workspace-1"
+        currentUserRole="admin"
+        allowedDomains={[]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Create Invite Link" }));
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectAccess: "workspace",
+        projectAssignments: undefined,
+      }),
+      expect.any(Object),
+    );
+  });
 });

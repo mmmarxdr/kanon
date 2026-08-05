@@ -97,12 +97,24 @@ export function InvitesSection({
     setSelectedProjectIds([]);
   }, [targetWorkspaceId]);
 
+  // If the picker lands on a workspace with no projects, fall back from
+  // all/selected so we never submit assigned + empty assignments.
+  useEffect(() => {
+    if (!projectsLoading && projects.length === 0 && projectAccess !== "workspace") {
+      setProjectAccess("workspace");
+      setSelectedProjectIds([]);
+    }
+  }, [projectsLoading, projects.length, projectAccess]);
+
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     const projectIds = projectAccess === "all"
       ? projects.map((project) => project.id)
       : selectedProjectIds;
-    const accessMode = projectAccess === "workspace" ? "workspace" : "assigned";
+    const accessMode =
+      projectAccess === "workspace" || projectIds.length === 0
+        ? "workspace"
+        : "assigned";
 
     createInvite.mutate(
       {

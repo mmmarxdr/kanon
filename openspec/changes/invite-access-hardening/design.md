@@ -21,7 +21,7 @@ from an assigned member with zero projects.
 
 Shared visibility for list and open:
 
-```
+```text
 if token.allowedProjectIds non-empty and project ∉ allowlist → deny
 if not workspace Member → deny
 if role in (owner, admin) → allow (effectiveRole = ws role)
@@ -43,6 +43,11 @@ workspace mode = all non-archived ∩ token).
 
 `CreateInviteBody` gains `projectAccess: workspace | assigned` (default `workspace`).
 When `assigned`, `projectAssignments` MUST be non-empty.
+
+Empty-workspace behavior for UI scope `all`: the web form disables `all` /
+`selected` when the target workspace has zero projects (and resets to
+`workspace` if the picker switches to an empty workspace while `all`/`selected`
+was selected). The API still rejects `assigned` + empty assignments.
 
 ## Workspace picker (web)
 

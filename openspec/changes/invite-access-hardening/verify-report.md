@@ -19,7 +19,7 @@ Strict TDD — schema/authz/list/invite apply covered by unit + integration test
 
 ## Commands
 
-```
+```shell
 pnpm --filter @kanon/api exec vitest run \
   src/middleware/require-role.test.ts \
   src/modules/invite/schema.test.ts \
