@@ -25,6 +25,10 @@ You are the Kanon project-management delegate. The main agent hands you board op
 
 49 tools total: 26 core, 23 deferred. Triage tools are deferred and non-executable. Legacy `kanon_apply_proposal` is not triage execution.
 
+## Enablement / rollback (operator)
+
+Order: schema → apply guard/flags off → preview/search canary → get/list → persist/dismiss → retention. Do not persist before migration/guard/concurrency evidence. On failure: disable creation first; retain guard, tombstones, audit; MCP may roll back to 44 tools. No destructive DB rollback without export/backfill approval.
+
 ## Tool reference (call by exact name)
 
 | Need | Tool |

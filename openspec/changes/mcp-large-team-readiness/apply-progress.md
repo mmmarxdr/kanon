@@ -39,3 +39,10 @@ Task 11.1: RED - Added `inventory.test.ts` plus extended instructions/descriptio
 Task 11.2: GREEN - Updated instructions with Triage (ToolSearch) enablement order; compressed persona; exported inventory/ceiling constants; documented protocol in mcp.mdx and kanon.md; trimmed ≥445 B from capture/groups/cycles/timesheet vs pre-triage (measured 487 B); instructions ≤1900 under fixed 1950 ceiling.
 Task 11.3: TRIANGULATE - Adversarial checks preserve all 44 legacy tool names, core/deferred classification, non-executable/legacy-apply guidance, and explicit "no workspace-wide queue".
 Task 11.4: REFACTOR - Consolidated count/ceiling constants without re-anchoring DESCRIPTION_BASELINE_BYTES=5650; `pnpm --filter @kanon/mcp test` green (514 passed). Branch: `feat/kan-193-mcp-inventory-docs`.
+
+# MCP large-team readiness PR12 Apply Progress
+
+Task 12.1: RED - Added observability/metrics/app/perf/MCP privacy tests for correlation, forbidden labels, redaction paths, SQL boundaries (LIMIT 11/51), and named profiles.
+Task 12.2: GREEN - `observability.ts` + registry metrics in `metrics.ts`; `app.ts` genReqId/X-Kanon-Correlation-ID echo + TRIAGE_PINO_REDACT_PATHS; `triage-preview-v1` / `triage-proposal-list-v1` harnesses (full 1000-sample behind TRIAGE_PERF=1).
+Task 12.3: TRIANGULATE - Fixture gates for P95/output budgets; source-plan asserts for visibility-first + limit+1 + no content fetch; MCP correlation/deadline privacy fixtures. Focused API suites + full `@kanon/mcp test` green (518 passed). Full monorepo/e2e load remains operator TRIAGE_PERF gate.
+Task 12.4: REFACTOR - Rollout/rollback runbook in `docs/modules/mcp.mdx` and `agents/kanon.md` (schema → guard → preview → get/list → persist/dismiss → retention; 44-tool rollback; no destructive DB rollback without export/backfill). Branch: `feat/kan-193-observability-perf`.

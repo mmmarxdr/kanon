@@ -50,6 +50,23 @@ A `.kanon` file binds a local repository to a Kanon workspace and project. Resol
 
 Every registered tool handler is wrapped so genuine tool use updates heartbeat activity. The background SSE client can consume workspace events, while graceful shutdown stops SSE and all heartbeat workers.
 
+## Rollout and rollback (operator)
+
+Enable capabilities only in this order:
+
+1. **Schema** — additive triage ledger/policy migration verified; no Issue shape change.
+2. **Apply guard / flags off** — triage-first legacy apply rejection + audit; `TRIAGE_PREVIEW_ENABLED` / `TRIAGE_PROPOSALS_ENABLED` remain false until evidence passes.
+3. **Read-only preview/search canary** — enable preview after `triage-preview-v1` evidence (authorized CTE + `LIMIT 11`, compact ≤16 KiB, P95 &lt;3s, zero domain writes).
+4. **Get/list** — enable after `triage-proposal-list-v1` visibility-before-predicates, `LIMIT 51`, 32 KiB list / 64 KiB get, and list P95 target.
+5. **Persist/dismiss** — only after exact-dedup, supersession, and concurrency evidence; dismiss &lt;1s / ≤8 KiB under profile.
+6. **Retention** — last; never shortens captured eligibility.
+
+Canary gates (rolling five-minute windows, ≥100 completed requests/stage): unexpected stage errors &gt;1% page and disable that stage; typed degradation &gt;10% halt that stage; unexpected errors &gt;5% disable all triage flags. Any security/invariant violation stops all triage flags immediately. Alerts never mutate Issues, proposal bytes, or audit.
+
+**Rollback** is flags-off / fix-forward: disable proposal creation first, then list/preview as needed. Retain immutable rows, apply guard, tombstones, audit, and authorized recovery. MCP may temporarily return to the prior **44-tool** discovery surface. Do **not** down-migrate enums/tables or delete audit rows in ordinary recovery. Destructive database rollback requires separate approval only after export/backfill and verification prove preserved history and compatibility.
+
+Reference profiles (set `TRIAGE_PERF=1` for full 1,000-sample runs on PG16/Node20, 4 vCPU/8 GiB): `triage-preview-v1`, `triage-proposal-list-v1`.
+
 <Warning>
 The MCP package must never bypass the API and access Prisma or PostgreSQL directly. Doing so would duplicate authorization and domain invariants.
 </Warning>

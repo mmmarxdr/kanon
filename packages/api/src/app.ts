@@ -54,6 +54,11 @@ import {
 } from "./modules/integrations/worker.js";
 import integrationRoutes from "./modules/integrations/routes.js";
 import { createInboundSyncCycle } from "./modules/integrations/inbound.js";
+import {
+  isCorrelationUuid,
+  TRIAGE_PINO_REDACT_PATHS,
+} from "./modules/triage/observability.js";
+import { randomUUID } from "node:crypto";
 
 export interface BuildAppOptions {
   /** Optional override for the email provider (useful for testing with a spy). */
@@ -83,6 +88,15 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     // users as a single bucket. Default (env.TRUST_PROXY=uniquelocal) is correct
     // for both the caddy→nginx→api and nginx→api topologies.
     trustProxy: env.TRUST_PROXY,
+    // KAN-193: accept X-Kanon-Correlation-ID (UUID) or mint one; used as Pino reqId.
+    genReqId: (req) => {
+      const raw = req.headers["x-kanon-correlation-id"];
+      const header = Array.isArray(raw) ? raw[0] : raw;
+      if (typeof header === "string" && isCorrelationUuid(header)) return header;
+      return randomUUID();
+    },
+    requestIdHeader: "x-kanon-correlation-id",
+    requestIdLogLabel: "reqId",
     logger: {
       level: process.env["NODE_ENV"] === "production" ? "info" : "debug",
       transport: process.env["NODE_ENV"] !== "production" ? { target: "pino-pretty" } : undefined,
@@ -90,11 +104,13 @@ export async function buildApp(opts: BuildAppOptions = {}) {
       // they never reach log aggregators. Pino replaces matched paths with
       // "[Redacted]". Paths are pino-style dot-notation; Authorization and
       // cookie cover auth material; password covers login-request bodies.
+      // KAN-193: also redact triage preview/suggestion bodies (defense in depth).
       redact: [
         "req.headers.authorization",
         "req.headers.cookie",
         "req.body.password",
         "req.body.apiKey",
+        ...TRIAGE_PINO_REDACT_PATHS,
       ],
       // ^ceiling: extend redact list if new sensitive fields are added (e.g.
       // req.body.token, req.body.refreshToken).
@@ -105,6 +121,11 @@ export async function buildApp(opts: BuildAppOptions = {}) {
         level: (label: string) => ({ level: label }),
       },
     },
+  });
+
+  // Echo correlation ID on every response for MCP/API continuity.
+  app.addHook("onRequest", async (request, reply) => {
+    reply.header("X-Kanon-Correlation-ID", request.id);
   });
 
   // Zod type provider for request/response validation

@@ -208,6 +208,17 @@ describe("KAN-193 documentation", () => {
     expect(mcpDoc).toMatch(/preview\/search → get\/list → persist\/dismiss → retention/);
   });
 
+  it("docs include rollout/rollback runbook and 44-tool rollback", () => {
+    expect(mcpDoc).toMatch(/Rollout and rollback/i);
+    expect(mcpDoc).toMatch(/triage-preview-v1/);
+    expect(mcpDoc).toMatch(/triage-proposal-list-v1/);
+    expect(mcpDoc).toMatch(/44-tool/);
+    expect(mcpDoc).toMatch(/Destructive database rollback/i);
+    expect(agentDoc).toMatch(/Enablement \/ rollback/i);
+    expect(agentDoc).toMatch(/44 tools/);
+    expect(agentDoc).toMatch(/export\/backfill/i);
+  });
+
   it("packages/mcp/agents/kanon.md documents triage tools without advertising apply-as-execution", () => {
     expect(agentDoc).toMatch(/49 tools/);
     expect(agentDoc).toContain("kanon_preview_issue_triage");

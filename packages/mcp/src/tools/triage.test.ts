@@ -422,3 +422,63 @@ describe("output budgets", () => {
     expect(body["degradation"]).toContain("output_truncated");
   });
 });
+
+describe("privacy / timeout continuity (KAN-193 PR12)", () => {
+  it("forwards correlation on all five tools without embedding query/cursor/model labels in errors", async () => {
+    const mockClient = {
+      previewIssueTriage: vi.fn().mockRejectedValue(
+        new KanonApiError(503, "TEMPORARY", "unavailable", undefined, {
+          category: "temporary_unavailability",
+          retry: "retry",
+          correlationId: CORRELATION,
+        }),
+      ),
+      persistTriageProposal: vi.fn(),
+      getTriageProposal: vi.fn(),
+      listTriageProposals: vi.fn(),
+      dismissTriageProposal: vi.fn(),
+    };
+    const tools = triageTools(registerTriageTools, mockClient as unknown as KanonClient);
+    const result = await tools.get("preview_issue_triage")!.handler({
+      phase: "prepare",
+      issueKey: "KAN-42",
+      correlationId: CORRELATION,
+    });
+    const body = parseResult(result);
+    expect(body["correlationId"]).toBe(CORRELATION);
+    expect(JSON.stringify(body)).not.toMatch(/"cursor"/i);
+    expect(JSON.stringify(body)).not.toMatch(/"model"/i);
+    expect(mockClient.previewIssueTriage.mock.calls[0]![2]).toEqual({
+      timeoutMs: 2900,
+      correlationId: CORRELATION,
+    });
+  });
+
+  it("uses design deadlines: preview/list 2900ms, dismiss 2000ms", async () => {
+    const mockClient = {
+      previewIssueTriage: vi.fn().mockResolvedValue({ previewSeal: "s" }),
+      listTriageProposals: vi.fn().mockResolvedValue({ rows: [], returnedCount: 0 }),
+      dismissTriageProposal: vi.fn().mockResolvedValue({ ok: true }),
+      persistTriageProposal: vi.fn(),
+      getTriageProposal: vi.fn(),
+    };
+    const tools = triageTools(registerTriageTools, mockClient as unknown as KanonClient);
+    await tools.get("preview_issue_triage")!.handler({
+      phase: "prepare",
+      issueKey: "KAN-1",
+      correlationId: CORRELATION,
+    });
+    await tools.get("list_triage_proposals")!.handler({
+      projectKey: "KAN",
+      correlationId: CORRELATION,
+    });
+    await tools.get("dismiss_triage_proposal")!.handler({
+      proposalId: PROPOSAL_ID,
+      reason: "duplicate",
+      correlationId: CORRELATION,
+    });
+    expect(mockClient.previewIssueTriage.mock.calls[0]![2].timeoutMs).toBe(2900);
+    expect(mockClient.listTriageProposals.mock.calls[0]![2].timeoutMs).toBe(2900);
+    expect(mockClient.dismissTriageProposal.mock.calls[0]![2].timeoutMs).toBe(2000);
+  });
+});

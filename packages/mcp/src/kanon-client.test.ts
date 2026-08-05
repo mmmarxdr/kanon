@@ -1065,4 +1065,22 @@ describe("KanonClient triage methods", () => {
     expect(abortSpy).toHaveBeenCalledWith(10_000);
     abortSpy.mockRestore();
   });
+
+  it("privacy: correlation header only — no query/cursor/model headers on triage calls", async () => {
+    const fetchMock = mockFetch({ rows: [] });
+    vi.stubGlobal("fetch", fetchMock);
+    await client.listTriageProposals(
+      "KAN",
+      { cursor: "opaque", limit: 20 },
+      { correlationId, timeoutMs: 2900 },
+    );
+    const [, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = opts.headers as Record<string, string>;
+    expect(headers["X-Kanon-Correlation-ID"]).toBe(correlationId);
+    expect(headers["X-Query"]).toBeUndefined();
+    expect(headers["X-Cursor"]).toBeUndefined();
+    expect(headers["X-Model"]).toBeUndefined();
+    // Cursor stays in the query string (API wire), never as a metric/log label here.
+    expect((fetchMock.mock.calls[0] as [string])[0]).toContain("cursor=");
+  });
 });
