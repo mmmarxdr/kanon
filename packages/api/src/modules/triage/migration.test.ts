@@ -91,6 +91,40 @@ describe("Triage Proposal Migration Schema", () => {
     await prisma.triageProposalLifecycleEvent.deleteMany({ where: { proposalId: proposal.id } });
     await prisma.triageProposal.delete({ where: { id: proposal.id } });
   });
+
+  it("rejects retention_days below the seven-day minimum", async () => {
+    await expect(
+      prisma.triagePolicy.create({
+        data: {
+          workspaceId: workspace.id,
+          version: "too-short",
+          retentionDays: 6,
+          dispositionListVisibility: "hidden",
+        },
+      }),
+    ).rejects.toThrow(/triage_policies_retention_days_min|CheckConstraintViolation|check constraint/i);
+  });
+
+  it("accepts disposed lifecycle for retention tombstones", async () => {
+    const proposal = await prisma.triageProposal.create({
+      data: {
+        identityDigest: crypto.randomBytes(32).toString("hex"),
+        targetIssueId: crypto.randomUUID(),
+        workspaceId: workspace.id,
+        projectId: project.id,
+        policyId: policy.id,
+        lifecycle: "disposed",
+        listSummary: { title: "tombstone" },
+        expiresAt: new Date(Date.now() - 86400000),
+        disposedAt: new Date(),
+      },
+    });
+
+    expect(proposal.lifecycle).toBe("disposed");
+    expect(proposal.disposedAt).not.toBeNull();
+
+    await prisma.triageProposal.delete({ where: { id: proposal.id } });
+  });
 });
 
 

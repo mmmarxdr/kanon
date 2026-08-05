@@ -1,5 +1,5 @@
 -- CreateEnum
-CREATE TYPE "TriageProposalLifecycleState" AS ENUM ('pending', 'dismissed', 'expired');
+CREATE TYPE "TriageProposalLifecycleState" AS ENUM ('pending', 'dismissed', 'expired', 'disposed');
 
 -- CreateTable
 CREATE TABLE "triage_policies" (
@@ -10,7 +10,8 @@ CREATE TABLE "triage_policies" (
     "disposition_list_visibility" TEXT NOT NULL DEFAULT 'hidden',
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT "triage_policies_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "triage_policies_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "triage_policies_retention_days_min" CHECK ("retention_days" >= 7)
 );
 
 -- CreateTable

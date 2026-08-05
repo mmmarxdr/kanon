@@ -43,6 +43,7 @@ import { triageProposalReadRoutes } from "./modules/triage/routes.js";
 import { bootstrapSetupToken } from "./modules/instance/service.js";
 import { eventBus } from "./services/event-bus/index.js";
 import { cleanupExpired } from "./modules/work-session/service.js";
+import { registerRetentionHousekeeping } from "./modules/triage/retention.js";
 import { registerNotificationService } from "./services/notification/index.js";
 import { createEmailProvider } from "./services/email/index.js";
 import type { EmailProvider } from "./services/email/types.js";
@@ -359,11 +360,18 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     cleanupTimer.unref?.();
   };
 
+  // ─── Triage Retention Housekeeping (self-rescheduling, non-overlapping) ──
+  // Expiry sweep every 60s (max 100) and retention sweep every 24h (max 100)
+  // with startup jitter. Uses `FOR UPDATE SKIP LOCKED` for concurrent safety
+  // and `unref()` so timers don't keep the process alive.
+  let stopRetention: (() => void) | undefined;
+
   app.addHook("onReady", async () => {
     scheduleCleanupTick();
     app.log.info(
       `Work session cleanup interval started (every ${CLEANUP_INTERVAL_MS / 1000}s, non-overlapping)`
     );
+    stopRetention = registerRetentionHousekeeping(app.log);
   });
 
   app.addHook("onClose", async () => {
@@ -371,6 +379,10 @@ export async function buildApp(opts: BuildAppOptions = {}) {
       clearTimeout(cleanupTimer);
       cleanupTimer = undefined;
       app.log.info("Work session cleanup interval stopped");
+    }
+    if (stopRetention) {
+      stopRetention();
+      stopRetention = undefined;
     }
   });
 
