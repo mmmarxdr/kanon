@@ -501,6 +501,45 @@ describe("Redmine-created issue import", () => {
     });
   });
 
+  it("requires legacy bindings to configure priority maps before activation", async () => {
+    const { owner, connection, binding } = await fixture();
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: { readMap: { "2": "in_progress" } },
+    });
+    const transport = remote({ issues: [], total_count: 0, offset: 0, limit: 100 });
+    await previewRedmineIssueImport(
+      connection.id,
+      binding.id,
+      owner.userId,
+      transport.dependencies,
+    );
+    transport.get.mockClear();
+
+    await expect(
+      activateRedmineIssueImport(
+        connection.id,
+        binding.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).rejects.toMatchObject({ code: "REDMINE_PRIORITY_UNMAPPED" });
+    expect(transport.get).not.toHaveBeenCalled();
+
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: { readMap: { "2": "in_progress", "priority:3": "high" } },
+    });
+    await expect(
+      activateRedmineIssueImport(
+        connection.id,
+        binding.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).resolves.toEqual({ importedCount: 0, issueKeys: [], replayed: false });
+  });
+
   it("serializes concurrent activation and replays without duplicate rows or keys", async () => {
     const { owner, project, connection, binding } = await fixture();
     const issue = redmineIssue();

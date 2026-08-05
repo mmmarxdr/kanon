@@ -504,6 +504,76 @@ describe("Redmine inbound sync", () => {
     });
   });
 
+  it("quarantines a remote date range whose start is after its due date", async () => {
+    const { issue, ref } = await fixture();
+    const observedAt = new Date("2026-08-01T10:02:47.000Z");
+    const setup = dependencies([change(observedAt, "review")]);
+    setup.loadIssueDetail.mockResolvedValue(
+      detailChange(observedAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+        fields: {
+          title: "Linked issue",
+          description: null,
+          statusId: "review",
+          priorityId: "3",
+          assignee: null,
+          startDate: "2026-08-20",
+          dueDate: "2026-08-02",
+          progress: 0,
+        },
+      }),
+    );
+
+    await runInboundSyncCycle(prisma, setup);
+
+    await expect(
+      prisma.issueSchedule.findUnique({ where: { issueId: issue.id } }),
+    ).resolves.toBeNull();
+    await expect(
+      prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } }),
+    ).resolves.toMatchObject({
+      metadata: expect.objectContaining({
+        baseline: expect.objectContaining({
+          fields: expect.objectContaining({ startDate: null, dueDate: null }),
+        }),
+      }),
+    });
+    await expect(
+      prisma.integrationInboundApplication.findFirstOrThrow({
+        where: { refId: ref.id, remoteUpdatedAt: observedAt },
+      }),
+    ).resolves.toMatchObject({
+      state: "conflict",
+      outcome: expect.objectContaining({
+        appliedFields: [],
+        conflictFields: ["startDate", "dueDate"],
+      }),
+    });
+    await expect(
+      prisma.integrationConflict.findFirstOrThrow({
+        where: { refId: ref.id, kind: "inbound-field-convergence" },
+      }),
+    ).resolves.toMatchObject({
+      localEvidence: {
+        issueId: issue.id,
+        issueKey: expect.any(String),
+        fields: {
+          startDate: expect.objectContaining({ reason: "invalid" }),
+          dueDate: expect.objectContaining({ reason: "invalid" }),
+        },
+      },
+      remoteEvidence: {
+        provider: "redmine",
+        remoteIssueId: "100",
+        remoteVersion: expect.any(String),
+        fields: {
+          startDate: { value: "2026-08-20", reason: "invalid-date-range" },
+          dueDate: { value: "2026-08-02", reason: "invalid-date-range" },
+        },
+      },
+    });
+  });
+
   it("rejects a credential replacement during linked convergence", async () => {
     const { credential, binding, issue, ref } = await fixture();
     const observedAt = new Date("2026-08-01T10:02:50.000Z");

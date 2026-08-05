@@ -84,10 +84,11 @@ function initialPriorityWriteMap(
   readMap: Record<string, IssuePriority>,
   existing?: Partial<Record<IssuePriority, string>> | null,
 ) {
+  const known = new Set(priorities.map((priority) => priority.id));
   return Object.fromEntries(
     ISSUE_PRIORITIES.map((priority) => [
       priority,
-      existing?.[priority] ??
+      (existing?.[priority] && known.has(existing[priority]) ? existing[priority] : undefined) ??
         priorities.find((remote) => readMap[remote.id] === priority)?.id ??
         priorities[0]?.id ??
         "",

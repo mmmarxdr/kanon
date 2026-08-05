@@ -900,7 +900,7 @@ async function convergeLinkedIssue(
           }
         : null,
     };
-  });
+  }, { timeout: 30_000 });
 
   if (typeof outcome === "string") return outcome;
   if (!outcome.transition) return outcome.result;

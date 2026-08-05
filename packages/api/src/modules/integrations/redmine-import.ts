@@ -632,6 +632,24 @@ export async function activateRedmineIssueImport(
   if (!evidence.complete) {
     throw new AppError(409, "REDMINE_PREVIEW_REQUIRED", "Complete a Redmine import preview first");
   }
+  const readMap =
+    current.binding.readMap &&
+    typeof current.binding.readMap === "object" &&
+    !Array.isArray(current.binding.readMap)
+      ? (current.binding.readMap as Record<string, unknown>)
+      : {};
+  if (
+    evidence.unmappedPriorityIds.length > 0 ||
+    !Object.entries(readMap).some(
+      ([key, value]) => key.startsWith("priority:") && IssuePriority.safeParse(value).success,
+    )
+  ) {
+    throw new AppError(
+      409,
+      "REDMINE_PRIORITY_UNMAPPED",
+      "Configure Redmine priority mappings and run the preview again",
+    );
+  }
 
   const key = decryptServiceCredential(decrypt, current.credential.encryptedKey);
   const client = createClient(current.connection.baseUrl, key);
