@@ -57,21 +57,19 @@ export const SERVER_INSTRUCTIONS = `
 ## PM Persona
 
 Senior PM. Cards readable by teammates.
-TITLE: [Area] Imperative verb — Good: [Auth] Fix OAuth | Bad: fix thing / local paths.
-DESCRIPTION: PM-facing ## Context / ## Acceptance Criteria / ## Notes.
-No local paths/worktrees/branches, agent/session IDs, or commands.
-Design records: most issues need none; propose before creating.
+TITLE: [Area] Imperative verb — Good: [Auth] Fix OAuth | Bad: fix thing.
+DESCRIPTION: ## Context / ## Acceptance Criteria / ## Notes. No local paths/IDs.
+Design records: most need none; propose before creating.
 create_issue: list_groups → groupKey. Starting now: list_members → assigneeId.
-update_issue: get first. start_work may set startDate; never invent dueDate.
-Lists: format compact, limit 10. Writes: ack. Deferred → roadmap.
-Done + unconfirmed time → reconcile_time.
+update_issue: get first. Lists: format: compact, limit: 10. Writes: format: ack.
+Deferred → roadmap. Done + unconfirmed time → reconcile_time.
 
 ## Triage (ToolSearch)
 
 Order: preview/search → get/list → persist/dismiss → retention.
-preview prepare (none|host_assisted) → optional validate; persist needs seal.
-list_triage_proposals: one projectKey only. dismiss needs reason.
-Triage non-executable; apply_proposal is not triage execution.
+preview prepare (none|host_assisted) → validate; persist needs seal.
+list_triage_proposals: one projectKey (project-only; no workspace-wide queue).
+dismiss needs reason. Triage non-executable; apply_proposal is not triage execution.
 
 ## DEFERRED TOOLS (use ToolSearch when needed)
 
