@@ -23,7 +23,12 @@ See proposal. Bulk body:
 
 ## Detail
 
-Memberships include `projectAccess`. When `assigned`, include ProjectMember rows for projects in that workspace. When `workspace`, `projects: []` means all active projects.
+Memberships include `projectAccess`.
+
+- `projectAccess === "workspace"` → `projects: null` (all active workspace projects; not an empty assignment list).
+- `projectAccess === "assigned"` → `projects: [...]` (may be `[]` when zero ProjectMember rows).
+
+`PUT .../memberships/:memberId/projects` **rejects** (`422 INVALID_PROJECT_ACCESS`) when `projectAccess !== "assigned"`. It does not clear or touch ProjectMember rows in workspace mode. Switching `projectAccess` via PATCH does not auto-delete/create ProjectMember rows; assigned lists are managed only via PUT.
 
 ## Assignment pickers (admin-only)
 

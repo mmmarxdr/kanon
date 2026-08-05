@@ -118,20 +118,29 @@ export async function getUserDetail(userId: string) {
 
   const memberships = await Promise.all(
     user.members.map(async (m) => {
-      const projects =
-        m.projectAccess === "assigned"
-          ? await prisma.projectMember.findMany({
-              where: {
-                userId,
-                project: { workspaceId: m.workspaceId, archived: false },
-              },
-              select: {
-                role: true,
-                project: { select: { id: true, key: true, name: true } },
-              },
-              orderBy: { project: { key: "asc" } },
-            })
-          : [];
+      if (m.projectAccess !== "assigned") {
+        return {
+          memberId: m.id,
+          workspaceId: m.workspace.id,
+          workspaceName: m.workspace.name,
+          workspaceSlug: m.workspace.slug,
+          role: m.role,
+          projectAccess: m.projectAccess,
+          projects: null,
+        };
+      }
+
+      const projects = await prisma.projectMember.findMany({
+        where: {
+          userId,
+          project: { workspaceId: m.workspaceId, archived: false },
+        },
+        select: {
+          role: true,
+          project: { select: { id: true, key: true, name: true } },
+        },
+        orderBy: { project: { key: "asc" } },
+      });
 
       return {
         memberId: m.id,
@@ -296,6 +305,25 @@ export async function replaceMembershipProjects(
       "INVALID_PROJECT_ACCESS",
       "Project list can only be replaced when projectAccess is assigned",
     );
+  }
+
+  const requestedIds = [...new Set(body.projects.map((p) => p.projectId))];
+  if (requestedIds.length > 0) {
+    const live = await prisma.project.findMany({
+      where: {
+        id: { in: requestedIds },
+        workspaceId: member.workspaceId,
+        archived: false,
+      },
+      select: { id: true },
+    });
+    if (live.length !== requestedIds.length) {
+      throw new AppError(
+        422,
+        "INVALID_PROJECT",
+        "One or more projects are missing, archived, or outside this workspace",
+      );
+    }
   }
 
   await prisma.$transaction(async (tx) => {

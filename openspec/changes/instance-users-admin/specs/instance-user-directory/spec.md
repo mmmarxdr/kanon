@@ -9,16 +9,16 @@ Admin user routes MUST require instance admin. Non-admins get 403.
 `GET /api/admin/users` MUST support `q`, `limit`, `offset`, optional `verified`, and return `total`.
 
 ### R3 Detail
-`GET /api/admin/users/:userId` MUST return user fields and memberships with role, projectAccess, and project assignments.
+`GET /api/admin/users/:userId` MUST return user fields and memberships with role, projectAccess, and project assignments. For `projectAccess=workspace`, `projects` MUST be `null`. For `projectAccess=assigned`, `projects` MUST be an array (possibly empty).
 
 ### R4 Verify
 `POST .../verify-email` MUST set `emailVerifiedAt` when null; MUST be idempotent if already set.
 
 ### R5 Membership edits
-Instance admin MUST be able to add/remove workspace membership and patch role/projectAccess subject to existing owner-cap rules.
+Instance admin MUST be able to add/remove workspace membership and patch role/projectAccess subject to existing owner-cap rules. PATCH of `projectAccess` MUST NOT implicitly mutate ProjectMember rows.
 
 ### R6 Assigned projects
-When projectAccess is assigned, `PUT .../projects` MUST replace ProjectMember rows for that user in the membership's workspace.
+When projectAccess is assigned, `PUT .../projects` MUST replace ProjectMember rows for that user in the membership's workspace. Every requested `projectId` MUST be a live (non-archived) project in that workspace; otherwise the request MUST fail without deleting existing rows. When projectAccess is workspace, `PUT .../projects` MUST reject with `422 INVALID_PROJECT_ACCESS` and leave ProjectMember rows unchanged.
 
 ### R7 Bulk
 Bulk verify_email and remove_from_workspace MUST return per-user ok/error without failing the whole batch on a single miss.

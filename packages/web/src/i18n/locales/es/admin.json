@@ -16,6 +16,8 @@
   "loading": "Cargando usuarios…",
   "empty": "No hay usuarios que coincidan.",
   "failed": "Error al cargar usuarios: {{message}}",
+  "detailFailed": "Error al cargar usuario: {{message}}",
+  "bulkPartialFailed": "{{failed}} de {{total}} fallaron",
   "prev": "Anterior",
   "next": "Siguiente",
   "pageOf": "{{from}}–{{to}} de {{total}}",

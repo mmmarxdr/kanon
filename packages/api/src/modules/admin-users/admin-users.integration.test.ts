@@ -227,7 +227,7 @@ describe("GET /api/admin/users — list + detail", () => {
     expect(detail.json().emailVerifiedAt).toBe("2026-01-15T12:00:00.000Z");
     expect(detail.json().memberships[0]).toMatchObject({
       projectAccess: "workspace",
-      projects: [],
+      projects: null,
     });
   });
 });
@@ -369,6 +369,38 @@ describe("POST/PATCH/DELETE admin user mutations", () => {
     });
     expect(res.statusCode).toBe(422);
     expect(res.json().code).toBe("INVALID_PROJECT_ACCESS");
+  });
+
+  it("422 when replace projects includes foreign id and keeps existing assignments", async () => {
+    const { token } = await seedInstanceAdminUser();
+    const ws = await seedTestWorkspace();
+    const otherWs = await seedTestWorkspace();
+    const project = await seedTestProject(ws.id, "OK");
+    const foreign = await seedTestProject(otherWs.id, "FX");
+    const member = await seedTestMemberWithRole(ws.id, "member", {
+      projectAccess: "assigned",
+    });
+    await seedTestProjectMember(member.userId, project.id, "pm");
+
+    const res = await app.inject({
+      method: "PUT",
+      url: `/api/admin/users/${member.userId}/memberships/${member.id}/projects`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        projects: [
+          { projectId: project.id, role: "member" },
+          { projectId: foreign.id, role: "member" },
+        ],
+      },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().code).toBe("INVALID_PROJECT");
+
+    const still = await prisma.projectMember.findMany({
+      where: { userId: member.userId, projectId: project.id },
+    });
+    expect(still).toHaveLength(1);
+    expect(still[0]!.role).toBe("pm");
   });
 
   it("bulk verify and remove_from_workspace", async () => {

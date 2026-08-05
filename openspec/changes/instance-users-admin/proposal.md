@@ -26,7 +26,7 @@ Thin `admin-users` module orchestrating existing member/project-member services.
 
 ## Rollback
 
-Remove routes + web page. No schema migration. No data loss.
+Remove routes + web page. No schema migration. Rollback removes the feature only — it does **not** reverse email verifications, memberships, or project assignments already applied through the admin APIs. Recover those via the same admin surface (or workspace member APIs) / DB ops as needed.
 
 ## Success Criteria
 

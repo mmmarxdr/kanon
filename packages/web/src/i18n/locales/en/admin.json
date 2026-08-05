@@ -16,6 +16,8 @@
   "loading": "Loading users…",
   "empty": "No users match.",
   "failed": "Failed to load users: {{message}}",
+  "detailFailed": "Failed to load user: {{message}}",
+  "bulkPartialFailed": "{{failed}} of {{total}} failed",
   "prev": "Previous",
   "next": "Next",
   "pageOf": "{{from}}–{{to}} of {{total}}",

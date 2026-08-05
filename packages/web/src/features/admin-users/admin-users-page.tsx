@@ -54,7 +54,7 @@ function MembershipEditor({
   const [role, setRole] = useState(membership.role);
   const [projectAccess, setProjectAccess] = useState(membership.projectAccess);
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>(
-    membership.projects.map((p) => p.projectId),
+    (membership.projects ?? []).map((p) => p.projectId),
   );
 
   const patch = usePatchAdminMembershipMutation(userId);
@@ -67,7 +67,7 @@ function MembershipEditor({
   useEffect(() => {
     setRole(membership.role);
     setProjectAccess(membership.projectAccess);
-    setSelectedProjectIds(membership.projects.map((p) => p.projectId));
+    setSelectedProjectIds((membership.projects ?? []).map((p) => p.projectId));
   }, [membership]);
 
   return (
@@ -152,7 +152,9 @@ function MembershipEditor({
                 memberId: membership.memberId,
                 projects: selectedProjectIds.map((projectId) => ({
                   projectId,
-                  role: "member",
+                  role:
+                    membership.projects?.find((p) => p.projectId === projectId)
+                      ?.role ?? role,
                 })),
               });
             }}
@@ -218,7 +220,7 @@ function UserDetailPanel({
     return (
       <SettingsCard title={t("detailTitle")} testId="admin-user-detail">
         <p className="text-sm text-destructive">
-          {t("failed", { message: detail.error?.message ?? "error" })}
+          {t("detailFailed", { message: detail.error?.message ?? "error" })}
         </p>
       </SettingsCard>
     );
@@ -358,6 +360,7 @@ export function AdminUsersPage() {
     null,
   );
   const [bulkWorkspaceId, setBulkWorkspaceId] = useState("");
+  const [bulkError, setBulkError] = useState<string | null>(null);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -415,15 +418,35 @@ export function AdminUsersPage() {
 
   async function applyBulk() {
     if (!bulkMode || selected.size === 0) return;
-    await bulk.mutateAsync({
-      action: bulkMode,
-      userIds: [...selected],
-      workspaceId:
-        bulkMode === "remove_from_workspace" ? bulkWorkspaceId : undefined,
-    });
-    setSelected(new Set());
-    setBulkMode(null);
-    setBulkWorkspaceId("");
+    setBulkError(null);
+    try {
+      const result = await bulk.mutateAsync({
+        action: bulkMode,
+        userIds: [...selected],
+        workspaceId:
+          bulkMode === "remove_from_workspace" ? bulkWorkspaceId : undefined,
+      });
+      const failed = result.results.filter((r) => !r.ok);
+      const succeeded = result.results.filter((r) => r.ok).map((r) => r.userId);
+      setSelected((prev) => {
+        const next = new Set(prev);
+        for (const id of succeeded) next.delete(id);
+        return next;
+      });
+      if (failed.length === 0) {
+        setBulkMode(null);
+        setBulkWorkspaceId("");
+      } else {
+        setBulkError(
+          t("bulkPartialFailed", {
+            failed: failed.length,
+            total: result.results.length,
+          }),
+        );
+      }
+    } catch (err) {
+      setBulkError(err instanceof ApiError ? err.message : "Bulk request failed");
+    }
   }
 
   return (
@@ -501,9 +524,7 @@ export function AdminUsersPage() {
                       (bulkMode === "remove_from_workspace" && !bulkWorkspaceId)
                     }
                     onClick={() => {
-                      void applyBulk().catch((err: unknown) => {
-                        if (!(err instanceof ApiError)) return;
-                      });
+                      void applyBulk();
                     }}
                   >
                     {t("bulkApply")}
@@ -514,10 +535,19 @@ export function AdminUsersPage() {
                     onClick={() => {
                       setBulkMode(null);
                       setBulkWorkspaceId("");
+                      setBulkError(null);
                     }}
                   >
                     {t("bulkCancel")}
                   </button>
+                  {bulkError && (
+                    <span
+                      data-testid="bulk-error"
+                      className="text-xs text-destructive"
+                    >
+                      {bulkError}
+                    </span>
+                  )}
                 </>
               )}
             </div>

@@ -33,7 +33,8 @@ export interface AdminMembership {
   workspaceSlug: string;
   role: string;
   projectAccess: "workspace" | "assigned";
-  projects: AdminMembershipProject[];
+  /** null = workspace-wide access; array = assigned (may be empty). */
+  projects: AdminMembershipProject[] | null;
 }
 
 export interface AdminUserDetail {

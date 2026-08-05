@@ -28,7 +28,7 @@ pnpm --filter @kanon/web exec vitest run \
   src/components/__tests__/app-sidebar.test.tsx
 ```
 
-All green (API 10, web 18 including pre-existing sidebar cases).
+Focused Vitest commands above: green (API suite + web page/sidebar). CI and manual checks tracked on the PR (pending until merge-ready).
 
 ## Notes
 
