@@ -23,7 +23,7 @@ export async function triageProposalReadRoutes(appRaw: FastifyInstance) {
         }),
       },
     },
-    getIssueTriageHistory,
+    async (request, reply) => getIssueTriageHistory(request, reply),
   );
 
   app.get(

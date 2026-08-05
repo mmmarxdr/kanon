@@ -134,60 +134,24 @@ export async function proposalActionRoutes(
     "/proposals/:id/apply",
     {
       preHandler: [
+        // Triage-first UUID resolution: never treat a triage proposal id as legacy apply.
         async (request, _reply) => {
-          const user = request.user;
-          if (!user) throw new AppError(401, "UNAUTHORIZED", "Authentication required");
-
           const id = (request.params as Record<string, string>)["id"];
           if (!id) throw new AppError(400, "PROPOSAL_ID_REQUIRED", "Proposal ID is required");
 
-          // Triage-first UUID resolution
-          const tp = await prisma.triageProposal.findUnique({ where: { id } });
-          if (tp) {
-            // Check flags
-            if (process.env.FF_MCP_TRIAGE_APPLY !== "true") {
-              throw new AppError(403, "CAPABILITY_DISABLED", "Triage capability is disabled");
-            }
-            throw new AppError(422, "TRIAGE_PROPOSAL_NON_EXECUTABLE", "Cannot execute triage proposal here");
+          const tp = await prisma.triageProposal.findUnique({ where: { id }, select: { id: true } });
+          if (!tp) return;
+
+          if (process.env["FF_MCP_TRIAGE_APPLY"] !== "true") {
+            throw new AppError(403, "CAPABILITY_DISABLED", "Triage capability is disabled");
           }
-
-          // Fallback to legacy Proposal Role checking
-          const proposal = await prisma.mcpProposal.findUnique({
-            where: { id },
-            select: { workspaceId: true, projectId: true },
-          });
-
-          if (!proposal) {
-            throw new AppError(404, "PROPOSAL_NOT_FOUND", "Proposal not found");
-          }
-          if (
-            proposal.projectId != null &&
-            user.allowedProjectIds &&
-            user.allowedProjectIds.length > 0 &&
-            !user.allowedProjectIds.includes(proposal.projectId)
-          ) {
-            throw new AppError(403, "FORBIDDEN", "Token scope does not allow access to this project");
-          }
-
-          const wsMember = await prisma.member.findUnique({
-            where: { userId_workspaceId: { userId: user.userId, workspaceId: proposal.workspaceId } },
-            select: { id: true, role: true },
-          });
-
-          if (!wsMember) throw new AppError(403, "FORBIDDEN", "You are not a member of this workspace");
-          
-          const ROLE_HIERARCHY = ["viewer", "member", "pm", "admin", "owner"];
-          if (ROLE_HIERARCHY.indexOf(wsMember.role) < ROLE_HIERARCHY.indexOf("member")) {
-            throw new AppError(403, "FORBIDDEN", `This action requires at least the "member" role`);
-          }
-
-          request.member = {
-            id: wsMember.id,
-            role: wsMember.role,
-            workspaceId: proposal.workspaceId,
-            userId: user.userId,
-          };
+          throw new AppError(
+            422,
+            "TRIAGE_PROPOSAL_NON_EXECUTABLE",
+            "Cannot execute triage proposal here",
+          );
         },
+        requireProposalRole("id", "member"),
       ],
       schema: { params: ProposalIdParam },
     },

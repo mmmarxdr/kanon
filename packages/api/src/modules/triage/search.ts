@@ -47,12 +47,13 @@ export async function searchIssues(
         targetProjectId = targetIssueObj.projectId;
       }
 
-      // If scope is explicitly a project or anchored by target issue, project must match
-      if (input.scope?.kind === "project" && input.scope.projectId) {
-        if (targetProjectId && targetProjectId !== input.scope.projectId) {
-          throw new AppError(400, "SCOPE_MISMATCH", "Target issue project does not match target project scope");
-        }
-        targetProjectId = input.scope.projectId;
+      // Project scope is target-anchored (contract scope.kind=project has no projectId).
+      if (input.scope?.kind === "project" && !targetProjectId) {
+        throw new AppError(
+          400,
+          "SCOPE_MISMATCH",
+          "Project scope requires targetIssueId to resolve the project",
+        );
       }
 
       const projectIdCondition = targetProjectId
@@ -147,19 +148,23 @@ export async function searchIssues(
         });
 
         return {
-          rank: idx + 1,
           issueId: r.issueId,
           issueKey: r.issueKey,
-          title: r.title,
-          type: r.type,
-          priority: r.priority,
-          state: r.state,
           projectId: r.projectId,
           projectKey: r.projectKey,
+          title: r.title,
+          state: r.state,
+          type: r.type ?? null,
+          priority: r.priority ?? null,
+          labels: Array.isArray(r.labels) ? r.labels.slice(0, 8) : [],
+          groupKey: r.groupKey ?? null,
+          assigneeId: r.assigneeId ?? null,
+          cycleId: r.cycleId ?? null,
+          createdAt: new Date(r.createdAt).toISOString(),
+          updatedAt: new Date(r.updatedAt).toISOString(),
+          rank: idx + 1,
           sourceVersion: sVersion,
           sourceHash: sHash,
-          reasonClasses: ["query_match"],
-          confidence: "high" as const,
         };
       });
 

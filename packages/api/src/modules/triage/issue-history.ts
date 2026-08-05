@@ -5,15 +5,17 @@ import { encodeIssueSearchCursor, decodeIssueSearchCursor } from "./cursor.js";
 import { calculateEffectiveState } from "./history-helper.js";
 
 export async function getIssueTriageHistory(
-  request: FastifyRequest<{ Params: { key: string }; Querystring: { limit: number; cursor?: string } }>,
-  reply: FastifyReply
+  request: FastifyRequest,
+  reply: FastifyReply,
 ) {
-  const limit = Math.max(1, Math.min(20, request.query.limit ?? 10));
-  const cursorStr = request.query.cursor;
+  const params = request.params as { key: string };
+  const query = request.query as { limit?: number; cursor?: string };
+  const limit = Math.max(1, Math.min(20, query.limit ?? 10));
+  const cursorStr = query.cursor;
 
   const issue = await prisma.issue.findUnique({
-    where: { key: request.params.key },
-    select: { id: true, state: true, projectId: true }
+    where: { key: params.key },
+    select: { id: true, state: true, projectId: true },
   });
   if (!issue) {
      return reply.status(404).send({ error: "Not found" });
@@ -88,7 +90,9 @@ export async function getIssueTriageHistory(
     let nextCursor: string | undefined = undefined;
     if (proposals.length > limit) {
       const nextProposal = proposals[limit - 1];
-      nextCursor = Buffer.from(`${nextProposal.createdAt.toISOString()}|${nextProposal.id}`).toString('base64');
+      if (nextProposal) {
+        nextCursor = Buffer.from(`${nextProposal.createdAt.toISOString()}|${nextProposal.id}`).toString("base64");
+      }
       proposals.pop();
     }
 
@@ -115,7 +119,13 @@ export async function getIssueTriageHistory(
       
       if (responsePayload.rows.length > 0) {
         const nextProposal = responsePayload.rows[responsePayload.rows.length - 1];
-        responsePayload.nextCursor = Buffer.from(`${nextProposal.createdAt.toISOString()}|${nextProposal.id}`).toString('base64');
+        if (nextProposal) {
+          responsePayload.nextCursor = Buffer.from(
+            `${nextProposal.createdAt.toISOString()}|${nextProposal.id}`,
+          ).toString("base64");
+        } else {
+          responsePayload.nextCursor = undefined;
+        }
       } else {
         responsePayload.nextCursor = undefined;
       }
