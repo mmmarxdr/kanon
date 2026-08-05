@@ -80,7 +80,7 @@ export function dataResult(data: unknown): ToolResult {
  * Triage success payload — preserves API fields and adds MCP contract/version.
  */
 export function triageDataResult(data: unknown, correlationId?: string): ToolResult {
-  const base =
+  const base: Record<string, unknown> =
     data && typeof data === "object" && !Array.isArray(data)
       ? { ...(data as Record<string, unknown>) }
       : { data };
