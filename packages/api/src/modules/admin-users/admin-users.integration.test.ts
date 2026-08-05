@@ -389,6 +389,39 @@ describe("POST/PATCH/DELETE admin user mutations", () => {
     });
   });
 
+  it("422 when add membership gets invalid initial projects and leaves no membership", async () => {
+    const { token } = await seedInstanceAdminUser();
+    const ws = await seedTestWorkspace();
+    const otherWs = await seedTestWorkspace();
+    const foreign = await seedTestProject(otherWs.id, "FX");
+    const target = await prisma.user.create({
+      data: {
+        email: `orphan-${randomUUID().slice(0, 8)}@example.com`,
+        passwordHash: "$2b$04$placeholder",
+        displayName: "Orphan",
+      },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/admin/users/${target.id}/memberships`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        workspaceId: ws.id,
+        role: "member",
+        projectAccess: "assigned",
+        projects: [{ projectId: foreign.id, role: "member" }],
+      },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().code).toBe("INVALID_PROJECT");
+
+    const leftover = await prisma.member.findUnique({
+      where: { userId_workspaceId: { userId: target.id, workspaceId: ws.id } },
+    });
+    expect(leftover).toBeNull();
+  });
+
   it("422 when replacing projects on workspace-mode membership", async () => {
     const { token } = await seedInstanceAdminUser();
     const ws = await seedTestWorkspace();

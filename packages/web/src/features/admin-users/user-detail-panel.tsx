@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ApiError } from "@/lib/api-client";
 import { SettingsCard } from "@/components/ui/settings-card";
@@ -44,6 +44,7 @@ function MembershipCard({
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [savedFlash, setSavedFlash] = useState<string | null>(null);
+  const flashTimer = useRef<number | null>(null);
 
   const patch = usePatchAdminMembershipMutation(userId);
   const remove = useRemoveAdminMembershipMutation(userId);
@@ -53,15 +54,25 @@ function MembershipCard({
     projectAccess === "assigned" ? membership.workspaceId : null,
   );
 
+  // Reset draft fields only when switching membership cards — keep edits across detail refetches.
   useEffect(() => {
     setRole(membership.role);
     setProjectAccess(membership.projectAccess);
     setSelectedProjectIds((membership.projects ?? []).map((p) => p.projectId));
-  }, [membership]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: memberId only
+  }, [membership.memberId]);
+
+  useEffect(
+    () => () => {
+      if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+    },
+    [],
+  );
 
   function flash(msg: string) {
     setSavedFlash(msg);
-    window.setTimeout(() => setSavedFlash(null), 2000);
+    if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setSavedFlash(null), 2000);
   }
 
   const dirtyMembership =
@@ -164,7 +175,7 @@ function MembershipCard({
                       checked={checked}
                       onChange={() => {
                         setSelectedProjectIds((prev) =>
-                          checked
+                          prev.includes(p.id)
                             ? prev.filter((id) => id !== p.id)
                             : [...prev, p.id],
                         );
@@ -389,6 +400,7 @@ export function UserDetailPanel({
   const [addAccess, setAddAccess] = useState<"workspace" | "assigned">("assigned");
   const [addProjectIds, setAddProjectIds] = useState<string[]>([]);
   const [addError, setAddError] = useState<string | null>(null);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
 
   const addProjectsQuery = useAdminWorkspaceProjectsQuery(
     addAccess === "assigned" && addWorkspaceId ? addWorkspaceId : null,
@@ -459,15 +471,28 @@ export function UserDetailPanel({
         </div>
 
         {!user.emailVerified && (
-          <button
-            type="button"
-            data-testid="verify-email-btn"
-            className="self-start rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
-            disabled={verify.isPending}
-            onClick={() => verify.mutate(userId)}
-          >
-            {t("verifyEmail")}
-          </button>
+          <div className="flex flex-col gap-1">
+            <button
+              type="button"
+              data-testid="verify-email-btn"
+              className="self-start rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+              disabled={verify.isPending}
+              onClick={() => {
+                setVerifyError(null);
+                verify.mutate(userId, {
+                  onError: (err) =>
+                    setVerifyError(errorMessage(err, t("actionFailed"))),
+                });
+              }}
+            >
+              {t("verifyEmail")}
+            </button>
+            {verifyError && (
+              <p className="text-xs text-destructive" data-testid="verify-email-error">
+                {verifyError}
+              </p>
+            )}
+          </div>
         )}
 
         <section className="flex flex-col gap-3">
@@ -577,7 +602,7 @@ export function UserDetailPanel({
                               checked={checked}
                               onChange={() => {
                                 setAddProjectIds((prev) =>
-                                  checked
+                                  prev.includes(p.id)
                                     ? prev.filter((id) => id !== p.id)
                                     : [...prev, p.id],
                                 );

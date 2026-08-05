@@ -15,6 +15,30 @@ import type {
 /** Instance admins orchestrate as workspace owner for cross-WS privilege. */
 const INSTANCE_ACTING_ROLE: MemberRole = "owner";
 
+async function assertProjectsInWorkspace(
+  workspaceId: string,
+  projects: Array<{ projectId: string }>,
+) {
+  const requestedIds = [...new Set(projects.map((p) => p.projectId))];
+  if (requestedIds.length === 0) return;
+
+  const live = await prisma.project.findMany({
+    where: {
+      id: { in: requestedIds },
+      workspaceId,
+      archived: false,
+    },
+    select: { id: true },
+  });
+  if (live.length !== requestedIds.length) {
+    throw new AppError(
+      422,
+      "INVALID_PROJECT",
+      "One or more projects are missing, archived, or outside this workspace",
+    );
+  }
+}
+
 /** Instance-admin directory helpers for assignment pickers (not a public catalog). */
 export async function listAllWorkspaces() {
   const rows = await prisma.workspace.findMany({
@@ -241,6 +265,14 @@ export async function addMembership(
     throw new AppError(404, "WORKSPACE_NOT_FOUND", "Workspace not found");
   }
 
+  const initialProjects =
+    body.projectAccess === "assigned" && body.projects && body.projects.length > 0
+      ? body.projects
+      : null;
+  if (initialProjects) {
+    await assertProjectsInWorkspace(body.workspaceId, initialProjects);
+  }
+
   const member = await memberService.addMember(
     body.workspaceId,
     user.email,
@@ -256,14 +288,20 @@ export async function addMembership(
     });
   }
 
-  if (
-    body.projectAccess === "assigned" &&
-    body.projects &&
-    body.projects.length > 0
-  ) {
-    await replaceMembershipProjects(userId, member.id, {
-      projects: body.projects,
-    });
+  if (initialProjects) {
+    try {
+      await replaceMembershipProjects(userId, member.id, {
+        projects: initialProjects,
+      });
+    } catch (err) {
+      await memberService.removeMember(
+        body.workspaceId,
+        member.id,
+        actorUserId,
+        INSTANCE_ACTING_ROLE,
+      );
+      throw err;
+    }
   }
 
   return getUserDetail(userId);
@@ -407,24 +445,7 @@ export async function replaceMembershipProjects(
     );
   }
 
-  const requestedIds = [...new Set(body.projects.map((p) => p.projectId))];
-  if (requestedIds.length > 0) {
-    const live = await prisma.project.findMany({
-      where: {
-        id: { in: requestedIds },
-        workspaceId: member.workspaceId,
-        archived: false,
-      },
-      select: { id: true },
-    });
-    if (live.length !== requestedIds.length) {
-      throw new AppError(
-        422,
-        "INVALID_PROJECT",
-        "One or more projects are missing, archived, or outside this workspace",
-      );
-    }
-  }
+  await assertProjectsInWorkspace(member.workspaceId, body.projects);
 
   await prisma.$transaction(async (tx) => {
     await tx.projectMember.deleteMany({

@@ -251,6 +251,9 @@ describe("AdminUsersPage", () => {
 
     fireEvent.change(moveSelect, { target: { value: "ws2" } });
     fireEvent.click(screen.getByTestId("confirm-move-m1"));
-    expect(idleMutation.mutate).toHaveBeenCalled();
+    expect(idleMutation.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ memberId: "m1", workspaceId: "ws2" }),
+      expect.anything(),
+    );
   });
 });

@@ -376,7 +376,8 @@ export function AdminUsersPage() {
                       disabled={
                         bulk.isPending ||
                         !bulkWorkspaceId ||
-                        sharedWorkspaces.length === 0
+                        sharedWorkspaces.length === 0 ||
+                        !sharedWorkspaces.some((w) => w.id === bulkWorkspaceId)
                       }
                       onClick={() => {
                         void applyBulk();

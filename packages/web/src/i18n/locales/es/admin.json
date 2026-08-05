@@ -58,7 +58,7 @@
   "clearProjects": "Limpiar",
   "saveMembership": "Guardar rol y acceso",
   "removeMembership": "Quitar del espacio",
-  "confirmRemove": "Confirmar quitar",
+  "confirmRemove": "Confirmar eliminación",
   "moveMembership": "Mover a otro espacio…",
   "moveMembershipTitle": "Mover a otro espacio",
   "moveMembershipHelp": "Agrega al usuario al espacio destino con el rol/acceso de abajo y lo quita de este. Las asignaciones de proyecto no se transfieren entre espacios.",
