@@ -23,6 +23,9 @@ export default defineConfig({
         "src/index.ts",
         "src/**/types.ts",
         "src/**/interface.ts",
+        // KAN-193: perf harnesses are opt-in (TRIAGE_PERF=1), not request-path code.
+        "src/modules/triage/performance/**",
+        "src/modules/triage/index.ts",
       ],
       // Ratchet: set ~1pt below the measured CI baseline (KAN-84 slice 4 raised
       // these after the roadmap + SSE coverage work). Measured global on a clean

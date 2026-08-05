@@ -139,4 +139,26 @@ describe("searchIssues (KAN-193 PR4)", () => {
     expect(res.returnedCount).toBe(2);
     expect(res.nextCursor).toBeDefined();
   });
+
+  it("rejects project scope without targetIssueId", async () => {
+    await expect(
+      searchIssues(workspaceId, userId, {
+        q: "authentication",
+        limit: 10,
+        projection: "compact",
+        scope: { kind: "project" },
+      }),
+    ).rejects.toMatchObject({ code: "SCOPE_MISMATCH" });
+  });
+
+  it("rejects unknown or invisible targetIssueId", async () => {
+    await expect(
+      searchIssues(workspaceId, userId, {
+        q: "authentication",
+        limit: 10,
+        projection: "compact",
+        targetIssueId: "00000000-0000-4000-8000-000000000099",
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND_OR_NOT_VISIBLE" });
+  });
 });
