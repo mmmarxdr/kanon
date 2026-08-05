@@ -213,6 +213,7 @@ describe("withIssueMutationTx", () => {
         title: "Created issue",
         description: null,
         state: "backlog",
+        priority: "medium",
         assigneeId: null,
         cycleId: null,
         estimate: 8,

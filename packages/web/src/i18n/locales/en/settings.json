@@ -130,6 +130,10 @@
   "redmineInboundMapHelp": "Every discovered Redmine status must map to a Kanon state.",
   "redmineOutboundMap": "Kanon to Redmine",
   "redmineOutboundMapHelp": "Choose a writable Redmine target for every Kanon state.",
+  "redminePriorityInboundMap": "Redmine priorities to Kanon",
+  "redminePriorityInboundMapHelp": "Map every discovered Redmine priority to a Kanon priority.",
+  "redminePriorityOutboundMap": "Kanon priorities to Redmine",
+  "redminePriorityOutboundMapHelp": "Choose a Redmine target for every Kanon priority.",
   "redmineSaveActivate": "Save and activate",
   "redmineSaveMaps": "Save provider maps",
   "redmineMapsSaved": "Provider maps saved.",
@@ -160,6 +164,12 @@
     "in_progress": "In progress",
     "review": "Review",
     "done": "Done"
+  },
+  "redminePriority": {
+    "critical": "Critical",
+    "high": "High",
+    "medium": "Medium",
+    "low": "Low"
   },
   "onboardingTitle": "Onboarding Link",
   "onboardingShareHint": "Share this link with the developer",

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { issueStateSchema } from "./issue.js";
+import { issuePrioritySchema, issueStateSchema } from "./issue.js";
 
 export const integrationLifecycleSchema = z.enum([
   "draft",
@@ -30,6 +30,7 @@ export const integrationDiscoverySchema = z.object({
   statuses: z.array(
     z.object({ id: z.string(), name: z.string(), writable: z.boolean() }),
   ),
+  priorities: z.array(z.object({ id: z.string(), name: z.string() })),
   projects: z.array(z.object({ id: z.string(), name: z.string() })),
   timeEntryActivities: z.array(
     z.object({ id: z.string(), name: z.string(), isDefault: z.boolean() }),
@@ -70,6 +71,8 @@ export const integrationConnectionSchema = z.object({
     .object({
       readMap: z.record(z.string(), issueStateSchema).nullable(),
       writeMap: z.record(z.string(), z.string()).nullable(),
+      priorityReadMap: z.record(z.string(), issuePrioritySchema).nullable(),
+      priorityWriteMap: z.record(issuePrioritySchema, z.string()).nullable(),
       timeActivityId: z.string().nullable(),
     })
     .nullable(),

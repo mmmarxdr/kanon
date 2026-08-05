@@ -91,7 +91,7 @@ async function fixture(readMap: Record<string, string> = { "2": "in_progress" })
       connectionId: connection.id,
       projectId: project.id,
       remoteProjectId: "7",
-      readMap,
+      readMap: { "priority:3": "high", ...readMap },
       writeMap: {},
       lifecycle: "active",
       lifecycleEpoch: 1,
@@ -133,7 +133,7 @@ describe("Redmine-created issue import", () => {
       eligibleUnlinkedCount: 1,
       excludedPrivateCount: 1,
       linkedCount: 0,
-      mappingGaps: { statusIds: ["9"], assigneeRemoteUserIds: ["6"] },
+      mappingGaps: { statusIds: ["9"], priorityIds: [], assigneeRemoteUserIds: ["6"] },
     });
     await expect(prisma.issue.count()).resolves.toBe(0);
     await expect(prisma.externalRef.count()).resolves.toBe(0);
@@ -384,9 +384,17 @@ describe("Redmine-created issue import", () => {
       title: "Imported issue",
       description: "Imported description",
       state: "done",
+      priority: "high",
       assigneeId: assignee.id,
       createdAt: new Date("2026-08-01T09:00:00Z"),
       completedAt: new Date("2026-08-03T10:45:00Z"),
+    });
+    await expect(
+      prisma.issueSchedule.findUniqueOrThrow({ where: { issueId: imported.id } }),
+    ).resolves.toMatchObject({
+      startDate: new Date("2026-08-01T00:00:00.000Z"),
+      dueDate: new Date("2026-08-15T00:00:00.000Z"),
+      progress: 100,
     });
     await expect(prisma.project.findUniqueOrThrow({ where: { id: project.id } })).resolves.toMatchObject({
       lastSequenceNum: 1,
@@ -402,7 +410,11 @@ describe("Redmine-created issue import", () => {
         baseline: expect.objectContaining({
           version: 1,
           completedAt: "2026-08-03T10:45:00.000Z",
-          fields: expect.objectContaining({ state: "done", assigneeId: assignee.id }),
+          fields: expect.objectContaining({
+            state: "done",
+            priority: "high",
+            assigneeId: assignee.id,
+          }),
         }),
       },
     });
@@ -487,6 +499,45 @@ describe("Redmine-created issue import", () => {
       auditCursorRemoteId: null,
       auditCompletedAt: cutoff,
     });
+  });
+
+  it("requires legacy bindings to configure priority maps before activation", async () => {
+    const { owner, connection, binding } = await fixture();
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: { readMap: { "2": "in_progress" } },
+    });
+    const transport = remote({ issues: [], total_count: 0, offset: 0, limit: 100 });
+    await previewRedmineIssueImport(
+      connection.id,
+      binding.id,
+      owner.userId,
+      transport.dependencies,
+    );
+    transport.get.mockClear();
+
+    await expect(
+      activateRedmineIssueImport(
+        connection.id,
+        binding.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).rejects.toMatchObject({ code: "REDMINE_PRIORITY_UNMAPPED" });
+    expect(transport.get).not.toHaveBeenCalled();
+
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: { readMap: { "2": "in_progress", "priority:3": "high" } },
+    });
+    await expect(
+      activateRedmineIssueImport(
+        connection.id,
+        binding.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).resolves.toEqual({ importedCount: 0, issueKeys: [], replayed: false });
   });
 
   it("serializes concurrent activation and replays without duplicate rows or keys", async () => {

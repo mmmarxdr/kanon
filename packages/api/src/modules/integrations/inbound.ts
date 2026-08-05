@@ -1,18 +1,36 @@
 import { createHash, randomUUID } from "node:crypto";
-import { Prisma, type PrismaClient } from "@prisma/client";
+import { Prisma, type IssuePriority, type IssueState, type PrismaClient } from "@prisma/client";
 import { env } from "../../config/env.js";
+import { eventBus } from "../../services/event-bus/index.js";
+import type { IssueTransitionedPayload } from "../../services/event-bus/types.js";
 import { AppError } from "../../shared/types.js";
+import { checkAndAdvanceParent } from "../issue/auto-transition.js";
+import { validateTransition } from "../issue/state-machine.js";
 import { reconcileIssueTime } from "../issue/reconcile.js";
-import { transitionIssue } from "../issue/service.js";
+import { syncRoadmapItemStatus } from "../roadmap/roadmap-sync.js";
+import { SESSION_TTL_MS } from "../work-session/service.js";
 import { decrypt as decryptCredential } from "./core/crypto.js";
 import {
   isProviderAuthenticationError,
+  isRetryableProviderError,
   safeErrorEvidence,
   type InboundCursor,
   type InboundIssueStatusChange,
   type InboundSource,
   type StatusReadMap,
 } from "./core/types.js";
+import {
+  canonicalRedmineDescription,
+  issueSyncMetadata,
+  priorityReadKey,
+  readIssueSyncBaseline,
+  reconcileIssueSnapshots,
+  type IssueFieldConflict,
+  type IssueSyncField,
+  type IssueSyncSnapshot,
+  type IssueSyncValue,
+} from "./issue-convergence.js";
+import { captureIntegrationWorkTx } from "./outbox.js";
 import { persistRedmineIssueImportsTx } from "./redmine-import.js";
 import {
   decodeRedmineIssueDetail,
@@ -263,77 +281,658 @@ async function lockPollSnapshot(
   return active;
 }
 
-async function finishApplication(
-  database: PrismaClient,
-  applicationId: string,
-  refId: string,
-  correlationId: string,
-  change: InboundIssueStatusChange,
-  outcome: Prisma.InputJsonObject,
-  workId: string | null,
-  changed: boolean,
-) {
-  await database.$transaction(async (transaction) => {
-    await transaction.externalRef.updateMany({
-      where: {
-        id: refId,
-        OR: [{ remoteUpdatedAt: null }, { remoteUpdatedAt: { lt: change.changedAt } }],
-      },
-      data: {
-        remoteUpdatedAt: change.changedAt,
-        lastCorrelationId: correlationId,
-        ...(changed ? { localVersion: { increment: 1 } } : {}),
-      },
-    });
-    await transaction.integrationInboundApplication.update({
-      where: { id: applicationId },
-      data: { state: "applied", refId, workId, outcome },
-    });
-  });
+const ISSUE_STATES = new Set<IssueState>([
+  "backlog",
+  "analysis",
+  "todo",
+  "in_progress",
+  "review",
+  "done",
+]);
+const ISSUE_PRIORITIES = new Set<IssuePriority>(["critical", "high", "medium", "low"]);
+
+function dateOnly(value: Date | null | undefined): string | null {
+  return value?.toISOString().slice(0, 10) ?? null;
 }
 
-async function conflictApplication(
+async function databaseNow(transaction: Prisma.TransactionClient): Promise<Date> {
+  const [clock] = await transaction.$queryRaw<Array<{ now: Date }>>(
+    Prisma.sql`SELECT clock_timestamp() AS "now"`,
+  );
+  if (!clock) throw new Error("Database clock unavailable");
+  return clock.now;
+}
+
+async function recordInboundFailure(
   database: PrismaClient,
-  applicationId: string,
   binding: ClaimedBinding,
-  refId: string,
   change: InboundIssueStatusChange,
-  issue: { id: string; key: string; state: string } | null,
-  error: AppError,
+  refId: string | null,
+  error: unknown,
+  sourceVersion: string | null = null,
 ) {
-  const localEvidence: Prisma.InputJsonObject = {
-    issueId: issue?.id ?? null,
-    issueKey: issue?.key ?? null,
-    currentState: issue?.state ?? null,
-    requestedState: change.state,
-    reason: error.code,
-  };
-  const remoteEvidence: Prisma.InputJsonObject = {
-    provider: "redmine",
-    remoteIssueId: change.entityId,
-    remoteVersion: change.remoteVersion,
-    requestedState: change.state,
-  };
-  await database.$transaction(async (transaction) => {
+  const correlationId = applicationIdentity(binding.id, change);
+  return database.$transaction(async (transaction) => {
+    if (!(await lockPollSnapshot(transaction, binding))) return "stale" as const;
+    await transaction.integrationInboundApplication.createMany({
+      data: {
+        bindingId: binding.id,
+        remoteEntityType: "issue",
+        remoteId: change.entityId,
+        remoteUpdatedAt: change.changedAt,
+        sourceVersion,
+        applicationKey: correlationId,
+        correlationId,
+        refId,
+      },
+      skipDuplicates: true,
+    });
+    const application = await transaction.integrationInboundApplication.findUniqueOrThrow({
+      where: { applicationKey: correlationId },
+    });
+    if (["applied", "conflict", "skipped"].includes(application.state)) return "detail" as const;
+
     await transaction.integrationConflict.create({
       data: {
-        kind: "inbound-status-transition",
+        kind: "inbound-observation-failure",
         bindingId: binding.id,
-        applicationId,
+        applicationId: application.id,
         refId,
-        localEvidence,
-        remoteEvidence,
+        localEvidence: { refId },
+        remoteEvidence: {
+          provider: "redmine",
+          remoteIssueId: change.entityId,
+          remoteVersion: change.remoteVersion,
+          error: safeErrorEvidence(error),
+        },
       },
     });
+    if (refId) {
+      await transaction.externalRef.updateMany({
+        where: { id: refId, bindingId: binding.id },
+        data: { remoteUpdatedAt: change.changedAt, lastCorrelationId: correlationId },
+      });
+    }
     await transaction.integrationInboundApplication.update({
-      where: { id: applicationId },
+      where: { id: application.id },
       data: {
         state: "conflict",
         refId,
-        outcome: { reason: error.code, message: error.message },
+        outcome: { reason: "INBOUND_OBSERVATION_FAILED", error: safeErrorEvidence(error) },
       },
     });
+    return "detail" as const;
   });
+}
+
+async function convergeLinkedIssue(
+  database: PrismaClient,
+  binding: ClaimedBinding,
+  change: InboundIssueStatusChange,
+  detail: RedmineIssueChange,
+) {
+  const correlationId = applicationIdentity(binding.id, {
+    ...change,
+    changedAt: detail.changedAt,
+  });
+
+  const outcome = await database.$transaction(async (transaction) => {
+    const active = await lockPollSnapshot(transaction, binding);
+    if (!active) return "stale" as const;
+
+    const ref = await transaction.externalRef.findUnique({
+      where: {
+        connectionId_entityType_externalId: {
+          connectionId: binding.connectionId,
+          entityType: "issue",
+          externalId: change.entityId,
+        },
+      },
+    });
+    await transaction.integrationInboundApplication.createMany({
+      data: {
+        bindingId: binding.id,
+        remoteEntityType: "issue",
+        remoteId: change.entityId,
+        remoteUpdatedAt: detail.changedAt,
+        sourceVersion: detail.sourceVersion,
+        applicationKey: correlationId,
+        correlationId,
+        refId: ref?.id,
+      },
+      skipDuplicates: true,
+    });
+    const application = await transaction.integrationInboundApplication.findFirstOrThrow({
+      where: {
+        OR: [
+          { applicationKey: correlationId },
+          {
+            bindingId: binding.id,
+            remoteEntityType: "issue",
+            remoteId: change.entityId,
+            sourceVersion: detail.sourceVersion,
+          },
+        ],
+      },
+    });
+    if (["applied", "conflict", "skipped"].includes(application.state)) return "detail" as const;
+
+    if (!ref || ref.bindingId !== binding.id) {
+      await transaction.integrationConflict.create({
+        data: {
+          kind: "inbound-reference",
+          bindingId: binding.id,
+          applicationId: application.id,
+          refId: ref?.id,
+          localEvidence: { reason: ref ? "binding-mismatch" : "reference-missing" },
+          remoteEvidence: {
+            provider: "redmine",
+            remoteIssueId: change.entityId,
+            remoteVersion: detail.sourceVersion,
+          },
+        },
+      });
+      await transaction.integrationInboundApplication.update({
+        where: { id: application.id },
+        data: {
+          state: "conflict",
+          outcome: { reason: ref ? "REFERENCE_BINDING_MISMATCH" : "REFERENCE_MISSING" },
+        },
+      });
+      return "detail" as const;
+    }
+    if (ref.remoteUpdatedAt && ref.remoteUpdatedAt >= detail.changedAt) {
+      await transaction.integrationInboundApplication.update({
+        where: { id: application.id },
+        data: {
+          state: "skipped",
+          refId: ref.id,
+          outcome: { reason: "stale-or-correlated-echo" },
+        },
+      });
+      return "detail" as const;
+    }
+    if (detail.operation === "tombstone" || !("statusId" in detail.fields)) {
+      await transaction.externalRef.update({
+        where: { id: ref.id },
+        data: { remoteUpdatedAt: detail.changedAt, lastCorrelationId: correlationId },
+      });
+      await transaction.integrationInboundApplication.update({
+        where: { id: application.id },
+        data: {
+          state: "skipped",
+          refId: ref.id,
+          outcome: { reason: "private-issue", provenance: "redmine-inbound" },
+        },
+      });
+      return "detail" as const;
+    }
+
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "issues" WHERE "id" = ${ref.entityId}::uuid FOR UPDATE`,
+    );
+    const issue = await transaction.issue.findFirst({
+      where: { id: ref.entityId, projectId: binding.projectId },
+      include: { schedule: true },
+    });
+    if (!issue) {
+      await transaction.integrationConflict.create({
+        data: {
+          kind: "inbound-reference",
+          bindingId: binding.id,
+          applicationId: application.id,
+          refId: ref.id,
+          localEvidence: { reason: "local-issue-missing", issueId: ref.entityId },
+          remoteEvidence: {
+            provider: "redmine",
+            remoteIssueId: change.entityId,
+            remoteVersion: detail.sourceVersion,
+          },
+        },
+      });
+      await transaction.integrationInboundApplication.update({
+        where: { id: application.id },
+        data: { state: "conflict", refId: ref.id, outcome: { reason: "LOCAL_ISSUE_MISSING" } },
+      });
+      return "detail" as const;
+    }
+
+    const actors = [detail.actor, detail.fields.assignee].filter(
+      (actor): actor is NonNullable<typeof actor> => actor !== undefined && actor !== null,
+    );
+    for (const actor of actors) {
+      await transaction.integrationExternalIdentity.upsert({
+        where: {
+          bindingId_remoteUserId: { bindingId: binding.id, remoteUserId: actor.remoteId },
+        },
+        create: {
+          bindingId: binding.id,
+          remoteUserId: actor.remoteId,
+          remoteLogin: actor.username ?? null,
+          remoteDisplayName: actor.displayName,
+        },
+        update: {
+          ...(actor.username === undefined ? {} : { remoteLogin: actor.username }),
+          remoteDisplayName: actor.displayName,
+        },
+      });
+    }
+
+    const readMap =
+      active.readMap && typeof active.readMap === "object" && !Array.isArray(active.readMap)
+        ? (active.readMap as Record<string, unknown>)
+        : {};
+    const remote: Partial<Record<IssueSyncField, IssueSyncValue>> = {
+      title: detail.fields.title,
+      description: canonicalRedmineDescription(detail.fields.description, issue.id),
+      startDate: detail.fields.startDate,
+      dueDate: detail.fields.dueDate,
+      progress: detail.fields.progress,
+    };
+    const mappingFailures: Partial<Record<IssueSyncField, unknown>> = {};
+    const mappedState = readMap[detail.fields.statusId];
+    if (typeof mappedState === "string" && ISSUE_STATES.has(mappedState as IssueState)) {
+      remote.state = mappedState;
+    } else {
+      mappingFailures.state = { remoteStatusId: detail.fields.statusId };
+    }
+    const mappedPriority = readMap[priorityReadKey(detail.fields.priorityId)];
+    if (
+      typeof mappedPriority === "string" &&
+      ISSUE_PRIORITIES.has(mappedPriority as IssuePriority)
+    ) {
+      remote.priority = mappedPriority;
+    } else {
+      mappingFailures.priority = { remotePriorityId: detail.fields.priorityId };
+    }
+    if (detail.fields.assignee === null) {
+      remote.assigneeId = null;
+    } else {
+      const identity = await transaction.integrationExternalIdentity.findUnique({
+        where: {
+          bindingId_remoteUserId: {
+            bindingId: binding.id,
+            remoteUserId: detail.fields.assignee.remoteId,
+          },
+        },
+        select: { memberId: true, member: { select: { workspaceId: true } } },
+      });
+      if (identity?.memberId && identity.member?.workspaceId === active.connection.workspaceId) {
+        remote.assigneeId = identity.memberId;
+      } else {
+        mappingFailures.assigneeId = { remoteUserId: detail.fields.assignee.remoteId };
+      }
+    }
+
+    const local: IssueSyncSnapshot = {
+      title: issue.title,
+      description: issue.description,
+      state: issue.state,
+      priority: issue.priority,
+      assigneeId: issue.assigneeId,
+      startDate: dateOnly(issue.schedule?.startDate),
+      dueDate: dateOnly(issue.schedule?.dueDate),
+      progress: issue.schedule?.progress ?? 0,
+    };
+    const baseline = readIssueSyncBaseline(ref.metadata);
+    const result = reconcileIssueSnapshots(baseline, local, remote, mappingFailures);
+    const patch = { ...result.patch };
+    const nextBaseline = { ...result.nextBaseline };
+    const appliedFields = [...result.appliedFields];
+    const conflicts: Partial<Record<IssueSyncField, IssueFieldConflict>> = {
+      ...result.conflicts,
+    };
+    let timeReconciled = false;
+    let reportedTotalHours: number | null = null;
+    let transitionRegression = false;
+    const rejectAppliedField = (field: IssueSyncField, remoteEvidence: unknown) => {
+      delete patch[field];
+      const index = appliedFields.indexOf(field);
+      if (index >= 0) appliedFields.splice(index, 1);
+      if (Object.prototype.hasOwnProperty.call(baseline?.fields ?? {}, field)) {
+        nextBaseline[field] = baseline!.fields[field];
+      } else {
+        delete nextBaseline[field];
+      }
+      conflicts[field] = {
+        reason: "invalid",
+        baselinePresent: Object.prototype.hasOwnProperty.call(baseline?.fields ?? {}, field),
+        baseline: baseline?.fields[field] ?? null,
+        local: local[field],
+        remote: remoteEvidence,
+      };
+    };
+
+    if (Object.prototype.hasOwnProperty.call(patch, "state")) {
+      const target = patch.state as IssueState;
+      const transition = validateTransition(issue.state, target);
+      if (!transition.allowed) {
+        rejectAppliedField("state", { state: target, reason: transition.reason });
+      } else {
+        transitionRegression = transition.isRegression;
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, "state") && target === "done") {
+        const now = await databaseNow(transaction);
+        const [activeSessions, latestWorkLog, latestTimeEntry] = await Promise.all([
+          transaction.workSession.count({
+            where: {
+              issueId: issue.id,
+              lastHeartbeat: { gt: new Date(now.getTime() - SESSION_TTL_MS) },
+            },
+          }),
+          transaction.workLog.findFirst({
+            where: { issueId: issue.id },
+            orderBy: { createdAt: "desc" },
+            select: { createdAt: true },
+          }),
+          transaction.timeEntry.findFirst({
+            where: { issueId: issue.id },
+            orderBy: { createdAt: "desc" },
+            select: { createdAt: true },
+          }),
+        ]);
+        const latestCapturedAt = [latestWorkLog?.createdAt, latestTimeEntry?.createdAt]
+          .filter((value): value is Date => value !== undefined)
+          .sort((left, right) => right.getTime() - left.getTime())[0];
+        if (activeSessions > 0) {
+          rejectAppliedField("state", {
+            state: target,
+            reason: "active-work-session",
+          });
+        } else if (
+          latestCapturedAt &&
+          (!issue.timeConfirmedAt || latestCapturedAt >= issue.timeConfirmedAt)
+        ) {
+          const reconciled = await reconcileIssueTime(
+            issue.id,
+            binding.actorMemberId,
+            undefined,
+            transaction,
+          );
+          timeReconciled = true;
+          reportedTotalHours = reconciled.totalHours;
+          await transaction.activityLog.create({
+            data: {
+              issueId: issue.id,
+              memberId: binding.actorMemberId,
+              action: "edited",
+              via: "redmine-inbound",
+              details: {
+                integration: "redmine",
+                action: "accepted_reported_time",
+                totalHours: reconciled.totalHours,
+                correlationId,
+              },
+            },
+          });
+        }
+      }
+    }
+
+    const effective = (field: "startDate" | "dueDate") =>
+      Object.prototype.hasOwnProperty.call(patch, field) ? patch[field] : local[field];
+    const effectiveStart = effective("startDate");
+    const effectiveDue = effective("dueDate");
+    if (
+      typeof effectiveStart === "string" &&
+      typeof effectiveDue === "string" &&
+      effectiveStart > effectiveDue
+    ) {
+      for (const field of ["startDate", "dueDate"] as const) {
+        if (Object.prototype.hasOwnProperty.call(patch, field)) {
+          rejectAppliedField(field, { value: patch[field], reason: "invalid-date-range" });
+        }
+      }
+    }
+
+    const issueData: Prisma.IssueUncheckedUpdateInput = {};
+    for (const field of ["title", "description", "priority", "assigneeId"] as const) {
+      if (Object.prototype.hasOwnProperty.call(patch, field)) issueData[field] = patch[field] as never;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "state")) {
+      issueData.state = patch.state as IssueState;
+      issueData.completedAt =
+        patch.state === "done" ? (detail.closedAt ?? detail.changedAt) : null;
+    }
+    if (Object.keys(issueData).length) {
+      await transaction.issue.update({ where: { id: issue.id }, data: issueData });
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "state")) {
+      await transaction.activityLog.create({
+        data: {
+          issueId: issue.id,
+          memberId: binding.actorMemberId,
+          action: "state_changed",
+          via: "redmine-inbound",
+          details: {
+            from: issue.state,
+            to: patch.state,
+            regression: transitionRegression,
+          },
+        },
+      });
+    }
+
+    const scheduleFields = (["startDate", "dueDate", "progress"] as const).filter((field) =>
+      Object.prototype.hasOwnProperty.call(patch, field),
+    );
+    if (scheduleFields.length) {
+      const scheduleData: Prisma.IssueScheduleUncheckedUpdateInput = {};
+      if (Object.prototype.hasOwnProperty.call(patch, "startDate")) {
+        scheduleData.startDate =
+          typeof patch.startDate === "string"
+            ? new Date(`${patch.startDate}T00:00:00.000Z`)
+            : null;
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, "dueDate")) {
+        scheduleData.dueDate =
+          typeof patch.dueDate === "string"
+            ? new Date(`${patch.dueDate}T00:00:00.000Z`)
+            : null;
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, "progress")) {
+        scheduleData.progress = patch.progress as number;
+      }
+      await transaction.issueSchedule.upsert({
+        where: { issueId: issue.id },
+        create: { issueId: issue.id, ...scheduleData } as Prisma.IssueScheduleUncheckedCreateInput,
+        update: scheduleData,
+      });
+    }
+
+    let workId: string | null = null;
+    if (appliedFields.length) {
+      const work = await captureIntegrationWorkTx(transaction, {
+        bindingId: binding.id,
+        entityType: "issue",
+        entityId: issue.id,
+        direction: "inbound",
+        operation: change.operation,
+        actorKey: `redmine:issue:${change.entityId}`,
+        actorKind: "remote",
+        payload: { version: 1, fields: patch } as Prisma.InputJsonValue,
+        correlationId,
+        refId: ref.id,
+      });
+      await transaction.integrationSyncWork.update({
+        where: { id: work.id },
+        data: { state: "done" },
+      });
+      workId = work.id;
+      await transaction.activityLog.create({
+        data: {
+          issueId: issue.id,
+          memberId: binding.actorMemberId,
+          action: "edited",
+          via: "redmine-inbound",
+          details: {
+            integration: "redmine",
+            action: "field_convergence",
+            correlationId,
+            appliedFields,
+          },
+        },
+      });
+    }
+
+    const conflictFields = Object.keys(conflicts) as IssueSyncField[];
+    if (conflictFields.length) {
+      const pending = await transaction.integrationSyncWork.findMany({
+        where: {
+          bindingId: binding.id,
+          entityType: "issue",
+          entityId: issue.id,
+          direction: "outbound",
+          state: { in: ["queued", "retry"] },
+        },
+        select: { id: true, payload: true },
+      });
+      for (const outbound of pending) {
+        const payload =
+          outbound.payload && typeof outbound.payload === "object" && !Array.isArray(outbound.payload)
+            ? outbound.payload
+            : null;
+        const fields =
+          payload?.["fields"] &&
+          typeof payload["fields"] === "object" &&
+          !Array.isArray(payload["fields"])
+            ? payload["fields"]
+            : null;
+        if (fields && conflictFields.some((field) => Object.hasOwn(fields, field))) {
+          const remainingFields = Object.fromEntries(
+            Object.entries(fields).filter(([field]) => !conflictFields.includes(field as IssueSyncField)),
+          );
+          await transaction.integrationSyncWork.update({
+            where: { id: outbound.id },
+            data: Object.keys(remainingFields).length
+              ? {
+                  payload: { ...payload, fields: remainingFields } as Prisma.InputJsonObject,
+                }
+              : { state: "dead", skippedReason: "inbound_field_conflict" },
+          });
+        }
+      }
+      await transaction.integrationConflict.create({
+        data: {
+          kind: "inbound-field-convergence",
+          bindingId: binding.id,
+          applicationId: application.id,
+          refId: ref.id,
+          localEvidence: {
+            issueId: issue.id,
+            issueKey: issue.key,
+            fields: Object.fromEntries(
+              conflictFields.map((field) => [
+                field,
+                {
+                  reason: conflicts[field]!.reason,
+                  baselinePresent: conflicts[field]!.baselinePresent,
+                  baseline: conflicts[field]!.baseline,
+                  local: conflicts[field]!.local,
+                },
+              ]),
+            ),
+          } as Prisma.InputJsonObject,
+          remoteEvidence: {
+            provider: "redmine",
+            remoteIssueId: change.entityId,
+            remoteVersion: detail.sourceVersion,
+            fields: Object.fromEntries(
+              conflictFields.map((field) => [field, conflicts[field]!.remote]),
+            ),
+          } as Prisma.InputJsonObject,
+        },
+      });
+    }
+
+    const stateConflict = conflicts.state !== undefined;
+    const metadata = issueSyncMetadata(ref.metadata, {
+      sourceVersion: detail.sourceVersion,
+      changedAt: detail.changedAt,
+      createdAt: detail.createdAt ?? null,
+      ...(remote.state !== undefined && !stateConflict
+        ? {
+            completedAt:
+              remote.state === "done" ? (detail.closedAt ?? detail.changedAt) : null,
+          }
+        : {}),
+      fields: nextBaseline,
+    });
+    await transaction.externalRef.update({
+      where: { id: ref.id },
+      data: {
+        remoteUpdatedAt: detail.changedAt,
+        lastCorrelationId: correlationId,
+        metadata,
+        ...(appliedFields.length ? { localVersion: { increment: 1 } } : {}),
+      },
+    });
+    await transaction.integrationInboundApplication.update({
+      where: { id: application.id },
+      data: {
+        state: conflictFields.length ? "conflict" : "applied",
+        refId: ref.id,
+        workId,
+        outcome: {
+          provenance: "redmine-inbound",
+          from: local.state,
+          to: remote.state ?? local.state,
+          timeReconciled,
+          reportedTotalHours,
+          appliedFields,
+          preservedFields: result.preservedFields,
+          convergedFields: result.convergedFields,
+          conflictFields,
+        },
+      },
+    });
+    return {
+      result: "detail" as const,
+      transition: Object.prototype.hasOwnProperty.call(patch, "state")
+        ? {
+            issueId: issue.id,
+            issueKey: issue.key,
+            parentId: issue.parentId,
+            projectKey: active.project.key,
+            workspaceId: active.connection.workspaceId,
+            from: issue.state,
+            to: patch.state as IssueState,
+          }
+        : null,
+    };
+  }, { timeout: 30_000 });
+
+  if (typeof outcome === "string") return outcome;
+  if (!outcome.transition) return outcome.result;
+  const transition = outcome.transition;
+  const effects = await Promise.allSettled([
+    checkAndAdvanceParent(database, { parentId: transition.parentId }, binding.actorMemberId),
+    syncRoadmapItemStatus(database, transition.issueId),
+  ]);
+  for (const effect of effects) {
+    if (effect.status === "rejected") console.error("Redmine transition side effect failed", effect.reason);
+  }
+  const payload: IssueTransitionedPayload = {
+    issueKey: transition.issueKey,
+    issueId: transition.issueId,
+    projectKey: transition.projectKey,
+    from: transition.from,
+    to: transition.to,
+    actorMemberId: binding.actorMemberId,
+    actorUserId: null,
+  };
+  try {
+    eventBus.emit({
+      type: "issue.transitioned",
+      workspaceId: transition.workspaceId,
+      actorId: binding.actorMemberId,
+      payload: payload as unknown as Record<string, unknown>,
+      via: "redmine-inbound",
+    });
+  } catch {
+    // Event delivery never changes durable convergence state.
+  }
+  return outcome.result;
 }
 
 async function applyChange(
@@ -355,24 +954,38 @@ async function applyChange(
   });
   if (!ref) {
     if (!allowDetail) return "detail-limit" as const;
-    const detail = await loadIssueDetail({
-      baseUrl: binding.baseUrl,
-      apiKey,
-      remoteProjectId: binding.remoteProjectId,
-      remoteIssueId: change.entityId,
-    });
+    let detail: RedmineIssueChange;
+    try {
+      detail = await loadIssueDetail({
+        baseUrl: binding.baseUrl,
+        apiKey,
+        remoteProjectId: binding.remoteProjectId,
+        remoteIssueId: change.entityId,
+      });
+    } catch (error) {
+      if (isProviderAuthenticationError(error) || isRetryableProviderError(error)) throw error;
+      return recordInboundFailure(database, binding, change, null, error);
+    }
     if (
       detail.identity.remoteId !== change.entityId ||
       detail.identity.remoteProjectId !== binding.remoteProjectId ||
       detail.changedAt < change.changedAt
     ) {
-      throw new Error("Redmine issue detail did not match the poll observation");
+      return recordInboundFailure(
+        database,
+        binding,
+        change,
+        null,
+        new AppError(409, "REDMINE_DETAIL_MISMATCH", "Redmine issue detail did not match the poll observation"),
+        detail.sourceVersion,
+      );
     }
     if (detail.operation === "tombstone") return "detail" as const;
 
-    return database.$transaction(async (transaction) => {
-      const active = await lockPollSnapshot(transaction, binding);
-      if (!active) return "stale" as const;
+    try {
+      return await database.$transaction(async (transaction) => {
+        const active = await lockPollSnapshot(transaction, binding);
+        if (!active) return "stale" as const;
 
       const linked = await transaction.externalRef.findUnique({
         where: {
@@ -422,8 +1035,26 @@ async function applyChange(
         },
         [detail],
       );
-      return "detail" as const;
-    });
+        return "detail" as const;
+      });
+    } catch (error) {
+      if (
+        error instanceof AppError &&
+        ["REDMINE_STATUS_UNMAPPED", "REDMINE_PRIORITY_UNMAPPED", "REDMINE_PREVIEW_STALE"].includes(
+          error.code,
+        )
+      ) {
+        return recordInboundFailure(
+          database,
+          binding,
+          change,
+          null,
+          error,
+          detail.sourceVersion,
+        );
+      }
+      throw error;
+    }
   }
 
   if (ref.remoteUpdatedAt && ref.remoteUpdatedAt >= change.changedAt) {
@@ -438,162 +1069,58 @@ async function applyChange(
       select: { id: true },
     });
     if (imported) return "processed" as const;
-  }
-
-  const correlationId = applicationIdentity(binding.id, change);
-  await database.integrationInboundApplication.createMany({
-    data: {
-      bindingId: binding.id,
-      remoteEntityType: "issue",
-      remoteId: change.entityId,
-      remoteUpdatedAt: change.changedAt,
-      applicationKey: correlationId,
-      correlationId,
-      refId: ref.id,
-    },
-    skipDuplicates: true,
-  });
-  const application = await database.integrationInboundApplication.findUniqueOrThrow({
-    where: { applicationKey: correlationId },
-  });
-  if (["applied", "conflict", "skipped"].includes(application.state)) {
-    return "processed" as const;
-  }
-
-  if (ref.bindingId !== binding.id) {
-    await conflictApplication(
-      database,
-      application.id,
-      binding,
-      ref.id,
-      change,
-      null,
-      new AppError(
-        409,
-        "REFERENCE_BINDING_MISMATCH",
-        "External reference belongs to another binding",
-      ),
-    );
-    return "processed" as const;
-  }
-  if (ref.remoteUpdatedAt && ref.remoteUpdatedAt >= change.changedAt) {
-    await database.integrationInboundApplication.update({
-      where: { id: application.id },
+    const correlationId = applicationIdentity(binding.id, change);
+    await database.integrationInboundApplication.createMany({
       data: {
-        state: "skipped",
+        bindingId: binding.id,
+        remoteEntityType: "issue",
+        remoteId: change.entityId,
+        remoteUpdatedAt: change.changedAt,
+        applicationKey: correlationId,
+        correlationId,
         refId: ref.id,
+        state: "skipped",
         outcome: {
           reason: "stale-or-correlated-echo",
           baselineRemoteVersion: ref.remoteUpdatedAt.toISOString(),
         },
       },
+      skipDuplicates: true,
     });
     return "processed" as const;
   }
-
-  const issue = await database.issue.findFirst({
-    where: { id: ref.entityId, projectId: binding.projectId },
-    select: { id: true, key: true, state: true },
-  });
-  if (!issue) {
-    await conflictApplication(
+  if (!allowDetail) return "detail-limit" as const;
+  let detail: RedmineIssueChange;
+  try {
+    detail = await loadIssueDetail({
+      baseUrl: binding.baseUrl,
+      apiKey,
+      remoteProjectId: binding.remoteProjectId,
+      remoteIssueId: change.entityId,
+    });
+  } catch (error) {
+    if (isProviderAuthenticationError(error) || isRetryableProviderError(error)) throw error;
+    return recordInboundFailure(database, binding, change, ref.id, error);
+  }
+  if (
+    detail.identity.remoteId !== change.entityId ||
+    detail.identity.remoteProjectId !== binding.remoteProjectId ||
+    detail.changedAt < change.changedAt
+  ) {
+    return recordInboundFailure(
       database,
-      application.id,
       binding,
-      ref.id,
       change,
-      null,
-      new AppError(409, "LOCAL_ISSUE_MISSING", "Linked Kanon issue no longer exists"),
+      ref.id,
+      new AppError(
+        409,
+        "REDMINE_DETAIL_MISMATCH",
+        "Redmine issue detail did not match the poll observation",
+      ),
+      detail.sourceVersion,
     );
-    return "processed" as const;
   }
-
-  let timeReconciled = false;
-  let reportedTotalHours: number | null = null;
-  const changed = issue.state !== change.state;
-  if (changed) {
-    const transition = () =>
-      transitionIssue(
-        issue.key,
-        change.state,
-        binding.actorMemberId,
-        "redmine-inbound",
-        undefined,
-        {
-          bindingId: binding.id,
-          direction: "inbound",
-          operation: change.operation,
-          actorKey: `redmine:issue:${change.entityId}`,
-          actorKind: "remote",
-          correlationId,
-          refId: ref.id,
-        },
-      );
-    try {
-      await transition();
-    } catch (error) {
-      if (!(error instanceof AppError)) throw error;
-      if (error.code !== "RECONCILIATION_REQUIRED") {
-        await conflictApplication(database, application.id, binding, ref.id, change, issue, error);
-        return "processed" as const;
-      }
-      try {
-        const reconciled = await reconcileIssueTime(issue.id, binding.actorMemberId);
-        timeReconciled = true;
-        reportedTotalHours = reconciled.totalHours;
-        await database.activityLog.create({
-          data: {
-            issueId: issue.id,
-            memberId: binding.actorMemberId,
-            action: "edited",
-            via: "redmine-inbound",
-            details: {
-              integration: "redmine",
-              action: "accepted_reported_time",
-              totalHours: reconciled.totalHours,
-              correlationId,
-            },
-          },
-        });
-        await transition();
-      } catch (retryError) {
-        if (!(retryError instanceof AppError)) throw retryError;
-        await conflictApplication(
-          database,
-          application.id,
-          binding,
-          ref.id,
-          change,
-          issue,
-          retryError,
-        );
-        return "processed" as const;
-      }
-    }
-  }
-
-  const work = await database.integrationSyncWork.findFirst({
-    where: { bindingId: binding.id, direction: "inbound", correlationId },
-    select: { id: true },
-  });
-  await finishApplication(
-    database,
-    application.id,
-    ref.id,
-    correlationId,
-    change,
-    {
-      from: issue.state,
-      to: change.state,
-      changed,
-      timeReconciled,
-      reportedTotalHours,
-      provenance: "redmine-inbound",
-    },
-    work?.id ?? null,
-    changed,
-  );
-  return "processed" as const;
+  return convergeLinkedIssue(database, binding, change, detail);
 }
 
 async function pollBinding(

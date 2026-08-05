@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Prisma, PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import {
   canonicalizeIssueMutationDraft,
@@ -18,6 +18,16 @@ export type IssueCaptureOverride = IssueCaptureContext & {
   readonly correlationId: string;
   readonly operation?: IssueCaptureIntent["operation"];
 };
+
+export async function lockIssueCaptureBindingTx(
+  transaction: Prisma.TransactionClient,
+  bindingId: string,
+): Promise<void> {
+  const [binding] = await transaction.$queryRaw<Array<{ id: string }>>(
+    Prisma.sql`SELECT "id" FROM "integration_project_bindings" WHERE "id" = ${bindingId}::uuid FOR SHARE`,
+  );
+  if (!binding) throw new Error(`Integration project binding ${bindingId} was not found`);
+}
 
 export async function resolveIssueCaptureContext(
   projectId: string,
@@ -91,10 +101,12 @@ export async function captureIssueScheduleMutationTx(
 export function withIssueMutationTx(
   operation: (transaction: Prisma.TransactionClient) => Promise<IssueMutationDraft>,
   database: Pick<PrismaClient, "$transaction"> = prisma,
+  bindingId?: string,
 ): Promise<IssueMutationRow> {
-  return database.$transaction(async (transaction) =>
-    captureIssueMutationTx(transaction, await operation(transaction)),
-  );
+  return database.$transaction(async (transaction) => {
+    if (bindingId) await lockIssueCaptureBindingTx(transaction, bindingId);
+    return captureIssueMutationTx(transaction, await operation(transaction));
+  });
 }
 
 export async function captureIssueMutationTx(

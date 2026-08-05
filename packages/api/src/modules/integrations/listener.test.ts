@@ -53,7 +53,7 @@ describe("integration sync listener", () => {
     const wake = vi.fn().mockResolvedValue([]);
     const unsubscribe = registerIntegrationSyncListener(bus, wake, logger, 2_000);
 
-    fire("issue.updated", { issueId: "issue-1", fields: ["labels", "priority"] });
+    fire("issue.updated", { issueId: "issue-1", fields: ["labels"] });
     await vi.advanceTimersByTimeAsync(2_000);
     expect(wake).not.toHaveBeenCalled();
 
@@ -274,10 +274,24 @@ describe("integration sync listener", () => {
         method: "PATCH",
         url: `/api/issues/${issue.key}`,
         headers: { authorization: `Bearer ${member.token}` },
-        payload: { priority: "high", labels: ["local-only"] },
+        payload: { labels: ["local-only"] },
       });
       expect(irrelevant.statusCode).toBe(200);
       await expect(prisma.integrationSyncWork.count()).resolves.toBe(0);
+
+      const priority = await app.inject({
+        method: "PATCH",
+        url: `/api/issues/${issue.key}`,
+        headers: { authorization: `Bearer ${member.token}` },
+        payload: { priority: "high" },
+      });
+      expect(priority.statusCode).toBe(200);
+      await expect(
+        prisma.integrationSyncWork.findFirstOrThrow({ where: { entityId: issue.id } }),
+      ).resolves.toMatchObject({
+        authCredentialId: credential.id,
+        payload: expect.objectContaining({ fields: { priority: "high" } }),
+      });
     } finally {
       await app.close();
       await cleanDatabase();

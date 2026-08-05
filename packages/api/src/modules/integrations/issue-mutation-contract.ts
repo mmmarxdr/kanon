@@ -4,6 +4,7 @@ export const ISSUE_CAPTURE_FIELDS = [
   "title",
   "description",
   "state",
+  "priority",
   "assigneeId",
   "cycleId",
   "estimate",
@@ -37,7 +38,14 @@ export interface IssueMutationPayload {
   readonly issue: Readonly<
     Pick<
       IssueMutationRow,
-      "key" | "title" | "description" | "state" | "assigneeId" | "cycleId" | "estimate"
+      | "key"
+      | "title"
+      | "description"
+      | "state"
+      | "priority"
+      | "assigneeId"
+      | "cycleId"
+      | "estimate"
     > & { completedAt: string | null; updatedAt: string }
   >;
 }
@@ -217,6 +225,7 @@ const issueRow = (value: unknown): IssueMutationRow =>
 function captureField(field: string, value: unknown): unknown {
   if (field === "estimate") return value === null ? null : scalar(value, "integer");
   if (field === "state") return scalar(value, "choice", STATES);
+  if (field === "priority") return scalar(value, "choice", ROW_CHOICES["priority"]);
   return field === "title" ? scalar(value, "string") : nullable(value, "string");
 }
 function captureValue(key: string, value: unknown): unknown {
@@ -244,6 +253,7 @@ export function canonicalizeIssueMutationDraft(value: unknown): CanonicalIssueMu
     title: result.title,
     description: result.description,
     state: result.state,
+    priority: result.priority,
     assigneeId: result.assigneeId,
     cycleId: result.cycleId,
     estimate: result.estimate,

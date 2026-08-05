@@ -6,10 +6,12 @@ import { useWorkspacesQuery } from "@/hooks/use-workspace-query";
 import {
   useBindRedmineProjectMutation,
   useClearRedmineCredentialMutation,
+  useConfigureRedmineProviderMapsMutation,
   useConnectRedmineCredentialMutation,
   useRedmineConnectionQuery,
   useRedmineDiscoveryQuery,
   useReplaceRedmineServiceCredentialMutation,
+  useSetRedmineLifecycleMutation,
 } from "./use-redmine-integration";
 import { AdminRedmineSection } from "./admin-redmine-section";
 import { RedmineSection } from "./redmine-section";
@@ -17,11 +19,13 @@ import { RedmineSection } from "./redmine-section";
 vi.mock("./use-redmine-integration", () => ({
   useBindRedmineProjectMutation: vi.fn(),
   useClearRedmineCredentialMutation: vi.fn(),
+  useConfigureRedmineProviderMapsMutation: vi.fn(),
   useConnectRedmineCredentialMutation: vi.fn(),
   useCreateRedmineConnectionMutation: vi.fn(),
   useRedmineConnectionQuery: vi.fn(),
   useRedmineDiscoveryQuery: vi.fn(),
   useReplaceRedmineServiceCredentialMutation: vi.fn(),
+  useSetRedmineLifecycleMutation: vi.fn(),
 }));
 
 vi.mock("@/hooks/use-projects-query", () => ({ useProjectsQuery: vi.fn() }));
@@ -32,7 +36,9 @@ const PROJECT_ID = "33333333-3333-4333-8333-333333333333";
 const connectMutate = vi.fn();
 const clearMutate = vi.fn();
 const bindMutate = vi.fn();
+const configureMutate = vi.fn();
 const replaceServiceMutate = vi.fn();
+const lifecycleMutate = vi.fn();
 const idleMutation = (mutate: ReturnType<typeof vi.fn>) => ({
   mutate,
   isPending: false,
@@ -107,9 +113,19 @@ describe("RedmineSection", () => {
     vi.mocked(useBindRedmineProjectMutation).mockReturnValue(
       idleMutation(bindMutate) as unknown as ReturnType<typeof useBindRedmineProjectMutation>,
     );
+    vi.mocked(useConfigureRedmineProviderMapsMutation).mockReturnValue(
+      idleMutation(configureMutate) as unknown as ReturnType<
+        typeof useConfigureRedmineProviderMapsMutation
+      >,
+    );
     vi.mocked(useReplaceRedmineServiceCredentialMutation).mockReturnValue(
       idleMutation(replaceServiceMutate) as unknown as ReturnType<
         typeof useReplaceRedmineServiceCredentialMutation
+      >,
+    );
+    vi.mocked(useSetRedmineLifecycleMutation).mockReturnValue(
+      idleMutation(lifecycleMutate) as unknown as ReturnType<
+        typeof useSetRedmineLifecycleMutation
       >,
     );
     vi.mocked(useRedmineDiscoveryQuery).mockReturnValue({
@@ -177,6 +193,7 @@ describe("RedmineSection", () => {
     vi.mocked(useRedmineDiscoveryQuery).mockReturnValue({
       data: {
         statuses: [],
+        priorities: [],
         projects: [{ id: "remote-project", name: "Remote project" }],
         timeEntryActivities: [],
       },
@@ -285,5 +302,61 @@ describe("RedmineSection", () => {
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
     expect(screen.getByText("Redmine connection failed")).toBeInTheDocument();
+  });
+
+  it("replaces stale outbound priority mappings with discovered priorities", () => {
+    vi.mocked(useRedmineConnectionQuery).mockReturnValue({
+      data: {
+        ...healthyConnection,
+        lifecycle: "draft",
+        providerMaps: {
+          timeActivityId: "9",
+          readMap: { new: "backlog" },
+          writeMap: {
+            backlog: "new",
+            analysis: "new",
+            todo: "new",
+            in_progress: "new",
+            review: "new",
+            done: "new",
+          },
+          priorityReadMap: { normal: "medium" },
+          priorityWriteMap: {
+            critical: "removed",
+            high: "removed",
+            medium: "removed",
+            low: "removed",
+          },
+        },
+      },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
+    vi.mocked(useRedmineDiscoveryQuery).mockReturnValue({
+      data: {
+        statuses: [{ id: "new", name: "New", writable: true }],
+        priorities: [{ id: "normal", name: "Normal" }],
+        projects: [],
+        timeEntryActivities: [{ id: "9", name: "Development", isDefault: true }],
+      },
+      isLoading: false,
+      isFetching: false,
+      error: null,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useRedmineDiscoveryQuery>);
+
+    render(<AdminRedmineSection redmineBaseUrl="https://redmine.example.test" />);
+    fireEvent.click(screen.getByRole("button", { name: "Save provider maps" }));
+
+    expect(configureMutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        priorityWriteMap: {
+          critical: "normal",
+          high: "normal",
+          medium: "normal",
+          low: "normal",
+        },
+      }),
+    );
   });
 });

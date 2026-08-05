@@ -30,6 +30,7 @@ import {
 const remote = {
   whoAmI: vi.fn(async () => ({ id: "remote-user", displayName: "Remote user", login: "remote" })),
   listStatuses: vi.fn(async () => [{ id: "new", name: "New", writable: true }]),
+  listPriorities: vi.fn(async () => [{ id: "normal", name: "Normal" }]),
   listProjects: vi.fn(async () => [{ id: "remote-project", name: "Remote project" }]),
   listTimeEntryActivities: vi.fn(async () => [
     { id: "9", name: "Development", isDefault: true },
@@ -48,6 +49,13 @@ const writeMap = {
   review: "new",
   done: "new",
 };
+const priorityReadMap = { normal: "medium" } as const;
+const priorityWriteMap = {
+  critical: "normal",
+  high: "normal",
+  medium: "normal",
+  low: "normal",
+} as const;
 
 function blockedWorkData(input: {
   bindingId: string;
@@ -117,7 +125,15 @@ describe("integration credentials", () => {
     );
     await configureConnection(
       connection.id,
-      { projectId: project.id, remoteProjectId: "remote-project", timeActivityId: "9", readMap: { new: "backlog" }, writeMap },
+      {
+        projectId: project.id,
+        remoteProjectId: "remote-project",
+        timeActivityId: "9",
+        readMap: { new: "backlog" },
+        writeMap,
+        priorityReadMap,
+        priorityWriteMap,
+      },
       owner.userId,
       deps,
     );
@@ -621,6 +637,8 @@ describe("integration credentials", () => {
         timeActivityId: "9",
         readMap: { new: "backlog" },
         writeMap,
+        priorityReadMap,
+        priorityWriteMap,
       },
       owner.userId,
       deps,

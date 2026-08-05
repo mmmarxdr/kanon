@@ -39,6 +39,8 @@ const connection = {
   providerMaps: {
     readMap: { "1": "backlog" },
     writeMap: { backlog: "1" },
+    priorityReadMap: { "4": "high" },
+    priorityWriteMap: { critical: "4", high: "4", medium: "3", low: "2" },
     timeActivityId: "9",
   },
   bindings: [
@@ -64,6 +66,7 @@ describe("integrationConnectionSchema", () => {
 
     expect(result.connectedMemberIds).toEqual(["55555555-5555-4555-8555-555555555555"]);
     expect(result.bindings[0]?.readMap).toEqual({ "1": "backlog" });
+    expect(result.providerMaps?.priorityReadMap).toEqual({ "4": "high" });
     expect(result.serviceCredentialStatus).toBe("invalid");
     expect(result.syncHealth).toMatchObject({
       status: "credential_blocked",

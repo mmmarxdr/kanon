@@ -38,6 +38,7 @@ import type {
 } from "../integrations/issue-mutation-contract.js";
 import {
   captureIssueMutationTx,
+  lockIssueCaptureBindingTx,
   type IssueCaptureOverride,
   resolveIssueCaptureContext,
   withIssueMutationTx,
@@ -56,18 +57,22 @@ async function mutateIssueWithCapture(
   const capture = captureOverride ?? (await resolveIssueCaptureContext(projectId, memberId));
   if (!capture) return mutate(prisma);
 
-  return withIssueMutationTx(async (transaction) => {
-    const result = await mutate(transaction);
-    return {
-      result,
-      capture: {
-        ...capture,
-        operation: captureOverride?.operation ?? operation,
-        correlationId: captureOverride?.correlationId ?? randomUUID(),
-        fields: fields(result),
-      },
-    };
-  });
+  return withIssueMutationTx(
+    async (transaction) => {
+      const result = await mutate(transaction);
+      return {
+        result,
+        capture: {
+          ...capture,
+          operation: captureOverride?.operation ?? operation,
+          correlationId: captureOverride?.correlationId ?? randomUUID(),
+          fields: fields(result),
+        },
+      };
+    },
+    prisma,
+    capture.bindingId,
+  );
 }
 
 async function transitionIssuesWithCapture(
@@ -80,6 +85,7 @@ async function transitionIssuesWithCapture(
   const capture = await resolveIssueCaptureContext(projectId, memberId);
 
   return prisma.$transaction(async (transaction) => {
+    if (capture) await lockIssueCaptureBindingTx(transaction, capture.bindingId);
     const transitioned: Array<{ id: string; state: IssueState }> = [];
     for (const issue of issues) {
       // The expected-state predicate turns concurrent transitions into no-ops.
@@ -233,6 +239,7 @@ export async function createIssue(
       title: result.title,
       description: result.description,
       state: result.state,
+      priority: result.priority,
       assigneeId: result.assigneeId,
       cycleId: result.cycleId,
       estimate: result.estimate,
@@ -658,6 +665,7 @@ export async function updateIssue(
     (result) => ({
       ...(body.title !== undefined ? { title: result.title } : {}),
       ...(body.description !== undefined ? { description: result.description } : {}),
+      ...(body.priority !== undefined ? { priority: result.priority } : {}),
       ...(body.assigneeId !== undefined ? { assigneeId: result.assigneeId } : {}),
       ...(body.cycleId !== undefined ? { cycleId: result.cycleId } : {}),
     }),

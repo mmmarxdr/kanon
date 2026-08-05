@@ -83,6 +83,7 @@ describe("issue writer integration capture", () => {
           title: "Captured issue",
           description: null,
           state: "backlog",
+          priority: "medium",
           assigneeId: null,
           cycleId: null,
           estimate: null,

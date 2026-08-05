@@ -46,7 +46,12 @@ async function fixture(state = "review" as const) {
       connectionId: connection.id,
       projectId: project.id,
       remoteProjectId: "41",
-      readMap: { open: "in_progress", review: "review", closed: "done" },
+      readMap: {
+        open: "in_progress",
+        review: "review",
+        closed: "done",
+        "priority:3": "medium",
+      },
       writeMap: {
         backlog: "open",
         analysis: "open",
@@ -84,6 +89,26 @@ async function fixture(state = "review" as const) {
       externalId: "100",
       remoteUpdatedAt: baseline,
       lastCorrelationId: "outbound-correlation",
+      metadata: {
+        remoteVersion: baseline.toISOString(),
+        baseline: {
+          version: 1,
+          sourceVersion: baseline.toISOString(),
+          changedAt: baseline.toISOString(),
+          createdAt: issue.createdAt.toISOString(),
+          completedAt: null,
+          fields: {
+            title: issue.title,
+            description: issue.description,
+            state: issue.state,
+            priority: issue.priority,
+            assigneeId: issue.assigneeId,
+            startDate: null,
+            dueDate: null,
+            progress: 0,
+          },
+        },
+      },
     },
   });
   return { workspace, owner, project, connection, credential, binding, issue, ref };
@@ -132,8 +157,23 @@ function detailChange(
 
 function dependencies(changes: readonly InboundIssueStatusChange[]) {
   const loadIssueDetail = vi.fn(async (options: InboundIssueDetailOptions): Promise<RedmineIssueChange> => {
-    void options;
-    throw new Error("Unexpected Redmine issue detail request");
+    const observed = changes.find(({ entityId }) => entityId === options.remoteIssueId);
+    if (!observed) throw new Error("Unexpected Redmine issue detail request");
+    const statusId = observed.state === "done" ? "closed" : observed.state === "review" ? "review" : "open";
+    return detailChange(observed.changedAt, {
+      identity: { type: "issue", remoteId: observed.entityId, remoteProjectId: "41" },
+      ...(observed.state === "done" ? { closedAt: observed.changedAt } : {}),
+      fields: {
+        title: "Linked issue",
+        description: null,
+        statusId,
+        priorityId: "3",
+        assignee: null,
+        startDate: null,
+        dueDate: null,
+        progress: observed.state === "done" ? 100 : 0,
+      },
+    });
   });
   return {
     limit: 1,
@@ -239,6 +279,396 @@ describe("Redmine inbound sync", () => {
     await expect(
       prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
     ).resolves.toMatchObject({ cursorUpdatedAt: greater, cursorRemoteId: "100" });
+  });
+
+  it("applies remote-only linked fields atomically without an outbound echo", async () => {
+    const { workspace, project, binding, issue, ref } = await fixture();
+    const assignee = await seedTestMember(workspace.id);
+    await prisma.integrationExternalIdentity.create({
+      data: {
+        bindingId: binding.id,
+        remoteUserId: "6",
+        remoteDisplayName: "Remote assignee",
+        memberId: assignee.id,
+      },
+    });
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: {
+        readMap: {
+          open: "in_progress",
+          review: "review",
+          closed: "done",
+          "priority:3": "medium",
+          "priority:4": "high",
+        },
+      },
+    });
+    const observedAt = new Date("2026-08-01T10:02:00.000Z");
+    const setup = dependencies([change(observedAt, "in_progress")]);
+    setup.loadIssueDetail.mockResolvedValue(
+      detailChange(observedAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+        fields: {
+          title: "Remote title",
+          description: `Remote body\n\n<!-- kanon-issue:${issue.id} -->`,
+          statusId: "open",
+          priorityId: "4",
+          assignee: { remoteId: "6", displayName: "Remote assignee" },
+          startDate: "2026-08-02",
+          dueDate: "2026-08-20",
+          progress: 70,
+        },
+      }),
+    );
+
+    await runInboundSyncCycle(prisma, setup);
+
+    await expect(prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).resolves.toMatchObject({
+      title: "Remote title",
+      description: "Remote body",
+      state: "in_progress",
+      priority: "high",
+      assigneeId: assignee.id,
+    });
+    await expect(prisma.issueSchedule.findUniqueOrThrow({ where: { issueId: issue.id } })).resolves.toMatchObject({
+      startDate: new Date("2026-08-02T00:00:00.000Z"),
+      dueDate: new Date("2026-08-20T00:00:00.000Z"),
+      progress: 70,
+    });
+    await expect(prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })).resolves.toMatchObject({
+      remoteUpdatedAt: observedAt,
+      metadata: expect.objectContaining({
+        baseline: expect.objectContaining({
+          fields: expect.objectContaining({
+            title: "Remote title",
+            description: "Remote body",
+            state: "in_progress",
+            priority: "high",
+            assigneeId: assignee.id,
+            startDate: "2026-08-02",
+            dueDate: "2026-08-20",
+            progress: 70,
+          }),
+        }),
+      }),
+    });
+    await expect(
+      prisma.integrationInboundApplication.findFirstOrThrow({ where: { refId: ref.id, remoteUpdatedAt: observedAt } }),
+    ).resolves.toMatchObject({
+      state: "applied",
+      outcome: expect.objectContaining({
+        appliedFields: [
+          "title",
+          "description",
+          "state",
+          "priority",
+          "assigneeId",
+          "startDate",
+          "dueDate",
+          "progress",
+        ],
+        conflictFields: [],
+      }),
+    });
+    await expect(
+      prisma.integrationSyncWork.findMany({
+        where: { entityId: issue.id },
+        select: { direction: true, state: true },
+      }),
+    ).resolves.toEqual([{ direction: "inbound", state: "done" }]);
+  });
+
+  it("applies unrelated remote fields and quarantines an outbound field conflict", async () => {
+    const { owner, binding, issue, ref } = await fixture();
+    await prisma.issue.update({
+      where: { id: issue.id },
+      data: { title: "Local title", priority: "high" },
+    });
+    const outbound = await prisma.integrationSyncWork.create({
+      data: {
+        bindingId: binding.id,
+        entityType: "issue",
+        entityId: issue.id,
+        direction: "outbound",
+        operation: "update",
+        dedupeKey: randomUUID(),
+        laneKey: randomUUID(),
+        actorKey: `member:${owner.id}`,
+        actorKind: "user",
+        payload: { version: 1, fields: { title: "Local title", priority: "high" } },
+        correlationId: randomUUID(),
+        epoch: binding.lifecycleEpoch,
+      },
+    });
+    const titleOnly = await prisma.integrationSyncWork.create({
+      data: {
+        bindingId: binding.id,
+        entityType: "issue",
+        entityId: issue.id,
+        direction: "outbound",
+        operation: "update",
+        dedupeKey: randomUUID(),
+        laneKey: randomUUID(),
+        actorKey: `member:${owner.id}`,
+        actorKind: "user",
+        payload: { version: 1, fields: { title: "Local title" } },
+        correlationId: randomUUID(),
+        epoch: binding.lifecycleEpoch,
+      },
+    });
+    const observedAt = new Date("2026-08-01T10:02:30.000Z");
+    const setup = dependencies([change(observedAt, "review")]);
+    setup.loadIssueDetail.mockResolvedValue(
+      detailChange(observedAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+        fields: {
+          title: "Remote title",
+          description: "Remote-only body",
+          statusId: "review",
+          priorityId: "3",
+          assignee: null,
+          startDate: null,
+          dueDate: null,
+          progress: 0,
+        },
+      }),
+    );
+
+    await runInboundSyncCycle(prisma, setup);
+
+    await expect(prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).resolves.toMatchObject({
+      title: "Local title",
+      description: "Remote-only body",
+    });
+    await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: outbound.id } })).resolves.toMatchObject({
+      state: "queued",
+      payload: { version: 1, fields: { priority: "high" } },
+    });
+    await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: titleOnly.id } })).resolves.toMatchObject({
+      state: "dead",
+      skippedReason: "inbound_field_conflict",
+    });
+    await expect(
+      prisma.integrationInboundApplication.findFirstOrThrow({ where: { refId: ref.id, remoteUpdatedAt: observedAt } }),
+    ).resolves.toMatchObject({
+      state: "conflict",
+      outcome: expect.objectContaining({
+        appliedFields: ["description"],
+        conflictFields: ["title"],
+      }),
+    });
+    await expect(
+      prisma.integrationConflict.findFirstOrThrow({ where: { refId: ref.id, kind: "inbound-field-convergence" } }),
+    ).resolves.toMatchObject({
+      localEvidence: expect.objectContaining({
+        fields: expect.objectContaining({ title: expect.objectContaining({ reason: "diverged" }) }),
+      }),
+    });
+  });
+
+  it("keeps an unmapped priority field-scoped while applying the remote title", async () => {
+    const { issue, ref } = await fixture();
+    const observedAt = new Date("2026-08-01T10:02:45.000Z");
+    const setup = dependencies([change(observedAt, "review")]);
+    setup.loadIssueDetail.mockResolvedValue(
+      detailChange(observedAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+        fields: {
+          title: "Mapped remote title",
+          description: null,
+          statusId: "review",
+          priorityId: "99",
+          assignee: null,
+          startDate: null,
+          dueDate: null,
+          progress: 0,
+        },
+      }),
+    );
+
+    await runInboundSyncCycle(prisma, setup);
+
+    await expect(prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).resolves.toMatchObject({
+      title: "Mapped remote title",
+      priority: "medium",
+    });
+    await expect(
+      prisma.integrationInboundApplication.findFirstOrThrow({ where: { refId: ref.id, remoteUpdatedAt: observedAt } }),
+    ).resolves.toMatchObject({
+      state: "conflict",
+      outcome: expect.objectContaining({
+        appliedFields: ["title"],
+        conflictFields: ["priority"],
+      }),
+    });
+  });
+
+  it("quarantines a remote date range whose start is after its due date", async () => {
+    const { issue, ref } = await fixture();
+    const observedAt = new Date("2026-08-01T10:02:47.000Z");
+    const setup = dependencies([change(observedAt, "review")]);
+    setup.loadIssueDetail.mockResolvedValue(
+      detailChange(observedAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+        fields: {
+          title: "Linked issue",
+          description: null,
+          statusId: "review",
+          priorityId: "3",
+          assignee: null,
+          startDate: "2026-08-20",
+          dueDate: "2026-08-02",
+          progress: 0,
+        },
+      }),
+    );
+
+    await runInboundSyncCycle(prisma, setup);
+
+    await expect(
+      prisma.issueSchedule.findUnique({ where: { issueId: issue.id } }),
+    ).resolves.toBeNull();
+    await expect(
+      prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } }),
+    ).resolves.toMatchObject({
+      metadata: expect.objectContaining({
+        baseline: expect.objectContaining({
+          fields: expect.objectContaining({ startDate: null, dueDate: null }),
+        }),
+      }),
+    });
+    await expect(
+      prisma.integrationInboundApplication.findFirstOrThrow({
+        where: { refId: ref.id, remoteUpdatedAt: observedAt },
+      }),
+    ).resolves.toMatchObject({
+      state: "conflict",
+      outcome: expect.objectContaining({
+        appliedFields: [],
+        conflictFields: ["startDate", "dueDate"],
+      }),
+    });
+    await expect(
+      prisma.integrationConflict.findFirstOrThrow({
+        where: { refId: ref.id, kind: "inbound-field-convergence" },
+      }),
+    ).resolves.toMatchObject({
+      localEvidence: {
+        issueId: issue.id,
+        issueKey: expect.any(String),
+        fields: {
+          startDate: expect.objectContaining({ reason: "invalid" }),
+          dueDate: expect.objectContaining({ reason: "invalid" }),
+        },
+      },
+      remoteEvidence: {
+        provider: "redmine",
+        remoteIssueId: "100",
+        remoteVersion: expect.any(String),
+        fields: {
+          startDate: { value: "2026-08-20", reason: "invalid-date-range" },
+          dueDate: { value: "2026-08-02", reason: "invalid-date-range" },
+        },
+      },
+    });
+  });
+
+  it("rejects a credential replacement during linked convergence", async () => {
+    const { credential, binding, issue, ref } = await fixture();
+    const observedAt = new Date("2026-08-01T10:02:50.000Z");
+    const setup = dependencies([change(observedAt, "in_progress")]);
+    setup.loadIssueDetail.mockImplementation(async () => {
+      await prisma.memberIntegrationCredential.update({
+        where: { id: credential.id },
+        data: {
+          encryptedKey: "replacement-key",
+          lastValidatedAt: new Date(baseline.getTime() + 1),
+        },
+      });
+      return detailChange(observedAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+        fields: {
+          title: "Must not apply",
+          description: null,
+          statusId: "open",
+          priorityId: "3",
+          assignee: null,
+          startDate: null,
+          dueDate: null,
+          progress: 0,
+        },
+      });
+    });
+
+    await runInboundSyncCycle(prisma, setup);
+
+    await expect(prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).resolves.toMatchObject({
+      title: "Linked issue",
+      state: "review",
+    });
+    await expect(prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })).resolves.toMatchObject({
+      remoteUpdatedAt: baseline,
+    });
+    await expect(prisma.integrationInboundApplication.count()).resolves.toBe(0);
+    await expect(prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })).resolves.toMatchObject({
+      cursorUpdatedAt: null,
+      cursorRemoteId: null,
+    });
+  });
+
+  it("records a malformed linked detail without leaking provider content", async () => {
+    const { binding, ref } = await fixture();
+    const observedAt = new Date("2026-08-01T10:02:55.000Z");
+    const setup = dependencies([change(observedAt, "review")]);
+    setup.loadIssueDetail.mockRejectedValue(
+      Object.assign(new Error("provider secret body"), { apiKey: "must-not-log" }),
+    );
+
+    await runInboundSyncCycle(prisma, setup);
+
+    await expect(
+      prisma.integrationInboundApplication.findFirstOrThrow({ where: { refId: ref.id, remoteUpdatedAt: observedAt } }),
+    ).resolves.toMatchObject({
+      state: "conflict",
+      outcome: expect.objectContaining({ reason: "INBOUND_OBSERVATION_FAILED" }),
+    });
+    await expect(
+      prisma.integrationConflict.findFirstOrThrow({
+        where: { refId: ref.id, kind: "inbound-observation-failure" },
+      }),
+    ).resolves.toMatchObject({ remoteEvidence: expect.objectContaining({ remoteIssueId: "100" }) });
+    await expect(
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+    ).resolves.toMatchObject({ cursorUpdatedAt: observedAt, cursorRemoteId: "100" });
+    expect(JSON.stringify([...setup.logger.warn.mock.calls, ...setup.logger.error.mock.calls])).not.toMatch(
+      /provider secret body|must-not-log|service-secret/,
+    );
+  });
+
+  it("records a mismatched linked detail and advances past the poison observation", async () => {
+    const { binding, ref } = await fixture();
+    const observedAt = new Date("2026-08-01T10:02:57.000Z");
+    const setup = dependencies([change(observedAt, "review")]);
+    setup.loadIssueDetail.mockResolvedValue(
+      detailChange(observedAt, {
+        identity: { type: "issue", remoteId: "different", remoteProjectId: "41" },
+      }),
+    );
+
+    await runInboundSyncCycle(prisma, setup);
+
+    await expect(
+      prisma.integrationInboundApplication.findFirstOrThrow({
+        where: { refId: ref.id, remoteUpdatedAt: observedAt },
+      }),
+    ).resolves.toMatchObject({
+      state: "conflict",
+      outcome: expect.objectContaining({ reason: "INBOUND_OBSERVATION_FAILED" }),
+    });
+    await expect(
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+    ).resolves.toMatchObject({ cursorUpdatedAt: observedAt, cursorRemoteId: "100" });
   });
 
   it("imports an unlinked Redmine issue observed after activation", async () => {
@@ -755,7 +1185,7 @@ describe("Redmine inbound sync", () => {
   });
 
   it.each(["mapping", "detail", "identity"] as const)(
-    "preserves the cursor when unlinked %s loading fails",
+    "records an unlinked %s failure and advances to the next observation",
     async (failure) => {
       const { binding, project } = await fixture();
       const observedAt = new Date("2026-08-01T10:09:00.000Z");
@@ -791,23 +1221,28 @@ describe("Redmine inbound sync", () => {
 
       await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(1);
       await expect(prisma.externalRef.count({ where: { externalId: "999" } })).resolves.toBe(0);
-      await expect(prisma.integrationInboundApplication.count()).resolves.toBe(0);
+      await expect(
+        prisma.integrationInboundApplication.findFirstOrThrow({ where: { remoteId: "999" } }),
+      ).resolves.toMatchObject({
+        state: "conflict",
+        outcome: expect.objectContaining({ reason: "INBOUND_OBSERVATION_FAILED" }),
+      });
+      await expect(
+        prisma.integrationConflict.findFirstOrThrow({
+          where: { bindingId: binding.id, kind: "inbound-observation-failure" },
+        }),
+      ).resolves.toMatchObject({
+        refId: null,
+        remoteEvidence: expect.objectContaining({ remoteIssueId: "999" }),
+      });
       await expect(
         prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
       ).resolves.toMatchObject({
-        cursorUpdatedAt: null,
-        cursorRemoteId: null,
+        cursorUpdatedAt: observedAt,
+        cursorRemoteId: "999",
         pollLeaseToken: null,
-        pollLeaseUntil: new Date(baseline.getTime() + 60_000),
+        pollLeaseUntil: null,
       });
-      expect(setup.logger.warn).toHaveBeenCalledWith(
-        expect.objectContaining({
-          bindingId: binding.id,
-          remoteIssueId: "999",
-          error: expect.any(Object),
-        }),
-        "Inbound Redmine issue processing failed",
-      );
       const logs = JSON.stringify([
         ...setup.logger.warn.mock.calls,
         ...setup.logger.error.mock.calls,
@@ -861,6 +1296,35 @@ describe("Redmine inbound sync", () => {
         'ALTER TABLE "issues" DROP CONSTRAINT IF EXISTS "test_redmine_discovery_rollback"',
       );
     }
+  });
+
+  it("ignores expired work sessions when applying a remote close", async () => {
+    const { owner, issue, ref } = await fixture();
+    await prisma.workSession.create({
+      data: {
+        userId: owner.userId,
+        memberId: owner.id,
+        issueId: issue.id,
+        source: "stale-test",
+        startedAt: new Date("2026-08-01T08:00:00.000Z"),
+        lastHeartbeat: new Date("2026-08-01T08:01:00.000Z"),
+      },
+    });
+    const closedAt = new Date("2026-08-04T10:02:00.000Z");
+
+    await runInboundSyncCycle(prisma, dependencies([change(closedAt, "done")]));
+
+    await expect(prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).resolves.toMatchObject({
+      state: "done",
+    });
+    await expect(
+      prisma.integrationInboundApplication.findFirstOrThrow({
+        where: { refId: ref.id, remoteUpdatedAt: closedAt },
+      }),
+    ).resolves.toMatchObject({
+      state: "applied",
+      outcome: expect.objectContaining({ conflictFields: [] }),
+    });
   });
 
   it("accepts reported time unchanged, closes in Kanon, suppresses echo, and keeps later edits", async () => {
@@ -920,7 +1384,7 @@ describe("Redmine inbound sync", () => {
     ]);
     await expect(
       prisma.activityLog.count({ where: { issueId: issue.id, via: "redmine-inbound" } }),
-    ).resolves.toBe(2);
+    ).resolves.toBe(3);
 
     await transitionIssue(issue.key, "review", owner.id);
     await expect(
