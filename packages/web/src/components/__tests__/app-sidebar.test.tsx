@@ -217,6 +217,7 @@ describe("AppSidebar", () => {
     render(<AppSidebar />);
 
     expect(screen.getByTestId("workspace-create-link")).toBeTruthy();
+    expect(screen.getByTestId("admin-users-nav-link")).toBeTruthy();
     expect(screen.queryByTestId("invite-admin-link")).toBeNull();
   });
 
@@ -242,13 +243,20 @@ describe("AppSidebar", () => {
 
   // ── (e) only isInstanceAdmin → no admin nav, no invite-admin ──────────────
 
-  it("(e) isInstanceAdmin:true but isSuperAdmin:false → admin nav NOT shown, invite-admin NOT shown", () => {
+  it("(e) isInstanceAdmin:true but isSuperAdmin:false → admin nav NOT shown, users + workspace-create shown", () => {
     mockUser.value = makeUser({ isInstanceAdmin: true, isSuperAdmin: false });
     render(<AppSidebar />);
 
     expect(screen.queryByTestId("admin-nav-link")).toBeNull();
+    expect(screen.getByTestId("admin-users-nav-link")).toBeTruthy();
     expect(screen.getByTestId("workspace-create-link")).toBeTruthy();
     expect(screen.queryByTestId("invite-admin-link")).toBeNull();
+  });
+
+  it("isInstanceAdmin:false → users nav NOT shown", () => {
+    mockUser.value = makeUser({ isInstanceAdmin: false, isSuperAdmin: false });
+    render(<AppSidebar />);
+    expect(screen.queryByTestId("admin-users-nav-link")).toBeNull();
   });
 
   // ── Soft-collapse ─────────────────────────────────────────────────────────

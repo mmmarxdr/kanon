@@ -24,6 +24,7 @@ import { settingsRoute } from "./routes/_authenticated/settings";
 import { projectSettingsRoute } from "./routes/_authenticated/project-settings";
 import { setupRoute } from "./routes/setup";
 import { adminInstanceRoute } from "./routes/_authenticated/admin.instance";
+import { adminUsersRoute } from "./routes/_authenticated/admin.users";
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -55,6 +56,7 @@ const routeTree = rootRoute.addChildren([
     settingsRoute,
     projectSettingsRoute,
     adminInstanceRoute,
+    adminUsersRoute,
   ]),
 ]);
 
