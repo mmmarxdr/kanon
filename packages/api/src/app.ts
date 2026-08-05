@@ -35,6 +35,7 @@ import issueSubscriptionRoutes from "./modules/issue-subscription/routes.js";
 import { workspaceInviteRoutes, publicInviteRoutes } from "./modules/invite/routes.js";
 import projectMemberRoutes from "./modules/project/project-member-routes.js";
 import instanceRoutes from "./modules/instance/routes.js";
+import adminUsersRoutes from "./modules/admin-users/routes.js";
 import { bootstrapSetupToken } from "./modules/instance/service.js";
 import { eventBus } from "./services/event-bus/index.js";
 import { cleanupExpired } from "./modules/work-session/service.js";
@@ -296,6 +297,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(publicInviteRoutes, { prefix: "/api/invites" });
   await app.register(projectMemberRoutes, { prefix: "/api/projects/:key/members" });
   await app.register(instanceRoutes, { prefix: "/api/instance" });
+  await app.register(adminUsersRoutes, { prefix: "/api/admin/users" });
   await app.register(integrationRoutes, { prefix: "/api/integrations" });
 
   // ─── Instance Setup Token (first-boot onReady hook) ───────────────────

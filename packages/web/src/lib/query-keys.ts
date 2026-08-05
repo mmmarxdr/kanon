@@ -158,3 +158,15 @@ export const scheduleTimelineKeys = {
   project: (projectKey: string) =>
     [...scheduleTimelineKeys.projects(), projectKey] as const,
 };
+
+export const adminUserKeys = {
+  all: ["admin-users"] as const,
+  lists: () => [...adminUserKeys.all, "list"] as const,
+  list: (params: { q: string; verified?: boolean; offset: number; limit: number }) =>
+    [...adminUserKeys.lists(), params] as const,
+  details: () => [...adminUserKeys.all, "detail"] as const,
+  detail: (userId: string) => [...adminUserKeys.details(), userId] as const,
+  workspaces: () => [...adminUserKeys.all, "workspaces"] as const,
+  workspaceProjects: (workspaceId: string) =>
+    [...adminUserKeys.all, "workspace-projects", workspaceId] as const,
+};

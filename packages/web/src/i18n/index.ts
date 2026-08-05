@@ -15,6 +15,7 @@ import enSettings from "./locales/en/settings.json";
 import enPalette from "./locales/en/palette.json";
 import enDependencies from "./locales/en/dependencies.json";
 import enAuth from "./locales/en/auth.json";
+import enAdmin from "./locales/en/admin.json";
 
 import esCommon from "./locales/es/common.json";
 import esNav from "./locales/es/nav.json";
@@ -28,6 +29,7 @@ import esSettings from "./locales/es/settings.json";
 import esPalette from "./locales/es/palette.json";
 import esDependencies from "./locales/es/dependencies.json";
 import esAuth from "./locales/es/auth.json";
+import esAdmin from "./locales/es/admin.json";
 
 export const I18N_NAMESPACES = [
   "common",
@@ -42,6 +44,7 @@ export const I18N_NAMESPACES = [
   "palette",
   "dependencies",
   "auth",
+  "admin",
 ] as const;
 
 export type I18nNamespace = (typeof I18N_NAMESPACES)[number];
@@ -60,6 +63,7 @@ const resources = {
     palette: enPalette,
     dependencies: enDependencies,
     auth: enAuth,
+    admin: enAdmin,
   },
   es: {
     common: esCommon,
@@ -74,6 +78,7 @@ const resources = {
     palette: esPalette,
     dependencies: esDependencies,
     auth: esAuth,
+    admin: esAdmin,
   },
 };
 
