@@ -1,0 +1,25 @@
+---
+description: Never deploy via AWS/SSM/kanon-infra — Dokploy owns live deploys
+alwaysApply: true
+---
+
+# Deploy: Dokploy only — no AWS
+
+AWS hosting for Kanon is **gone**. Do **not** invent or follow AWS/EC2/SSM/`kanon-infra` deploy runbooks.
+
+## Forbidden
+
+- Triggering `deploy-dev.yml` (or any `mmmarxdr/kanon-infra` workflow)
+- `aws ssm`, `aws ec2`, Terraform apply against old kanon-infra boxes
+- Assuming live URL is `*.sslip.io` / instance id `i-00bc0fb1e0ec1b1e6`
+- Reading or recreating `.claude/skills/kanon-deploy` (deleted on purpose)
+
+## Shipping
+
+When the user asks to ship / “subir” a change:
+
+1. Open PR, get CI green, merge (if they asked to merge).
+2. Stop. **Dokploy** pulls published images automatically.
+3. Do **not** run a manual deploy unless the user explicitly names Dokploy/ops steps.
+
+MCP package releases (`release.yml`) are unrelated to AWS box deploys — only run when the user asks for an MCP release.
