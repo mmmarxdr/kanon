@@ -9,7 +9,7 @@ import type { EmailProvider } from "../../services/email/types.js";
 import { buildInviteEmail } from "../../services/email/templates/invite.js";
 import { getInstanceLocale } from "../instance/service.js";
 import type { CreateInviteBody, OnboardingInviteBody, ProjectAssignment } from "./schema.js";
-import { ProjectAssignmentSchema } from "./schema.js";
+import { ProjectAssignmentSchema, resolveInviteProjectAccess } from "./schema.js";
 import { createProjectMembersInTx } from "../project/project-member-service.js";
 import { z } from "zod";
 
@@ -125,6 +125,11 @@ function isDomainAllowed(email: string, allowedDomains: string[]): boolean {
 /**
  * Shape an invite record into the InviteResponse format.
  */
+function assignmentCount(projectAssignments: unknown): number {
+  const parsed = z.array(ProjectAssignmentSchema).safeParse(projectAssignments);
+  return parsed.success ? parsed.data.length : 0;
+}
+
 function toInviteResponse(invite: {
   id: string;
   token: string;
@@ -135,6 +140,8 @@ function toInviteResponse(invite: {
   revokedAt: Date | null;
   label: string | null;
   email: string | null;
+  projectAccess?: "workspace" | "assigned";
+  projectAssignments?: unknown;
   createdAt: Date;
   createdBy: { email: string; displayName: string | null };
 }) {
@@ -148,6 +155,8 @@ function toInviteResponse(invite: {
     revokedAt: invite.revokedAt?.toISOString() ?? null,
     label: invite.label,
     email: invite.email,
+    projectAccess: invite.projectAccess ?? "workspace",
+    projectAssignmentCount: assignmentCount(invite.projectAssignments),
     inviteUrl: `/invite/${invite.token}`,
     createdBy: {
       email: invite.createdBy.email,
@@ -184,6 +193,8 @@ export async function createInvite(
   // An explicit maxUses in the body always wins.
   const maxUses = body.maxUses ?? (body.email ? 1 : 0);
 
+  const projectAccess = resolveInviteProjectAccess(body);
+
   const invite = await prisma.workspaceInvite.create({
     data: {
       token,
@@ -194,6 +205,7 @@ export async function createInvite(
       email: body.email ?? null,
       workspaceId,
       createdById,
+      projectAccess,
       projectAssignments:
         body.projectAssignments && body.projectAssignments.length > 0
           ? body.projectAssignments
@@ -407,6 +419,7 @@ export async function createOnboardingInvite(
 
   // 3. Persist the invite row — opaque token required by existing schema
   const opaqueToken = generateToken();
+  const projectAccess = resolveInviteProjectAccess(body);
   const invite = await prisma.workspaceInvite.create({
     data: {
       token: opaqueToken,
@@ -418,6 +431,7 @@ export async function createOnboardingInvite(
       kind: "ONBOARDING",
       workspaceId,
       createdById,
+      projectAccess,
       projectAssignments:
         body.projectAssignments && body.projectAssignments.length > 0
           ? body.projectAssignments
@@ -465,9 +479,10 @@ export async function acceptInvite(token: string, userId: string, userEmail: str
       workspace_id: string;
       kind: string | null;
       project_assignments: unknown;
+      project_access: "workspace" | "assigned";
       email: string | null;
     }>>`
-      SELECT id, token, role, max_uses, use_count, expires_at, revoked_at, workspace_id, kind, project_assignments, email
+      SELECT id, token, role, max_uses, use_count, expires_at, revoked_at, workspace_id, kind, project_assignments, project_access, email
       FROM workspace_invites
       WHERE token = ${token}
       FOR UPDATE
@@ -554,11 +569,12 @@ export async function acceptInvite(token: string, userId: string, userEmail: str
     // Derive username from email (shared helper — ADR-6)
     const username = await deriveUsername(tx, invite.workspaceId, userEmail);
 
-    // Create member
+    // Create member — KAN-222: projectAccess from invite (workspace = all projects)
     const member = await tx.member.create({
       data: {
         username,
         role: invite.role as MemberRole,
+        projectAccess: row.project_access ?? "workspace",
         userId,
         workspaceId: invite.workspaceId,
       },

@@ -34,18 +34,48 @@ function dedupeFirstWins(
   });
 }
 
+const ProjectAccessEnum = z.enum(["workspace", "assigned"]);
+
 /**
  * Create invite request body — used by POST /api/workspaces/:wid/invites.
+ *
+ * projectAccess:
+ *   - workspace (default): Member gets full workspace project access
+ *   - assigned: requires non-empty projectAssignments (all/selected UI scopes)
  */
-export const CreateInviteBody = z.object({
-  role: InviteRoleEnum.optional().default("member"),
-  maxUses: z.number().int().min(0).optional(),
-  expiresInHours: z.number().int().min(1).max(720).optional().default(168),
-  label: z.string().max(200).optional(),
-  email: z.string().email().optional(),
-  projectAssignments: z.array(ProjectAssignmentSchema).optional().transform(dedupeFirstWins),
-});
+export const CreateInviteBody = z
+  .object({
+    role: InviteRoleEnum.optional().default("member"),
+    maxUses: z.number().int().min(0).optional(),
+    expiresInHours: z.number().int().min(1).max(720).optional().default(168),
+    label: z.string().max(200).optional(),
+    email: z.string().email().optional(),
+    /** Omit to infer: assignments present → assigned, else workspace */
+    projectAccess: ProjectAccessEnum.optional(),
+    projectAssignments: z.array(ProjectAssignmentSchema).optional().transform(dedupeFirstWins),
+  })
+  .superRefine((data, ctx) => {
+    const access =
+      data.projectAccess ??
+      (data.projectAssignments && data.projectAssignments.length > 0 ? "assigned" : "workspace");
+    if (access === "assigned" && (!data.projectAssignments || data.projectAssignments.length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "projectAssignments are required when projectAccess is assigned",
+        path: ["projectAssignments"],
+      });
+    }
+  });
 export type CreateInviteBody = z.infer<typeof CreateInviteBody>;
+
+/** Resolve persisted projectAccess for createInvite / onboarding. */
+export function resolveInviteProjectAccess(body: {
+  projectAccess?: "workspace" | "assigned";
+  projectAssignments?: ProjectAssignment[] | undefined;
+}): "workspace" | "assigned" {
+  if (body.projectAccess) return body.projectAccess;
+  return body.projectAssignments && body.projectAssignments.length > 0 ? "assigned" : "workspace";
+}
 
 /**
  * Invite response — returned by invite CRUD endpoints.
@@ -60,6 +90,8 @@ export const InviteResponse = z.object({
   revokedAt: z.string().nullable(),
   label: z.string().nullable(),
   email: z.string().nullable(),
+  projectAccess: ProjectAccessEnum,
+  projectAssignmentCount: z.number().int().min(0),
   inviteUrl: z.string(),
   createdBy: z.object({
     email: z.string(),
@@ -136,6 +168,7 @@ export const OnboardingInviteBody = z
     email: z.string().email("Invalid email address").optional(),
     role: z.enum(["member", "admin", "viewer"]).optional().default("member"),
     ttlHours: z.number().int().min(1).max(72).optional().default(72),
+    projectAccess: ProjectAccessEnum.optional(),
     projectAssignments: z.array(ProjectAssignmentSchema).optional().transform(dedupeFirstWins),
   })
   .refine(
@@ -149,7 +182,19 @@ export const OnboardingInviteBody = z
       message: "Exactly one of userId or email must be provided",
       path: ["userId"],
     },
-  );
+  )
+  .superRefine((data, ctx) => {
+    const access =
+      data.projectAccess ??
+      (data.projectAssignments && data.projectAssignments.length > 0 ? "assigned" : "workspace");
+    if (access === "assigned" && (!data.projectAssignments || data.projectAssignments.length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "projectAssignments are required when projectAccess is assigned",
+        path: ["projectAssignments"],
+      });
+    }
+  });
 export type OnboardingInviteBody = z.infer<typeof OnboardingInviteBody>;
 
 /**

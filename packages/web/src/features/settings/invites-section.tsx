@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useProjectsQuery } from "@/hooks/use-projects-query";
+import { useWorkspacesQuery } from "@/hooks/use-workspace-query";
 import {
   useWorkspaceInvitesQuery,
   useCreateInviteMutation,
@@ -66,11 +67,12 @@ export function InvitesSection({
   const { t } = useTranslation("settings");
   const { t: tCommon } = useTranslation("common");
   const { data: invites, isLoading, error } = useWorkspaceInvitesQuery(workspaceId);
-  const { data: projects = [], isLoading: projectsLoading } = useProjectsQuery(workspaceId);
+  const { data: workspaces = [] } = useWorkspacesQuery();
   const createInvite = useCreateInviteMutation(workspaceId);
   const revokeInvite = useRevokeInviteMutation(workspaceId);
 
   const [showForm, setShowForm] = useState(false);
+  const [targetWorkspaceId, setTargetWorkspaceId] = useState(workspaceId);
   const [role, setRole] = useState<string>("member");
   const [maxUses, setMaxUses] = useState<string>("0");
   const [expiresInHours, setExpiresInHours] = useState<string>("168");
@@ -82,27 +84,43 @@ export function InvitesSection({
 
   const isAdmin = currentUserRole === "admin" || currentUserRole === "owner";
   const listColumns = invitesColumns(t);
+  const adminWorkspaces = workspaces.filter(
+    (ws) => ws.role === "admin" || ws.role === "owner",
+  );
+  const { data: projects = [], isLoading: projectsLoading } = useProjectsQuery(targetWorkspaceId);
+
+  useEffect(() => {
+    setTargetWorkspaceId(workspaceId);
+  }, [workspaceId]);
+
+  useEffect(() => {
+    setSelectedProjectIds([]);
+  }, [targetWorkspaceId]);
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     const projectIds = projectAccess === "all"
       ? projects.map((project) => project.id)
       : selectedProjectIds;
+    const accessMode = projectAccess === "workspace" ? "workspace" : "assigned";
 
     createInvite.mutate(
       {
+        workspaceId: targetWorkspaceId,
         role,
         maxUses: parseInt(maxUses, 10) || 0,
         expiresInHours: parseInt(expiresInHours, 10) || 168,
         label: label || undefined,
         email: email || undefined,
-        projectAssignments: projectAccess === "workspace"
+        projectAccess: accessMode,
+        projectAssignments: accessMode === "workspace"
           ? undefined
           : projectIds.map((projectId) => ({ projectId, role })),
       },
       {
-        onSuccess: () => {
+        onSuccess: (invite) => {
           setShowForm(false);
+          setTargetWorkspaceId(workspaceId);
           setRole("member");
           setMaxUses("0");
           setExpiresInHours("168");
@@ -110,6 +128,13 @@ export function InvitesSection({
           setEmail("");
           setProjectAccess("workspace");
           setSelectedProjectIds([]);
+          if (targetWorkspaceId !== workspaceId) {
+            const url = `${window.location.origin}/invite/${invite.token}`;
+            void navigator.clipboard.writeText(url).then(() => {
+              setCopiedId(invite.id);
+              setTimeout(() => setCopiedId(null), 2000);
+            });
+          }
         },
       },
     );
@@ -229,6 +254,26 @@ export function InvitesSection({
               )}
             </div>
 
+            {adminWorkspaces.length > 1 && (
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-card-foreground">
+                  {t("invitesTargetWorkspace")}
+                </label>
+                <select
+                  data-testid="invite-target-workspace"
+                  value={targetWorkspaceId}
+                  onChange={(e) => setTargetWorkspaceId(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/25"
+                >
+                  {adminWorkspaces.map((ws) => (
+                    <option key={ws.id} value={ws.id}>
+                      {ws.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <fieldset className="space-y-2 rounded-md border border-border p-3">
               <legend className="px-1 text-xs font-medium text-card-foreground">
                 {t("invitesProjectAccess")}
@@ -247,7 +292,11 @@ export function InvitesSection({
                   {t("invitesAccessSelected")}
                 </option>
               </select>
-              <p className="text-xs text-muted-foreground">{t("invitesAccessHint")}</p>
+              <p className="text-xs text-muted-foreground">
+                {projectAccess === "workspace"
+                  ? t("invitesAccessHintWorkspace")
+                  : t("invitesAccessHintAssigned")}
+              </p>
 
               {projectAccess === "all" && (
                 <p className="text-xs text-foreground">
@@ -406,6 +455,11 @@ function InviteListRow({
         </span>,
         <span key="role" className="text-xs text-muted-foreground">
           {roleLabel(invite.role, t)}
+          <span className="block text-[10px] text-muted-foreground/80">
+            {invite.projectAccess === "assigned"
+              ? t("invitesAccessSummaryAssigned", { count: invite.projectAssignmentCount ?? 0 })
+              : t("invitesAccessSummaryWorkspace")}
+          </span>
         </span>,
         <span key="email" className="text-xs text-muted-foreground truncate">
           {invite.email ?? "—"}

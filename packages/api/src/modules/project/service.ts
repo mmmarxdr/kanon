@@ -77,22 +77,47 @@ export async function createProject(
   return project;
 }
 
+export type ListProjectsVisibility = {
+  role: "owner" | "admin" | "pm" | "member" | "viewer";
+  /** KAN-222 membership access mode */
+  projectAccess: "workspace" | "assigned";
+  userId: string;
+  /** KAN-79: scoped tokens only see these ids; null/omit = unscoped */
+  allowedProjectIds?: string[] | null;
+};
+
 /**
- * List projects in a workspace.
+ * List projects in a workspace visible to the caller.
  *
- * KAN-79: when `allowedProjectIds` is provided (a scoped token), the result is
- * restricted to those projects so a scoped credential cannot enumerate
- * out-of-scope projects. Pass `null`/omit for unscoped tokens (full list).
+ * Visibility (KAN-222) matches enforceProjectAccess:
+ * - owner/admin → all active projects
+ * - projectAccess=workspace → all active projects
+ * - projectAccess=assigned → only ProjectMember rows
+ * Then intersect with token allowedProjectIds when non-empty (KAN-79).
  */
 export async function listProjects(
   workspaceId: string,
-  allowedProjectIds?: string[] | null,
+  visibility: ListProjectsVisibility,
 ) {
+  const isFullWorkspace =
+    visibility.role === "owner" ||
+    visibility.role === "admin" ||
+    visibility.projectAccess === "workspace";
+
+  const allowedProjectIds = visibility.allowedProjectIds;
+
   return prisma.project.findMany({
     where: {
       workspaceId,
       archived: false,
-      ...(allowedProjectIds ? { id: { in: allowedProjectIds } } : {}),
+      ...(isFullWorkspace
+        ? allowedProjectIds
+          ? { id: { in: allowedProjectIds } }
+          : {}
+        : {
+            projectMembers: { some: { userId: visibility.userId } },
+            ...(allowedProjectIds ? { id: { in: allowedProjectIds } } : {}),
+          }),
     },
     orderBy: { createdAt: "asc" },
   });

@@ -11,6 +11,10 @@ vi.mock("@/hooks/use-projects-query", () => ({
   useProjectsQuery: vi.fn(),
 }));
 
+vi.mock("@/hooks/use-workspace-query", () => ({
+  useWorkspacesQuery: vi.fn(),
+}));
+
 vi.mock("./invite-domain-restriction", () => ({
   InviteDomainRestriction: () => null,
 }));
@@ -27,6 +31,7 @@ async function renderSection(mutate = vi.fn()) {
     useRevokeInviteMutation,
   } = await import("./use-settings-queries");
   const { useProjectsQuery } = await import("@/hooks/use-projects-query");
+  const { useWorkspacesQuery } = await import("@/hooks/use-workspace-query");
 
   vi.mocked(useWorkspaceInvitesQuery).mockReturnValue({
     data: [],
@@ -37,6 +42,13 @@ async function renderSection(mutate = vi.fn()) {
     data: projects,
     isLoading: false,
   } as unknown as ReturnType<typeof useProjectsQuery>);
+  vi.mocked(useWorkspacesQuery).mockReturnValue({
+    data: [
+      { id: "workspace-1", name: "Primary", slug: "primary", role: "admin", allowedDomains: [], createdAt: "" },
+      { id: "workspace-2", name: "Client", slug: "client", role: "owner", allowedDomains: [], createdAt: "" },
+    ],
+    isLoading: false,
+  } as unknown as ReturnType<typeof useWorkspacesQuery>);
   vi.mocked(useCreateInviteMutation).mockReturnValue({
     mutate,
     isPending: false,
@@ -65,13 +77,16 @@ describe("InvitesSection project access", () => {
     vi.clearAllMocks();
   });
 
-  it("keeps project access empty by default", async () => {
+  it("defaults to workspace projectAccess with no assignments", async () => {
     const mutate = await renderSection();
 
     fireEvent.click(screen.getByRole("button", { name: "Create Invite Link" }));
 
     expect(mutate).toHaveBeenCalledWith(
-      expect.objectContaining({ projectAssignments: undefined }),
+      expect.objectContaining({
+        projectAccess: "workspace",
+        projectAssignments: undefined,
+      }),
       expect.any(Object),
     );
   });
@@ -87,6 +102,7 @@ describe("InvitesSection project access", () => {
     expect(mutate).toHaveBeenCalledWith(
       expect.objectContaining({
         role: "member",
+        projectAccess: "assigned",
         projectAssignments: projects.map((project) => ({
           projectId: project.id,
           role: "member",
@@ -107,8 +123,23 @@ describe("InvitesSection project access", () => {
 
     expect(mutate).toHaveBeenCalledWith(
       expect.objectContaining({
+        projectAccess: "assigned",
         projectAssignments: [{ projectId: projects[0]!.id, role: "member" }],
       }),
+      expect.any(Object),
+    );
+  });
+
+  it("lets admins pick a target workspace", async () => {
+    const mutate = await renderSection();
+
+    fireEvent.change(screen.getByTestId("invite-target-workspace"), {
+      target: { value: "workspace-2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Invite Link" }));
+
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: "workspace-2", projectAccess: "workspace" }),
       expect.any(Object),
     );
   });

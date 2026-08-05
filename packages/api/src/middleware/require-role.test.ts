@@ -78,7 +78,7 @@ describe("requireRole", () => {
     await expect(handler(request, dummyReply, vi.fn())).resolves.toBeUndefined();
     expect(mockFindUnique).toHaveBeenCalledWith({
       where: { userId_workspaceId: { userId: "u1", workspaceId: "ws-1" } },
-      select: { id: true, role: true },
+      select: { id: true, role: true, projectAccess: true },
     });
     // Verify request.member is set
     expect(request.member).toEqual({
@@ -492,7 +492,7 @@ describe("enforceProjectAccess", () => {
 
   // ── (d) Workspace owner/admin bypass — no ProjectMember lookup ──────────
   it("(d) owner bypasses: skips ProjectMember lookup, returns workspace role", async () => {
-    mockFindUnique.mockResolvedValue({ id: "wm-owner", role: "owner" } as any);
+    mockFindUnique.mockResolvedValue({ id: "wm-owner", role: "owner", projectAccess: "assigned" } as any);
 
     const result = await enforceProjectAccess(USER_ID, PROJECT_ID, WORKSPACE_ID, "member");
 
@@ -502,7 +502,7 @@ describe("enforceProjectAccess", () => {
   });
 
   it("(d) admin bypasses: skips ProjectMember lookup, returns workspace role", async () => {
-    mockFindUnique.mockResolvedValue({ id: "wm-admin", role: "admin" } as any);
+    mockFindUnique.mockResolvedValue({ id: "wm-admin", role: "admin", projectAccess: "assigned" } as any);
 
     const result = await enforceProjectAccess(USER_ID, PROJECT_ID, WORKSPACE_ID, "admin");
 
@@ -511,9 +511,20 @@ describe("enforceProjectAccess", () => {
     expect(result.projectRole).toBe("admin");
   });
 
+  // ── KAN-222: workspace projectAccess bypasses ProjectMember ─────────────
+  it("(KAN-222) member with projectAccess=workspace skips ProjectMember lookup", async () => {
+    mockFindUnique.mockResolvedValue({ id: "wm-ws", role: "member", projectAccess: "workspace" } as any);
+
+    const result = await enforceProjectAccess(USER_ID, PROJECT_ID, WORKSPACE_ID, "member");
+
+    expect(mockProjectMemberFindUnique).not.toHaveBeenCalled();
+    expect(result.member.projectAccess).toBe("workspace");
+    expect(result.projectRole).toBe("member");
+  });
+
   // ── (b) member with PM row + sufficient role → pass ─────────────────────
   it("(b) member with PM row and sufficient role passes", async () => {
-    mockFindUnique.mockResolvedValue({ id: "wm-1", role: "member" } as any);
+    mockFindUnique.mockResolvedValue({ id: "wm-1", role: "member", projectAccess: "assigned" } as any);
     mockProjectMemberFindUnique.mockResolvedValue({ id: "pm-1", role: "member" } as any);
 
     const result = await enforceProjectAccess(USER_ID, PROJECT_ID, WORKSPACE_ID, "member");
@@ -526,7 +537,7 @@ describe("enforceProjectAccess", () => {
   });
 
   it("(b) viewer with PM row and viewer-minimum route passes", async () => {
-    mockFindUnique.mockResolvedValue({ id: "wm-v", role: "viewer" } as any);
+    mockFindUnique.mockResolvedValue({ id: "wm-v", role: "viewer", projectAccess: "assigned" } as any);
     mockProjectMemberFindUnique.mockResolvedValue({ id: "pm-v", role: "viewer" } as any);
 
     const result = await enforceProjectAccess(USER_ID, PROJECT_ID, WORKSPACE_ID, "viewer");
@@ -536,7 +547,7 @@ describe("enforceProjectAccess", () => {
 
   // ── (c) viewer on member-minimum route → 403 ────────────────────────────
   it("(c) viewer PM role on member-minimum route returns 403", async () => {
-    mockFindUnique.mockResolvedValue({ id: "wm-v", role: "viewer" } as any);
+    mockFindUnique.mockResolvedValue({ id: "wm-v", role: "viewer", projectAccess: "assigned" } as any);
     mockProjectMemberFindUnique.mockResolvedValue({ id: "pm-v", role: "viewer" } as any);
 
     await expect(
@@ -546,7 +557,7 @@ describe("enforceProjectAccess", () => {
 
   // ── (a) member with no PM row → 403 ─────────────────────────────────────
   it("(a) member with no ProjectMember row returns 403", async () => {
-    mockFindUnique.mockResolvedValue({ id: "wm-1", role: "member" } as any);
+    mockFindUnique.mockResolvedValue({ id: "wm-1", role: "member", projectAccess: "assigned" } as any);
     mockProjectMemberFindUnique.mockResolvedValue(null);
 
     await expect(
@@ -556,7 +567,7 @@ describe("enforceProjectAccess", () => {
 
   // ── R-INV1: member.id MUST be workspace Member.id, not PM.id ────────────
   it("(R-INV1) result.member.id is workspace Member.id, NOT ProjectMember.id", async () => {
-    mockFindUnique.mockResolvedValue({ id: "workspace-member-42", role: "member" } as any);
+    mockFindUnique.mockResolvedValue({ id: "workspace-member-42", role: "member", projectAccess: "assigned" } as any);
     mockProjectMemberFindUnique.mockResolvedValue({ id: "pm-id-999", role: "member" } as any);
 
     const result = await enforceProjectAccess(USER_ID, PROJECT_ID, WORKSPACE_ID, "member");
@@ -581,7 +592,7 @@ describe("enforceProjectAccess", () => {
   // member/viewer path: requires an explicit ProjectMember row.
   it("(pm-no-row) pm workspace member WITHOUT a ProjectMember row is rejected 403", async () => {
     // Workspace member has role "pm" — not in the owner/admin bypass set
-    mockFindUnique.mockResolvedValue({ id: "wm-pm-1", role: "pm" } as any);
+    mockFindUnique.mockResolvedValue({ id: "wm-pm-1", role: "pm", projectAccess: "assigned" } as any);
     // No ProjectMember row for this project
     mockProjectMemberFindUnique.mockResolvedValue(null);
 
@@ -597,7 +608,7 @@ describe("enforceProjectAccess", () => {
 
   it("(pm-with-row) pm workspace member WITH a ProjectMember row of sufficient role is accepted", async () => {
     // Workspace member has role "pm"
-    mockFindUnique.mockResolvedValue({ id: "wm-pm-2", role: "pm" } as any);
+    mockFindUnique.mockResolvedValue({ id: "wm-pm-2", role: "pm", projectAccess: "assigned" } as any);
     // ProjectMember row exists with role "member" (sufficient for member-minimum)
     mockProjectMemberFindUnique.mockResolvedValue({ id: "pm-row-2", role: "member" } as any);
 

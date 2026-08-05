@@ -27,6 +27,8 @@ export interface WorkspaceInvite {
   revokedAt: string | null;
   label: string | null;
   email: string | null;
+  projectAccess?: "workspace" | "assigned";
+  projectAssignmentCount?: number;
   inviteUrl: string;
   createdBy: {
     email: string;
@@ -49,6 +51,7 @@ interface CreateInviteInput {
   expiresInHours?: number;
   label?: string;
   email?: string;
+  projectAccess?: "workspace" | "assigned";
   projectAssignments?: Array<{ projectId: string; role: string }>;
 }
 
@@ -83,13 +86,22 @@ export function useWorkspaceInvitesQuery(workspaceId: string | undefined) {
 export function useCreateInviteMutation(workspaceId: string | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: CreateInviteInput) =>
-      fetchApi<WorkspaceInvite>(`/api/workspaces/${workspaceId}/invites`, {
+    mutationFn: (input: CreateInviteInput & { workspaceId?: string }) => {
+      const targetId = input.workspaceId ?? workspaceId;
+      const { workspaceId: _ignored, ...body } = input;
+      return fetchApi<WorkspaceInvite>(`/api/workspaces/${targetId}/invites`, {
         method: "POST",
-        body: JSON.stringify(input),
-      }),
-    onSuccess: () => {
-      if (workspaceId) {
+        body: JSON.stringify(body),
+      });
+    },
+    onSuccess: (_data, variables) => {
+      const targetId = variables.workspaceId ?? workspaceId;
+      if (targetId) {
+        void queryClient.invalidateQueries({
+          queryKey: inviteKeys.list(targetId),
+        });
+      }
+      if (workspaceId && workspaceId !== targetId) {
         void queryClient.invalidateQueries({
           queryKey: inviteKeys.list(workspaceId),
         });

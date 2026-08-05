@@ -249,6 +249,7 @@ describe("onboard()", () => {
     workspace_id: WORKSPACE_ID,
     role: "member",
     project_assignments: null,
+    project_access: "workspace" as const,
     revoked_at: null,
     consumed_at: null,
     expires_at: new Date(Date.now() + 72 * 60 * 60 * 1000),
@@ -435,7 +436,8 @@ describe("onboard() — project assignment application (Phase 6)", () => {
   function makeOnboardTxWithPM(opts: {
     invite?: {
       id?: string; kind?: string; email?: string; workspace_id?: string;
-      role?: string; project_assignments?: unknown; revoked_at?: Date | null;
+      role?: string; project_assignments?: unknown; project_access?: string;
+      revoked_at?: Date | null;
       consumed_at?: Date | null; expires_at?: Date;
     };
     liveProjectIds?: string[];
@@ -448,6 +450,7 @@ describe("onboard() — project assignment application (Phase 6)", () => {
       workspace_id: WORKSPACE_ID,
       role: "member",
       project_assignments: mockInviteWithAssignments.projectAssignments,
+      project_access: "assigned",
       revoked_at: null,
       consumed_at: null,
       expires_at: mockInviteWithAssignments.expiresAt,
