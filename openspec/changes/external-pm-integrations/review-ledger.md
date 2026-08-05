@@ -554,3 +554,16 @@
 
 - RED evidence: required-field `@ts-expect-error` directives were unused; three unit regressions failed; and the PostgreSQL lifecycle update completed before capture commit.
 - GREEN evidence: API build, configured type gate, tracked-tree formatting, and full API coverage passed; focused core/contract/outbox/adapter/issue suites passed **50/50**. Remote full CI and re-review remain pending.
+
+## Public PR review — B1.1 ExternalRef binding hardening
+
+- **Target:** PR #276, final head `23b9acbdbeba3126552868fc8dc388e16c74e75a`
+- **Result:** `PASS`; required CI and CodeRabbit passed, all actionable threads were resolved, and GitHub reported `mergeStateStatus: CLEAN` before merge.
+
+| id | location | severity | status | evidence |
+| --- | --- | --- | --- | --- |
+| CR-B1-001 | `packages/api/prisma/binding-hardening.test.ts` Docker command ordering assertion | MINOR | fixed | The test now proves both the integrity-proof and migration commands exist before asserting their order; focused binding tests passed. |
+| CR-B1-002 | `packages/api/src/modules/integrations/backfill.ts` CLI disconnect path | MINOR | fixed | Prisma disconnect rejection is handled locally, logged, and sets a failing exit code without replacing proof diagnostics. |
+
+- Non-blocking review notes about historical naming, SQL/ORM policy duplication, index size, and migration lock duration were not expanded into speculative refactors. The migration remains fail-closed and its live zero-unresolved prerequisite passed.
+- PR #276 merged as `9f4c074667ffc926a55a395fe87c4d6ff9cde72a` on 2026-08-05. Automatic Dokploy deployment is in progress; deployment verification is intentionally not recorded as complete yet.

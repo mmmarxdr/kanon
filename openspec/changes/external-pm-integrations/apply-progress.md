@@ -2,15 +2,13 @@
 
 ## Status
 
-- Current work unit: **A1.8a — Issue mutation contract**
-- State: **accepted for commit under maintainer `size:exception`; Judgment Day terminal state: `ESCALATED — maintainer exception`** — historical failed A1.8 evidence remains preserved below
-- Branch: `feat/pm-182-issue-contract`
-- Worktree: `/srv/workspace/projects/kanon/.claude/worktrees/pm-182-issue-contract`
-- Base: `docs/pm-182-a1-8-rescope` at `6feeec1b10c6b49560583fc18d14c31c255d02df` (functional ancestor `de988c638acef374cebb86caac1c7996196f5eec`)
-- Intended PR target: `docs/pm-182-a1-8-rescope`
-- Delivery: feature-branch chain
-- Mode: strict TDD
-- Review budget: 400 changed lines; feature-branch chain; final A1.8a result has a maintainer-approved `size:exception`
+- Current work unit: **B1.1 — ExternalRef binding hardening closeout**
+- State: **merged** in PR #276; automatic Dokploy deployment is in progress and post-deploy verification is pending
+- Branch: `feat/kan-223-external-ref-binding-hardening`
+- Base: `main` at merge commit `9f4c074667ffc926a55a395fe87c4d6ff9cde72a`
+- Delivery: direct PR to `main`
+- Mode: proof-gated migration hardening
+- Review result: required CI and CodeRabbit passed; both actionable review threads were fixed and resolved
 - Maintainer-approved migration correction: A1.3 uses `20260721_pm_identity_health`; A1.2 remains unchanged; A1.4 uses `20260722_pm_work_outbox`; A1.5 uses `20260723_pm_inbound_application_conflict`.
 
 ## Completed Tasks
@@ -24,6 +22,7 @@
 - [x] A1.6b — Transaction-scoped ExternalRef writer gate and final invariant proof (Judgment Day re-judgment pending)
 - [x] A1.7 — Transactional integration-work capture, idempotent lane keys, rollback evidence, and read-only due-work scanner
 - [x] A1.8a — Pure Issue-row/canonical-payload contract; final `size:exception` is recorded below
+- [x] B1.1 — Required ExternalRef binding, binding-scoped uniqueness, and restricted binding deletion
 
 ## A1.2 Implementation
 
@@ -518,3 +517,11 @@ Terminal A1.8 state: **BLOCKED / ESCALATED** after the failed final scoped pre-c
 - Narrowed required canonical patch fields, bounded canonical JSON depth, locked the binding epoch through capture commit, made duplicate outbox insertion atomic, rejected missing Redmine status mappings, and unified zero-transition responses.
 - RED reproduced the type, JSON, status, no-op, and lifecycle race failures. GREEN passed the API build, configured type gate, and focused core/contract/outbox/adapter/issue suites **50/50**.
 - The generated migration, one-time backfill scan, current exact Issue scalar list, localized 422 fallback, and per-invocation correlation IDs remain unchanged for the reasons recorded in `review-ledger.md`.
+
+## B1.1 — ExternalRef binding hardening
+
+- Made `ExternalRef.bindingId` required, changed binding deletion to `Restrict`, and added binding-scoped remote-reference uniqueness through generated migration `20260805125112_external_ref_binding_hardening`.
+- Replaced the consumed nullable backfill path with an advisory-gated aggregate integrity proof executed before `prisma migrate deploy`; invalid, missing, cross-tenant, mismatched, duplicate, and partial-schema states fail closed.
+- The live Dokploy proof passed before migration with `{"zeroUnresolved":true,"diagnostics":[]}` and made no data, schema, deployment, or configuration change.
+- Focused binding/lifecycle/retry verification passed **62/62**. Prisma validation, API/Web/MCP type checks, lint, tracked formatting, and diff checks passed. The full API coverage run passed **2268/2269** with one unrelated async notification flake that passed **19/19** in isolation.
+- PR #276 merged to `main` as `9f4c074667ffc926a55a395fe87c4d6ff9cde72a` on 2026-08-05 after required CI and CodeRabbit passed. Automatic Dokploy deployment is in progress; post-deploy health and migration verification remain pending.
