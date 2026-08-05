@@ -7,12 +7,37 @@ import type {
   AddMembershipBody,
   AdminUserListQuery,
   BulkBody,
+  MoveMembershipBody,
   PatchMembershipBody,
   ReplaceProjectsBody,
 } from "./schema.js";
 
 /** Instance admins orchestrate as workspace owner for cross-WS privilege. */
 const INSTANCE_ACTING_ROLE: MemberRole = "owner";
+
+async function assertProjectsInWorkspace(
+  workspaceId: string,
+  projects: Array<{ projectId: string }>,
+) {
+  const requestedIds = [...new Set(projects.map((p) => p.projectId))];
+  if (requestedIds.length === 0) return;
+
+  const live = await prisma.project.findMany({
+    where: {
+      id: { in: requestedIds },
+      workspaceId,
+      archived: false,
+    },
+    select: { id: true },
+  });
+  if (live.length !== requestedIds.length) {
+    throw new AppError(
+      422,
+      "INVALID_PROJECT",
+      "One or more projects are missing, archived, or outside this workspace",
+    );
+  }
+}
 
 /** Instance-admin directory helpers for assignment pickers (not a public catalog). */
 export async function listAllWorkspaces() {
@@ -66,7 +91,12 @@ export async function listUsers(query: AdminUserListQuery) {
         emailVerifiedAt: true,
         isInstanceAdmin: true,
         createdAt: true,
-        _count: { select: { members: true } },
+        members: {
+          select: {
+            workspace: { select: { id: true, name: true } },
+          },
+          orderBy: { createdAt: "asc" },
+        },
       },
     }),
   ]);
@@ -79,7 +109,11 @@ export async function listUsers(query: AdminUserListQuery) {
       emailVerified: u.emailVerifiedAt !== null,
       isInstanceAdmin: u.isInstanceAdmin,
       createdAt: u.createdAt.toISOString(),
-      workspaceCount: u._count.members,
+      workspaceCount: u.members.length,
+      workspaces: u.members.map((m) => ({
+        id: m.workspace.id,
+        name: m.workspace.name,
+      })),
     })),
     total,
     limit: query.limit,
@@ -231,6 +265,14 @@ export async function addMembership(
     throw new AppError(404, "WORKSPACE_NOT_FOUND", "Workspace not found");
   }
 
+  const initialProjects =
+    body.projectAccess === "assigned" && body.projects && body.projects.length > 0
+      ? body.projects
+      : null;
+  if (initialProjects) {
+    await assertProjectsInWorkspace(body.workspaceId, initialProjects);
+  }
+
   const member = await memberService.addMember(
     body.workspaceId,
     user.email,
@@ -244,6 +286,102 @@ export async function addMembership(
       where: { id: member.id },
       data: { projectAccess: body.projectAccess },
     });
+  }
+
+  if (initialProjects) {
+    try {
+      await replaceMembershipProjects(userId, member.id, {
+        projects: initialProjects,
+      });
+    } catch (err) {
+      await memberService.removeMember(
+        body.workspaceId,
+        member.id,
+        actorUserId,
+        INSTANCE_ACTING_ROLE,
+      );
+      throw err;
+    }
+  }
+
+  return getUserDetail(userId);
+}
+
+export async function moveMembership(
+  userId: string,
+  memberId: string,
+  body: MoveMembershipBody,
+  actorUserId: string,
+) {
+  const member = await assertMembershipOwnedByUser(memberId, userId);
+
+  if (member.workspaceId === body.workspaceId) {
+    throw new AppError(
+      422,
+      "SAME_WORKSPACE",
+      "Target workspace must be different from the current membership",
+    );
+  }
+
+  const existingTarget = await prisma.member.findUnique({
+    where: {
+      userId_workspaceId: { userId, workspaceId: body.workspaceId },
+    },
+    select: { id: true },
+  });
+  if (existingTarget) {
+    throw new AppError(
+      409,
+      "ALREADY_MEMBER",
+      "User is already a member of the target workspace",
+    );
+  }
+
+  if (member.role === "owner") {
+    const ownerCount = await prisma.member.count({
+      where: { workspaceId: member.workspaceId, role: "owner" },
+    });
+    if (ownerCount <= 1) {
+      throw new AppError(
+        422,
+        "LAST_OWNER",
+        "Cannot move the last owner out of a workspace",
+      );
+    }
+  }
+
+  const role = body.role ?? member.role;
+  const projectAccess = body.projectAccess ?? member.projectAccess;
+
+  await addMembership(
+    userId,
+    {
+      workspaceId: body.workspaceId,
+      role,
+      projectAccess,
+    },
+    actorUserId,
+  );
+
+  try {
+    await removeMembership(userId, memberId, actorUserId);
+  } catch (err) {
+    // Compensate: drop the target membership we just created so move is atomic-ish.
+    const created = await prisma.member.findUnique({
+      where: {
+        userId_workspaceId: { userId, workspaceId: body.workspaceId },
+      },
+      select: { id: true },
+    });
+    if (created) {
+      await memberService.removeMember(
+        body.workspaceId,
+        created.id,
+        actorUserId,
+        INSTANCE_ACTING_ROLE,
+      );
+    }
+    throw err;
   }
 
   return getUserDetail(userId);
@@ -307,24 +445,7 @@ export async function replaceMembershipProjects(
     );
   }
 
-  const requestedIds = [...new Set(body.projects.map((p) => p.projectId))];
-  if (requestedIds.length > 0) {
-    const live = await prisma.project.findMany({
-      where: {
-        id: { in: requestedIds },
-        workspaceId: member.workspaceId,
-        archived: false,
-      },
-      select: { id: true },
-    });
-    if (live.length !== requestedIds.length) {
-      throw new AppError(
-        422,
-        "INVALID_PROJECT",
-        "One or more projects are missing, archived, or outside this workspace",
-      );
-    }
-  }
+  await assertProjectsInWorkspace(member.workspaceId, body.projects);
 
   await prisma.$transaction(async (tx) => {
     await tx.projectMember.deleteMany({

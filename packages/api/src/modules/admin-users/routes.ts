@@ -13,6 +13,7 @@ import {
   AdminUserListQuery,
   AdminWorkspaceIdParam,
   BulkBody,
+  MoveMembershipBody,
   PatchMembershipBody,
   ReplaceProjectsBody,
 } from "./schema.js";
@@ -148,6 +149,26 @@ export default async function adminUsersRoutes(
       const result = await adminUsersService.removeMembership(
         request.params.userId,
         request.params.memberId,
+        request.user.userId,
+      );
+      return reply.status(200).send(result);
+    },
+  );
+
+  app.post(
+    "/:userId/memberships/:memberId/move",
+    {
+      preHandler: [requireInstanceAdmin()],
+      schema: {
+        params: AdminMembershipParam,
+        body: MoveMembershipBody,
+      },
+    },
+    async (request, reply) => {
+      const result = await adminUsersService.moveMembership(
+        request.params.userId,
+        request.params.memberId,
+        request.body,
         request.user.userId,
       );
       return reply.status(200).send(result);

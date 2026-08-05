@@ -23,6 +23,7 @@ vi.mock("./use-admin-users", () => ({
   useAdminWorkspaceProjectsQuery: vi.fn(),
   useVerifyAdminUserEmailMutation: vi.fn(),
   useAddAdminMembershipMutation: vi.fn(),
+  useMoveAdminMembershipMutation: vi.fn(),
   usePatchAdminMembershipMutation: vi.fn(),
   useRemoveAdminMembershipMutation: vi.fn(),
   useReplaceAdminProjectsMutation: vi.fn(),
@@ -64,6 +65,7 @@ const USERS = [
     isInstanceAdmin: false,
     createdAt: "2026-01-01T00:00:00Z",
     workspaceCount: 1,
+    workspaces: [{ id: "ws1", name: "Acme" }],
   },
   {
     id: "u2",
@@ -73,6 +75,10 @@ const USERS = [
     isInstanceAdmin: false,
     createdAt: "2026-01-02T00:00:00Z",
     workspaceCount: 2,
+    workspaces: [
+      { id: "ws1", name: "Acme" },
+      { id: "ws2", name: "Beta" },
+    ],
   },
 ];
 
@@ -99,13 +105,19 @@ async function mockHooks(overrides?: {
   } as unknown as ReturnType<typeof hooks.useAdminUserDetailQuery>);
 
   vi.mocked(hooks.useAdminWorkspacesQuery).mockReturnValue({
-    data: [{ id: "ws1", name: "Acme", slug: "acme" }],
+    data: [
+      { id: "ws1", name: "Acme", slug: "acme" },
+      { id: "ws2", name: "Beta", slug: "beta" },
+    ],
     isLoading: false,
     error: null,
   } as unknown as ReturnType<typeof hooks.useAdminWorkspacesQuery>);
 
   vi.mocked(hooks.useAdminWorkspaceProjectsQuery).mockReturnValue({
-    data: [],
+    data: [
+      { id: "p1", key: "KAN", name: "Kanon" },
+      { id: "p2", key: "OPS", name: "Ops" },
+    ],
     isLoading: false,
     error: null,
   } as unknown as ReturnType<typeof hooks.useAdminWorkspaceProjectsQuery>);
@@ -122,6 +134,9 @@ async function mockHooks(overrides?: {
   vi.mocked(hooks.useAddAdminMembershipMutation).mockReturnValue(
     idleMutation as unknown as ReturnType<typeof hooks.useAddAdminMembershipMutation>,
   );
+  vi.mocked(hooks.useMoveAdminMembershipMutation).mockReturnValue(
+    idleMutation as unknown as ReturnType<typeof hooks.useMoveAdminMembershipMutation>,
+  );
   vi.mocked(hooks.usePatchAdminMembershipMutation).mockReturnValue(
     idleMutation as unknown as ReturnType<typeof hooks.usePatchAdminMembershipMutation>,
   );
@@ -134,6 +149,8 @@ async function mockHooks(overrides?: {
   vi.mocked(hooks.useAdminUsersBulkMutation).mockReturnValue(
     idleMutation as unknown as ReturnType<typeof hooks.useAdminUsersBulkMutation>,
   );
+
+  return { idleMutation, hooks };
 }
 
 describe("AdminUsersPage", () => {
@@ -158,30 +175,36 @@ describe("AdminUsersPage", () => {
     expect(mockNavigate).toHaveBeenCalledWith({ to: "/" });
   });
 
-  it("renders searchable user list for instance admins", async () => {
+  it("renders searchable user list with workspace names", async () => {
     await mockHooks();
     render(<AdminUsersPage />, { wrapper: createWrapper() });
 
     expect(screen.getByTestId("admin-users-page")).toBeTruthy();
     expect(screen.getByText("alice@example.com")).toBeTruthy();
-    expect(screen.getByText("bob@example.com")).toBeTruthy();
-    expect(screen.getByTestId("admin-users-search")).toBeTruthy();
+    expect(screen.getByText("Acme")).toBeTruthy();
+    expect(screen.getByTestId("admin-user-detail-empty")).toBeTruthy();
   });
 
-  it("shows bulk bar when rows are selected", async () => {
+  it("shows remove panel with shared workspace picker after selecting users", async () => {
     await mockHooks();
     render(<AdminUsersPage />, { wrapper: createWrapper() });
 
-    const checkboxes = screen.getAllByRole("checkbox");
-    // first checkbox is select-all; second is first user
-    fireEvent.click(checkboxes[1]!);
+    fireEvent.click(screen.getByRole("checkbox", { name: "alice@example.com" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "bob@example.com" }));
 
     expect(screen.getByTestId("admin-users-bulk-bar")).toBeTruthy();
-    expect(screen.getByText(/1 selected/i)).toBeTruthy();
+    fireEvent.click(screen.getByTestId("bulk-remove-btn"));
+
+    expect(screen.getByTestId("bulk-remove-panel")).toBeTruthy();
+    const select = screen.getByTestId("bulk-workspace-select") as HTMLSelectElement;
+    expect([...select.options].map((o) => o.text)).toEqual([
+      "Select a workspace…",
+      "Acme",
+    ]);
   });
 
-  it("opens detail panel when clicking a user email", async () => {
-    await mockHooks({
+  it("opens manage-user hub with move and add-to-workspace controls", async () => {
+    const { idleMutation } = await mockHooks({
       detail: {
         id: "u1",
         email: "alice@example.com",
@@ -192,7 +215,17 @@ describe("AdminUsersPage", () => {
         isInstanceAdmin: false,
         isSuperAdmin: false,
         createdAt: "2026-01-01T00:00:00Z",
-        memberships: [],
+        memberships: [
+          {
+            memberId: "m1",
+            workspaceId: "ws1",
+            workspaceName: "Acme",
+            workspaceSlug: "acme",
+            role: "member",
+            projectAccess: "assigned",
+            projects: [{ projectId: "p1", key: "KAN", name: "Kanon", role: "member" }],
+          },
+        ],
       },
     });
     render(<AdminUsersPage />, { wrapper: createWrapper() });
@@ -202,6 +235,25 @@ describe("AdminUsersPage", () => {
     await waitFor(() => {
       expect(screen.getByTestId("admin-user-detail")).toBeTruthy();
       expect(screen.getByTestId("verify-email-btn")).toBeTruthy();
+      expect(screen.getByTestId("membership-m1")).toBeTruthy();
+      expect(screen.getByTestId("add-membership-section")).toBeTruthy();
     });
+
+    fireEvent.click(screen.getByTestId("move-membership-btn-m1"));
+    expect(screen.getByTestId("move-panel-m1")).toBeTruthy();
+
+    const moveSelect = screen.getByTestId("move-workspace-m1") as HTMLSelectElement;
+    // Already in Acme → only Beta available
+    expect([...moveSelect.options].map((o) => o.text)).toEqual([
+      "Select a workspace…",
+      "Beta",
+    ]);
+
+    fireEvent.change(moveSelect, { target: { value: "ws2" } });
+    fireEvent.click(screen.getByTestId("confirm-move-m1"));
+    expect(idleMutation.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ memberId: "m1", workspaceId: "ws2" }),
+      expect.anything(),
+    );
   });
 });

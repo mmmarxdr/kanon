@@ -86,7 +86,12 @@ describe("GET /api/admin/users — list + detail", () => {
       email: expect.any(String),
       emailVerified: expect.any(Boolean),
       workspaceCount: expect.any(Number),
+      workspaces: expect.any(Array),
     });
+    const aliceRow = body.users.find((u: { id: string }) => u.id === verified.userId);
+    expect(aliceRow.workspaces).toEqual([
+      expect.objectContaining({ id: ws.id, name: ws.name }),
+    ]);
 
     const search = await app.inject({
       method: "GET",
@@ -351,6 +356,70 @@ describe("POST/PATCH/DELETE admin user mutations", () => {
 
     // actor id used for remove — keep referenced so lint doesn't complain if unused
     expect(adminId).toBeTruthy();
+  });
+
+  it("moves a membership to another workspace", async () => {
+    const { token } = await seedInstanceAdminUser();
+    const source = await seedTestWorkspace();
+    const target = await seedTestWorkspace();
+    await seedTestMemberWithRole(source.id, "owner");
+    const member = await seedTestMemberWithRole(source.id, "member", {
+      email: `move-${randomUUID().slice(0, 8)}@example.com`,
+      projectAccess: "assigned",
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/admin/users/${member.userId}/memberships/${member.id}/move`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { workspaceId: target.id, role: "admin", projectAccess: "workspace" },
+    });
+    expect(res.statusCode).toBe(200);
+    const memberships = res.json().memberships as Array<{
+      workspaceId: string;
+      role: string;
+      projectAccess: string;
+    }>;
+    expect(memberships).toHaveLength(1);
+    expect(memberships[0]).toMatchObject({
+      workspaceId: target.id,
+      role: "admin",
+      projectAccess: "workspace",
+      projects: null,
+    });
+  });
+
+  it("422 when add membership gets invalid initial projects and leaves no membership", async () => {
+    const { token } = await seedInstanceAdminUser();
+    const ws = await seedTestWorkspace();
+    const otherWs = await seedTestWorkspace();
+    const foreign = await seedTestProject(otherWs.id, "FX");
+    const target = await prisma.user.create({
+      data: {
+        email: `orphan-${randomUUID().slice(0, 8)}@example.com`,
+        passwordHash: "$2b$04$placeholder",
+        displayName: "Orphan",
+      },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/admin/users/${target.id}/memberships`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        workspaceId: ws.id,
+        role: "member",
+        projectAccess: "assigned",
+        projects: [{ projectId: foreign.id, role: "member" }],
+      },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().code).toBe("INVALID_PROJECT");
+
+    const leftover = await prisma.member.findUnique({
+      where: { userId_workspaceId: { userId: target.id, workspaceId: ws.id } },
+    });
+    expect(leftover).toBeNull();
   });
 
   it("422 when replacing projects on workspace-mode membership", async () => {
