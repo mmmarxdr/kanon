@@ -111,6 +111,7 @@ export interface KanonIssue {
   specArtifacts?: unknown;
   labels?: string[];
   cycle?: { id: string; name: string; state: "upcoming" | "active" | "done" } | null;
+  schedule?: { startDate: string | null; dueDate: string | null; progress: number } | null;
 }
 
 /**

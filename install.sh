@@ -4,7 +4,7 @@
 # installs to ~/.kanon/mcp, then invokes `node setup` to configure your tools.
 #
 # Usage (install form) — use the PINNED, TAGGED installer:
-#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.12.0/install.sh)"
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.12.1/install.sh)"
 #
 # The tagged installer ships EXPECTED_SHA256 baked in (the trust root). The copy on
 # `main` carries EXPECTED_SHA256="" and, over a network origin, ABORTS rather than
@@ -43,7 +43,7 @@ set -euo pipefail
 # file:// test fixture is explicitly enabled.
 EXPECTED_SHA256=""
 
-KANON_MCP_VERSION="0.12.0"
+KANON_MCP_VERSION="0.12.1"
 KANON_REPO="${KANON_REPO:-mmmarxdr/kanon}"
 DEFAULT_BASE_URL="https://github.com/${KANON_REPO}/releases/download/mcp-v${KANON_MCP_VERSION}"
 BASE_URL="${KANON_INSTALL_BASE_URL:-$DEFAULT_BASE_URL}"

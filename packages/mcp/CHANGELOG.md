@@ -1,5 +1,9 @@
 # Changelog — @kanon/mcp
 
+## v0.12.1 (2026-08-06)
+
+- Fixes `get_issue` slim output to include start date, due date, and progress.
+
 ## v0.12.0 (2026-08-05)
 
 - Adds issue start date, due date, and progress to `get_issue` and `update_issue`.
