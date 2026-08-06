@@ -150,6 +150,21 @@ describe("slimIssueDetail", () => {
     expect(result).toHaveProperty("description", "Full description of the bug");
   });
 
+  it("flattens schedule fields with empty defaults", () => {
+    expect(slimIssueDetail(makeIssue({
+      schedule: { startDate: "2026-08-03T00:00:00.000Z", dueDate: "2026-08-10T00:00:00.000Z", progress: 25 },
+    }) as any)).toMatchObject({
+      startDate: "2026-08-03T00:00:00.000Z",
+      dueDate: "2026-08-10T00:00:00.000Z",
+      progress: 25,
+    });
+    expect(slimIssueDetail(makeIssue() as any)).toMatchObject({
+      startDate: null,
+      dueDate: null,
+      progress: 0,
+    });
+  });
+
   it("includes children as {key, title, state} objects", () => {
     const children = [
       { id: "c1", key: "KAN-2", title: "Sub-task", state: "todo", priority: "low", sortOrder: 1 },

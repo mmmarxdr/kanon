@@ -170,6 +170,10 @@ export function slimIssueDetail(issue: KanonIssue): Record<string, unknown> {
   if (parentKey !== undefined) {
     base["parentKey"] = parentKey;
   }
+  const schedule = issue.schedule;
+  base["startDate"] = schedule?.startDate ?? null;
+  base["dueDate"] = schedule?.dueDate ?? null;
+  base["progress"] = schedule?.progress ?? 0;
   return base;
 }
 

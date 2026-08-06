@@ -27,13 +27,13 @@ instance that issued it. Default lifetime is 72 hours
 On Linux, macOS, or WSL, run:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.12.0/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.12.1/install.sh)"
 ```
 
 On native Windows PowerShell, run:
 
 ```powershell
-irm https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.12.0/install.ps1 | iex
+irm https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.12.1/install.ps1 | iex
 ```
 
 > Use the **tagged** installer (`mcp-v<version>`), not `main`. The tagged script has
@@ -162,7 +162,7 @@ can run unattended (CI, provisioning scripts):
 
 ```bash
 echo "kanon://<your-host>/onboard?token=<jwt>" \
-  | bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.12.0/install.sh)"
+  | bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.12.1/install.sh)"
 ```
 
 Native Windows can set `$env:KANON_ONBOARD_LINK` before invoking the tagged
