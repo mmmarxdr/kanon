@@ -1615,3 +1615,194 @@ describe("Redmine inbound sync", () => {
       expect(JSON.stringify(setup.logger.error.mock.calls)).not.toMatch(/secret|-key/);
     });
 });
+
+describe("Redmine inbound comment echoes", () => {
+  beforeEach(cleanDatabase);
+
+  const commentUuid = "550e8400-e29b-41d4-a716-446655440000";
+  const marker = `<!-- kanon-comment:${commentUuid} -->`;
+
+  function markedJournal(observedAt: Date, remoteId = "902"): RedmineCommentChange {
+    return {
+      identity: {
+        type: "comment",
+        remoteId,
+        remoteProjectId: "41",
+        parent: { type: "issue", remoteId: "100" },
+      },
+      operation: "upsert",
+      changedAt: observedAt,
+      createdAt: observedAt,
+      sourceVersion: "sha256:comment-902-v1",
+      actor: { remoteId: "5", displayName: "Remote author", username: "author" },
+      fields: { body: `Delivered body\n\n${marker}` },
+    };
+  }
+
+  it.each(["leased", "ambiguous", "done"] as const)("attaches a marked journal with %s outbound proof", async (state) => {
+    const { owner, binding, connection, issue, ref } = await fixture();
+    const local = await prisma.comment.create({
+      data: { id: commentUuid, issueId: issue.id, authorId: owner.id, body: "Delivered body" },
+    });
+    const work = await prisma.integrationSyncWork.create({
+      data: {
+        bindingId: binding.id,
+        entityType: "comment",
+        entityId: local.id,
+        direction: "outbound",
+        operation: "create",
+        dedupeKey: "comment-echo-work",
+        laneKey: issue.id,
+        actorKey: `member:${owner.id}`,
+        actorKind: "user",
+        payload: { version: 1 },
+        correlationId: local.id,
+        epoch: binding.lifecycleEpoch,
+        refId: ref.id,
+        marker,
+        state,
+      },
+    });
+    const observedAt = new Date("2026-08-01T10:01:00.000Z");
+    const setup = dependencies([change(observedAt, "review")]);
+    setup.loadIssueDetail.mockResolvedValue({
+      ...detailChange(observedAt, { identity: { type: "issue", remoteId: "100", remoteProjectId: "41" } }),
+      comments: [markedJournal(observedAt)],
+    });
+
+    await runInboundSyncCycle(prisma, setup);
+
+    await expect(prisma.comment.count({ where: { issueId: issue.id } })).resolves.toBe(1);
+    await expect(
+      prisma.externalRef.findUniqueOrThrow({
+        where: { connectionId_entityType_externalId: { connectionId: connection.id, entityType: "comment", externalId: "902" } },
+      }),
+    ).resolves.toMatchObject({ entityId: local.id, bindingId: binding.id });
+    await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({ state: "done" });
+    await expect(prisma.integrationInboundApplication.findFirstOrThrow({ where: { workId: work.id } })).resolves.toMatchObject({
+      outcome: expect.objectContaining({ provenance: "redmine-inbound-echo", marker }),
+    });
+  });
+
+  it("imports a second marked journal normally when the local comment is already mapped", async () => {
+    const { owner, binding, connection, issue, ref } = await fixture();
+    const local = await prisma.comment.create({
+      data: { id: commentUuid, issueId: issue.id, authorId: owner.id, body: "Delivered body" },
+    });
+    await prisma.integrationSyncWork.create({
+      data: {
+        bindingId: binding.id,
+        entityType: "comment",
+        entityId: local.id,
+        direction: "outbound",
+        operation: "create",
+        dedupeKey: "mapped-comment-echo-work",
+        laneKey: issue.id,
+        actorKey: `member:${owner.id}`,
+        actorKind: "user",
+        payload: { version: 1 },
+        correlationId: local.id,
+        epoch: binding.lifecycleEpoch,
+        refId: ref.id,
+        marker,
+        state: "done",
+      },
+    });
+    await prisma.externalRef.create({
+      data: {
+        connectionId: connection.id,
+        bindingId: binding.id,
+        entityType: "comment",
+        entityId: local.id,
+        externalId: "902",
+        remoteUpdatedAt: baseline,
+      },
+    });
+    const observedAt = new Date("2026-08-01T10:01:00.000Z");
+    const setup = dependencies([change(observedAt, "review")]);
+    setup.loadIssueDetail.mockResolvedValue({
+      ...detailChange(observedAt, { identity: { type: "issue", remoteId: "100", remoteProjectId: "41" } }),
+      comments: [markedJournal(observedAt, "903")],
+    });
+
+    await runInboundSyncCycle(prisma, setup);
+
+    await expect(prisma.comment.count({ where: { issueId: issue.id } })).resolves.toBe(2);
+    await expect(
+      prisma.externalRef.findUniqueOrThrow({
+        where: { connectionId_entityType_externalId: { connectionId: connection.id, entityType: "comment", externalId: "903" } },
+      }),
+    ).resolves.toMatchObject({ bindingId: binding.id, entityId: expect.not.stringMatching(commentUuid) });
+    await expect(
+      prisma.integrationInboundApplication.findFirstOrThrow({ where: { bindingId: binding.id, remoteId: "903" } }),
+    ).resolves.toMatchObject({ workId: null, outcome: { provenance: "redmine-inbound" } });
+  });
+
+  it.each(["queued", "dead", "superseded"] as const)(
+    "does not use %s work as proof of an outbound comment",
+    async (state) => {
+      const { owner, binding, connection, issue, ref } = await fixture();
+      const local = await prisma.comment.create({
+        data: { id: commentUuid, issueId: issue.id, authorId: owner.id, body: "Delivered body" },
+      });
+      const work = await prisma.integrationSyncWork.create({
+        data: {
+          bindingId: binding.id,
+          entityType: "comment",
+          entityId: local.id,
+          direction: "outbound",
+          operation: "create",
+          dedupeKey: `unproven-comment-echo-${state}`,
+          laneKey: issue.id,
+          actorKey: `member:${owner.id}`,
+          actorKind: "user",
+          payload: { version: 1 },
+          correlationId: local.id,
+          epoch: binding.lifecycleEpoch,
+          refId: ref.id,
+          marker,
+          state,
+        },
+      });
+      const observedAt = new Date("2026-08-01T10:01:00.000Z");
+      const setup = dependencies([change(observedAt, "review")]);
+      setup.loadIssueDetail.mockResolvedValue({
+        ...detailChange(observedAt, { identity: { type: "issue", remoteId: "100", remoteProjectId: "41" } }),
+        comments: [markedJournal(observedAt)],
+      });
+
+      await runInboundSyncCycle(prisma, setup);
+
+      await expect(prisma.comment.count({ where: { issueId: issue.id } })).resolves.toBe(2);
+      await expect(
+        prisma.externalRef.findUniqueOrThrow({
+          where: { connectionId_entityType_externalId: { connectionId: connection.id, entityType: "comment", externalId: "902" } },
+        }),
+      ).resolves.toMatchObject({ entityId: expect.not.stringMatching(commentUuid) });
+      await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({ state });
+    },
+  );
+
+  it("does not attach a copied marker without its matching outbound work", async () => {
+    const { owner, binding, connection, issue } = await fixture();
+    await prisma.comment.create({
+      data: { id: commentUuid, issueId: issue.id, authorId: owner.id, body: "Original local comment" },
+    });
+    const observedAt = new Date("2026-08-01T10:01:00.000Z");
+    const setup = dependencies([change(observedAt, "review")]);
+    setup.loadIssueDetail.mockResolvedValue({
+      ...detailChange(observedAt, { identity: { type: "issue", remoteId: "100", remoteProjectId: "41" } }),
+      comments: [markedJournal(observedAt)],
+    });
+
+    await runInboundSyncCycle(prisma, setup);
+
+    await expect(
+      prisma.externalRef.findFirst({ where: { connectionId: connection.id, entityType: "comment", entityId: commentUuid } }),
+    ).resolves.toBeNull();
+    await expect(prisma.comment.count({ where: { issueId: issue.id } })).resolves.toBe(2);
+    await expect(
+      prisma.integrationInboundApplication.findFirstOrThrow({ where: { bindingId: binding.id, remoteId: "902" } }),
+    ).resolves.toMatchObject({ workId: null, outcome: { provenance: "redmine-inbound" } });
+  });
+});

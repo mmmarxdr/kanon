@@ -37,6 +37,7 @@ import {
   type RedmineCommentChange,
   type RedmineIssueChange,
 } from "./providers/redmine/decoder.js";
+import { parseCommentMarker } from "./providers/redmine/comment-marker.js";
 import { RedmineHttpClient } from "./providers/redmine/http-client.js";
 import { RedminePollingInboundSource } from "./providers/redmine/inbound-source.js";
 
@@ -44,6 +45,7 @@ const DEFAULT_LIMIT = 10;
 const DEFAULT_LEASE_MS = 120_000;
 const FAILED_POLL_DELAY_MS = 60_000;
 const MAX_DETAIL_READS = 10;
+const ECHO_PROVEN_WORK_STATES = ["leased", "ambiguous", "done"] as const;
 
 export interface InboundSyncLogger {
   info(context: unknown, message: string): void;
@@ -413,6 +415,90 @@ async function persistInboundCommentsTx(
       },
     });
     if (existing) continue;
+
+    const marker = parseCommentMarker(change.fields.body);
+    if (marker) {
+      const parentRef = await transaction.externalRef.findFirst({
+        where: {
+          bindingId: binding.id,
+          connectionId: binding.connectionId,
+          entityType: "issue",
+          entityId: issueId,
+          externalId: remoteIssueId,
+        },
+      });
+      const work = parentRef
+        ? await transaction.integrationSyncWork.findFirst({
+            where: {
+              bindingId: binding.id,
+              entityType: "comment",
+              entityId: marker.commentId,
+              direction: "outbound",
+              operation: "create",
+              refId: parentRef.id,
+              marker: marker.marker,
+              state: { in: [...ECHO_PROVEN_WORK_STATES] },
+            },
+            orderBy: { createdAt: "asc" },
+          })
+        : null;
+      const localComment = work
+        ? await transaction.comment.findFirst({
+            where: { id: marker.commentId, issueId },
+          })
+        : null;
+      const localRef = localComment
+        ? await transaction.externalRef.findFirst({
+            where: {
+              connectionId: binding.connectionId,
+              entityType: "comment",
+              entityId: localComment.id,
+            },
+          })
+        : null;
+      if (work && localComment && !localRef) {
+        const ref = await transaction.externalRef.create({
+          data: {
+            connectionId: binding.connectionId,
+            bindingId: binding.id,
+            entityType: "comment",
+            entityId: localComment.id,
+            externalId: change.identity.remoteId,
+            remoteUpdatedAt: change.changedAt,
+            localVersion: 1,
+            lastCorrelationId: correlationId,
+            metadata: {
+              remoteVersion: change.sourceVersion,
+              remoteIssueId,
+              remoteActorId: change.actor?.remoteId ?? null,
+              marker: marker.marker,
+            },
+          },
+        });
+        await transaction.integrationSyncWork.updateMany({
+          where: { id: work.id, state: { not: "done" } },
+          data: { state: "done", leaseToken: null, leaseUntil: null },
+        });
+        await transaction.integrationInboundApplication.create({
+          data: {
+            bindingId: binding.id,
+            remoteEntityType: "comment",
+            remoteParentType: "issue",
+            remoteParentId: remoteIssueId,
+            remoteId: change.identity.remoteId,
+            remoteUpdatedAt: change.changedAt,
+            sourceVersion: change.sourceVersion,
+            applicationKey: correlationId,
+            correlationId,
+            state: "applied",
+            refId: ref.id,
+            workId: work.id,
+            outcome: { provenance: "redmine-inbound-echo", marker: marker.marker },
+          },
+        });
+        continue;
+      }
+    }
 
     const comment = await transaction.comment.create({
       data: {
