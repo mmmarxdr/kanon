@@ -78,6 +78,7 @@ describe("SyncedFromToolsSlot", () => {
   it.each([
     ["claude-code", "Claude Code"],
     ["cursor",      "Cursor"],
+    ["codex",       "Codex"],
     ["antigravity", "Antigravity"],
     ["cli",         "CLI"],
   ] as const)("renders via=%s with the label %s", (via, label) => {

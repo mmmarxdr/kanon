@@ -12,6 +12,10 @@ describe("normalizeVia", () => {
     expect(normalizeVia("cursor")).toBe("cursor");
   });
 
+  it("returns known value: codex", () => {
+    expect(normalizeVia("codex")).toBe("codex");
+  });
+
   it("returns known value: antigravity", () => {
     expect(normalizeVia("antigravity")).toBe("antigravity");
   });
@@ -38,8 +42,8 @@ describe("normalizeVia", () => {
 
   it("VIA const array contains all known values", () => {
     expect(VIA).toEqual(
-      expect.arrayContaining(["claude-code", "cursor", "antigravity", "web", "cli"]),
+      expect.arrayContaining(["claude-code", "cursor", "codex", "antigravity", "web", "cli"]),
     );
-    expect(VIA).toHaveLength(5);
+    expect(VIA).toHaveLength(6);
   });
 });

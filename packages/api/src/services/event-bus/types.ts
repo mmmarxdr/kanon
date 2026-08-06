@@ -113,7 +113,7 @@ export interface DomainEvent<T = Record<string, unknown>> {
   /** ISO-8601 timestamp when the event was created */
   timestamp: string;
   /** Normalized X-Kanon-Client value that originated the mutation (S1 / KAN-30).
-   *  Known values: claude-code | cursor | antigravity | web | cli. Null if unknown. */
+   *  Known values: claude-code | cursor | codex | antigravity | web | cli. Null if unknown. */
   via?: string | null;
 }
 

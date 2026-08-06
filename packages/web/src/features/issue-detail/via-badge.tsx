@@ -18,6 +18,7 @@ import { Icon } from "@/components/ui/icons";
 const VIA_LABELS: Record<string, string> = {
   "claude-code": "Claude Code",
   cursor: "Cursor",
+  codex: "Codex",
   antigravity: "Antigravity",
   cli: "CLI",
 };

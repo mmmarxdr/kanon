@@ -86,8 +86,9 @@ The setup CLI exits non-zero with a specific message for each failure. Map the m
 ### Codex CLI troubleshooting
 
 Codex stores MCP config in **TOML** at `$CODEX_HOME/config.toml` (default `~/.codex`).
-Skills land in `$CODEX_HOME/skills/`. Set `CODEX_HOME` before running setup when
-Codex uses a non-default home.
+Skills land in `~/.agents/skills/` and the native Kanon subagent in
+`$CODEX_HOME/agents/kanon.toml`. Set `CODEX_HOME` before running setup when Codex
+uses a non-default home.
 
 | Symptom | Cause | Fix |
 | ------- | ----- | --- |
@@ -95,7 +96,7 @@ Codex uses a non-default home.
 | MCP entry missing after setup | Wrong file edited manually | Look for `[mcp_servers.kanon]` with `command` + `args`; env vars under `[mcp_servers.kanon.env]` |
 | Re-run duplicates or corrupts config | Hand-edited TOML | Re-run `kanon-setup --tool codex -y` — merge is idempotent and migrates `kanon-mcp` to `kanon` |
 | Comments disappeared in `config.toml` | TOML parse/stringify round-trip | Expected — setup only touches current `kanon` and legacy `kanon-mcp` tables; restore comments manually if needed |
-| Manual rollback | User wants to uninstall Kanon only | Remove `[mcp_servers.kanon]` and `[mcp_servers.kanon.env]` from `config.toml`, delete `kanon-*` under `$CODEX_HOME/skills/`, or run `kanon-setup --tool codex --remove -y` |
+| Manual rollback | User wants to uninstall Kanon only | Remove `[mcp_servers.kanon]` from `config.toml`, delete Kanon skills under `~/.agents/skills/` and `$CODEX_HOME/agents/kanon.toml`, or run `kanon-setup --tool codex --remove -y` |
 
 Codex install does **not** write `AGENTS.md` — that file is personal harness, not product surface.
 

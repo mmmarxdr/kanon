@@ -16,6 +16,10 @@ describe("resolveClientIdentity — MCP startup validation", () => {
     expect(result).toBe("claude-code");
   });
 
+  it("accepts Codex provenance", () => {
+    expect(resolveClientIdentity("codex")).toBe("codex");
+  });
+
   it("trims whitespace before validation", () => {
     const result = resolveClientIdentity("  cursor  ");
     expect(result).toBe("cursor");

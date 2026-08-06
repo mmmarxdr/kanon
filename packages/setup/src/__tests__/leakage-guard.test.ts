@@ -21,6 +21,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import path from "node:path";
 import { getToolByName } from "../registry.js";
 import type { PlatformContext } from "../types.js";
 
@@ -131,7 +132,7 @@ describe("opencode — personal-config leakage guard", () => {
 /**
  * Codex CLI leakage guard — KAN-128.
  *
- * Codex install MUST NOT write AGENTS.md or declare template/agents/commands paths.
+ * Codex install MUST NOT write AGENTS.md or declare template/commands paths.
  */
 describe("codex — personal-config leakage guard", () => {
   const codex = getToolByName("codex");
@@ -180,8 +181,8 @@ describe("codex — personal-config leakage guard", () => {
         expect(paths.template).toBeUndefined();
       });
 
-      it("does NOT declare an `agents` directory", () => {
-        expect(paths.agents).toBeUndefined();
+      it("uses the native Codex agents directory without writing AGENTS.md", () => {
+        expect(path.basename(paths.agents!(ctxFor))).toBe("agents");
       });
 
       it("does NOT declare a `commands` directory", () => {

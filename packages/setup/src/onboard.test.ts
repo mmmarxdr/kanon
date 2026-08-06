@@ -328,8 +328,14 @@ describe("onboardFromLink()", () => {
         .not.toContain("allowed-tools");
 
       const codex = parse(fs.readFileSync(path.join(home, ".codex", "config.toml"), "utf8")) as Record<string, unknown>;
-      expect((codex["mcp_servers"] as Record<string, unknown>)["kanon"]).toBeDefined();
-      expect(fs.existsSync(path.join(home, ".codex", "skills", "kanon-onboard", "SKILL.md"))).toBe(true);
+      expect((codex["mcp_servers"] as Record<string, unknown>)["kanon"]).toMatchObject({
+        env: {
+          KANON_CLIENT_IDENTITY: "codex",
+          KANON_WORKSPACE_ID: "workspace-1",
+        },
+      });
+      expect(fs.existsSync(path.join(home, ".agents", "skills", "kanon-onboard", "SKILL.md"))).toBe(true);
+      expect(fs.existsSync(path.join(home, ".codex", "agents", "kanon.toml"))).toBe(true);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

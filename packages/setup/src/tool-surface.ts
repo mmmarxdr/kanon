@@ -12,8 +12,9 @@ import {
   resolveToolLegacyConfigPaths,
   resolveToolLegacyRulePaths,
   resolveToolTargets,
+  resolveCodexHome,
 } from "./registry.js";
-import { installSkills } from "./skills.js";
+import { installSkills, removeSkills } from "./skills.js";
 import { installTemplate } from "./templates.js";
 import type {
   McpServerEntry,
@@ -112,6 +113,11 @@ export function cleanupLegacyToolSurface(
   }
   for (const rulePath of resolveToolLegacyRulePaths(tool, ctx)) {
     fs.rmSync(rulePath, { force: true });
+  }
+  if (tool.name === "codex") {
+    const legacySkillDir = resolveCodexHome(ctx, "skills");
+    const currentSkillDir = tool.platforms[ctx.platform]?.skills(ctx);
+    if (legacySkillDir !== currentSkillDir) removeSkills(legacySkillDir);
   }
 }
 

@@ -3,7 +3,7 @@
  *
  * Shows only the AI/tool-attributed rows from the unified issue timeline:
  * filters to items whose `via` is one of the supported tool values
- * (claude-code | cursor | antigravity | cli). Excludes `web`, null, and
+ * (claude-code | cursor | codex | antigravity | cli). Excludes `web`, null, and
  * any unrecognized future via values (forward-compatible — they remain
  * visible in the main timeline but are not surfaced as "synced from your
  * tools" until we explicitly add them here).

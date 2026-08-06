@@ -10,14 +10,14 @@ tags: [kanon, onboarding, project-setup, codebase-scan, batch]
 Scan the current codebase, resolve or create a Kanon project, seed issues and roadmap items from TODO/FIXME comments and architecture gaps, and report results. One command takes a repo from unknown to fully tracked.
 
 Supports two modes:
-- **Interactive** (user-invoked via `/kanon-init`): workspace selection + single confirmation before creation
+- **Interactive** (user invokes the `kanon-init` skill): workspace selection + single confirmation before creation
 - **Batch** (sub-agent): zero interaction, workspace/project params passed as inputs
 
 ---
 
 ## Trigger
 
-`/kanon-init`, `init project`, new project onboarding
+`kanon-init`, `init project`, new project onboarding
 
 ---
 
@@ -35,7 +35,7 @@ Supports two modes:
 
 ## Prerequisites
 
-Load Kanon MCP tools via ToolSearch. If tools are not available, stop and tell the user to configure the Kanon MCP server.
+Use the available Kanon MCP tools. If they are not available, stop and tell the user to configure the Kanon MCP server.
 
 Call `kanon_list_workspaces()` to verify connectivity. If it fails, stop and report the MCP server is not reachable.
 
@@ -49,11 +49,7 @@ Scan the codebase to understand its structure, tech stack, and areas of concern.
 
 Scan top-level directories and workspace packages:
 
-```
-Glob("*")           -> top-level dirs and files
-Glob("packages/*")  -> monorepo packages (if packages/ exists)
-Glob("src/*")       -> flat project subdirs (if no packages/)
-```
+Inspect top-level entries, `packages/*` for monorepos, and `src/*` for flat projects using the host's native file-search tools.
 
 Map directories to human-readable groups. **Cap at 5 groups.**
 
@@ -84,9 +80,7 @@ Detect frameworks, databases, testing tools, and build tools from dependencies.
 
 ### 1c: TODO/FIXME Scan
 
-```
-Grep(pattern: "TODO|FIXME|HACK|XXX", output_mode: "content", head_limit: 20)
-```
+Search file contents for the first 20 `TODO`, `FIXME`, `HACK`, or `XXX` markers using the host's native search tools.
 
 Filter out bare markers with no descriptive text. Keep entries with meaningful text after the marker.
 

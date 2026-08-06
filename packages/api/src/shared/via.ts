@@ -10,9 +10,9 @@
  * NOTE: "mcp" is deliberately NOT in this list.
  * "mcp" is a transport name (Model Context Protocol), not a client identity.
  * Clients running over MCP identify themselves via KANON_CLIENT_IDENTITY
- * (e.g. 'claude-code', 'cursor').  normalizeVia('mcp') therefore returns null.
+ * (e.g. 'claude-code', 'cursor', 'codex'). normalizeVia('mcp') therefore returns null.
  */
-export const VIA = ["claude-code", "cursor", "antigravity", "web", "cli"] as const;
+export const VIA = ["claude-code", "cursor", "codex", "antigravity", "web", "cli"] as const;
 
 export type Via = (typeof VIA)[number];
 
