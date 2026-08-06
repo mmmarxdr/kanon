@@ -145,13 +145,13 @@ to this instance.
 On Linux, macOS, or WSL where your AI tools live, run:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.12.1/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.13.0/install.sh)"
 ```
 
 On native Windows PowerShell, run:
 
 ```powershell
-irm https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.12.1/install.ps1 | iex
+irm https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.13.0/install.ps1 | iex
 ```
 
 > Use the **tagged** installer (`mcp-v<version>`), not `main`. The tagged script has
