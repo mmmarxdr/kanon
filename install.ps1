@@ -6,7 +6,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # release.yml stamps both values on the tag-only release commit.
-$EXPECTED_SHA256 = ""
+$EXPECTED_SHA256 = "12b89d5e3796910399a808a9fa559c4facaeca6c9233c292243e139c3c607e5c"
 $KANON_MCP_VERSION = "0.12.0"
 $KanonRepo = if ($env:KANON_REPO) { $env:KANON_REPO } else { "mmmarxdr/kanon" }
 if ($KanonRepo -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
