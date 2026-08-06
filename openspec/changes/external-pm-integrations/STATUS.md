@@ -111,11 +111,15 @@ Kanon mutation
 
 ## Remaining work for the complete proposal
 
-After outbound, seven additional tasks remain:
+After outbound, six additional tasks remain:
 
 - A5.1–A5.3 — inbound Redmine → Kanon polling, conflict handling, and close
 - A6.1–A6.3 — API coverage, owner/member UI, and end-to-end validation
-- B1.1 — final binding hardening after the zero-unresolved proof
+
+## Release B
+
+- [x] **B1.1** — final binding hardening merged in PR #276 after the live zero-unresolved proof
+- Automatic Dokploy deployment is in progress; post-deploy verification remains KAN-223 closeout work
 
 ## Accepted A1.8a debt
 
