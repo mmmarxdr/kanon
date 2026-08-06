@@ -71,5 +71,16 @@
 - Tier: standard
 - Lens: reliability
 - Sweep: 1 of 1
-- Findings: empty ledger; no BLOCKER, CRITICAL, WARNING, or SUGGESTION
+- General refutation: RR-001 and RR-002 stand
+- Commit readiness: NOT READY pending verified fixes
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| RR-001 | reliability | `packages/api/src/modules/integrations/inbound.ts:407-466` | CRITICAL | verified | Resolved in fix round 1: recognition checks for an existing local `ExternalRef`, and a second marked journal is imported normally without violating entity uniqueness. Scoped re-review verified the regression test and fix-touched lines. |
+| RR-002 | reliability | `packages/api/src/modules/integrations/inbound.ts:429-470` | CRITICAL | verified | Resolved in fix round 1: recognition is whitelisted to `leased`, `ambiguous`, and `done`; queued and terminal pre-I/O states cannot authorize attachment or be rewritten. Scoped re-review verified the state tests and fix-touched lines. |
+| RR-003 | reliability | `packages/api/src/modules/integrations/providers/redmine/comment-marker.ts:4,13-20` | WARNING | info | The parser accepts a non-standalone final marker separator. This is informational and does not drive fix work. |
+
+- Fix rounds used: 1 of 2
+- Scoped re-review: RR-001 and RR-002 verified resolved; no fix-line findings
+- Validation: focused 44/44; full API typecheck and 184 files / 2,391 tests passed, 3 skipped; exit 0
 - Commit readiness: READY

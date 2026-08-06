@@ -15,23 +15,30 @@
 - No outbound comment capture, provider dispatch, Redmine write path, migration, feature flag, or PR2/PR3 work was added.
 - An echo attaches only when the current binding, exact parent issue `ExternalRef`, canonical final marker/local UUID, matching outbound `comment/create` work, and original comment ownership all validate.
 - A copied/spoofed marker without matching local work cannot attach the original comment or complete work.
-- Product/test changed lines: **222 additions, 0 deletions** (OpenSpec and `.codegraph/` excluded), within the **≤399** PR limit.
+- Product/test changed lines: **333 additions, 0 deletions** (OpenSpec and `.codegraph/` excluded), within the **≤399** PR limit.
 
 ## TDD Cycle Evidence
 
 | Task | Test File / Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR | Result |
 |---|---|---|---|---|---|---|---|
 | 1.1 | `providers/redmine/comment-marker.test.ts` / Unit | N/A (new) | Missing-module test invocation failed before production implementation | Marker suite passed **3/3** | Canonical stripped body plus uppercase, misplaced, malformed, multiple, and reserved-marker paths | Pure parser remained small and deterministic | Complete |
-| 1.2 | `inbound.test.ts` / Integration | Existing inbound behavior protected by focused suite | Valid and copied-marker echo cases written before recognition production code | Inbound suite passed **35/35** | Valid binding/parent/work echo and copied marker without work exercise distinct paths | Recognition isolated in `persistInboundCommentsTx()` | Complete |
-| 1.3 | API focused + full verification / Integration | Focused combined suite passed **38/38** | N/A | `test:types` passed; full suite passed | Parser and inbound paths both included | Verified no capture/dispatch/write path was introduced | Complete |
+| 1.2 | `inbound.test.ts` / Integration | Existing inbound behavior protected by a **35/35** baseline | Initial valid/copied-marker cases plus four expected pre-commit fix failures were written before production changes | Final inbound suite passed **41/41** | Valid states (`leased`, `ambiguous`, `done`), invalid states, copied markers, and already-mapped comments exercise distinct paths | Recognition isolated in `persistInboundCommentsTx()` with explicit proof-state and local-mapping guards | Complete |
+| 1.3 | API focused + full verification / Integration | Focused combined suite passed **44/44** | N/A | `test:types` passed; full suite passed | Parser and inbound paths both included | Verified no capture/dispatch/write path was introduced | Complete |
 
 ## Verification Results
 
-- Focused: `pnpm --dir packages/api exec vitest run src/modules/integrations/providers/redmine/comment-marker.test.ts src/modules/integrations/inbound.test.ts` — **2 files passed; 38 tests passed** (marker 3/3, inbound 35/35).
+- Focused: `pnpm --dir packages/api exec vitest run src/modules/integrations/providers/redmine/comment-marker.test.ts src/modules/integrations/inbound.test.ts` — **2 files passed; 44 tests passed** (marker 3/3, inbound 41/41).
 - Required full: `pnpm --dir packages/api run test` — **exit code 0**.
   - Typecheck: passed.
-  - Vitest: **184 test files passed; 2,385 tests passed; 3 skipped; 2,388 total**.
-  - Duration: **317.39s**.
+  - Vitest: **184 test files passed; 2,391 tests passed; 3 skipped; 2,394 total**.
+  - Duration: **350.01s**.
+
+## Pre-Commit Fix Round 1
+
+- Reliability review confirmed that a second marked journal could collide with an existing local `ExternalRef`, and that pre-I/O/terminal work states could incorrectly authorize recognition.
+- Strict TDD added already-mapped-journal and work-state coverage before production changes; RED produced four expected failures.
+- Recognition now requires an unmapped local comment and work state `leased`, `ambiguous`, or `done`.
+- Scoped reliability re-review verified both CRITICAL findings resolved with no fix-line defect.
 
 ## Historical Recovery Notes
 
