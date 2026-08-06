@@ -1,7 +1,13 @@
 import { pathToFileURL } from "node:url";
 import { Prisma, PrismaClient } from "@prisma/client";
 
-const SUPPORTED_ENTITY_TYPES = new Set(["issue", "project", "cycle", "time_entry"]);
+const SUPPORTED_ENTITY_TYPES = new Set([
+  "issue",
+  "project",
+  "cycle",
+  "time_entry",
+  "comment",
+]);
 
 /** Stable PostgreSQL transaction-level advisory-lock key for cooperating writers. */
 export const EXTERNAL_REF_BACKFILL_LOCK_KEY = 0x4b414e4f4e5f4136n;
@@ -95,9 +101,14 @@ export async function proveExternalRefBindings(
           FROM "time_entries" entry
           JOIN "issues" issue ON issue."id" = entry."issue_id"
           JOIN "projects" project ON project."id" = issue."project_id"
+          UNION ALL
+          SELECT 'comment', comment."id", issue."project_id", project."workspace_id"
+          FROM "comments" comment
+          JOIN "issues" issue ON issue."id" = comment."issue_id"
+          JOIN "projects" project ON project."id" = issue."project_id"
         ), violations AS (
           SELECT CASE
-            WHEN ref."entity_type" NOT IN ('issue', 'project', 'cycle', 'time_entry')
+            WHEN ref."entity_type" NOT IN ('issue', 'project', 'cycle', 'time_entry', 'comment')
               THEN 'unsupported-entity-type'
             WHEN owner.entity_id IS NULL THEN 'local-entity-not-found'
             WHEN ref."binding_id" IS NULL THEN 'unbound-reference'
@@ -260,7 +271,10 @@ async function loadEntityOwnership(
   const timeEntryIds = refs
     .filter((ref) => ref.entityType === "time_entry")
     .map((ref) => ref.entityId);
-  const [projects, issues, cycles, timeEntries] = await Promise.all([
+  const commentIds = refs
+    .filter((ref) => ref.entityType === "comment")
+    .map((ref) => ref.entityId);
+  const [projects, issues, cycles, timeEntries, comments] = await Promise.all([
     transaction.project.findMany({
       where: { id: { in: projectIds } },
       select: { id: true, workspaceId: true },
@@ -283,6 +297,13 @@ async function loadEntityOwnership(
     }),
     transaction.timeEntry.findMany({
       where: { id: { in: timeEntryIds } },
+      select: {
+        id: true,
+        issue: { select: { projectId: true, project: { select: { workspaceId: true } } } },
+      },
+    }),
+    transaction.comment.findMany({
+      where: { id: { in: commentIds } },
       select: {
         id: true,
         issue: { select: { projectId: true, project: { select: { workspaceId: true } } } },
@@ -314,6 +335,12 @@ async function loadEntityOwnership(
     ownership.set(`time_entry:${entry.id}`, {
       projectId: entry.issue.projectId,
       workspaceId: entry.issue.project.workspaceId,
+    });
+  }
+  for (const comment of comments) {
+    ownership.set(`comment:${comment.id}`, {
+      projectId: comment.issue.projectId,
+      workspaceId: comment.issue.project.workspaceId,
     });
   }
   return ownership;
