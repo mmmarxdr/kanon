@@ -34,6 +34,7 @@ import { captureIntegrationWorkTx } from "./outbox.js";
 import { persistRedmineIssueImportsTx } from "./redmine-import.js";
 import {
   decodeRedmineIssueDetail,
+  type RedmineCommentChange,
   type RedmineIssueChange,
 } from "./providers/redmine/decoder.js";
 import { RedmineHttpClient } from "./providers/redmine/http-client.js";
@@ -64,13 +65,17 @@ export interface InboundIssueDetailOptions {
   readonly remoteIssueId: string;
 }
 
+type InboundIssueDetail = RedmineIssueChange & {
+  readonly comments?: readonly RedmineCommentChange[];
+};
+
 export interface InboundSyncDependencies {
   readonly now?: () => Date;
   readonly decrypt?: (ciphertext: string) => string;
   readonly createSource?: (
     options: InboundSourceOptions,
   ) => InboundSource<InboundIssueStatusChange>;
-  readonly loadIssueDetail?: (options: InboundIssueDetailOptions) => Promise<RedmineIssueChange>;
+  readonly loadIssueDetail?: (options: InboundIssueDetailOptions) => Promise<InboundIssueDetail>;
   readonly logger?: InboundSyncLogger;
   readonly limit?: number;
   readonly leaseMs?: number;
@@ -116,7 +121,8 @@ const defaultDetailLoader = async (options: InboundIssueDetailOptions) => {
   const value = await client.get<unknown>(
     `/issues/${encodeURIComponent(options.remoteIssueId)}.json?include=journals`,
   );
-  return decodeRedmineIssueDetail(value, options.remoteProjectId).issue;
+  const decoded = decodeRedmineIssueDetail(value, options.remoteProjectId);
+  return { ...decoded.issue, comments: decoded.comments };
 };
 
 function log(
@@ -365,11 +371,100 @@ async function recordInboundFailure(
   });
 }
 
+async function persistInboundCommentsTx(
+  transaction: Prisma.TransactionClient,
+  binding: ClaimedBinding,
+  issueId: string,
+  remoteIssueId: string,
+  comments: readonly RedmineCommentChange[],
+) {
+  for (const change of comments) {
+    const correlationId = createHash("sha256")
+      .update(`${binding.id}|comment|${change.identity.remoteId}|${change.sourceVersion}`)
+      .digest("hex");
+
+    if (change.operation !== "upsert" || !("body" in change.fields)) {
+      await transaction.integrationInboundApplication.createMany({
+        data: {
+          bindingId: binding.id,
+          remoteEntityType: "comment",
+          remoteParentType: "issue",
+          remoteParentId: remoteIssueId,
+          remoteId: change.identity.remoteId,
+          remoteUpdatedAt: change.changedAt,
+          sourceVersion: change.sourceVersion,
+          applicationKey: correlationId,
+          correlationId,
+          state: "skipped",
+          outcome: { reason: "private-comment" },
+        },
+        skipDuplicates: true,
+      });
+      continue;
+    }
+
+    const existing = await transaction.externalRef.findUnique({
+      where: {
+        connectionId_entityType_externalId: {
+          connectionId: binding.connectionId,
+          entityType: "comment",
+          externalId: change.identity.remoteId,
+        },
+      },
+    });
+    if (existing) continue;
+
+    const comment = await transaction.comment.create({
+      data: {
+        issueId,
+        authorId: binding.actorMemberId,
+        body: change.fields.body,
+        source: "system",
+        via: "redmine-inbound",
+        createdAt: change.createdAt ?? change.changedAt,
+      },
+    });
+    const ref = await transaction.externalRef.create({
+      data: {
+        connectionId: binding.connectionId,
+        bindingId: binding.id,
+        entityType: "comment",
+        entityId: comment.id,
+        externalId: change.identity.remoteId,
+        remoteUpdatedAt: change.changedAt,
+        localVersion: 1,
+        lastCorrelationId: correlationId,
+        metadata: {
+          remoteVersion: change.sourceVersion,
+          remoteIssueId,
+          remoteActorId: change.actor?.remoteId ?? null,
+        },
+      },
+    });
+    await transaction.integrationInboundApplication.create({
+      data: {
+        bindingId: binding.id,
+        remoteEntityType: "comment",
+        remoteParentType: "issue",
+        remoteParentId: remoteIssueId,
+        remoteId: change.identity.remoteId,
+        remoteUpdatedAt: change.changedAt,
+        sourceVersion: change.sourceVersion,
+        applicationKey: correlationId,
+        correlationId,
+        state: "applied",
+        refId: ref.id,
+        outcome: { provenance: "redmine-inbound" },
+      },
+    });
+  }
+}
+
 async function convergeLinkedIssue(
   database: PrismaClient,
   binding: ClaimedBinding,
   change: InboundIssueStatusChange,
-  detail: RedmineIssueChange,
+  detail: InboundIssueDetail,
 ) {
   const correlationId = applicationIdentity(binding.id, {
     ...change,
@@ -496,6 +591,14 @@ async function convergeLinkedIssue(
       });
       return "detail" as const;
     }
+
+    await persistInboundCommentsTx(
+      transaction,
+      binding,
+      ref.entityId,
+      change.entityId,
+      detail.comments ?? [],
+    );
 
     const actors = [detail.actor, detail.fields.assignee].filter(
       (actor): actor is NonNullable<typeof actor> => actor !== undefined && actor !== null,
@@ -939,7 +1042,7 @@ async function applyChange(
   database: PrismaClient,
   binding: ClaimedBinding,
   change: InboundIssueStatusChange,
-  loadIssueDetail: (options: InboundIssueDetailOptions) => Promise<RedmineIssueChange>,
+  loadIssueDetail: (options: InboundIssueDetailOptions) => Promise<InboundIssueDetail>,
   apiKey: string,
   allowDetail: boolean,
 ) {
@@ -954,7 +1057,7 @@ async function applyChange(
   });
   if (!ref) {
     if (!allowDetail) return "detail-limit" as const;
-    let detail: RedmineIssueChange;
+    let detail: InboundIssueDetail;
     try {
       detail = await loadIssueDetail({
         baseUrl: binding.baseUrl,
@@ -987,54 +1090,71 @@ async function applyChange(
         const active = await lockPollSnapshot(transaction, binding);
         if (!active) return "stale" as const;
 
-      const linked = await transaction.externalRef.findUnique({
-        where: {
-          connectionId_entityType_externalId: {
-            connectionId: binding.connectionId,
-            entityType: "issue",
-            externalId: change.entityId,
-          },
-        },
-        select: { id: true },
-      });
-      if (linked) return "detail" as const;
-
-      const localIssueIds =
-        "description" in detail.fields ? outboundIssueIds(detail.fields.description) : [];
-      const outboundCreate = localIssueIds.length
-        ? await transaction.integrationSyncWork.findFirst({
-            where: {
-              bindingId: binding.id,
+        const linked = await transaction.externalRef.findUnique({
+          where: {
+            connectionId_entityType_externalId: {
+              connectionId: binding.connectionId,
               entityType: "issue",
-              entityId: { in: localIssueIds },
-              direction: "outbound",
-              operation: "create",
-              state: { in: ["queued", "retry", "leased", "ambiguous"] },
+              externalId: change.entityId,
             },
-            select: { id: true },
-          })
-        : null;
-      if (outboundCreate) {
-        throw new AppError(
-          409,
-          "OUTBOUND_CREATE_UNSETTLED",
-          "Outbound issue creation is awaiting finalization",
-        );
-      }
+          },
+          select: { id: true },
+        });
+        if (linked) return "detail" as const;
 
-      await persistRedmineIssueImportsTx(
-        transaction,
-        {
-          connectionId: binding.connectionId,
-          bindingId: binding.id,
-          projectId: binding.projectId,
-          projectKey: active.project.key,
-          workspaceId: active.connection.workspaceId,
-          readMap: active.readMap,
-          provenance: "redmine-inbound-discovery",
-        },
-        [detail],
-      );
+        const localIssueIds =
+          "description" in detail.fields ? outboundIssueIds(detail.fields.description) : [];
+        const outboundCreate = localIssueIds.length
+          ? await transaction.integrationSyncWork.findFirst({
+              where: {
+                bindingId: binding.id,
+                entityType: "issue",
+                entityId: { in: localIssueIds },
+                direction: "outbound",
+                operation: "create",
+                state: { in: ["queued", "retry", "leased", "ambiguous"] },
+              },
+              select: { id: true },
+            })
+          : null;
+        if (outboundCreate) {
+          throw new AppError(
+            409,
+            "OUTBOUND_CREATE_UNSETTLED",
+            "Outbound issue creation is awaiting finalization",
+          );
+        }
+
+        await persistRedmineIssueImportsTx(
+          transaction,
+          {
+            connectionId: binding.connectionId,
+            bindingId: binding.id,
+            projectId: binding.projectId,
+            projectKey: active.project.key,
+            workspaceId: active.connection.workspaceId,
+            readMap: active.readMap,
+            provenance: "redmine-inbound-discovery",
+          },
+          [detail],
+        );
+        const importedRef = await transaction.externalRef.findUniqueOrThrow({
+          where: {
+            connectionId_entityType_externalId: {
+              connectionId: binding.connectionId,
+              entityType: "issue",
+              externalId: change.entityId,
+            },
+          },
+          select: { id: true, entityId: true },
+        });
+        await persistInboundCommentsTx(
+          transaction,
+          binding,
+          importedRef.entityId,
+          change.entityId,
+          detail.comments ?? [],
+        );
         return "detail" as const;
       });
     } catch (error) {
@@ -1090,7 +1210,7 @@ async function applyChange(
     return "processed" as const;
   }
   if (!allowDetail) return "detail-limit" as const;
-  let detail: RedmineIssueChange;
+  let detail: InboundIssueDetail;
   try {
     detail = await loadIssueDetail({
       baseUrl: binding.baseUrl,

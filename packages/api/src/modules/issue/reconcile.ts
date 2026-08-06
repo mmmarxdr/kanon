@@ -162,31 +162,39 @@ async function captureConfirmedTimeTx(
  * Returns a descriptor that the caller uses to either throw RECONCILIATION_REQUIRED
  * or allow the transition.
  *
- * "needs reconciliation" = has any WorkLog OR TimeEntry AND
- *   (timeConfirmedAt is null OR some row.createdAt > timeConfirmedAt).
- *
- * Zero captured time → auto-pass (returns { needed: false }).
+ * "needs reconciliation" = time has never been confirmed, or a WorkLog/TimeEntry
+ * was created at or after the last confirmation. Zero hours still require an
+ * explicit confirmation so completed tickets never have unknown time.
  */
-export async function checkReconciliation(issueId: string, timeConfirmedAt: Date | null): Promise<{
+export async function checkReconciliation(
+  issueId: string,
+  timeConfirmedAt: Date | null,
+  database: Pick<Prisma.TransactionClient, "workLog" | "timeEntry"> = prisma,
+): Promise<{
   needed: boolean;
   workLogs: any[];
   timeEntries: any[];
   totalHours: number;
 }> {
   const [workLogs, timeEntries] = await Promise.all([
-    prisma.workLog.findMany({
+    database.workLog.findMany({
       where: { issueId },
       select: { id: true, durationS: true, startedAt: true, endedAt: true, createdAt: true, memberId: true },
     }),
-    prisma.timeEntry.findMany({
+    database.timeEntry.findMany({
       where: { issueId },
       select: { id: true, hours: true, status: true, sourceWorkLogId: true, createdAt: true, memberId: true },
     }),
   ]);
 
-  // Zero captured time → auto-pass
+  // Zero captured time still needs one explicit confirmation.
   if (workLogs.length === 0 && timeEntries.length === 0) {
-    return { needed: false, workLogs: [], timeEntries: [], totalHours: 0 };
+    return {
+      needed: timeConfirmedAt === null,
+      workLogs: [],
+      timeEntries: [],
+      totalHours: 0,
+    };
   }
 
   // If confirmed, check staleness: any row created at or after confirmation?

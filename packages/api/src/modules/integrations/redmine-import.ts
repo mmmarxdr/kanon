@@ -404,6 +404,7 @@ export async function previewRedmineIssueImport(
     const unsettledOutbound = await transaction.integrationSyncWork.count({
       where: {
         bindingId,
+        epoch: current.binding.lifecycleEpoch,
         direction: "outbound",
         state: { in: ["leased", "ambiguous"] },
       },

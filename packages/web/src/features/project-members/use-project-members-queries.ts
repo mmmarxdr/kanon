@@ -8,6 +8,7 @@ export type MemberRole = "owner" | "admin" | "pm" | "member" | "viewer";
 
 export interface EffectiveMemberRow {
   userId: string;
+  memberId: string;
   email: string;
   displayName: string | null;
   role: MemberRole;

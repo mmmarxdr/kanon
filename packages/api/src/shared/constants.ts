@@ -49,7 +49,7 @@ export const BCRYPT_COST = 12;
 /**
  * Issue types, priorities, and states as plain arrays for Zod enum usage.
  */
-export const ISSUE_TYPES = ["feature", "bug", "task", "spike"] as const;
+export const ISSUE_TYPES = ["feature", "bug", "task", "spike", "incident"] as const;
 export const ISSUE_PRIORITIES = ["critical", "high", "medium", "low"] as const;
 export const ISSUE_STATES = [
   "backlog",

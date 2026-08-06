@@ -45,11 +45,11 @@ If the user asks "where is my API key?" the correct answer is: there isn't one �
 
    Unix, macOS, or WSL:
 
-   `bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.11.0/install.sh)"`
+   `bash -c "$(curl -fsSL https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.12.0/install.sh)"`
 
    Native Windows PowerShell:
 
-   `irm https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.11.0/install.ps1 | iex`
+   `irm https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.12.0/install.ps1 | iex`
 3. **Read the success output** — three blocks in order:
    - `✓ Onboarded as <email>` + server URL + credentials path
    - `✓ Configured N tool(s):` + a per-tool line with the config file that was updated
