@@ -1,5 +1,11 @@
 # Changelog — @kanon/mcp
 
+## v0.13.0 (2026-08-06)
+
+- Adds native Codex CLI setup with TOML MCP config, a `kanon.toml` agent, and shared skills.
+- Preserves Codex tool approvals while migrating the legacy `kanon-mcp` entry to `kanon`.
+- Attributes MCP and API activity to Codex throughout the Kanon UI.
+
 ## v0.12.1 (2026-08-06)
 
 - Fixes `get_issue` slim output to include start date, due date, and progress.

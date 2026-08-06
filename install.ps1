@@ -1,13 +1,13 @@
 # Kanon MCP installer for native Windows.
 # Run the pinned tagged copy, for example:
-#   irm https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.12.1/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/mmmarxdr/kanon/mcp-v0.13.0/install.ps1 | iex
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # release.yml stamps both values on the tag-only release commit.
 $EXPECTED_SHA256 = ""
-$KANON_MCP_VERSION = "0.12.1"
+$KANON_MCP_VERSION = "0.13.0"
 $KanonRepo = if ($env:KANON_REPO) { $env:KANON_REPO } else { "mmmarxdr/kanon" }
 if ($KanonRepo -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
   throw "[kanon] invalid KANON_REPO '$KanonRepo'; expected owner/repo"
