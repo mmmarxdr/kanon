@@ -333,7 +333,7 @@ async function run(options: {
         }
 
         const agentDir = target.agents?.(ctx);
-        const removedAgentFiles = agentDir ? removeAgents(agentDir) : [];
+        const removedAgentFiles = agentDir ? removeAgents(agentDir, tool.name) : [];
         if (removedAgentFiles.length > 0) {
           console.log(
             chalk.green("  ✓") +

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { parse } from "smol-toml";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { installAgents, removeAgents } from "./agents.js";
 import { getAssetsDir } from "./tool-surface.js";
@@ -65,12 +66,28 @@ describe("agent installation", () => {
     expect(fs.readFileSync(path.join(agentDest, "kanon.md"), "utf8")).toBe(SOURCE);
   });
 
-  it("removes only exact Kanon product files", () => {
+  it("renders a native Codex TOML agent", () => {
+    expect(installAgents(agentDest, assetsDir, "codex")).toEqual(["kanon.toml"]);
+
+    const installed = parse(
+      fs.readFileSync(path.join(agentDest, "kanon.toml"), "utf8"),
+    );
+    expect(installed).toEqual({
+      name: "kanon",
+      description: "Kanon board specialist",
+      developer_instructions: "Use kanon_start_work(issue_key).",
+    });
+  });
+
+  it("removes only the agent format owned for each host", () => {
     fs.mkdirSync(agentDest, { recursive: true });
     fs.writeFileSync(path.join(agentDest, "kanon.md"), "owned");
+    fs.writeFileSync(path.join(agentDest, "kanon.toml"), "owned");
     fs.writeFileSync(path.join(agentDest, "kanon-notes.md"), "user-owned");
 
-    expect(removeAgents(agentDest)).toEqual(["kanon.md"]);
+    expect(removeAgents(agentDest, "codex")).toEqual(["kanon.toml"]);
+    expect(fs.existsSync(path.join(agentDest, "kanon.md"))).toBe(true);
+    expect(removeAgents(agentDest, "claude-code")).toEqual(["kanon.md"]);
     expect(fs.readFileSync(path.join(agentDest, "kanon-notes.md"), "utf8")).toBe("user-owned");
   });
 

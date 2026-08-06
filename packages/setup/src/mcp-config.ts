@@ -192,14 +192,44 @@ export function mergeTomlMcpConfig(
   const config = parseTomlConfigFile(configPath);
 
   const servers = (config["mcp_servers"] as Record<string, unknown>) || {};
+  const current = servers[serverName];
+  const legacy = serverName === MCP_SERVER_NAME
+    ? servers[LEGACY_MCP_SERVER_NAME]
+    : undefined;
+  const currentEntry = current && typeof current === "object" && !Array.isArray(current)
+    ? current as Record<string, unknown>
+    : {};
+  const legacyEntry = legacy && typeof legacy === "object" && !Array.isArray(legacy)
+    ? legacy as Record<string, unknown>
+    : {};
+  const serverEntry: Record<string, unknown> = { ...legacyEntry, ...currentEntry };
+  const legacyTools = legacyEntry["tools"];
+  const currentTools = currentEntry["tools"];
+  if (legacyTools || currentTools) {
+    serverEntry["tools"] = {
+      ...(legacyTools as Record<string, unknown> | undefined),
+      ...(currentTools as Record<string, unknown> | undefined),
+    };
+  }
   if (serverName === MCP_SERVER_NAME) delete servers[LEGACY_MCP_SERVER_NAME];
 
-  const serverEntry: Record<string, unknown> = {
-    command: entry.command,
-    args: entry.args,
-  };
+  serverEntry["command"] = entry.command;
+  serverEntry["args"] = entry.args;
+  for (const key of [
+    "type",
+    "url",
+    "bearer_token",
+    "bearer_token_env_var",
+    "http_headers",
+    "env_http_headers",
+    "environment",
+  ]) {
+    delete serverEntry[key];
+  }
   if (entry.env) {
     serverEntry["env"] = entry.env;
+  } else {
+    delete serverEntry["env"];
   }
 
   servers[serverName] = serverEntry;

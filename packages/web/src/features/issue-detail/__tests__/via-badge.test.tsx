@@ -17,6 +17,7 @@ describe("ViaBadge — Scenario 2: via=claude-code → 'Claude Code' cobalt badg
 describe("ViaBadge — Scenario 3: recognized tool labels", () => {
   it.each([
     ["cursor", "Cursor"],
+    ["codex", "Codex"],
     ["antigravity", "Antigravity"],
     ["cli", "CLI"],
   ] as const)("via=%s renders label %s", (via, label) => {

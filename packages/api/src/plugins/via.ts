@@ -1,7 +1,7 @@
 // ─── Via Plugin (S1 / KAN-30) ─────────────────────────────────────────────────
 //
 // Reads the X-Kanon-Client header on every request, normalizes it against the
-// closed vocabulary (claude-code | cursor | antigravity | web | cli), and sets
+// closed vocabulary (claude-code | cursor | codex | antigravity | web | cli), and sets
 // request.via. Unknown or absent values resolve to null.
 
 import type { FastifyInstance } from "fastify";

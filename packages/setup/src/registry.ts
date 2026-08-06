@@ -40,15 +40,16 @@ const OPENCODE_PATHS: PlatformPaths = {
 /**
  * Codex CLI platform paths — shared across darwin/linux/wsl/win32.
  *
- * Codex is a product surface only: MCP config + skills. No template,
- * agents, or commands paths (see leakage-guard.test.ts).
+ * Codex uses its native MCP config, shared user skills, and custom agents.
+ * No AGENTS.md template or duplicate commands are installed.
  */
 const CODEX_PATHS: PlatformPaths = {
   detect: async (ctx) =>
     commandExists("codex", ctx.platform) ||
     fs.existsSync(resolveCodexHome(ctx, "config.toml")),
   config: (ctx) => resolveCodexHome(ctx, "config.toml"),
-  skills: (ctx) => resolveCodexHome(ctx, "skills"),
+  skills: (ctx) => path.join(ctx.homedir, ".agents", "skills"),
+  agents: (ctx) => resolveCodexHome(ctx, "agents"),
   mcpMode: "direct",
 };
 
@@ -245,12 +246,13 @@ export const toolRegistry: ToolDefinition[] = [
 
   // ── Codex CLI ──────────────────────────────────────────────────────────
   // OpenAI Codex CLI — global install under $CODEX_HOME (default ~/.codex).
-  // Product surface only: TOML MCP config + skills. No AGENTS.md writes.
+  // Native TOML MCP config + shared skills + custom agent. No AGENTS.md writes.
   {
     name: "codex",
     displayName: "Codex CLI",
     rootKey: "mcp_servers",
     configFormat: "toml",
+    clientIdentity: "codex",
     templateSource: "",
     templateMode: "marker-inject",
 

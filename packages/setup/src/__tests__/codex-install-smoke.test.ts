@@ -88,6 +88,8 @@ describe("codex install smoke — KAN-128", () => {
       "direct",
       process.execPath,
       FAKE_WRAPPER,
+      undefined,
+      "codex",
     );
     mergeTomlMcpConfig(configPath, "kanon", formatCodexMcpEntry(entry));
     installSkills(skillDir, REAL_ASSETS_DIR);
@@ -124,6 +126,9 @@ args = ["run"]
       expect(typeof entry.command).toBe("string");
       expect(Array.isArray(entry.args)).toBe(true);
       expect(entry.args!.length).toBeGreaterThan(0);
+      expect((entry as { env?: Record<string, string> }).env).toEqual({
+        KANON_CLIENT_IDENTITY: "codex",
+      });
     });
 
     it("preserves unrelated mcp_servers entries", () => {
@@ -132,14 +137,14 @@ args = ["run"]
       expect(servers["other"]).toEqual({ command: "other", args: ["run"] });
     });
 
-    it("installs all 3 product skills under CODEX_HOME/skills", () => {
+    it("installs all 3 product skills under ~/.agents/skills", () => {
       for (const skill of PRODUCT_SKILLS) {
         expect(
           fs.existsSync(path.join(skillDir, skill, "SKILL.md")),
           `expected ${skill}/SKILL.md`,
         ).toBe(true);
       }
-      expect(skillDir.startsWith(codexHome)).toBe(true);
+      expect(skillDir).toBe(path.join(tmpHome, ".agents", "skills"));
     });
 
     it("LEAKAGE — no AGENTS.md written under CODEX_HOME", () => {

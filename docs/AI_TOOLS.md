@@ -142,7 +142,8 @@ Codex uses a global home directory (not project-scoped):
 | ---- | ------- |
 | `$CODEX_HOME` (default `~/.codex`) | Codex CLI home override |
 | `$CODEX_HOME/config.toml` | MCP server config (TOML) |
-| `$CODEX_HOME/skills/` | Global skills directory |
+| `$CODEX_HOME/agents/kanon.toml` | Native Kanon subagent |
+| `~/.agents/skills/` | Current shared user skills directory |
 
 Install or remove Kanon for Codex only:
 
@@ -153,7 +154,8 @@ kanon-setup --tool codex --remove -y
 
 Setup writes `[mcp_servers.kanon]` with flat `command`/`args` and env vars
 under `[mcp_servers.kanon.env]`. TOML round-trip via `smol-toml` may drop
-comments in `config.toml` — only the current `kanon` and legacy `kanon-mcp` tables are touched.
+comments in `config.toml`; existing Kanon tool approval policy is preserved while
+the legacy `kanon-mcp` table is migrated.
 
 ## Non-interactive use
 

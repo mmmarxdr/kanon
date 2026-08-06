@@ -745,14 +745,17 @@ args = ["run"]
       });
     });
 
-    it("deletes the legacy kanon-mcp key during merge", () => {
+    it("migrates legacy tool approvals to the canonical kanon key", () => {
       const configPath = path.join(tmpDir, "config.toml");
       fs.writeFileSync(
         configPath,
         `
-[mcp_servers.kanon-mcp]
-command = "legacy"
-args = ["old"]
+[mcp_servers.kanon]
+command = "current"
+args = ["current"]
+
+[mcp_servers.kanon-mcp.tools.kanon_get_issue]
+approval_mode = "approve"
 `,
       );
 
@@ -765,7 +768,42 @@ args = ["old"]
       const result = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
       const servers = result["mcp_servers"] as Record<string, unknown>;
       expect(servers["kanon-mcp"]).toBeUndefined();
-      expect(servers["kanon"]).toBeDefined();
+      expect(servers["kanon"]).toEqual({
+        command: "node",
+        args: ["/srv.js"],
+        tools: { kanon_get_issue: { approval_mode: "approve" } },
+      });
+    });
+
+    it("preserves canonical tool policy when refreshing the transport", () => {
+      const configPath = path.join(tmpDir, "config.toml");
+      fs.writeFileSync(
+        configPath,
+        `
+[mcp_servers.kanon]
+command = "old-node"
+args = ["old-wrapper.js"]
+default_tools_approval_mode = "prompt"
+
+[mcp_servers.kanon.tools.kanon_list_groups]
+approval_mode = "approve"
+`,
+      );
+
+      mergeTomlMcpConfig(
+        configPath,
+        "kanon",
+        formatCodexMcpEntry({ command: "node", args: ["/new-wrapper.js"] }),
+      );
+
+      const result = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+      const entry = (result["mcp_servers"] as Record<string, unknown>)["kanon"];
+      expect(entry).toEqual({
+        command: "node",
+        args: ["/new-wrapper.js"],
+        default_tools_approval_mode: "prompt",
+        tools: { kanon_list_groups: { approval_mode: "approve" } },
+      });
     });
 
     it("is idempotent — running twice produces the same file", () => {

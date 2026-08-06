@@ -11,6 +11,7 @@
 export const VALID_IDENTITIES = [
   "claude-code",
   "cursor",
+  "codex",
   "antigravity",
   "web",
   "cli",

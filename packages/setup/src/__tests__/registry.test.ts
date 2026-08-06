@@ -179,22 +179,24 @@ describe("registry — codex", () => {
     }
   });
 
-  it("does NOT declare template, agents, or commands paths", () => {
+  it("declares native agents without template or commands paths", () => {
     const tool = getToolByName("codex")!;
     for (const [name, paths] of Object.entries(tool.platforms)) {
       expect(paths!.template, `platform ${name} should not have template`).toBeUndefined();
-      expect(paths!.agents, `platform ${name} should not have agents`).toBeUndefined();
+      expect(paths!.agents, `platform ${name} should have native agents`).toBeDefined();
       expect(paths!.commands, `platform ${name} should not have commands`).toBeUndefined();
     }
   });
 
-  it("resolves default config and skills paths under ~/.codex/", () => {
+  it("uses current Codex config, agent, and skill locations", () => {
     const tool = getToolByName("codex")!;
     const ctx: PlatformContext = { platform: "linux", homedir: "/home/test" };
     const paths = tool.platforms.linux!;
 
     expect(paths.config(ctx)).toBe("/home/test/.codex/config.toml");
-    expect(paths.skills(ctx)).toBe("/home/test/.codex/skills");
+    expect(paths.agents?.(ctx)).toBe("/home/test/.codex/agents");
+    expect(paths.skills(ctx)).toBe("/home/test/.agents/skills");
+    expect(tool.clientIdentity).toBe("codex");
   });
 
   it("resolves paths under CODEX_HOME when env is set", () => {
@@ -208,7 +210,8 @@ describe("registry — codex", () => {
       const paths = tool.platforms.linux!;
 
       expect(paths.config(ctx)).toBe(path.join(override, "config.toml"));
-      expect(paths.skills(ctx)).toBe(path.join(override, "skills"));
+      expect(paths.agents?.(ctx)).toBe(path.join(override, "agents"));
+      expect(paths.skills(ctx)).toBe("/home/test/.agents/skills");
     } finally {
       if (prev === undefined) {
         delete process.env.CODEX_HOME;

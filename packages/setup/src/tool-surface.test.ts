@@ -132,3 +132,45 @@ describe("Cursor tool surface upgrades", () => {
     expect(windows.args).toContain("KANON_WORKSPACE_ID=workspace-from-windows");
   });
 });
+
+describe("Codex tool surface upgrades", () => {
+  const roots: string[] = [];
+
+  afterEach(() => {
+    for (const root of roots.splice(0)) {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("installs native surfaces and removes only deprecated Kanon skills", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-codex-surface-"));
+    roots.push(root);
+    const codexHome = path.join(root, "codex-home");
+    const previousCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = codexHome;
+
+    try {
+      const ctx: PlatformContext = { platform: "linux", homedir: root };
+      const codex = getToolByName("codex")!;
+      const legacySkills = path.join(codexHome, "skills");
+      fs.mkdirSync(path.join(legacySkills, "kanon-agent"), { recursive: true });
+      fs.mkdirSync(path.join(legacySkills, "user-skill"), { recursive: true });
+
+      const [installed] = installToolSurface({
+        tool: codex,
+        ctx,
+        assetsDir: makeAssets(root),
+        buildEntry: () => ({ command: "node", args: ["wrapper.js"] }),
+      });
+
+      expect(installed!.skillDir).toBe(path.join(root, ".agents", "skills"));
+      expect(installed!.installedAgents).toEqual(["kanon.toml"]);
+      expect(fs.existsSync(path.join(codexHome, "agents", "kanon.toml"))).toBe(true);
+      expect(fs.existsSync(path.join(legacySkills, "kanon-agent"))).toBe(false);
+      expect(fs.existsSync(path.join(legacySkills, "user-skill"))).toBe(true);
+    } finally {
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
+    }
+  });
+});
