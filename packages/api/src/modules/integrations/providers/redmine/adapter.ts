@@ -450,6 +450,11 @@ export class RedmineProviderAdapter implements PmProviderAdapter {
           },
           "Redmine did not reach the requested status",
         );
+        if (!creating) {
+          throw new Error(
+            `Redmine did not reach requested status ${requestedStatusId}; achieved ${externalId(observed.issue.status?.id ?? "unknown")}`,
+          );
+        }
       }
     }
     return {

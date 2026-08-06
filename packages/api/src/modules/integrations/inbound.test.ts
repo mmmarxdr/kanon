@@ -11,7 +11,10 @@ import {
 import { transitionIssue } from "../issue/service.js";
 import type { InboundCursor, InboundIssueStatusChange } from "./core/types.js";
 import { runInboundSyncCycle, type InboundIssueDetailOptions } from "./inbound.js";
-import type { RedmineIssueChange } from "./providers/redmine/decoder.js";
+import type {
+  RedmineCommentChange,
+  RedmineIssueChange,
+} from "./providers/redmine/decoder.js";
 
 const baseline = new Date("2026-08-01T10:00:00.000Z");
 
@@ -279,6 +282,103 @@ describe("Redmine inbound sync", () => {
     await expect(
       prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
     ).resolves.toMatchObject({ cursorUpdatedAt: greater, cursorRemoteId: "100" });
+  });
+
+  it("imports public Redmine comments once and excludes private notes", async () => {
+    const { owner, binding, issue } = await fixture();
+    const observedAt = new Date("2026-08-01T10:01:00.000Z");
+    const publicComment: RedmineCommentChange = {
+      identity: {
+        type: "comment",
+        remoteId: "900",
+        remoteProjectId: "41",
+        parent: { type: "issue", remoteId: "100" },
+      },
+      operation: "upsert",
+      changedAt: observedAt,
+      createdAt: observedAt,
+      sourceVersion: "sha256:comment-900-v1",
+      actor: { remoteId: "5", displayName: "Remote author", username: "author" },
+      fields: { body: "Comment created in Redmine" },
+    };
+    const privateComment: RedmineCommentChange = {
+      identity: {
+        type: "comment",
+        remoteId: "901",
+        remoteProjectId: "41",
+        parent: { type: "issue", remoteId: "100" },
+      },
+      operation: "tombstone",
+      changedAt: observedAt,
+      createdAt: observedAt,
+      sourceVersion: "sha256:comment-901-v1",
+      fields: { reason: "private" },
+    };
+    const detail = {
+      ...detailChange(observedAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+        fields: {
+          title: "Linked issue",
+          description: null,
+          statusId: "review",
+          priorityId: "3",
+          assignee: null,
+          startDate: null,
+          dueDate: null,
+          progress: 0,
+        },
+      }),
+      comments: [publicComment, privateComment],
+    };
+    const setup = dependencies([change(observedAt, "review")]);
+    setup.loadIssueDetail.mockResolvedValue(detail);
+
+    await runInboundSyncCycle(prisma, setup);
+
+    const comment = await prisma.comment.findFirstOrThrow({ where: { issueId: issue.id } });
+    expect(comment).toMatchObject({
+      body: "Comment created in Redmine",
+      source: "system",
+      via: "redmine-inbound",
+      authorId: owner.id,
+      createdAt: observedAt,
+    });
+    await expect(
+      prisma.externalRef.findUniqueOrThrow({
+        where: {
+          connectionId_entityType_externalId: {
+            connectionId: binding.connectionId,
+            entityType: "comment",
+            externalId: "900",
+          },
+        },
+      }),
+    ).resolves.toMatchObject({ bindingId: binding.id, entityId: comment.id });
+    await expect(
+      prisma.integrationInboundApplication.findMany({
+        where: { bindingId: binding.id, remoteEntityType: "comment" },
+        orderBy: { remoteId: "asc" },
+        select: { remoteId: true, state: true, outcome: true },
+      }),
+    ).resolves.toEqual([
+      {
+        remoteId: "900",
+        state: "applied",
+        outcome: expect.objectContaining({ provenance: "redmine-inbound" }),
+      },
+      {
+        remoteId: "901",
+        state: "skipped",
+        outcome: { reason: "private-comment" },
+      },
+    ]);
+
+    const later = new Date("2026-08-01T10:02:00.000Z");
+    const replay = dependencies([change(later, "review")]);
+    replay.loadIssueDetail.mockResolvedValue({ ...detail, changedAt: later });
+    await runInboundSyncCycle(prisma, replay);
+
+    await expect(prisma.comment.count({ where: { issueId: issue.id } })).resolves.toBe(1);
   });
 
   it("applies remote-only linked fields atomically without an outbound echo", async () => {

@@ -341,6 +341,38 @@ describe("Redmine-created issue import", () => {
     ).resolves.toMatchObject({ bootstrapState: "not_required", bootstrapFence: 0 });
   });
 
+  it("ignores unsettled outbound work from a superseded lifecycle epoch", async () => {
+    const { owner, project, connection, binding } = await fixture();
+    await prisma.integrationSyncWork.create({
+      data: {
+        bindingId: binding.id,
+        entityType: "project",
+        entityId: project.id,
+        direction: "outbound",
+        operation: "update",
+        dedupeKey: `stale-ambiguous-${binding.id}`,
+        laneKey: `project-${binding.id}`,
+        actorKey: `member:${owner.id}`,
+        actorKind: "user",
+        payload: {},
+        correlationId: `stale-ambiguous-${binding.id}`,
+        state: "ambiguous",
+        epoch: binding.lifecycleEpoch - 1,
+      },
+    });
+    const transport = remote({ issues: [], total_count: 0, offset: 0, limit: 100 });
+
+    await expect(
+      previewRedmineIssueImport(
+        connection.id,
+        binding.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).resolves.toMatchObject({ eligibleUnlinkedCount: 0 });
+    expect(transport.get).toHaveBeenCalled();
+  });
+
   it("imports the preview atomically with identity, baseline, inbound work, and ready state", async () => {
     const { owner, assignee, project, connection, binding } = await fixture({ "5": "done" });
     await prisma.integrationExternalIdentity.create({
