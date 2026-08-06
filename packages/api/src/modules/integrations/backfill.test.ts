@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "../../config/prisma.js";
-import { cleanDatabase, disconnectTestDb } from "../../test/helpers.js";
+import { cleanDatabase, disconnectTestDb, seedTestMember } from "../../test/helpers.js";
 import {
   EXTERNAL_REF_BACKFILL_LOCK_KEY,
   ExternalRefBackfillInvariantError,
@@ -85,6 +85,40 @@ describe("external reference binding integrity", () => {
 
     expect("backfillExternalRefBindingsInTransaction" in backfillModule).toBe(false);
     expect("backfillExternalRefBindings" in backfillModule).toBe(false);
+    await expect(proveExternalRefBindings(prisma)).resolves.toBeUndefined();
+    await expect(withExternalRefBackfillWriteGate(prisma, async () => "valid"))
+      .resolves.toBe("valid");
+  });
+
+  it("accepts comment references owned through their parent issue", async () => {
+    const { workspace, project, connection, binding } = await fixture();
+    const member = await seedTestMember(workspace.id);
+    const issue = await prisma.issue.create({
+      data: {
+        key: `${project.key}-1`,
+        sequenceNum: 1,
+        title: "Inbound comment ownership",
+        projectId: project.id,
+      },
+    });
+    const comment = await prisma.comment.create({
+      data: {
+        issueId: issue.id,
+        authorId: member.id,
+        body: "Imported from Redmine",
+        source: "system",
+      },
+    });
+    await prisma.externalRef.create({
+      data: {
+        connectionId: connection.id,
+        bindingId: binding.id,
+        entityType: "comment",
+        entityId: comment.id,
+        externalId: `journal-${randomUUID()}`,
+      },
+    });
+
     await expect(proveExternalRefBindings(prisma)).resolves.toBeUndefined();
     await expect(withExternalRefBackfillWriteGate(prisma, async () => "valid"))
       .resolves.toBe("valid");
