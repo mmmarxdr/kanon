@@ -41,7 +41,7 @@ set -euo pipefail
 # on the tagged, detached commit (mcp-v<version>), never touching main.
 # The KAN-52 gate below refuses unpinned installs unless a local, non-UNC
 # file:// test fixture is explicitly enabled.
-EXPECTED_SHA256=""
+EXPECTED_SHA256="1294ef182d72cc9dc499be532fc8a5a7c57963192ead54ea78afec3c3b341e6d"
 
 KANON_MCP_VERSION="0.13.0"
 KANON_REPO="${KANON_REPO:-mmmarxdr/kanon}"
