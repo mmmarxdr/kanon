@@ -265,6 +265,15 @@ describe("KAN-157 reconciliation gate — transitionIssue →done", () => {
     await expect(
       transitionIssue(ISSUE_KEY, "done", MEMBER_ID),
     ).resolves.toBeDefined();
+
+    expect(prisma.$transaction).toHaveBeenCalledOnce();
+    expect(prisma.$queryRaw).toHaveBeenCalledOnce();
+    expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.workLog.findMany.mock.invocationCallOrder[0]!,
+    );
+    expect(prisma.workLog.findMany.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.issue.update.mock.invocationCallOrder[0]!,
+    );
   });
 });
 

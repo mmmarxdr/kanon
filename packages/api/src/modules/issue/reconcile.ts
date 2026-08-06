@@ -166,18 +166,22 @@ async function captureConfirmedTimeTx(
  * was created at or after the last confirmation. Zero hours still require an
  * explicit confirmation so completed tickets never have unknown time.
  */
-export async function checkReconciliation(issueId: string, timeConfirmedAt: Date | null): Promise<{
+export async function checkReconciliation(
+  issueId: string,
+  timeConfirmedAt: Date | null,
+  database: Pick<Prisma.TransactionClient, "workLog" | "timeEntry"> = prisma,
+): Promise<{
   needed: boolean;
   workLogs: any[];
   timeEntries: any[];
   totalHours: number;
 }> {
   const [workLogs, timeEntries] = await Promise.all([
-    prisma.workLog.findMany({
+    database.workLog.findMany({
       where: { issueId },
       select: { id: true, durationS: true, startedAt: true, endedAt: true, createdAt: true, memberId: true },
     }),
-    prisma.timeEntry.findMany({
+    database.timeEntry.findMany({
       where: { issueId },
       select: { id: true, hours: true, status: true, sourceWorkLogId: true, createdAt: true, memberId: true },
     }),

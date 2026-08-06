@@ -82,6 +82,7 @@ vi.mock("../../config/prisma.js", () => ({
     timeEntry: {
       findMany: vi.fn(),
     },
+    $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   },
 }));
@@ -655,6 +656,7 @@ describe("batchTransitionByKeys()", () => {
 describe("KAN-35 — transitionIssue: completedAt stamping", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => cb(prisma));
     vi.mocked(prisma.project.findUnique).mockResolvedValue(PROJECT as any);
     // KAN-157: reconciliation gate — zero captured time → auto-pass for existing tests.
     vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);

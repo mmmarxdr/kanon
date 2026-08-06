@@ -53,12 +53,20 @@ async function mutateIssueWithCapture(
   fields: (result: IssueMutationRow) => IssueCaptureFields,
   mutate: (database: IssueDatabase) => Promise<IssueMutationRow>,
   captureOverride?: IssueCaptureOverride,
+  beforeMutate?: (transaction: Prisma.TransactionClient) => Promise<void>,
 ): Promise<IssueMutationRow> {
   const capture = captureOverride ?? (await resolveIssueCaptureContext(projectId, memberId));
-  if (!capture) return mutate(prisma);
+  if (!capture) {
+    if (!beforeMutate) return mutate(prisma);
+    return prisma.$transaction(async (transaction) => {
+      await beforeMutate(transaction);
+      return mutate(transaction);
+    });
+  }
 
   return withIssueMutationTx(
     async (transaction) => {
+      await beforeMutate?.(transaction);
       const result = await mutate(transaction);
       return {
         result,
@@ -798,7 +806,8 @@ export async function transitionIssue(
   // KAN-157: timeConfirmedAt is on the Issue model; Prisma includes it as a scalar.
   // The reconciliation gate uses issue.timeConfirmedAt (may be null).
 
-  const result = validateTransition(issue.state, toState as any);
+  let fromState = issue.state;
+  let result = validateTransition(fromState, toState as any);
   if (!result.allowed) {
     throw new AppError(400, "INVALID_TRANSITION", result.reason);
   }
@@ -806,20 +815,6 @@ export async function transitionIssue(
   // KAN-157: reconciliation gate — block →done unless time is confirmed.
   if (toState === "done") {
     await stopActiveWorkSessions(key);
-    const rec = await checkReconciliation(issue.id, issue.timeConfirmedAt ?? null);
-    if (rec.needed) {
-      throw new AppError(
-        409,
-        "RECONCILIATION_REQUIRED",
-        `Issue "${key}" has unconfirmed captured time. Call POST /api/issues/${key}/reconcile-time before transitioning to done.`,
-        {
-          issueKey: key,
-          workLogs: rec.workLogs,
-          timeEntries: rec.timeEntries,
-          totalHours: rec.totalHours,
-        },
-      );
-    }
   }
 
   // KAN-35 completion-timestamp contract: set completedAt when entering done, clear on any other transition.
@@ -835,8 +830,44 @@ export async function transitionIssue(
           state: toState as any,
           completedAt: toState === "done" ? new Date() : null,
         },
-      }),
+    }),
     captureOverride,
+    toState === "done"
+      ? async (transaction) => {
+          await transaction.$queryRaw`SELECT "id" FROM "issues" WHERE "id" = ${issue.id}::uuid FOR UPDATE`;
+          const current = await transaction.issue.findUnique({
+            where: { id: issue.id },
+            select: { state: true, timeConfirmedAt: true },
+          });
+          if (!current) {
+            throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${key}" not found`);
+          }
+          fromState = current.state;
+          result = validateTransition(fromState, toState as any);
+          if (!result.allowed) {
+            throw new AppError(400, "INVALID_TRANSITION", result.reason);
+          }
+
+          const rec = await checkReconciliation(
+            issue.id,
+            current.timeConfirmedAt,
+            transaction,
+          );
+          if (rec.needed) {
+            throw new AppError(
+              409,
+              "RECONCILIATION_REQUIRED",
+              `Issue "${key}" has unconfirmed captured time. Call POST /api/issues/${key}/reconcile-time before transitioning to done.`,
+              {
+                issueKey: key,
+                workLogs: rec.workLogs,
+                timeEntries: rec.timeEntries,
+                totalHours: rec.totalHours,
+              },
+            );
+          }
+        }
+      : undefined,
   );
 
   // Create activity log for state change
@@ -845,7 +876,7 @@ export async function transitionIssue(
     memberId,
     action: "state_changed",
     details: {
-      from: issue.state,
+      from: fromState,
       to: toState,
       regression: result.isRegression,
     },
@@ -870,7 +901,7 @@ export async function transitionIssue(
       issueKey: key,
       issueId: issue.id,
       projectKey: issue.project.key,
-      from: issue.state,
+      from: fromState,
       to: toState,
       // KAN-156: actor identity for the work-session transition listener.
       // actorUserId is null when the member row is not found (deleted between
