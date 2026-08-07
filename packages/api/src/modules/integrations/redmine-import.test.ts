@@ -725,7 +725,11 @@ describe("Redmine-created issue import", () => {
         lifecycleEpoch: { increment: 1 },
       },
     });
-    const current = redmineIssue({ subject: "Current remote title", assigned_to: null });
+    const current = redmineIssue({
+      subject: "Current remote title",
+      assigned_to: null,
+      updated_on: "2026-08-03T11:00:00Z",
+    });
     const transport = remote({}, {
       "42": {
         issue: {
@@ -763,13 +767,20 @@ describe("Redmine-created issue import", () => {
       prisma.integrationInboundApplication.findUniqueOrThrow({ where: { id: application.id } }),
     ).resolves.toMatchObject({
       id: application.id,
-      applicationKey: application.applicationKey,
       state: "applied",
       refId: expect.any(String),
       workId: expect.any(String),
       leaseToken: null,
       leaseUntil: null,
     });
+    const completed = await prisma.integrationInboundApplication.findUniqueOrThrow({
+      where: { id: application.id },
+    });
+    expect(completed.sourceVersion).toMatch(/^sha256:/);
+    expect(completed.sourceVersion).not.toBe(application.sourceVersion);
+    expect(completed.applicationKey).not.toBe(application.applicationKey);
+    expect(completed.correlationId).toBe(completed.applicationKey);
+    expect(completed.remoteUpdatedAt).toEqual(new Date("2026-08-03T11:00:00.000Z"));
     await expect(
       prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } }),
     ).resolves.toMatchObject({ state: "resolved" });
@@ -933,9 +944,7 @@ describe("Redmine-created issue import", () => {
   it("returns the same application to conflict when the binding changes during refetch", async () => {
     const { owner, project, connection, binding } = await fixture();
     const { application, conflict } = await preImportConflict(binding.id);
-    const transport = remote({}, {
-      "42": { issue: { ...redmineIssue({ assigned_to: null }), journals: [] } },
-    });
+    const transport = remote({});
     transport.get.mockImplementation(async () => {
       await prisma.integrationProjectBinding.update({
         where: { id: binding.id },

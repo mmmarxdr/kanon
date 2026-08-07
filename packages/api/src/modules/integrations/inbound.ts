@@ -343,31 +343,51 @@ async function recordInboundFailure(
       },
       skipDuplicates: true,
     });
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "integration_inbound_applications" WHERE "application_key" = ${correlationId} FOR UPDATE`,
+    );
     const application = await transaction.integrationInboundApplication.findUniqueOrThrow({
       where: { applicationKey: correlationId },
     });
+    const activeClaim =
+      created.count === 0 &&
+      application.state === "claimed" &&
+      application.leaseToken !== null &&
+      application.leaseUntil !== null &&
+      application.leaseUntil > (await databaseNow(transaction));
     if (
       ["applied", "conflict", "skipped"].includes(application.state) ||
-      (created.count === 0 && application.state === "claimed" && application.leaseToken !== null)
+      activeClaim
     ) {
       return "detail" as const;
     }
 
-    await transaction.integrationConflict.create({
-      data: {
-        kind: "inbound-observation-failure",
-        bindingId: binding.id,
+    const remoteEvidence = {
+      provider: "redmine",
+      remoteIssueId: change.entityId,
+      remoteVersion: change.remoteVersion,
+      error: safeErrorEvidence(error),
+    };
+    const retained = await transaction.integrationConflict.updateMany({
+      where: {
         applicationId: application.id,
-        refId,
-        localEvidence: { refId },
-        remoteEvidence: {
-          provider: "redmine",
-          remoteIssueId: change.entityId,
-          remoteVersion: change.remoteVersion,
-          error: safeErrorEvidence(error),
-        },
+        kind: "inbound-observation-failure",
+        state: "open",
       },
+      data: { refId, localEvidence: { refId }, remoteEvidence },
     });
+    if (retained.count === 0) {
+      await transaction.integrationConflict.create({
+        data: {
+          kind: "inbound-observation-failure",
+          bindingId: binding.id,
+          applicationId: application.id,
+          refId,
+          localEvidence: { refId },
+          remoteEvidence,
+        },
+      });
+    }
     if (refId) {
       await transaction.externalRef.updateMany({
         where: { id: refId, bindingId: binding.id },
@@ -378,6 +398,8 @@ async function recordInboundFailure(
       where: { id: application.id },
       data: {
         state: "conflict",
+        leaseToken: null,
+        leaseUntil: null,
         refId,
         outcome: { reason: "INBOUND_OBSERVATION_FAILED", error: safeErrorEvidence(error) },
       },

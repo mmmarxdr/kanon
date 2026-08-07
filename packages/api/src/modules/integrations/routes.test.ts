@@ -41,6 +41,7 @@ describe("integration retry route", () => {
 
     const unauthenticated = await app.inject({ method: "POST", url: path });
     expect(unauthenticated.statusCode).toBe(401);
+    expect(retry).not.toHaveBeenCalled();
 
     const workspace = await seedTestWorkspace();
     const owner = await seedTestMemberWithRole(workspace.id, "owner");
@@ -50,6 +51,7 @@ describe("integration retry route", () => {
       headers: { authorization: `Bearer ${owner.token}` },
     });
     expect(invalid.statusCode).toBe(400);
+    expect(retry).not.toHaveBeenCalled();
   });
 
   it("wires identifiers, user scope, and the successful response", async () => {

@@ -204,6 +204,10 @@ export async function completeRetriedApplicationTx(
     refId: string | null;
     workId: string | null;
     outcome: Prisma.InputJsonValue;
+    applicationKey?: string;
+    correlationId?: string;
+    remoteUpdatedAt?: Date;
+    sourceVersion?: string;
   },
 ): Promise<void> {
   const [clock] = await database.$queryRaw<Array<{ now: Date }>>(
@@ -426,6 +430,10 @@ export async function persistRedmineIssueImportsTx(
         refId: ref.id,
         workId: work.id,
         outcome,
+        applicationKey: correlationId,
+        correlationId,
+        remoteUpdatedAt: change.changedAt,
+        sourceVersion: change.sourceVersion,
       });
     } else {
       await database.integrationInboundApplication.create({

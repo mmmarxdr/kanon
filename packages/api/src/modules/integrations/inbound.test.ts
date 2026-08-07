@@ -1387,6 +1387,10 @@ describe("Redmine inbound sync", () => {
 
     await runInboundSyncCycle(prisma, setup);
 
+    expect(setup.loadIssueDetail).toHaveBeenCalled();
+    await expect(
+      prisma.integrationInboundApplication.count({ where: { bindingId: binding.id } }),
+    ).resolves.toBe(1);
     await expect(
       prisma.integrationInboundApplication.findUniqueOrThrow({ where: { id: application.id } }),
     ).resolves.toMatchObject({
@@ -1400,6 +1404,51 @@ describe("Redmine inbound sync", () => {
       prisma.integrationConflict.count({ where: { applicationId: application.id } }),
     ).resolves.toBe(1);
     await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(1);
+  });
+
+  it("returns an expired owner retry claim to its existing conflict", async () => {
+    const { binding } = await fixture();
+    const observedAt = new Date("2026-08-01T10:09:30.000Z");
+    const observed = change(observedAt, "in_progress", "999");
+    const applicationKey = createHash("sha256")
+      .update(`${binding.id}|issue|${observed.entityId}|${observedAt.toISOString()}`)
+      .digest("hex");
+    const application = await prisma.integrationInboundApplication.create({
+      data: {
+        bindingId: binding.id,
+        remoteEntityType: "issue",
+        remoteId: observed.entityId,
+        remoteUpdatedAt: observedAt,
+        applicationKey,
+        correlationId: applicationKey,
+        state: "claimed",
+        leaseToken: "expired-owner-retry",
+        leaseUntil: new Date("2000-01-01T00:00:00.000Z"),
+        fence: 1,
+        outcome: { reason: "INBOUND_OBSERVATION_FAILED" },
+      },
+    });
+    await prisma.integrationConflict.create({
+      data: {
+        kind: "inbound-observation-failure",
+        bindingId: binding.id,
+        applicationId: application.id,
+        localEvidence: { refId: null },
+        remoteEvidence: { provider: "redmine", remoteIssueId: observed.entityId },
+      },
+    });
+    const setup = dependencies([observed]);
+    setup.loadIssueDetail.mockRejectedValue(new Error("current detail still fails"));
+
+    await runInboundSyncCycle(prisma, setup);
+
+    expect(setup.loadIssueDetail).toHaveBeenCalled();
+    await expect(
+      prisma.integrationInboundApplication.findUniqueOrThrow({ where: { id: application.id } }),
+    ).resolves.toMatchObject({ state: "conflict", leaseToken: null, leaseUntil: null, fence: 1 });
+    await expect(
+      prisma.integrationConflict.count({ where: { applicationId: application.id, state: "open" } }),
+    ).resolves.toBe(1);
   });
 
   it("rolls back every discovery row and preserves the cursor on a write failure", async () => {
