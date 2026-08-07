@@ -268,6 +268,15 @@ describe("A6.1 — createComment wires parseAndUpsertMentions", () => {
     await createComment("TEST-1", { body: reserved, source: "human" }, "m-alice", null, true);
     expect(prisma.integrationSyncWork.update).toHaveBeenCalledWith(expect.objectContaining({ data: { state: "ambiguous" } }));
     expect(prisma.integrationConflict.create).toHaveBeenCalledOnce();
+
+    mockCommentCreate.mockResolvedValue(created as any);
+    mockCaptureIntegrationWorkTx.mockRejectedValueOnce(new Error("capture failed"));
+    await expect(createComment("TEST-1", { body: "Ship it", source: "human" }, "m-alice", null, true)).rejects.toThrow("capture failed");
+
+    mockCaptureIntegrationWorkTx.mockClear();
+    vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([]);
+    await expect(createComment("TEST-1", { body: "Ship it", source: "human" }, "m-alice", null, true)).resolves.toEqual(created);
+    expect(mockCaptureIntegrationWorkTx).not.toHaveBeenCalled();
   });
 
   it("calls parseAndUpsertMentions with correct args after creating a comment with @mentions", async () => {

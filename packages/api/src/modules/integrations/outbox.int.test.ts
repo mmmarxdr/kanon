@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { prisma } from "../../config/prisma.js";
@@ -186,9 +186,10 @@ describe("integration outbox capture and scanner", () => {
     const work = await prisma.integrationSyncWork.findFirstOrThrow({ where: { entityType: "comment", entityId: comment.id } });
 
     expect(work).toMatchObject({
-      bindingId: fixture.binding.id, operation: "create", authCredentialId: credential.id, refId: null,
+      bindingId: fixture.binding.id, entityType: "comment", entityId: comment.id, operation: "create",
+      authCredentialId: credential.id, refId: null, laneKey: createIntegrationWorkLaneKey(fixture.binding.id, "issue", fixture.issue.id),
       marker: `<!-- kanon-comment:${comment.id} -->`,
-      payload: expect.objectContaining({ issueId: fixture.issue.id, parentRefId: fixture.externalRef.id, parentRemoteIssueId: fixture.externalRef.externalId, credentialRemoteUserId: "5" }),
+      payload: { version: 1, body: comment.body, bodySha256: createHash("sha256").update(comment.body).digest("hex"), commentUpdatedAt: comment.updatedAt.toISOString(), issueId: fixture.issue.id, parentRefId: fixture.externalRef.id, parentRemoteIssueId: fixture.externalRef.externalId, bindingEpoch: fixture.binding.lifecycleEpoch, credentialId: credential.id, credentialLastValidatedAt: "2026-08-01T10:00:00.000Z", credentialRemoteUserId: "5" },
     });
     await expect(prisma.activityLog.count({ where: { issueId: fixture.issue.id, details: { path: ["commentId"], equals: comment.id } } })).resolves.toBe(1);
   });

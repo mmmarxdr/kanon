@@ -26,7 +26,7 @@
 - The immutable payload snapshots body/hash/timestamp, parent proof, binding epoch, credential version, and remote actor; `work.refId` stays null until PR1 attaches the remote comment ref.
 - Work uses the parent issue lane. Reserved outbound markers create a durable conflict instead of dispatchable work.
 - PR1 owns convergent echo attachment and PR2 owns provider dispatch; PR3 does not duplicate or reopen either path.
-- Product/test changed lines: **249**, within the **≤399** PR limit.
+- Product/test changed lines: **261**, within the **≤399** PR limit.
 
 ## PR3 TDD and Verification
 
@@ -35,6 +35,7 @@
 - Full API: **184 files / 2,404 tests passed; 3 skipped**.
 - `test:types` and API build passed.
 - Pre-commit risk review returned an empty ledger with no reportable defect.
+- Post-PR reliability review found two CRITICAL coverage gaps. The real producer test now verifies the parent lane and complete immutable payload; capture failure propagation plus the existing real-database transaction test prove rollback. Both findings were verified resolved with no new BLOCKER/CRITICAL issue; the scoped service/outbox suites passed **22/22**.
 
 ## PR2 Boundary
 

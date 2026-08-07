@@ -159,7 +159,20 @@
 - Tier: standard
 - Lens: risk
 - Sweep: 1 of 1
-- Product/test scope: 249 changed lines
+- Product/test scope: 261 changed lines
 - Findings: empty ledger; no reportable security, privilege-boundary, data-exposure, dependency, or merge-blocking defect
 - Validation: focused 139/139; full API typecheck and 184 files / 2,404 tests passed, 3 skipped; build passed
 - Commit readiness: READY
+
+## PR3 Post-PR Reliability Review
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| R3-001 | reliability | `packages/api/src/modules/integrations/outbox.int.test.ts:173-194` | CRITICAL | verified | The real producer test now asserts the parent issue lane and complete body/hash/timestamp/binding/credential/actor snapshot. |
+| R3-002 | reliability | `packages/api/src/modules/comment/__tests__/service.test.ts:257-279`, `packages/api/src/modules/integrations/outbox.int.test.ts:267-288` | CRITICAL | verified | Capture rejection escapes the shared transaction, and the existing real-database test proves domain mutation plus work roll back together when that transaction throws. |
+| R3-003 | reliability | `packages/api/src/modules/comment/__tests__/service.test.ts:276-279` | WARNING | info | Binding disappearance is covered; other missing-proof no-capture branches remain warning-only residual coverage. |
+| R3-004 | reliability | `packages/api/src/modules/comment/__tests__/service.test.ts:257-258` | WARNING | info | Lock order is covered by call order and source review rather than timing-dependent real contention. |
+
+- Validation: service/outbox **22/22**; API typecheck, Prettier, and `git diff --check` passed
+- Product/test scope: 261 changed lines
+- PR readiness: READY
