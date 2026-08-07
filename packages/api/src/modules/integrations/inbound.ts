@@ -456,7 +456,7 @@ async function persistInboundCommentsTx(
             },
           })
         : null;
-      if (work && localComment && !localRef) {
+      if (work && localComment && marker.body === localComment.body && !localRef) {
         const ref = await transaction.externalRef.create({
           data: {
             connectionId: binding.connectionId,
