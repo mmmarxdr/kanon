@@ -504,7 +504,21 @@ async function prepare(
         },
       };
     } else if (current.entityType === "issue") {
-      const fields = issueFields(current.payload);
+      // ponytail: tolerate persisted estimate payloads, but discard them until units are defined.
+      const fields = Object.fromEntries(
+        Object.entries(issueFields(current.payload)).filter(
+          ([name]) => name !== "estimate" && name !== "estimateHours",
+        ),
+      );
+      if (current.operation === "update" && Object.keys(fields).length === 0) {
+        const superseded = await transaction.integrationSyncWork.updateMany({
+          where: { ...fenced(claimed), leaseUntil: { gt: now } },
+          data: { state: "superseded", leaseToken: null, leaseUntil: null },
+        });
+        return superseded.count
+          ? { kind: "skipped", reason: "Estimate synchronization is disabled" }
+          : { kind: "stale" };
+      }
       const changed = (name: string) => Object.prototype.hasOwnProperty.call(fields, name);
       const issue = await transaction.issue.findFirst({
         where: { id: current.entityId, projectId: current.binding.projectId },
@@ -523,9 +537,6 @@ async function prepare(
         priority: issue.priority,
         assigneeId: issue.assigneeId,
         cycleId: issue.cycleId,
-        estimate: issue.estimate,
-        estimateHours:
-          issue.schedule?.estimateHours == null ? null : Number(issue.schedule.estimateHours),
         startDate: issue.schedule?.startDate?.toISOString() ?? null,
         dueDate: issue.schedule?.dueDate?.toISOString() ?? null,
         progress: issue.schedule?.progress ?? 0,
@@ -569,8 +580,7 @@ async function prepare(
               email: issue.assignee.user.email,
             }
           : null,
-        estimateHours:
-          issue.schedule?.estimateHours == null ? null : Number(issue.schedule.estimateHours),
+        estimateHours: null,
         startDate: issue.schedule?.startDate ?? null,
         dueDate: issue.schedule?.dueDate ?? null,
         progress: issue.schedule?.progress ?? 0,
@@ -587,10 +597,7 @@ async function prepare(
               : omit,
           priority: changed("priority") ? { kind: "set", value: entity.priority } : omit,
           assignee: field(changed("assigneeId"), entity.assignee),
-          estimateHours: field(
-            changed("estimate") || changed("estimateHours"),
-            entity.estimateHours,
-          ),
+          estimateHours: omit,
           cycleId: field(changed("cycleId"), entity.cycleId),
           startDate: field(changed("startDate"), entity.startDate),
           dueDate: field(changed("dueDate"), entity.dueDate),

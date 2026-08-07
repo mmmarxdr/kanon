@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { createIssue, transitionIssue, updateIssue } from "../issue/service.js";
 import { reviseEstimate, upsertPlan } from "../schedule/service.js";
@@ -86,7 +87,6 @@ describe("issue writer integration capture", () => {
           priority: "medium",
           assigneeId: null,
           cycleId: null,
-          estimate: null,
         },
         issue: expect.objectContaining({ key: created.key, title: "Captured issue" }),
       }),
@@ -219,7 +219,7 @@ describe("issue writer integration capture", () => {
     ).resolves.toMatchObject({ authCredentialId: null });
   });
 
-  it("captures schedule and estimate changes in their writer transactions", async () => {
+  it("captures schedule changes while keeping estimate revisions local", async () => {
     const workspace = await seedTestWorkspace();
     const member = await seedTestMember(workspace.id);
     const project = await seedTestProject(workspace.id);
@@ -248,7 +248,7 @@ describe("issue writer integration capture", () => {
       where: { bindingId: binding.id, entityId: issue.id },
       orderBy: { sequence: "asc" },
     });
-    expect(work).toHaveLength(2);
+    expect(work).toHaveLength(1);
     expect(work.every(({ authCredentialId }) => authCredentialId === credential!.id)).toBe(true);
     expect(work.map(({ payload }) => payload)).toEqual([
       {
@@ -259,11 +259,14 @@ describe("issue writer integration capture", () => {
           progress: 65,
         },
       },
-      { version: 1, fields: { estimateHours: 7.5 } },
     ]);
+    await expect(
+      prisma.issueSchedule.findUniqueOrThrow({ where: { issueId: issue.id } }),
+    ).resolves.toMatchObject({ estimateHours: new Prisma.Decimal("7.5") });
+    expect(await prisma.estimateRevision.count({ where: { issueId: issue.id } })).toBe(1);
   });
 
-  it("rolls schedule and estimate writes back when outbox capture fails", async () => {
+  it("rolls schedule capture back without blocking local estimate revisions", async () => {
     const workspace = await seedTestWorkspace();
     const foreignWorkspace = await seedTestWorkspace();
     const member = await seedTestMember(workspace.id);
@@ -289,11 +292,11 @@ describe("issue writer integration capture", () => {
     ).rejects.toThrow("mismatched ownership");
     expect(await prisma.issueSchedule.findUnique({ where: { issueId: issue.id } })).toBeNull();
 
-    await expect(reviseEstimate(issue.key, { hours: "3.50" }, member.id)).rejects.toThrow(
-      "mismatched ownership",
-    );
-    expect(await prisma.issueSchedule.findUnique({ where: { issueId: issue.id } })).toBeNull();
-    expect(await prisma.estimateRevision.count({ where: { issueId: issue.id } })).toBe(0);
+    await expect(reviseEstimate(issue.key, { hours: "3.50" }, member.id)).resolves.toBeDefined();
+    await expect(
+      prisma.issueSchedule.findUniqueOrThrow({ where: { issueId: issue.id } }),
+    ).resolves.toMatchObject({ estimateHours: new Prisma.Decimal("3.5") });
+    expect(await prisma.estimateRevision.count({ where: { issueId: issue.id } })).toBe(1);
     expect(await prisma.integrationSyncWork.count({ where: { entityId: issue.id } })).toBe(0);
   });
 });

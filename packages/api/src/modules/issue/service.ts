@@ -250,7 +250,6 @@ export async function createIssue(
       priority: result.priority,
       assigneeId: result.assigneeId,
       cycleId: result.cycleId,
-      estimate: result.estimate,
     }),
     (database) =>
       database.issue.create({
