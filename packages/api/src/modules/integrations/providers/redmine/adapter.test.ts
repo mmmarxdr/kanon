@@ -224,7 +224,7 @@ describe("RedmineProviderAdapter", () => {
     });
   });
 
-  it("creates a fully mapped issue with a stable reconciliation marker", async () => {
+  it("creates a mapped issue without unsupported estimate delivery", async () => {
     const http = client();
     http.post.mockResolvedValue({ issue: { id: 99 } });
     http.get.mockResolvedValue({
@@ -255,7 +255,6 @@ describe("RedmineProviderAdapter", () => {
         priority_id: "4",
         assigned_to_id: "8",
         fixed_version_id: "12",
-        estimated_hours: 2.5,
         start_date: "2026-07-01",
         due_date: "2026-07-14",
         done_ratio: 50,
@@ -371,7 +370,7 @@ describe("RedmineProviderAdapter", () => {
     });
   });
 
-  it("maps an explicit Kanon priority update to Redmine", async () => {
+  it("maps priority while dropping a stale estimate patch", async () => {
     const http = client();
     http.put.mockResolvedValue(undefined);
     http.get.mockResolvedValue({
@@ -385,6 +384,7 @@ describe("RedmineProviderAdapter", () => {
     await adapter.pushIssue(issue, {
       ...noChange,
       priority: { kind: "set", value: "high" },
+      estimateHours: { kind: "set", value: 2.5 },
     });
 
     expect(http.put).toHaveBeenCalledWith("/issues/99.json", { issue: { priority_id: "4" } });

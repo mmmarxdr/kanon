@@ -313,11 +313,8 @@ export async function reviseEstimate(
     throw new AppError(422, "INVALID_ESTIMATE", "hours must be >= 0");
   }
 
-  const capture = await resolveIssueCaptureContext(issue.projectId, memberId);
-
-  // Atomic transaction: append revision + upsert estimateHours + integration work
+  // Estimate revisions stay local until provider unit semantics are approved.
   const { revision } = await prisma.$transaction(async (tx) => {
-    if (capture) await lockIssueCaptureBindingTx(tx, capture.bindingId);
     const revision = await tx.estimateRevision.create({
       data: {
         issueId: issue.id,
@@ -338,12 +335,6 @@ export async function reviseEstimate(
         estimateHours: hoursDecimal,
       },
     });
-
-    if (capture) {
-      await captureIssueScheduleMutationTx(tx, issue.id, capture, {
-        estimateHours: Number(hoursDecimal),
-      });
-    }
 
     return { revision };
   });

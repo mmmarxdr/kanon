@@ -715,7 +715,7 @@ describe("integration worker retry and completion", () => {
           paths.push((await options.resolveExternalId("issue", issue.id)) ? "update" : "create");
           expect(issue).toMatchObject({
             title: "Current canonical title",
-            estimateHours: 2.5,
+            estimateHours: null,
             progress: 40,
           });
           expect(patch).toMatchObject({
@@ -829,7 +829,7 @@ describe("integration worker retry and completion", () => {
     ).resolves.toMatchObject({ state: "ambiguous" });
   });
 
-  it("dispatches captured schedule fields from the current canonical schedule", async () => {
+  it("dispatches supported schedule fields but drops persisted estimates", async () => {
     const fixture = await createFixture();
     await createRef(fixture, "issue", fixture.issue.id, "remote-known");
     await createWork(fixture, {
@@ -850,12 +850,40 @@ describe("integration worker retry and completion", () => {
     expect(pushIssue).toHaveBeenCalledWith(
       expect.objectContaining({ id: fixture.issue.id }),
       expect.objectContaining({
-        estimateHours: { kind: "set", value: 2.5 },
+        estimateHours: { kind: "omit" },
         startDate: { kind: "set", value: new Date("2026-07-29T00:00:00.000Z") },
         dueDate: { kind: "set", value: new Date("2026-08-05T00:00:00.000Z") },
         progress: { kind: "set", value: 40 },
       }),
     );
+  });
+
+  it("supersedes estimate-only work without blocking later issue updates", async () => {
+    const fixture = await createFixture();
+    await createRef(fixture, "issue", fixture.issue.id, "remote-known");
+    const estimateOnly = await createWork(fixture, {
+      payload: { version: 1, fields: { estimateHours: 2.5 } },
+    });
+    const pushIssue = vi.fn().mockResolvedValue(success("remote-known"));
+    const deps = dependencies(adapter({ pushIssue }), { limit: 2 }).deps;
+
+    await runIntegrationWorkerCycle(prisma, deps);
+
+    expect(pushIssue).not.toHaveBeenCalled();
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({
+        where: { id: estimateOnly.id },
+        select: { state: true, leaseToken: true, leaseUntil: true },
+      }),
+    ).resolves.toEqual({ state: "superseded", leaseToken: null, leaseUntil: null });
+
+    const supported = await createWork(fixture, { laneKey: estimateOnly.laneKey });
+    await runIntegrationWorkerCycle(prisma, deps);
+
+    expect(pushIssue).toHaveBeenCalledOnce();
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: supported.id } }),
+    ).resolves.toMatchObject({ state: "done" });
   });
 
   it("does not attribute a later unconnected actor schedule change to an earlier actor", async () => {

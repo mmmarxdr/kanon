@@ -663,7 +663,6 @@ export class RedmineProviderAdapter implements PmProviderAdapter {
         throw new Error(`Missing Redmine priority mapping for ${priority}`);
       assign("priority_id", mappedPriority);
     }
-    assign("estimated_hours", value(patch.estimateHours, issue.estimateHours));
     const startDate = value(patch.startDate, issue.startDate);
     if (startDate !== undefined) payload["start_date"] = dateOnly(startDate);
     const dueDate = value(patch.dueDate, issue.dueDate);
