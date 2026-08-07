@@ -50,6 +50,18 @@ describe("RedmineHttpClient", () => {
     });
   });
 
+  it("never retries a blind PUT", async () => {
+    const transport = vi.fn().mockResolvedValue(response(503));
+    const client = new RedmineHttpClient("https://redmine.example", "secret", {
+      resolve: publicDns,
+      transport,
+      sleep: vi.fn(),
+    });
+
+    await expect(client.putOnce("/issues/42.json", { issue: { notes: "body" } })).rejects.toMatchObject({ statusCode: 503 });
+    expect(transport).toHaveBeenCalledOnce();
+  });
+
   it("re-resolves and retries idempotent requests after 429 and 5xx", async () => {
     const transport = vi
       .fn()

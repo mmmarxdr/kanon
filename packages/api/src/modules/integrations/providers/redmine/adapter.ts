@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import {
   ProviderDispatchError,
   isRetryableProviderError,
   type CanonicalCycle,
+  type CanonicalComment,
   type CanonicalIssue,
   type CanonicalIssuePatch,
   type CanonicalProject,
@@ -13,9 +15,10 @@ import {
 } from "../../core/types.js";
 import { RedmineHttpError, type RedmineHttpClient } from "./http-client.js";
 import { priorityWriteKey } from "../../issue-convergence.js";
+import { parseCommentMarker } from "./comment-marker.js";
 
 type ExternalEntityType = "project" | "cycle" | "issue" | "time_entry" | "user";
-type HttpClient = Pick<RedmineHttpClient, "delete" | "get" | "post" | "put">;
+type HttpClient = Pick<RedmineHttpClient, "delete" | "get" | "post" | "put" | "putOnce">;
 
 interface RedmineProviderOptions {
   writeMap: StatusWriteMap;
@@ -30,6 +33,13 @@ type RemoteIssue = {
   status?: RemoteRef;
   allowed_statuses?: RemoteRef[];
   updated_on?: string;
+  journals?: RemoteJournal[];
+};
+type RemoteJournal = {
+  id: string | number;
+  notes?: string | null;
+  user?: RemoteRef;
+  created_on?: string;
 };
 type RemoteVersion = RemoteRef & {
   description?: string | null;
@@ -48,6 +58,7 @@ const MAX_RECONCILIATION_ISSUES = ISSUE_PAGE_SIZE * MAX_ISSUE_PAGES;
 const TIME_ENTRY_MARKER = (id: string) => `[kanon-time-entry:${id}]`;
 
 const externalId = (value: string | number) => String(value);
+const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 const positiveNumericId = (value: unknown): number | null => {
   const id =
     typeof value === "number"
@@ -208,6 +219,38 @@ export class RedmineProviderAdapter implements PmProviderAdapter {
   async reconcileCreate(
     request: ProviderCreateReconciliationRequest,
   ): Promise<readonly PushResult[]> {
+    if (request.entityType === "comment") {
+      const response = await this.client.get<{ issue: RemoteIssue }>(
+        `/issues/${encodeURIComponent(request.expectedRemoteIssueId)}.json?include=journals`,
+      );
+      if (
+        externalId(response.issue.id) !== request.expectedRemoteIssueId ||
+        !Array.isArray(response.issue.journals)
+      ) {
+        throw new Error("Malformed Redmine comment proof response");
+      }
+      return response.issue.journals.flatMap((journal) => {
+        const parsed = typeof journal.notes === "string" ? parseCommentMarker(journal.notes) : null;
+        if (
+          !parsed ||
+          parsed.marker !== request.marker ||
+          sha256(parsed.body) !== request.strippedBodySha256 ||
+          externalId(journal.user?.id ?? "") !== request.expectedCredentialRemoteUserId
+        ) {
+          return [];
+        }
+        if (positiveNumericId(journal.id) === null) {
+          throw new Error("Malformed Redmine comment journal");
+        }
+        return [{
+          ...result(externalId(journal.id), journal.created_on ?? null),
+          remoteIssueId: request.expectedRemoteIssueId,
+          marker: parsed.marker,
+          strippedBodySha256: request.strippedBodySha256,
+          remoteActorId: request.expectedCredentialRemoteUserId,
+        }];
+      });
+    }
     const marker = `<!-- kanon-${request.entityType}:${request.entityId} -->`;
     const matches = new Map<string, PushResult>();
 
@@ -463,6 +506,36 @@ export class RedmineProviderAdapter implements PmProviderAdapter {
       achievedStatusId: observed.issue.status ? externalId(observed.issue.status.id) : null,
       remoteVersion: observed.issue.updated_on ?? null,
     };
+  }
+
+  async pushComment(comment: CanonicalComment, remoteIssueId: string): Promise<PushResult> {
+    const remoteUserId = await this.requireExternalId("user", comment.author.id);
+    const marker = `<!-- kanon-comment:${comment.id} -->`;
+    const request: ProviderCreateReconciliationRequest = {
+      entityType: "comment",
+      entityId: comment.id,
+      expectedRemoteIssueId: remoteIssueId,
+      marker,
+      strippedBodySha256: sha256(comment.body),
+      expectedCredentialRemoteUserId: remoteUserId,
+    };
+    try {
+      await this.client.putOnce(`/issues/${encodeURIComponent(remoteIssueId)}.json`, {
+        issue: { notes: `${comment.body}\n\n${marker}`, private_notes: false },
+      });
+    } catch (error) {
+      if (error instanceof RedmineHttpError && error.statusCode < 500 && error.statusCode !== 429) {
+        throw error;
+      }
+      throw new ProviderDispatchError("ambiguous", error);
+    }
+    try {
+      const matches = await this.reconcileCreate(request);
+      if (matches.length === 1) return matches[0]!;
+      throw new Error(`Expected one Redmine comment proof, found ${matches.length}`);
+    } catch (error) {
+      throw new ProviderDispatchError("ambiguous", error);
+    }
   }
 
   private async advanceIssueStatus(

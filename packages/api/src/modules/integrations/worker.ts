@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Prisma, type IntegrationSyncWork, type PrismaClient } from "@prisma/client";
 import { env } from "../../config/env.js";
 import {
@@ -7,6 +7,7 @@ import {
   isRetryableProviderError,
   safeErrorEvidence,
   type CanonicalCycle,
+  type CanonicalComment,
   type CanonicalIssue,
   type CanonicalIssuePatch,
   type CanonicalProject,
@@ -49,7 +50,7 @@ type ExternalEntityType = "project" | "cycle" | "issue" | "time_entry" | "user";
 export type IntegrationDispatchAdapter = Pick<
   PmProviderAdapter,
   "ensureProject" | "ensureCycle" | "pushIssue" | "reconcileCreate"
-> & Partial<Pick<PmProviderAdapter, "pushTimeEntry">>;
+> & Partial<Pick<PmProviderAdapter, "pushComment" | "pushTimeEntry">>;
 export interface IntegrationWorkerLogger {
   info(context: unknown, message: string): void;
   warn(context: unknown, message: string): void;
@@ -73,11 +74,13 @@ export interface IntegrationWorkerDependencies {
   readonly leaseMs?: number;
   readonly timeBudgetMs?: number;
   readonly shouldStop?: () => boolean;
+  readonly commentDispatchEnabled?: boolean;
 }
 type Dispatch =
   | { kind: "project"; entity: CanonicalProject }
   | { kind: "cycle"; entity: CanonicalCycle }
   | { kind: "issue"; entity: CanonicalIssue; patch: CanonicalIssuePatch }
+  | { kind: "comment"; entity: CanonicalComment; remoteIssueId: string; proof: ProviderCreateReconciliationRequest }
   | { kind: "time_entry"; entity: CanonicalTimeEntry; activityId: string };
 type Prepared = {
   work: IntegrationSyncWork;
@@ -90,7 +93,7 @@ type PrepareResult =
   | { kind: "ready"; value: Prepared }
   | { kind: "stale" }
   | { kind: "skipped"; reason: string; state?: "skipped" | "dead" };
-type UsedCredential = { id: string; encryptedKey: string; lastValidatedAt: Date | null };
+type UsedCredential = { id: string; encryptedKey: string; externalUserId: string | null; lastValidatedAt: Date | null };
 type CredentialResult =
   | { ok: true; apiKey: string; credential: UsedCredential }
   | { ok: false; reason: string; credential?: UsedCredential };
@@ -106,7 +109,7 @@ type AmbiguityClaimResult =
   | { kind: "claimed"; value: AmbiguityPrepared };
 type AuthFailureMode = "definitive" | "ambiguous";
 type Deps = Required<
-  Pick<IntegrationWorkerDependencies, "jitter" | "decrypt" | "createAdapter" | "claim" | "logger">
+  Pick<IntegrationWorkerDependencies, "jitter" | "decrypt" | "createAdapter" | "claim" | "logger" | "commentDispatchEnabled">
 > &
   Pick<
     IntegrationWorkerDependencies,
@@ -139,6 +142,7 @@ function deps(value: IntegrationWorkerDependencies): Deps {
     leaseMs: value.leaseMs,
     timeBudgetMs: value.timeBudgetMs,
     shouldStop: value.shouldStop,
+    commentDispatchEnabled: value.commentDispatchEnabled ?? false,
   };
 }
 function log(d: Deps, level: keyof IntegrationWorkerLogger, context: unknown, message: string) {
@@ -233,6 +237,9 @@ async function entityOwned(
       })) === 1
     );
   }
+  if (current.entityType === "comment") {
+    return (await transaction.comment.count({ where: { id: current.entityId, issue: { projectId: current.binding.projectId } } })) === 1;
+  }
   if (current.entityType === "cycle") {
     return (
       (await transaction.cycle.count({
@@ -278,6 +285,20 @@ function issueFields(payload: Prisma.JsonValue) {
     throw new TerminalError("Unsupported integration issue fields");
   }
   return fields as Record<string, Prisma.JsonValue>;
+}
+const COMMENT_STRING_FIELDS = ["body", "bodySha256", "commentUpdatedAt", "issueId", "parentRefId", "parentRemoteIssueId", "credentialId", "credentialRemoteUserId"] as const;
+type CommentPayload = Record<(typeof COMMENT_STRING_FIELDS)[number], string> & { bindingEpoch: number; credentialLastValidatedAt: string | null };
+function commentPayload(payload: Prisma.JsonValue): CommentPayload {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload) || payload["version"] !== 1) {
+    throw new TerminalError("Unsupported integration comment payload");
+  }
+  for (const key of COMMENT_STRING_FIELDS) {
+    if (typeof payload[key] !== "string") throw new TerminalError("Unsupported integration comment payload");
+  }
+  if (typeof payload["bindingEpoch"] !== "number" || (payload["credentialLastValidatedAt"] !== null && typeof payload["credentialLastValidatedAt"] !== "string")) {
+    throw new TerminalError("Unsupported integration comment payload");
+  }
+  return payload as unknown as CommentPayload;
 }
 function confirmedTimePayload(payload: Prisma.JsonValue) {
   if (
@@ -348,7 +369,7 @@ async function credential(
     return {
       ok: false,
       reason: "credential_invalid",
-      credential: { id, encryptedKey: value.encryptedKey, lastValidatedAt: value.lastValidatedAt },
+      credential: { id, encryptedKey: value.encryptedKey, externalUserId: value.externalUserId, lastValidatedAt: value.lastValidatedAt },
     };
   }
   if (value.lastAuthStatus !== "valid") {
@@ -364,6 +385,7 @@ async function credential(
       credential: {
         id: value.id,
         encryptedKey: value.encryptedKey,
+        externalUserId: value.externalUserId,
         lastValidatedAt: value.lastValidatedAt,
       },
     };
@@ -418,7 +440,70 @@ async function prepare(
     };
     let dispatch: Dispatch;
     let ownRef: Awaited<ReturnType<typeof findRef>> = null;
-    if (current.entityType === "issue") {
+    if (current.entityType === "comment") {
+      const captured = commentPayload(current.payload);
+      const comment = await transaction.comment.findFirst({
+        where: { id: current.entityId, issue: { projectId: current.binding.projectId } },
+        include: { author: { include: { user: { select: { email: true } } } } },
+      });
+      const parentRef = await transaction.externalRef.findUnique({ where: { id: captured.parentRefId } });
+      ownRef = await findRef("comment", current.entityId, false);
+      const changed =
+        !comment ||
+        ownRef !== null ||
+        current.operation !== "create" ||
+        current.marker !== `<!-- kanon-comment:${current.entityId} -->` ||
+        captured.body !== comment.body ||
+        captured.bodySha256 !== createHash("sha256").update(comment.body).digest("hex") ||
+        captured.commentUpdatedAt !== comment.updatedAt.toISOString();
+      if (changed) {
+        const superseded = await transaction.integrationSyncWork.updateMany({
+          where: { ...fenced(claimed), leaseUntil: { gt: now } },
+          data: { state: "superseded", leaseToken: null, leaseUntil: null },
+        });
+        return superseded.count
+          ? { kind: "skipped", reason: "Captured comment was superseded" }
+          : { kind: "stale" };
+      }
+      if (
+        captured.bindingEpoch !== current.epoch ||
+        captured.credentialId !== auth.credential.id ||
+        captured.credentialLastValidatedAt !== auth.credential.lastValidatedAt?.toISOString() &&
+          !(captured.credentialLastValidatedAt === null && auth.credential.lastValidatedAt === null) ||
+        captured.credentialRemoteUserId !== auth.credential.externalUserId ||
+        !parentRef ||
+        parentRef.bindingId !== current.bindingId ||
+        parentRef.connectionId !== current.binding.connectionId ||
+        parentRef.entityType !== "issue" ||
+        parentRef.entityId !== captured.issueId ||
+        parentRef.externalId !== captured.parentRemoteIssueId ||
+        comment.issueId !== captured.issueId
+      ) {
+        throw new TerminalError("Captured comment proof is stale or invalid");
+      }
+      refs.set(`issue:${comment.issueId}`, parentRef.externalId);
+      refs.set(`user:${comment.authorId}`, captured.credentialRemoteUserId);
+      const entity: CanonicalComment = {
+        id: comment.id,
+        issueId: comment.issueId,
+        body: comment.body,
+        author: { id: comment.author.id, displayName: comment.author.username, email: comment.author.user.email },
+        createdAt: comment.createdAt,
+      };
+      dispatch = {
+        kind: "comment",
+        entity,
+        remoteIssueId: parentRef.externalId,
+        proof: {
+          entityType: "comment",
+          entityId: comment.id,
+          expectedRemoteIssueId: parentRef.externalId,
+          marker: current.marker!,
+          strippedBodySha256: captured.bodySha256,
+          expectedCredentialRemoteUserId: captured.credentialRemoteUserId,
+        },
+      };
+    } else if (current.entityType === "issue") {
       const fields = issueFields(current.payload);
       const changed = (name: string) => Object.prototype.hasOwnProperty.call(fields, name);
       const issue = await transaction.issue.findFirst({
@@ -671,6 +756,14 @@ function remoteMatches(matches: readonly PushResult[]) {
       remoteVersion: match.remoteVersion,
     }));
 }
+function provesComment(request: ProviderCreateReconciliationRequest, result: PushResult) {
+  return request.entityType !== "comment" || (
+    result.remoteIssueId === request.expectedRemoteIssueId &&
+    result.marker === request.marker &&
+    result.strippedBodySha256 === request.strippedBodySha256 &&
+    result.remoteActorId === request.expectedCredentialRemoteUserId
+  );
+}
 
 const staleEpochEvidence = (
   current: LockedWork,
@@ -727,6 +820,7 @@ async function claimAmbiguous(
       JOIN "integration_connections" AS connection ON connection."id" = binding."connection_id"
       WHERE work."direction" = 'outbound'::"SyncDirection"
         AND work."state" = 'ambiguous'::"SyncWorkState"
+        AND (${d.commentDispatchEnabled} OR work."entity_type" <> 'comment')
         AND work."skipped_reason" IS DISTINCT FROM 'credential_invalid'
         AND work."available_at" <= ${dueAt}
         AND binding."lifecycle" = 'active'::"IntegrationLifecycle"
@@ -815,6 +909,7 @@ async function claimAmbiguous(
     if (
       current.entityType !== "issue" &&
       current.entityType !== "cycle" &&
+      current.entityType !== "comment" &&
       current.entityType !== "time_entry"
     ) {
       await createAmbiguityConflict(
@@ -827,7 +922,37 @@ async function claimAmbiguous(
     }
 
     let request: ProviderCreateReconciliationRequest;
-    if (current.entityType === "time_entry") {
+    if (current.entityType === "comment") {
+      let captured: CommentPayload;
+      try {
+        captured = commentPayload(current.payload);
+      } catch {
+        await createAmbiguityConflict(transaction, current, { reason: "invalid-comment-proof" }, now);
+        return { kind: "handled" };
+      }
+      const parentRef = await transaction.externalRef.findUnique({ where: { id: captured.parentRefId } });
+      if (
+        current.operation !== "create" ||
+        current.marker !== `<!-- kanon-comment:${current.entityId} -->` ||
+        !parentRef ||
+        parentRef.bindingId !== current.bindingId ||
+        parentRef.connectionId !== current.binding.connectionId ||
+        parentRef.entityType !== "issue" ||
+        parentRef.entityId !== captured.issueId ||
+        parentRef.externalId !== captured.parentRemoteIssueId
+      ) {
+        await createAmbiguityConflict(transaction, current, { reason: "invalid-comment-proof" }, now);
+        return { kind: "handled" };
+      }
+      request = {
+        entityType: "comment",
+        entityId: current.entityId,
+        expectedRemoteIssueId: captured.parentRemoteIssueId,
+        marker: current.marker,
+        strippedBodySha256: captured.bodySha256,
+        expectedCredentialRemoteUserId: captured.credentialRemoteUserId,
+      };
+    } else if (current.entityType === "time_entry") {
       const entry = await transaction.timeEntry.findFirst({
         where: { id: current.entityId, issue: { projectId: current.binding.projectId } },
         select: { issueId: true, workedOn: true },
@@ -888,6 +1013,18 @@ async function claimAmbiguous(
         now,
       );
       return { kind: "handled" };
+    }
+    if (request.entityType === "comment") {
+      const captured = commentPayload(current.payload);
+      if (
+        captured.credentialId !== auth.credential.id ||
+        captured.credentialRemoteUserId !== auth.credential.externalUserId ||
+        captured.credentialLastValidatedAt !== auth.credential.lastValidatedAt?.toISOString() &&
+          !(captured.credentialLastValidatedAt === null && auth.credential.lastValidatedAt === null)
+      ) {
+        await createAmbiguityConflict(transaction, current, { reason: "stale-comment-credential" }, now);
+        return { kind: "handled" };
+      }
     }
     const leaseMs = d.leaseMs ?? 120_000;
     const claimed = await transaction.integrationSyncWork.update({
@@ -1195,6 +1332,7 @@ async function reconcileAmbiguity(
       "Integration ambiguity reconciliation needs manual resolution",
     );
   }
+  matches = matches.filter((match) => provesComment(prepared.request, match));
 
   if (matches.length !== 1) {
     const changed = await conflictAmbiguity(
@@ -1441,6 +1579,12 @@ async function process(database: PrismaClient, work: IntegrationSyncWork, d: Dep
     pushed =
       prepared.dispatch.kind === "issue"
         ? await adapter.pushIssue(prepared.dispatch.entity, prepared.dispatch.patch)
+        : prepared.dispatch.kind === "comment"
+          ? adapter.pushComment
+            ? await adapter.pushComment(prepared.dispatch.entity, prepared.dispatch.remoteIssueId)
+            : (() => {
+                throw new TerminalError("Integration adapter cannot write comments");
+              })()
         : prepared.dispatch.kind === "time_entry"
           ? adapter.pushTimeEntry
             ? await adapter.pushTimeEntry(
@@ -1453,6 +1597,9 @@ async function process(database: PrismaClient, work: IntegrationSyncWork, d: Dep
         : prepared.dispatch.kind === "cycle"
           ? await adapter.ensureCycle(prepared.dispatch.entity)
           : await adapter.ensureProject(prepared.dispatch.entity);
+    if (prepared.dispatch.kind === "comment" && !provesComment(prepared.dispatch.proof, pushed)) {
+      throw new ProviderDispatchError("ambiguous", new Error("Redmine comment proof mismatch"));
+    }
   } catch (error) {
     return fail(database, prepared, work, error, d);
   }
@@ -1538,6 +1685,7 @@ export async function runIntegrationWorkerCycle(
   while (remaining > 0 && canContinue()) {
     const options = {
       limit: 1,
+      excludeComments: !d.commentDispatchEnabled,
       ...(d.leaseMs === undefined ? {} : { leaseMs: d.leaseMs }),
       ...(d.now ? { now: d.now() } : {}),
     };
