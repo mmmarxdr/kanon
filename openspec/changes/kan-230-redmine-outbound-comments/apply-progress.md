@@ -32,6 +32,14 @@
 - Post-PR review found that excluded comments could still block later same-lane work. Strict RED/GREEN now excludes comments from both claim candidates and earlier-work barriers; claims/worker passed **59/59**, typecheck passed, and scoped risk re-review returned an empty ledger.
 - Reliability review then found missing negative proof and pre-I/O fence coverage. Adapter decoys plus worker tests now reject incomplete/mismatched proof, prove zero provider I/O for stale capture, and assert durable `superseded`/`dead` outcomes; the focused claims/adapter/http/worker suite passed **92/92** and both BLOCKERs were verified resolved.
 
+## PR3 Pre-Code Gates
+
+- JD-003 initially BLOCKED: inserting comment/activity first takes issue `KEY SHARE` and can deadlock with inbound holding binding while waiting for issue `FOR UPDATE`.
+- Corrected design locks and revalidates connection → binding before any comment/activity/work insert; scoped blind re-review passed.
+- JD2-002 confirmed `work.refId` belongs to the synchronized comment, not its parent. Parent issue proof remains only in immutable payload until attachment.
+- PR1 rollback compatibility was fixed in `5e3077a`; payload-only echoes now lock/revalidate work, reject open conflicts, and store the comment ref.
+- Rollback now drains or manually resolves all comment work before reverting PR2. Both blind gate re-reviews passed.
+
 ## PR1 Boundary
 
 - No outbound comment capture, provider dispatch, Redmine write path, migration, feature flag, or PR2/PR3 work was added.

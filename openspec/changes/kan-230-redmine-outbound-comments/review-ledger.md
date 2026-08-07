@@ -143,3 +143,13 @@
 - Product/test scope remains exactly 399 changed lines
 - Scoped risk re-review: empty ledger; no reportable fix-line defect
 - Push readiness: READY
+
+## PR3 Pre-Code Gate Review
+
+| id | initial verdict | final verdict | evidence |
+|---|---|---|---|
+| JD-003 | BLOCK | PASS | Capture now locks/revalidates connection → binding before comment/activity FKs can lock issue; inbound and worker use the same prefix. |
+| JD2-002 | BLOCK | PASS | Parent ref remains in immutable payload; PR1 `5e3077a` recognizes payload-only work, stores comment `refId`, rejects open conflicts, and rollback drains work before PR2 removal. |
+
+- Review mode: two blind scoped judges
+- Apply gate: OPEN for PR3 implementation
