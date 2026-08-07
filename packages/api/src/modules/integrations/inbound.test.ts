@@ -1655,10 +1655,10 @@ describe("Redmine inbound comment echoes", () => {
         laneKey: issue.id,
         actorKey: `member:${owner.id}`,
         actorKind: "user",
-        payload: { version: 1 },
+        payload: { version: 1, issueId: issue.id, parentRefId: ref.id, parentRemoteIssueId: "100" },
         correlationId: local.id,
         epoch: binding.lifecycleEpoch,
-        refId: ref.id,
+        refId: null,
         marker,
         state,
       },
@@ -1678,7 +1678,7 @@ describe("Redmine inbound comment echoes", () => {
         where: { connectionId_entityType_externalId: { connectionId: connection.id, entityType: "comment", externalId: "902" } },
       }),
     ).resolves.toMatchObject({ entityId: local.id, bindingId: binding.id });
-    await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({ state: "done" });
+    await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({ state: "done", refId: expect.any(String) });
     await expect(prisma.integrationInboundApplication.findFirstOrThrow({ where: { workId: work.id } })).resolves.toMatchObject({
       outcome: expect.objectContaining({ provenance: "redmine-inbound-echo", marker }),
     });
@@ -1788,9 +1788,17 @@ describe("Redmine inbound comment echoes", () => {
     ).resolves.toMatchObject({ workId: null, outcome: { provenance: "redmine-inbound" } });
   });
 
-  it.each(["queued", "dead", "superseded"] as const)(
+  it.each([
+    ["queued", "queued", {}],
+    ["dead", "dead", {}],
+    ["superseded", "superseded", {}],
+    ["wrong issue", "leased", { issueId: randomUUID() }],
+    ["wrong parent ref", "leased", { parentRefId: randomUUID() }],
+    ["wrong remote issue", "leased", { parentRemoteIssueId: "wrong" }],
+    ["open conflict", "ambiguous", {}],
+  ] as const)(
     "does not use %s work as proof of an outbound comment",
-    async (state) => {
+    async (proof, state, payloadOverride) => {
       const { owner, binding, connection, issue, ref } = await fixture();
       const local = await prisma.comment.create({
         data: { id: commentUuid, issueId: issue.id, authorId: owner.id, body: "Delivered body" },
@@ -1802,18 +1810,23 @@ describe("Redmine inbound comment echoes", () => {
           entityId: local.id,
           direction: "outbound",
           operation: "create",
-          dedupeKey: `unproven-comment-echo-${state}`,
+          dedupeKey: `unproven-comment-echo-${proof}`,
           laneKey: issue.id,
           actorKey: `member:${owner.id}`,
           actorKind: "user",
-          payload: { version: 1 },
+          payload: { version: 1, issueId: issue.id, parentRefId: ref.id, parentRemoteIssueId: "100", ...payloadOverride },
           correlationId: local.id,
           epoch: binding.lifecycleEpoch,
-          refId: ref.id,
+          refId: null,
           marker,
           state,
         },
       });
+      if (proof === "open conflict") {
+        await prisma.integrationConflict.create({
+          data: { kind: "outbound-create-ambiguity", bindingId: binding.id, workId: work.id, localEvidence: {}, remoteEvidence: {} },
+        });
+      }
       const observedAt = new Date("2026-08-01T10:01:00.000Z");
       const setup = dependencies([change(observedAt, "review")]);
       setup.loadIssueDetail.mockResolvedValue({

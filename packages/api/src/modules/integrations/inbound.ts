@@ -45,7 +45,6 @@ const DEFAULT_LIMIT = 10;
 const DEFAULT_LEASE_MS = 120_000;
 const FAILED_POLL_DELAY_MS = 60_000;
 const MAX_DETAIL_READS = 10;
-const ECHO_PROVEN_WORK_STATES = ["leased", "ambiguous", "done"] as const;
 
 export interface InboundSyncLogger {
   info(context: unknown, message: string): void;
@@ -427,22 +426,35 @@ async function persistInboundCommentsTx(
           externalId: remoteIssueId,
         },
       });
-      const work = parentRef
+      const [work] = parentRef
+        ? await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            SELECT work."id" FROM "integration_sync_work" work
+            WHERE work."binding_id" = ${binding.id}::uuid
+              AND work."entity_type" = 'comment' AND work."entity_id" = ${marker.commentId}::uuid
+              AND work."direction" = 'outbound'::"SyncDirection" AND work."operation" = 'create'::"SyncOperation"
+              AND work."payload"->>'issueId' = ${issueId}
+              AND work."payload"->>'parentRefId' = ${parentRef.id}
+              AND work."payload"->>'parentRemoteIssueId' = ${remoteIssueId}
+              AND work."marker" = ${marker.marker}
+              AND work."state" IN ('leased'::"SyncWorkState", 'ambiguous'::"SyncWorkState", 'done'::"SyncWorkState")
+            ORDER BY work."created_at" LIMIT 1 FOR UPDATE OF work
+          `)
+        : [];
+      const provenWork = work
         ? await transaction.integrationSyncWork.findFirst({
             where: {
-              bindingId: binding.id,
-              entityType: "comment",
-              entityId: marker.commentId,
-              direction: "outbound",
-              operation: "create",
-              refId: parentRef.id,
-              marker: marker.marker,
-              state: { in: [...ECHO_PROVEN_WORK_STATES] },
+              id: work.id,
+              AND: [
+                { payload: { path: ["issueId"], equals: issueId } },
+                { payload: { path: ["parentRefId"], equals: parentRef!.id } },
+                { payload: { path: ["parentRemoteIssueId"], equals: remoteIssueId } },
+              ],
+              state: { in: ["leased", "ambiguous", "done"] },
+              conflicts: { none: { state: "open" } },
             },
-            orderBy: { createdAt: "asc" },
           })
         : null;
-      const localComment = work
+      const localComment = provenWork
         ? await transaction.comment.findFirst({
             where: { id: marker.commentId, issueId },
           })
@@ -456,7 +468,7 @@ async function persistInboundCommentsTx(
             },
           })
         : null;
-      if (work && localComment && marker.body === localComment.body && !localRef) {
+      if (provenWork && localComment && marker.body === localComment.body && !localRef) {
         const ref = await transaction.externalRef.create({
           data: {
             connectionId: binding.connectionId,
@@ -475,9 +487,9 @@ async function persistInboundCommentsTx(
             },
           },
         });
-        await transaction.integrationSyncWork.updateMany({
-          where: { id: work.id, state: { not: "done" } },
-          data: { state: "done", leaseToken: null, leaseUntil: null },
+        await transaction.integrationSyncWork.update({
+          where: { id: provenWork.id },
+          data: { state: "done", refId: ref.id, leaseToken: null, leaseUntil: null },
         });
         await transaction.integrationInboundApplication.create({
           data: {
@@ -492,7 +504,7 @@ async function persistInboundCommentsTx(
             correlationId,
             state: "applied",
             refId: ref.id,
-            workId: work.id,
+            workId: provenWork.id,
             outcome: { provenance: "redmine-inbound-echo", marker: marker.marker },
           },
         });

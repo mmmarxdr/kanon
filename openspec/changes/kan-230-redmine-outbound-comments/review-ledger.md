@@ -102,3 +102,17 @@
 - Findings: empty ledger; no user-impacting reliability defect
 - Remote boundary: exactly four product/test files, 333 additions, zero deletions
 - PR readiness: READY
+
+## PR1 Post-PR Rollback Compatibility Review
+
+- Lens: reliability
+- Scope: payload-only parent proof, work locking, conflict races, and final comment-ref attachment
+
+| id | severity | status | evidence |
+|---|---|---|---|
+| R3-001 | BLOCKER | verified | Done work now stores the attached comment ref; leased, ambiguous, and done tests begin with null `refId` and end with the comment ref. |
+| R3-002 | CRITICAL | verified | Work is locked, then exact payload/state/no-conflict proof is revalidated in a fresh READ COMMITTED statement before attachment. |
+| R3-003 | BLOCKER | verified | The matrix independently rejects wrong issue, parent ref, remote issue, open conflicts, and invalid states. |
+
+- Validation: echo matrix 13/13; API typecheck passed
+- Commit readiness: READY

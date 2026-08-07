@@ -40,6 +40,14 @@
 - Recognition now requires an unmapped local comment and work state `leased`, `ambiguous`, or `done`.
 - Scoped reliability re-review verified both CRITICAL findings resolved with no fix-line defect.
 
+## Post-PR Rollback Compatibility Fix
+
+- PR3 gate analysis confirmed `work.refId` must remain null until the comment `ExternalRef` is attached; the parent issue ref stays only in immutable payload.
+- Strict RED reproduced duplicate inbound import for payload-only leased, ambiguous, and done work.
+- Echo recognition now locks work, revalidates exact payload parent proof and no open conflict in a fresh statement, and atomically stores the comment ref while completing work.
+- Expanded proof matrix passes **13/13**: payload-only success, all allowed states, each wrong parent field, open conflict, invalid states, altered body, existing mapping, and copied marker.
+- Reliability review resolved two BLOCKERs and one CRITICAL; scoped re-review found no remaining fix-line defect.
+
 ## Historical Recovery Notes
 
 - The original oversized two-PR plan was blocked before source changes to preserve JD-001/JD-002 and the 399-line limit.
