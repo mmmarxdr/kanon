@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma, type IssuePriority, type IssueState, type PrismaClient } from "@prisma/client";
 import { env } from "../../config/env.js";
+import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import type { IssueTransitionedPayload } from "../../services/event-bus/types.js";
 import { AppError } from "../../shared/types.js";
@@ -31,7 +32,13 @@ import {
   type IssueSyncValue,
 } from "./issue-convergence.js";
 import { captureIntegrationWorkTx } from "./outbox.js";
-import { persistRedmineIssueImportsTx } from "./redmine-import.js";
+import {
+  completeRetriedApplicationTx,
+  persistRedmineIssueImportsTx,
+  type InboundApplicationClaim,
+  type RedmineImportDependencies,
+  type RedmineIssueImportContext,
+} from "./redmine-import.js";
 import {
   decodeRedmineIssueDetail,
   type RedmineCommentChange,
@@ -40,11 +47,13 @@ import {
 import { parseCommentMarker } from "./providers/redmine/comment-marker.js";
 import { RedmineHttpClient } from "./providers/redmine/http-client.js";
 import { RedminePollingInboundSource } from "./providers/redmine/inbound-source.js";
+import { ownedConnection, serviceCredential } from "./service.js";
 
 const DEFAULT_LIMIT = 10;
 const DEFAULT_LEASE_MS = 120_000;
 const FAILED_POLL_DELAY_MS = 60_000;
 const MAX_DETAIL_READS = 10;
+const RETRY_LEASE_MS = 120_000;
 
 export interface InboundSyncLogger {
   info(context: unknown, message: string): void;
@@ -321,7 +330,7 @@ async function recordInboundFailure(
   const correlationId = applicationIdentity(binding.id, change);
   return database.$transaction(async (transaction) => {
     if (!(await lockPollSnapshot(transaction, binding))) return "stale" as const;
-    await transaction.integrationInboundApplication.createMany({
+    const created = await transaction.integrationInboundApplication.createMany({
       data: {
         bindingId: binding.id,
         remoteEntityType: "issue",
@@ -337,7 +346,12 @@ async function recordInboundFailure(
     const application = await transaction.integrationInboundApplication.findUniqueOrThrow({
       where: { applicationKey: correlationId },
     });
-    if (["applied", "conflict", "skipped"].includes(application.state)) return "detail" as const;
+    if (
+      ["applied", "conflict", "skipped"].includes(application.state) ||
+      (created.count === 0 && application.state === "claimed" && application.leaseToken !== null)
+    ) {
+      return "detail" as const;
+    }
 
     await transaction.integrationConflict.create({
       data: {
@@ -374,7 +388,7 @@ async function recordInboundFailure(
 
 async function persistInboundCommentsTx(
   transaction: Prisma.TransactionClient,
-  binding: ClaimedBinding,
+  binding: Pick<ClaimedBinding, "id" | "connectionId" | "actorMemberId">,
   issueId: string,
   remoteIssueId: string,
   comments: readonly RedmineCommentChange[],
@@ -1136,6 +1150,361 @@ async function convergeLinkedIssue(
   return outcome.result;
 }
 
+type UnlinkedImportContext = RedmineIssueImportContext & { readonly actorMemberId: string };
+
+async function importUnlinkedIssueTx(
+  transaction: Prisma.TransactionClient,
+  context: UnlinkedImportContext,
+  detail: InboundIssueDetail,
+) {
+  const linked = await transaction.externalRef.findUnique({
+    where: {
+      connectionId_entityType_externalId: {
+        connectionId: context.connectionId,
+        entityType: "issue",
+        externalId: detail.identity.remoteId,
+      },
+    },
+    select: { id: true, bindingId: true },
+  });
+  if (linked) {
+    if (context.applicationClaim) {
+      if (linked.bindingId !== context.bindingId) {
+        throw new AppError(
+          409,
+          "REFERENCE_BINDING_MISMATCH",
+          "Redmine issue is linked to another project binding",
+        );
+      }
+      await completeRetriedApplicationTx(transaction, context.applicationClaim, {
+        state: "skipped",
+        refId: linked.id,
+        workId: null,
+        outcome: { reason: "already-imported", provenance: "redmine-inbound-retry" },
+      });
+    }
+    return { kind: "linked" as const, issueKey: null };
+  }
+
+  const localIssueIds =
+    "description" in detail.fields ? outboundIssueIds(detail.fields.description) : [];
+  const outboundCreate = localIssueIds.length
+    ? await transaction.integrationSyncWork.findFirst({
+        where: {
+          bindingId: context.bindingId,
+          entityType: "issue",
+          entityId: { in: localIssueIds },
+          direction: "outbound",
+          operation: "create",
+          state: { in: ["queued", "retry", "leased", "ambiguous"] },
+        },
+        select: { id: true },
+      })
+    : null;
+  if (outboundCreate) {
+    throw new AppError(
+      409,
+      "OUTBOUND_CREATE_UNSETTLED",
+      "Outbound issue creation is awaiting finalization",
+    );
+  }
+
+  const [issueKey] = await persistRedmineIssueImportsTx(transaction, context, [detail]);
+  const importedRef = await transaction.externalRef.findUniqueOrThrow({
+    where: {
+      connectionId_entityType_externalId: {
+        connectionId: context.connectionId,
+        entityType: "issue",
+        externalId: detail.identity.remoteId,
+      },
+    },
+    select: { entityId: true },
+  });
+  await persistInboundCommentsTx(
+    transaction,
+    {
+      id: context.bindingId,
+      connectionId: context.connectionId,
+      actorMemberId: context.actorMemberId,
+    },
+    importedRef.entityId,
+    detail.identity.remoteId,
+    detail.comments ?? [],
+  );
+  return { kind: "imported" as const, issueKey: issueKey! };
+}
+
+type RetryClaim = InboundApplicationClaim & {
+  readonly remoteId: string;
+  readonly remoteUpdatedAt: Date;
+};
+
+async function retryBinding(
+  transaction: Prisma.TransactionClient,
+  connectionId: string,
+  bindingId: string,
+  userId: string,
+  allowedProjectIds?: string[],
+) {
+  const connection = await ownedConnection(transaction, connectionId, userId);
+  if (connection.provider !== "redmine") {
+    throw new AppError(400, "INVALID_INTEGRATION_PROVIDER", "Connection is not a Redmine integration");
+  }
+  const binding = await transaction.integrationProjectBinding.findFirst({
+    where: { id: bindingId, connectionId },
+    include: { project: { select: { key: true } } },
+  });
+  if (!binding) {
+    throw new AppError(404, "INTEGRATION_BINDING_NOT_FOUND", "Integration project binding not found");
+  }
+  if (
+    allowedProjectIds &&
+    allowedProjectIds.length > 0 &&
+    !allowedProjectIds.includes(binding.projectId)
+  ) {
+    throw new AppError(403, "FORBIDDEN", "Token scope does not allow access to this project");
+  }
+  if (
+    connection.lifecycle !== "active" ||
+    binding.lifecycle !== "active" ||
+    !binding.inboundEnabled ||
+    binding.bootstrapState !== "ready"
+  ) {
+    throw new AppError(409, "INTEGRATION_NOT_ACTIVE", "Inbound Redmine sync must be active");
+  }
+  const credential = await serviceCredential(transaction, connection);
+  return { connection, binding, credential };
+}
+
+async function retainRetryConflict(claim: RetryClaim, error: unknown): Promise<boolean> {
+  const evidence = safeErrorEvidence(error);
+  return prisma.$transaction(async (transaction) => {
+    const retained = await transaction.integrationInboundApplication.updateMany({
+      where: {
+        id: claim.id,
+        state: "claimed",
+        leaseToken: claim.leaseToken,
+        fence: claim.fence,
+      },
+      data: {
+        state: "conflict",
+        leaseToken: null,
+        leaseUntil: null,
+        outcome: { reason: "INBOUND_OBSERVATION_FAILED", error: evidence },
+      },
+    });
+    if (retained.count !== 1) return false;
+    await transaction.integrationConflict.updateMany({
+      where: {
+        applicationId: claim.id,
+        kind: "inbound-observation-failure",
+        state: "open",
+      },
+      data: {
+        remoteEvidence: {
+          provider: "redmine",
+          remoteIssueId: claim.remoteId,
+          error: evidence,
+        },
+      },
+    });
+    return true;
+  });
+}
+
+async function rejectRetry(claim: RetryClaim, error: unknown): Promise<never> {
+  if (!(await retainRetryConflict(claim, error))) {
+    throw new AppError(409, "INBOUND_APPLICATION_STALE", "Inbound application retry is stale");
+  }
+  if (error instanceof AppError) throw error;
+  throw new AppError(
+    409,
+    "INBOUND_RETRY_CONFLICT",
+    "Current Redmine issue still cannot be imported",
+  );
+}
+
+export async function retryRedmineIssueImport(
+  connectionId: string,
+  bindingId: string,
+  applicationId: string,
+  userId: string,
+  options: RedmineImportDependencies & { allowedProjectIds?: string[] } = {},
+) {
+  const decrypt = options.decrypt ?? decryptCredential;
+  const createClient =
+    options.client ??
+    ((baseUrl: string, apiKey: string) =>
+      new RedmineHttpClient(baseUrl, apiKey, {
+        endpointAllowlist: env.REDMINE_ENDPOINT_ALLOWLIST,
+      }));
+  const initial = await prisma.$transaction((transaction) =>
+    retryBinding(transaction, connectionId, bindingId, userId, options.allowedProjectIds),
+  );
+  const claim = await prisma.$transaction(async (transaction): Promise<RetryClaim> => {
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "integration_inbound_applications" WHERE "id" = ${applicationId}::uuid AND "binding_id" = ${bindingId}::uuid FOR UPDATE`,
+    );
+    const application = await transaction.integrationInboundApplication.findFirst({
+      where: { id: applicationId, bindingId },
+      include: {
+        conflicts: {
+          where: { kind: "inbound-observation-failure", state: "open" },
+          select: { id: true },
+        },
+      },
+    });
+    if (!application) {
+      throw new AppError(
+        404,
+        "INBOUND_APPLICATION_NOT_FOUND",
+        "Retryable inbound application was not found",
+      );
+    }
+    const outcome =
+      application.outcome &&
+      typeof application.outcome === "object" &&
+      !Array.isArray(application.outcome)
+        ? application.outcome
+        : {};
+    const now = await databaseNow(transaction);
+    const retryableApplication =
+      application.remoteEntityType === "issue" &&
+      application.refId === null &&
+      application.conflicts.length > 0;
+    const retryable =
+      retryableApplication &&
+      ((application.state === "conflict" && outcome["reason"] === "INBOUND_OBSERVATION_FAILED") ||
+        (application.state === "claimed" &&
+          application.leaseUntil !== null &&
+          application.leaseUntil <= now));
+    if (!retryable) {
+      throw new AppError(
+        409,
+        "INBOUND_APPLICATION_NOT_RETRYABLE",
+        "Inbound application is not retryable",
+      );
+    }
+    const leaseToken = randomUUID();
+    const claimed = await transaction.integrationInboundApplication.update({
+      where: { id: application.id },
+      data: {
+        state: "claimed",
+        leaseToken,
+        leaseUntil: new Date(now.getTime() + RETRY_LEASE_MS),
+        fence: { increment: 1 },
+      },
+    });
+    return {
+      id: claimed.id,
+      remoteId: claimed.remoteId,
+      remoteUpdatedAt: claimed.remoteUpdatedAt,
+      leaseToken,
+      fence: claimed.fence,
+    };
+  });
+
+  let detail: InboundIssueDetail;
+  try {
+    const apiKey = decrypt(initial.credential.encryptedKey);
+    if (!apiKey) throw new Error("Service credential could not be decrypted");
+    const value = await createClient(initial.connection.baseUrl, apiKey).get<unknown>(
+      `/issues/${encodeURIComponent(claim.remoteId)}.json?include=journals`,
+    );
+    const decoded = decodeRedmineIssueDetail(value, initial.binding.remoteProjectId);
+    detail = { ...decoded.issue, comments: decoded.comments };
+    if (
+      detail.identity.remoteId !== claim.remoteId ||
+      detail.changedAt < claim.remoteUpdatedAt
+    ) {
+      throw new AppError(
+        409,
+        "REDMINE_DETAIL_MISMATCH",
+        "Redmine issue detail did not match the retry target",
+      );
+    }
+  } catch (error) {
+    return rejectRetry(claim, error);
+  }
+
+  try {
+    return await prisma.$transaction(async (transaction) => {
+      await transaction.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "integration_connections" WHERE "id" = ${connectionId}::uuid FOR SHARE`,
+      );
+      await transaction.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "integration_project_bindings" WHERE "id" = ${bindingId}::uuid FOR SHARE`,
+      );
+      await transaction.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "member_integration_credentials" WHERE "id" = ${initial.credential.id}::uuid FOR SHARE`,
+      );
+      const owner = await transaction.member.findUnique({
+        where: {
+          userId_workspaceId: { userId, workspaceId: initial.connection.workspaceId },
+        },
+        select: { id: true },
+      });
+      if (owner) {
+        await transaction.$queryRaw(
+          Prisma.sql`SELECT "id" FROM "members" WHERE "id" = ${owner.id}::uuid FOR SHARE`,
+        );
+      }
+      const current = await retryBinding(
+        transaction,
+        connectionId,
+        bindingId,
+        userId,
+        options.allowedProjectIds,
+      );
+      if (
+        current.connection.lifecycleEpoch !== initial.connection.lifecycleEpoch ||
+        current.binding.lifecycleEpoch !== initial.binding.lifecycleEpoch ||
+        current.credential.id !== initial.credential.id ||
+        current.credential.encryptedKey !== initial.credential.encryptedKey ||
+        current.credential.updatedAt.getTime() !== initial.credential.updatedAt.getTime()
+      ) {
+        throw new AppError(
+          409,
+          "INBOUND_RETRY_FENCE_CHANGED",
+          "Redmine binding or credential changed during retry",
+        );
+      }
+
+      if (detail.operation !== "upsert" || !("statusId" in detail.fields)) {
+        await completeRetriedApplicationTx(transaction, claim, {
+          state: "skipped",
+          refId: null,
+          workId: null,
+          outcome: { reason: "private-issue", provenance: "redmine-inbound-retry" },
+        });
+        return { applicationId: claim.id, state: "skipped" as const, issueKey: null };
+      }
+      const result = await importUnlinkedIssueTx(
+        transaction,
+        {
+          connectionId,
+          bindingId,
+          projectId: current.binding.projectId,
+          projectKey: current.binding.project.key,
+          workspaceId: current.connection.workspaceId,
+          readMap: current.binding.readMap,
+          provenance: "redmine-inbound-retry",
+          applicationClaim: claim,
+          actorMemberId: current.credential.memberId,
+        },
+        detail,
+      );
+      return {
+        applicationId: claim.id,
+        state: result.kind === "imported" ? ("applied" as const) : ("skipped" as const),
+        issueKey: result.issueKey,
+      };
+    }, { timeout: 30_000 });
+  } catch (error) {
+    return rejectRetry(claim, error);
+  }
+}
+
 async function applyChange(
   database: PrismaClient,
   binding: ClaimedBinding,
@@ -1188,42 +1557,7 @@ async function applyChange(
         const active = await lockPollSnapshot(transaction, binding);
         if (!active) return "stale" as const;
 
-        const linked = await transaction.externalRef.findUnique({
-          where: {
-            connectionId_entityType_externalId: {
-              connectionId: binding.connectionId,
-              entityType: "issue",
-              externalId: change.entityId,
-            },
-          },
-          select: { id: true },
-        });
-        if (linked) return "detail" as const;
-
-        const localIssueIds =
-          "description" in detail.fields ? outboundIssueIds(detail.fields.description) : [];
-        const outboundCreate = localIssueIds.length
-          ? await transaction.integrationSyncWork.findFirst({
-              where: {
-                bindingId: binding.id,
-                entityType: "issue",
-                entityId: { in: localIssueIds },
-                direction: "outbound",
-                operation: "create",
-                state: { in: ["queued", "retry", "leased", "ambiguous"] },
-              },
-              select: { id: true },
-            })
-          : null;
-        if (outboundCreate) {
-          throw new AppError(
-            409,
-            "OUTBOUND_CREATE_UNSETTLED",
-            "Outbound issue creation is awaiting finalization",
-          );
-        }
-
-        await persistRedmineIssueImportsTx(
+        await importUnlinkedIssueTx(
           transaction,
           {
             connectionId: binding.connectionId,
@@ -1233,25 +1567,9 @@ async function applyChange(
             workspaceId: active.connection.workspaceId,
             readMap: active.readMap,
             provenance: "redmine-inbound-discovery",
+            actorMemberId: binding.actorMemberId,
           },
-          [detail],
-        );
-        const importedRef = await transaction.externalRef.findUniqueOrThrow({
-          where: {
-            connectionId_entityType_externalId: {
-              connectionId: binding.connectionId,
-              entityType: "issue",
-              externalId: change.entityId,
-            },
-          },
-          select: { id: true, entityId: true },
-        });
-        await persistInboundCommentsTx(
-          transaction,
-          binding,
-          importedRef.entityId,
-          change.entityId,
-          detail.comments ?? [],
+          detail,
         );
         return "detail" as const;
       });

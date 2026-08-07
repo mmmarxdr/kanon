@@ -65,7 +65,17 @@ export interface RedmineIssueImportContext {
   readonly projectKey: string;
   readonly workspaceId: string;
   readonly readMap: Prisma.JsonValue;
-  readonly provenance: "redmine-inbound-bootstrap" | "redmine-inbound-discovery";
+  readonly provenance:
+    | "redmine-inbound-bootstrap"
+    | "redmine-inbound-discovery"
+    | "redmine-inbound-retry";
+  readonly applicationClaim?: InboundApplicationClaim;
+}
+
+export interface InboundApplicationClaim {
+  readonly id: string;
+  readonly leaseToken: string;
+  readonly fence: number;
 }
 
 export interface RedmineImportDependencies {
@@ -186,11 +196,55 @@ function applicationKey(bindingId: string, change: RedmineIssueChange): string {
     .digest("hex");
 }
 
+export async function completeRetriedApplicationTx(
+  database: Database,
+  claim: InboundApplicationClaim,
+  data: {
+    state: "applied" | "skipped";
+    refId: string | null;
+    workId: string | null;
+    outcome: Prisma.InputJsonValue;
+  },
+): Promise<void> {
+  const [clock] = await database.$queryRaw<Array<{ now: Date }>>(
+    Prisma.sql`SELECT clock_timestamp() AS "now"`,
+  );
+  if (!clock) throw new Error("Database clock unavailable");
+  const updated = await database.integrationInboundApplication.updateMany({
+    where: {
+      id: claim.id,
+      state: "claimed",
+      leaseToken: claim.leaseToken,
+      leaseUntil: { gt: clock.now },
+      fence: claim.fence,
+    },
+    data: {
+      ...data,
+      leaseToken: null,
+      leaseUntil: null,
+    },
+  });
+  if (updated.count !== 1) {
+    throw new AppError(409, "INBOUND_APPLICATION_STALE", "Inbound application retry is stale");
+  }
+  await database.integrationConflict.updateMany({
+    where: {
+      applicationId: claim.id,
+      kind: "inbound-observation-failure",
+      state: "open",
+    },
+    data: { state: "resolved" },
+  });
+}
+
 export async function persistRedmineIssueImportsTx(
   database: Database,
   context: RedmineIssueImportContext,
   changes: readonly RedmineIssueChange[],
 ): Promise<string[]> {
+  if (context.applicationClaim && changes.length !== 1) {
+    throw new TypeError("A retried inbound application must import exactly one issue");
+  }
   const readMap =
     context.readMap && typeof context.readMap === "object" && !Array.isArray(context.readMap)
       ? (context.readMap as Record<string, unknown>)
@@ -361,21 +415,35 @@ export async function persistRedmineIssueImportsTx(
       },
       select: { id: true },
     });
-    await database.integrationInboundApplication.create({
-      data: {
-        bindingId: context.bindingId,
-        remoteEntityType: "issue",
-        remoteId: change.identity.remoteId,
-        remoteUpdatedAt: change.changedAt,
-        sourceVersion: change.sourceVersion,
-        applicationKey: correlationId,
-        correlationId,
+    const outcome = {
+      provenance: context.provenance,
+      issueKey: issue.key,
+      ...(context.applicationClaim ? { retriedSourceVersion: change.sourceVersion } : {}),
+    };
+    if (context.applicationClaim) {
+      await completeRetriedApplicationTx(database, context.applicationClaim, {
         state: "applied",
         refId: ref.id,
         workId: work.id,
-        outcome: { provenance: context.provenance, issueKey: issue.key },
-      },
-    });
+        outcome,
+      });
+    } else {
+      await database.integrationInboundApplication.create({
+        data: {
+          bindingId: context.bindingId,
+          remoteEntityType: "issue",
+          remoteId: change.identity.remoteId,
+          remoteUpdatedAt: change.changedAt,
+          sourceVersion: change.sourceVersion,
+          applicationKey: correlationId,
+          correlationId,
+          state: "applied",
+          refId: ref.id,
+          workId: work.id,
+          outcome,
+        },
+      });
+    }
     issueKeys.push(issue.key);
   }
 

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "../../config/prisma.js";
 import {
@@ -1350,6 +1350,57 @@ describe("Redmine inbound sync", () => {
       expect(logs).not.toMatch(/must-not-be-logged|detail secret|Unmapped issue/);
     },
   );
+
+  it("does not overwrite a pre-import application claimed by an owner retry", async () => {
+    const { binding, project } = await fixture();
+    const observedAt = new Date("2026-08-01T10:09:30.000Z");
+    const observed = change(observedAt, "in_progress", "999");
+    const applicationKey = createHash("sha256")
+      .update(`${binding.id}|issue|${observed.entityId}|${observedAt.toISOString()}`)
+      .digest("hex");
+    const application = await prisma.integrationInboundApplication.create({
+      data: {
+        bindingId: binding.id,
+        remoteEntityType: "issue",
+        remoteId: observed.entityId,
+        remoteUpdatedAt: observedAt,
+        applicationKey,
+        correlationId: applicationKey,
+        state: "claimed",
+        leaseToken: "owner-retry",
+        leaseUntil: new Date("2999-01-01T00:00:00.000Z"),
+        fence: 1,
+        outcome: { reason: "INBOUND_OBSERVATION_FAILED" },
+      },
+    });
+    await prisma.integrationConflict.create({
+      data: {
+        kind: "inbound-observation-failure",
+        bindingId: binding.id,
+        applicationId: application.id,
+        localEvidence: { refId: null },
+        remoteEvidence: { provider: "redmine", remoteIssueId: observed.entityId },
+      },
+    });
+    const setup = dependencies([observed]);
+    setup.loadIssueDetail.mockRejectedValue(new Error("poll saw the same invalid detail"));
+
+    await runInboundSyncCycle(prisma, setup);
+
+    await expect(
+      prisma.integrationInboundApplication.findUniqueOrThrow({ where: { id: application.id } }),
+    ).resolves.toMatchObject({
+      state: "claimed",
+      leaseToken: "owner-retry",
+      leaseUntil: new Date("2999-01-01T00:00:00.000Z"),
+      fence: 1,
+      refId: null,
+    });
+    await expect(
+      prisma.integrationConflict.count({ where: { applicationId: application.id } }),
+    ).resolves.toBe(1);
+    await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(1);
+  });
 
   it("rolls back every discovery row and preserves the cursor on a write failure", async () => {
     const { binding, project } = await fixture();

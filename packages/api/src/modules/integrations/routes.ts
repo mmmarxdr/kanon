@@ -1,7 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { activateRedmineIssueImport, previewRedmineIssueImport } from "./redmine-import.js";
+import {
+  activateRedmineIssueImport,
+  previewRedmineIssueImport,
+} from "./redmine-import.js";
+import { retryRedmineIssueImport } from "./inbound.js";
 import {
   bindProject,
   clearCredential,
@@ -18,6 +22,7 @@ import {
 
 const ConnectionId = z.object({ id: z.string().uuid() });
 const ConnectionBindingId = ConnectionId.extend({ bindingId: z.string().uuid() });
+const InboundApplicationId = ConnectionBindingId.extend({ applicationId: z.string().uuid() });
 const WorkspaceConnection = z.object({ workspaceId: z.string().uuid() });
 const CreateConnection = z.object({
   workspaceId: z.string().uuid(),
@@ -113,6 +118,19 @@ export default async function integrationRoutes(fastify: FastifyInstance): Promi
         request.params.id,
         request.params.bindingId,
         request.user.userId,
+      ),
+  );
+
+  app.post(
+    "/connections/:id/bindings/:bindingId/inbound/applications/:applicationId/retry",
+    { schema: { params: InboundApplicationId } },
+    async (request) =>
+      retryRedmineIssueImport(
+        request.params.id,
+        request.params.bindingId,
+        request.params.applicationId,
+        request.user.userId,
+        { allowedProjectIds: request.user.allowedProjectIds },
       ),
   );
 

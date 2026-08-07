@@ -12,6 +12,7 @@ import {
   previewRedmineIssueImport,
   type RedmineImportDependencies,
 } from "./redmine-import.js";
+import { retryRedmineIssueImport } from "./inbound.js";
 
 const cutoff = new Date("2026-08-04T12:00:00.000Z");
 
@@ -98,6 +99,36 @@ async function fixture(readMap: Record<string, string> = { "2": "in_progress" })
     },
   });
   return { workspace, owner, assignee, project, connection, credential, binding };
+}
+
+async function preImportConflict(bindingId: string, remoteId = "42") {
+  await prisma.integrationProjectBinding.update({
+    where: { id: bindingId },
+    data: { inboundEnabled: true, bootstrapState: "ready" },
+  });
+  const application = await prisma.integrationInboundApplication.create({
+    data: {
+      bindingId,
+      remoteEntityType: "issue",
+      remoteId,
+      remoteUpdatedAt: new Date("2026-08-02T10:30:00.000Z"),
+      sourceVersion: "sha256:failed-observation",
+      applicationKey: `failed-${bindingId}-${remoteId}`,
+      correlationId: `failed-${bindingId}-${remoteId}`,
+      state: "conflict",
+      outcome: { reason: "INBOUND_OBSERVATION_FAILED" },
+    },
+  });
+  const conflict = await prisma.integrationConflict.create({
+    data: {
+      kind: "inbound-observation-failure",
+      bindingId,
+      applicationId: application.id,
+      localEvidence: { refId: null },
+      remoteEvidence: { provider: "redmine", remoteIssueId: remoteId },
+    },
+  });
+  return { application, conflict };
 }
 
 describe("Redmine-created issue import", () => {
@@ -682,5 +713,414 @@ describe("Redmine-created issue import", () => {
     await expect(
       prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
     ).resolves.toMatchObject({ inboundEnabled: false, bootstrapState: "previewed" });
+  });
+
+  it("refetches current detail and applies the same pre-import application", async () => {
+    const { owner, project, connection, binding } = await fixture({});
+    const { application, conflict } = await preImportConflict(binding.id);
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: {
+        readMap: { "2": "in_progress", "priority:3": "high" },
+        lifecycleEpoch: { increment: 1 },
+      },
+    });
+    const current = redmineIssue({ subject: "Current remote title", assigned_to: null });
+    const transport = remote({}, {
+      "42": {
+        issue: {
+          ...current,
+          journals: [
+            {
+              id: 90,
+              user: { id: 8, name: "Remote reviewer" },
+              notes: "Current public comment",
+              private_notes: false,
+              created_on: "2026-08-02T10:00:00Z",
+              updated_on: "2026-08-02T10:05:00Z",
+              details: [],
+            },
+          ],
+        },
+      },
+    });
+
+    await expect(
+      retryRedmineIssueImport(
+        connection.id,
+        binding.id,
+        application.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).resolves.toEqual({ applicationId: application.id, state: "applied", issueKey: `${project.key}-1` });
+
+    expect(transport.get).toHaveBeenCalledWith("/issues/42.json?include=journals");
+    await expect(prisma.issue.findFirstOrThrow({ where: { projectId: project.id } })).resolves.toMatchObject({
+      title: "Current remote title",
+    });
+    await expect(
+      prisma.integrationInboundApplication.findUniqueOrThrow({ where: { id: application.id } }),
+    ).resolves.toMatchObject({
+      id: application.id,
+      applicationKey: application.applicationKey,
+      state: "applied",
+      refId: expect.any(String),
+      workId: expect.any(String),
+      leaseToken: null,
+      leaseUntil: null,
+    });
+    await expect(
+      prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } }),
+    ).resolves.toMatchObject({ state: "resolved" });
+    await expect(
+      retryRedmineIssueImport(
+        connection.id,
+        binding.id,
+        application.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).rejects.toMatchObject({ code: "INBOUND_APPLICATION_NOT_RETRYABLE" });
+    expect(transport.get).toHaveBeenCalledTimes(1);
+    await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(1);
+    await expect(
+      prisma.externalRef.count({ where: { bindingId: binding.id, entityType: "issue" } }),
+    ).resolves.toBe(1);
+    await expect(prisma.comment.findFirstOrThrow()).resolves.toMatchObject({
+      body: "Current public comment",
+      source: "system",
+      via: "redmine-inbound",
+    });
+    await expect(
+      prisma.externalRef.findFirstOrThrow({ where: { bindingId: binding.id, entityType: "comment" } }),
+    ).resolves.toMatchObject({ externalId: "90" });
+    await expect(
+      prisma.integrationInboundApplication.count({
+        where: { bindingId: binding.id, remoteEntityType: "issue" },
+      }),
+    ).resolves.toBe(1);
+  });
+
+  it("keeps the same application retryable after a current decoder failure", async () => {
+    const { owner, project, connection, binding } = await fixture();
+    const { application, conflict } = await preImportConflict(binding.id);
+    const malformed = remote({}, { "42": { issue: { id: 42, subject: "do-not-store" } } });
+
+    await expect(
+      retryRedmineIssueImport(
+        connection.id,
+        binding.id,
+        application.id,
+        owner.userId,
+        malformed.dependencies,
+      ),
+    ).rejects.toMatchObject({ code: "INBOUND_RETRY_CONFLICT" });
+
+    const retainedApplication = await prisma.integrationInboundApplication.findUniqueOrThrow({
+      where: { id: application.id },
+    });
+    expect(retainedApplication).toMatchObject({
+      state: "conflict",
+      fence: 1,
+      leaseToken: null,
+      leaseUntil: null,
+      refId: null,
+    });
+    const retained = await prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } });
+    expect(retained.state).toBe("open");
+    expect(
+      JSON.stringify([
+        retainedApplication.outcome,
+        retained.remoteEvidence,
+        retained.localEvidence,
+      ]),
+    ).not.toContain("do-not-store");
+    await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(0);
+
+    const current = redmineIssue({ subject: "Decoded after deploy", assigned_to: null });
+    const repaired = remote({}, { "42": { issue: { ...current, journals: [] } } });
+    await expect(
+      retryRedmineIssueImport(
+        connection.id,
+        binding.id,
+        application.id,
+        owner.userId,
+        repaired.dependencies,
+      ),
+    ).resolves.toMatchObject({ applicationId: application.id, state: "applied" });
+    await expect(prisma.issue.findFirstOrThrow({ where: { projectId: project.id } })).resolves.toMatchObject({
+      title: "Decoded after deploy",
+    });
+  });
+
+  it("allows only workspace owners to retry a pre-import conflict", async () => {
+    const { assignee, connection, binding } = await fixture();
+    const { application } = await preImportConflict(binding.id);
+    const transport = remote({}, { "42": { issue: { ...redmineIssue(), journals: [] } } });
+
+    await expect(
+      retryRedmineIssueImport(
+        connection.id,
+        binding.id,
+        application.id,
+        assignee.userId,
+        transport.dependencies,
+      ),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    expect(transport.get).not.toHaveBeenCalled();
+    await expect(
+      prisma.integrationInboundApplication.findUniqueOrThrow({ where: { id: application.id } }),
+    ).resolves.toMatchObject({ state: "conflict", fence: 0, leaseToken: null });
+  });
+
+  it("rejects an owner token scoped away from the binding project before provider I/O", async () => {
+    const { owner, workspace, connection, binding } = await fixture();
+    const otherProject = await seedTestProject(workspace.id);
+    const { application } = await preImportConflict(binding.id);
+    const transport = remote({}, { "42": { issue: { ...redmineIssue(), journals: [] } } });
+
+    await expect(
+      retryRedmineIssueImport(connection.id, binding.id, application.id, owner.userId, {
+        ...transport.dependencies,
+        allowedProjectIds: [otherProject.id],
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    expect(transport.get).not.toHaveBeenCalled();
+    await expect(
+      prisma.integrationInboundApplication.findUniqueOrThrow({ where: { id: application.id } }),
+    ).resolves.toMatchObject({ state: "conflict", fence: 0, leaseToken: null });
+  });
+
+  it("fences concurrent retries before provider I/O can import twice", async () => {
+    const { owner, project, connection, binding } = await fixture();
+    const { application } = await preImportConflict(binding.id);
+    let release!: (value: unknown) => void;
+    const response = new Promise<unknown>((resolve) => {
+      release = resolve;
+    });
+    const transport = remote({});
+    transport.get.mockImplementation(() => response);
+
+    const first = retryRedmineIssueImport(
+      connection.id,
+      binding.id,
+      application.id,
+      owner.userId,
+      transport.dependencies,
+    );
+    await vi.waitFor(() => expect(transport.get).toHaveBeenCalledOnce());
+
+    await expect(
+      retryRedmineIssueImport(
+        connection.id,
+        binding.id,
+        application.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).rejects.toMatchObject({ code: "INBOUND_APPLICATION_NOT_RETRYABLE" });
+
+    release({ issue: { ...redmineIssue({ assigned_to: null }), journals: [] } });
+    await expect(first).resolves.toMatchObject({ applicationId: application.id, state: "applied" });
+    expect(transport.get).toHaveBeenCalledTimes(1);
+    await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(1);
+    await expect(prisma.externalRef.count({ where: { bindingId: binding.id } })).resolves.toBe(1);
+  });
+
+  it("returns the same application to conflict when the binding changes during refetch", async () => {
+    const { owner, project, connection, binding } = await fixture();
+    const { application, conflict } = await preImportConflict(binding.id);
+    const transport = remote({}, {
+      "42": { issue: { ...redmineIssue({ assigned_to: null }), journals: [] } },
+    });
+    transport.get.mockImplementation(async () => {
+      await prisma.integrationProjectBinding.update({
+        where: { id: binding.id },
+        data: { lifecycleEpoch: { increment: 1 } },
+      });
+      return { issue: { ...redmineIssue({ assigned_to: null }), journals: [] } };
+    });
+
+    await expect(
+      retryRedmineIssueImport(
+        connection.id,
+        binding.id,
+        application.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).rejects.toMatchObject({ code: "INBOUND_RETRY_FENCE_CHANGED" });
+
+    await expect(
+      prisma.integrationInboundApplication.findUniqueOrThrow({ where: { id: application.id } }),
+    ).resolves.toMatchObject({ state: "conflict", fence: 1, leaseToken: null, leaseUntil: null });
+    await expect(
+      prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } }),
+    ).resolves.toMatchObject({ state: "open" });
+    await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(0);
+  });
+
+  it("skips the same application when current remote policy excludes the issue", async () => {
+    const { owner, project, connection, binding } = await fixture();
+    const { application, conflict } = await preImportConflict(binding.id);
+    const current = redmineIssue({ is_private: true, assigned_to: null });
+    const transport = remote({}, { "42": { issue: { ...current, journals: [] } } });
+
+    await expect(
+      retryRedmineIssueImport(
+        connection.id,
+        binding.id,
+        application.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).resolves.toEqual({ applicationId: application.id, state: "skipped", issueKey: null });
+
+    await expect(
+      prisma.integrationInboundApplication.findUniqueOrThrow({ where: { id: application.id } }),
+    ).resolves.toMatchObject({
+      state: "skipped",
+      refId: null,
+      workId: null,
+      leaseToken: null,
+      leaseUntil: null,
+      outcome: { reason: "private-issue", provenance: "redmine-inbound-retry" },
+    });
+    await expect(
+      prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } }),
+    ).resolves.toMatchObject({ state: "resolved" });
+    await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(0);
+  });
+
+  it("keeps a marked remote issue conflicted while its outbound create is unsettled", async () => {
+    const { owner, project, connection, binding } = await fixture();
+    const { application } = await preImportConflict(binding.id);
+    const local = await prisma.issue.create({
+      data: {
+        key: `${project.key}-1`,
+        sequenceNum: 1,
+        title: "Original local issue",
+        projectId: project.id,
+      },
+    });
+    await prisma.integrationSyncWork.create({
+      data: {
+        bindingId: binding.id,
+        entityType: "issue",
+        entityId: local.id,
+        direction: "outbound",
+        operation: "create",
+        dedupeKey: `create-${local.id}`,
+        laneKey: local.id,
+        actorKey: `member:${owner.id}`,
+        actorKind: "user",
+        payload: { version: 1, fields: { title: local.title } },
+        correlationId: `create-${local.id}`,
+        state: "ambiguous",
+        availableAt: cutoff,
+        epoch: binding.lifecycleEpoch,
+      },
+    });
+    const current = redmineIssue({
+      description: `Remote result\n\n<!-- kanon-issue:${local.id} -->`,
+      assigned_to: null,
+    });
+    const transport = remote({}, { "42": { issue: { ...current, journals: [] } } });
+
+    await expect(
+      retryRedmineIssueImport(
+        connection.id,
+        binding.id,
+        application.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).rejects.toMatchObject({ code: "OUTBOUND_CREATE_UNSETTLED" });
+
+    await expect(
+      prisma.integrationInboundApplication.findUniqueOrThrow({ where: { id: application.id } }),
+    ).resolves.toMatchObject({ state: "conflict", leaseToken: null, leaseUntil: null });
+    await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(1);
+    await expect(prisma.externalRef.count({ where: { connectionId: connection.id } })).resolves.toBe(0);
+  });
+
+  it("rejects a current ref owned by another project binding", async () => {
+    const { owner, workspace, project, connection, binding } = await fixture();
+    const { application } = await preImportConflict(binding.id);
+    const otherProject = await seedTestProject(workspace.id);
+    const otherBinding = await prisma.integrationProjectBinding.create({
+      data: {
+        connectionId: connection.id,
+        projectId: otherProject.id,
+        remoteProjectId: "8",
+        readMap: { "2": "in_progress", "priority:3": "high" },
+        writeMap: {},
+        lifecycle: "active",
+        lifecycleEpoch: 1,
+      },
+    });
+    const otherIssue = await prisma.issue.create({
+      data: {
+        key: `${otherProject.key}-1`,
+        sequenceNum: 1,
+        title: "Other project issue",
+        projectId: otherProject.id,
+      },
+    });
+    await prisma.externalRef.create({
+      data: {
+        connectionId: connection.id,
+        bindingId: otherBinding.id,
+        entityType: "issue",
+        entityId: otherIssue.id,
+        externalId: "42",
+      },
+    });
+    const transport = remote({}, {
+      "42": { issue: { ...redmineIssue({ assigned_to: null }), journals: [] } },
+    });
+
+    await expect(
+      retryRedmineIssueImport(
+        connection.id,
+        binding.id,
+        application.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).rejects.toMatchObject({ code: "REFERENCE_BINDING_MISMATCH" });
+
+    await expect(
+      prisma.integrationInboundApplication.findUniqueOrThrow({ where: { id: application.id } }),
+    ).resolves.toMatchObject({ state: "conflict", refId: null });
+    await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(0);
+  });
+
+  it("rejects detail older than the retained failed observation", async () => {
+    const { owner, project, connection, binding } = await fixture();
+    const { application } = await preImportConflict(binding.id);
+    const stale = redmineIssue({
+      assigned_to: null,
+      updated_on: "2026-08-02T10:00:00Z",
+    });
+    const transport = remote({}, { "42": { issue: { ...stale, journals: [] } } });
+
+    await expect(
+      retryRedmineIssueImport(
+        connection.id,
+        binding.id,
+        application.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).rejects.toMatchObject({ code: "REDMINE_DETAIL_MISMATCH" });
+
+    await expect(
+      prisma.integrationInboundApplication.findUniqueOrThrow({ where: { id: application.id } }),
+    ).resolves.toMatchObject({ state: "conflict", refId: null, leaseToken: null });
+    await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(0);
   });
 });
