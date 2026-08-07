@@ -130,3 +130,14 @@
 
 - Validation: focused 83/83; full API typecheck and 184 files / 2,396 tests passed, 3 skipped; build and formatting pass
 - Commit readiness: READY
+
+## PR2 Post-PR Same-Lane Gate Review
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| CR-PR2-001 | reliability | `packages/api/src/modules/integrations/claims.ts:28-43` | MAJOR | verified | Excluded comments are now omitted from both claim candidates and earlier same-lane barriers. A real-database regression failed before the query fix and passes after it. |
+
+- Validation: claims/worker **59/59**; API typecheck, Prettier, and `git diff --check` passed
+- Product/test scope remains exactly 399 changed lines
+- Scoped risk re-review: empty ledger; no reportable fix-line defect
+- Push readiness: READY

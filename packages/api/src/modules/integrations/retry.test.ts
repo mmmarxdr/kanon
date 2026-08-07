@@ -265,14 +265,13 @@ describe("integration worker retry and completion", () => {
     const fixture = await createFixture();
     const ambiguous = await createWork(fixture, {
       entityType: "comment",
-      entityId: fixture.issue.id,
+      laneKey: fixture.issue.id,
       operation: "create",
       state: "ambiguous",
       payload: { version: 1 },
     });
-    const issueWork = await createWork(fixture);
+    const issueWork = await createWork(fixture, { laneKey: fixture.issue.id });
     const pushIssue = vi.fn().mockResolvedValue(success());
-
     await runIntegrationWorkerCycle(prisma, dependencies(adapter({ pushIssue }), { limit: 3 }).deps);
 
     expect(pushIssue).toHaveBeenCalledOnce();

@@ -29,6 +29,7 @@
 - Full API: **184 files / 2,396 tests passed; 3 skipped**.
 - `test:types`, API build, Prettier, and `git diff --check` passed.
 - Pre-commit risk review found one CRITICAL 429 retry path; strict RED/GREEN changed uncertain 429 outcomes to read-only ambiguity reconciliation. Scoped re-review verified it resolved with no fix-line defects.
+- Post-PR review found that excluded comments could still block later same-lane work. Strict RED/GREEN now excludes comments from both claim candidates and earlier-work barriers; claims/worker passed **59/59**, typecheck passed, and scoped risk re-review returned an empty ledger.
 
 ## PR1 Boundary
 

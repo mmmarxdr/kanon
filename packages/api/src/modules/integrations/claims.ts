@@ -31,6 +31,7 @@ function genuinelyClaimable(at: Prisma.Sql, excludeComments: boolean): Prisma.Sq
       WHERE earlier."binding_id" = work."binding_id"
         AND earlier."lane_key" = work."lane_key"
         AND earlier."sequence" < work."sequence"
+        AND (${!excludeComments} OR earlier."entity_type" <> 'comment')
         AND (
           (earlier."epoch" = binding."lifecycle_epoch" AND earlier."state" NOT IN (
             'superseded'::"SyncWorkState", 'dead'::"SyncWorkState",
