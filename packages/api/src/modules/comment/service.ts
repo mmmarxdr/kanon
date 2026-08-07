@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { Prisma } from "@prisma/client";
+import { env } from "../../config/env.js";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 import { createActivityLog } from "../activity/service.js";
@@ -5,6 +8,8 @@ import { parseAndUpsertMentions, emitMentionEvents } from "../mentions/service.j
 import { eventBus } from "../../services/event-bus/index.js";
 import { autoSubscribe } from "../issue-subscription/service.js";
 import type { CreateCommentBody } from "./schema.js";
+import { captureIntegrationWorkTx, createIntegrationWorkLaneKey } from "../integrations/outbox.js";
+import { hasReservedCommentMarker } from "../integrations/providers/redmine/comment-marker.js";
 
 /**
  * Create a comment on an issue and log the activity.
@@ -14,6 +19,7 @@ export async function createComment(
   body: CreateCommentBody,
   memberId: string,
   via?: string | null,
+  commentCaptureEnabled = env.INTEGRATION_COMMENT_CAPTURE_ENABLED,
 ) {
   // Note: Issue does NOT have workspaceId directly — it lives in issue.project.workspaceId
   const issue = await prisma.issue.findUnique({
@@ -22,6 +28,7 @@ export async function createComment(
       id: true,
       key: true,
       title: true,
+      projectId: true,
       project: { select: { workspaceId: true } },
     },
   });
@@ -33,7 +40,7 @@ export async function createComment(
     );
   }
 
-  const comment = await prisma.comment.create({
+  const create = {
     data: {
       body: body.body,
       source: body.source,
@@ -50,16 +57,110 @@ export async function createComment(
         },
       },
     },
-  });
+  } satisfies Prisma.CommentCreateArgs;
+
+  const comment = commentCaptureEnabled
+    ? await prisma.$transaction(async (transaction) => {
+        const candidate = await transaction.integrationProjectBinding.findFirst({
+          where: { projectId: issue.projectId, lifecycle: "active", connection: { provider: "redmine", lifecycle: "active" } },
+          orderBy: { id: "asc" },
+          select: { id: true },
+        });
+        const [binding] = candidate
+          ? await transaction.$queryRaw<Array<{ id: string; connectionId: string; lifecycleEpoch: number; serviceFallbackEnabled: boolean; serviceCredentialId: string | null }>>(Prisma.sql`
+              SELECT binding."id", binding."connection_id" AS "connectionId", binding."lifecycle_epoch" AS "lifecycleEpoch"
+                   , connection."service_fallback_enabled" AS "serviceFallbackEnabled", connection."service_credential_id" AS "serviceCredentialId"
+              FROM "integration_connections" connection
+              JOIN "integration_project_bindings" binding ON binding."connection_id" = connection."id"
+              WHERE binding."id" = ${candidate.id}::uuid
+                AND binding."project_id" = ${issue.projectId}::uuid
+                AND binding."lifecycle" = 'active'::"IntegrationLifecycle"
+                AND connection."provider" = 'redmine'
+                AND connection."lifecycle" = 'active'::"IntegrationLifecycle"
+              FOR SHARE OF connection, binding
+            `)
+          : [];
+        const [parentRef, actor] = binding
+          ? await Promise.all([
+              transaction.externalRef.findFirst({
+                where: { bindingId: binding.id, entityType: "issue", entityId: issue.id },
+                select: { id: true, externalId: true },
+              }),
+              transaction.member.findUnique({ where: { id: memberId }, select: { isAgent: true } }),
+            ])
+          : [null, null];
+        const credential = !binding || !actor || (actor.isAgent && (!binding.serviceFallbackEnabled || !binding.serviceCredentialId))
+          ? null
+          : await transaction.memberIntegrationCredential.findFirst({
+              where: {
+                connectionId: binding.connectionId,
+                lastAuthStatus: "valid",
+                revokedAt: null,
+                externalUserId: { not: null },
+                ...(actor.isAgent ? { id: binding.serviceCredentialId! } : { memberId }),
+              },
+              select: { id: true, externalUserId: true, lastValidatedAt: true },
+            });
+        const value = await transaction.comment.create(create);
+        await transaction.activityLog.create({
+          data: { issueId: issue.id, memberId, action: "commented", details: { commentId: value.id, source: value.source }, via: via ?? null },
+        });
+        if (binding && parentRef && credential?.externalUserId) {
+          const marker = `<!-- kanon-comment:${value.id} -->`;
+          const work = await captureIntegrationWorkTx(transaction, {
+            bindingId: binding.id,
+            entityType: "comment",
+            entityId: value.id,
+            direction: "outbound",
+            operation: "create",
+            actorKey: `member:${memberId}`,
+            actorKind: actor!.isAgent ? "ai" : "user",
+            payload: {
+              version: 1,
+              body: value.body,
+              bodySha256: createHash("sha256").update(value.body).digest("hex"),
+              commentUpdatedAt: value.updatedAt.toISOString(),
+              issueId: issue.id,
+              parentRefId: parentRef.id,
+              parentRemoteIssueId: parentRef.externalId,
+              bindingEpoch: binding.lifecycleEpoch,
+              credentialId: credential.id,
+              credentialLastValidatedAt: credential.lastValidatedAt?.toISOString() ?? null,
+              credentialRemoteUserId: credential.externalUserId,
+            },
+            correlationId: value.id,
+            authCredentialId: credential.id,
+            refId: null,
+            marker,
+            laneKey: createIntegrationWorkLaneKey(binding.id, "issue", issue.id),
+          });
+          if (hasReservedCommentMarker(value.body)) {
+            await transaction.integrationSyncWork.update({ where: { id: work.id }, data: { state: "ambiguous" } });
+            await transaction.integrationConflict.create({
+              data: {
+                kind: "outbound-create-ambiguity",
+                bindingId: binding.id,
+                workId: work.id,
+                localEvidence: { reason: "reserved-comment-marker" },
+                remoteEvidence: {},
+              },
+            });
+          }
+        }
+        return value;
+      })
+    : await prisma.comment.create(create);
 
   // Auto-create activity log for comment
-  await createActivityLog({
-    issueId: issue.id,
-    memberId,
-    action: "commented",
-    details: { commentId: comment.id, source: comment.source },
-    via,
-  });
+  if (!commentCaptureEnabled) {
+    await createActivityLog({
+      issueId: issue.id,
+      memberId,
+      action: "commented",
+      details: { commentId: comment.id, source: comment.source },
+      via,
+    });
+  }
 
   // Auto-subscribe commenter (best-effort, D9)
   void autoSubscribe(issue.id, memberId, "commenter");

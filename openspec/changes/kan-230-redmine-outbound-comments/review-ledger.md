@@ -102,3 +102,77 @@
 - Findings: empty ledger; no user-impacting reliability defect
 - Remote boundary: exactly four product/test files, 333 additions, zero deletions
 - PR readiness: READY
+
+## PR1 Post-PR Rollback Compatibility Review
+
+- Lens: reliability
+- Scope: payload-only parent proof, work locking, conflict races, and final comment-ref attachment
+
+| id | severity | status | evidence |
+|---|---|---|---|
+| R3-001 | BLOCKER | verified | Done work now stores the attached comment ref; leased, ambiguous, and done tests begin with null `refId` and end with the comment ref. |
+| R3-002 | CRITICAL | verified | Work is locked, then exact payload/state/no-conflict proof is revalidated in a fresh READ COMMITTED statement before attachment. |
+| R3-003 | BLOCKER | verified | The matrix independently rejects wrong issue, parent ref, remote issue, open conflicts, and invalid states. |
+
+- Validation: echo matrix 13/13; API typecheck passed
+- Commit readiness: READY
+
+## PR2 Pre-Commit Risk Review
+
+- Tier: standard
+- Lens: risk
+- Sweep: 1 of 1
+- Product/test scope: 399 changed lines
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| R1-001 | risk | `packages/api/src/modules/integrations/providers/redmine/adapter.ts:526-530` | CRITICAL | verified | Initial review found HTTP 429 became retry and could issue another blind PUT. Strict RED/GREEN now maps 429, 5xx, and non-HTTP outcomes to `ambiguous`; scoped re-review verified only read-only reconciliation follows and found no fix-line defect. |
+
+- Validation: focused 83/83; full API typecheck and 184 files / 2,396 tests passed, 3 skipped; build and formatting pass
+- Commit readiness: READY
+
+## PR2 Post-PR Reliability Reviews
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| CR-PR2-001 | reliability | `packages/api/src/modules/integrations/claims.ts:28-43` | MAJOR | verified | Excluded comments are now omitted from both claim candidates and earlier same-lane barriers. A real-database regression failed before the query fix and passes after it. |
+| RR-PR2-002 | reliability | `packages/api/src/modules/integrations/providers/redmine/adapter.test.ts:77-106`, `packages/api/src/modules/integrations/retry.test.ts:283-337` | BLOCKER | verified | Decoy journals, incomplete immediate proof, and wrong-actor reconciliation cannot finalize comment work; exact proof still converges to `done`. |
+| RR-PR2-003 | reliability | `packages/api/src/modules/integrations/retry.test.ts:320-328` | BLOCKER | verified | Stale body, parent, and credential snapshots make zero provider calls and durably become `superseded`, `dead`, and `dead` respectively. |
+
+- Validation: claims/adapter/http/worker **92/92**; API typecheck, Prettier, and `git diff --check` passed
+- Product/test scope remains exactly 399 changed lines
+- Scoped risk re-review: empty ledger; no reportable fix-line defect
+- Push readiness: READY
+
+## PR3 Pre-Code Gate Review
+
+| id | initial verdict | final verdict | evidence |
+|---|---|---|---|
+| JD-003 | BLOCK | PASS | Capture now locks/revalidates connection → binding before comment/activity FKs can lock issue; inbound and worker use the same prefix. |
+| JD2-002 | BLOCK | PASS | Parent ref remains in immutable payload; PR1 `5e3077a` recognizes payload-only work, stores comment `refId`, rejects open conflicts, and rollback drains work before PR2 removal. |
+
+- Review mode: two blind scoped judges
+- Apply gate: OPEN for PR3 implementation
+
+## PR3 Pre-Commit Risk Review
+
+- Tier: standard
+- Lens: risk
+- Sweep: 1 of 1
+- Product/test scope: 261 changed lines
+- Findings: empty ledger; no reportable security, privilege-boundary, data-exposure, dependency, or merge-blocking defect
+- Validation: focused 139/139; full API typecheck and 184 files / 2,404 tests passed, 3 skipped; build passed
+- Commit readiness: READY
+
+## PR3 Post-PR Reliability Review
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| R3-001 | reliability | `packages/api/src/modules/integrations/outbox.int.test.ts:173-194` | CRITICAL | verified | The real producer test now asserts the parent issue lane and complete body/hash/timestamp/binding/credential/actor snapshot. |
+| R3-002 | reliability | `packages/api/src/modules/comment/__tests__/service.test.ts:257-279`, `packages/api/src/modules/integrations/outbox.int.test.ts:267-288` | CRITICAL | verified | Capture rejection escapes the shared transaction, and the existing real-database test proves domain mutation plus work roll back together when that transaction throws. |
+| R3-003 | reliability | `packages/api/src/modules/comment/__tests__/service.test.ts:276-279` | WARNING | info | Binding disappearance is covered; other missing-proof no-capture branches remain warning-only residual coverage. |
+| R3-004 | reliability | `packages/api/src/modules/comment/__tests__/service.test.ts:257-258` | WARNING | info | Lock order is covered by call order and source review rather than timing-dependent real contention. |
+
+- Validation: service/outbox **22/22**; API typecheck, Prettier, and `git diff --check` passed
+- Product/test scope: 261 changed lines
+- PR readiness: READY

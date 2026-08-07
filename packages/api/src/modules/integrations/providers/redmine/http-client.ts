@@ -249,11 +249,15 @@ export class RedmineHttpClient {
     return this.send<T>("PUT", path, body);
   }
 
+  putOnce<T>(path: string, body: unknown): Promise<T> {
+    return this.send<T>("PUT", path, body, 1);
+  }
+
   delete<T>(path: string): Promise<T> {
     return this.send<T>("DELETE", path);
   }
 
-  private async send<T>(method: Dispatcher.HttpMethod, path: string, value?: unknown): Promise<T> {
+  private async send<T>(method: Dispatcher.HttpMethod, path: string, value?: unknown, limit?: number): Promise<T> {
     const target = new URL(path.replace(/^\/+/, ""), this.baseUrl);
     if (target.origin !== this.baseUrl.origin) throw unsafe("request path changed origin");
 
@@ -263,7 +267,7 @@ export class RedmineHttpClient {
       "X-Redmine-API-Key": this.apiKey,
     };
     if (body !== undefined) headers["content-type"] = "application/json";
-    const attempts = method === "POST" ? 1 : this.maxAttempts;
+    const attempts = limit ?? (method === "POST" ? 1 : this.maxAttempts);
 
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       const controller = new AbortController();
