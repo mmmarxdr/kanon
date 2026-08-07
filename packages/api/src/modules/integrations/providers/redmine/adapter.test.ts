@@ -79,7 +79,11 @@ describe("RedmineProviderAdapter", () => {
     http.get.mockResolvedValue({
       issue: {
         id: 42,
-        journals: [{ id: 9, notes: `${comment.body}\n\n${commentMarker}`, user: { id: 8 }, created_on: "2026-07-02T14:01:00Z" }],
+        journals: [
+          { id: 9, notes: `${comment.body}\n\n${commentMarker}`, user: { id: 8 }, created_on: "2026-07-02T14:01:00Z" },
+          { id: 10, notes: `Changed\n\n${commentMarker}`, user: { id: 8 } },
+          { id: 11, notes: `${comment.body}\n\n${commentMarker}`, user: { id: 7 } },
+        ],
       },
     });
     const adapter = new RedmineProviderAdapter(http, {
@@ -87,16 +91,8 @@ describe("RedmineProviderAdapter", () => {
       resolveExternalId: async (type) => (type === "user" ? "8" : null),
     });
 
-    await expect(adapter.pushComment(comment, "42")).resolves.toMatchObject({
-      externalId: "9",
-      remoteIssueId: "42",
-      marker: commentMarker,
-      strippedBodySha256: commentHash,
-      remoteActorId: "8",
-    });
-    expect(http.putOnce).toHaveBeenCalledWith("/issues/42.json", {
-      issue: { notes: `${comment.body}\n\n${commentMarker}`, private_notes: false },
-    });
+    await expect(adapter.pushComment(comment, "42")).resolves.toMatchObject({ externalId: "9", remoteIssueId: "42", marker: commentMarker, strippedBodySha256: commentHash, remoteActorId: "8" });
+    expect(http.putOnce).toHaveBeenCalledWith("/issues/42.json", { issue: { notes: `${comment.body}\n\n${commentMarker}`, private_notes: false } });
     http.putOnce.mockRejectedValueOnce(new RedmineHttpError(429));
     await expect(adapter.pushComment(comment, "42")).rejects.toMatchObject({ outcome: "ambiguous" });
     expect(http.putOnce).toHaveBeenCalledTimes(2);

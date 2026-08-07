@@ -131,13 +131,15 @@
 - Validation: focused 83/83; full API typecheck and 184 files / 2,396 tests passed, 3 skipped; build and formatting pass
 - Commit readiness: READY
 
-## PR2 Post-PR Same-Lane Gate Review
+## PR2 Post-PR Reliability Reviews
 
 | id | lens | location | severity | status | evidence |
 |---|---|---|---|---|---|
 | CR-PR2-001 | reliability | `packages/api/src/modules/integrations/claims.ts:28-43` | MAJOR | verified | Excluded comments are now omitted from both claim candidates and earlier same-lane barriers. A real-database regression failed before the query fix and passes after it. |
+| RR-PR2-002 | reliability | `packages/api/src/modules/integrations/providers/redmine/adapter.test.ts:77-106`, `packages/api/src/modules/integrations/retry.test.ts:283-337` | BLOCKER | verified | Decoy journals, incomplete immediate proof, and wrong-actor reconciliation cannot finalize comment work; exact proof still converges to `done`. |
+| RR-PR2-003 | reliability | `packages/api/src/modules/integrations/retry.test.ts:320-328` | BLOCKER | verified | Stale body, parent, and credential snapshots make zero provider calls and durably become `superseded`, `dead`, and `dead` respectively. |
 
-- Validation: claims/worker **59/59**; API typecheck, Prettier, and `git diff --check` passed
+- Validation: claims/adapter/http/worker **92/92**; API typecheck, Prettier, and `git diff --check` passed
 - Product/test scope remains exactly 399 changed lines
 - Scoped risk re-review: empty ledger; no reportable fix-line defect
 - Push readiness: READY

@@ -280,7 +280,7 @@ describe("integration worker retry and completion", () => {
     await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: issueWork.id } })).resolves.toMatchObject({ state: "done" });
   });
 
-  it("reconciles a fully fenced ambiguous comment when explicitly enabled", async () => {
+  it("rejects stale capture and incomplete proof before exact reconciliation", async () => {
     const fixture = await createFixture();
     const parentRef = await createRef(fixture, "issue", fixture.issue.id, "42");
     const comment = await prisma.comment.create({
@@ -307,21 +307,25 @@ describe("integration worker retry and completion", () => {
         credentialRemoteUserId: "remote-user",
       },
     });
-    const proof = {
-      ...success("9"),
-      remoteIssueId: "42",
-      marker,
-      strippedBodySha256: bodySha256,
-      remoteActorId: "remote-user",
-    };
-    const pushComment = vi.fn().mockRejectedValue(new ProviderDispatchError("ambiguous", new Error("response lost")));
-    const reconcileCreate = vi.fn().mockResolvedValue([proof]);
+    const proof = { ...success("9"), remoteIssueId: "42", marker, strippedBodySha256: bodySha256, remoteActorId: "remote-user" };
+    const pushComment = vi.fn().mockResolvedValue(success("9"));
+    const reconcileCreate = vi.fn().mockResolvedValueOnce([{ ...proof, remoteActorId: "wrong" }]).mockResolvedValue([proof]);
 
     const setup = dependencies(adapter({ pushComment, reconcileCreate }), { commentDispatchEnabled: true, limit: 1 });
+    const captured = work.payload as Prisma.InputJsonObject;
+    for (const [payload, state] of [[{ ...captured, body: "stale" }, "superseded"], [{ ...captured, parentRemoteIssueId: "wrong" }, "dead"], [{ ...captured, credentialId: randomUUID() }, "dead"]] as const) {
+      await prisma.integrationSyncWork.update({ where: { id: work.id }, data: { state: "queued", payload, leaseToken: null, leaseUntil: null } });
+      await runIntegrationWorkerCycle(prisma, setup.deps);
+      await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({ state });
+    }
+    expect(pushComment).not.toHaveBeenCalled();
+    await prisma.integrationSyncWork.update({ where: { id: work.id }, data: { state: "queued", payload: captured, leaseToken: null, leaseUntil: null } });
     await runIntegrationWorkerCycle(prisma, setup.deps);
     await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({ state: "ambiguous" });
     await runIntegrationWorkerCycle(prisma, setup.deps);
-
+    await expect(prisma.integrationConflict.count({ where: { workId: work.id } })).resolves.toBe(1);
+    await prisma.integrationConflict.deleteMany({ where: { workId: work.id } });
+    await runIntegrationWorkerCycle(prisma, setup.deps);
     expect(pushComment).toHaveBeenCalledWith(expect.objectContaining({ id: comment.id, body: comment.body }), "42");
     expect(reconcileCreate).toHaveBeenCalledWith(expect.objectContaining({ entityType: "comment", marker }));
     await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({ state: "done" });
