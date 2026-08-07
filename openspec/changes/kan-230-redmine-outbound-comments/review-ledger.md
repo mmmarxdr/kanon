@@ -143,3 +143,36 @@
 - Product/test scope remains exactly 399 changed lines
 - Scoped risk re-review: empty ledger; no reportable fix-line defect
 - Push readiness: READY
+
+## PR3 Pre-Code Gate Review
+
+| id | initial verdict | final verdict | evidence |
+|---|---|---|---|
+| JD-003 | BLOCK | PASS | Capture now locks/revalidates connection → binding before comment/activity FKs can lock issue; inbound and worker use the same prefix. |
+| JD2-002 | BLOCK | PASS | Parent ref remains in immutable payload; PR1 `5e3077a` recognizes payload-only work, stores comment `refId`, rejects open conflicts, and rollback drains work before PR2 removal. |
+
+- Review mode: two blind scoped judges
+- Apply gate: OPEN for PR3 implementation
+
+## PR3 Pre-Commit Risk Review
+
+- Tier: standard
+- Lens: risk
+- Sweep: 1 of 1
+- Product/test scope: 261 changed lines
+- Findings: empty ledger; no reportable security, privilege-boundary, data-exposure, dependency, or merge-blocking defect
+- Validation: focused 139/139; full API typecheck and 184 files / 2,404 tests passed, 3 skipped; build passed
+- Commit readiness: READY
+
+## PR3 Post-PR Reliability Review
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| R3-001 | reliability | `packages/api/src/modules/integrations/outbox.int.test.ts:173-194` | CRITICAL | verified | The real producer test now asserts the parent issue lane and complete body/hash/timestamp/binding/credential/actor snapshot. |
+| R3-002 | reliability | `packages/api/src/modules/comment/__tests__/service.test.ts:257-279`, `packages/api/src/modules/integrations/outbox.int.test.ts:267-288` | CRITICAL | verified | Capture rejection escapes the shared transaction, and the existing real-database test proves domain mutation plus work roll back together when that transaction throws. |
+| R3-003 | reliability | `packages/api/src/modules/comment/__tests__/service.test.ts:276-279` | WARNING | info | Binding disappearance is covered; other missing-proof no-capture branches remain warning-only residual coverage. |
+| R3-004 | reliability | `packages/api/src/modules/comment/__tests__/service.test.ts:257-258` | WARNING | info | Lock order is covered by call order and source review rather than timing-dependent real contention. |
+
+- Validation: service/outbox **22/22**; API typecheck, Prettier, and `git diff --check` passed
+- Product/test scope: 261 changed lines
+- PR readiness: READY

@@ -220,6 +220,15 @@ describe("envSchema — FORECAST_* env vars", () => {
   });
 });
 
+describe("envSchema — comment rollout", () => {
+  const base = { DATABASE_URL: "postgresql://user:pass@localhost:5432/kanon", JWT_SECRET: "a".repeat(16), JWT_REFRESH_SECRET: "b".repeat(16) };
+
+  it("defaults capture off and only enables explicit true", () => {
+    expect(envSchema.parse(base).INTEGRATION_COMMENT_CAPTURE_ENABLED).toBe(false);
+    expect(envSchema.parse({ ...base, INTEGRATION_COMMENT_CAPTURE_ENABLED: "true" }).INTEGRATION_COMMENT_CAPTURE_ENABLED).toBe(true);
+  });
+});
+
 describe("envSchema — REDMINE_ENDPOINT_ALLOWLIST", () => {
   const base = {
     DATABASE_URL: "postgresql://user:pass@localhost:5432/kanon",
