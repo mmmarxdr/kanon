@@ -8,8 +8,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // --- Mocks ---
 
-vi.mock("../../../config/prisma.js", () => ({
-  prisma: {
+vi.mock("../../../config/prisma.js", () => {
+  const transaction = {
     comment: {
       findUnique: vi.fn(),
       update: vi.fn(),
@@ -21,7 +21,20 @@ vi.mock("../../../config/prisma.js", () => ({
     activityLog: {
       create: vi.fn(),
     },
-  },
+    integrationProjectBinding: { findFirst: vi.fn() },
+    externalRef: { findFirst: vi.fn() },
+    member: { findUnique: vi.fn() },
+    memberIntegrationCredential: { findFirst: vi.fn() },
+    integrationSyncWork: { update: vi.fn() },
+    integrationConflict: { create: vi.fn() },
+    $queryRaw: vi.fn(),
+  };
+  return { prisma: { ...transaction, $transaction: vi.fn((operation) => operation(transaction)) } };
+});
+
+vi.mock("../../integrations/outbox.js", () => ({
+  captureIntegrationWorkTx: vi.fn().mockResolvedValue({ id: "work-1" }),
+  createIntegrationWorkLaneKey: vi.fn().mockReturnValue("issue-lane"),
 }));
 
 // Mock parseAndUpsertMentions — we test that updateComment calls it correctly
@@ -37,6 +50,7 @@ vi.mock("../../activity/service.js", () => ({
 import { prisma } from "../../../config/prisma.js";
 import { parseAndUpsertMentions } from "../../mentions/service.js";
 import { updateComment, createComment } from "../service.js";
+import { captureIntegrationWorkTx } from "../../integrations/outbox.js";
 
 const mockIssueFindUnique = vi.mocked(prisma.issue.findUnique);
 const mockCommentCreate = vi.mocked(prisma.comment.create);
@@ -44,6 +58,7 @@ const mockCommentFindUnique = vi.mocked(prisma.comment.findUnique);
 const mockCommentUpdate = vi.mocked(prisma.comment.update);
 const mockActivityLogCreate = vi.mocked(prisma.activityLog.create);
 const mockParseAndUpsertMentions = vi.mocked(parseAndUpsertMentions);
+const mockCaptureIntegrationWorkTx = vi.mocked(captureIntegrationWorkTx);
 
 function makeComment(overrides?: Record<string, unknown>) {
   return {
@@ -225,6 +240,36 @@ describe("A6.1 — createComment wires parseAndUpsertMentions", () => {
     mockActivityLogCreate.mockResolvedValue({} as any);
   });
 
+  it("atomically captures eligible Redmine comment work behind the rollout flag", async () => {
+    const created = makeCreatedComment({ body: "Ship it" });
+    mockIssueFindUnique.mockResolvedValue({ id: "iss-1", key: "TEST-1", title: "Issue", projectId: "project-1", project: { workspaceId: "ws-1" } } as any);
+    mockCommentCreate.mockResolvedValue(created as any);
+    vi.mocked(prisma.integrationProjectBinding.findFirst).mockResolvedValue({
+      id: "binding-1", connectionId: "connection-1", connection: { serviceFallbackEnabled: false, serviceCredentialId: null },
+    } as any);
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([{ id: "binding-1", connectionId: "connection-1", lifecycleEpoch: 3 }] as any);
+    vi.mocked(prisma.externalRef.findFirst).mockResolvedValue({ id: "parent-ref", externalId: "100" } as any);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({ isAgent: false } as any);
+    vi.mocked(prisma.memberIntegrationCredential.findFirst).mockResolvedValue({ id: "credential-1", externalUserId: "5", lastValidatedAt: null } as any);
+
+    await createComment("TEST-1", { body: "Ship it", source: "human" }, "m-alice", null, true);
+
+    expect(prisma.$transaction).toHaveBeenCalledOnce();
+    expect(vi.mocked(prisma.$queryRaw).mock.invocationCallOrder[0]).toBeLessThan(mockCommentCreate.mock.invocationCallOrder[0]!);
+    expect(mockActivityLogCreate).toHaveBeenCalledOnce();
+    expect(mockCaptureIntegrationWorkTx).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      entityType: "comment", entityId: created.id, operation: "create", laneKey: "issue-lane",
+      authCredentialId: "credential-1", refId: null, marker: `<!-- kanon-comment:${created.id} -->`,
+      payload: expect.objectContaining({ issueId: "iss-1", parentRefId: "parent-ref", parentRemoteIssueId: "100", credentialRemoteUserId: "5" }),
+    }));
+
+    const reserved = "Copied <!-- kanon-comment:550e8400-e29b-41d4-a716-446655440000 -->";
+    mockCommentCreate.mockResolvedValue({ ...created, body: reserved } as any);
+    await createComment("TEST-1", { body: reserved, source: "human" }, "m-alice", null, true);
+    expect(prisma.integrationSyncWork.update).toHaveBeenCalledWith(expect.objectContaining({ data: { state: "ambiguous" } }));
+    expect(prisma.integrationConflict.create).toHaveBeenCalledOnce();
+  });
+
   it("calls parseAndUpsertMentions with correct args after creating a comment with @mentions", async () => {
     const issue = makeIssueForComment();
     // createComment does findUnique by key, now returns { id, project: { workspaceId } }
@@ -265,6 +310,7 @@ describe("A6.1 — createComment wires parseAndUpsertMentions", () => {
 
     // The wiring is unconditional — parser handles the no-mention case internally
     expect(mockParseAndUpsertMentions).toHaveBeenCalledOnce();
+    expect(mockCaptureIntegrationWorkTx).not.toHaveBeenCalled();
   });
 
   it("does NOT break createComment when parseAndUpsertMentions throws (best-effort)", async () => {

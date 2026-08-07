@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { prisma } from "../../config/prisma.js";
+import { createComment } from "../comment/service.js";
 import {
   captureIntegrationWorkTx,
+  createIntegrationWorkLaneKey,
   scanIntegrationWork,
   type IntegrationWorkCapture,
 } from "./outbox.js";
@@ -168,6 +170,49 @@ afterAll(async () => {
 });
 
 describe("integration outbox capture and scanner", () => {
+  it("atomically captures a real linked comment with immutable dispatch proof", async () => {
+    const fixture = await createFixture();
+    const credential = await createCredential(fixture.workspace.id, fixture.connection.id);
+    await Promise.all([
+      prisma.integrationConnection.update({ where: { id: fixture.connection.id }, data: { lifecycle: "active" } }),
+      prisma.integrationProjectBinding.update({ where: { id: fixture.binding.id }, data: { lifecycle: "active" } }),
+      prisma.memberIntegrationCredential.update({
+        where: { id: credential.id },
+        data: { externalUserId: "5", lastAuthStatus: "valid", lastValidatedAt: new Date("2026-08-01T10:00:00Z") },
+      }),
+    ]);
+
+    const comment = await createComment(fixture.issue.key, { body: "Ship atomically", source: "human" }, credential.memberId, null, true);
+    const work = await prisma.integrationSyncWork.findFirstOrThrow({ where: { entityType: "comment", entityId: comment.id } });
+
+    expect(work).toMatchObject({
+      bindingId: fixture.binding.id, operation: "create", authCredentialId: credential.id, refId: null,
+      marker: `<!-- kanon-comment:${comment.id} -->`,
+      payload: expect.objectContaining({ issueId: fixture.issue.id, parentRefId: fixture.externalRef.id, parentRemoteIssueId: fixture.externalRef.externalId, credentialRemoteUserId: "5" }),
+    });
+    await expect(prisma.activityLog.count({ where: { issueId: fixture.issue.id, details: { path: ["commentId"], equals: comment.id } } })).resolves.toBe(1);
+  });
+
+  it("captures comment ownership on the parent issue lane without storing the parent ref", async () => {
+    const fixture = await createFixture();
+    const credential = await createCredential(fixture.workspace.id, fixture.connection.id);
+    const comment = await prisma.comment.create({
+      data: { body: "Outbound", issueId: fixture.issue.id, authorId: credential.memberId },
+    });
+    const laneKey = createIntegrationWorkLaneKey(fixture.binding.id, "issue", fixture.issue.id);
+
+    const work = await captureInTransaction(fixture, {
+      entityType: "comment", entityId: comment.id, operation: "create", correlationId: comment.id,
+      authCredentialId: credential.id, refId: null, laneKey, payload: { version: 1 },
+    });
+
+    expect(work).toMatchObject({ entityType: "comment", entityId: comment.id, laneKey, refId: null });
+    await expect(captureInTransaction(fixture, {
+      entityType: "comment", entityId: comment.id, operation: "create",
+      correlationId: randomUUID(), refId: fixture.externalRef.id, payload: { version: 1 },
+    })).rejects.toThrow(/reference/i);
+  });
+
   it("captures one durable, idempotent lane item inside the caller transaction", async () => {
     const fixture = await createFixture();
     const credential = await createCredential(fixture.workspace.id, fixture.connection.id);

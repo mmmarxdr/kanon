@@ -2,7 +2,7 @@
 
 ## Status
 
-**PR2 complete — proof-backed Redmine comment dispatch is implemented, verified, and dark by default.** No local capture path exists, so the slice remains inert.
+**PR3 complete — outbound Redmine comment capture is atomic, verified, and dark by default.** The full recognition, dispatch, and capture chain is ready for review without enabling production traffic.
 
 ## Completed Tasks
 
@@ -13,6 +13,28 @@
 - [x] 2.2 **RED:** One-write transport, complete proof, dark gating, and ambiguity reconciliation tests failed before implementation.
 - [x] 2.3 **GREEN:** Provider contracts, Redmine transport/proof, worker fences, dispatch, and reconciliation implemented.
 - [x] 2.4 **REFACTOR/verify:** Dispatch defaults off; focused tests, full API suite, typecheck, and build pass.
+- [x] 3.1 **Gate:** Connection → binding lock order validated and amended before code.
+- [x] 3.2 **Gate:** Parent issue proof remains in immutable payload; `work.refId` remains available for the comment ref.
+- [x] 3.3 **RED:** Eligible/inactive links, reserved markers, ownership, and real-database lock order covered before implementation.
+- [x] 3.4 **GREEN:** Atomic comment/activity/work capture and parent issue lane implemented without reopening PR1/PR2 boundaries.
+- [x] 3.5 **REFACTOR/verify:** Capture defaults off; focused tests, full API suite, typecheck, and build pass.
+
+## PR3 Boundary
+
+- `INTEGRATION_COMMENT_CAPTURE_ENABLED` defaults to `false`; disabled capture creates only the existing comment and activity records.
+- Eligible capture locks and revalidates connection → binding before inserting comment, activity, and work in one transaction.
+- The immutable payload snapshots body/hash/timestamp, parent proof, binding epoch, credential version, and remote actor; `work.refId` stays null until PR1 attaches the remote comment ref.
+- Work uses the parent issue lane. Reserved outbound markers create a durable conflict instead of dispatchable work.
+- PR1 owns convergent echo attachment and PR2 owns provider dispatch; PR3 does not duplicate or reopen either path.
+- Product/test changed lines: **249**, within the **≤399** PR limit.
+
+## PR3 TDD and Verification
+
+- RED: capture, snapshot, lock-order, reserved-marker, and ownership assertions failed before production implementation.
+- GREEN focused: environment, comment service, outbox integration, inbound, and retry coverage — **139 tests passed**.
+- Full API: **184 files / 2,404 tests passed; 3 skipped**.
+- `test:types` and API build passed.
+- Pre-commit risk review returned an empty ledger with no reportable defect.
 
 ## PR2 Boundary
 
@@ -85,9 +107,8 @@
 
 ## Remaining Tasks
 
-- [ ] 3.1–3.5 PR3 atomic capture and activation.
-- [ ] Completion.
+- None.
 
 ## Risks
 
-No open PR1/PR2 implementation risks. PR3 remains intentionally unimplemented and must preserve the established marker-proof boundary and lock order.
+No open PR1/PR2/PR3 implementation risks. Both capture and dispatch remain off by default and require an explicit staged rollout.

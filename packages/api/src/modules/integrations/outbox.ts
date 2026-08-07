@@ -3,7 +3,7 @@ import { Prisma, PrismaClient } from "@prisma/client";
 
 const SCANNABLE_STATES = ["queued", "retry"] as const;
 const DEFAULT_SCAN_LIMIT = 100;
-const SUPPORTED_ENTITY_TYPES = ["issue", "project", "cycle", "time_entry"] as const;
+const SUPPORTED_ENTITY_TYPES = ["issue", "project", "cycle", "comment", "time_entry"] as const;
 
 export type IntegrationWorkDirection = "outbound" | "inbound";
 export type IntegrationWorkOperation = "create" | "update" | "delete" | "close";
@@ -23,6 +23,7 @@ interface IntegrationWorkCaptureBase {
   readonly availableAt?: Date;
   readonly epoch?: number;
   readonly marker?: string | null;
+  readonly laneKey?: string;
 }
 
 export interface IntegrationWorkCapture extends IntegrationWorkCaptureBase {
@@ -78,6 +79,15 @@ async function loadEntityOwnership(
       });
       return issue
         ? { projectId: issue.projectId, workspaceId: issue.project.workspaceId }
+        : null;
+    }
+    case "comment": {
+      const comment = await transaction.comment.findUnique({
+        where: { id: entityId },
+        select: { issue: { select: { projectId: true, project: { select: { workspaceId: true } } } } },
+      });
+      return comment
+        ? { projectId: comment.issue.projectId, workspaceId: comment.issue.project.workspaceId }
         : null;
     }
     case "cycle": {
@@ -150,6 +160,7 @@ export async function captureIntegrationWorkTx(
   assertNonEmpty("entityType", capture.entityType);
   assertNonEmpty("entityId", capture.entityId);
   assertNonEmpty("actorKey", capture.actorKey);
+  if (capture.laneKey !== undefined) assertNonEmpty("laneKey", capture.laneKey);
   const correlationId = correlationIdFor(capture);
   if (!isSupportedEntityType(capture.entityType)) {
     throw new Error(`Unsupported integration entity type ${capture.entityType}`);
@@ -249,11 +260,7 @@ export async function captureIntegrationWorkTx(
     capture.operation,
     correlationId,
   );
-  const laneKey = createIntegrationWorkLaneKey(
-    capture.bindingId,
-    capture.entityType,
-    capture.entityId,
-  );
+  const laneKey = capture.laneKey ?? createIntegrationWorkLaneKey(capture.bindingId, capture.entityType, capture.entityId);
   const data: Prisma.IntegrationSyncWorkUncheckedCreateInput = {
     entityType: capture.entityType,
     entityId: capture.entityId,
