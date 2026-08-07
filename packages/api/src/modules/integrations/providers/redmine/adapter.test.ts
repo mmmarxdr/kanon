@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type {
+  CanonicalComment,
   CanonicalCycle,
   CanonicalIssue,
   CanonicalIssuePatch,
@@ -57,12 +59,49 @@ const timeEntry: CanonicalTimeEntry = {
   hours: "1.5",
   workedOn: new Date("2026-07-02T14:00:00.000Z"),
 };
+const comment: CanonicalComment = {
+  id: "2f307e3a-10e5-4bf0-8473-a78ab84da53b",
+  issueId: issue.id,
+  body: "Delivered body",
+  author: { id: "user-1", displayName: "Ada" },
+  createdAt: new Date("2026-07-02T14:00:00.000Z"),
+};
+const commentMarker = `<!-- kanon-comment:${comment.id} -->`;
+const commentHash = createHash("sha256").update(comment.body).digest("hex");
 
 function client() {
-  return { delete: vi.fn(), get: vi.fn(), post: vi.fn(), put: vi.fn() };
+  return { delete: vi.fn(), get: vi.fn(), post: vi.fn(), put: vi.fn(), putOnce: vi.fn() };
 }
 
 describe("RedmineProviderAdapter", () => {
+  it("writes one public note and proves its exact parent, marker, body, and actor", async () => {
+    const http = client();
+    http.get.mockResolvedValue({
+      issue: {
+        id: 42,
+        journals: [{ id: 9, notes: `${comment.body}\n\n${commentMarker}`, user: { id: 8 }, created_on: "2026-07-02T14:01:00Z" }],
+      },
+    });
+    const adapter = new RedmineProviderAdapter(http, {
+      writeMap: {},
+      resolveExternalId: async (type) => (type === "user" ? "8" : null),
+    });
+
+    await expect(adapter.pushComment(comment, "42")).resolves.toMatchObject({
+      externalId: "9",
+      remoteIssueId: "42",
+      marker: commentMarker,
+      strippedBodySha256: commentHash,
+      remoteActorId: "8",
+    });
+    expect(http.putOnce).toHaveBeenCalledWith("/issues/42.json", {
+      issue: { notes: `${comment.body}\n\n${commentMarker}`, private_notes: false },
+    });
+    http.putOnce.mockRejectedValueOnce(new RedmineHttpError(429));
+    await expect(adapter.pushComment(comment, "42")).rejects.toMatchObject({ outcome: "ambiguous" });
+    expect(http.putOnce).toHaveBeenCalledTimes(2);
+  });
+
   it("discovers projects, statuses, cycles, trackers, and the authenticated user", async () => {
     const http = client();
     http.get.mockImplementation((path: string) => {

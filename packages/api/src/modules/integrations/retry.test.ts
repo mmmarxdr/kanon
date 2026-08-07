@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -43,7 +43,7 @@ import {
 type DispatchAdapter = Pick<
   PmProviderAdapter,
   "ensureProject" | "ensureCycle" | "pushIssue" | "reconcileCreate"
-> & Partial<Pick<PmProviderAdapter, "pushTimeEntry">>;
+> & Partial<Pick<PmProviderAdapter, "pushComment" | "pushTimeEntry">>;
 
 const NOW = new Date("2026-07-30T12:00:00.000Z");
 const FAR_FUTURE = new Date("2999-01-01T00:00:00.000Z");
@@ -261,6 +261,73 @@ afterAll(async () => {
 });
 
 describe("integration worker retry and completion", () => {
+  it("keeps ambiguous comments dark while unrelated work continues", async () => {
+    const fixture = await createFixture();
+    const ambiguous = await createWork(fixture, {
+      entityType: "comment",
+      entityId: fixture.issue.id,
+      operation: "create",
+      state: "ambiguous",
+      payload: { version: 1 },
+    });
+    const issueWork = await createWork(fixture);
+    const pushIssue = vi.fn().mockResolvedValue(success());
+
+    await runIntegrationWorkerCycle(prisma, dependencies(adapter({ pushIssue }), { limit: 3 }).deps);
+
+    expect(pushIssue).toHaveBeenCalledOnce();
+    await expect(prisma.integrationConflict.count({ where: { workId: ambiguous.id } })).resolves.toBe(0);
+    await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: ambiguous.id } })).resolves.toMatchObject({ state: "ambiguous", leaseToken: null });
+    await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: issueWork.id } })).resolves.toMatchObject({ state: "done" });
+  });
+
+  it("reconciles a fully fenced ambiguous comment when explicitly enabled", async () => {
+    const fixture = await createFixture();
+    const parentRef = await createRef(fixture, "issue", fixture.issue.id, "42");
+    const comment = await prisma.comment.create({
+      data: { body: "Delivered body", issueId: fixture.issue.id, authorId: fixture.member.id },
+    });
+    const marker = `<!-- kanon-comment:${comment.id} -->`;
+    const bodySha256 = createHash("sha256").update(comment.body).digest("hex");
+    const work = await createWork(fixture, {
+      entityType: "comment",
+      entityId: comment.id,
+      operation: "create",
+      marker,
+      payload: {
+        version: 1,
+        body: comment.body,
+        bodySha256,
+        commentUpdatedAt: comment.updatedAt.toISOString(),
+        issueId: fixture.issue.id,
+        parentRefId: parentRef.id,
+        parentRemoteIssueId: parentRef.externalId,
+        bindingEpoch: fixture.binding.lifecycleEpoch,
+        credentialId: fixture.credential.id,
+        credentialLastValidatedAt: null,
+        credentialRemoteUserId: "remote-user",
+      },
+    });
+    const proof = {
+      ...success("9"),
+      remoteIssueId: "42",
+      marker,
+      strippedBodySha256: bodySha256,
+      remoteActorId: "remote-user",
+    };
+    const pushComment = vi.fn().mockRejectedValue(new ProviderDispatchError("ambiguous", new Error("response lost")));
+    const reconcileCreate = vi.fn().mockResolvedValue([proof]);
+
+    const setup = dependencies(adapter({ pushComment, reconcileCreate }), { commentDispatchEnabled: true, limit: 1 });
+    await runIntegrationWorkerCycle(prisma, setup.deps);
+    await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({ state: "ambiguous" });
+    await runIntegrationWorkerCycle(prisma, setup.deps);
+
+    expect(pushComment).toHaveBeenCalledWith(expect.objectContaining({ id: comment.id, body: comment.body }), "42");
+    expect(reconcileCreate).toHaveBeenCalledWith(expect.objectContaining({ entityType: "comment", marker }));
+    await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({ state: "done" });
+  });
+
   it("shares one non-overlapping cycle across concurrent wake-ups", async () => {
     let release!: () => void;
     const pending = new Promise<void>((resolve) => {
@@ -593,7 +660,7 @@ describe("integration worker retry and completion", () => {
 
     expect(claim).toHaveBeenCalledOnce();
     expect(claim.mock.calls[0]?.[0]).toBe(prisma);
-    expect(claim.mock.calls[0]?.[1]).toEqual({ limit: 1 });
+    expect(claim.mock.calls[0]?.[1]).toEqual({ limit: 1, excludeComments: true });
   });
 
   it("uses the database clock for production prepare and finalize under app clock skew", async () => {

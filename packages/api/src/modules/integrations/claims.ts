@@ -9,9 +9,10 @@ export interface IntegrationWorkClaimOptions {
   readonly now?: Date;
   readonly limit?: number;
   readonly leaseMs?: number;
+  readonly excludeComments?: boolean;
 }
 
-function genuinelyClaimable(at: Prisma.Sql): Prisma.Sql {
+function genuinelyClaimable(at: Prisma.Sql, excludeComments: boolean): Prisma.Sql {
   return Prisma.sql`
     connection."lifecycle" = 'active'::"IntegrationLifecycle"
     AND binding."lifecycle" = 'active'::"IntegrationLifecycle"
@@ -20,6 +21,7 @@ function genuinelyClaimable(at: Prisma.Sql): Prisma.Sql {
       'ready'::"IntegrationBootstrapState"
     )
     AND work."direction" = 'outbound'::"SyncDirection"
+    AND (${!excludeComments} OR work."entity_type" <> 'comment')
     AND work."state" IN ('queued'::"SyncWorkState", 'retry'::"SyncWorkState")
     AND work."available_at" <= ${at}
     AND work."epoch" = binding."lifecycle_epoch"
@@ -58,7 +60,7 @@ export async function claimIntegrationWork(
   return database.$transaction(async (transaction) => {
     await transaction.$queryRaw`SELECT set_config('lock_timeout', '1000ms', true)`;
     const dueAt = options.now ? Prisma.sql`${options.now}` : Prisma.sql`clock_timestamp()`;
-    const eligibility = genuinelyClaimable(dueAt);
+    const eligibility = genuinelyClaimable(dueAt, options.excludeComments === true);
     const bindings = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
       SELECT binding."id"
       FROM "integration_connections" AS connection

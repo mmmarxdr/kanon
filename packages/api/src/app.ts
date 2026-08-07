@@ -230,7 +230,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   let injectedRunning: Promise<unknown> | undefined;
   const integrationWorker = injectedScan
     ? undefined
-    : createIntegrationWorkerCycle(prisma, { logger: app.log });
+    : createIntegrationWorkerCycle(prisma, { logger: app.log, commentDispatchEnabled: env.INTEGRATION_COMMENT_DISPATCH_ENABLED });
   const integrationScan = injectedScan
     ? () => {
         if (injectedRunning) return injectedRunning;

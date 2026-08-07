@@ -35,10 +35,10 @@ Tracker `feat/kan-230-redmine-outbound-comments` targets `main` as draft/no-merg
 
 ## PR2 — proof and dark dispatch
 
-- [ ] 2.1 **Gate before code (JD2-003):** Identify production config/app-wiring and pre-claim gates for normal **and ambiguous** comment claims. If no safe ≤399-line seam exists, stop and re-slice/amend/re-review.
-- [ ] 2.2 **RED:** Extend `packages/api/src/modules/integrations/core/types.ts`, `packages/api/src/modules/integrations/providers/redmine/adapter.test.ts`, and `packages/api/src/modules/integrations/providers/redmine/http.test.ts` for complete parent+exact-marker+stripped-hash+actor proof and one blind write.
-- [ ] 2.3 **GREEN:** Add `RedmineHttpClient.putOnce()` in `packages/api/src/modules/integrations/providers/redmine/http-client.ts`; update `packages/api/src/modules/integrations/providers/redmine/adapter.ts`, `packages/api/src/modules/integrations/worker.ts`, and `packages/api/src/modules/integrations/ambiguity.test.ts` for proved/unproved reconciliation, conflict, and zero I/O on failed fences.
-- [ ] 2.4 **REFACTOR/verify:** Wire `commentDispatchEnabled=false` before leasing; prove unrelated work continues and no local capture exists. Run `pnpm --dir packages/api run test:types`, `pnpm --dir packages/api run test`, and `pnpm --dir packages/api run build`.
+- [x] 2.1 **Gate before code (JD2-003):** Identify production config/app-wiring and pre-claim gates for normal **and ambiguous** comment claims. If no safe ≤399-line seam exists, stop and re-slice/amend/re-review.
+- [x] 2.2 **RED:** Extend `packages/api/src/modules/integrations/core/types.ts`, `packages/api/src/modules/integrations/providers/redmine/adapter.test.ts`, and `packages/api/src/modules/integrations/providers/redmine/http.test.ts` for complete parent+exact-marker+stripped-hash+actor proof and one blind write.
+- [x] 2.3 **GREEN:** Add `RedmineHttpClient.putOnce()` in `packages/api/src/modules/integrations/providers/redmine/http-client.ts`; update `packages/api/src/modules/integrations/providers/redmine/adapter.ts`, `packages/api/src/modules/integrations/worker.ts`, and `packages/api/src/modules/integrations/retry.test.ts` for proved/unproved reconciliation, conflict, and zero I/O on failed fences.
+- [x] 2.4 **REFACTOR/verify:** Wire `commentDispatchEnabled=false` before leasing; prove unrelated work continues and no local capture exists. Run `pnpm --dir packages/api run test:types`, `pnpm --dir packages/api run test`, and `pnpm --dir packages/api run build`.
 
 ## PR3 — atomic capture
 

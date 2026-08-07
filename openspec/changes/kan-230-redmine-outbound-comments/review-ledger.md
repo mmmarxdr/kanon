@@ -116,3 +116,17 @@
 
 - Validation: echo matrix 13/13; API typecheck passed
 - Commit readiness: READY
+
+## PR2 Pre-Commit Risk Review
+
+- Tier: standard
+- Lens: risk
+- Sweep: 1 of 1
+- Product/test scope: 399 changed lines
+
+| id | lens | location | severity | status | evidence |
+|---|---|---|---|---|---|
+| R1-001 | risk | `packages/api/src/modules/integrations/providers/redmine/adapter.ts:526-530` | CRITICAL | verified | Initial review found HTTP 429 became retry and could issue another blind PUT. Strict RED/GREEN now maps 429, 5xx, and non-HTTP outcomes to `ambiguous`; scoped re-review verified only read-only reconciliation follows and found no fix-line defect. |
+
+- Validation: focused 83/83; full API typecheck and 184 files / 2,396 tests passed, 3 skipped; build and formatting pass
+- Commit readiness: READY

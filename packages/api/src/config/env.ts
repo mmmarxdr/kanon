@@ -167,6 +167,11 @@ export const envSchema = z.object({
     .default("2000")
     .transform((val) => parseInt(val, 10))
     .pipe(z.number().int().min(100)),
+  INTEGRATION_COMMENT_DISPATCH_ENABLED: z
+    .enum(["true", "false"])
+    .optional()
+    .default("false")
+    .transform((value) => value === "true"),
   REDMINE_ENDPOINT_ALLOWLIST: z
     .string()
     .optional()

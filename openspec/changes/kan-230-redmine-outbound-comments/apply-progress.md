@@ -2,13 +2,33 @@
 
 ## Status
 
-**PR1 complete — inert marker recognition is implemented and verified.** The historical obsolete two-PR attempt was blocked before implementation with zero changed product/test lines; this approved three-PR recovery supersedes that boundary for PR1 only.
+**PR2 complete — proof-backed Redmine comment dispatch is implemented, verified, and dark by default.** No local capture path exists, so the slice remains inert.
 
 ## Completed Tasks
 
 - [x] 1.1 **RED:** Canonical marker parser tests.
 - [x] 1.2 **GREEN:** Canonical parser and binding/parent/UUID/work-validated inbound echo recognition.
 - [x] 1.3 **REFACTOR/verify:** Inert-slice boundary and required verification.
+- [x] 2.1 **Gate:** Production wiring and both normal/ambiguous pre-lease gates fit safely within the review budget.
+- [x] 2.2 **RED:** One-write transport, complete proof, dark gating, and ambiguity reconciliation tests failed before implementation.
+- [x] 2.3 **GREEN:** Provider contracts, Redmine transport/proof, worker fences, dispatch, and reconciliation implemented.
+- [x] 2.4 **REFACTOR/verify:** Dispatch defaults off; focused tests, full API suite, typecheck, and build pass.
+
+## PR2 Boundary
+
+- `INTEGRATION_COMMENT_DISPATCH_ENABLED` defaults to `false` and excludes normal and ambiguous comment work before leasing.
+- Redmine receives at most one blind PUT; completion requires one journal matching parent issue, exact marker, stripped-body SHA-256, and captured remote actor.
+- Missing or indeterminate proof becomes `ambiguous`; one later read-only reconciliation either finalizes the same comment or creates a durable conflict.
+- Comment body, timestamp, parent reference, binding epoch, and credential snapshot are fenced before provider I/O.
+- Product/test changed lines: **399**, at the **≤399** PR limit.
+
+## PR2 TDD and Verification
+
+- RED: `putOnce` and `pushComment` were absent; comment work was leased/dead and enabled dispatch never ran.
+- GREEN focused: HTTP, adapter, worker, and production wiring — **4 files / 83 tests passed**.
+- Full API: **184 files / 2,396 tests passed; 3 skipped**.
+- `test:types`, API build, Prettier, and `git diff --check` passed.
+- Pre-commit risk review found one CRITICAL 429 retry path; strict RED/GREEN changed uncertain 429 outcomes to read-only ambiguity reconciliation. Scoped re-review verified it resolved with no fix-line defects.
 
 ## PR1 Boundary
 
@@ -55,10 +75,9 @@
 
 ## Remaining Tasks
 
-- [ ] 2.1–2.4 PR2 proof and dark dispatch.
 - [ ] 3.1–3.5 PR3 atomic capture and activation.
 - [ ] Completion.
 
 ## Risks
 
-No open PR1 implementation risks. PR2 and PR3 remain intentionally unimplemented and must preserve the established marker-proof boundary.
+No open PR1/PR2 implementation risks. PR3 remains intentionally unimplemented and must preserve the established marker-proof boundary and lock order.
