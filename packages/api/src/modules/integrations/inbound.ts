@@ -37,6 +37,7 @@ import {
   type RedmineCommentChange,
   type RedmineIssueChange,
 } from "./providers/redmine/decoder.js";
+import { parseCommentMarker } from "./providers/redmine/comment-marker.js";
 import { RedmineHttpClient } from "./providers/redmine/http-client.js";
 import { RedminePollingInboundSource } from "./providers/redmine/inbound-source.js";
 
@@ -413,6 +414,103 @@ async function persistInboundCommentsTx(
       },
     });
     if (existing) continue;
+
+    const marker = parseCommentMarker(change.fields.body);
+    if (marker) {
+      const parentRef = await transaction.externalRef.findFirst({
+        where: {
+          bindingId: binding.id,
+          connectionId: binding.connectionId,
+          entityType: "issue",
+          entityId: issueId,
+          externalId: remoteIssueId,
+        },
+      });
+      const [work] = parentRef
+        ? await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            SELECT work."id" FROM "integration_sync_work" work
+            WHERE work."binding_id" = ${binding.id}::uuid
+              AND work."entity_type" = 'comment' AND work."entity_id" = ${marker.commentId}::uuid
+              AND work."direction" = 'outbound'::"SyncDirection" AND work."operation" = 'create'::"SyncOperation"
+              AND work."payload"->>'issueId' = ${issueId}
+              AND work."payload"->>'parentRefId' = ${parentRef.id}
+              AND work."payload"->>'parentRemoteIssueId' = ${remoteIssueId}
+              AND work."marker" = ${marker.marker}
+              AND work."state" IN ('leased'::"SyncWorkState", 'ambiguous'::"SyncWorkState", 'done'::"SyncWorkState")
+            ORDER BY work."created_at" LIMIT 1 FOR UPDATE OF work
+          `)
+        : [];
+      const provenWork = work
+        ? await transaction.integrationSyncWork.findFirst({
+            where: {
+              id: work.id,
+              AND: [
+                { payload: { path: ["issueId"], equals: issueId } },
+                { payload: { path: ["parentRefId"], equals: parentRef!.id } },
+                { payload: { path: ["parentRemoteIssueId"], equals: remoteIssueId } },
+              ],
+              state: { in: ["leased", "ambiguous", "done"] },
+              conflicts: { none: { state: "open" } },
+            },
+          })
+        : null;
+      const localComment = provenWork
+        ? await transaction.comment.findFirst({
+            where: { id: marker.commentId, issueId },
+          })
+        : null;
+      const localRef = localComment
+        ? await transaction.externalRef.findFirst({
+            where: {
+              connectionId: binding.connectionId,
+              entityType: "comment",
+              entityId: localComment.id,
+            },
+          })
+        : null;
+      if (provenWork && localComment && marker.body === localComment.body && !localRef) {
+        const ref = await transaction.externalRef.create({
+          data: {
+            connectionId: binding.connectionId,
+            bindingId: binding.id,
+            entityType: "comment",
+            entityId: localComment.id,
+            externalId: change.identity.remoteId,
+            remoteUpdatedAt: change.changedAt,
+            localVersion: 1,
+            lastCorrelationId: correlationId,
+            metadata: {
+              remoteVersion: change.sourceVersion,
+              remoteIssueId,
+              remoteActorId: change.actor?.remoteId ?? null,
+              marker: marker.marker,
+            },
+          },
+        });
+        await transaction.integrationSyncWork.update({
+          where: { id: provenWork.id },
+          data: { state: "done", refId: ref.id, leaseToken: null, leaseUntil: null },
+        });
+        await transaction.integrationInboundApplication.create({
+          data: {
+            bindingId: binding.id,
+            remoteEntityType: "comment",
+            remoteParentType: "issue",
+            remoteParentId: remoteIssueId,
+            remoteId: change.identity.remoteId,
+            remoteUpdatedAt: change.changedAt,
+            sourceVersion: change.sourceVersion,
+            applicationKey: correlationId,
+            correlationId,
+            state: "applied",
+            refId: ref.id,
+            workId: provenWork.id,
+            outcome: { provenance: "redmine-inbound-echo", marker: marker.marker },
+          },
+        });
+        continue;
+      }
+    }
 
     const comment = await transaction.comment.create({
       data: {

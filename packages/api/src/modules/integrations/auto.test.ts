@@ -116,7 +116,7 @@ describe("integration scheduler", () => {
     expect(createWorker).toHaveBeenCalledOnce();
     expect(createWorker).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ logger: app.log }),
+      expect.objectContaining({ logger: app.log, commentDispatchEnabled: false }),
     );
     expect(createInboundWorker).toHaveBeenCalledOnce();
     expect(createInboundWorker).toHaveBeenCalledWith(

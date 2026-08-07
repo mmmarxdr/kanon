@@ -146,6 +146,10 @@ export interface PushResult {
   readonly achievedStatusId: string | null;
   readonly remoteVersion: string | null;
   readonly deleted?: boolean;
+  readonly remoteIssueId?: string;
+  readonly marker?: string;
+  readonly strippedBodySha256?: string;
+  readonly remoteActorId?: string;
 }
 
 export type ProviderCreateReconciliationRequest =
@@ -160,6 +164,14 @@ export type ProviderCreateReconciliationRequest =
       readonly remoteProjectId: string;
       readonly remoteIssueId: string;
       readonly spentOn: string;
+    }
+  | {
+      readonly entityType: "comment";
+      readonly entityId: string;
+      readonly expectedRemoteIssueId: string;
+      readonly marker: string;
+      readonly strippedBodySha256: string;
+      readonly expectedCredentialRemoteUserId: string;
     };
 
 export interface ProviderCreateReconciler {
@@ -240,6 +252,7 @@ export interface PmProviderAdapter extends ProviderCreateReconciler {
   ensureProject(project: CanonicalProject): Promise<PushResult>;
   ensureCycle(cycle: CanonicalCycle): Promise<PushResult>;
   pushIssue(issue: CanonicalIssue, patch: CanonicalIssuePatch): Promise<PushResult>;
+  pushComment(comment: CanonicalComment, remoteIssueId: string): Promise<PushResult>;
   pushTimeEntry(entry: CanonicalTimeEntry, activityId: string): Promise<PushResult>;
 }
 
