@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Prisma, PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { prisma } from "../../config/prisma.js";
 import type {
@@ -7,7 +7,11 @@ import type {
   IssueCaptureIntent,
   IssueMutationDraft,
 } from "./issue-mutation-contract.js";
-import { withIssueMutationTx } from "./issue-tx.js";
+import {
+  captureIssueScheduleMutationTx,
+  lockIssueCaptureBindingTx,
+  withIssueMutationTx,
+} from "./issue-tx.js";
 
 const workspaceIds = new Set<string>();
 
@@ -56,7 +60,7 @@ async function createFixture() {
       projectId: project.id,
     },
   });
-  return { project, binding, issue, transitionIssue };
+  return { project, connection, binding, issue, transitionIssue };
 }
 
 function mutationDatabase(mutate: () => void): Pick<PrismaClient, "$transaction"> {
@@ -303,5 +307,108 @@ describe("withIssueMutationTx", () => {
       fields: { title: "Stable title" },
       issue: { title: "Stable title" },
     });
+  });
+
+  it("serializes concurrent blocked issue and schedule evidence updates", async () => {
+    const fixture = await createFixture();
+    const ref = await prisma.externalRef.create({
+      data: {
+        connectionId: fixture.connection.id,
+        bindingId: fixture.binding.id,
+        entityType: "issue",
+        entityId: fixture.issue.id,
+        externalId: `remote-${randomUUID()}`,
+      },
+    });
+    const conflict = await prisma.integrationConflict.create({
+      data: {
+        kind: "inbound-field-convergence",
+        bindingId: fixture.binding.id,
+        refId: ref.id,
+        localEvidence: {
+          blockedFields: ["title", "dueDate"],
+          fields: {
+            title: { local: fixture.issue.title, localVersion: "initial" },
+            dueDate: { local: null, localVersion: "initial" },
+          },
+        },
+        remoteEvidence: {},
+      },
+    });
+
+    let releaseLock!: () => void;
+    let confirmLock!: () => void;
+    const lockReleased = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const lockConfirmed = new Promise<void>((resolve) => {
+      confirmLock = resolve;
+    });
+    const blocker = prisma.$transaction(async (transaction) => {
+      await transaction.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "integration_conflicts" WHERE "id" = ${conflict.id}::uuid FOR UPDATE`,
+      );
+      confirmLock();
+      await lockReleased;
+    });
+    await lockConfirmed;
+
+    const titleWrite = withIssueMutationTx(
+      async (transaction) => {
+        const result = await transaction.issue.update({
+          where: { id: fixture.issue.id },
+          data: { title: "Concurrent local title" },
+        });
+        return {
+          result,
+          capture: capture(fixture.binding.id, "concurrent-title", { title: result.title }),
+        };
+      },
+      prisma,
+      fixture.binding.id,
+    );
+    const scheduleWrite = prisma.$transaction(async (transaction) => {
+      await lockIssueCaptureBindingTx(transaction, fixture.binding.id);
+      const result = await transaction.issueSchedule.create({
+        data: { issueId: fixture.issue.id, dueDate: new Date("2026-08-30T00:00:00.000Z") },
+      });
+      await captureIssueScheduleMutationTx(
+        transaction,
+        fixture.issue.id,
+        {
+          bindingId: fixture.binding.id,
+          direction: "outbound",
+          actorKey: "member:actor-1",
+          actorKind: "user",
+        },
+        { dueDate: result.dueDate!.toISOString() },
+        result.updatedAt.toISOString(),
+      );
+      return result;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    releaseLock();
+    const [, title, schedule] = await Promise.all([blocker, titleWrite, scheduleWrite]);
+
+    await expect(
+      prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } }),
+    ).resolves.toMatchObject({
+      localEvidence: expect.objectContaining({
+        fields: expect.objectContaining({
+          title: expect.objectContaining({
+            local: title.title,
+            localVersion: title.updatedAt.toISOString(),
+          }),
+          dueDate: expect.objectContaining({
+            local: schedule.dueDate!.toISOString(),
+            localVersion: schedule.updatedAt.toISOString(),
+          }),
+        }),
+      }),
+    });
+    await expect(
+      prisma.integrationSyncWork.count({ where: { entityId: fixture.issue.id } }),
+    ).resolves.toBe(0);
   });
 });
