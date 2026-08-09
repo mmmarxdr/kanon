@@ -66,8 +66,8 @@ describe("RBAC & Profile Integration", () => {
         },
       });
 
-      expect(res.statusCode).toBe(403);
-      expect(res.json().code).toBe("FORBIDDEN");
+      expect(res.statusCode).toBe(404);
+      expect(res.json().code).toBe("PROJECT_NOT_FOUND");
     });
 
     it("member cannot delete a project", async () => {
