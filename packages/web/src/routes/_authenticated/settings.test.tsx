@@ -3,13 +3,13 @@
  * SettingsShell integration (KAN-213 Slice A).
  *
  * Covers:
- * - Exactly three tabs (Members, Invites, Integrations) with no Domains tab.
+ * - Owners get Projects; members keep the three shared tabs.
  * - Tab panel id / aria-labelledby pairing with TabList ids.
  * - Page chrome rendered via SettingsShell with consistent panel ids.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("@/hooks/use-workspace-query", () => ({
@@ -39,6 +39,10 @@ vi.mock("@/features/settings/redmine-section", () => ({
   RedmineSection: () => <div data-testid="integrations-section">Integrations</div>,
 }));
 
+vi.mock("@/features/settings/projects-section", () => ({
+  ProjectsSection: () => <div data-testid="projects-section">Projects</div>,
+}));
+
 const WORKSPACE = {
   id: "ws-1",
   name: "Acme Corp",
@@ -47,7 +51,7 @@ const WORKSPACE = {
   createdAt: "2026-01-01T00:00:00Z",
 };
 
-async function renderSettings(currentUserRole = "owner") {
+async function renderSettings(workspaceRole = "owner") {
   const { useActiveWorkspaceId, useWorkspacesQuery } = await import(
     "@/hooks/use-workspace-query"
   );
@@ -57,7 +61,7 @@ async function renderSettings(currentUserRole = "owner") {
 
   vi.mocked(useActiveWorkspaceId).mockReturnValue(WORKSPACE.id);
   vi.mocked(useWorkspacesQuery).mockReturnValue({
-    data: [WORKSPACE],
+    data: [{ ...WORKSPACE, role: workspaceRole }],
     isLoading: false,
   } as unknown as ReturnType<typeof useWorkspacesQuery>);
 
@@ -66,7 +70,7 @@ async function renderSettings(currentUserRole = "owner") {
       {
         id: "m1",
         username: "owner",
-        role: currentUserRole,
+        role: "member",
         createdAt: "2026-01-01T00:00:00Z",
         user: {
           id: "u1",
@@ -93,14 +97,15 @@ describe("SettingsPage — accessible tabs (KAN-212 Slice C)", () => {
     vi.resetModules();
   });
 
-  it("renders exactly three tabs and no Domains tab for owners", async () => {
+  it("uses Workspace.role to add the owner-only Projects tab", async () => {
     await renderSettings("owner");
 
     const tabs = screen.getAllByRole("tab");
-    expect(tabs).toHaveLength(3);
+    expect(tabs).toHaveLength(4);
     expect(screen.getByRole("tab", { name: "Members" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Invites" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Integrations" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Projects" })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Domains" })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Notifications" })).not.toBeInTheDocument();
   });
@@ -109,6 +114,7 @@ describe("SettingsPage — accessible tabs (KAN-212 Slice C)", () => {
     await renderSettings("member");
 
     expect(screen.getAllByRole("tab")).toHaveLength(3);
+    expect(screen.queryByRole("tab", { name: "Projects" })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Domains" })).not.toBeInTheDocument();
   });
 
@@ -154,5 +160,57 @@ describe("SettingsPage — accessible tabs (KAN-212 Slice C)", () => {
     expect(panel).toHaveAttribute("id", "settings-panel-integrations");
     expect(panel).toHaveAttribute("aria-labelledby", "settings-tab-integrations");
     expect(screen.getByTestId("integrations-section")).toBeInTheDocument();
+  });
+
+  it("renders the project controls from the owner-only tab", async () => {
+    const user = userEvent.setup();
+    await renderSettings("owner");
+
+    await user.click(screen.getByRole("tab", { name: "Projects" }));
+
+    expect(screen.getByRole("tabpanel")).toHaveAttribute("id", "settings-panel-projects");
+    expect(screen.getByTestId("projects-section")).toBeInTheDocument();
+  });
+
+  it("resets tab state when the active workspace changes", async () => {
+    const user = userEvent.setup();
+    const view = await renderSettings("owner");
+    await user.click(screen.getByRole("tab", { name: "Integrations" }));
+    const { useActiveWorkspaceId, useWorkspacesQuery } = await import(
+      "@/hooks/use-workspace-query"
+    );
+    vi.mocked(useActiveWorkspaceId).mockReturnValue("ws-2");
+    vi.mocked(useWorkspacesQuery).mockReturnValue({
+      data: [{ ...WORKSPACE, id: "ws-2", name: "Other", role: "owner" }],
+      isLoading: false,
+    } as unknown as ReturnType<typeof useWorkspacesQuery>);
+
+    const { SettingsPage } = await import("./settings");
+    view.rerender(<SettingsPage />);
+
+    expect(screen.getByRole("tab", { name: "Members" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByTestId("members-section")).toBeInTheDocument();
+  });
+
+  it("hides project controls immediately after an ownership downgrade", async () => {
+    const user = userEvent.setup();
+    const view = await renderSettings("owner");
+    await user.click(screen.getByRole("tab", { name: "Projects" }));
+    expect(screen.getByTestId("projects-section")).toBeInTheDocument();
+    const { useWorkspacesQuery } = await import("@/hooks/use-workspace-query");
+    vi.mocked(useWorkspacesQuery).mockReturnValue({
+      data: [{ ...WORKSPACE, role: "member" }],
+      isLoading: false,
+    } as unknown as ReturnType<typeof useWorkspacesQuery>);
+    const { SettingsPage } = await import("./settings");
+
+    view.rerender(<SettingsPage />);
+
+    await waitFor(() => expect(screen.queryByTestId("projects-section")).not.toBeInTheDocument());
+    expect(screen.queryByRole("tab", { name: "Projects" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("members-section")).toBeInTheDocument();
   });
 });

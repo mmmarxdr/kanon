@@ -230,7 +230,16 @@ export async function patchSettings(body: PatchSettingsBodyType) {
       body.redmineBaseUrl !== undefined &&
       body.redmineBaseUrl !== current.redmineBaseUrl
     ) {
-      // A different origin invalidates every remote ID, mapping, and credential.
+      const bindingHistory = await transaction.integrationProjectBinding.count({
+        where: { connection: { provider: "redmine" } },
+      });
+      if (bindingHistory > 0) {
+        throw new AppError(
+          409,
+          "REDMINE_CONNECTIONS_EXIST",
+          "The Redmine URL is immutable after the first project binding",
+        );
+      }
       await transaction.integrationConnection.deleteMany({ where: { provider: "redmine" } });
     }
 

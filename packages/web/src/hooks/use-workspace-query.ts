@@ -60,7 +60,7 @@ export function useSetActiveWorkspace() {
   return useCallback(
     (workspaceId: string) => {
       setActiveWorkspaceId(workspaceId);
-      void queryClient.invalidateQueries({ queryKey: projectKeys.lists() });
+      void queryClient.invalidateQueries({ queryKey: projectKeys.list(workspaceId) });
     },
     [queryClient, setActiveWorkspaceId],
   );

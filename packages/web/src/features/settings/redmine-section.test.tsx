@@ -2,18 +2,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { IntegrationConnection } from "@kanon/shared";
 import { useProjectsQuery } from "@/hooks/use-projects-query";
-import { useWorkspacesQuery } from "@/hooks/use-workspace-query";
 import {
   useBindRedmineProjectMutation,
   useClearRedmineCredentialMutation,
   useConfigureRedmineProviderMapsMutation,
   useConnectRedmineCredentialMutation,
+  useCreateRedmineConnectionMutation,
   useRedmineConnectionQuery,
   useRedmineDiscoveryQuery,
   useReplaceRedmineServiceCredentialMutation,
   useSetRedmineLifecycleMutation,
+  useUnbindRedmineProjectMutation,
 } from "./use-redmine-integration";
-import { AdminRedmineSection } from "./admin-redmine-section";
 import { RedmineSection } from "./redmine-section";
 
 vi.mock("./use-redmine-integration", () => ({
@@ -26,16 +26,18 @@ vi.mock("./use-redmine-integration", () => ({
   useRedmineDiscoveryQuery: vi.fn(),
   useReplaceRedmineServiceCredentialMutation: vi.fn(),
   useSetRedmineLifecycleMutation: vi.fn(),
+  useUnbindRedmineProjectMutation: vi.fn(),
 }));
 
 vi.mock("@/hooks/use-projects-query", () => ({ useProjectsQuery: vi.fn() }));
-vi.mock("@/hooks/use-workspace-query", () => ({ useWorkspacesQuery: vi.fn() }));
 
 const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
 const PROJECT_ID = "33333333-3333-4333-8333-333333333333";
 const connectMutate = vi.fn();
+const createMutate = vi.fn();
 const clearMutate = vi.fn();
 const bindMutate = vi.fn();
+const unbindMutate = vi.fn();
 const configureMutate = vi.fn();
 const replaceServiceMutate = vi.fn();
 const lifecycleMutate = vi.fn();
@@ -81,6 +83,7 @@ const healthyConnection: IntegrationConnection = {
   lifecycleEpoch: 1,
   serviceFallbackEnabled: false,
   serviceCredentialStatus: "valid",
+  serviceCredentialIsCaller: false,
   syncHealth: { status: "healthy", blockedWork: null },
   discoveredStatuses: null,
   providerMaps: null,
@@ -105,6 +108,11 @@ describe("RedmineSection", () => {
         typeof useConnectRedmineCredentialMutation
       >,
     );
+    vi.mocked(useCreateRedmineConnectionMutation).mockReturnValue(
+      idleMutation(createMutate) as unknown as ReturnType<
+        typeof useCreateRedmineConnectionMutation
+      >,
+    );
     vi.mocked(useClearRedmineCredentialMutation).mockReturnValue(
       idleMutation(clearMutate) as unknown as ReturnType<
         typeof useClearRedmineCredentialMutation
@@ -112,6 +120,11 @@ describe("RedmineSection", () => {
     );
     vi.mocked(useBindRedmineProjectMutation).mockReturnValue(
       idleMutation(bindMutate) as unknown as ReturnType<typeof useBindRedmineProjectMutation>,
+    );
+    vi.mocked(useUnbindRedmineProjectMutation).mockReturnValue(
+      idleMutation(unbindMutate) as unknown as ReturnType<
+        typeof useUnbindRedmineProjectMutation
+      >,
     );
     vi.mocked(useConfigureRedmineProviderMapsMutation).mockReturnValue(
       idleMutation(configureMutate) as unknown as ReturnType<
@@ -140,23 +153,37 @@ describe("RedmineSection", () => {
       isLoading: false,
       error: null,
     } as unknown as ReturnType<typeof useProjectsQuery>);
-    vi.mocked(useWorkspacesQuery).mockReturnValue({
-      data: [{ id: WORKSPACE_ID, name: "Kanon", slug: "kanon", role: "owner" }],
-      isLoading: false,
-      error: null,
-    } as unknown as ReturnType<typeof useWorkspacesQuery>);
   });
 
-  it("tells workspace users that instance admin must configure Redmine", () => {
+  it("keeps connection bootstrap hidden from members", () => {
     vi.mocked(useRedmineConnectionQuery).mockReturnValue({
       data: null,
       isLoading: false,
       error: null,
     } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
-    render(<RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={[]} />);
+    render(<RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="member" members={[]} />);
 
-    expect(screen.getByText(/instance admin has not configured Redmine/i)).toBeInTheDocument();
+    expect(screen.getByText(/workspace owner has not connected Redmine/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /test and create connection/i })).not.toBeInTheDocument();
+  });
+
+  it("lets an owner bootstrap the active workspace connection", () => {
+    vi.mocked(useRedmineConnectionQuery).mockReturnValue({
+      data: null,
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
+
+    render(<RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={[]} />);
+    fireEvent.change(screen.getByTestId("admin-redmine-api-key"), {
+      target: { value: "service-key" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /test and create connection/i }));
+
+    expect(createMutate).toHaveBeenCalledWith(
+      "service-key",
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
   });
 
   it("shows personal identity and workspace coverage to a member", () => {
@@ -227,12 +254,50 @@ describe("RedmineSection", () => {
     );
 
     expect(screen.getByText("Link Redmine project")).toBeInTheDocument();
-    expect(screen.queryByText("Redmine to Kanon")).not.toBeInTheDocument();
+    expect(screen.getByText("Redmine to Kanon")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save project link" }));
     expect(bindMutate).toHaveBeenCalledWith({
       projectId: PROJECT_ID,
       remoteProjectId: "remote-project",
     });
+  });
+
+  it("lets an owner explicitly unlink a project binding", () => {
+    const binding = {
+      id: "99999999-9999-4999-8999-999999999999",
+      projectId: PROJECT_ID,
+      remoteProjectId: "remote-project",
+      readMap: {},
+      writeMap: {},
+      timeActivityId: null,
+      lifecycle: "active" as const,
+      lifecycleEpoch: 1,
+      releasePending: false,
+    };
+    vi.mocked(useRedmineConnectionQuery).mockReturnValue({
+      data: { ...healthyConnection, bindings: [binding] },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
+    vi.mocked(useRedmineDiscoveryQuery).mockReturnValue({
+      data: {
+        statuses: [],
+        priorities: [],
+        projects: [{ id: "remote-project", name: "Remote project" }],
+        timeEntryActivities: [],
+      },
+      isLoading: false,
+      isFetching: false,
+      error: null,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useRedmineDiscoveryQuery>);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />);
+    fireEvent.click(screen.getByRole("button", { name: "Unlink project" }));
+
+    expect(unbindMutate).toHaveBeenCalledWith(binding.id);
+    confirm.mockRestore();
   });
 
   it("shows members a safe blocked state without cross-user details", () => {
@@ -251,7 +316,7 @@ describe("RedmineSection", () => {
     );
 
     expect(screen.getByText("Redmine sync needs attention")).toBeInTheDocument();
-    expect(screen.getByText(/ask the credential owner or an instance admin/i)).toBeInTheDocument();
+    expect(screen.getByText(/ask the credential owner or a workspace owner/i)).toBeInTheDocument();
     expect(screen.queryByText(/blocked sync operations/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("list", { name: /blocked sync operations/i })).not.toBeInTheDocument();
   });
@@ -292,7 +357,22 @@ describe("RedmineSection", () => {
     expect(screen.getAllByRole("listitem")).toHaveLength(20);
   });
 
-  it("lets an instance admin replace the service key when discovery is blocked", () => {
+  it("does not offer to disconnect the caller when it is the workspace service credential", () => {
+    vi.mocked(useRedmineConnectionQuery).mockReturnValue({
+      data: { ...healthyConnection, serviceCredentialIsCaller: true },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
+
+    render(
+      <RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Disconnect" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Replace service key" })).toBeInTheDocument();
+  });
+
+  it("lets a workspace owner replace the service key when discovery is blocked", () => {
     vi.mocked(useRedmineConnectionQuery).mockReturnValue({
       data: {
         ...healthyConnection,
@@ -310,7 +390,9 @@ describe("RedmineSection", () => {
       refetch: vi.fn(),
     } as unknown as ReturnType<typeof useRedmineDiscoveryQuery>);
 
-    render(<AdminRedmineSection redmineBaseUrl="https://redmine.example.test" />);
+    render(
+      <RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />,
+    );
     fireEvent.change(screen.getByLabelText("Service API key"), {
       target: { value: "replacement-key" },
     });
@@ -320,7 +402,31 @@ describe("RedmineSection", () => {
       "replacement-key",
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
-    expect(screen.getByText("Redmine connection failed")).toBeInTheDocument();
+    expect(screen.getAllByText("Redmine connection failed").length).toBeGreaterThan(0);
+  });
+
+  it("keeps lifecycle controls available when discovery is blocked", () => {
+    vi.mocked(useRedmineConnectionQuery).mockReturnValue({
+      data: healthyConnection,
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
+    vi.mocked(useRedmineDiscoveryQuery).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isFetching: false,
+      error: new Error("Redmine connection failed"),
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useRedmineDiscoveryQuery>);
+
+    render(
+      <RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />,
+    );
+    fireEvent.change(screen.getByLabelText("Connection lifecycle"), {
+      target: { value: "paused" },
+    });
+
+    expect(lifecycleMutate).toHaveBeenCalledWith("paused");
   });
 
   it("replaces stale outbound priority mappings with discovered priorities", () => {
@@ -364,7 +470,9 @@ describe("RedmineSection", () => {
       refetch: vi.fn(),
     } as unknown as ReturnType<typeof useRedmineDiscoveryQuery>);
 
-    render(<AdminRedmineSection redmineBaseUrl="https://redmine.example.test" />);
+    render(
+      <RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />,
+    );
     fireEvent.click(screen.getByRole("button", { name: "Save provider maps" }));
 
     expect(configureMutate).toHaveBeenCalledWith(

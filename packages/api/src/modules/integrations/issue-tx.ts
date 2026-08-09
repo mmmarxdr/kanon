@@ -24,7 +24,7 @@ export async function lockIssueCaptureBindingTx(
   bindingId: string,
 ): Promise<void> {
   const [binding] = await transaction.$queryRaw<Array<{ id: string }>>(
-    Prisma.sql`SELECT "id" FROM "integration_project_bindings" WHERE "id" = ${bindingId}::uuid FOR SHARE`,
+    Prisma.sql`SELECT "id" FROM "integration_project_bindings" WHERE "id" = ${bindingId}::uuid AND "release_requested_at" IS NULL AND "released_at" IS NULL FOR SHARE`,
   );
   if (!binding) throw new Error(`Integration project binding ${bindingId} was not found`);
 }
@@ -35,7 +35,12 @@ export async function resolveIssueCaptureContext(
 ): Promise<IssueCaptureContext | null> {
   // ponytail: PM-182 supports one workspace PM connection; fan out when multi-provider ships.
   const binding = await prisma.integrationProjectBinding.findFirst({
-    where: { projectId },
+    where: {
+      projectId,
+      releaseRequestedAt: null,
+      releasedAt: null,
+      project: { archived: false },
+    },
     orderBy: { id: "asc" },
     select: {
       id: true,

@@ -87,19 +87,20 @@ async function seedUpgradeFixture(database: PrismaClient, unresolved: boolean) {
       workspaceId: workspace.id,
     },
   });
-  const binding = await database.integrationProjectBinding.create({
-    data: {
-      connectionId: connection.id,
-      projectId: project.id,
-      remoteProjectId: "binding-upgrade",
-      readMap: {},
-      writeMap: {},
-    },
-  });
+  const bindingId = randomUUID();
+  await database.$executeRaw`
+    INSERT INTO "integration_project_bindings" (
+      "id", "connection_id", "project_id", "remote_project_id", "read_map", "write_map",
+      "created_at", "updated_at"
+    ) VALUES (
+      ${bindingId}::uuid, ${connection.id}::uuid, ${project.id}::uuid,
+      'binding-upgrade', '{}'::jsonb, '{}'::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    )
+  `;
   const ref = await database.externalRef.create({
     data: {
       connectionId: connection.id,
-      bindingId: binding.id,
+      bindingId,
       entityType: "project",
       entityId: project.id,
       externalId: "binding-upgrade",
@@ -127,7 +128,7 @@ async function seedUpgradeFixture(database: PrismaClient, unresolved: boolean) {
   }
   return {
     refId: ref.id,
-    bindingId: binding.id,
+    bindingId,
     connectionId: connection.id,
     workspaceId: workspace.id,
     projectId: project.id,
@@ -233,18 +234,20 @@ async function runUpgrade(unresolved: boolean) {
       expect(foreignKey?.delete_action).toBe("n");
       await expect(database.externalRef.count()).resolves.toBe(2);
       if (!fixture.unresolvedProjectId) throw new Error("Missing unresolved upgrade project");
-      const repairedBinding = await database.integrationProjectBinding.create({
-        data: {
-          connectionId: fixture.connectionId,
-          projectId: fixture.unresolvedProjectId,
-          remoteProjectId: "repaired-binding",
-          readMap: {},
-          writeMap: {},
-        },
-      });
+      const repairedBindingId = randomUUID();
+      await database.$executeRaw`
+        INSERT INTO "integration_project_bindings" (
+          "id", "connection_id", "project_id", "remote_project_id", "read_map", "write_map",
+          "created_at", "updated_at"
+        ) VALUES (
+          ${repairedBindingId}::uuid, ${fixture.connectionId}::uuid,
+          ${fixture.unresolvedProjectId}::uuid, 'repaired-binding', '{}'::jsonb, '{}'::jsonb,
+          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        )
+      `;
       await database.$executeRaw`
         UPDATE "external_refs"
-        SET "binding_id" = ${repairedBinding.id}::uuid
+        SET "binding_id" = ${repairedBindingId}::uuid
         WHERE "binding_id" IS NULL
       `;
       await expect(proveExternalRefBindings(database)).resolves.toBeUndefined();
@@ -272,7 +275,7 @@ async function runUpgrade(unresolved: boolean) {
             },
           },
         }),
-      ).resolves.toMatchObject({ bindingId: repairedBinding.id });
+      ).resolves.toMatchObject({ bindingId: repairedBindingId });
     } else {
       expect(column?.is_nullable).toBe("NO");
       expect(foreignKey?.delete_action).toBe("r");

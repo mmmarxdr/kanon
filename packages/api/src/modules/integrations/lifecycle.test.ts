@@ -20,10 +20,13 @@ import {
   getConnectionDiscovery,
   getWorkspaceConnection,
   setConnectionLifecycle,
+  unbindProject,
   type ConnectionServiceDeps,
 } from "./service.js";
 import { patchSettings } from "../instance/service.js";
+import { archiveProject } from "../project/service.js";
 import { runIntegrationWorkerCycle } from "./worker.js";
+import { resolveIssueCaptureContext } from "./issue-tx.js";
 
 const remote = {
   whoAmI: vi.fn(async () => ({ id: "remote-owner", displayName: "Owner", login: "owner" })),
@@ -163,65 +166,34 @@ describe("integration connection lifecycle", () => {
     await expect(prisma.memberIntegrationCredential.count()).resolves.toBe(0);
   });
 
-  it("cannot persist a stale connection while the instance URL changes", async () => {
+  it("rejects instance URL changes without deleting workspace integration evidence", async () => {
     const workspace = await seedTestWorkspace();
     const owner = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
-    await prisma.$executeRawUnsafe(`
-      CREATE OR REPLACE FUNCTION test_delay_redmine_connection()
-      RETURNS trigger AS $$
-      BEGIN
-        PERFORM pg_sleep(0.5);
-        RETURN NEW;
-      END;
-      $$ LANGUAGE plpgsql
-    `);
-    await prisma.$executeRawUnsafe(`
-      CREATE TRIGGER test_delay_redmine_connection
-      BEFORE INSERT ON "integration_connections"
-      FOR EACH ROW EXECUTE FUNCTION test_delay_redmine_connection()
-    `);
+    const { connection } = await createConnection(
+      { workspaceId: workspace.id, apiKey: "secret" },
+      owner.userId,
+      deps,
+    );
+    const project = await seedTestProject(workspace.id);
+    await prisma.integrationProjectBinding.create({
+      data: {
+        connectionId: connection.id,
+        projectId: project.id,
+        remoteProjectId: "remote-project",
+        readMap: {},
+        writeMap: {},
+      },
+    });
 
-    try {
-      const creating = createConnection(
-        { workspaceId: workspace.id, apiKey: "secret" },
-        owner.userId,
-        deps,
-      );
-      let insertStarted = false;
-      for (let attempt = 0; attempt < 50; attempt += 1) {
-        const [activity] = await prisma.$queryRaw<Array<{ active: boolean }>>`
-          SELECT EXISTS (
-            SELECT 1 FROM pg_stat_activity
-            WHERE pid <> pg_backend_pid()
-              AND state = 'active'
-              AND query LIKE 'INSERT INTO %integration_connections%'
-          ) AS active
-        `;
-        if (activity?.active) {
-          insertStarted = true;
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      expect(insertStarted).toBe(true);
-
-      await Promise.all([
-        creating,
-        patchSettings({ redmineBaseUrl: "https://new-redmine.example.test" }),
-      ]);
-
-      await expect(
-        prisma.instanceSettings.findUniqueOrThrow({ where: { id: INSTANCE_SETTINGS_ID } }),
-      ).resolves.toMatchObject({ redmineBaseUrl: "https://new-redmine.example.test" });
-      await expect(
-        prisma.integrationConnection.count({ where: { provider: "redmine" } }),
-      ).resolves.toBe(0);
-    } finally {
-      await prisma.$executeRawUnsafe(
-        'DROP TRIGGER IF EXISTS test_delay_redmine_connection ON "integration_connections"',
-      );
-      await prisma.$executeRawUnsafe("DROP FUNCTION IF EXISTS test_delay_redmine_connection()");
-    }
+    await expect(
+      patchSettings({ redmineBaseUrl: "https://new-redmine.example.test" }),
+    ).rejects.toMatchObject({ statusCode: 409, code: "REDMINE_CONNECTIONS_EXIST" });
+    await expect(
+      prisma.instanceSettings.findUniqueOrThrow({ where: { id: INSTANCE_SETTINGS_ID } }),
+    ).resolves.toMatchObject({ redmineBaseUrl: "https://redmine.example.test" });
+    await expect(
+      prisma.integrationConnection.findUniqueOrThrow({ where: { id: connection.id } }),
+    ).resolves.toMatchObject({ workspaceId: workspace.id });
   });
 
   it("rolls back the connection when credential linkage fails", async () => {
@@ -248,23 +220,18 @@ describe("integration connection lifecycle", () => {
     }
   });
 
-  it("rejects non-instance-admins over HTTP before remote validation or persistence", async () => {
+  it("rejects non-owner bootstrap before remote validation", async () => {
     const workspace = await seedTestWorkspace();
-    const owner = await seedTestMemberWithRole(workspace.id, "owner");
     const admin = await seedTestMemberWithRole(workspace.id, "admin");
 
-    for (const actor of [owner, admin]) {
-      const response = await app.inject({
-        method: "POST",
-        url: "/api/integrations/connections",
-        headers: { authorization: `Bearer ${actor.token}` },
-        payload: {
-          workspaceId: workspace.id,
-          apiKey: "must-not-leave-kanon",
-        },
-      });
-      expect(response.statusCode).toBe(403);
-    }
+    const forbidden = await app.inject({
+      method: "POST",
+      url: `/api/integrations/workspaces/${workspace.id}/connections`,
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: { apiKey: "must-not-leave-kanon" },
+    });
+    expect(forbidden.statusCode).toBe(403);
+
     await expect(prisma.integrationConnection.count()).resolves.toBe(0);
   });
 
@@ -586,7 +553,7 @@ describe("integration connection lifecycle", () => {
     await expect(prisma.integrationProjectBinding.count()).resolves.toBe(0);
   });
 
-  it("lets owners bind projects, redacts maps, and resets inbound state on rebind", async () => {
+  it("lets owners configure and bind while redacting maps from non-owners", async () => {
     const workspace = await seedTestWorkspace();
     const owner = await seedTestMemberWithRole(workspace.id, "owner");
     const instanceAdmin = await seedTestMemberWithRole(workspace.id, "member", {
@@ -597,7 +564,7 @@ describe("integration connection lifecycle", () => {
 
     const { connection } = await createConnection(
       { workspaceId: workspace.id, apiKey: "secret" },
-      instanceAdmin.userId,
+      owner.userId,
       deps,
     );
 
@@ -619,16 +586,22 @@ describe("integration connection lifecycle", () => {
         priorityReadMap,
         priorityWriteMap,
       },
-      instanceAdmin.userId,
+      owner.userId,
       deps,
     );
 
     const ownerDiscovery = await getConnectionDiscovery(connection.id, owner.userId, deps);
     expect(ownerDiscovery).toEqual({
       projects: [{ id: "remote-project", name: "Remote project" }],
-      statuses: [],
-      priorities: [],
-      timeEntryActivities: [],
+      statuses: [
+        { id: "new", name: "New", writable: true },
+        { id: "dev", name: "In Dev", writable: true },
+      ],
+      priorities: [
+        { id: "normal", name: "Normal" },
+        { id: "high", name: "High" },
+      ],
+      timeEntryActivities: [{ id: "9", name: "Development", isDefault: true }],
     });
 
     const binding = await bindProject(
@@ -643,11 +616,15 @@ describe("integration connection lifecycle", () => {
       readMap: { ...readMap, "priority:normal": "medium", "priority:high": "high" },
     });
 
+    const ownerView = await getWorkspaceConnection(workspace.id, owner.userId);
+    expect(ownerView?.providerMaps?.timeActivityId).toBe("9");
+    expect(ownerView?.providerMaps?.priorityReadMap).toEqual({ normal: "medium", high: "high" });
+    expect(ownerView?.providerMaps?.priorityWriteMap).toEqual(priorityWriteMap);
+    expect(ownerView?.bindings[0]?.readMap).toEqual(readMap);
+
     const adminView = await getWorkspaceConnection(workspace.id, instanceAdmin.userId);
-    expect(adminView?.providerMaps?.timeActivityId).toBe("9");
-    expect(adminView?.providerMaps?.priorityReadMap).toEqual({ normal: "medium", high: "high" });
-    expect(adminView?.providerMaps?.priorityWriteMap).toEqual(priorityWriteMap);
-    expect(adminView?.bindings[0]?.readMap).toEqual(readMap);
+    expect(adminView?.providerMaps).toBeNull();
+    expect(adminView?.discoveredStatuses).toBeNull();
 
     const memberView = await getConnection(connection.id, member.userId);
     expect(memberView.providerMaps).toBeNull();
@@ -686,33 +663,17 @@ describe("integration connection lifecycle", () => {
       { id: "remote-project-2", name: "Replacement project" },
     ]);
 
-    await bindProject(
-      connection.id,
-      { projectId: project.id, remoteProjectId: "remote-project-2" },
-      owner.userId,
-      deps,
-    );
-
+    await expect(
+      bindProject(
+        connection.id,
+        { projectId: project.id, remoteProjectId: "remote-project-2" },
+        owner.userId,
+        deps,
+      ),
+    ).rejects.toMatchObject({ statusCode: 409, code: "PROJECT_ALREADY_BOUND" });
     await expect(
       prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
-    ).resolves.toMatchObject({
-      remoteProjectId: "remote-project-2",
-      inboundEnabled: false,
-      bootstrapState: "not_required",
-      bootstrapCutoff: null,
-      bootstrapPageToken: null,
-      bootstrapLeaseToken: null,
-      bootstrapLeaseUntil: null,
-      bootstrapFence: 4,
-      cursorUpdatedAt: null,
-      cursorRemoteId: null,
-      pageToken: null,
-      pollLeaseToken: null,
-      pollLeaseUntil: null,
-      pollFence: 5,
-      auditCursorRemoteId: null,
-      auditCompletedAt: null,
-    });
+    ).resolves.toMatchObject({ remoteProjectId: "remote-project" });
   });
 
   it("rejects service bootstrap when the instance admin is not a workspace member", async () => {
@@ -722,7 +683,7 @@ describe("integration connection lifecycle", () => {
 
     await expect(
       createConnection({ workspaceId: workspace.id, apiKey: "secret" }, outsiderAdmin.userId, deps),
-    ).rejects.toMatchObject({ statusCode: 409, code: "WORKSPACE_MEMBERSHIP_REQUIRED" });
+    ).rejects.toMatchObject({ statusCode: 403, code: "FORBIDDEN" });
     await expect(prisma.integrationConnection.count()).resolves.toBe(0);
   });
 
@@ -764,5 +725,225 @@ describe("integration connection lifecycle", () => {
     await expect(
       prisma.integrationConnection.findUniqueOrThrow({ where: { id: connection.id } }),
     ).resolves.toMatchObject({ lifecycle: "draft", lifecycleEpoch: 2 });
+  });
+
+  it("isolates one owner's workspaces and atomically rejects a duplicate remote project", async () => {
+    const workspaceA = await seedTestWorkspace();
+    const workspaceB = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspaceA.id, "owner");
+    await prisma.member.create({
+      data: {
+        userId: owner.userId,
+        workspaceId: workspaceB.id,
+        username: "shared-owner",
+        role: "owner",
+      },
+    });
+    const [projectA, projectB] = await Promise.all([
+      seedTestProject(workspaceA.id),
+      seedTestProject(workspaceB.id),
+    ]);
+    const [{ connection: connectionA }, { connection: connectionB }] = await Promise.all([
+      createConnection({ workspaceId: workspaceA.id, apiKey: "key-a" }, owner.userId, deps),
+      createConnection({ workspaceId: workspaceB.id, apiKey: "key-b" }, owner.userId, deps),
+    ]);
+    const maps = {
+      timeActivityId: "9",
+      readMap,
+      writeMap,
+      priorityReadMap,
+      priorityWriteMap,
+    };
+    await Promise.all([
+      configureProviderMaps(connectionA.id, maps, owner.userId, deps, workspaceA.id),
+      configureProviderMaps(connectionB.id, maps, owner.userId, deps, workspaceB.id),
+    ]);
+
+    await expect(
+      getConnection(connectionA.id, owner.userId, workspaceB.id),
+    ).rejects.toMatchObject({ statusCode: 404, code: "INTEGRATION_NOT_FOUND" });
+    const attempts = await Promise.allSettled([
+      bindProject(
+        connectionA.id,
+        { projectId: projectA.id, remoteProjectId: "remote-project" },
+        owner.userId,
+        deps,
+        workspaceA.id,
+      ),
+      bindProject(
+        connectionB.id,
+        { projectId: projectB.id, remoteProjectId: "remote-project" },
+        owner.userId,
+        deps,
+        workspaceB.id,
+      ),
+    ]);
+
+    expect(attempts.map(({ status }) => status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(attempts.find(({ status }) => status === "rejected")).toMatchObject({
+      reason: {
+        code: "REMOTE_PROJECT_ALREADY_BOUND",
+        message: "Redmine project is already bound",
+      },
+    });
+    await expect(
+      prisma.integrationProjectBinding.count({
+        where: { remoteProjectId: "remote-project", releasedAt: null },
+      }),
+    ).resolves.toBe(1);
+  });
+
+  it("drains and releases a binding without deleting evidence before archive or transfer", async () => {
+    const workspaceA = await seedTestWorkspace();
+    const workspaceB = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspaceA.id, "owner");
+    await prisma.member.create({
+      data: {
+        userId: owner.userId,
+        workspaceId: workspaceB.id,
+        username: "transfer-owner",
+        role: "owner",
+      },
+    });
+    const [projectA, projectB] = await Promise.all([
+      seedTestProject(workspaceA.id),
+      seedTestProject(workspaceB.id),
+    ]);
+    const { connection: connectionA } = await createConnection(
+      { workspaceId: workspaceA.id, apiKey: "key-a" },
+      owner.userId,
+      deps,
+    );
+    const maps = {
+      timeActivityId: "9",
+      readMap,
+      writeMap,
+      priorityReadMap,
+      priorityWriteMap,
+    };
+    await configureProviderMaps(connectionA.id, maps, owner.userId, deps, workspaceA.id);
+    const binding = await bindProject(
+      connectionA.id,
+      { projectId: projectA.id, remoteProjectId: "remote-project" },
+      owner.userId,
+      deps,
+      workspaceA.id,
+    );
+    await setConnectionLifecycle(connectionA.id, "active", owner.userId, deps, workspaceA.id);
+    const reference = await prisma.externalRef.create({
+      data: {
+        connectionId: connectionA.id,
+        bindingId: binding.id,
+        entityType: "project",
+        entityId: projectA.id,
+        externalId: "remote-project",
+      },
+    });
+    const work = await prisma.integrationSyncWork.create({
+      data: {
+        bindingId: binding.id,
+        entityType: "project",
+        entityId: projectA.id,
+        direction: "outbound",
+        operation: "update",
+        dedupeKey: "release-work",
+        laneKey: "release-work",
+        actorKey: `member:${owner.id}`,
+        actorKind: "user",
+        payload: {},
+        correlationId: "release-work",
+        state: "leased",
+        leaseToken: "release-lease",
+        leaseUntil: new Date("2999-01-01T00:00:00.000Z"),
+        epoch: binding.lifecycleEpoch,
+        refId: reference.id,
+      },
+    });
+    const application = await prisma.integrationInboundApplication.create({
+      data: {
+        bindingId: binding.id,
+        remoteEntityType: "issue",
+        remoteId: "42",
+        remoteUpdatedAt: new Date("2026-08-09T00:00:00.000Z"),
+        applicationKey: "release-application",
+        correlationId: "release-application",
+        state: "conflict",
+      },
+    });
+    const conflict = await prisma.integrationConflict.create({
+      data: {
+        bindingId: binding.id,
+        applicationId: application.id,
+        kind: "mapping",
+        localEvidence: {},
+        remoteEvidence: {},
+      },
+    });
+
+    await expect(archiveProject(projectA.id, owner.id, workspaceA.id)).rejects.toMatchObject({
+      statusCode: 409,
+      code: "PROJECT_INTEGRATION_BOUND",
+    });
+    await expect(
+      unbindProject(connectionA.id, binding.id, owner.userId, workspaceA.id),
+    ).resolves.toMatchObject({ status: "draining" });
+    await expect(
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+    ).resolves.toMatchObject({
+      lifecycle: "active",
+      releaseRequestedAt: expect.any(Date),
+      releasedAt: null,
+    });
+    await expect(
+      setConnectionLifecycle(connectionA.id, "paused", owner.userId, deps, workspaceA.id),
+    ).rejects.toMatchObject({ statusCode: 409, code: "BINDING_RELEASE_IN_PROGRESS" });
+    await expect(
+      configureProviderMaps(connectionA.id, maps, owner.userId, deps, workspaceA.id),
+    ).rejects.toMatchObject({ statusCode: 409, code: "BINDING_RELEASE_IN_PROGRESS" });
+    await expect(resolveIssueCaptureContext(projectA.id, owner.id)).resolves.toBeNull();
+
+    await prisma.integrationSyncWork.update({
+      where: { id: work.id },
+      data: { state: "done", leaseToken: null, leaseUntil: null },
+    });
+    await runIntegrationWorkerCycle(prisma, { limit: 1 });
+    await expect(
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+    ).resolves.toMatchObject({ lifecycle: "disabled", releasedAt: expect.any(Date) });
+    await expect(prisma.externalRef.findUnique({ where: { id: reference.id } })).resolves.not.toBeNull();
+    await expect(
+      prisma.integrationInboundApplication.findUnique({ where: { id: application.id } }),
+    ).resolves.not.toBeNull();
+    await expect(
+      prisma.integrationConflict.findUnique({ where: { id: conflict.id } }),
+    ).resolves.not.toBeNull();
+    await expect(
+      bindProject(
+        connectionA.id,
+        { projectId: projectA.id, remoteProjectId: "remote-project" },
+        owner.userId,
+        deps,
+        workspaceA.id,
+      ),
+    ).rejects.toMatchObject({ statusCode: 409, code: "BINDING_HISTORY_UNRESOLVED" });
+
+    await expect(archiveProject(projectA.id, owner.id, workspaceA.id)).resolves.toMatchObject({
+      archived: true,
+    });
+    const { connection: connectionB } = await createConnection(
+      { workspaceId: workspaceB.id, apiKey: "key-b" },
+      owner.userId,
+      deps,
+    );
+    await configureProviderMaps(connectionB.id, maps, owner.userId, deps, workspaceB.id);
+    await expect(
+      bindProject(
+        connectionB.id,
+        { projectId: projectB.id, remoteProjectId: "remote-project" },
+        owner.userId,
+        deps,
+        workspaceB.id,
+      ),
+    ).resolves.toMatchObject({ projectId: projectB.id, remoteProjectId: "remote-project" });
   });
 });

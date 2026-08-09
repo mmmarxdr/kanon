@@ -87,7 +87,7 @@ describe("useSetActiveWorkspace", () => {
     useWorkspaceStore.setState({ activeWorkspaceId: null });
   });
 
-  it("persists id and invalidates project lists", () => {
+  it("persists id and invalidates only that workspace project list", () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -103,7 +103,7 @@ describe("useSetActiveWorkspace", () => {
 
     expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("ws-b");
     expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: projectKeys.lists(),
+      queryKey: projectKeys.list("ws-b"),
     });
   });
 });

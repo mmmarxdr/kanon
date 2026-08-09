@@ -12,10 +12,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // ─── hoisted mocks ────────────────────────────────────────────────────────────
 
-const { mockNavigate, mockQueryData, mockQueryLoading } = vi.hoisted(() => ({
+const { mockNavigate, mockQueryData, mockQueryLoading, mockWorkspaceRole } = vi.hoisted(() => ({
   mockNavigate: vi.fn(),
   mockQueryData: { value: null as unknown[] | null },
   mockQueryLoading: { value: false },
+  mockWorkspaceRole: { value: "owner" },
 }));
 
 // ─── router mock ──────────────────────────────────────────────────────────────
@@ -45,6 +46,13 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
     }),
   };
 });
+
+vi.mock("@/hooks/use-workspace-query", () => ({
+  useSetActiveWorkspace: () => vi.fn(),
+  useWorkspacesQuery: () => ({
+    data: [{ id: "ws-1", name: "Workspace", role: mockWorkspaceRole.value }],
+  }),
+}));
 
 // ─── CreateProjectModal mock ──────────────────────────────────────────────────
 
@@ -79,6 +87,7 @@ describe("ProjectSelectPage", () => {
     vi.clearAllMocks();
     mockQueryData.value = null;
     mockQueryLoading.value = false;
+    mockWorkspaceRole.value = "owner";
   });
 
   // ── (a) empty state shows "Create project" action ─────────────────────────
@@ -100,6 +109,16 @@ describe("ProjectSelectPage", () => {
     const btn = await screen.findByTestId("create-project-btn");
     fireEvent.click(btn);
     expect(screen.getByTestId("create-project-modal")).toBeTruthy();
+  });
+
+  it("does not offer project creation to non-owners", async () => {
+    mockQueryData.value = [];
+    mockWorkspaceRole.value = "member";
+
+    renderPage();
+
+    expect(await screen.findByText("No projects in this workspace yet.")).toBeTruthy();
+    expect(screen.queryByTestId("create-project-btn")).toBeNull();
   });
 
   // ── (c) projects list renders (regression guard) ──────────────────────────

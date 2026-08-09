@@ -164,18 +164,23 @@ async function claimBinding(
       SELECT binding."id"
       FROM "integration_project_bindings" AS binding
       JOIN "integration_connections" AS connection ON connection."id" = binding."connection_id"
+      JOIN "projects" AS project ON project."id" = binding."project_id"
       JOIN "member_integration_credentials" AS credential
         ON credential."id" = connection."service_credential_id"
       JOIN "members" AS member ON member."id" = credential."member_id"
       WHERE connection."provider" = 'redmine'
         AND connection."lifecycle" = 'active'::"IntegrationLifecycle"
         AND binding."lifecycle" = 'active'::"IntegrationLifecycle"
+        AND binding."released_at" IS NULL
+        AND binding."release_requested_at" IS NULL
+        AND project."archived" = false
         AND binding."inbound_enabled" = true
         AND binding."bootstrap_state" = 'ready'::"IntegrationBootstrapState"
         AND credential."connection_id" = connection."id"
         AND credential."last_auth_status" = 'valid'::"CredentialAuthStatus"
         AND credential."revoked_at" IS NULL
         AND member."workspace_id" = connection."workspace_id"
+        AND member."role" = 'owner'
         AND (binding."poll_lease_until" IS NULL OR binding."poll_lease_until" <= ${now})
         ${exclusion}
       ORDER BY binding."updated_at", binding."id"
@@ -252,12 +257,15 @@ async function lockPollSnapshot(
       id: binding.id,
       connectionId: binding.connectionId,
       lifecycle: "active",
+      releasedAt: null,
+      releaseRequestedAt: null,
       inboundEnabled: true,
       bootstrapState: "ready",
       lifecycleEpoch: binding.lifecycleEpoch,
       pollLeaseToken: binding.pollLeaseToken,
       pollFence: binding.pollFence,
       connection: { lifecycle: "active" },
+      project: { archived: false },
     },
     include: {
       project: { select: { key: true } },
@@ -1266,25 +1274,26 @@ async function retryBinding(
   connectionId: string,
   bindingId: string,
   userId: string,
-  allowedProjectIds?: string[],
+  workspaceId?: string,
+  allowedProjectIds?: string[] | null,
 ) {
-  const connection = await ownedConnection(transaction, connectionId, userId);
+  const connection = await ownedConnection(transaction, connectionId, userId, workspaceId);
   if (connection.provider !== "redmine") {
     throw new AppError(400, "INVALID_INTEGRATION_PROVIDER", "Connection is not a Redmine integration");
   }
   const binding = await transaction.integrationProjectBinding.findFirst({
-    where: { id: bindingId, connectionId },
+    where: {
+      id: bindingId,
+      connectionId,
+      releaseRequestedAt: null,
+      releasedAt: null,
+      project: { archived: false },
+      ...(allowedProjectIds ? { projectId: { in: allowedProjectIds } } : {}),
+    },
     include: { project: { select: { key: true } } },
   });
   if (!binding) {
     throw new AppError(404, "INTEGRATION_BINDING_NOT_FOUND", "Integration project binding not found");
-  }
-  if (
-    allowedProjectIds &&
-    allowedProjectIds.length > 0 &&
-    !allowedProjectIds.includes(binding.projectId)
-  ) {
-    throw new AppError(403, "FORBIDDEN", "Token scope does not allow access to this project");
   }
   if (
     connection.lifecycle !== "active" ||
@@ -1351,7 +1360,7 @@ export async function retryRedmineIssueImport(
   bindingId: string,
   applicationId: string,
   userId: string,
-  options: RedmineImportDependencies & { allowedProjectIds?: string[] } = {},
+  options: RedmineImportDependencies = {},
 ) {
   const decrypt = options.decrypt ?? decryptCredential;
   const createClient =
@@ -1361,7 +1370,14 @@ export async function retryRedmineIssueImport(
         endpointAllowlist: env.REDMINE_ENDPOINT_ALLOWLIST,
       }));
   const initial = await prisma.$transaction((transaction) =>
-    retryBinding(transaction, connectionId, bindingId, userId, options.allowedProjectIds),
+    retryBinding(
+      transaction,
+      connectionId,
+      bindingId,
+      userId,
+      options.workspaceId,
+      options.allowedProjectIds,
+    ),
   );
   const claim = await prisma.$transaction(async (transaction): Promise<RetryClaim> => {
     await transaction.$queryRaw(
@@ -1476,6 +1492,7 @@ export async function retryRedmineIssueImport(
         connectionId,
         bindingId,
         userId,
+        options.workspaceId,
         options.allowedProjectIds,
       );
       if (

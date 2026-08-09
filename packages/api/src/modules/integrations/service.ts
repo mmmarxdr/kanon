@@ -72,36 +72,18 @@ type Database = Pick<
   | "memberIntegrationCredential"
 >;
 
-async function requireInstanceAdmin(database: Pick<Database, "user">, userId: string) {
-  const user = await database.user.findUnique({
-    where: { id: userId },
-    select: { isInstanceAdmin: true },
-  });
-  if (!user?.isInstanceAdmin) {
-    throw new AppError(403, "FORBIDDEN", "Instance-admin access required");
-  }
-}
-
-async function isInstanceAdminUser(database: Pick<Database, "user">, userId: string) {
-  const user = await database.user.findUnique({
-    where: { id: userId },
-    select: { isInstanceAdmin: true },
-  });
-  return !!user?.isInstanceAdmin;
-}
-
 async function requireOwner(database: Database, workspaceId: string, userId: string) {
   const member = await database.member.findUnique({
     where: { userId_workspaceId: { userId, workspaceId } },
     select: { id: true, role: true },
   });
   if (!member || member.role !== "owner") {
-    throw new AppError(403, "FORBIDDEN", "Only a workspace owner can bind projects to Redmine");
+    throw new AppError(403, "FORBIDDEN", "Workspace owner access required");
   }
   return member;
 }
 
-/** Service credential holder must be the configuring admin's workspace membership. */
+/** Service credential holder must be the configuring owner's workspace membership. */
 async function resolveServiceCredentialMember(
   database: Database,
   workspaceId: string,
@@ -121,23 +103,30 @@ async function resolveServiceCredentialMember(
   return caller;
 }
 
-async function adminConnection(database: Database, connectionId: string, userId: string) {
+export async function ownedConnection(
+  database: Database,
+  connectionId: string,
+  userId: string,
+  workspaceId?: string,
+) {
   const connection = await database.integrationConnection.findUnique({ where: { id: connectionId } });
-  if (!connection) throw new AppError(404, "INTEGRATION_NOT_FOUND", "Integration connection not found");
-  await requireInstanceAdmin(database, userId);
-  return connection;
-}
-
-export async function ownedConnection(database: Database, connectionId: string, userId: string) {
-  const connection = await database.integrationConnection.findUnique({ where: { id: connectionId } });
-  if (!connection) throw new AppError(404, "INTEGRATION_NOT_FOUND", "Integration connection not found");
+  if (!connection || (workspaceId && connection.workspaceId !== workspaceId)) {
+    throw new AppError(404, "INTEGRATION_NOT_FOUND", "Integration connection not found");
+  }
   await requireOwner(database, connection.workspaceId, userId);
   return connection;
 }
 
-async function memberConnection(database: Database, connectionId: string, userId: string) {
+async function memberConnection(
+  database: Database,
+  connectionId: string,
+  userId: string,
+  workspaceId?: string,
+) {
   const connection = await database.integrationConnection.findUnique({ where: { id: connectionId } });
-  if (!connection) throw new AppError(404, "INTEGRATION_NOT_FOUND", "Integration connection not found");
+  if (!connection || (workspaceId && connection.workspaceId !== workspaceId)) {
+    throw new AppError(404, "INTEGRATION_NOT_FOUND", "Integration connection not found");
+  }
   const member = await database.member.findUnique({
     where: { userId_workspaceId: { userId, workspaceId: connection.workspaceId } },
     select: { id: true },
@@ -178,7 +167,7 @@ async function upsertExternalIdentities(
   remoteDisplayName?: string | null,
 ) {
   const bindings = await database.integrationProjectBinding.findMany({
-    where: { connectionId },
+    where: { connectionId, releaseRequestedAt: null, releasedAt: null },
     select: { id: true },
   });
   for (const binding of bindings) {
@@ -251,13 +240,25 @@ async function upsertExternalIdentities(
   }
 }
 
-export async function serviceCredential(database: Database, connection: { id: string; serviceCredentialId: string | null }) {
+export async function serviceCredential(
+  database: Database,
+  connection: {
+    id: string;
+    workspaceId: string;
+    serviceCredentialId: string | null;
+  },
+) {
   const credential = connection.serviceCredentialId
-    ? await database.memberIntegrationCredential.findUnique({ where: { id: connection.serviceCredentialId } })
+    ? await database.memberIntegrationCredential.findUnique({
+        where: { id: connection.serviceCredentialId },
+        include: { member: { select: { workspaceId: true, role: true } } },
+      })
     : null;
   if (
     !credential ||
     credential.connectionId !== connection.id ||
+    credential.member.workspaceId !== connection.workspaceId ||
+    credential.member.role !== "owner" ||
     credential.lastAuthStatus !== "valid" ||
     credential.revokedAt
   ) {
@@ -271,7 +272,7 @@ export async function createConnection(
   userId: string,
   deps: ConnectionServiceDeps = defaultDeps,
 ) {
-  await requireInstanceAdmin(prisma, userId);
+  await requireOwner(prisma, input.workspaceId, userId);
   const existing = await prisma.integrationConnection.findUnique({
     where: { workspaceId_provider: { workspaceId: input.workspaceId, provider: "redmine" } },
     select: { lifecycle: true },
@@ -307,7 +308,7 @@ export async function createConnection(
     await transaction.$queryRaw(
       Prisma.sql`SELECT "id" FROM "instance_settings" WHERE "id" = ${INSTANCE_SETTINGS_ID}::uuid FOR UPDATE`,
     );
-    await requireInstanceAdmin(transaction, userId);
+    await requireOwner(transaction, input.workspaceId, userId);
     const serviceMember = await resolveServiceCredentialMember(
       transaction,
       input.workspaceId,
@@ -372,6 +373,17 @@ async function lockConnection(transaction: Prisma.TransactionClient, connectionI
   );
 }
 
+async function lockRemoteProject(
+  transaction: Prisma.TransactionClient,
+  connection: { provider: string; baseUrl: string },
+  remoteProjectId: string,
+) {
+  const key = JSON.stringify([connection.provider, connection.baseUrl, remoteProjectId]);
+  await transaction.$queryRaw(
+    Prisma.sql`SELECT 1::int AS "locked" FROM (SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))) AS advisory_lock`,
+  );
+}
+
 async function redriveAuthBlockedWork(
   transaction: Prisma.TransactionClient,
   connectionId: string,
@@ -393,10 +405,21 @@ async function redriveAuthBlockedWork(
       : { actorKind: { in: ["system", "ai"] } }),
   };
   const bindings = await transaction.integrationProjectBinding.findMany({
-    where: { connectionId },
-    select: { id: true, lifecycleEpoch: true },
+    where: { connectionId, releasedAt: null },
+    select: { id: true, lifecycleEpoch: true, releaseRequestedAt: true },
   });
   for (const binding of bindings) {
+    if (binding.releaseRequestedAt) {
+      await transaction.integrationSyncWork.updateMany({
+        where: { ...where, bindingId: binding.id, state: "ambiguous" },
+        data: {
+          availableAt: now,
+          skippedReason: null,
+          authCredentialId: replacementCredentialId,
+        },
+      });
+      continue;
+    }
     await transaction.integrationSyncWork.updateMany({
       where: { ...where, bindingId: binding.id, state: "dead" },
       data: {
@@ -423,15 +446,9 @@ export async function getConnectionDiscovery(
   connectionId: string,
   userId: string,
   deps: ConnectionServiceDeps = defaultDeps,
+  workspaceId?: string,
 ) {
-  const connection = await prisma.integrationConnection.findUnique({ where: { id: connectionId } });
-  if (!connection) throw new AppError(404, "INTEGRATION_NOT_FOUND", "Integration connection not found");
-
-  const admin = await isInstanceAdminUser(prisma, userId);
-  if (!admin) {
-    // Workspace owners may list remote projects only (for project association).
-    await requireOwner(prisma, connection.workspaceId, userId);
-  }
+  const connection = await ownedConnection(prisma, connectionId, userId, workspaceId);
 
   const credential = await serviceCredential(prisma, connection);
   const [statuses, priorities, projects, timeEntryActivities] = await queryRedmine(() => {
@@ -449,13 +466,10 @@ export async function getConnectionDiscovery(
     data: { discoveredStatuses },
   });
 
-  if (!admin) {
-    return { projects, statuses: [], priorities: [], timeEntryActivities: [] };
-  }
   return { statuses, priorities, projects, timeEntryActivities };
 }
 
-/** Instance-admin: persist global status/activity maps on the connection and cascade to bindings. */
+/** Workspace owner: persist provider maps on the connection and current bindings. */
 export async function configureProviderMaps(
   connectionId: string,
   input: {
@@ -467,8 +481,9 @@ export async function configureProviderMaps(
   },
   userId: string,
   deps: ConnectionServiceDeps = defaultDeps,
+  workspaceId?: string,
 ) {
-  const connection = await adminConnection(prisma, connectionId, userId);
+  const connection = await ownedConnection(prisma, connectionId, userId, workspaceId);
   const credential = await serviceCredential(prisma, connection);
   const [statuses, priorities, timeEntryActivities] = await queryRedmine(() => {
     const remote = deps.remote(connection.baseUrl, deps.decrypt(credential.encryptedKey));
@@ -555,7 +570,17 @@ export async function configureProviderMaps(
 
   return prisma.$transaction(async (transaction) => {
     await lockConnection(transaction, connectionId);
-    const current = await adminConnection(transaction, connectionId, userId);
+    const current = await ownedConnection(transaction, connectionId, userId, workspaceId);
+    const releasePending = await transaction.integrationProjectBinding.count({
+      where: { connectionId, releaseRequestedAt: { not: null }, releasedAt: null },
+    });
+    if (releasePending > 0) {
+      throw new AppError(
+        409,
+        "BINDING_RELEASE_IN_PROGRESS",
+        "Wait for project disconnection to finish before changing provider maps",
+      );
+    }
     const updated = await transaction.integrationConnection.update({
       where: { id: connectionId },
       data: {
@@ -568,7 +593,12 @@ export async function configureProviderMaps(
       },
     });
     await transaction.integrationProjectBinding.updateMany({
-      where: { connectionId, lifecycle: { not: "draft" } },
+      where: {
+        connectionId,
+        releaseRequestedAt: null,
+        releasedAt: null,
+        lifecycle: { not: "draft" },
+      },
       data: {
         readMap: readMap as Prisma.InputJsonValue,
         writeMap: writeMap as Prisma.InputJsonValue,
@@ -577,7 +607,7 @@ export async function configureProviderMaps(
       },
     });
     await transaction.integrationProjectBinding.updateMany({
-      where: { connectionId, lifecycle: "draft" },
+      where: { connectionId, releaseRequestedAt: null, releasedAt: null, lifecycle: "draft" },
       data: {
         readMap: readMap as Prisma.InputJsonValue,
         writeMap: writeMap as Prisma.InputJsonValue,
@@ -593,14 +623,16 @@ export async function bindProject(
   input: { projectId: string; remoteProjectId: string },
   userId: string,
   deps: ConnectionServiceDeps = defaultDeps,
+  workspaceId?: string,
+  allowedProjectIds?: string[] | null,
 ) {
-  const connection = await ownedConnection(prisma, connectionId, userId);
+  const connection = await ownedConnection(prisma, connectionId, userId, workspaceId);
   const maps = providerMapsFromConnection(connection);
   if (!maps.readMap || !maps.writeMap || !maps.timeActivityId) {
     throw new AppError(
       409,
       "PROVIDER_MAPS_REQUIRED",
-      "An instance admin must configure Redmine status and activity maps first",
+      "A workspace owner must configure Redmine status and activity maps first",
     );
   }
   const credential = await serviceCredential(prisma, connection);
@@ -612,53 +644,134 @@ export async function bindProject(
   }
 
   return prisma.$transaction(async (transaction) => {
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "instance_settings" WHERE "id" = ${INSTANCE_SETTINGS_ID}::uuid FOR SHARE`,
+    );
     await lockConnection(transaction, connectionId);
-    const current = await ownedConnection(transaction, connectionId, userId);
+    const current = await ownedConnection(transaction, connectionId, userId, workspaceId);
     const currentMaps = providerMapsFromConnection(current);
     if (!currentMaps.readMap || !currentMaps.writeMap) {
       throw new AppError(
         409,
         "PROVIDER_MAPS_REQUIRED",
-        "An instance admin must configure Redmine status and activity maps first",
+        "A workspace owner must configure Redmine status and activity maps first",
       );
     }
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "projects" WHERE "id" = ${input.projectId}::uuid AND "workspace_id" = ${current.workspaceId}::uuid FOR UPDATE`,
+    );
     const project = await transaction.project.findFirst({
-      where: { id: input.projectId, workspaceId: current.workspaceId },
+      where: {
+        id: input.projectId,
+        workspaceId: current.workspaceId,
+        archived: false,
+        ...(allowedProjectIds ? { AND: { id: { in: allowedProjectIds } } } : {}),
+      },
       select: { id: true },
     });
-    if (!project) throw new AppError(400, "PROJECT_NOT_FOUND", "Project does not belong to this workspace");
-    const binding = await transaction.integrationProjectBinding.upsert({
-      where: { connectionId_projectId: { connectionId, projectId: project.id } },
-      create: {
+    if (!project) {
+      throw new AppError(400, "PROJECT_NOT_FOUND", "Project is missing, archived, or outside this workspace");
+    }
+
+    await lockRemoteProject(transaction, current, input.remoteProjectId);
+    const localBinding = await transaction.integrationProjectBinding.findFirst({
+      where: { connectionId, projectId: project.id, releasedAt: null },
+    });
+    if (localBinding) {
+      if (localBinding.remoteProjectId === input.remoteProjectId) return localBinding;
+      throw new AppError(409, "PROJECT_ALREADY_BOUND", "Kanon project is already bound to Redmine");
+    }
+    const remoteBinding = await transaction.integrationProjectBinding.findFirst({
+      where: {
+        remoteProjectId: input.remoteProjectId,
+        releasedAt: null,
+        connection: { provider: current.provider, baseUrl: current.baseUrl },
+      },
+      select: { id: true },
+    });
+    if (remoteBinding) {
+      throw new AppError(409, "REMOTE_PROJECT_ALREADY_BOUND", "Redmine project is already bound");
+    }
+
+    const historical = await transaction.integrationProjectBinding.findFirst({
+      where: {
         connectionId,
         projectId: project.id,
         remoteProjectId: input.remoteProjectId,
-        readMap: currentMaps.readMap as Prisma.InputJsonValue,
-        writeMap: currentMaps.writeMap as Prisma.InputJsonValue,
+        releasedAt: { not: null },
       },
-      update: {
-        remoteProjectId: input.remoteProjectId,
-        readMap: currentMaps.readMap as Prisma.InputJsonValue,
-        writeMap: currentMaps.writeMap as Prisma.InputJsonValue,
-        lifecycle: "draft",
-        lifecycleEpoch: { increment: 1 },
-        inboundEnabled: false,
-        bootstrapState: "not_required",
-        bootstrapCutoff: null,
-        bootstrapPageToken: Prisma.DbNull,
-        bootstrapLeaseToken: null,
-        bootstrapLeaseUntil: null,
-        bootstrapFence: { increment: 1 },
-        cursorUpdatedAt: null,
-        cursorRemoteId: null,
-        pageToken: null,
-        pollLeaseToken: null,
-        pollLeaseUntil: null,
-        pollFence: { increment: 1 },
-        auditCursorRemoteId: null,
-        auditCompletedAt: null,
-      },
+      orderBy: { updatedAt: "desc" },
     });
+    if (historical) {
+      const unresolved = await transaction.integrationSyncWork.count({
+        where: {
+          bindingId: historical.id,
+          state: { in: ["leased", "ambiguous"] },
+        },
+      });
+      const openConflicts = await transaction.integrationConflict.count({
+        where: { bindingId: historical.id, state: "open" },
+      });
+      if (unresolved > 0 || openConflicts > 0) {
+        throw new AppError(
+          409,
+          "BINDING_HISTORY_UNRESOLVED",
+          "Resolve retained synchronization conflicts before reconnecting this project",
+        );
+      }
+    } else {
+      const remapHistory = await transaction.integrationProjectBinding.findFirst({
+        where: {
+          connectionId,
+          releasedAt: { not: null },
+          OR: [{ projectId: project.id }, { remoteProjectId: input.remoteProjectId }],
+        },
+        select: { id: true },
+      });
+      if (remapHistory) {
+        throw new AppError(
+          409,
+          "BINDING_HISTORY_CONFLICT",
+          "Retained synchronization history prevents remapping this project in the same workspace",
+        );
+      }
+    }
+    const binding = historical
+      ? await transaction.integrationProjectBinding.update({
+          where: { id: historical.id },
+          data: {
+            releasedAt: null,
+            releaseRequestedAt: null,
+            readMap: currentMaps.readMap as Prisma.InputJsonValue,
+            writeMap: currentMaps.writeMap as Prisma.InputJsonValue,
+            lifecycle: "draft",
+            lifecycleEpoch: { increment: 1 },
+            inboundEnabled: false,
+            bootstrapState: "not_required",
+            bootstrapCutoff: null,
+            bootstrapPageToken: Prisma.DbNull,
+            bootstrapLeaseToken: null,
+            bootstrapLeaseUntil: null,
+            bootstrapFence: { increment: 1 },
+            cursorUpdatedAt: null,
+            cursorRemoteId: null,
+            pageToken: null,
+            pollLeaseToken: null,
+            pollLeaseUntil: null,
+            pollFence: { increment: 1 },
+            auditCursorRemoteId: null,
+            auditCompletedAt: null,
+          },
+        })
+      : await transaction.integrationProjectBinding.create({
+          data: {
+            connectionId,
+            projectId: project.id,
+            remoteProjectId: input.remoteProjectId,
+            readMap: currentMaps.readMap as Prisma.InputJsonValue,
+            writeMap: currentMaps.writeMap as Prisma.InputJsonValue,
+          },
+        });
     const credentials = await transaction.memberIntegrationCredential.findMany({
       where: { connectionId, externalUserId: { not: null } },
       select: { memberId: true, externalUserId: true, externalLogin: true },
@@ -682,10 +795,144 @@ export async function bindProject(
   });
 }
 
-/**
- * Instance-admin convenience: set provider maps and bind a project in one call.
- * Prefer configureProviderMaps + bindProject for the split UI flows.
- */
+export async function unbindProject(
+  connectionId: string,
+  bindingId: string,
+  userId: string,
+  workspaceId?: string,
+  allowedProjectIds?: string[] | null,
+) {
+  return prisma.$transaction(async (transaction) => {
+    await lockConnection(transaction, connectionId);
+    const connection = await ownedConnection(transaction, connectionId, userId, workspaceId);
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "integration_project_bindings" WHERE "id" = ${bindingId}::uuid FOR UPDATE`,
+    );
+    const binding = await transaction.integrationProjectBinding.findFirst({
+      where: {
+        id: bindingId,
+        connectionId,
+        project: { workspaceId: connection.workspaceId },
+        ...(allowedProjectIds ? { projectId: { in: allowedProjectIds } } : {}),
+      },
+    });
+    if (!binding) {
+      throw new AppError(404, "INTEGRATION_BINDING_NOT_FOUND", "Integration project binding not found");
+    }
+    if (binding.releasedAt) return { status: "released" as const, binding };
+
+    await lockRemoteProject(transaction, connection, binding.remoteProjectId);
+    const existingUnresolvedWork = await transaction.integrationSyncWork.count({
+      where: { bindingId, state: { in: ["leased", "ambiguous"] } },
+    });
+    if (
+      existingUnresolvedWork > 0 &&
+      (connection.lifecycle !== "active" || binding.lifecycle !== "active")
+    ) {
+      throw new AppError(
+        409,
+        "INTEGRATION_NOT_ACTIVE",
+        "Resume synchronization before disconnecting outstanding work",
+      );
+    }
+    const releaseRequested = await transaction.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: {
+        releaseRequestedAt: binding.releaseRequestedAt ?? new Date(),
+        ...(binding.releaseRequestedAt
+          ? {}
+          : {
+              inboundEnabled: false,
+              pollLeaseToken: null,
+              pollLeaseUntil: null,
+              pollFence: { increment: 1 },
+              bootstrapLeaseToken: null,
+              bootstrapLeaseUntil: null,
+              bootstrapFence: { increment: 1 },
+            }),
+      },
+    });
+    const unresolvedWork = await transaction.integrationSyncWork.count({
+      where: { bindingId, state: { in: ["leased", "ambiguous"] } },
+    });
+    if (unresolvedWork > 0) {
+      return { status: "draining" as const, binding: releaseRequested };
+    }
+
+    const released = await transaction.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: {
+        lifecycle: "disabled",
+        lifecycleEpoch: { increment: 1 },
+        releasedAt: new Date(),
+      },
+    });
+    const currentBindings = await transaction.integrationProjectBinding.count({
+      where: { connectionId, releasedAt: null },
+    });
+    if (currentBindings === 0 && connection.lifecycle !== "draft") {
+      await transaction.integrationConnection.update({
+        where: { id: connectionId },
+        data: { lifecycle: "draft", lifecycleEpoch: { increment: 1 } },
+      });
+    }
+    return { status: "released" as const, binding: released };
+  });
+}
+
+export async function finalizeDrainedBindingReleases(
+  database: typeof prisma = prisma,
+  limit = 100,
+) {
+  const candidates = await database.integrationProjectBinding.findMany({
+    where: {
+      releaseRequestedAt: { not: null },
+      releasedAt: null,
+      works: { none: { state: { in: ["leased", "ambiguous"] } } },
+    },
+    orderBy: { releaseRequestedAt: "asc" },
+    take: limit,
+    select: { id: true, connectionId: true },
+  });
+  let released = 0;
+  for (const candidate of candidates) {
+    released += await database.$transaction(async (transaction) => {
+      await lockConnection(transaction, candidate.connectionId);
+      await transaction.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "integration_project_bindings" WHERE "id" = ${candidate.id}::uuid FOR UPDATE`,
+      );
+      const current = await transaction.integrationProjectBinding.findUnique({
+        where: { id: candidate.id },
+      });
+      if (!current?.releaseRequestedAt || current.releasedAt) return 0;
+      const unresolved = await transaction.integrationSyncWork.count({
+        where: { bindingId: current.id, state: { in: ["leased", "ambiguous"] } },
+      });
+      if (unresolved > 0) return 0;
+      await transaction.integrationProjectBinding.update({
+        where: { id: current.id },
+        data: {
+          lifecycle: "disabled",
+          lifecycleEpoch: { increment: 1 },
+          releasedAt: new Date(),
+        },
+      });
+      const currentBindings = await transaction.integrationProjectBinding.count({
+        where: { connectionId: current.connectionId, releasedAt: null },
+      });
+      if (currentBindings === 0) {
+        await transaction.integrationConnection.updateMany({
+          where: { id: current.connectionId, lifecycle: { not: "draft" } },
+          data: { lifecycle: "draft", lifecycleEpoch: { increment: 1 } },
+        });
+      }
+      return 1;
+    });
+  }
+  return released;
+}
+
+/** Owner convenience retained for tests and API consumers. */
 export async function configureConnection(
   connectionId: string,
   input: {
@@ -699,6 +946,8 @@ export async function configureConnection(
   },
   userId: string,
   deps: ConnectionServiceDeps = defaultDeps,
+  workspaceId?: string,
+  allowedProjectIds?: string[] | null,
 ) {
   await configureProviderMaps(
     connectionId,
@@ -711,107 +960,34 @@ export async function configureConnection(
     },
     userId,
     deps,
+    workspaceId,
   );
-  // bindProject requires workspace owner; instance admin may not be owner — bind as admin path
-  return bindProjectAsAdmin(connectionId, { projectId: input.projectId, remoteProjectId: input.remoteProjectId }, userId, deps);
+  return bindProject(
+    connectionId,
+    { projectId: input.projectId, remoteProjectId: input.remoteProjectId },
+    userId,
+    deps,
+    workspaceId,
+    allowedProjectIds,
+  );
 }
 
-async function bindProjectAsAdmin(
-  connectionId: string,
-  input: { projectId: string; remoteProjectId: string },
-  userId: string,
-  deps: ConnectionServiceDeps = defaultDeps,
+async function assertActivationReady(
+  database: Database,
+  connection: {
+    id: string;
+    workspaceId: string;
+    serviceCredentialId: string | null;
+    discoveredStatuses: unknown;
+  },
 ) {
-  const connection = await adminConnection(prisma, connectionId, userId);
-  const maps = providerMapsFromConnection(connection);
-  if (!maps.readMap || !maps.writeMap) {
-    throw new AppError(
-      409,
-      "PROVIDER_MAPS_REQUIRED",
-      "An instance admin must configure Redmine status and activity maps first",
-    );
-  }
-  const credential = await serviceCredential(prisma, connection);
-  const projects = await queryRedmine(() =>
-    deps.remote(connection.baseUrl, deps.decrypt(credential.encryptedKey)).listProjects(),
-  );
-  if (!projects.some(({ id }) => id === input.remoteProjectId)) {
-    throw new AppError(400, "REMOTE_PROJECT_NOT_FOUND", "Select a project returned by discovery");
-  }
-
-  return prisma.$transaction(async (transaction) => {
-    await lockConnection(transaction, connectionId);
-    const current = await adminConnection(transaction, connectionId, userId);
-    const currentMaps = providerMapsFromConnection(current);
-    if (!currentMaps.readMap || !currentMaps.writeMap) {
-      throw new AppError(
-        409,
-        "PROVIDER_MAPS_REQUIRED",
-        "An instance admin must configure Redmine status and activity maps first",
-      );
-    }
-    const project = await transaction.project.findFirst({
-      where: { id: input.projectId, workspaceId: current.workspaceId },
-      select: { id: true },
-    });
-    if (!project) throw new AppError(400, "PROJECT_NOT_FOUND", "Project does not belong to this workspace");
-    const binding = await transaction.integrationProjectBinding.upsert({
-      where: { connectionId_projectId: { connectionId, projectId: project.id } },
-      create: {
-        connectionId,
-        projectId: project.id,
-        remoteProjectId: input.remoteProjectId,
-        readMap: currentMaps.readMap as Prisma.InputJsonValue,
-        writeMap: currentMaps.writeMap as Prisma.InputJsonValue,
-      },
-      update: {
-        remoteProjectId: input.remoteProjectId,
-        readMap: currentMaps.readMap as Prisma.InputJsonValue,
-        writeMap: currentMaps.writeMap as Prisma.InputJsonValue,
-        lifecycle: "draft",
-        lifecycleEpoch: { increment: 1 },
-        inboundEnabled: false,
-        bootstrapState: "not_required",
-        bootstrapCutoff: null,
-        bootstrapPageToken: Prisma.DbNull,
-        bootstrapLeaseToken: null,
-        bootstrapLeaseUntil: null,
-        bootstrapFence: { increment: 1 },
-        cursorUpdatedAt: null,
-        cursorRemoteId: null,
-        pageToken: null,
-        pollLeaseToken: null,
-        pollLeaseUntil: null,
-        pollFence: { increment: 1 },
-        auditCursorRemoteId: null,
-        auditCompletedAt: null,
-      },
-    });
-    const credentials = await transaction.memberIntegrationCredential.findMany({
-      where: { connectionId, externalUserId: { not: null } },
-      select: { memberId: true, externalUserId: true, externalLogin: true },
-    });
-    for (const credential of credentials) {
-      await upsertExternalIdentities(
-        transaction,
-        connectionId,
-        credential.memberId,
-        credential.externalUserId!,
-        credential.externalLogin,
-      );
-    }
-    if (current.lifecycle !== "draft") {
-      await transaction.integrationConnection.update({
-        where: { id: connectionId },
-        data: { lifecycle: "draft", lifecycleEpoch: { increment: 1 } },
-      });
-    }
-    return binding;
+  const bindings = await database.integrationProjectBinding.findMany({
+    where: {
+      connectionId: connection.id,
+      releaseRequestedAt: null,
+      releasedAt: null,
+    },
   });
-}
-
-async function assertActivationReady(database: Database, connection: { id: string; serviceCredentialId: string | null; discoveredStatuses: unknown }) {
-  const bindings = await database.integrationProjectBinding.findMany({ where: { connectionId: connection.id } });
   const credential = await serviceCredential(database, connection);
   if (
     credential.lastAuthStatus !== "valid" ||
@@ -877,9 +1053,20 @@ export async function setConnectionLifecycle(
   lifecycle: "active" | "paused" | "disabled",
   userId: string,
   deps: ConnectionServiceDeps = defaultDeps,
+  workspaceId?: string,
 ) {
-  const current = await adminConnection(prisma, connectionId, userId);
+  const current = await ownedConnection(prisma, connectionId, userId, workspaceId);
   if (current.lifecycle === lifecycle) return current;
+  const releasePending = await prisma.integrationProjectBinding.count({
+    where: { connectionId, releaseRequestedAt: { not: null }, releasedAt: null },
+  });
+  if (releasePending > 0) {
+    throw new AppError(
+      409,
+      "BINDING_RELEASE_IN_PROGRESS",
+      "Wait for project disconnection to finish before changing integration lifecycle",
+    );
+  }
   if (lifecycle === "active") {
     const credential = await assertActivationReady(prisma, current);
     await queryRedmine(() =>
@@ -889,15 +1076,25 @@ export async function setConnectionLifecycle(
 
   return prisma.$transaction(async (transaction) => {
     await lockConnection(transaction, connectionId);
-    const locked = await adminConnection(transaction, connectionId, userId);
+    const locked = await ownedConnection(transaction, connectionId, userId, workspaceId);
     if (locked.lifecycle === lifecycle) return locked;
+    const lockedReleasePending = await transaction.integrationProjectBinding.count({
+      where: { connectionId, releaseRequestedAt: { not: null }, releasedAt: null },
+    });
+    if (lockedReleasePending > 0) {
+      throw new AppError(
+        409,
+        "BINDING_RELEASE_IN_PROGRESS",
+        "Wait for project disconnection to finish before changing integration lifecycle",
+      );
+    }
     if (lifecycle === "active") await assertActivationReady(transaction, locked);
     const connection = await transaction.integrationConnection.update({
       where: { id: connectionId },
       data: { lifecycle, lifecycleEpoch: { increment: 1 } },
     });
     await transaction.integrationProjectBinding.updateMany({
-      where: { connectionId },
+      where: { connectionId, releaseRequestedAt: null, releasedAt: null },
       data: {
         lifecycle,
         lifecycleEpoch: { increment: 1 },
@@ -916,6 +1113,8 @@ export async function setConnectionLifecycle(
           FROM "integration_project_bindings" AS binding
           WHERE work."binding_id" = binding."id"
             AND binding."connection_id" = ${connectionId}::uuid
+            AND binding."released_at" IS NULL
+            AND binding."release_requested_at" IS NULL
             AND work."epoch" = binding."lifecycle_epoch" - 1
             AND work."state" IN (
               'queued'::"SyncWorkState",
@@ -964,14 +1163,20 @@ export async function connectCredential(
   apiKey: string,
   userId: string,
   deps: ConnectionServiceDeps = defaultDeps,
+  workspaceId?: string,
 ) {
-  const { connection, member } = await memberConnection(prisma, connectionId, userId);
+  const { connection, member } = await memberConnection(
+    prisma,
+    connectionId,
+    userId,
+    workspaceId,
+  );
   const existing = await prisma.memberIntegrationCredential.findUnique({
     where: { memberId_connectionId: { memberId: member.id, connectionId } },
     select: { id: true },
   });
   if (existing?.id === connection.serviceCredentialId) {
-    return replaceServiceCredential(connectionId, apiKey, userId, deps);
+    return replaceServiceCredential(connectionId, apiKey, userId, deps, workspaceId);
   }
   const identity = await queryRedmine(() => deps.remote(connection.baseUrl, apiKey).whoAmI());
   const encryptedKey = deps.encrypt(apiKey);
@@ -980,7 +1185,7 @@ export async function connectCredential(
   try {
     const credential = await prisma.$transaction(async (transaction) => {
       await lockConnection(transaction, connectionId);
-      const current = await memberConnection(transaction, connectionId, userId);
+      const current = await memberConnection(transaction, connectionId, userId, workspaceId);
       const currentCredential = await transaction.memberIntegrationCredential.findUnique({
         where: {
           memberId_connectionId: { memberId: current.member.id, connectionId },
@@ -990,8 +1195,8 @@ export async function connectCredential(
       if (currentCredential?.id === current.connection.serviceCredentialId) {
         throw new AppError(
           409,
-          "SERVICE_CREDENTIAL_REQUIRES_ADMIN",
-          "Replace the service credential from instance administration",
+          "SERVICE_CREDENTIAL_REQUIRES_OWNER",
+          "Replace the service credential from workspace settings",
         );
       }
       const saved = await transaction.memberIntegrationCredential.upsert({
@@ -1049,8 +1254,9 @@ export async function replaceServiceCredential(
   apiKey: string,
   userId: string,
   deps: ConnectionServiceDeps = defaultDeps,
+  workspaceId?: string,
 ) {
-  const connection = await adminConnection(prisma, connectionId, userId);
+  const connection = await ownedConnection(prisma, connectionId, userId, workspaceId);
   await resolveServiceCredentialMember(prisma, connection.workspaceId, userId);
   const identity = await queryRedmine(() => deps.remote(connection.baseUrl, apiKey).whoAmI());
   const encryptedKey = deps.encrypt(apiKey);
@@ -1059,7 +1265,7 @@ export async function replaceServiceCredential(
   try {
     const credential = await prisma.$transaction(async (transaction) => {
       await lockConnection(transaction, connectionId);
-      const current = await adminConnection(transaction, connectionId, userId);
+      const current = await ownedConnection(transaction, connectionId, userId, workspaceId);
       const serviceMember = await resolveServiceCredentialMember(
         transaction,
         current.workspaceId,
@@ -1087,7 +1293,7 @@ export async function replaceServiceCredential(
       });
       await transaction.integrationExternalIdentity.updateMany({
         where: {
-          binding: { connectionId },
+          binding: { connectionId, releaseRequestedAt: null, releasedAt: null },
           memberId: { not: serviceMember.id },
           remoteUserId: identity.id,
         },
@@ -1126,8 +1332,28 @@ export async function replaceServiceCredential(
   }
 }
 
-export async function clearCredential(connectionId: string, userId: string) {
-  const { member } = await memberConnection(prisma, connectionId, userId);
+export async function clearCredential(
+  connectionId: string,
+  userId: string,
+  workspaceId?: string,
+) {
+  const { connection, member } = await memberConnection(
+    prisma,
+    connectionId,
+    userId,
+    workspaceId,
+  );
+  const existing = await prisma.memberIntegrationCredential.findUnique({
+    where: { memberId_connectionId: { memberId: member.id, connectionId } },
+    select: { id: true },
+  });
+  if (existing?.id === connection.serviceCredentialId) {
+    throw new AppError(
+      409,
+      "SERVICE_CREDENTIAL_REQUIRES_REPLACEMENT",
+      "Replace the workspace service credential before disconnecting this account",
+    );
+  }
   await prisma.memberIntegrationCredential.updateMany({
     where: { connectionId, memberId: member.id },
     data: { lastAuthStatus: "revoked", revokedAt: new Date() },
@@ -1138,38 +1364,45 @@ export async function clearCredential(connectionId: string, userId: string) {
   return publicCredential(credential);
 }
 
-export async function getWorkspaceConnection(workspaceId: string, userId: string) {
-  const admin = await isInstanceAdminUser(prisma, userId);
-  if (!admin) {
-    const member = await prisma.member.findUnique({
-      where: { userId_workspaceId: { userId, workspaceId } },
-      select: { id: true },
-    });
-    if (!member) throw new AppError(403, "FORBIDDEN", "Workspace membership is required");
-  }
+export async function getWorkspaceConnection(
+  workspaceId: string,
+  userId: string,
+  allowedProjectIds?: string[] | null,
+) {
+  const member = await prisma.member.findUnique({
+    where: { userId_workspaceId: { userId, workspaceId } },
+    select: { id: true },
+  });
+  if (!member) throw new AppError(403, "FORBIDDEN", "Workspace membership is required");
   const connection = await prisma.integrationConnection.findUnique({
     where: { workspaceId_provider: { workspaceId, provider: "redmine" } },
     select: { id: true },
   });
-  return connection ? getConnection(connection.id, userId) : null;
+  return connection ? getConnection(connection.id, userId, workspaceId, allowedProjectIds) : null;
 }
 
-export async function getConnection(connectionId: string, userId: string) {
-  const admin = await isInstanceAdminUser(prisma, userId);
+export async function getConnection(
+  connectionId: string,
+  userId: string,
+  workspaceId?: string,
+  allowedProjectIds?: string[] | null,
+) {
   const connection = await prisma.integrationConnection.findUnique({ where: { id: connectionId } });
-  if (!connection) throw new AppError(404, "INTEGRATION_NOT_FOUND", "Integration connection not found");
+  if (!connection || (workspaceId && connection.workspaceId !== workspaceId)) {
+    throw new AppError(404, "INTEGRATION_NOT_FOUND", "Integration connection not found");
+  }
 
   const member = await prisma.member.findUnique({
     where: { userId_workspaceId: { userId, workspaceId: connection.workspaceId } },
     select: { id: true, role: true },
   });
-  if (!admin && !member) {
+  if (!member) {
     throw new AppError(403, "FORBIDDEN", "Workspace membership is required");
   }
-  const memberId = member?.id ?? null;
-  const operator = admin || member?.role === "owner";
+  const memberId = member.id;
+  const operator = member.role === "owner" && !allowedProjectIds;
   const authBlockedWhere = {
-    binding: { connectionId },
+    binding: { connectionId, releasedAt: null },
     skippedReason: "credential_invalid",
     state: { in: ["dead", "ambiguous"] },
   } satisfies Prisma.IntegrationSyncWorkWhereInput;
@@ -1190,7 +1423,11 @@ export async function getConnection(connectionId: string, userId: string) {
           })
         : Promise.resolve(null),
       prisma.integrationProjectBinding.findMany({
-        where: { connectionId },
+        where: {
+          connectionId,
+          releasedAt: null,
+          ...(allowedProjectIds ? { projectId: { in: allowedProjectIds } } : {}),
+        },
         orderBy: { id: "asc" },
         select: {
           id: true,
@@ -1200,11 +1437,12 @@ export async function getConnection(connectionId: string, userId: string) {
           writeMap: true,
           lifecycle: true,
           lifecycleEpoch: true,
+          releaseRequestedAt: true,
         },
       }),
       prisma.member.count({ where: { workspaceId: connection.workspaceId } }),
       prisma.integrationExternalIdentity.count({
-        where: { binding: { connectionId } },
+        where: { binding: { connectionId, releasedAt: null } },
       }),
       prisma.memberIntegrationCredential.findMany({
         where: { connectionId, lastAuthStatus: "valid", revokedAt: null },
@@ -1213,7 +1451,11 @@ export async function getConnection(connectionId: string, userId: string) {
       connection.serviceCredentialId
         ? prisma.memberIntegrationCredential.findFirst({
             where: { id: connection.serviceCredentialId, connectionId },
-            select: { lastAuthStatus: true, revokedAt: true },
+            select: {
+              lastAuthStatus: true,
+              revokedAt: true,
+              member: { select: { role: true, workspaceId: true } },
+            },
           })
         : Promise.resolve(null),
       prisma.integrationSyncWork.count({ where: authBlockedWhere }),
@@ -1235,7 +1477,10 @@ export async function getConnection(connectionId: string, userId: string) {
     ]);
   const providerMaps = providerMapsFromConnection(connection);
   const serviceCredentialStatus = serviceCredentialRecord
-    ? serviceCredentialRecord.revokedAt
+    ? serviceCredentialRecord.member.role !== "owner" ||
+      serviceCredentialRecord.member.workspaceId !== connection.workspaceId
+      ? "invalid"
+      : serviceCredentialRecord.revokedAt
       ? "revoked"
       : serviceCredentialRecord.lastAuthStatus
     : "missing";
@@ -1248,6 +1493,7 @@ export async function getConnection(connectionId: string, userId: string) {
     lifecycleEpoch: connection.lifecycleEpoch,
     serviceFallbackEnabled: connection.serviceFallbackEnabled,
     serviceCredentialStatus,
+    serviceCredentialIsCaller: credential?.id === connection.serviceCredentialId,
     syncHealth: {
       status:
         serviceCredentialStatus !== "valid" || blockedWorkTotal > 0
@@ -1257,8 +1503,8 @@ export async function getConnection(connectionId: string, userId: string) {
           : ("healthy" as const),
       blockedWork: operator ? { total: blockedWorkTotal, items: blockedWork } : null,
     },
-    discoveredStatuses: admin ? connection.discoveredStatuses : null,
-    providerMaps: admin
+    discoveredStatuses: operator ? connection.discoveredStatuses : null,
+    providerMaps: operator
       ? {
           readMap: providerMaps.readMap
             ? Object.fromEntries(
@@ -1297,7 +1543,7 @@ export async function getConnection(connectionId: string, userId: string) {
       projectId: binding.projectId,
       remoteProjectId: binding.remoteProjectId,
       readMap:
-        admin && binding.readMap && typeof binding.readMap === "object" && !Array.isArray(binding.readMap)
+        operator && binding.readMap && typeof binding.readMap === "object" && !Array.isArray(binding.readMap)
           ? Object.fromEntries(
               Object.entries(binding.readMap).filter(
                 ([key]) => !key.startsWith(PRIORITY_MAP_PREFIX),
@@ -1305,7 +1551,7 @@ export async function getConnection(connectionId: string, userId: string) {
             )
           : {},
       writeMap:
-        admin && binding.writeMap && typeof binding.writeMap === "object" && !Array.isArray(binding.writeMap)
+        operator && binding.writeMap && typeof binding.writeMap === "object" && !Array.isArray(binding.writeMap)
           ? Object.fromEntries(
               Object.entries(binding.writeMap).filter(
                 ([key]) =>
@@ -1313,7 +1559,7 @@ export async function getConnection(connectionId: string, userId: string) {
               ),
             )
           : {},
-      timeActivityId: admin
+      timeActivityId: operator
         ? binding.writeMap &&
           typeof binding.writeMap === "object" &&
           !Array.isArray(binding.writeMap) &&
@@ -1323,6 +1569,7 @@ export async function getConnection(connectionId: string, userId: string) {
         : null,
       lifecycle: binding.lifecycle,
       lifecycleEpoch: binding.lifecycleEpoch,
+      releasePending: binding.releaseRequestedAt !== null,
     })),
     callerCredential: publicCredential(credential),
     connectedMemberIds: connectedCredentials.map(({ memberId }) => memberId),
