@@ -7,7 +7,7 @@ import type {
   RemoteChange,
 } from "../../core/types.js";
 
-const MAX_ISSUES_PER_PASS = 10_000;
+export const MAX_ISSUES_PER_PASS = 10_000;
 const remoteIdSchema = z
   .union([z.number(), z.string().regex(/^\d+$/)])
   .transform(Number)

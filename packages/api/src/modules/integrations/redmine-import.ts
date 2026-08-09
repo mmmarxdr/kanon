@@ -11,14 +11,15 @@ import { priorityReadKey } from "./issue-convergence.js";
 import {
   decodeRedmineIssueDetail,
   decodeRedmineIssueListPage,
+  MAX_ISSUES_PER_PASS,
+  RedminePaginationDriftError,
   type RedmineIssueChange,
 } from "./providers/redmine/decoder.js";
-import { RedmineHttpClient } from "./providers/redmine/http-client.js";
+import { RedmineHttpClient, RedmineHttpError } from "./providers/redmine/http-client.js";
 import { ownedConnection, serviceCredential } from "./service.js";
 
 const PAGE_SIZE = 100;
-// ponytail: one Redmine page avoids an unbounded candidate manifest and transaction.
-const MAX_ISSUES = PAGE_SIZE;
+const ACTIVATION_BATCH_SIZE = 10;
 const BOOTSTRAP_LEASE_MS = 120_000;
 const IssueState = z.enum(["backlog", "analysis", "todo", "in_progress", "review", "done"]);
 const IssuePriority = z.enum(["critical", "high", "medium", "low"]);
@@ -33,10 +34,10 @@ const PreviewEvidence = z
   .object({
     version: z.literal(1),
     complete: z.boolean(),
-    nextOffset: z.number().int().nonnegative().max(MAX_ISSUES),
-    scannedCount: z.number().int().nonnegative().max(MAX_ISSUES),
-    excludedPrivateCount: z.number().int().nonnegative().max(MAX_ISSUES),
-    linkedCount: z.number().int().nonnegative().max(MAX_ISSUES),
+    nextOffset: z.number().int().nonnegative().max(MAX_ISSUES_PER_PASS),
+    scannedCount: z.number().int().nonnegative().max(MAX_ISSUES_PER_PASS),
+    excludedPrivateCount: z.number().int().nonnegative().max(MAX_ISSUES_PER_PASS),
+    linkedCount: z.number().int().nonnegative().max(MAX_ISSUES_PER_PASS),
     checkpoint: Checkpoint.nullable(),
     candidates: z
       .array(
@@ -47,10 +48,13 @@ const PreviewEvidence = z
           })
           .strict(),
       )
-      .max(MAX_ISSUES),
-    unmappedStatusIds: z.array(z.string().regex(/^\d+$/)).max(MAX_ISSUES),
-    unmappedPriorityIds: z.array(z.string().regex(/^\d+$/)).max(MAX_ISSUES).default([]),
-    unmappedAssigneeIds: z.array(z.string().regex(/^\d+$/)).max(MAX_ISSUES),
+      .max(MAX_ISSUES_PER_PASS),
+    unmappedStatusIds: z.array(z.string().regex(/^\d+$/)).max(MAX_ISSUES_PER_PASS),
+    unmappedPriorityIds: z
+      .array(z.string().regex(/^\d+$/))
+      .max(MAX_ISSUES_PER_PASS)
+      .default([]),
+    unmappedAssigneeIds: z.array(z.string().regex(/^\d+$/)).max(MAX_ISSUES_PER_PASS),
   })
   .strict();
 
@@ -205,6 +209,19 @@ function applicationKey(bindingId: string, change: RedmineIssueChange): string {
   return createHash("sha256")
     .update(`${bindingId}|issue|${change.identity.remoteId}|${change.sourceVersion}`)
     .digest("hex");
+}
+
+export function isEligibleRedmineIssueImport(
+  change: Pick<RedmineIssueChange, "createdAt" | "closedAt">,
+  mappedState: unknown,
+  cutoff: Date,
+): boolean {
+  const isClosed = mappedState === "done" || change.closedAt !== undefined;
+  return (
+    !isClosed ||
+    (change.createdAt?.getTime() ?? -1) >= cutoff.getTime() ||
+    (change.closedAt?.getTime() ?? -1) >= cutoff.getTime()
+  );
 }
 
 export async function completeRetriedApplicationTx(
@@ -502,6 +519,13 @@ export async function previewRedmineIssueImport(
     if (current.binding.inboundEnabled && current.binding.bootstrapState === "ready") {
       throw new AppError(409, "REDMINE_IMPORT_ACTIVE", "Redmine inbound import is already active");
     }
+    if (current.binding.bootstrapState === "bootstrapping") {
+      throw new AppError(
+        409,
+        "REDMINE_IMPORT_IN_PROGRESS",
+        "Finish the current Redmine import activation before previewing again",
+      );
+    }
     const unsettledOutbound = await transaction.integrationSyncWork.count({
       where: {
         bindingId,
@@ -531,10 +555,12 @@ export async function previewRedmineIssueImport(
         ? PreviewEvidence.safeParse(current.binding.bootstrapPageToken)
         : null;
     const stored = storedEvidence?.success ? storedEvidence.data : null;
-    const resumable = stored && stored.nextOffset < MAX_ISSUES ? stored : null;
+    const resumable = stored && stored.nextOffset < MAX_ISSUES_PER_PASS ? stored : null;
     const evidence = resumable?.complete ? emptyEvidence() : (resumable ?? emptyEvidence());
 
-    const cutoff = resumable ? current.binding.bootstrapCutoff! : claimedAt;
+    const cutoff = resumable
+      ? current.binding.bootstrapCutoff!
+      : new Date(Math.floor(claimedAt.getTime() / 1_000) * 1_000);
     const leaseToken = randomUUID();
     const binding = await transaction.integrationProjectBinding.update({
       where: { id: bindingId },
@@ -612,6 +638,15 @@ export async function previewRedmineIssueImport(
         linkedCount += 1;
         continue;
       }
+      if (
+        !isEligibleRedmineIssueImport(
+          change,
+          readMap[change.fields.statusId],
+          claim.cutoff,
+        )
+      ) {
+        continue;
+      }
       candidates.push({
         remoteId: change.identity.remoteId,
         sourceVersion: change.sourceVersion,
@@ -685,7 +720,7 @@ export async function previewRedmineIssueImport(
       throw new AppError(
         409,
         "REDMINE_IMPORT_LIMIT",
-        `Redmine import preview is limited to ${MAX_ISSUES} issues`,
+        `Redmine import preview paused after ${PAGE_SIZE} issues; run it again to continue`,
       );
     }
 
@@ -701,14 +736,31 @@ export async function previewRedmineIssueImport(
       },
     };
   } catch (error) {
+    const drifted = error instanceof RedminePaginationDriftError;
     await prisma.integrationProjectBinding.updateMany({
       where: {
         id: bindingId,
         bootstrapLeaseToken: claim.leaseToken,
         bootstrapFence: claim.fence,
       },
-      data: { bootstrapLeaseToken: null, bootstrapLeaseUntil: null },
+      data: {
+        bootstrapLeaseToken: null,
+        bootstrapLeaseUntil: null,
+        ...(drifted
+          ? {
+              bootstrapState: "pending" as const,
+              bootstrapPageToken: emptyEvidence() as unknown as Prisma.InputJsonValue,
+            }
+          : {}),
+      },
     });
+    if (drifted) {
+      throw new AppError(
+        409,
+        "REDMINE_PREVIEW_STALE",
+        "The Redmine issue set changed; the preview restarted from the first page",
+      );
+    }
     if (error instanceof AppError) throw error;
     throw remoteFailure();
   }
@@ -723,71 +775,131 @@ export async function activateRedmineIssueImport(
   const now = dependencies.now ?? (() => new Date());
   const decrypt = dependencies.decrypt ?? decryptCredential;
   const createClient = dependencies.client ?? defaultClient;
-  const current = await importBinding(
-    prisma,
-    connectionId,
-    bindingId,
-    userId,
-    dependencies.allowedProjectIds,
-    dependencies.workspaceId,
-  );
-  if (current.binding.inboundEnabled && current.binding.bootstrapState === "ready") {
-    return { importedCount: 0, issueKeys: [] as string[], replayed: true };
-  }
-  if (current.binding.bootstrapState !== "previewed" || !current.binding.bootstrapCutoff) {
-    throw new AppError(409, "REDMINE_PREVIEW_REQUIRED", "Complete a Redmine import preview first");
-  }
-  const evidence = parseEvidence(current.binding.bootstrapPageToken);
-  if (!evidence.complete) {
-    throw new AppError(409, "REDMINE_PREVIEW_REQUIRED", "Complete a Redmine import preview first");
-  }
-  const readMap =
-    current.binding.readMap &&
-    typeof current.binding.readMap === "object" &&
-    !Array.isArray(current.binding.readMap)
-      ? (current.binding.readMap as Record<string, unknown>)
-      : {};
-  if (
-    evidence.unmappedPriorityIds.length > 0 ||
-    !Object.entries(readMap).some(
-      ([key, value]) => key.startsWith("priority:") && IssuePriority.safeParse(value).success,
-    )
-  ) {
-    throw new AppError(
-      409,
-      "REDMINE_PRIORITY_UNMAPPED",
-      "Configure Redmine priority mappings and run the preview again",
+  const claim = await prisma.$transaction(async (transaction) => {
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "integration_project_bindings" WHERE "id" = ${bindingId}::uuid FOR UPDATE`,
     );
+    const current = await importBinding(
+      transaction,
+      connectionId,
+      bindingId,
+      userId,
+      dependencies.allowedProjectIds,
+      dependencies.workspaceId,
+    );
+    if (current.binding.inboundEnabled && current.binding.bootstrapState === "ready") {
+      return { kind: "ready" as const };
+    }
+    if (
+      !["previewed", "bootstrapping"].includes(current.binding.bootstrapState) ||
+      !current.binding.bootstrapCutoff
+    ) {
+      throw new AppError(
+        409,
+        "REDMINE_PREVIEW_REQUIRED",
+        "Complete a Redmine import preview first",
+      );
+    }
+    const evidence = parseEvidence(current.binding.bootstrapPageToken);
+    if (!evidence.complete) {
+      throw new AppError(
+        409,
+        "REDMINE_PREVIEW_REQUIRED",
+        "Complete a Redmine import preview first",
+      );
+    }
+    const readMap =
+      current.binding.readMap &&
+      typeof current.binding.readMap === "object" &&
+      !Array.isArray(current.binding.readMap)
+        ? (current.binding.readMap as Record<string, unknown>)
+        : {};
+    if (
+      evidence.unmappedPriorityIds.length > 0 ||
+      !Object.entries(readMap).some(
+        ([key, value]) => key.startsWith("priority:") && IssuePriority.safeParse(value).success,
+      )
+    ) {
+      throw new AppError(
+        409,
+        "REDMINE_PRIORITY_UNMAPPED",
+        "Configure Redmine priority mappings and run the preview again",
+      );
+    }
+    const claimedAt = now();
+    if (
+      current.binding.bootstrapLeaseToken &&
+      current.binding.bootstrapLeaseUntil &&
+      current.binding.bootstrapLeaseUntil > claimedAt
+    ) {
+      throw new AppError(
+        409,
+        "REDMINE_IMPORT_IN_PROGRESS",
+        "A Redmine import activation is already running",
+      );
+    }
+    const leaseToken = randomUUID();
+    const binding = await transaction.integrationProjectBinding.update({
+      where: { id: bindingId },
+      data: {
+        bootstrapState: "bootstrapping",
+        bootstrapLeaseToken: leaseToken,
+        bootstrapLeaseUntil: new Date(claimedAt.getTime() + BOOTSTRAP_LEASE_MS),
+        bootstrapFence: { increment: 1 },
+      },
+      select: { bootstrapFence: true },
+    });
+    return {
+      kind: "claimed" as const,
+      current,
+      evidence,
+      candidates: evidence.candidates.slice(0, ACTIVATION_BATCH_SIZE),
+      leaseToken,
+      fence: binding.bootstrapFence,
+    };
+  });
+  if (claim.kind === "ready") {
+    return { importedCount: 0, issueKeys: [] as string[], replayed: true, complete: true };
   }
 
-  const key = decryptServiceCredential(decrypt, current.credential.encryptedKey);
-  const client = createClient(current.connection.baseUrl, key);
-  const changes: RedmineIssueChange[] = [];
   try {
-    for (const candidate of evidence.candidates) {
-      const value = await client.get<unknown>(
-        `/issues/${encodeURIComponent(candidate.remoteId)}.json?include=journals`,
-      );
-      const change = decodeRedmineIssueDetail(value, current.binding.remoteProjectId).issue;
-      if (
-        change.operation !== "upsert" ||
-        change.identity.remoteId !== candidate.remoteId ||
-        change.sourceVersion !== candidate.sourceVersion
-      ) {
+    const key = decryptServiceCredential(decrypt, claim.current.credential.encryptedKey);
+    const client = createClient(claim.current.connection.baseUrl, key);
+    const changes: RedmineIssueChange[] = [];
+    try {
+      for (const candidate of claim.candidates) {
+        const value = await client.get<unknown>(
+          `/issues/${encodeURIComponent(candidate.remoteId)}.json?include=journals`,
+        );
+        const change = decodeRedmineIssueDetail(
+          value,
+          claim.current.binding.remoteProjectId,
+        ).issue;
+        if (
+          change.operation !== "upsert" ||
+          change.identity.remoteId !== candidate.remoteId ||
+          change.sourceVersion !== candidate.sourceVersion
+        ) {
+          throw new AppError(
+            409,
+            "REDMINE_PREVIEW_STALE",
+            "A Redmine issue changed after preview; run the preview again",
+          );
+        }
+        changes.push(change);
+      }
+    } catch (error) {
+      if (error instanceof RedmineHttpError && error.statusCode === 404) {
         throw new AppError(
           409,
           "REDMINE_PREVIEW_STALE",
-          "A Redmine issue changed after preview; run the preview again",
+          "A previewed Redmine issue no longer exists; run the preview again",
         );
       }
-      changes.push(change);
+      if (error instanceof AppError) throw error;
+      throw remoteFailure();
     }
-  } catch (error) {
-    if (error instanceof AppError) throw error;
-    throw remoteFailure();
-  }
 
-  try {
     return await prisma.$transaction(
       async (transaction) => {
         await transaction.$queryRaw(
@@ -802,21 +914,31 @@ export async function activateRedmineIssueImport(
           dependencies.workspaceId,
         );
         if (locked.binding.inboundEnabled && locked.binding.bootstrapState === "ready") {
-          return { importedCount: 0, issueKeys: [] as string[], replayed: true };
+          return {
+            importedCount: 0,
+            issueKeys: [] as string[],
+            replayed: true,
+            complete: true,
+          };
         }
         if (
-          locked.binding.bootstrapState !== "previewed" ||
-          locked.binding.bootstrapFence !== current.binding.bootstrapFence ||
-          locked.binding.lifecycleEpoch !== current.binding.lifecycleEpoch ||
-          locked.binding.bootstrapCutoff?.getTime() !== current.binding.bootstrapCutoff!.getTime() ||
-          locked.credential.id !== current.credential.id
+          locked.binding.bootstrapState !== "bootstrapping" ||
+          locked.binding.bootstrapLeaseToken !== claim.leaseToken ||
+          locked.binding.bootstrapFence !== claim.fence ||
+          locked.binding.lifecycleEpoch !== claim.current.binding.lifecycleEpoch ||
+          locked.binding.bootstrapCutoff?.getTime() !==
+            claim.current.binding.bootstrapCutoff!.getTime() ||
+          locked.credential.id !== claim.current.credential.id ||
+          locked.credential.encryptedKey !== claim.current.credential.encryptedKey
         ) {
           throw new AppError(409, "REDMINE_PREVIEW_STALE", "The Redmine import preview changed");
         }
         const lockedEvidence = parseEvidence(locked.binding.bootstrapPageToken);
         if (
           !lockedEvidence.complete ||
-          JSON.stringify(lockedEvidence.candidates) !== JSON.stringify(evidence.candidates)
+          JSON.stringify(lockedEvidence) !== JSON.stringify(claim.evidence) ||
+          JSON.stringify(lockedEvidence.candidates.slice(0, ACTIVATION_BATCH_SIZE)) !==
+            JSON.stringify(claim.candidates)
         ) {
           throw new AppError(409, "REDMINE_PREVIEW_STALE", "The Redmine import preview changed");
         }
@@ -836,18 +958,6 @@ export async function activateRedmineIssueImport(
           );
         }
 
-        const activatedAt = now();
-        const leaseToken = randomUUID();
-        await transaction.integrationProjectBinding.update({
-          where: { id: bindingId },
-          data: {
-            bootstrapState: "bootstrapping",
-            bootstrapLeaseToken: leaseToken,
-            bootstrapLeaseUntil: new Date(activatedAt.getTime() + BOOTSTRAP_LEASE_MS),
-            bootstrapFence: { increment: 1 },
-          },
-        });
-
         const issueKeys = await persistRedmineIssueImportsTx(
           transaction,
           {
@@ -862,7 +972,24 @@ export async function activateRedmineIssueImport(
           changes,
         );
 
-        const cursor = checkpoint(evidence.checkpoint) ?? {
+        const remainingCandidates = lockedEvidence.candidates.slice(claim.candidates.length);
+        if (remainingCandidates.length) {
+          await transaction.integrationProjectBinding.update({
+            where: { id: bindingId },
+            data: {
+              bootstrapPageToken: {
+                ...lockedEvidence,
+                candidates: remainingCandidates,
+              } as unknown as Prisma.InputJsonValue,
+              bootstrapLeaseToken: null,
+              bootstrapLeaseUntil: null,
+            },
+          });
+          return { importedCount: issueKeys.length, issueKeys, replayed: false, complete: false };
+        }
+
+        const activatedAt = now();
+        const cursor = checkpoint(lockedEvidence.checkpoint) ?? {
           updatedAt: new Date(0),
           remoteId: "1",
           pageToken: null,
@@ -880,21 +1007,39 @@ export async function activateRedmineIssueImport(
             pageToken: null,
             pollLeaseToken: null,
             pollLeaseUntil: null,
-            auditCursorRemoteId: evidence.checkpoint?.remoteId ?? null,
+            auditCursorRemoteId: lockedEvidence.checkpoint?.remoteId ?? null,
             auditCompletedAt: activatedAt,
           },
         });
-        return { importedCount: issueKeys.length, issueKeys, replayed: false };
+        return { importedCount: issueKeys.length, issueKeys, replayed: false, complete: true };
       },
       { timeout: 30_000 },
     );
   } catch (error) {
+    const restartPreview = error instanceof AppError && error.code === "REDMINE_PREVIEW_STALE";
+    await prisma.integrationProjectBinding.updateMany({
+      where: {
+        id: bindingId,
+        bootstrapLeaseToken: claim.leaseToken,
+        bootstrapFence: claim.fence,
+      },
+      data: {
+        bootstrapLeaseToken: null,
+        bootstrapLeaseUntil: null,
+        ...(restartPreview
+          ? {
+              bootstrapState: "pending" as const,
+              bootstrapPageToken: emptyEvidence() as unknown as Prisma.InputJsonValue,
+            }
+          : {}),
+      },
+    });
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       const binding = await prisma.integrationProjectBinding.findFirst({
         where: { id: bindingId, releaseRequestedAt: null, releasedAt: null },
       });
       if (binding?.inboundEnabled && binding.bootstrapState === "ready") {
-        return { importedCount: 0, issueKeys: [] as string[], replayed: true };
+        return { importedCount: 0, issueKeys: [] as string[], replayed: true, complete: true };
       }
       throw new AppError(409, "REDMINE_IMPORT_RACE", "Redmine import raced with another write");
     }

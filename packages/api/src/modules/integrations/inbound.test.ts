@@ -69,6 +69,7 @@ async function fixture(state = "review" as const) {
       lifecycleEpoch: 1,
       inboundEnabled: true,
       bootstrapState: "ready",
+      bootstrapCutoff: baseline,
     },
   });
   const issue = await prisma.issue.create({
@@ -849,6 +850,80 @@ describe("Redmine inbound sync", () => {
     await expect(
       prisma.issue.findFirstOrThrow({ where: { projectId: project.id, id: { not: issue.id } } }),
     ).resolves.toMatchObject({ state: "done", completedAt: closedAt });
+  });
+
+  it("records pre-activation closed history and imports it after a later reopen", async () => {
+    const { binding, issue, project } = await fixture();
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: {
+        readMap: {
+          open: "in_progress",
+          review: "review",
+          closed: "review",
+          "priority:3": "medium",
+        },
+      },
+    });
+    const historicalAt = new Date("2026-08-01T10:04:30.000Z");
+    const historical = dependencies([change(historicalAt, "review", "999")]);
+    historical.loadIssueDetail.mockResolvedValue({
+      ...detailChange(historicalAt),
+      closedAt: new Date("2026-08-01T09:30:00.000Z"),
+      fields: {
+        title: "Historical closed issue",
+        description: null,
+        statusId: "closed",
+        priorityId: "3",
+        assignee: null,
+        startDate: null,
+        dueDate: null,
+        progress: 100,
+      },
+    });
+
+    await runInboundSyncCycle(prisma, historical);
+
+    await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(1);
+    await expect(
+      prisma.integrationInboundApplication.findFirstOrThrow({
+        where: { bindingId: binding.id, remoteId: "999" },
+      }),
+    ).resolves.toMatchObject({
+      state: "skipped",
+      sourceVersion: expect.stringMatching(/^sha256:/),
+      outcome: expect.objectContaining({
+        reason: "pre-activation-closed-history",
+        cutoff: baseline.toISOString(),
+        provenance: "redmine-inbound-discovery",
+      }),
+    });
+
+    const reopenedAt = new Date("2026-08-01T10:05:30.000Z");
+    const reopened = dependencies([change(reopenedAt, "review", "999")]);
+    reopened.loadIssueDetail.mockResolvedValue(
+      detailChange(reopenedAt, {
+        fields: {
+          title: "Reopened historical issue",
+          description: null,
+          statusId: "review",
+          priorityId: "3",
+          assignee: null,
+          startDate: null,
+          dueDate: null,
+          progress: 50,
+        },
+      }),
+    );
+
+    await runInboundSyncCycle(prisma, reopened);
+
+    await expect(
+      prisma.issue.findFirstOrThrow({ where: { projectId: project.id, id: { not: issue.id } } }),
+    ).resolves.toMatchObject({ title: "Reopened historical issue", state: "review" });
+    await expect(
+      prisma.integrationInboundApplication.count({ where: { bindingId: binding.id, remoteId: "999" } }),
+    ).resolves.toBe(2);
   });
 
   it("skips private detail without provider content and imports a later public observation", async () => {

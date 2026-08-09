@@ -13,6 +13,7 @@ import {
   type RedmineImportDependencies,
 } from "./redmine-import.js";
 import { retryRedmineIssueImport } from "./inbound.js";
+import { RedmineHttpError } from "./providers/redmine/http-client.js";
 
 const cutoff = new Date("2026-08-04T12:00:00.000Z");
 
@@ -43,7 +44,9 @@ function remote(
   details: Readonly<Record<string, unknown>> = {},
 ): { dependencies: RedmineImportDependencies; get: ReturnType<typeof vi.fn> } {
   const get = vi.fn(async (path: string) => {
-    if (path.startsWith("/issues.json?")) return list;
+    if (path.startsWith("/issues.json?")) {
+      return typeof list === "function" ? list(path) : list;
+    }
     const match = /^\/issues\/(\d+)\.json\?include=journals$/.exec(path);
     if (match?.[1] && details[match[1]]) return details[match[1]];
     throw new Error("Unexpected Redmine request");
@@ -104,7 +107,7 @@ async function fixture(readMap: Record<string, string> = { "2": "in_progress" })
 async function preImportConflict(bindingId: string, remoteId = "42") {
   await prisma.integrationProjectBinding.update({
     where: { id: bindingId },
-    data: { inboundEnabled: true, bootstrapState: "ready" },
+    data: { inboundEnabled: true, bootstrapState: "ready", bootstrapCutoff: cutoff },
   });
   const application = await prisma.integrationInboundApplication.create({
     data: {
@@ -145,9 +148,16 @@ describe("Redmine-created issue import", () => {
       is_private: true,
       updated_on: "2026-08-02T10:31:00Z",
     });
+    const historical = redmineIssue({
+      id: 44,
+      assigned_to: null,
+      status: { id: 5, name: "Closed" },
+      updated_on: "2026-08-02T10:32:00Z",
+      closed_on: "2026-08-02T10:00:00Z",
+    });
     const transport = remote({
-      issues: [visible, hidden],
-      total_count: 2,
+      issues: [visible, hidden, historical],
+      total_count: 3,
       offset: 0,
       limit: 100,
     });
@@ -182,16 +192,16 @@ describe("Redmine-created issue import", () => {
     });
     expect(stored.bootstrapPageToken).toMatchObject({
       complete: true,
-      scannedCount: 2,
-      checkpoint: { remoteId: "43", pageToken: null },
+      scannedCount: 3,
+      checkpoint: { remoteId: "44", pageToken: null },
       candidates: [{ remoteId: "42", sourceVersion: expect.stringMatching(/^sha256:/) }],
     });
     expect(JSON.stringify(stored.bootstrapPageToken)).not.toContain("Private subject");
     expect(JSON.stringify(stored.bootstrapPageToken)).not.toContain("Private body");
   });
 
-  it("persists an incomplete checkpoint and never marks an over-cap preview complete", async () => {
-    const { owner, connection, binding } = await fixture();
+  it("resumes preview and activation beyond the first 100 issues", async () => {
+    const { owner, project, connection, binding } = await fixture();
     const issues = Array.from({ length: 100 }, (_, index) =>
       redmineIssue({
         id: index + 1,
@@ -201,7 +211,21 @@ describe("Redmine-created issue import", () => {
         ).padStart(2, "0")}Z`,
       }),
     );
-    const transport = remote({ issues, total_count: 101, offset: 0, limit: 100 });
+    const last = redmineIssue({
+      id: 101,
+      assigned_to: null,
+      updated_on: "2026-08-02T10:01:40Z",
+    });
+    const allIssues = [...issues, last];
+    const transport = remote(
+      (path) =>
+        path.includes("offset=100")
+          ? { issues: [last], total_count: 101, offset: 100, limit: 100 }
+          : { issues, total_count: 101, offset: 0, limit: 100 },
+      Object.fromEntries(
+        allIssues.map((issue) => [String(issue.id), { issue: { ...issue, journals: [] } }]),
+      ),
+    );
 
     await expect(
       previewRedmineIssueImport(
@@ -229,13 +253,90 @@ describe("Redmine-created issue import", () => {
     });
     await expect(prisma.issue.count()).resolves.toBe(0);
 
-    const retry = remote({ issues: [issues[0]], total_count: 1, offset: 0, limit: 100 });
     await expect(
-      previewRedmineIssueImport(connection.id, binding.id, owner.userId, retry.dependencies),
-    ).resolves.toMatchObject({ eligibleUnlinkedCount: 1 });
+      previewRedmineIssueImport(connection.id, binding.id, owner.userId, transport.dependencies),
+    ).resolves.toMatchObject({ eligibleUnlinkedCount: 101 });
+    const completed = await prisma.integrationProjectBinding.findUniqueOrThrow({
+      where: { id: binding.id },
+    });
+    expect(completed).toMatchObject({ bootstrapState: "previewed", bootstrapFence: 2 });
+    expect(completed.bootstrapPageToken).toMatchObject({
+      complete: true,
+      nextOffset: 101,
+      scannedCount: 101,
+      checkpoint: { remoteId: "101", pageToken: null },
+    });
+
+    const batches = [];
+    while (batches.length < 20) {
+      const batch = await activateRedmineIssueImport(
+        connection.id,
+        binding.id,
+        owner.userId,
+        transport.dependencies,
+      );
+      batches.push(batch);
+      if (batch.complete) break;
+    }
+    expect(batches.at(-1)?.complete).toBe(true);
+    expect(batches).toHaveLength(11);
+    expect(batches.reduce((total, batch) => total + batch.importedCount, 0)).toBe(101);
+    await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(101);
+    await expect(
+      prisma.integrationInboundApplication.count({ where: { bindingId: binding.id } }),
+    ).resolves.toBe(101);
     await expect(
       prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
-    ).resolves.toMatchObject({ bootstrapState: "previewed", bootstrapFence: 2 });
+    ).resolves.toMatchObject({
+      inboundEnabled: true,
+      bootstrapState: "ready",
+      bootstrapPageToken: null,
+      cursorRemoteId: "101",
+    });
+  });
+
+  it("restarts a resumed preview after Redmine pagination drift", async () => {
+    const { owner, connection, binding } = await fixture();
+    const issues = Array.from({ length: 100 }, (_, index) =>
+      redmineIssue({
+        id: index + 1,
+        assigned_to: null,
+        updated_on: `2026-08-02T10:${String(Math.floor(index / 60)).padStart(2, "0")}:${String(
+          index % 60,
+        ).padStart(2, "0")}Z`,
+      }),
+    );
+    let firstPage = true;
+    const transport = remote((path) => {
+      if (path.includes("offset=100")) {
+        return { issues: [], total_count: 100, offset: 100, limit: 100 };
+      }
+      if (firstPage) {
+        firstPage = false;
+        return { issues, total_count: 101, offset: 0, limit: 100 };
+      }
+      return { issues: [], total_count: 0, offset: 0, limit: 100 };
+    });
+
+    await expect(
+      previewRedmineIssueImport(connection.id, binding.id, owner.userId, transport.dependencies),
+    ).rejects.toMatchObject({ code: "REDMINE_IMPORT_LIMIT" });
+    await expect(
+      previewRedmineIssueImport(connection.id, binding.id, owner.userId, transport.dependencies),
+    ).rejects.toMatchObject({ code: "REDMINE_PREVIEW_STALE" });
+
+    await expect(
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+    ).resolves.toMatchObject({
+      bootstrapState: "pending",
+      bootstrapCutoff: cutoff,
+      bootstrapPageToken: expect.objectContaining({ nextOffset: 0, scannedCount: 0 }),
+      bootstrapLeaseToken: null,
+      bootstrapLeaseUntil: null,
+    });
+    await expect(
+      previewRedmineIssueImport(connection.id, binding.id, owner.userId, transport.dependencies),
+    ).resolves.toMatchObject({ cutoff, eligibleUnlinkedCount: 0 });
   });
 
   it("restarts a preview when persisted resume evidence is invalid", async () => {
@@ -426,8 +527,8 @@ describe("Redmine-created issue import", () => {
     const issue = redmineIssue({
       status: { id: 5, name: "Closed" },
       done_ratio: 100,
-      updated_on: "2026-08-03T11:00:00Z",
-      closed_on: "2026-08-03T10:45:00Z",
+      updated_on: "2026-08-04T12:00:00Z",
+      closed_on: "2026-08-04T12:00:00Z",
     });
     const transport = remote(
       { issues: [issue], total_count: 1, offset: 0, limit: 100 },
@@ -447,7 +548,12 @@ describe("Redmine-created issue import", () => {
       transport.dependencies,
     );
 
-    expect(activated).toEqual({ importedCount: 1, issueKeys: [`${project.key}-1`], replayed: false });
+    expect(activated).toEqual({
+      importedCount: 1,
+      issueKeys: [`${project.key}-1`],
+      replayed: false,
+      complete: true,
+    });
     const imported = await prisma.issue.findFirstOrThrow({ where: { projectId: project.id } });
     expect(imported).toMatchObject({
       key: `${project.key}-1`,
@@ -458,7 +564,7 @@ describe("Redmine-created issue import", () => {
       priority: "high",
       assigneeId: assignee.id,
       createdAt: new Date("2026-08-01T09:00:00Z"),
-      completedAt: new Date("2026-08-03T10:45:00Z"),
+      completedAt: cutoff,
     });
     await expect(
       prisma.issueSchedule.findUniqueOrThrow({ where: { issueId: imported.id } }),
@@ -474,13 +580,13 @@ describe("Redmine-created issue import", () => {
     expect(ref).toMatchObject({
       bindingId: binding.id,
       externalId: "42",
-      remoteUpdatedAt: new Date("2026-08-03T11:00:00Z"),
+      remoteUpdatedAt: cutoff,
       localVersion: 1n,
       metadata: {
         remoteVersion: expect.stringMatching(/^sha256:/),
         baseline: expect.objectContaining({
           version: 1,
-          completedAt: "2026-08-03T10:45:00.000Z",
+          completedAt: cutoff.toISOString(),
           fields: expect.objectContaining({
             state: "done",
             priority: "high",
@@ -528,7 +634,7 @@ describe("Redmine-created issue import", () => {
       bootstrapPageToken: null,
       bootstrapLeaseToken: null,
       bootstrapLeaseUntil: null,
-      cursorUpdatedAt: new Date("2026-08-03T11:00:00Z"),
+      cursorUpdatedAt: cutoff,
       cursorRemoteId: "42",
       pageToken: null,
       auditCursorRemoteId: "42",
@@ -553,7 +659,7 @@ describe("Redmine-created issue import", () => {
         owner.userId,
         transport.dependencies,
       ),
-    ).resolves.toEqual({ importedCount: 0, issueKeys: [], replayed: false });
+    ).resolves.toEqual({ importedCount: 0, issueKeys: [], replayed: false, complete: true });
     await expect(prisma.issue.count()).resolves.toBe(0);
     await expect(prisma.externalRef.count()).resolves.toBe(0);
     await expect(prisma.integrationInboundApplication.count()).resolves.toBe(0);
@@ -608,7 +714,7 @@ describe("Redmine-created issue import", () => {
         owner.userId,
         transport.dependencies,
       ),
-    ).resolves.toEqual({ importedCount: 0, issueKeys: [], replayed: false });
+    ).resolves.toEqual({ importedCount: 0, issueKeys: [], replayed: false, complete: true });
   });
 
   it("serializes concurrent activation and replays without duplicate rows or keys", async () => {
@@ -625,7 +731,7 @@ describe("Redmine-created issue import", () => {
       transport.dependencies,
     );
 
-    const concurrent = await Promise.all([
+    const concurrent = await Promise.allSettled([
       activateRedmineIssueImport(connection.id, binding.id, owner.userId, transport.dependencies),
       activateRedmineIssueImport(connection.id, binding.id, owner.userId, transport.dependencies),
     ]);
@@ -636,8 +742,16 @@ describe("Redmine-created issue import", () => {
       transport.dependencies,
     );
 
-    expect(concurrent.map((result) => result.importedCount).sort()).toEqual([0, 1]);
-    expect(replay).toEqual({ importedCount: 0, issueKeys: [], replayed: true });
+    const fulfilled = concurrent
+      .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof activateRedmineIssueImport>>> => result.status === "fulfilled")
+      .map((result) => result.value);
+    expect(fulfilled.some((result) => result.importedCount === 1)).toBe(true);
+    for (const result of concurrent) {
+      if (result.status === "rejected") {
+        expect(result.reason).toMatchObject({ code: "REDMINE_IMPORT_IN_PROGRESS" });
+      }
+    }
+    expect(replay).toEqual({ importedCount: 0, issueKeys: [], replayed: true, complete: true });
     await expect(prisma.issue.count()).resolves.toBe(1);
     await expect(prisma.externalRef.count()).resolves.toBe(1);
     await expect(prisma.integrationInboundApplication.count()).resolves.toBe(1);
@@ -683,12 +797,73 @@ describe("Redmine-created issue import", () => {
       ).resolves.toMatchObject({ lastSequenceNum: 0 });
       await expect(
         prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
-      ).resolves.toMatchObject({ inboundEnabled: false, bootstrapState: "previewed" });
+      ).resolves.toMatchObject({ inboundEnabled: false, bootstrapState: "bootstrapping" });
     } finally {
       await prisma.$executeRawUnsafe(
         'ALTER TABLE "issues" DROP CONSTRAINT IF EXISTS "test_redmine_import_rollback"',
       );
     }
+
+    await expect(
+      activateRedmineIssueImport(
+        connection.id,
+        binding.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).resolves.toMatchObject({ importedCount: 1, complete: true });
+    await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(1);
+  });
+
+  it("restarts preview when an activation candidate was deleted remotely", async () => {
+    const { owner, project, connection, binding } = await fixture();
+    const issue = redmineIssue();
+    const transport = remote(
+      { issues: [issue], total_count: 1, offset: 0, limit: 100 },
+      { "42": { issue: { ...issue, journals: [] } } },
+    );
+    await previewRedmineIssueImport(
+      connection.id,
+      binding.id,
+      owner.userId,
+      transport.dependencies,
+    );
+
+    await expect(
+      activateRedmineIssueImport(connection.id, binding.id, owner.userId, {
+        ...transport.dependencies,
+        client: () => ({
+          get: async <T>() => {
+            throw new RedmineHttpError(404);
+          },
+        }),
+      }),
+    ).rejects.toMatchObject({ code: "REDMINE_PREVIEW_STALE" });
+    await expect(
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+    ).resolves.toMatchObject({
+      inboundEnabled: false,
+      bootstrapState: "pending",
+      bootstrapPageToken: expect.objectContaining({ nextOffset: 0, candidates: [] }),
+      bootstrapLeaseToken: null,
+      bootstrapLeaseUntil: null,
+    });
+
+    await previewRedmineIssueImport(
+      connection.id,
+      binding.id,
+      owner.userId,
+      transport.dependencies,
+    );
+    await expect(
+      activateRedmineIssueImport(
+        connection.id,
+        binding.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).resolves.toMatchObject({ importedCount: 1, complete: true });
+    await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(1);
   });
 
   it("rejects an unmapped status before transaction writes", async () => {
@@ -720,7 +895,21 @@ describe("Redmine-created issue import", () => {
     });
     await expect(
       prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
-    ).resolves.toMatchObject({ inboundEnabled: false, bootstrapState: "previewed" });
+    ).resolves.toMatchObject({ inboundEnabled: false, bootstrapState: "bootstrapping" });
+
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: { readMap: { "9": "in_progress", "priority:3": "high" } },
+    });
+    await expect(
+      activateRedmineIssueImport(
+        connection.id,
+        binding.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).resolves.toMatchObject({ importedCount: 1, complete: true });
+    await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(1);
   });
 
   it("refetches current detail and applies the same pre-import application", async () => {
@@ -819,6 +1008,69 @@ describe("Redmine-created issue import", () => {
         where: { bindingId: binding.id, remoteEntityType: "issue" },
       }),
     ).resolves.toBe(1);
+  });
+
+  it("keeps pre-activation closed history skipped during conflict retry", async () => {
+    const { owner, project, connection, binding } = await fixture({ "5": "review" });
+    const { application, conflict } = await preImportConflict(binding.id);
+    const historical = redmineIssue({
+      status: { id: 5, name: "Closed" },
+      assigned_to: null,
+      done_ratio: 100,
+      updated_on: "2026-08-03T11:00:00Z",
+      closed_on: "2026-08-03T10:45:00Z",
+    });
+    const transport = remote({}, { "42": { issue: { ...historical, journals: [] } } });
+
+    await expect(
+      retryRedmineIssueImport(
+        connection.id,
+        binding.id,
+        application.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).resolves.toEqual({ applicationId: application.id, state: "skipped", issueKey: null });
+    await expect(
+      prisma.integrationInboundApplication.findUniqueOrThrow({ where: { id: application.id } }),
+    ).resolves.toMatchObject({
+      state: "skipped",
+      outcome: expect.objectContaining({ reason: "pre-activation-closed-history" }),
+      refId: null,
+      workId: null,
+    });
+    await expect(
+      prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } }),
+    ).resolves.toMatchObject({ state: "resolved" });
+    await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(0);
+  });
+
+  it("keeps a retry conflict open when the binding cutoff is missing", async () => {
+    const { owner, project, connection, binding } = await fixture();
+    const { application, conflict } = await preImportConflict(binding.id);
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: { bootstrapCutoff: null },
+    });
+    const current = redmineIssue({ assigned_to: null, updated_on: "2026-08-03T11:00:00Z" });
+    const transport = remote({}, { "42": { issue: { ...current, journals: [] } } });
+
+    await expect(
+      retryRedmineIssueImport(
+        connection.id,
+        binding.id,
+        application.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).rejects.toMatchObject({ code: "REDMINE_BOOTSTRAP_CUTOFF_MISSING" });
+    await expect(
+      prisma.integrationInboundApplication.findUniqueOrThrow({ where: { id: application.id } }),
+    ).resolves.toMatchObject({ state: "conflict", leaseToken: null, leaseUntil: null });
+    await expect(
+      prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } }),
+    ).resolves.toMatchObject({ state: "open" });
+    await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(0);
   });
 
   it("keeps the same application retryable after a current decoder failure", async () => {
