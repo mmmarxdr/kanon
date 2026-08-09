@@ -258,6 +258,12 @@ describe("A6.1 — createComment wires parseAndUpsertMentions", () => {
     expect(prisma.integrationProjectBinding.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ commentCaptureEnabled: true }) }),
     );
+    const lockedCaptureQuery = vi.mocked(prisma.$queryRaw).mock.calls[0]![0] as {
+      strings: readonly string[];
+    };
+    expect(lockedCaptureQuery.strings.join(" ")).toContain(
+      'binding."comment_capture_enabled" = true',
+    );
     expect(vi.mocked(prisma.$queryRaw).mock.invocationCallOrder[0]).toBeLessThan(mockCommentCreate.mock.invocationCallOrder[0]!);
     expect(mockActivityLogCreate).toHaveBeenCalledOnce();
     expect(mockCaptureIntegrationWorkTx).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
