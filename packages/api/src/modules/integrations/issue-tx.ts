@@ -7,6 +7,7 @@ import {
   type IssueMutationDraft,
   type IssueMutationRow,
 } from "./issue-mutation-contract.js";
+import { readBlockedIssueFields } from "./issue-convergence.js";
 import { captureIntegrationWorkTx } from "./outbox.js";
 
 export type IssueCaptureContext = Omit<
@@ -18,6 +19,71 @@ export type IssueCaptureOverride = IssueCaptureContext & {
   readonly correlationId: string;
   readonly operation?: IssueCaptureIntent["operation"];
 };
+
+function jsonObject(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+async function routeBlockedIssueFieldsTx(
+  transaction: Prisma.TransactionClient,
+  bindingId: string,
+  issueId: string,
+  fields: Readonly<Record<string, unknown>>,
+  localVersion: string,
+): Promise<Record<string, unknown>> {
+  const conflicts = await transaction.$queryRaw<
+    Array<{ id: string; localEvidence: Prisma.JsonValue }>
+  >(Prisma.sql`
+    SELECT conflict."id", conflict."local_evidence" AS "localEvidence"
+    FROM "integration_conflicts" AS conflict
+    JOIN "external_refs" AS ref ON ref."id" = conflict."ref_id"
+    WHERE conflict."binding_id" = ${bindingId}::uuid
+      AND conflict."kind" = 'inbound-field-convergence'
+      AND conflict."state" = 'open'::"ConflictState"
+      AND ref."entity_type" = 'issue'
+      AND ref."entity_id" = ${issueId}::uuid
+    ORDER BY conflict."created_at", conflict."id"
+    FOR UPDATE OF conflict
+  `);
+  if (conflicts.length === 0) return { ...fields };
+
+  const blocked = new Set<string>(
+    conflicts.flatMap(({ localEvidence }) => readBlockedIssueFields(localEvidence)),
+  );
+  const changedBlocked = Object.keys(fields).filter((field) => blocked.has(field));
+  if (changedBlocked.length === 0) return { ...fields };
+
+  for (const conflict of conflicts) {
+    const evidence = jsonObject(conflict.localEvidence) ?? {};
+    const conflictBlocked = readBlockedIssueFields(evidence);
+    const conflictMask = new Set<string>(conflictBlocked);
+    const changed = changedBlocked.filter((field) => conflictMask.has(field));
+    if (changed.length === 0) continue;
+    const evidenceFields = jsonObject(evidence["fields"]) ?? {};
+    const nextFields = { ...evidenceFields };
+    for (const field of changed) {
+      nextFields[field] = {
+        ...(jsonObject(evidenceFields[field]) ?? {}),
+        local: fields[field] ?? null,
+        localVersion,
+      };
+    }
+    await transaction.integrationConflict.update({
+      where: { id: conflict.id },
+      data: {
+        localEvidence: {
+          ...evidence,
+          blockedFields: conflictBlocked,
+          fields: nextFields,
+        } as Prisma.InputJsonObject,
+      },
+    });
+  }
+
+  return Object.fromEntries(Object.entries(fields).filter(([field]) => !blocked.has(field)));
+}
 
 export async function lockIssueCaptureBindingTx(
   transaction: Prisma.TransactionClient,
@@ -86,8 +152,21 @@ export async function captureIssueScheduleMutationTx(
   issueId: string,
   capture: IssueCaptureContext,
   fields: IssueScheduleCaptureFields,
+  localVersion: string,
 ): Promise<void> {
   if (Object.keys(fields).length === 0) return;
+  const correlationId = randomUUID();
+  const routedFields =
+    capture.direction === "outbound"
+      ? await routeBlockedIssueFieldsTx(
+          transaction,
+          capture.bindingId,
+          issueId,
+          fields,
+          localVersion,
+        )
+      : fields;
+  if (Object.keys(routedFields).length === 0) return;
 
   await captureIntegrationWorkTx(transaction, {
     bindingId: capture.bindingId,
@@ -97,8 +176,8 @@ export async function captureIssueScheduleMutationTx(
     operation: "update",
     actorKey: capture.actorKey,
     actorKind: capture.actorKind,
-    payload: { version: 1, fields } as Prisma.InputJsonValue,
-    correlationId: randomUUID(),
+    payload: { version: 1, fields: routedFields } as Prisma.InputJsonValue,
+    correlationId,
     authCredentialId: capture.authCredentialId,
   });
 }
@@ -121,6 +200,17 @@ export async function captureIssueMutationTx(
   const { capture, payload, result } = canonicalizeIssueMutationDraft(mutation);
 
   if (capture.operation === "update" && Object.keys(payload.fields).length === 0) return result;
+  const fields =
+    capture.direction === "outbound" && capture.operation === "update"
+      ? await routeBlockedIssueFieldsTx(
+          transaction,
+          capture.bindingId,
+          result.id,
+          payload.fields,
+          payload.issue.updatedAt,
+        )
+      : payload.fields;
+  if (capture.operation === "update" && Object.keys(fields).length === 0) return result;
 
   const work = await captureIntegrationWorkTx(transaction, {
     bindingId: capture.bindingId,
@@ -130,7 +220,7 @@ export async function captureIssueMutationTx(
     operation: capture.operation,
     actorKey: capture.actorKey,
     actorKind: capture.actorKind,
-    payload: payload as unknown as Prisma.InputJsonValue,
+    payload: { ...payload, fields } as unknown as Prisma.InputJsonValue,
     correlationId: capture.correlationId,
     refId: capture.refId,
     authCredentialId: capture.authCredentialId,

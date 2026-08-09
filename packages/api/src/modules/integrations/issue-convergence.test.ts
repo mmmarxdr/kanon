@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canonicalRedmineDescription,
   issueSyncMetadata,
+  readBlockedIssueFields,
   readIssueSyncBaseline,
   reconcileIssueSnapshots,
   type IssueSyncSnapshot,
@@ -67,6 +68,19 @@ describe("reconcileIssueSnapshots", () => {
     expect(result.conflicts).toMatchObject({ priority: { reason: "mapping" } });
     expect(result.conflicts.title).toBeUndefined();
     expect(result.nextBaseline.title).toBe(local.title);
+  });
+});
+
+describe("readBlockedIssueFields", () => {
+  it("reads the durable mask and legacy field evidence in canonical order", () => {
+    expect(readBlockedIssueFields({ blockedFields: ["priority", "title", "estimate"] })).toEqual([
+      "title",
+      "priority",
+    ]);
+    expect(readBlockedIssueFields({ fields: { dueDate: {}, state: {}, estimate: {} } })).toEqual([
+      "state",
+      "dueDate",
+    ]);
   });
 });
 

@@ -157,14 +157,26 @@ export async function upsertPlan(
         where: { issueId: issue.id },
       });
       if (capture && written > 0) {
-        await captureIssueScheduleMutationTx(transaction, issue.id, capture, captureFields(result));
+        await captureIssueScheduleMutationTx(
+          transaction,
+          issue.id,
+          capture,
+          captureFields(result),
+          result.updatedAt.toISOString(),
+        );
       }
       return result;
     }
 
     const result = await transaction.issueSchedule.upsert(upsert);
     if (capture) {
-      await captureIssueScheduleMutationTx(transaction, issue.id, capture, captureFields(result));
+      await captureIssueScheduleMutationTx(
+        transaction,
+        issue.id,
+        capture,
+        captureFields(result),
+        result.updatedAt.toISOString(),
+      );
     }
     return result;
   };

@@ -22,8 +22,10 @@ import {
 } from "./core/types.js";
 import {
   canonicalRedmineDescription,
+  ISSUE_SYNC_FIELDS,
   issueSyncMetadata,
   priorityReadKey,
+  readBlockedIssueFields,
   readIssueSyncBaseline,
   reconcileIssueSnapshots,
   type IssueFieldConflict,
@@ -319,6 +321,12 @@ const ISSUE_STATES = new Set<IssueState>([
   "done",
 ]);
 const ISSUE_PRIORITIES = new Set<IssuePriority>(["critical", "high", "medium", "low"]);
+
+function jsonObject(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
 
 function dateOnly(value: Date | null | undefined): string | null {
   return value?.toISOString().slice(0, 10) ?? null;
@@ -863,9 +871,43 @@ async function convergeLinkedIssue(
     const patch = { ...result.patch };
     const nextBaseline = { ...result.nextBaseline };
     const appliedFields = [...result.appliedFields];
+    const preservedFields = [...result.preservedFields];
+    const convergedFields = [...result.convergedFields];
     const conflicts: Partial<Record<IssueSyncField, IssueFieldConflict>> = {
       ...result.conflicts,
     };
+    const activeFieldConflicts = await transaction.integrationConflict.findMany({
+      where: {
+        bindingId: binding.id,
+        refId: ref.id,
+        kind: "inbound-field-convergence",
+        state: "open",
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    const activeFieldConflict = activeFieldConflicts[0];
+    const activeLocalEvidence = activeFieldConflicts.reduce(
+      (evidence, conflict) => ({ ...evidence, ...(jsonObject(conflict.localEvidence) ?? {}) }),
+      {} as Record<string, unknown>,
+    );
+    const activeLocalFields = activeFieldConflicts.reduce(
+      (fields, conflict) => ({
+        ...fields,
+        ...(jsonObject(jsonObject(conflict.localEvidence)?.["fields"]) ?? {}),
+      }),
+      {} as Record<string, unknown>,
+    );
+    const activeRemoteEvidence = activeFieldConflicts.reduce(
+      (evidence, conflict) => ({ ...evidence, ...(jsonObject(conflict.remoteEvidence) ?? {}) }),
+      {} as Record<string, unknown>,
+    );
+    const activeRemoteFields = activeFieldConflicts.reduce(
+      (fields, conflict) => ({
+        ...fields,
+        ...(jsonObject(jsonObject(conflict.remoteEvidence)?.["fields"]) ?? {}),
+      }),
+      {} as Record<string, unknown>,
+    );
     let timeReconciled = false;
     let reportedTotalHours: number | null = null;
     let transitionRegression = false;
@@ -886,6 +928,43 @@ async function convergeLinkedIssue(
         remote: remoteEvidence,
       };
     };
+    const removeField = (fields: IssueSyncField[], field: IssueSyncField) => {
+      const index = fields.indexOf(field);
+      if (index >= 0) fields.splice(index, 1);
+    };
+    const activeBlockedFields = new Set(
+      activeFieldConflicts.flatMap(({ localEvidence }) => readBlockedIssueFields(localEvidence)),
+    );
+    // Matching snapshots stay blocked until an owner explicitly resolves the conflict.
+    for (const field of ISSUE_SYNC_FIELDS.filter((candidate) => activeBlockedFields.has(candidate))) {
+      delete patch[field];
+      removeField(appliedFields, field);
+      removeField(preservedFields, field);
+      removeField(convergedFields, field);
+      if (Object.prototype.hasOwnProperty.call(baseline?.fields ?? {}, field)) {
+        nextBaseline[field] = baseline!.fields[field];
+      } else {
+        delete nextBaseline[field];
+      }
+      if (conflicts[field]) continue;
+      const previous = jsonObject(activeLocalFields[field]);
+      const reason = previous?.["reason"];
+      conflicts[field] = {
+        reason: ["missing-baseline", "diverged", "mapping", "invalid"].includes(
+          String(reason),
+        )
+          ? (reason as IssueFieldConflict["reason"])
+          : "diverged",
+        baselinePresent: Object.prototype.hasOwnProperty.call(baseline?.fields ?? {}, field),
+        baseline: baseline?.fields[field] ?? null,
+        local: local[field],
+        remote:
+          mappingFailures[field] ??
+          (Object.prototype.hasOwnProperty.call(remote, field)
+            ? remote[field]
+            : (activeRemoteFields[field] ?? null)),
+      };
+    }
 
     if (Object.prototype.hasOwnProperty.call(patch, "state")) {
       const target = patch.state as IssueState;
@@ -1059,7 +1138,7 @@ async function convergeLinkedIssue(
       });
     }
 
-    const conflictFields = Object.keys(conflicts) as IssueSyncField[];
+    const conflictFields = ISSUE_SYNC_FIELDS.filter((field) => conflicts[field] !== undefined);
     if (conflictFields.length) {
       const pending = await transaction.integrationSyncWork.findMany({
         where: {
@@ -1096,37 +1175,63 @@ async function convergeLinkedIssue(
           });
         }
       }
-      await transaction.integrationConflict.create({
-        data: {
-          kind: "inbound-field-convergence",
-          bindingId: binding.id,
-          applicationId: application.id,
-          refId: ref.id,
-          localEvidence: {
-            issueId: issue.id,
-            issueKey: issue.key,
-            fields: Object.fromEntries(
-              conflictFields.map((field) => [
-                field,
-                {
-                  reason: conflicts[field]!.reason,
-                  baselinePresent: conflicts[field]!.baselinePresent,
-                  baseline: conflicts[field]!.baseline,
-                  local: conflicts[field]!.local,
-                },
-              ]),
-            ),
-          } as Prisma.InputJsonObject,
-          remoteEvidence: {
-            provider: "redmine",
-            remoteIssueId: change.entityId,
-            remoteVersion: detail.sourceVersion,
-            fields: Object.fromEntries(
-              conflictFields.map((field) => [field, conflicts[field]!.remote]),
-            ),
-          } as Prisma.InputJsonObject,
-        },
-      });
+      const localFields = { ...activeLocalFields };
+      const remoteFields = { ...activeRemoteFields };
+      for (const field of conflictFields) {
+        const previous = jsonObject(activeLocalFields[field]);
+        const currentLocalVersion = ["startDate", "dueDate", "progress"].includes(field)
+          ? (issue.schedule?.updatedAt ?? issue.updatedAt).toISOString()
+          : issue.updatedAt.toISOString();
+        localFields[field] = {
+          ...previous,
+          reason: conflicts[field]!.reason,
+          baselinePresent: conflicts[field]!.baselinePresent,
+          baseline: conflicts[field]!.baseline,
+          local: conflicts[field]!.local,
+          localVersion:
+            previous?.["local"] === conflicts[field]!.local &&
+            typeof previous["localVersion"] === "string"
+              ? previous["localVersion"]
+              : currentLocalVersion,
+        };
+        remoteFields[field] = conflicts[field]!.remote ?? null;
+      }
+      const localEvidence = {
+        ...activeLocalEvidence,
+        issueId: issue.id,
+        issueKey: issue.key,
+        blockedFields: conflictFields,
+        fields: localFields,
+      } as Prisma.InputJsonObject;
+      const remoteEvidence = {
+        ...activeRemoteEvidence,
+        provider: "redmine",
+        remoteIssueId: change.entityId,
+        remoteVersion: detail.sourceVersion,
+        blockedFields: conflictFields,
+        fields: remoteFields,
+      } as Prisma.InputJsonObject;
+      if (activeFieldConflict) {
+        await transaction.integrationConflict.update({
+          where: { id: activeFieldConflict.id },
+          data: { applicationId: application.id, localEvidence, remoteEvidence },
+        });
+        await transaction.integrationConflict.updateMany({
+          where: { id: { in: activeFieldConflicts.slice(1).map(({ id }) => id) } },
+          data: { state: "resolved" },
+        });
+      } else {
+        await transaction.integrationConflict.create({
+          data: {
+            kind: "inbound-field-convergence",
+            bindingId: binding.id,
+            applicationId: application.id,
+            refId: ref.id,
+            localEvidence,
+            remoteEvidence,
+          },
+        });
+      }
     }
 
     const stateConflict = conflicts.state !== undefined;
@@ -1164,8 +1269,8 @@ async function convergeLinkedIssue(
           timeReconciled,
           reportedTotalHours,
           appliedFields,
-          preservedFields: result.preservedFields,
-          convergedFields: result.convergedFields,
+          preservedFields,
+          convergedFields,
           conflictFields,
         },
       },

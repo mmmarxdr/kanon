@@ -12,6 +12,7 @@ import {
 import { transitionIssue } from "../issue/service.js";
 import type { InboundCursor, InboundIssueStatusChange } from "./core/types.js";
 import { runInboundSyncCycle, type InboundIssueDetailOptions } from "./inbound.js";
+import { withIssueMutationTx } from "./issue-tx.js";
 import type {
   RedmineCommentChange,
   RedmineIssueChange,
@@ -560,16 +561,182 @@ describe("Redmine inbound sync", () => {
         conflictFields: ["title"],
       }),
     });
+    const conflict = await prisma.integrationConflict.findFirstOrThrow({
+      where: { refId: ref.id, kind: "inbound-field-convergence" },
+    });
+    expect(conflict).toMatchObject({
+      localEvidence: expect.objectContaining({
+        blockedFields: ["title"],
+        fields: expect.objectContaining({ title: expect.objectContaining({ reason: "diverged" }) }),
+      }),
+    });
+
+    const edited = await withIssueMutationTx(
+      async (transaction) => {
+        const result = await transaction.issue.update({
+          where: { id: issue.id },
+          data: { title: "Latest local title", priority: "critical" },
+        });
+        return {
+          result,
+          capture: {
+            bindingId: binding.id,
+            direction: "outbound",
+            operation: "update",
+            actorKey: `member:${owner.id}`,
+            actorKind: "user",
+            correlationId: "blocked-local-edit",
+            fields: { title: result.title, priority: result.priority },
+          },
+        };
+      },
+      prisma,
+      binding.id,
+    );
     await expect(
-      prisma.integrationConflict.findFirstOrThrow({ where: { refId: ref.id, kind: "inbound-field-convergence" } }),
+      prisma.integrationSyncWork.findFirstOrThrow({
+        where: { correlationId: "blocked-local-edit" },
+      }),
+    ).resolves.toMatchObject({ payload: expect.objectContaining({ fields: { priority: "critical" } }) });
+    await expect(
+      prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } }),
     ).resolves.toMatchObject({
       localEvidence: expect.objectContaining({
-        fields: expect.objectContaining({ title: expect.objectContaining({ reason: "diverged" }) }),
+        blockedFields: ["title"],
+        fields: expect.objectContaining({
+          title: expect.objectContaining({
+            local: "Latest local title",
+            localVersion: edited.updatedAt.toISOString(),
+          }),
+        }),
+      }),
+    });
+
+    const titleOnlyEdit = await withIssueMutationTx(
+      async (transaction) => {
+        const result = await transaction.issue.update({
+          where: { id: issue.id },
+          data: { title: "Newest local title" },
+        });
+        return {
+          result,
+          capture: {
+            bindingId: binding.id,
+            direction: "outbound",
+            operation: "update",
+            actorKey: `member:${owner.id}`,
+            actorKind: "user",
+            correlationId: "blocked-title-only-edit",
+            fields: { title: result.title },
+          },
+        };
+      },
+      prisma,
+      binding.id,
+    );
+    await expect(
+      prisma.integrationSyncWork.count({
+        where: { correlationId: "blocked-title-only-edit" },
+      }),
+    ).resolves.toBe(0);
+    await expect(
+      prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } }),
+    ).resolves.toMatchObject({
+      localEvidence: expect.objectContaining({
+        fields: expect.objectContaining({
+          title: expect.objectContaining({
+            local: "Newest local title",
+            localVersion: titleOnlyEdit.updatedAt.toISOString(),
+          }),
+        }),
+      }),
+    });
+
+    await prisma.integrationConflict.create({
+      data: {
+        kind: "inbound-field-convergence",
+        bindingId: binding.id,
+        applicationId: conflict.applicationId,
+        refId: ref.id,
+        localEvidence: {
+          issueId: issue.id,
+          issueKey: issue.key,
+          blockedFields: ["dueDate"],
+          fields: {
+            dueDate: {
+              reason: "diverged",
+              baselinePresent: true,
+              baseline: null,
+              local: null,
+              localVersion: titleOnlyEdit.updatedAt.toISOString(),
+            },
+          },
+        },
+        remoteEvidence: {
+          provider: "redmine",
+          remoteIssueId: "100",
+          remoteVersion: "legacy-duplicate",
+          blockedFields: ["dueDate"],
+          fields: { dueDate: "2026-08-25" },
+        },
+      },
+    });
+
+    const laterAt = new Date("2026-08-01T10:02:40.000Z");
+    const later = dependencies([change(laterAt, "review")]);
+    later.loadIssueDetail.mockResolvedValue(
+      detailChange(laterAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+        fields: {
+          title: "Newest local title",
+          description: "Later remote-only body",
+          statusId: "review",
+          priorityId: "3",
+          assignee: null,
+          startDate: null,
+          dueDate: "2026-08-30",
+          progress: 0,
+        },
+      }),
+    );
+
+    await runInboundSyncCycle(prisma, later);
+
+    await expect(prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).resolves.toMatchObject({
+      title: "Newest local title",
+      description: "Later remote-only body",
+      priority: "critical",
+    });
+    await expect(
+      prisma.issueSchedule.findUnique({ where: { issueId: issue.id } }),
+    ).resolves.toBeNull();
+    await expect(prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })).resolves.toMatchObject({
+      metadata: expect.objectContaining({
+        baseline: expect.objectContaining({
+          fields: expect.objectContaining({ dueDate: null }),
+        }),
+      }),
+    });
+    await expect(
+      prisma.integrationConflict.count({
+        where: { refId: ref.id, kind: "inbound-field-convergence", state: "open" },
+      }),
+    ).resolves.toBe(1);
+    await expect(
+      prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } }),
+    ).resolves.toMatchObject({
+      remoteEvidence: expect.objectContaining({
+        remoteVersion: `sha256:${laterAt.getTime()}`,
+        blockedFields: ["title", "dueDate"],
+        fields: expect.objectContaining({
+          title: "Newest local title",
+          dueDate: "2026-08-30",
+        }),
       }),
     });
   });
 
-  it("keeps an unmapped priority field-scoped while applying the remote title", async () => {
+  it("keeps unmapped fields scoped while applying the remote title", async () => {
     const { issue, ref } = await fixture();
     const observedAt = new Date("2026-08-01T10:02:45.000Z");
     const setup = dependencies([change(observedAt, "review")]);
@@ -579,9 +746,9 @@ describe("Redmine inbound sync", () => {
         fields: {
           title: "Mapped remote title",
           description: null,
-          statusId: "review",
+          statusId: "missing",
           priorityId: "99",
-          assignee: null,
+          assignee: { remoteId: "404", displayName: "Unmapped user" },
           startDate: null,
           dueDate: null,
           progress: 0,
@@ -593,7 +760,9 @@ describe("Redmine inbound sync", () => {
 
     await expect(prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).resolves.toMatchObject({
       title: "Mapped remote title",
+      state: "review",
       priority: "medium",
+      assigneeId: null,
     });
     await expect(
       prisma.integrationInboundApplication.findFirstOrThrow({ where: { refId: ref.id, remoteUpdatedAt: observedAt } }),
@@ -601,7 +770,16 @@ describe("Redmine inbound sync", () => {
       state: "conflict",
       outcome: expect.objectContaining({
         appliedFields: ["title"],
-        conflictFields: ["priority"],
+        conflictFields: ["state", "priority", "assigneeId"],
+      }),
+    });
+    await expect(
+      prisma.integrationConflict.findFirstOrThrow({
+        where: { refId: ref.id, kind: "inbound-field-convergence" },
+      }),
+    ).resolves.toMatchObject({
+      localEvidence: expect.objectContaining({
+        blockedFields: ["state", "priority", "assigneeId"],
       }),
     });
   });

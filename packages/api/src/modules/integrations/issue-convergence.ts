@@ -50,6 +50,14 @@ function object(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+export function readBlockedIssueFields(evidence: unknown): IssueSyncField[] {
+  const value = object(evidence);
+  const mask = value?.["blockedFields"];
+  const names = Array.isArray(mask) ? mask : Object.keys(object(value?.["fields"]) ?? {});
+  const blocked = new Set(names.filter((name): name is string => typeof name === "string"));
+  return ISSUE_SYNC_FIELDS.filter((field) => blocked.has(field));
+}
+
 function validField(field: IssueSyncField, value: unknown): value is IssueSyncValue {
   if (["description", "assigneeId", "startDate", "dueDate"].includes(field) && value === null) {
     return true;
