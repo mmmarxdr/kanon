@@ -935,6 +935,7 @@ async function convergeLinkedIssue(
     const activeBlockedFields = new Set(
       activeFieldConflicts.flatMap(({ localEvidence }) => readBlockedIssueFields(localEvidence)),
     );
+    // Matching snapshots stay blocked until an owner explicitly resolves the conflict.
     for (const field of ISSUE_SYNC_FIELDS.filter((candidate) => activeBlockedFields.has(candidate))) {
       delete patch[field];
       removeField(appliedFields, field);

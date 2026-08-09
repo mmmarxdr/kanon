@@ -688,7 +688,7 @@ describe("Redmine inbound sync", () => {
       detailChange(laterAt, {
         identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
         fields: {
-          title: "Latest remote title",
+          title: "Newest local title",
           description: "Later remote-only body",
           statusId: "review",
           priorityId: "3",
@@ -729,7 +729,7 @@ describe("Redmine inbound sync", () => {
         remoteVersion: `sha256:${laterAt.getTime()}`,
         blockedFields: ["title", "dueDate"],
         fields: expect.objectContaining({
-          title: "Latest remote title",
+          title: "Newest local title",
           dueDate: "2026-08-30",
         }),
       }),
