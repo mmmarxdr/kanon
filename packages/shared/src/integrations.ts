@@ -87,6 +87,8 @@ export const integrationConnectionSchema = z.object({
       timeActivityId: z.string().nullable(),
       lifecycle: integrationLifecycleSchema,
       lifecycleEpoch: z.number().int(),
+      commentCaptureEnabled: z.boolean(),
+      commentDispatchEnabled: z.boolean(),
       releasePending: z.boolean(),
     }),
   ),

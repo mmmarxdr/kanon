@@ -170,19 +170,28 @@ afterAll(async () => {
 });
 
 describe("integration outbox capture and scanner", () => {
-  it("atomically captures a real linked comment with immutable dispatch proof", async () => {
+  it("atomically captures comments only for the rollout-enabled binding", async () => {
     const fixture = await createFixture();
+    const other = await createFixture();
     const credential = await createCredential(fixture.workspace.id, fixture.connection.id);
+    const otherCredential = await createCredential(other.workspace.id, other.connection.id);
     await Promise.all([
       prisma.integrationConnection.update({ where: { id: fixture.connection.id }, data: { lifecycle: "active" } }),
-      prisma.integrationProjectBinding.update({ where: { id: fixture.binding.id }, data: { lifecycle: "active" } }),
+      prisma.integrationProjectBinding.update({ where: { id: fixture.binding.id }, data: { lifecycle: "active", commentCaptureEnabled: true } }),
       prisma.memberIntegrationCredential.update({
         where: { id: credential.id },
         data: { externalUserId: "5", lastAuthStatus: "valid", lastValidatedAt: new Date("2026-08-01T10:00:00Z") },
       }),
+      prisma.integrationConnection.update({ where: { id: other.connection.id }, data: { lifecycle: "active" } }),
+      prisma.integrationProjectBinding.update({ where: { id: other.binding.id }, data: { lifecycle: "active" } }),
+      prisma.memberIntegrationCredential.update({
+        where: { id: otherCredential.id },
+        data: { externalUserId: "6", lastAuthStatus: "valid" },
+      }),
     ]);
 
     const comment = await createComment(fixture.issue.key, { body: "Ship atomically", source: "human" }, credential.memberId, null, true);
+    const otherComment = await createComment(other.issue.key, { body: "Stay local", source: "human" }, otherCredential.memberId, null, true);
     const work = await prisma.integrationSyncWork.findFirstOrThrow({ where: { entityType: "comment", entityId: comment.id } });
 
     expect(work).toMatchObject({
@@ -192,6 +201,9 @@ describe("integration outbox capture and scanner", () => {
       payload: { version: 1, body: comment.body, bodySha256: createHash("sha256").update(comment.body).digest("hex"), commentUpdatedAt: comment.updatedAt.toISOString(), issueId: fixture.issue.id, parentRefId: fixture.externalRef.id, parentRemoteIssueId: fixture.externalRef.externalId, bindingEpoch: fixture.binding.lifecycleEpoch, credentialId: credential.id, credentialLastValidatedAt: "2026-08-01T10:00:00.000Z", credentialRemoteUserId: "5" },
     });
     await expect(prisma.activityLog.count({ where: { issueId: fixture.issue.id, details: { path: ["commentId"], equals: comment.id } } })).resolves.toBe(1);
+    await expect(
+      prisma.integrationSyncWork.count({ where: { entityType: "comment", entityId: otherComment.id } }),
+    ).resolves.toBe(0);
   });
 
   it("captures comment ownership on the parent issue lane without storing the parent ref", async () => {

@@ -54,6 +54,8 @@ const connection = {
       timeActivityId: "9",
       lifecycle: "active",
       lifecycleEpoch: 1,
+      commentCaptureEnabled: false,
+      commentDispatchEnabled: false,
       releasePending: false,
     },
   ],
@@ -68,6 +70,10 @@ describe("integrationConnectionSchema", () => {
 
     expect(result.connectedMemberIds).toEqual(["55555555-5555-4555-8555-555555555555"]);
     expect(result.bindings[0]?.readMap).toEqual({ "1": "backlog" });
+    expect(result.bindings[0]).toMatchObject({
+      commentCaptureEnabled: false,
+      commentDispatchEnabled: false,
+    });
     expect(result.providerMaps?.priorityReadMap).toEqual({ "4": "high" });
     expect(result.serviceCredentialStatus).toBe("invalid");
     expect(result.serviceCredentialIsCaller).toBe(true);
@@ -86,6 +92,15 @@ describe("integrationConnectionSchema", () => {
           readMap: { "1": "shipped" },
         },
       ],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects non-boolean binding rollout gates", () => {
+    const result = integrationConnectionSchema.safeParse({
+      ...connection,
+      bindings: [{ ...connection.bindings[0], commentDispatchEnabled: "true" }],
     });
 
     expect(result.success).toBe(false);

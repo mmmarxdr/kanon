@@ -255,6 +255,9 @@ describe("A6.1 — createComment wires parseAndUpsertMentions", () => {
     await createComment("TEST-1", { body: "Ship it", source: "human" }, "m-alice", null, true);
 
     expect(prisma.$transaction).toHaveBeenCalledOnce();
+    expect(prisma.integrationProjectBinding.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ commentCaptureEnabled: true }) }),
+    );
     expect(vi.mocked(prisma.$queryRaw).mock.invocationCallOrder[0]).toBeLessThan(mockCommentCreate.mock.invocationCallOrder[0]!);
     expect(mockActivityLogCreate).toHaveBeenCalledOnce();
     expect(mockCaptureIntegrationWorkTx).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({

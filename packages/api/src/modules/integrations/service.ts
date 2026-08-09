@@ -746,6 +746,8 @@ export async function bindProject(
             writeMap: currentMaps.writeMap as Prisma.InputJsonValue,
             lifecycle: "draft",
             lifecycleEpoch: { increment: 1 },
+            commentCaptureEnabled: false,
+            commentDispatchEnabled: false,
             inboundEnabled: false,
             bootstrapState: "not_required",
             bootstrapCutoff: null,
@@ -843,6 +845,8 @@ export async function unbindProject(
           ? {}
           : {
               inboundEnabled: false,
+              commentCaptureEnabled: false,
+              commentDispatchEnabled: false,
               pollLeaseToken: null,
               pollLeaseUntil: null,
               pollFence: { increment: 1 },
@@ -877,6 +881,68 @@ export async function unbindProject(
       });
     }
     return { status: "released" as const, binding: released };
+  });
+}
+
+export async function setBindingCommentRollout(
+  connectionId: string,
+  bindingId: string,
+  input: { commentCaptureEnabled: boolean; commentDispatchEnabled: boolean },
+  userId: string,
+  workspaceId?: string,
+  allowedProjectIds?: string[] | null,
+) {
+  if (input.commentDispatchEnabled && !input.commentCaptureEnabled) {
+    throw new AppError(
+      400,
+      "COMMENT_CAPTURE_REQUIRED",
+      "Comment capture must be enabled before dispatch",
+    );
+  }
+
+  return prisma.$transaction(async (transaction) => {
+    await lockConnection(transaction, connectionId);
+    const connection = await ownedConnection(transaction, connectionId, userId, workspaceId);
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "integration_project_bindings" WHERE "id" = ${bindingId}::uuid FOR UPDATE`,
+    );
+    const binding = await transaction.integrationProjectBinding.findFirst({
+      where: {
+        id: bindingId,
+        connectionId,
+        releasedAt: null,
+        releaseRequestedAt: null,
+        project: { workspaceId: connection.workspaceId },
+        ...(allowedProjectIds ? { projectId: { in: allowedProjectIds } } : {}),
+      },
+    });
+    if (!binding) {
+      throw new AppError(
+        404,
+        "INTEGRATION_BINDING_NOT_FOUND",
+        "Integration project binding not found",
+      );
+    }
+    if (
+      (input.commentCaptureEnabled || input.commentDispatchEnabled) &&
+      (connection.lifecycle !== "active" || binding.lifecycle !== "active")
+    ) {
+      throw new AppError(
+        409,
+        "INTEGRATION_NOT_ACTIVE",
+        "Activate the integration before enabling comment rollout",
+      );
+    }
+    if (
+      binding.commentCaptureEnabled === input.commentCaptureEnabled &&
+      binding.commentDispatchEnabled === input.commentDispatchEnabled
+    ) {
+      return binding;
+    }
+    return transaction.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: input,
+    });
   });
 }
 
@@ -1098,6 +1164,9 @@ export async function setConnectionLifecycle(
       data: {
         lifecycle,
         lifecycleEpoch: { increment: 1 },
+        ...(lifecycle === "disabled"
+          ? { commentCaptureEnabled: false, commentDispatchEnabled: false }
+          : {}),
         pollLeaseToken: null,
         pollLeaseUntil: null,
       },
@@ -1437,6 +1506,8 @@ export async function getConnection(
           writeMap: true,
           lifecycle: true,
           lifecycleEpoch: true,
+          commentCaptureEnabled: true,
+          commentDispatchEnabled: true,
           releaseRequestedAt: true,
         },
       }),
@@ -1569,6 +1640,8 @@ export async function getConnection(
         : null,
       lifecycle: binding.lifecycle,
       lifecycleEpoch: binding.lifecycleEpoch,
+      commentCaptureEnabled: binding.commentCaptureEnabled,
+      commentDispatchEnabled: binding.commentDispatchEnabled,
       releasePending: binding.releaseRequestedAt !== null,
     })),
     callerCredential: publicCredential(credential),

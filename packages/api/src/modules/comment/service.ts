@@ -62,7 +62,7 @@ export async function createComment(
   const comment = commentCaptureEnabled
     ? await prisma.$transaction(async (transaction) => {
         const candidate = await transaction.integrationProjectBinding.findFirst({
-          where: { projectId: issue.projectId, releaseRequestedAt: null, releasedAt: null, lifecycle: "active", project: { archived: false }, connection: { provider: "redmine", lifecycle: "active" } },
+          where: { projectId: issue.projectId, releaseRequestedAt: null, releasedAt: null, lifecycle: "active", commentCaptureEnabled: true, project: { archived: false }, connection: { provider: "redmine", lifecycle: "active" } },
           orderBy: { id: "asc" },
           select: { id: true },
         });
@@ -76,6 +76,7 @@ export async function createComment(
                  AND binding."project_id" = ${issue.projectId}::uuid
                  AND binding."released_at" IS NULL
                  AND binding."release_requested_at" IS NULL
+                AND binding."comment_capture_enabled" = true
                 AND binding."lifecycle" = 'active'::"IntegrationLifecycle"
                 AND connection."provider" = 'redmine'
                 AND connection."lifecycle" = 'active'::"IntegrationLifecycle"

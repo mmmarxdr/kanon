@@ -178,4 +178,69 @@ describe("integration retry route", () => {
       prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: allowedBinding.id } }),
     ).resolves.toMatchObject({ releasedAt: expect.any(Date) });
   });
+
+  it("lets only the workspace owner change binding comment rollout", async () => {
+    const workspace = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const member = await seedTestMemberWithRole(workspace.id, "member");
+    const project = await seedTestProject(workspace.id);
+    const connection = await prisma.integrationConnection.create({
+      data: { workspaceId: workspace.id, provider: "redmine", baseUrl: "https://redmine.test" },
+    });
+    const binding = await prisma.integrationProjectBinding.create({
+      data: {
+        connectionId: connection.id,
+        projectId: project.id,
+        remoteProjectId: "remote-project",
+        readMap: {},
+        writeMap: {},
+      },
+    });
+    const url = `/api/integrations/workspaces/${workspace.id}/connections/${connection.id}/bindings/${binding.id}/comment-rollout`;
+
+    const denied = await app.inject({
+      method: "PATCH",
+      url,
+      headers: { authorization: `Bearer ${member.token}` },
+      payload: { commentCaptureEnabled: true, commentDispatchEnabled: false },
+    });
+    const invalid = await app.inject({
+      method: "PATCH",
+      url,
+      headers: { authorization: `Bearer ${owner.token}` },
+      payload: { commentCaptureEnabled: false, commentDispatchEnabled: true },
+    });
+    const inactive = await app.inject({
+      method: "PATCH",
+      url,
+      headers: { authorization: `Bearer ${owner.token}` },
+      payload: { commentCaptureEnabled: true, commentDispatchEnabled: true },
+    });
+    await Promise.all([
+      prisma.integrationConnection.update({
+        where: { id: connection.id },
+        data: { lifecycle: "active" },
+      }),
+      prisma.integrationProjectBinding.update({
+        where: { id: binding.id },
+        data: { lifecycle: "active" },
+      }),
+    ]);
+    const enabled = await app.inject({
+      method: "PATCH",
+      url,
+      headers: { authorization: `Bearer ${owner.token}` },
+      payload: { commentCaptureEnabled: true, commentDispatchEnabled: true },
+    });
+
+    expect(denied.statusCode).toBe(403);
+    expect(invalid.statusCode).toBe(400);
+    expect(inactive.statusCode).toBe(409);
+    expect(enabled.statusCode).toBe(200);
+    expect(enabled.json()).toMatchObject({
+      id: binding.id,
+      commentCaptureEnabled: true,
+      commentDispatchEnabled: true,
+    });
+  });
 });
