@@ -272,6 +272,8 @@ describe("RedmineSection", () => {
       timeActivityId: null,
       lifecycle: "active" as const,
       lifecycleEpoch: 1,
+      commentCaptureEnabled: false,
+      commentDispatchEnabled: false,
       releasePending: false,
     };
     vi.mocked(useRedmineConnectionQuery).mockReturnValue({

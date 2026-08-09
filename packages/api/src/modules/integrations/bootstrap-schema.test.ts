@@ -16,6 +16,10 @@ const migrationPath = join(
   dirname(fileURLToPath(import.meta.url)),
   "../../../prisma/migrations/20260803135500_redmine_inbound_bootstrap_state/migration.sql",
 );
+const commentRolloutMigrationPath = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../prisma/migrations/20260809223500_redmine_comment_rollout_gates/migration.sql",
+);
 
 async function fixture() {
   const workspace = await seedTestWorkspace();
@@ -53,6 +57,8 @@ describe("Redmine inbound bootstrap persistence", () => {
       prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
     ).resolves.toMatchObject({
       inboundEnabled: false,
+      commentCaptureEnabled: false,
+      commentDispatchEnabled: false,
       bootstrapState: "not_required",
       bootstrapCutoff: null,
       bootstrapPageToken: null,
@@ -158,5 +164,13 @@ describe("Redmine inbound bootstrap persistence", () => {
     expect(sql).toContain('DEFAULT \'not_required\'');
     expect(sql).toContain('DEFAULT false');
     expect(sql).toContain("ON DELETE SET NULL");
+  });
+
+  it("adds default-off comment rollout gates without destructive operations", async () => {
+    const sql = await readFile(commentRolloutMigrationPath, "utf8");
+
+    expect(sql).not.toMatch(/\b(?:DROP TABLE|DROP COLUMN|TRUNCATE|DELETE FROM|RENAME)\b/i);
+    expect(sql).toContain('"comment_capture_enabled" BOOLEAN NOT NULL DEFAULT false');
+    expect(sql).toContain('"comment_dispatch_enabled" BOOLEAN NOT NULL DEFAULT false');
   });
 });

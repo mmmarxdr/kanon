@@ -835,7 +835,7 @@ async function claimAmbiguous(
        JOIN "projects" AS project ON project."id" = binding."project_id"
       WHERE work."direction" = 'outbound'::"SyncDirection"
         AND work."state" = 'ambiguous'::"SyncWorkState"
-        AND (${d.commentDispatchEnabled} OR work."entity_type" <> 'comment')
+        AND (work."entity_type" <> 'comment' OR (${d.commentDispatchEnabled} AND binding."comment_dispatch_enabled"))
         AND work."skipped_reason" IS DISTINCT FROM 'credential_invalid'
         AND work."available_at" <= ${dueAt}
          AND binding."lifecycle" = 'active'::"IntegrationLifecycle"
@@ -859,11 +859,13 @@ async function claimAmbiguous(
       !current ||
       current.state !== "ambiguous" ||
       current.skippedReason === "credential_invalid" ||
-       current.availableAt > now ||
-       current.binding.lifecycle !== "active" ||
-       current.binding.releasedAt !== null ||
-       current.binding.project.archived ||
-       current.binding.connection.lifecycle !== "active" ||
+      current.availableAt > now ||
+      current.binding.lifecycle !== "active" ||
+      current.binding.releasedAt !== null ||
+      current.binding.project.archived ||
+      current.binding.connection.lifecycle !== "active" ||
+      (current.entityType === "comment" &&
+        (!d.commentDispatchEnabled || !current.binding.commentDispatchEnabled)) ||
       (await transaction.integrationConflict.count({
         where: { workId: current.id, state: "open" },
       })) > 0

@@ -1219,6 +1219,8 @@ model IntegrationProjectBinding {
   pollLeaseToken  String?              @map("poll_lease_token")
   pollLeaseUntil  DateTime?            @map("poll_lease_until")
   pollFence       Int                  @default(0) @map("poll_fence")
+  commentCaptureEnabled  Boolean       @default(false) @map("comment_capture_enabled")
+  commentDispatchEnabled Boolean       @default(false) @map("comment_dispatch_enabled")
   inboundEnabled      Boolean                   @default(false) @map("inbound_enabled")
   bootstrapState      IntegrationBootstrapState @default(not_required) @map("bootstrap_state")
   bootstrapCutoff     DateTime?                 @map("bootstrap_cutoff")

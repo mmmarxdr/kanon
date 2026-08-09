@@ -20,6 +20,7 @@ import {
   getConnectionDiscovery,
   getWorkspaceConnection,
   replaceServiceCredential,
+  setBindingCommentRollout,
   setConnectionLifecycle,
   unbindProject,
 } from "./service.js";
@@ -52,6 +53,15 @@ const BindProject = z.object({
   remoteProjectId: z.string().min(1),
 });
 const SetLifecycle = z.object({ lifecycle: z.enum(["active", "paused", "disabled"]) });
+const SetCommentRollout = z
+  .object({
+    commentCaptureEnabled: z.boolean(),
+    commentDispatchEnabled: z.boolean(),
+  })
+  .refine(({ commentCaptureEnabled, commentDispatchEnabled }) => !commentDispatchEnabled || commentCaptureEnabled, {
+    message: "Comment capture must be enabled before dispatch",
+    path: ["commentDispatchEnabled"],
+  });
 const ConnectCredential = z.object({
   apiKey: z.string().min(1).max(4096),
 });
@@ -185,6 +195,23 @@ export default async function integrationRoutes(fastify: FastifyInstance): Promi
       );
       return reply.status(result.status === "draining" ? 202 : 200).send(result);
     },
+  );
+
+  app.patch(
+    "/workspaces/:wid/connections/:id/bindings/:bindingId/comment-rollout",
+    {
+      preHandler: [requireRole("wid", "owner")],
+      schema: { params: ConnectionBindingId, body: SetCommentRollout },
+    },
+    async (request) =>
+      setBindingCommentRollout(
+        request.params.id,
+        request.params.bindingId,
+        request.body,
+        request.user.userId,
+        request.params.wid,
+        scopedProjectIds(request.user.allowedProjectIds),
+      ),
   );
 
   app.post(

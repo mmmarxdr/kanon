@@ -272,6 +272,29 @@ describe("claimIntegrationWork", () => {
     ]);
   });
 
+  it("claims comments only from bindings with dispatch enabled", async () => {
+    const canary = await createFixture();
+    const other = await createFixture();
+    await prisma.integrationProjectBinding.update({
+      where: { id: canary.binding.id },
+      data: { commentDispatchEnabled: true },
+    });
+    const canaryComment = await createWork(canary.binding, { entityType: "comment" });
+    const otherComment = await createWork(other.binding, { entityType: "comment" });
+    const otherIssue = await createWork(other.binding);
+
+    const claimed = await claimIntegrationWork(prisma, {
+      excludeComments: false,
+      limit: 10,
+      leaseMs: 1_000,
+    });
+
+    expect(claimed.map(({ id }) => id)).toEqual([canaryComment.id, otherIssue.id]);
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: otherComment.id } }),
+    ).resolves.toMatchObject({ state: "queued", leaseToken: null });
+  });
+
   it("uses the oldest genuinely claimable head before the parent UUID", async () => {
     const fixtures = [await createFixture(), await createFixture(), await createFixture()].sort(
       (left, right) => left.connection.id.localeCompare(right.connection.id)

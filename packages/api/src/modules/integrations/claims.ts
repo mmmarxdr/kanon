@@ -24,7 +24,7 @@ function genuinelyClaimable(at: Prisma.Sql, excludeComments: boolean): Prisma.Sq
       'ready'::"IntegrationBootstrapState"
     )
     AND work."direction" = 'outbound'::"SyncDirection"
-    AND (${!excludeComments} OR work."entity_type" <> 'comment')
+    AND (work."entity_type" <> 'comment' OR (${!excludeComments} AND binding."comment_dispatch_enabled"))
     AND work."state" IN ('queued'::"SyncWorkState", 'retry'::"SyncWorkState")
     AND work."available_at" <= ${at}
     AND work."epoch" = binding."lifecycle_epoch"
@@ -34,7 +34,7 @@ function genuinelyClaimable(at: Prisma.Sql, excludeComments: boolean): Prisma.Sq
       WHERE earlier."binding_id" = work."binding_id"
         AND earlier."lane_key" = work."lane_key"
         AND earlier."sequence" < work."sequence"
-        AND (${!excludeComments} OR earlier."entity_type" <> 'comment')
+        AND (earlier."entity_type" <> 'comment' OR (${!excludeComments} AND binding."comment_dispatch_enabled"))
         AND (
           (earlier."epoch" = binding."lifecycle_epoch" AND earlier."state" NOT IN (
             'superseded'::"SyncWorkState", 'dead'::"SyncWorkState",

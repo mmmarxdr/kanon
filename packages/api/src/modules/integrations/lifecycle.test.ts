@@ -305,6 +305,10 @@ describe("integration connection lifecycle", () => {
       deps,
     );
     const active = await setConnectionLifecycle(connection.id, "active", owner.userId, deps);
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: { commentCaptureEnabled: true, commentDispatchEnabled: true },
+    });
     const disabled = await setConnectionLifecycle(connection.id, "disabled", owner.userId);
 
     expect(binding.lifecycle).toBe("draft");
@@ -312,7 +316,13 @@ describe("integration connection lifecycle", () => {
     expect(disabled).toMatchObject({ lifecycle: "disabled", lifecycleEpoch: 2 });
     await expect(
       prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
-    ).resolves.toMatchObject({ lifecycle: "disabled", lifecycleEpoch: 2, pollLeaseToken: null });
+    ).resolves.toMatchObject({
+      lifecycle: "disabled",
+      lifecycleEpoch: 2,
+      commentCaptureEnabled: false,
+      commentDispatchEnabled: false,
+      pollLeaseToken: null,
+    });
   });
 
   it("resumes only the immediate pause cohort and safely fences leased work", async () => {
@@ -621,6 +631,10 @@ describe("integration connection lifecycle", () => {
     expect(ownerView?.providerMaps?.priorityReadMap).toEqual({ normal: "medium", high: "high" });
     expect(ownerView?.providerMaps?.priorityWriteMap).toEqual(priorityWriteMap);
     expect(ownerView?.bindings[0]?.readMap).toEqual(readMap);
+    expect(ownerView?.bindings[0]).toMatchObject({
+      commentCaptureEnabled: false,
+      commentDispatchEnabled: false,
+    });
 
     const adminView = await getWorkspaceConnection(workspace.id, instanceAdmin.userId);
     expect(adminView?.providerMaps).toBeNull();
@@ -830,6 +844,10 @@ describe("integration connection lifecycle", () => {
       workspaceA.id,
     );
     await setConnectionLifecycle(connectionA.id, "active", owner.userId, deps, workspaceA.id);
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: { commentCaptureEnabled: true, commentDispatchEnabled: true },
+    });
     const reference = await prisma.externalRef.create({
       data: {
         connectionId: connectionA.id,
@@ -891,6 +909,8 @@ describe("integration connection lifecycle", () => {
       prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
     ).resolves.toMatchObject({
       lifecycle: "active",
+      commentCaptureEnabled: false,
+      commentDispatchEnabled: false,
       releaseRequestedAt: expect.any(Date),
       releasedAt: null,
     });

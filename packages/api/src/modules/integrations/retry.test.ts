@@ -283,6 +283,10 @@ describe("integration worker retry and completion", () => {
 
   it("rejects stale capture and incomplete proof before exact reconciliation", async () => {
     const fixture = await createFixture();
+    await prisma.integrationProjectBinding.update({
+      where: { id: fixture.binding.id },
+      data: { commentDispatchEnabled: true },
+    });
     const parentRef = await createRef(fixture, "issue", fixture.issue.id, "42");
     const comment = await prisma.comment.create({
       data: { body: "Delivered body", issueId: fixture.issue.id, authorId: fixture.member.id },
@@ -323,6 +327,17 @@ describe("integration worker retry and completion", () => {
     await prisma.integrationSyncWork.update({ where: { id: work.id }, data: { state: "queued", payload: captured, leaseToken: null, leaseUntil: null } });
     await runIntegrationWorkerCycle(prisma, setup.deps);
     await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({ state: "ambiguous" });
+    await prisma.integrationProjectBinding.update({
+      where: { id: fixture.binding.id },
+      data: { commentDispatchEnabled: false },
+    });
+    await runIntegrationWorkerCycle(prisma, setup.deps);
+    expect(reconcileCreate).not.toHaveBeenCalled();
+    await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({ state: "ambiguous", leaseToken: null });
+    await prisma.integrationProjectBinding.update({
+      where: { id: fixture.binding.id },
+      data: { commentDispatchEnabled: true },
+    });
     await runIntegrationWorkerCycle(prisma, setup.deps);
     await expect(prisma.integrationConflict.count({ where: { workId: work.id } })).resolves.toBe(1);
     await prisma.integrationConflict.deleteMany({ where: { workId: work.id } });
