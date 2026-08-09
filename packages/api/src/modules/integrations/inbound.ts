@@ -34,6 +34,7 @@ import {
 import { captureIntegrationWorkTx } from "./outbox.js";
 import {
   completeRetriedApplicationTx,
+  isEligibleRedmineIssueImport,
   persistRedmineIssueImportsTx,
   type InboundApplicationClaim,
   type RedmineImportDependencies,
@@ -101,6 +102,7 @@ type ClaimedBinding = {
   readonly lifecycleEpoch: number;
   readonly cursorUpdatedAt: Date | null;
   readonly cursorRemoteId: string | null;
+  readonly bootstrapCutoff: Date;
   readonly pollLeaseToken: string;
   readonly pollFence: number;
   readonly baseUrl: string;
@@ -176,6 +178,7 @@ async function claimBinding(
         AND project."archived" = false
         AND binding."inbound_enabled" = true
         AND binding."bootstrap_state" = 'ready'::"IntegrationBootstrapState"
+        AND binding."bootstrap_cutoff" IS NOT NULL
         AND credential."connection_id" = connection."id"
         AND credential."last_auth_status" = 'valid'::"CredentialAuthStatus"
         AND credential."revoked_at" IS NULL
@@ -205,6 +208,7 @@ async function claimBinding(
         })
       : null;
     if (!credential) throw new Error("Inbound service credential disappeared during claim");
+    if (!binding.bootstrapCutoff) throw new Error("Inbound binding cutoff disappeared during claim");
 
     return {
       id: binding.id,
@@ -215,6 +219,7 @@ async function claimBinding(
       lifecycleEpoch: binding.lifecycleEpoch,
       cursorUpdatedAt: binding.cursorUpdatedAt,
       cursorRemoteId: binding.cursorRemoteId,
+      bootstrapCutoff: binding.bootstrapCutoff,
       pollLeaseToken: token,
       pollFence: binding.pollFence,
       baseUrl: binding.connection.baseUrl,
@@ -411,6 +416,40 @@ async function recordInboundFailure(
         refId,
         outcome: { reason: "INBOUND_OBSERVATION_FAILED", error: safeErrorEvidence(error) },
       },
+    });
+    return "detail" as const;
+  });
+}
+
+async function recordHistoricalClosedIssue(
+  database: PrismaClient,
+  binding: ClaimedBinding,
+  change: InboundIssueStatusChange,
+  detail: InboundIssueDetail,
+) {
+  const correlationId = applicationIdentity(binding.id, {
+    ...change,
+    changedAt: detail.changedAt,
+  });
+  return database.$transaction(async (transaction) => {
+    if (!(await lockPollSnapshot(transaction, binding))) return "stale" as const;
+    await transaction.integrationInboundApplication.createMany({
+      data: {
+        bindingId: binding.id,
+        remoteEntityType: "issue",
+        remoteId: change.entityId,
+        remoteUpdatedAt: detail.changedAt,
+        sourceVersion: detail.sourceVersion,
+        applicationKey: correlationId,
+        correlationId,
+        state: "skipped",
+        outcome: {
+          reason: "pre-activation-closed-history",
+          cutoff: binding.bootstrapCutoff.toISOString(),
+          provenance: "redmine-inbound-discovery",
+        },
+      },
+      skipDuplicates: true,
     });
     return "detail" as const;
   });
@@ -1518,6 +1557,33 @@ export async function retryRedmineIssueImport(
         });
         return { applicationId: claim.id, state: "skipped" as const, issueKey: null };
       }
+      const readMap =
+        current.binding.readMap &&
+        typeof current.binding.readMap === "object" &&
+        !Array.isArray(current.binding.readMap)
+          ? (current.binding.readMap as Record<string, unknown>)
+          : {};
+      if (
+        !current.binding.bootstrapCutoff ||
+        !isEligibleRedmineIssueImport(
+          detail,
+          readMap[detail.fields.statusId],
+          current.binding.bootstrapCutoff,
+        )
+      ) {
+        await completeRetriedApplicationTx(transaction, claim, {
+          state: "skipped",
+          refId: null,
+          workId: null,
+          outcome: {
+            reason: "pre-activation-closed-history",
+            provenance: "redmine-inbound-retry",
+          },
+          remoteUpdatedAt: detail.changedAt,
+          sourceVersion: detail.sourceVersion,
+        });
+        return { applicationId: claim.id, state: "skipped" as const, issueKey: null };
+      }
       const result = await importUnlinkedIssueTx(
         transaction,
         {
@@ -1589,7 +1655,18 @@ async function applyChange(
         detail.sourceVersion,
       );
     }
-    if (detail.operation === "tombstone") return "detail" as const;
+    if (detail.operation === "tombstone" || !("statusId" in detail.fields)) {
+      return "detail" as const;
+    }
+    if (
+      !isEligibleRedmineIssueImport(
+        detail,
+        (binding.readMap as StatusReadMap)[detail.fields.statusId],
+        binding.bootstrapCutoff,
+      )
+    ) {
+      return recordHistoricalClosedIssue(database, binding, change, detail);
+    }
 
     try {
       return await database.$transaction(async (transaction) => {
