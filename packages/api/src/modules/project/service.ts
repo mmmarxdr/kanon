@@ -151,12 +151,16 @@ export async function updateProject(
   actorId?: string,
   workspaceId?: string,
   allowedProjectIds?: string[] | null,
+  ownerUserId?: string,
 ) {
   const project = await prisma.project.findFirst({
     where: {
       id: projectId,
       ...(workspaceId ? { workspaceId } : {}),
       ...(allowedProjectIds ? { AND: { id: { in: allowedProjectIds } } } : {}),
+      ...(ownerUserId
+        ? { workspace: { members: { some: { userId: ownerUserId, role: "owner" } } } }
+        : {}),
     },
   });
   if (!project) {
@@ -195,6 +199,7 @@ export async function archiveProject(
   actorId?: string,
   workspaceId?: string,
   allowedProjectIds?: string[] | null,
+  ownerUserId?: string,
 ) {
   const archived = await prisma.$transaction(async (transaction) => {
     await transaction.$queryRaw`SELECT "id" FROM "projects" WHERE "id" = ${projectId}::uuid FOR UPDATE`;
@@ -203,6 +208,9 @@ export async function archiveProject(
         id: projectId,
         ...(workspaceId ? { workspaceId } : {}),
         ...(allowedProjectIds ? { AND: { id: { in: allowedProjectIds } } } : {}),
+        ...(ownerUserId
+          ? { workspace: { members: { some: { userId: ownerUserId, role: "owner" } } } }
+          : {}),
       },
     });
     if (!project) {

@@ -82,7 +82,8 @@ export interface RedmineImportDependencies {
   readonly now?: () => Date;
   readonly decrypt?: (ciphertext: string) => string;
   readonly client?: (baseUrl: string, apiKey: string) => Client;
-  readonly allowedProjectIds?: string[];
+  readonly allowedProjectIds?: string[] | null;
+  readonly workspaceId?: string;
 }
 
 const defaultClient = (baseUrl: string, apiKey: string): Client =>
@@ -149,9 +150,10 @@ async function importBinding(
   connectionId: string,
   bindingId: string,
   userId: string,
-  allowedProjectIds?: string[],
+  allowedProjectIds?: string[] | null,
+  workspaceId?: string,
 ) {
-  const connection = await ownedConnection(database, connectionId, userId);
+  const connection = await ownedConnection(database, connectionId, userId, workspaceId);
   if (connection.provider !== "redmine") {
     throw new AppError(400, "INVALID_INTEGRATION_PROVIDER", "Connection is not a Redmine integration");
   }
@@ -477,7 +479,14 @@ export async function previewRedmineIssueImport(
   const decrypt = dependencies.decrypt ?? decryptCredential;
   const createClient = dependencies.client ?? defaultClient;
 
-  await importBinding(prisma, connectionId, bindingId, userId, dependencies.allowedProjectIds);
+  await importBinding(
+    prisma,
+    connectionId,
+    bindingId,
+    userId,
+    dependencies.allowedProjectIds,
+    dependencies.workspaceId,
+  );
   const claim = await prisma.$transaction(async (transaction) => {
     await transaction.$queryRaw(
       Prisma.sql`SELECT "id" FROM "integration_project_bindings" WHERE "id" = ${bindingId}::uuid FOR UPDATE`,
@@ -488,6 +497,7 @@ export async function previewRedmineIssueImport(
       bindingId,
       userId,
       dependencies.allowedProjectIds,
+      dependencies.workspaceId,
     );
     if (current.binding.inboundEnabled && current.binding.bootstrapState === "ready") {
       throw new AppError(409, "REDMINE_IMPORT_ACTIVE", "Redmine inbound import is already active");
@@ -719,6 +729,7 @@ export async function activateRedmineIssueImport(
     bindingId,
     userId,
     dependencies.allowedProjectIds,
+    dependencies.workspaceId,
   );
   if (current.binding.inboundEnabled && current.binding.bootstrapState === "ready") {
     return { importedCount: 0, issueKeys: [] as string[], replayed: true };
@@ -788,6 +799,7 @@ export async function activateRedmineIssueImport(
           bindingId,
           userId,
           dependencies.allowedProjectIds,
+          dependencies.workspaceId,
         );
         if (locked.binding.inboundEnabled && locked.binding.bootstrapState === "ready") {
           return { importedCount: 0, issueKeys: [] as string[], replayed: true };

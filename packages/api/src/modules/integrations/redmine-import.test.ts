@@ -286,6 +286,14 @@ describe("Redmine-created issue import", () => {
         transport.dependencies,
       ),
     ).rejects.toMatchObject({ code: "INTEGRATION_BINDING_NOT_FOUND" });
+    await expect(
+      previewRedmineIssueImport(
+        first.connection.id,
+        first.binding.id,
+        first.owner.userId,
+        { ...transport.dependencies, workspaceId: second.workspace.id },
+      ),
+    ).rejects.toMatchObject({ code: "INTEGRATION_NOT_FOUND" });
 
     await prisma.integrationProjectBinding.update({
       where: { id: first.binding.id },
@@ -897,7 +905,7 @@ describe("Redmine-created issue import", () => {
         ...transport.dependencies,
         allowedProjectIds: [otherProject.id],
       }),
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    ).rejects.toMatchObject({ code: "INTEGRATION_BINDING_NOT_FOUND" });
 
     expect(transport.get).not.toHaveBeenCalled();
     await expect(

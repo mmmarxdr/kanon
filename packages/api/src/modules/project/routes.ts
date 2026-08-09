@@ -8,7 +8,7 @@ import {
   ProjectKeyParam,
 } from "./schema.js";
 import * as projectService from "./service.js";
-import { requireMember, requireProjectMember, requireProjectRole, requireRole } from "../../middleware/require-role.js";
+import { requireMember, requireProjectMember, requireRole } from "../../middleware/require-role.js";
 import { scopedProjectIds } from "../../shared/token-scope.js";
 import { AppError } from "../../shared/types.js";
 
@@ -123,14 +123,21 @@ export default async function projectRoutes(
   app.patch(
     "/projects/:key",
     {
-      preHandler: [requireProjectRole("key", "admin")],
+      preHandler: [requireProjectMember("key")],
       schema: {
         params: ProjectKeyParam,
         body: UpdateProjectBody,
       },
     },
     async (request, _reply) => {
-      return projectService.updateProject(request.projectId!, request.body, request.member?.id);
+      return projectService.updateProject(
+        request.projectId!,
+        request.body,
+        request.member?.id,
+        undefined,
+        scopedProjectIds(request.user.allowedProjectIds),
+        request.user.userId,
+      );
     },
   );
 
@@ -140,13 +147,19 @@ export default async function projectRoutes(
   app.delete(
     "/projects/:key",
     {
-      preHandler: [requireProjectRole("key", "owner")],
+      preHandler: [requireProjectMember("key")],
       schema: {
         params: ProjectKeyParam,
       },
     },
     async (request, _reply) => {
-      return projectService.archiveProject(request.projectId!, request.member?.id);
+      return projectService.archiveProject(
+        request.projectId!,
+        request.member?.id,
+        undefined,
+        scopedProjectIds(request.user.allowedProjectIds),
+        request.user.userId,
+      );
     },
   );
 }

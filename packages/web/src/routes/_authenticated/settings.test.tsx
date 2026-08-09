@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("@/hooks/use-workspace-query", () => ({
@@ -192,6 +192,25 @@ describe("SettingsPage — accessible tabs (KAN-212 Slice C)", () => {
       "aria-selected",
       "true",
     );
+    expect(screen.getByTestId("members-section")).toBeInTheDocument();
+  });
+
+  it("hides project controls immediately after an ownership downgrade", async () => {
+    const user = userEvent.setup();
+    const view = await renderSettings("owner");
+    await user.click(screen.getByRole("tab", { name: "Projects" }));
+    expect(screen.getByTestId("projects-section")).toBeInTheDocument();
+    const { useWorkspacesQuery } = await import("@/hooks/use-workspace-query");
+    vi.mocked(useWorkspacesQuery).mockReturnValue({
+      data: [{ ...WORKSPACE, role: "member" }],
+      isLoading: false,
+    } as unknown as ReturnType<typeof useWorkspacesQuery>);
+    const { SettingsPage } = await import("./settings");
+
+    view.rerender(<SettingsPage />);
+
+    await waitFor(() => expect(screen.queryByTestId("projects-section")).not.toBeInTheDocument());
+    expect(screen.queryByRole("tab", { name: "Projects" })).not.toBeInTheDocument();
     expect(screen.getByTestId("members-section")).toBeInTheDocument();
   });
 });

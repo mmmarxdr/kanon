@@ -91,6 +91,7 @@ describe("integration retry route", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual(result);
     expect(retry).toHaveBeenCalledWith(connection.id, binding.id, applicationId, owner.userId, {
+      workspaceId: workspace.id,
       allowedProjectIds: [allowedProjectId],
     });
   });
@@ -110,6 +111,15 @@ describe("integration retry route", () => {
         connectionId: connection.id,
         projectId: denied.id,
         remoteProjectId: "remote-project",
+        readMap: {},
+        writeMap: {},
+      },
+    });
+    const allowedBinding = await prisma.integrationProjectBinding.create({
+      data: {
+        connectionId: connection.id,
+        projectId: allowed.id,
+        remoteProjectId: "allowed-remote-project",
         readMap: {},
         writeMap: {},
       },
@@ -150,13 +160,22 @@ describe("integration retry route", () => {
       url: `/api/integrations/workspaces/${workspace.id}/connections/${connection.id}/bindings/${binding.id}`,
       headers,
     });
+    const allowedUnbind = await app.inject({
+      method: "DELETE",
+      url: `/api/integrations/workspaces/${workspace.id}/connections/${connection.id}/bindings/${allowedBinding.id}`,
+      headers,
+    });
 
     expect(create.statusCode).toBe(403);
     expect(mapping.statusCode).toBe(403);
     expect(credential.statusCode).toBe(403);
     expect(unbind.statusCode).toBe(404);
+    expect(allowedUnbind.statusCode).toBe(200);
     await expect(
       prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
     ).resolves.toMatchObject({ releasedAt: null });
+    await expect(
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: allowedBinding.id } }),
+    ).resolves.toMatchObject({ releasedAt: expect.any(Date) });
   });
 });

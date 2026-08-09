@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { createRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { authenticatedRoute } from "../_authenticated";
 import { useActiveWorkspaceId, useWorkspacesQuery } from "@/hooks/use-workspace-query";
 import {
@@ -72,10 +72,15 @@ function WorkspaceSettings({
 }) {
   const { t } = useTranslation("settings");
   const [activeTab, setActiveTab] = useState<SettingsTab>("members");
+  const isWorkspaceOwner = currentUserRole === "owner";
   const tabs =
-    currentUserRole === "owner"
+    isWorkspaceOwner
       ? [...TAB_KEYS, { key: "projects" as const, labelKey: "tabProjects" }]
       : TAB_KEYS;
+
+  useEffect(() => {
+    if (!isWorkspaceOwner && activeTab === "projects") setActiveTab("members");
+  }, [activeTab, isWorkspaceOwner]);
 
   return (
     <SettingsShell
@@ -116,7 +121,9 @@ function WorkspaceSettings({
           members={members}
         />
       )}
-      {activeTab === "projects" && <ProjectsSection workspaceId={workspaceId} />}
+      {activeTab === "projects" && isWorkspaceOwner && (
+        <ProjectsSection workspaceId={workspaceId} />
+      )}
     </SettingsShell>
   );
 }

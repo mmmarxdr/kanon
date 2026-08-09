@@ -204,7 +204,10 @@ export default async function integrationRoutes(fastify: FastifyInstance): Promi
         request.params.id,
         request.params.bindingId,
         request.user.userId,
-        { allowedProjectIds: request.user.allowedProjectIds },
+        {
+          workspaceId: request.params.wid,
+          allowedProjectIds: scopedProjectIds(request.user.allowedProjectIds),
+        },
       );
     },
   );
@@ -226,7 +229,10 @@ export default async function integrationRoutes(fastify: FastifyInstance): Promi
         request.params.id,
         request.params.bindingId,
         request.user.userId,
-        { allowedProjectIds: request.user.allowedProjectIds },
+        {
+          workspaceId: request.params.wid,
+          allowedProjectIds: scopedProjectIds(request.user.allowedProjectIds),
+        },
       );
     },
   );
@@ -249,7 +255,10 @@ export default async function integrationRoutes(fastify: FastifyInstance): Promi
         request.params.bindingId,
         request.params.applicationId,
         request.user.userId,
-        { allowedProjectIds: request.user.allowedProjectIds },
+        {
+          workspaceId: request.params.wid,
+          allowedProjectIds: scopedProjectIds(request.user.allowedProjectIds),
+        },
       );
     },
   );

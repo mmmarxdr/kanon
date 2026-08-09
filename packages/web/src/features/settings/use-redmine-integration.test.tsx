@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -36,6 +36,9 @@ function createWrapper() {
 }
 
 describe("Redmine integration hooks", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
   it("scopes connection and discovery queries by workspace", async () => {
     vi.mocked(fetchApiValidated).mockResolvedValue(null);
     const { queryClient, wrapper } = createWrapper();
@@ -60,6 +63,22 @@ describe("Redmine integration hooks", () => {
     expect(
       queryClient.getQueryState(integrationKeys.discovery(WORKSPACE_ID, CONNECTION_ID)),
     ).toBeDefined();
+  });
+
+  it("polls only while a binding release is pending", async () => {
+    vi.mocked(fetchApiValidated).mockResolvedValue({ bindings: [{ releasePending: true }] });
+    const { queryClient, wrapper } = createWrapper();
+    const connection = renderHook(() => useRedmineConnectionQuery(WORKSPACE_ID), { wrapper });
+    await waitFor(() => expect(connection.result.current.isSuccess).toBe(true));
+    const query = queryClient.getQueryCache().find({
+      queryKey: integrationKeys.connection(WORKSPACE_ID),
+    });
+    const refetchInterval = (query?.options as { refetchInterval?: unknown }).refetchInterval;
+    if (typeof refetchInterval !== "function" || !query) throw new Error("Missing polling policy");
+
+    expect(refetchInterval(query)).toBe(2_000);
+    queryClient.setQueryData(integrationKeys.connection(WORKSPACE_ID), { bindings: [] });
+    expect(refetchInterval(query)).toBe(false);
   });
 
   it("uses workspace-scoped owner mutation paths", async () => {

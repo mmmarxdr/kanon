@@ -151,6 +151,40 @@ describe("KAN-16: Project Membership Enforcement", () => {
     expect(res.statusCode).toBe(200);
   });
 
+  it("requires a workspace owner for the legacy project update route", async () => {
+    const admin = await seedTestMemberWithRole(workspaceId, "admin");
+    const project = await seedTestProject(workspaceId, "NOADMN");
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/projects/${project.key}`,
+      headers: { authorization: `Bearer ${admin.token}` },
+      payload: { name: "Unauthorized update" },
+    });
+
+    expect(res.statusCode).toBe(404);
+    await expect(prisma.project.findUniqueOrThrow({ where: { id: project.id } })).resolves.toMatchObject({
+      name: "Test Project",
+    });
+  });
+
+  it("does not let a project owner archive through the legacy route", async () => {
+    const member = await seedTestMemberWithRole(workspaceId, "member");
+    const project = await seedTestProject(workspaceId, "NOPROW");
+    await seedTestProjectMember(member.userId, project.id, "owner");
+
+    const res = await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${project.key}`,
+      headers: { authorization: `Bearer ${member.token}` },
+    });
+
+    expect(res.statusCode).toBe(404);
+    await expect(prisma.project.findUniqueOrThrow({ where: { id: project.id } })).resolves.toMatchObject({
+      archived: false,
+    });
+  });
+
   // ── R-KAN16 (e): createProject creator auto-gets owner PM row ────────────
 
   it("(e) R-KAN16: workspace owner creating a project gets owner PM row auto-inserted", async () => {
@@ -431,13 +465,13 @@ describe("KAN-16: Project Membership Enforcement", () => {
       prisma.project.create({ data: { key: "W2KEY", name: "WB Project", workspaceId: wsB.id } }),
     ]);
 
-    // User is admin in WA (admin can PATCH without PM row — admin bypass applies).
-    const memberInWA = await seedTestMemberWithRole(wsA.id, "admin");
-    // Add same user to WB as admin.
+    // User is owner in both workspaces; the key gate must still select WA deterministically.
+    const memberInWA = await seedTestMemberWithRole(wsA.id, "owner");
+    // Add same user to WB as owner.
     await prisma.member.create({
       data: {
         username: `w2wb-adm-${Math.random().toString(36).slice(2, 7)}`,
-        role: "admin",
+        role: "owner",
         userId: memberInWA.userId,
         workspaceId: wsB.id,
       },

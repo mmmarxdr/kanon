@@ -78,7 +78,8 @@ describe("AdminInstanceForm — instance settings page", () => {
 
     const input = await screen.findByDisplayValue("Acme Kanon");
     expect(input).toBeTruthy();
-    expect(screen.queryByText("Redmine connection")).toBeNull();
+    expect(screen.queryByTestId("admin-redmine-api-key")).toBeNull();
+    expect(screen.queryByTestId("admin-redmine-test-connection")).toBeNull();
   });
 
   // ── (b) 403 → redirect to / ────────────────────────────────────────────────

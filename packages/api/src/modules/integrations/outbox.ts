@@ -241,9 +241,17 @@ export async function captureIntegrationWorkTx(
     }
   }
 
-  const [lockedBinding] = await transaction.$queryRaw<Array<{ lifecycleEpoch: number }>>(
+  const [lockedBinding] = await transaction.$queryRaw<
+    Array<{
+      lifecycleEpoch: number;
+      releaseRequestedAt: Date | null;
+      releasedAt: Date | null;
+    }>
+  >(
     Prisma.sql`
-      SELECT "lifecycle_epoch" AS "lifecycleEpoch"
+      SELECT "lifecycle_epoch" AS "lifecycleEpoch",
+             "release_requested_at" AS "releaseRequestedAt",
+             "released_at" AS "releasedAt"
       FROM "integration_project_bindings"
       WHERE "id" = ${capture.bindingId}::uuid
       FOR SHARE
@@ -251,6 +259,9 @@ export async function captureIntegrationWorkTx(
   );
   if (!lockedBinding) {
     throw new Error(`Integration project binding ${capture.bindingId} was not found`);
+  }
+  if (lockedBinding.releaseRequestedAt || lockedBinding.releasedAt) {
+    throw new Error(`Integration project binding ${capture.bindingId} is not current`);
   }
   if (capture.epoch !== undefined && capture.epoch !== lockedBinding.lifecycleEpoch) {
     throw new Error(
