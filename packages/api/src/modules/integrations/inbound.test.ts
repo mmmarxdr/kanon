@@ -891,7 +891,12 @@ describe("Redmine inbound sync", () => {
       }),
     ).resolves.toMatchObject({
       state: "skipped",
-      outcome: expect.objectContaining({ reason: "pre-activation-closed-history" }),
+      sourceVersion: expect.stringMatching(/^sha256:/),
+      outcome: expect.objectContaining({
+        reason: "pre-activation-closed-history",
+        cutoff: baseline.toISOString(),
+        provenance: "redmine-inbound-discovery",
+      }),
     });
 
     const reopenedAt = new Date("2026-08-01T10:05:30.000Z");

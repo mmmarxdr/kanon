@@ -15,7 +15,7 @@ import {
   RedminePaginationDriftError,
   type RedmineIssueChange,
 } from "./providers/redmine/decoder.js";
-import { RedmineHttpClient } from "./providers/redmine/http-client.js";
+import { RedmineHttpClient, RedmineHttpError } from "./providers/redmine/http-client.js";
 import { ownedConnection, serviceCredential } from "./service.js";
 
 const PAGE_SIZE = 100;
@@ -889,6 +889,13 @@ export async function activateRedmineIssueImport(
         changes.push(change);
       }
     } catch (error) {
+      if (error instanceof RedmineHttpError && error.statusCode === 404) {
+        throw new AppError(
+          409,
+          "REDMINE_PREVIEW_STALE",
+          "A previewed Redmine issue no longer exists; run the preview again",
+        );
+      }
       if (error instanceof AppError) throw error;
       throw remoteFailure();
     }

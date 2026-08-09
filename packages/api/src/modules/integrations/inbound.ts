@@ -1563,8 +1563,14 @@ export async function retryRedmineIssueImport(
         !Array.isArray(current.binding.readMap)
           ? (current.binding.readMap as Record<string, unknown>)
           : {};
+      if (!current.binding.bootstrapCutoff) {
+        throw new AppError(
+          409,
+          "REDMINE_BOOTSTRAP_CUTOFF_MISSING",
+          "Redmine binding has no bootstrap cutoff",
+        );
+      }
       if (
-        !current.binding.bootstrapCutoff ||
         !isEligibleRedmineIssueImport(
           detail,
           readMap[detail.fields.statusId],
