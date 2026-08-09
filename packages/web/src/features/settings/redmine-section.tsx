@@ -9,8 +9,10 @@ import {
   useConnectRedmineCredentialMutation,
   useRedmineConnectionQuery,
   useRedmineDiscoveryQuery,
+  useUnbindRedmineProjectMutation,
 } from "./use-redmine-integration";
 import type { WorkspaceMember } from "./use-settings-queries";
+import { RedmineOwnerSection } from "./redmine-owner-section";
 
 export function RedmineCredentialHealth({
   connection,
@@ -87,7 +89,7 @@ function CredentialCard({
               : t("redmineMyAccountHelp")}
           </p>
         </div>
-        {credential.connected && (
+        {credential.connected && !connection.serviceCredentialIsCaller && (
           <button
             type="button"
             onClick={() => clear.mutate()}
@@ -153,7 +155,9 @@ function ProjectBindFields({
     binding?.remoteProjectId ?? discovery.projects[0]?.id ?? "",
   );
   const bind = useBindRedmineProjectMutation(workspaceId, connection.id);
+  const unbind = useUnbindRedmineProjectMutation(workspaceId, connection.id);
   const complete = projectId && remoteProjectId;
+  const releasePending = binding?.releasePending === true;
 
   return (
     <form
@@ -167,6 +171,7 @@ function ProjectBindFields({
         {t("redmineRemoteProject")}
         <select
           value={remoteProjectId}
+          disabled={releasePending}
           onChange={(event) => setRemoteProjectId(event.target.value)}
           className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2"
         >
@@ -175,15 +180,31 @@ function ProjectBindFields({
           ))}
         </select>
       </label>
-      {bind.isError && <p className="text-sm text-destructive">{bind.error.message}</p>}
+      {(bind.isError || unbind.isError) && (
+        <p className="text-sm text-destructive">{(bind.error ?? unbind.error)?.message}</p>
+      )}
       {bind.isSuccess && <p className="text-sm text-success">{t("redmineProjectBound")}</p>}
-      <button
-        type="submit"
-        disabled={bind.isPending || !complete}
-        className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
-      >
-        {bind.isPending ? t("redmineSaving") : t("redmineSaveProject")}
-      </button>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="submit"
+          disabled={bind.isPending || !complete || releasePending}
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
+        >
+          {bind.isPending ? t("redmineSaving") : t("redmineSaveProject")}
+        </button>
+        {binding && (
+          <button
+            type="button"
+            disabled={unbind.isPending || releasePending}
+            onClick={() => {
+              if (window.confirm(t("redmineUnbindConfirm"))) unbind.mutate(binding.id);
+            }}
+            className="rounded-md border border-destructive/50 px-4 py-2 text-sm font-medium text-destructive disabled:opacity-50"
+          >
+            {unbind.isPending || releasePending ? t("redmineUnbinding") : t("redmineUnbind")}
+          </button>
+        )}
+      </div>
     </form>
   );
 }
@@ -196,7 +217,7 @@ function ProjectBindCard({
   connection: IntegrationConnection;
 }) {
   const { t } = useTranslation("settings");
-  const discovery = useRedmineDiscoveryQuery(connection.id, true);
+  const discovery = useRedmineDiscoveryQuery(workspaceId, connection.id, true);
   const projects = useProjectsQuery(workspaceId);
   const [projectId, setProjectId] = useState(connection.bindings[0]?.projectId ?? "");
   const selectedProjectId = projectId || projects.data?.[0]?.id || "";
@@ -324,7 +345,9 @@ export function RedmineSection({
     return <SettingsCard><p className="text-sm text-destructive">{connection.error.message}</p></SettingsCard>;
   }
   if (!connection.data) {
-    return (
+    return isOwner ? (
+      <RedmineOwnerSection workspaceId={workspaceId} connection={null} />
+    ) : (
       <SettingsCard>
         <h2 className="text-lg font-semibold text-foreground">Redmine</h2>
         <p className="mt-1 text-sm text-muted-foreground">{t("redmineNotConfigured")}</p>
@@ -348,6 +371,9 @@ export function RedmineSection({
       <RedmineCredentialHealth connection={connection.data} />
       <CredentialCard workspaceId={workspaceId} connection={connection.data} />
       {isOwner && <ProjectBindCard workspaceId={workspaceId} connection={connection.data} />}
+      {isOwner && (
+        <RedmineOwnerSection workspaceId={workspaceId} connection={connection.data} />
+      )}
       <CoverageCard connection={connection.data} members={members} />
     </div>
   );

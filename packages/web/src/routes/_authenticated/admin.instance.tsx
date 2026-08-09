@@ -23,7 +23,6 @@ import { authenticatedRoute } from "../_authenticated";
 import { fetchApi, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/stores/auth-store";
 import { SUPPORTED_LOCALES } from "@kanon/shared";
-import { AdminRedmineSection } from "@/features/settings/admin-redmine-section";
 import { SettingsShell } from "@/components/ui/settings-shell";
 import { SettingsCard } from "@/components/ui/settings-card";
 import { SettingsField, SETTINGS_INPUT_CLASS } from "@/components/ui/settings-field";
@@ -395,8 +394,6 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
           </div>
         </form>
       </SettingsCard>
-
-      <AdminRedmineSection redmineBaseUrl={settings.redmineBaseUrl} />
     </SettingsShell>
   );
 }

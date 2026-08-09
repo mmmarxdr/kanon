@@ -138,8 +138,8 @@ export const integrationKeys = {
   all: ["integrations"] as const,
   connection: (workspaceId: string) =>
     [...integrationKeys.all, "connection", workspaceId] as const,
-  discovery: (connectionId: string) =>
-    [...integrationKeys.all, "discovery", connectionId] as const,
+  discovery: (workspaceId: string, connectionId: string) =>
+    [...integrationKeys.all, "discovery", workspaceId, connectionId] as const,
 };
 
 export const scheduleKeys = {

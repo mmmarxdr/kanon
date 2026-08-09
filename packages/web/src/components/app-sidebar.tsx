@@ -5,7 +5,7 @@ import { useSidebarStore } from "@/stores/sidebar-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useCommandPaletteStore } from "@/stores/command-palette-store";
 import { useProjectsQuery } from "@/hooks/use-projects-query";
-import { useActiveWorkspaceId } from "@/hooks/use-workspace-query";
+import { useActiveWorkspaceId, useWorkspacesQuery } from "@/hooks/use-workspace-query";
 import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { Icon } from "@/components/ui/icons";
 import { Avatar, avatarInitials } from "@/components/ui/primitives";
@@ -105,6 +105,8 @@ export function AppSidebar() {
   const { t: tCommon } = useTranslation("common");
 
   const workspaceId = useActiveWorkspaceId();
+  const { data: workspaces } = useWorkspacesQuery();
+  const isWorkspaceOwner = workspaces?.find((workspace) => workspace.id === workspaceId)?.role === "owner";
   const { data: projects, isLoading: projectsLoading } = useProjectsQuery(workspaceId);
   const projectKey =
     location.pathname.match(/^\/(board|roadmap|dependencies|cycles|project-settings|schedule)\/([^/]+)/)?.[2] ?? "";
@@ -296,14 +298,16 @@ export function AppSidebar() {
               >
                 {t("projects")}
               </span>
-              <button
-                type="button"
-                style={{ color: "var(--ink-4)" }}
-                title={t("createProject")}
-                onClick={() => setShowCreateProject(true)}
-              >
-                <Icon.Plus />
-              </button>
+              {isWorkspaceOwner && (
+                <button
+                  type="button"
+                  style={{ color: "var(--ink-4)" }}
+                  title={t("createProject")}
+                  onClick={() => setShowCreateProject(true)}
+                >
+                  <Icon.Plus />
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -655,8 +659,9 @@ export function AppSidebar() {
         </div>
       </div>
 
-      {showCreateProject && workspaceId && (
+      {showCreateProject && workspaceId && isWorkspaceOwner && (
         <CreateProjectModal
+          key={workspaceId}
           workspaceId={workspaceId}
           onClose={() => setShowCreateProject(false)}
         />

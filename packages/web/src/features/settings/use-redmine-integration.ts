@@ -26,20 +26,26 @@ export function useRedmineConnectionQuery(workspaceId: string | undefined) {
     queryKey: integrationKeys.connection(workspaceId ?? ""),
     queryFn: () =>
       fetchApiValidated(
-        `/api/integrations/connections?workspaceId=${encodeURIComponent(workspaceId!)}`,
+        `/api/integrations/workspaces/${workspaceId}/connections`,
         integrationConnectionSchema.nullable(),
       ),
     enabled: !!workspaceId,
     staleTime: 30_000,
+    refetchInterval: (query) =>
+      query.state.data?.bindings.some((binding) => binding.releasePending) ? 2_000 : false,
   });
 }
 
-export function useRedmineDiscoveryQuery(connectionId: string | undefined, enabled: boolean) {
+export function useRedmineDiscoveryQuery(
+  workspaceId: string,
+  connectionId: string | undefined,
+  enabled: boolean,
+) {
   return useQuery({
-    queryKey: integrationKeys.discovery(connectionId ?? ""),
+    queryKey: integrationKeys.discovery(workspaceId, connectionId ?? ""),
     queryFn: () =>
       fetchApiValidated(
-        `/api/integrations/connections/${connectionId}/discovery`,
+        `/api/integrations/workspaces/${workspaceId}/connections/${connectionId}/discovery`,
         integrationDiscoverySchema,
       ),
     enabled: !!connectionId && enabled,
@@ -51,9 +57,9 @@ export function useCreateRedmineConnectionMutation(workspaceId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (apiKey: string) =>
-      fetchApi<unknown>("/api/integrations/connections", {
+      fetchApi<unknown>(`/api/integrations/workspaces/${workspaceId}/connections`, {
         method: "POST",
-        body: JSON.stringify({ workspaceId, apiKey }),
+        body: JSON.stringify({ apiKey }),
       }),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: integrationKeys.connection(workspaceId) }),
@@ -64,10 +70,13 @@ export function useConnectRedmineCredentialMutation(workspaceId: string, connect
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (apiKey: string) =>
-      fetchApi<unknown>("/api/integrations/credentials", {
-        method: "POST",
-        body: JSON.stringify({ connectionId, apiKey }),
-      }),
+      fetchApi<unknown>(
+        `/api/integrations/workspaces/${workspaceId}/connections/${connectionId}/credential`,
+        {
+          method: "POST",
+          body: JSON.stringify({ apiKey }),
+        },
+      ),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: integrationKeys.connection(workspaceId) }),
   });
@@ -80,13 +89,15 @@ export function useReplaceRedmineServiceCredentialMutation(
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (apiKey: string) =>
-      fetchApi<unknown>(`/api/integrations/connections/${connectionId}/service-credential`, {
-        method: "PUT",
-        body: JSON.stringify({ apiKey }),
-      }),
+      fetchApi<unknown>(
+        `/api/integrations/workspaces/${workspaceId}/connections/${connectionId}/service-credential`,
+        { method: "PUT", body: JSON.stringify({ apiKey }) },
+      ),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: integrationKeys.connection(workspaceId) });
-      void queryClient.invalidateQueries({ queryKey: integrationKeys.discovery(connectionId) });
+      void queryClient.invalidateQueries({
+        queryKey: integrationKeys.discovery(workspaceId, connectionId),
+      });
     },
   });
 }
@@ -95,9 +106,10 @@ export function useClearRedmineCredentialMutation(workspaceId: string, connectio
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () =>
-      fetchApi<void>(`/api/integrations/connections/${connectionId}/credential`, {
-        method: "DELETE",
-      }),
+      fetchApi<void>(
+        `/api/integrations/workspaces/${workspaceId}/connections/${connectionId}/credential`,
+        { method: "DELETE" },
+      ),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: integrationKeys.connection(workspaceId) }),
   });
@@ -107,13 +119,15 @@ export function useConfigureRedmineProviderMapsMutation(workspaceId: string, con
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: ConfigureRedmineProviderMapsInput) =>
-      fetchApi<unknown>(`/api/integrations/connections/${connectionId}/provider-maps`, {
-        method: "PUT",
-        body: JSON.stringify(input),
-      }),
+      fetchApi<unknown>(
+        `/api/integrations/workspaces/${workspaceId}/connections/${connectionId}/provider-maps`,
+        { method: "PUT", body: JSON.stringify(input) },
+      ),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: integrationKeys.connection(workspaceId) });
-      void queryClient.invalidateQueries({ queryKey: integrationKeys.discovery(connectionId) });
+      void queryClient.invalidateQueries({
+        queryKey: integrationKeys.discovery(workspaceId, connectionId),
+      });
     },
   });
 }
@@ -122,10 +136,10 @@ export function useSetRedmineLifecycleMutation(workspaceId: string, connectionId
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (lifecycle: "active" | "paused" | "disabled") =>
-      fetchApi<unknown>(`/api/integrations/connections/${connectionId}/lifecycle`, {
-        method: "PATCH",
-        body: JSON.stringify({ lifecycle }),
-      }),
+      fetchApi<unknown>(
+        `/api/integrations/workspaces/${workspaceId}/connections/${connectionId}/lifecycle`,
+        { method: "PATCH", body: JSON.stringify({ lifecycle }) },
+      ),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: integrationKeys.connection(workspaceId) }),
   });
@@ -135,10 +149,23 @@ export function useBindRedmineProjectMutation(workspaceId: string, connectionId:
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: BindRedmineProjectInput) =>
-      fetchApi<unknown>(`/api/integrations/connections/${connectionId}/bindings`, {
-        method: "PUT",
-        body: JSON.stringify(input),
-      }),
+      fetchApi<unknown>(
+        `/api/integrations/workspaces/${workspaceId}/connections/${connectionId}/bindings`,
+        { method: "PUT", body: JSON.stringify(input) },
+      ),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: integrationKeys.connection(workspaceId) }),
+  });
+}
+
+export function useUnbindRedmineProjectMutation(workspaceId: string, connectionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (bindingId: string) =>
+      fetchApi<unknown>(
+        `/api/integrations/workspaces/${workspaceId}/connections/${connectionId}/bindings/${bindingId}`,
+        { method: "DELETE" },
+      ),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: integrationKeys.connection(workspaceId) }),
   });

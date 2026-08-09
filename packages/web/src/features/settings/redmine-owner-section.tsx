@@ -8,17 +8,14 @@ import {
   type IssuePriority,
   type IssueState,
 } from "@kanon/shared";
-import { useWorkspacesQuery } from "@/hooks/use-workspace-query";
 import { SettingsCard } from "@/components/ui/settings-card";
 import {
   useConfigureRedmineProviderMapsMutation,
   useCreateRedmineConnectionMutation,
-  useRedmineConnectionQuery,
   useRedmineDiscoveryQuery,
   useReplaceRedmineServiceCredentialMutation,
   useSetRedmineLifecycleMutation,
 } from "./use-redmine-integration";
-import { RedmineCredentialHealth } from "./redmine-section";
 
 const ISSUE_STATES = issueStateSchema.options;
 const ISSUE_PRIORITIES = issuePrioritySchema.options;
@@ -103,7 +100,7 @@ function ConnectionSetup({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div className="mt-4 space-y-4">
-      <p className="text-sm text-muted-foreground">{t("redmineAdminSetupHelp")}</p>
+      <p className="text-sm text-muted-foreground">{t("redmineOwnerSetupHelp")}</p>
       <form
         className="space-y-4"
         onSubmit={(event) => {
@@ -172,14 +169,12 @@ function ProviderMapsForm({
     ),
   );
   const configure = useConfigureRedmineProviderMapsMutation(workspaceId, connection.id);
-  const lifecycle = useSetRedmineLifecycleMutation(workspaceId, connection.id);
   const writableStatuses = discovery.statuses.filter((status) => status.writable);
   const complete =
     timeActivityId &&
     discovery.priorities.length > 0 &&
     Object.values(writeMap).every(Boolean) &&
     Object.values(priorityWriteMap).every(Boolean);
-  const canActivate = connection.bindings.length > 0 && connection.providerMaps?.timeActivityId;
 
   return (
     <div className="mt-5 space-y-6">
@@ -321,23 +316,11 @@ function ProviderMapsForm({
         </button>
       </form>
 
-      <div className="border-t border-border pt-4">
-        <p className="text-sm text-muted-foreground">{t("redmineActivateHelp")}</p>
-        {lifecycle.isError && <p className="mt-2 text-sm text-destructive">{lifecycle.error.message}</p>}
-        <button
-          type="button"
-          disabled={lifecycle.isPending || !canActivate || connection.lifecycle === "active"}
-          onClick={() => lifecycle.mutate("active")}
-          className="mt-3 rounded-md border border-border px-4 py-2 text-sm font-medium disabled:opacity-50"
-        >
-          {connection.lifecycle === "active" ? t("redmineAlreadyActive") : t("redmineActivate")}
-        </button>
-      </div>
     </div>
   );
 }
 
-function ConnectedAdminPanel({
+function ConnectedOwnerPanel({
   workspaceId,
   connection,
 }: {
@@ -345,16 +328,20 @@ function ConnectedAdminPanel({
   connection: IntegrationConnection;
 }) {
   const { t } = useTranslation("settings");
-  const discovery = useRedmineDiscoveryQuery(connection.id, true);
+  const discovery = useRedmineDiscoveryQuery(workspaceId, connection.id, true);
   const replace = useReplaceRedmineServiceCredentialMutation(workspaceId, connection.id);
+  const lifecycle = useSetRedmineLifecycleMutation(workspaceId, connection.id);
   const [apiKey, setApiKey] = useState("");
+  const canActivate = Boolean(
+    connection.bindings.length > 0 && connection.providerMaps?.timeActivityId,
+  );
 
   return (
     <div className="mt-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="break-all text-sm text-muted-foreground">{connection.baseUrl}</p>
-          <p className="mt-1 text-xs text-muted-foreground">{t("redmineAdminMapsHelp")}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{t("redmineOwnerMapsHelp")}</p>
         </div>
         <div className="flex items-center gap-2">
           <span className="rounded-full bg-secondary px-2.5 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -371,7 +358,6 @@ function ConnectedAdminPanel({
         </div>
       </div>
       <div className="mt-4 space-y-4">
-        <RedmineCredentialHealth connection={connection} />
         <form
           className="rounded-lg border border-border p-4"
           onSubmit={(event) => {
@@ -409,6 +395,29 @@ function ConnectedAdminPanel({
               : t("redmineReplaceServiceKey")}
           </button>
         </form>
+        <div className="rounded-lg border border-border p-4">
+          <label className="block text-sm font-medium text-foreground">
+            {t("redmineLifecycleControl")}
+            <select
+              value={connection.lifecycle}
+              onChange={(event) =>
+                lifecycle.mutate(event.target.value as "active" | "paused" | "disabled")
+              }
+              disabled={lifecycle.isPending}
+              className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2"
+            >
+              <option value="draft" disabled>{t("redmineLifecycle.draft")}</option>
+              <option value="pausing" disabled>{t("redmineLifecycle.pausing")}</option>
+              <option value="active" disabled={!canActivate}>{t("redmineLifecycle.active")}</option>
+              <option value="paused">{t("redmineLifecycle.paused")}</option>
+              <option value="disabled">{t("redmineLifecycle.disabled")}</option>
+            </select>
+          </label>
+          <p className="mt-2 text-sm text-muted-foreground">{t("redmineActivateHelp")}</p>
+          {lifecycle.isError && (
+            <p className="mt-2 text-sm text-destructive">{lifecycle.error.message}</p>
+          )}
+        </div>
       </div>
       {discovery.isLoading ? (
         <p className="mt-4 text-sm text-muted-foreground">{t("redmineLoading")}</p>
@@ -428,61 +437,23 @@ function ConnectedAdminPanel({
   );
 }
 
-export function AdminRedmineSection({ redmineBaseUrl }: { redmineBaseUrl: string | null }) {
+export function RedmineOwnerSection({
+  workspaceId,
+  connection,
+}: {
+  workspaceId: string;
+  connection: IntegrationConnection | null;
+}) {
   const { t } = useTranslation("settings");
-  const workspaces = useWorkspacesQuery();
-  const [workspaceId, setWorkspaceId] = useState("");
-  const selectedId = workspaceId || workspaces.data?.[0]?.id || "";
-  const connection = useRedmineConnectionQuery(selectedId || undefined);
-
-  if (!redmineBaseUrl) {
-    return (
-      <SettingsCard testId="admin-redmine-section">
-        <h2 className="text-lg font-semibold text-foreground">{t("redmineAdminTitle")}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">{t("redmineAdminNeedsUrl")}</p>
-      </SettingsCard>
-    );
-  }
 
   return (
-    <SettingsCard testId="admin-redmine-section">
-      <h2 className="text-lg font-semibold text-foreground">{t("redmineAdminTitle")}</h2>
-      <p className="mt-1 text-sm text-muted-foreground">{t("redmineAdminHelp")}</p>
-
-      {workspaces.isLoading ? (
-        <p className="mt-4 text-sm text-muted-foreground">{t("redmineLoading")}</p>
-      ) : !workspaces.data?.length ? (
-        <p className="mt-4 text-sm text-muted-foreground">{t("redmineAdminNoWorkspace")}</p>
+    <SettingsCard testId="redmine-owner-section">
+      <h2 className="text-lg font-semibold text-foreground">{t("redmineOwnerTitle")}</h2>
+      <p className="mt-1 text-sm text-muted-foreground">{t("redmineOwnerHelp")}</p>
+      {connection ? (
+        <ConnectedOwnerPanel workspaceId={workspaceId} connection={connection} />
       ) : (
-        <>
-          <label className="mt-4 block text-sm font-medium text-foreground">
-            {t("redmineAdminWorkspace")}
-            <select
-              value={selectedId}
-              onChange={(event) => setWorkspaceId(event.target.value)}
-              data-testid="admin-redmine-workspace"
-              className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2"
-            >
-              {workspaces.data.map((workspace) => (
-                <option key={workspace.id} value={workspace.id}>{workspace.name}</option>
-              ))}
-            </select>
-          </label>
-
-          {connection.isLoading ? (
-            <p className="mt-4 text-sm text-muted-foreground">{t("redmineLoading")}</p>
-          ) : connection.error ? (
-            <p className="mt-4 text-sm text-destructive">{connection.error.message}</p>
-          ) : !connection.data ? (
-            <ConnectionSetup key={selectedId} workspaceId={selectedId} />
-          ) : (
-            <ConnectedAdminPanel
-              key={selectedId}
-              workspaceId={selectedId}
-              connection={connection.data}
-            />
-          )}
-        </>
+        <ConnectionSetup workspaceId={workspaceId} />
       )}
     </SettingsCard>
   );

@@ -23,6 +23,7 @@ const {
   mockToggleProjectsExpanded,
   mockLocation,
   mockProjects,
+  mockWorkspaceRole,
 } = vi.hoisted(() => ({
   mockUser: { value: null as null | Record<string, unknown> },
   mockCollapsed: { value: false },
@@ -30,6 +31,7 @@ const {
   mockToggleProjectsExpanded: { fn: vi.fn() },
   mockLocation: { value: { pathname: "/" } },
   mockProjects: { value: [] as unknown[] },
+  mockWorkspaceRole: { value: "owner" },
 }));
 
 // ─── router mock ──────────────────────────────────────────────────────────────
@@ -102,7 +104,7 @@ vi.mock("@/hooks/use-projects-query", () => ({
 vi.mock("@/hooks/use-workspace-query", () => ({
   useActiveWorkspaceId: () => "ws-1",
   useWorkspacesQuery: () => ({
-    data: [{ id: "ws-1", name: "Alpha", slug: "alpha" }],
+    data: [{ id: "ws-1", name: "Alpha", slug: "alpha", role: mockWorkspaceRole.value }],
   }),
   useSetActiveWorkspace: () => vi.fn(),
 }));
@@ -186,6 +188,7 @@ describe("AppSidebar", () => {
     mockToggleProjectsExpanded.fn = vi.fn();
     mockLocation.value = { pathname: "/" };
     mockProjects.value = [];
+    mockWorkspaceRole.value = "owner";
     mockUser.value = makeUser();
   });
 
@@ -199,6 +202,14 @@ describe("AppSidebar", () => {
     fireEvent.click(plusBtn);
 
     expect(screen.getByTestId("create-project-modal")).toBeTruthy();
+  });
+
+  it("hides project creation from non-owners", () => {
+    mockWorkspaceRole.value = "member";
+
+    render(<AppSidebar />);
+
+    expect(screen.queryByTitle("New project")).toBeNull();
   });
 
   // ── (b) isSuperAdmin:true → Admin nav entry ────────────────────────────────
