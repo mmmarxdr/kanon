@@ -51,7 +51,10 @@ async function captureConfirmedTimeTx(
   const binding = await tx.integrationProjectBinding.findFirst({
     where: {
       projectId,
+      releaseRequestedAt: null,
+      releasedAt: null,
       lifecycle: { in: ["active", "paused"] },
+      project: { archived: false },
       connection: {
         provider: "redmine",
         lifecycle: { in: ["active", "paused"] },

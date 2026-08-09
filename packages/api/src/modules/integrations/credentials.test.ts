@@ -190,7 +190,7 @@ describe("integration credentials", () => {
 
     const response = await app.inject({
       method: "GET",
-      url: `/api/integrations/connections/${connection.id}`,
+      url: `/api/integrations/workspaces/${workspace.id}/connections/${connection.id}`,
       headers: { authorization: `Bearer ${member.token}` },
     });
     expect(response.statusCode).toBe(200);
@@ -198,15 +198,17 @@ describe("integration credentials", () => {
     expect(response.body).not.toContain("encryptedKey");
     const cleared = await app.inject({
       method: "DELETE",
-      url: `/api/integrations/connections/${connection.id}/credential`,
+      url: `/api/integrations/workspaces/${workspace.id}/connections/${connection.id}/credential`,
       headers: { authorization: `Bearer ${member.token}` },
     });
     expect(cleared.statusCode).toBe(204);
 
-    await clearCredential(connection.id, owner.userId);
-    await expect(getConnectionDiscovery(connection.id, owner.userId, deps)).rejects.toMatchObject({
+    await expect(clearCredential(connection.id, owner.userId)).rejects.toMatchObject({
       statusCode: 409,
-      code: "INTEGRATION_NOT_READY",
+      code: "SERVICE_CREDENTIAL_REQUIRES_REPLACEMENT",
+    });
+    await expect(getConnectionDiscovery(connection.id, owner.userId, deps)).resolves.toMatchObject({
+      projects: expect.any(Array),
     });
   });
 
@@ -374,11 +376,13 @@ describe("integration credentials", () => {
     ).resolves.toMatchObject({ state: "dead", skippedReason: "credential_invalid" });
   });
 
-  it("lets only an instance admin replace and rebind the service credential", async () => {
+  it("lets only a workspace owner replace and rebind the service credential", async () => {
     const workspace = await seedTestWorkspace();
     const previousAdmin = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
     const replacementAdmin = await seedTestMemberWithRole(workspace.id, "owner", { isInstanceAdmin: true });
-    const nonAdminOwner = await seedTestMemberWithRole(workspace.id, "owner");
+    const instanceAdmin = await seedTestMemberWithRole(workspace.id, "admin", {
+      isInstanceAdmin: true,
+    });
     const project = await seedTestProject(workspace.id);
     const connection = await prisma.integrationConnection.create({
       data: { workspaceId: workspace.id, provider: "redmine", baseUrl: "https://redmine.example.test" },
@@ -471,8 +475,8 @@ describe("integration credentials", () => {
 
     const forbidden = await app.inject({
       method: "PUT",
-      url: `/api/integrations/connections/${connection.id}/service-credential`,
-      headers: { authorization: `Bearer ${nonAdminOwner.token}` },
+      url: `/api/integrations/workspaces/${workspace.id}/connections/${connection.id}/service-credential`,
+      headers: { authorization: `Bearer ${instanceAdmin.token}` },
       payload: { apiKey: "replacement-service-key" },
     });
     expect(forbidden.statusCode).toBe(403);
@@ -530,9 +534,9 @@ describe("integration credentials", () => {
       authCredentialId: replacement.id,
     });
 
-    await prisma.user.update({
-      where: { id: replacementAdmin.userId },
-      data: { isInstanceAdmin: false },
+    await prisma.member.update({
+      where: { id: replacementAdmin.id },
+      data: { role: "admin" },
     });
     vi.clearAllMocks();
     await expect(
@@ -588,7 +592,7 @@ describe("integration credentials", () => {
 
     const ownerResponse = await app.inject({
       method: "GET",
-      url: `/api/integrations/connections/${connection.id}`,
+      url: `/api/integrations/workspaces/${workspace.id}/connections/${connection.id}`,
       headers: { authorization: `Bearer ${owner.token}` },
     });
     const ownerDetail = integrationConnectionSchema.parse(ownerResponse.json());
@@ -609,7 +613,7 @@ describe("integration credentials", () => {
 
     const memberResponse = await app.inject({
       method: "GET",
-      url: `/api/integrations/connections/${connection.id}`,
+      url: `/api/integrations/workspaces/${workspace.id}/connections/${connection.id}`,
       headers: { authorization: `Bearer ${member.token}` },
     });
     const memberDetail = integrationConnectionSchema.parse(memberResponse.json());
@@ -691,17 +695,18 @@ describe("integration credentials", () => {
   it("rejects malformed credential requests at the HTTP boundary", async () => {
     const workspace = await seedTestWorkspace();
     const member = await seedTestMemberWithRole(workspace.id, "member");
+    const owner = await seedTestMemberWithRole(workspace.id, "owner");
     const response = await app.inject({
       method: "POST",
-      url: "/api/integrations/credentials",
+      url: `/api/integrations/workspaces/${workspace.id}/connections/${randomUUID()}/credential`,
       headers: { authorization: `Bearer ${member.token}` },
-      payload: { connectionId: "not-a-uuid", apiKey: "" },
+      payload: { apiKey: "" },
     });
     expect(response.statusCode).toBe(400);
     const serviceResponse = await app.inject({
       method: "PUT",
-      url: `/api/integrations/connections/${randomUUID()}/service-credential`,
-      headers: { authorization: `Bearer ${member.token}` },
+      url: `/api/integrations/workspaces/${workspace.id}/connections/${randomUUID()}/service-credential`,
+      headers: { authorization: `Bearer ${owner.token}` },
       payload: { apiKey: "" },
     });
     expect(serviceResponse.statusCode).toBe(400);
@@ -723,7 +728,7 @@ describe("integration credentials", () => {
 
     const response = await app.inject({
       method: "GET",
-      url: `/api/integrations/connections?workspaceId=${workspace.id}`,
+      url: `/api/integrations/workspaces/${workspace.id}/connections`,
       headers: { authorization: `Bearer ${member.token}` },
     });
     expect(response.statusCode).toBe(200);

@@ -164,18 +164,23 @@ async function claimBinding(
       SELECT binding."id"
       FROM "integration_project_bindings" AS binding
       JOIN "integration_connections" AS connection ON connection."id" = binding."connection_id"
+      JOIN "projects" AS project ON project."id" = binding."project_id"
       JOIN "member_integration_credentials" AS credential
         ON credential."id" = connection."service_credential_id"
       JOIN "members" AS member ON member."id" = credential."member_id"
       WHERE connection."provider" = 'redmine'
         AND connection."lifecycle" = 'active'::"IntegrationLifecycle"
         AND binding."lifecycle" = 'active'::"IntegrationLifecycle"
+        AND binding."released_at" IS NULL
+        AND binding."release_requested_at" IS NULL
+        AND project."archived" = false
         AND binding."inbound_enabled" = true
         AND binding."bootstrap_state" = 'ready'::"IntegrationBootstrapState"
         AND credential."connection_id" = connection."id"
         AND credential."last_auth_status" = 'valid'::"CredentialAuthStatus"
         AND credential."revoked_at" IS NULL
         AND member."workspace_id" = connection."workspace_id"
+        AND member."role" = 'owner'
         AND (binding."poll_lease_until" IS NULL OR binding."poll_lease_until" <= ${now})
         ${exclusion}
       ORDER BY binding."updated_at", binding."id"
@@ -252,12 +257,15 @@ async function lockPollSnapshot(
       id: binding.id,
       connectionId: binding.connectionId,
       lifecycle: "active",
+      releasedAt: null,
+      releaseRequestedAt: null,
       inboundEnabled: true,
       bootstrapState: "ready",
       lifecycleEpoch: binding.lifecycleEpoch,
       pollLeaseToken: binding.pollLeaseToken,
       pollFence: binding.pollFence,
       connection: { lifecycle: "active" },
+      project: { archived: false },
     },
     include: {
       project: { select: { key: true } },
@@ -1273,7 +1281,13 @@ async function retryBinding(
     throw new AppError(400, "INVALID_INTEGRATION_PROVIDER", "Connection is not a Redmine integration");
   }
   const binding = await transaction.integrationProjectBinding.findFirst({
-    where: { id: bindingId, connectionId },
+    where: {
+      id: bindingId,
+      connectionId,
+      releaseRequestedAt: null,
+      releasedAt: null,
+      project: { archived: false },
+    },
     include: { project: { select: { key: true } } },
   });
   if (!binding) {

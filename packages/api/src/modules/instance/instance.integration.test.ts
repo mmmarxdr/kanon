@@ -23,6 +23,7 @@ import {
   disconnectTestDb,
   generateTestToken,
   seedTestWorkspace,
+  seedTestProject,
   seedTestMember,
   seedInstanceAdminUser,
 } from "../../test/helpers.js";
@@ -404,15 +405,29 @@ describe("Instance routes", () => {
       expect(body.allowedSignupDomains).toContain("kanon.io");
     });
 
-    it("stores or clears the Redmine URL and resets connections", async () => {
+    it("stores or clears the Redmine URL only before project binding history exists", async () => {
       const { token } = await seedOwner();
       const workspace = await seedTestWorkspace();
-      await prisma.integrationConnection.create({
+      await prisma.instanceSettings.update({
+        where: { id: INSTANCE_SETTINGS_ID },
+        data: { redmineBaseUrl: "https://old-redmine.example.test" },
+      });
+      const connection = await prisma.integrationConnection.create({
         data: {
           workspaceId: workspace.id,
           provider: "redmine",
           baseUrl: "https://old-redmine.example.test",
           lifecycle: "active",
+        },
+      });
+      const project = await seedTestProject(workspace.id);
+      await prisma.integrationProjectBinding.create({
+        data: {
+          connectionId: connection.id,
+          projectId: project.id,
+          remoteProjectId: "remote-project",
+          readMap: {},
+          writeMap: {},
         },
       });
 
@@ -423,19 +438,32 @@ describe("Instance routes", () => {
         payload: { redmineBaseUrl: "https://redmine.example.test/" },
       });
 
-      expect(res.statusCode).toBe(200);
-      expect(res.json().redmineBaseUrl).toBe("https://redmine.example.test");
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ code: "REDMINE_CONNECTIONS_EXIST" });
       await expect(
-        prisma.integrationConnection.count({ where: { provider: "redmine" } }),
-      ).resolves.toBe(0);
+        prisma.integrationConnection.findUnique({ where: { id: connection.id } }),
+      ).resolves.not.toBeNull();
 
-      await prisma.integrationConnection.create({
+      await prisma.integrationConnection.delete({ where: { id: connection.id } });
+      const draftConnection = await prisma.integrationConnection.create({
         data: {
           workspaceId: workspace.id,
           provider: "redmine",
-          baseUrl: "https://redmine.example.test",
+          baseUrl: "https://old-redmine.example.test",
         },
       });
+      const changed = await app.inject({
+        method: "PATCH",
+        url: "/api/instance/settings",
+        headers: { authorization: `Bearer ${token}` },
+        payload: { redmineBaseUrl: "https://redmine.example.test/" },
+      });
+      expect(changed.statusCode).toBe(200);
+      expect(changed.json().redmineBaseUrl).toBe("https://redmine.example.test");
+      await expect(
+        prisma.integrationConnection.findUnique({ where: { id: draftConnection.id } }),
+      ).resolves.toBeNull();
+
       const cleared = await app.inject({
         method: "PATCH",
         url: "/api/instance/settings",

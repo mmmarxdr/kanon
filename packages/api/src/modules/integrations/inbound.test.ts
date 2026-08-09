@@ -5,6 +5,7 @@ import {
   cleanDatabase,
   disconnectTestDb,
   seedTestMember,
+  seedTestMemberWithRole,
   seedTestProject,
   seedTestWorkspace,
 } from "../../test/helpers.js";
@@ -20,7 +21,7 @@ const baseline = new Date("2026-08-01T10:00:00.000Z");
 
 async function fixture(state = "review" as const) {
   const workspace = await seedTestWorkspace();
-  const owner = await seedTestMember(workspace.id);
+  const owner = await seedTestMemberWithRole(workspace.id, "owner");
   const project = await seedTestProject(workspace.id);
   const connection = await prisma.integrationConnection.create({
     data: {

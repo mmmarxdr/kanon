@@ -62,7 +62,7 @@ export async function createComment(
   const comment = commentCaptureEnabled
     ? await prisma.$transaction(async (transaction) => {
         const candidate = await transaction.integrationProjectBinding.findFirst({
-          where: { projectId: issue.projectId, lifecycle: "active", connection: { provider: "redmine", lifecycle: "active" } },
+          where: { projectId: issue.projectId, releaseRequestedAt: null, releasedAt: null, lifecycle: "active", project: { archived: false }, connection: { provider: "redmine", lifecycle: "active" } },
           orderBy: { id: "asc" },
           select: { id: true },
         });
@@ -73,7 +73,9 @@ export async function createComment(
               FROM "integration_connections" connection
               JOIN "integration_project_bindings" binding ON binding."connection_id" = connection."id"
               WHERE binding."id" = ${candidate.id}::uuid
-                AND binding."project_id" = ${issue.projectId}::uuid
+                 AND binding."project_id" = ${issue.projectId}::uuid
+                 AND binding."released_at" IS NULL
+                 AND binding."release_requested_at" IS NULL
                 AND binding."lifecycle" = 'active'::"IntegrationLifecycle"
                 AND connection."provider" = 'redmine'
                 AND connection."lifecycle" = 'active'::"IntegrationLifecycle"

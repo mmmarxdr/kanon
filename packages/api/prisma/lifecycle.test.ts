@@ -245,6 +245,8 @@ describe("integration lifecycle schema", () => {
     expect(field("IntegrationProjectBinding", "writeMap")?.isRequired).toBe(true);
     expect(field("IntegrationProjectBinding", "cursorUpdatedAt")?.isRequired).toBe(false);
     expect(field("IntegrationProjectBinding", "pollLeaseUntil")?.isRequired).toBe(false);
+    expect(field("IntegrationProjectBinding", "releaseRequestedAt")?.isRequired).toBe(false);
+    expect(field("IntegrationProjectBinding", "releasedAt")?.isRequired).toBe(false);
   });
 
   it("persists a draft connection and binding with database defaults", async () => {
@@ -266,24 +268,26 @@ describe("integration lifecycle schema", () => {
     expect(stored?.pollLeaseUntil).toBeNull();
   });
 
-  it("allows an explicit pause and rejects duplicate project or remote bindings", async () => {
+  it("allows an explicit pause and retains one unique released binding generation", async () => {
     const workspace = await createWorkspace();
     const firstProject = await createProject(workspace.id);
-    const secondProject = await createProject(workspace.id);
     const connection = await prisma.integrationConnection.create({
       data: { provider: "redmine", baseUrl: "https://pm.example.test", workspaceId: workspace.id },
     });
     const binding = await createBinding(connection.id, firstProject.id);
     const paused = await prisma.integrationProjectBinding.update({
       where: { id: binding.id },
-      data: { lifecycle: "paused", lifecycleEpoch: 2 },
+      data: { lifecycle: "paused", lifecycleEpoch: 2, releasedAt: new Date() },
     });
 
-    expect(paused).toMatchObject({ lifecycle: "paused", lifecycleEpoch: 2 });
+    expect(paused).toMatchObject({
+      lifecycle: "paused",
+      lifecycleEpoch: 2,
+      releasedAt: expect.any(Date),
+    });
     await expect(
-      createBinding(connection.id, firstProject.id, "remote-project-2")
-    ).rejects.toThrow();
-    await expect(createBinding(connection.id, secondProject.id)).rejects.toThrow();
+      createBinding(connection.id, firstProject.id, binding.remoteProjectId),
+    ).rejects.toMatchObject({ code: "P2002" });
   });
 
   it(

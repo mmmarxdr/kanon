@@ -146,4 +146,45 @@ describe("KAN-222: project list visibility", () => {
     expect(list.statusCode).toBe(200);
     expect(list.json().map((p: { key: string }) => p.key)).toEqual(["TOK1"]);
   });
+
+  it("S6: a scoped owner cannot create, edit, or archive outside the token allowlist", async () => {
+    const owner = await seedTestMemberWithRole(workspaceId, "owner");
+    const allowed = await seedTestProject(workspaceId, "OWNCRD");
+    const denied = await seedTestProject(workspaceId, "OWNDEN");
+    const scopedToken = generateTestToken({
+      userId: owner.userId,
+      email: owner.email,
+      allowedProjectIds: [allowed.id],
+    });
+    const headers = { authorization: `Bearer ${scopedToken}` };
+
+    const create = await app.inject({
+      method: "POST",
+      url: `/api/workspaces/${workspaceId}/projects`,
+      headers,
+      payload: { key: "NEWPRJ", name: "New project" },
+    });
+    const editDenied = await app.inject({
+      method: "PATCH",
+      url: `/api/workspaces/${workspaceId}/projects/${denied.id}`,
+      headers,
+      payload: { name: "Denied edit" },
+    });
+    const archiveDenied = await app.inject({
+      method: "DELETE",
+      url: `/api/workspaces/${workspaceId}/projects/${denied.id}`,
+      headers,
+    });
+    const editAllowed = await app.inject({
+      method: "PATCH",
+      url: `/api/workspaces/${workspaceId}/projects/${allowed.id}`,
+      headers,
+      payload: { name: "Allowed edit" },
+    });
+
+    expect(create.statusCode).toBe(403);
+    expect(editDenied.statusCode).toBe(404);
+    expect(archiveDenied.statusCode).toBe(404);
+    expect(editAllowed.statusCode).toBe(200);
+  });
 });

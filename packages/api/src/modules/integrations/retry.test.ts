@@ -30,7 +30,7 @@ import { prisma } from "../../config/prisma.js";
 import { ProviderDispatchError, type PmProviderAdapter, type PushResult } from "./core/types.js";
 import { RedmineProviderAdapter } from "./providers/redmine/adapter.js";
 import { RedmineHttpError } from "./providers/redmine/http-client.js";
-import { connectCredential, type ConnectionServiceDeps } from "./service.js";
+import { connectCredential, unbindProject, type ConnectionServiceDeps } from "./service.js";
 import {
   createIntegrationWorkerCycle,
   requeueDeadIntegrationWork,
@@ -92,6 +92,7 @@ async function createFixture() {
       username: `retry-${randomUUID().slice(0, 8)}`,
       userId: user.id,
       workspaceId: workspace.id,
+      role: "owner",
     },
   });
   const credential = await prisma.memberIntegrationCredential.create({
@@ -1511,6 +1512,38 @@ describe("integration worker retry and completion", () => {
     ).resolves.toMatchObject({ state: "done" });
   });
 
+  it("finishes an in-flight provider write before automatically releasing its binding", async () => {
+    const fixture = await createFixture();
+    const work = await createWork(fixture, { operation: "create" });
+    let finishPush!: (result: PushResult) => void;
+    const pushIssue = vi.fn(
+      () => new Promise<PushResult>((resolve) => {
+        finishPush = resolve;
+      }),
+    );
+    const setup = dependencies(adapter({ pushIssue }));
+
+    const cycle = runIntegrationWorkerCycle(prisma, setup.deps);
+    await vi.waitFor(() => expect(pushIssue).toHaveBeenCalledOnce());
+    await expect(
+      unbindProject(
+        fixture.connection.id,
+        fixture.binding.id,
+        fixture.user.id,
+        fixture.workspace.id,
+      ),
+    ).resolves.toMatchObject({ status: "draining" });
+    finishPush(success());
+    await cycle;
+
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } }),
+    ).resolves.toMatchObject({ state: "done", leaseToken: null });
+    await expect(
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: fixture.binding.id } }),
+    ).resolves.toMatchObject({ lifecycle: "disabled", releasedAt: expect.any(Date) });
+  });
+
   it("records the selected service fallback on 401 and already-invalid blocking", async () => {
     const fixture = await createFixture();
     await prisma.integrationConnection.update({
@@ -1540,14 +1573,51 @@ describe("integration worker retry and completion", () => {
     ).resolves.toBe(2);
   });
 
+  it("makes release-pending credential ambiguity reclaimable after service rotation", async () => {
+    const fixture = await createFixture();
+    await prisma.integrationConnection.update({
+      where: { id: fixture.connection.id },
+      data: { serviceFallbackEnabled: true, serviceCredentialId: fixture.credential.id },
+    });
+    await prisma.integrationProjectBinding.update({
+      where: { id: fixture.binding.id },
+      data: { releaseRequestedAt: NOW },
+    });
+    const work = await createWork(fixture, {
+      operation: "create",
+      state: "ambiguous",
+      actorKey: "system:scheduler",
+      actorKind: "system",
+      skippedReason: "credential_invalid",
+    });
+
+    await connectCredential(
+      fixture.connection.id,
+      "replacement-key",
+      fixture.user.id,
+      replacementDeps,
+      fixture.workspace.id,
+    );
+
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } }),
+    ).resolves.toMatchObject({ state: "ambiguous", skippedReason: null });
+  });
+
   it("skips disabled, revoked, and cross-connection service fallbacks", async () => {
-    for (const invalid of ["disabled", "revoked", "cross-connection"] as const) {
+    for (const invalid of ["disabled", "revoked", "demoted", "cross-connection"] as const) {
       const fixture = await createFixture();
       let serviceCredentialId = fixture.credential.id;
       if (invalid === "revoked") {
         await prisma.memberIntegrationCredential.update({
           where: { id: fixture.credential.id },
           data: { revokedAt: NOW },
+        });
+      }
+      if (invalid === "demoted") {
+        await prisma.member.update({
+          where: { id: fixture.member.id },
+          data: { role: "member" },
         });
       }
       if (invalid === "cross-connection") {

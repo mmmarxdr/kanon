@@ -14,7 +14,12 @@ export async function captureCycleMutationTx(
   operation: IntegrationWorkOperation,
 ) {
   const bindings = await transaction.integrationProjectBinding.findMany({
-    where: { projectId: cycle.projectId },
+    where: {
+      projectId: cycle.projectId,
+      releaseRequestedAt: null,
+      releasedAt: null,
+      project: { archived: false },
+    },
     orderBy: { id: "asc" },
     select: { id: true, connectionId: true },
   });

@@ -1184,7 +1184,7 @@ model IntegrationConnection {
   lifecycle              IntegrationLifecycle @default(draft)
   lifecycleEpoch         Int                  @default(0) @map("lifecycle_epoch")
   serviceFallbackEnabled Boolean              @default(false) @map("service_fallback_enabled")
-  // Optional pointer to the admin credential used for discovery + as the
+  // Optional pointer to the workspace-owner credential used for discovery + as the
   // outbound write fallback. Plain column (no FK): the target row may be removed
   // independently and a dangling pointer is handled as "no service credential".
   serviceCredentialId String? @map("service_credential_id") @db.Uuid
@@ -1228,6 +1228,8 @@ model IntegrationProjectBinding {
   bootstrapFence      Int                       @default(0) @map("bootstrap_fence")
   auditCursorRemoteId String?                   @map("audit_cursor_remote_id")
   auditCompletedAt    DateTime?                 @map("audit_completed_at")
+  releaseRequestedAt  DateTime?                 @map("release_requested_at")
+  releasedAt          DateTime?                 @map("released_at")
   createdAt       DateTime             @default(now()) @map("created_at")
   updatedAt       DateTime             @updatedAt @map("updated_at")
 
@@ -1243,6 +1245,8 @@ model IntegrationProjectBinding {
 
   @@unique([connectionId, projectId])
   @@unique([connectionId, remoteProjectId])
+  @@index([remoteProjectId, releasedAt])
+  @@index([releaseRequestedAt])
   @@index([lifecycle, pollLeaseUntil])
   @@index([bootstrapState, bootstrapLeaseUntil])
   @@index([projectId])

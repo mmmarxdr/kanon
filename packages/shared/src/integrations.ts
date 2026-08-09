@@ -46,6 +46,7 @@ export const integrationConnectionSchema = z.object({
   lifecycleEpoch: z.number().int(),
   serviceFallbackEnabled: z.boolean(),
   serviceCredentialStatus: integrationCredentialStatusSchema,
+  serviceCredentialIsCaller: z.boolean(),
   syncHealth: z.object({
     status: z.enum(["healthy", "inactive", "credential_blocked"]),
     blockedWork: z
@@ -86,6 +87,7 @@ export const integrationConnectionSchema = z.object({
       timeActivityId: z.string().nullable(),
       lifecycle: integrationLifecycleSchema,
       lifecycleEpoch: z.number().int(),
+      releasePending: z.boolean(),
     }),
   ),
   callerCredential: integrationCredentialSchema,

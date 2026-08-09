@@ -33,6 +33,10 @@ export const WorkspaceIdParam = z.object({
   wid: z.string().uuid("Invalid workspace ID"),
 });
 
+export const WorkspaceProjectParam = WorkspaceIdParam.extend({
+  projectId: z.string().uuid("Invalid project ID"),
+});
+
 /**
  * Project key param.
  */

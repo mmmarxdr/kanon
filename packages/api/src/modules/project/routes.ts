@@ -4,11 +4,13 @@ import {
   CreateProjectBody,
   UpdateProjectBody,
   WorkspaceIdParam,
+  WorkspaceProjectParam,
   ProjectKeyParam,
 } from "./schema.js";
 import * as projectService from "./service.js";
 import { requireMember, requireProjectMember, requireProjectRole, requireRole } from "../../middleware/require-role.js";
 import { scopedProjectIds } from "../../shared/token-scope.js";
+import { AppError } from "../../shared/types.js";
 
 /**
  * Project routes plugin.
@@ -26,13 +28,16 @@ export default async function projectRoutes(
   app.post(
     "/workspaces/:wid/projects",
     {
-      preHandler: [requireRole("wid", "member")],
+      preHandler: [requireRole("wid", "owner")],
       schema: {
         params: WorkspaceIdParam,
         body: CreateProjectBody,
       },
     },
     async (request, reply) => {
+      if (scopedProjectIds(request.user.allowedProjectIds)) {
+        throw new AppError(403, "FORBIDDEN", "Token scope does not allow project creation");
+      }
       const project = await projectService.createProject(
         request.params.wid,
         request.body,
@@ -40,6 +45,37 @@ export default async function projectRoutes(
       );
       return reply.status(201).send(project);
     },
+  );
+
+  app.patch(
+    "/workspaces/:wid/projects/:projectId",
+    {
+      preHandler: [requireRole("wid", "owner")],
+      schema: { params: WorkspaceProjectParam, body: UpdateProjectBody },
+    },
+    async (request) =>
+      projectService.updateProject(
+        request.params.projectId,
+        request.body,
+        request.member?.id,
+        request.params.wid,
+        scopedProjectIds(request.user.allowedProjectIds),
+      ),
+  );
+
+  app.delete(
+    "/workspaces/:wid/projects/:projectId",
+    {
+      preHandler: [requireRole("wid", "owner")],
+      schema: { params: WorkspaceProjectParam },
+    },
+    async (request) =>
+      projectService.archiveProject(
+        request.params.projectId,
+        request.member?.id,
+        request.params.wid,
+        scopedProjectIds(request.user.allowedProjectIds),
+      ),
   );
 
   /**

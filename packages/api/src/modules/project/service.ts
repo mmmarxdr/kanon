@@ -145,9 +145,19 @@ export async function getProject(projectId: string) {
 /**
  * Update a project by gate-resolved id (KAN-16 security fix).
  */
-export async function updateProject(projectId: string, body: UpdateProjectBody, actorId?: string) {
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
+export async function updateProject(
+  projectId: string,
+  body: UpdateProjectBody,
+  actorId?: string,
+  workspaceId?: string,
+  allowedProjectIds?: string[] | null,
+) {
+  const project = await prisma.project.findFirst({
+    where: {
+      id: projectId,
+      ...(workspaceId ? { workspaceId } : {}),
+      ...(allowedProjectIds ? { AND: { id: { in: allowedProjectIds } } } : {}),
+    },
   });
   if (!project) {
     throw new AppError(
@@ -180,30 +190,48 @@ export async function updateProject(projectId: string, body: UpdateProjectBody, 
 /**
  * Soft delete (archive) a project by gate-resolved id (KAN-16 security fix).
  */
-export async function archiveProject(projectId: string, actorId?: string) {
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-  });
-  if (!project) {
-    throw new AppError(
-      404,
-      "PROJECT_NOT_FOUND",
-      `Project not found`,
-    );
-  }
-
-  const archived = await prisma.project.update({
-    where: { id: project.id },
-    data: { archived: true },
+export async function archiveProject(
+  projectId: string,
+  actorId?: string,
+  workspaceId?: string,
+  allowedProjectIds?: string[] | null,
+) {
+  const archived = await prisma.$transaction(async (transaction) => {
+    await transaction.$queryRaw`SELECT "id" FROM "projects" WHERE "id" = ${projectId}::uuid FOR UPDATE`;
+    const project = await transaction.project.findFirst({
+      where: {
+        id: projectId,
+        ...(workspaceId ? { workspaceId } : {}),
+        ...(allowedProjectIds ? { AND: { id: { in: allowedProjectIds } } } : {}),
+      },
+    });
+    if (!project) {
+      throw new AppError(404, "PROJECT_NOT_FOUND", "Project not found");
+    }
+    const binding = await transaction.integrationProjectBinding.findFirst({
+      where: { projectId, releasedAt: null },
+      select: { id: true },
+    });
+    if (binding) {
+      throw new AppError(
+        409,
+        "PROJECT_INTEGRATION_BOUND",
+        "Disconnect the project integration before archiving this project",
+      );
+    }
+    return transaction.project.update({
+      where: { id: project.id },
+      data: { archived: true },
+    });
   });
 
   // Emit domain event (fire-and-forget)
   try {
     eventBus.emit({
       type: "project.archived",
-      workspaceId: project.workspaceId,
+      workspaceId: archived.workspaceId,
       actorId: actorId ?? "system",
-      payload: { projectId: project.id, projectKey: project.key },
+      payload: { projectId: archived.id, projectKey: archived.key },
     });
   } catch {
     // Never let event emission break the mutation

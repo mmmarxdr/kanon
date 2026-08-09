@@ -82,6 +82,7 @@ export interface RedmineImportDependencies {
   readonly now?: () => Date;
   readonly decrypt?: (ciphertext: string) => string;
   readonly client?: (baseUrl: string, apiKey: string) => Client;
+  readonly allowedProjectIds?: string[];
 }
 
 const defaultClient = (baseUrl: string, apiKey: string): Client =>
@@ -148,13 +149,21 @@ async function importBinding(
   connectionId: string,
   bindingId: string,
   userId: string,
+  allowedProjectIds?: string[],
 ) {
   const connection = await ownedConnection(database, connectionId, userId);
   if (connection.provider !== "redmine") {
     throw new AppError(400, "INVALID_INTEGRATION_PROVIDER", "Connection is not a Redmine integration");
   }
   const binding = await database.integrationProjectBinding.findFirst({
-    where: { id: bindingId, connectionId },
+    where: {
+      id: bindingId,
+      connectionId,
+      releaseRequestedAt: null,
+      releasedAt: null,
+      project: { archived: false },
+      ...(allowedProjectIds?.length ? { projectId: { in: allowedProjectIds } } : {}),
+    },
     include: { project: { select: { key: true, workspaceId: true } } },
   });
   if (!binding) {
@@ -468,12 +477,18 @@ export async function previewRedmineIssueImport(
   const decrypt = dependencies.decrypt ?? decryptCredential;
   const createClient = dependencies.client ?? defaultClient;
 
-  await importBinding(prisma, connectionId, bindingId, userId);
+  await importBinding(prisma, connectionId, bindingId, userId, dependencies.allowedProjectIds);
   const claim = await prisma.$transaction(async (transaction) => {
     await transaction.$queryRaw(
       Prisma.sql`SELECT "id" FROM "integration_project_bindings" WHERE "id" = ${bindingId}::uuid FOR UPDATE`,
     );
-    const current = await importBinding(transaction, connectionId, bindingId, userId);
+    const current = await importBinding(
+      transaction,
+      connectionId,
+      bindingId,
+      userId,
+      dependencies.allowedProjectIds,
+    );
     if (current.binding.inboundEnabled && current.binding.bootstrapState === "ready") {
       throw new AppError(409, "REDMINE_IMPORT_ACTIVE", "Redmine inbound import is already active");
     }
@@ -698,7 +713,13 @@ export async function activateRedmineIssueImport(
   const now = dependencies.now ?? (() => new Date());
   const decrypt = dependencies.decrypt ?? decryptCredential;
   const createClient = dependencies.client ?? defaultClient;
-  const current = await importBinding(prisma, connectionId, bindingId, userId);
+  const current = await importBinding(
+    prisma,
+    connectionId,
+    bindingId,
+    userId,
+    dependencies.allowedProjectIds,
+  );
   if (current.binding.inboundEnabled && current.binding.bootstrapState === "ready") {
     return { importedCount: 0, issueKeys: [] as string[], replayed: true };
   }
@@ -761,7 +782,13 @@ export async function activateRedmineIssueImport(
         await transaction.$queryRaw(
           Prisma.sql`SELECT "id" FROM "integration_project_bindings" WHERE "id" = ${bindingId}::uuid FOR UPDATE`,
         );
-        const locked = await importBinding(transaction, connectionId, bindingId, userId);
+        const locked = await importBinding(
+          transaction,
+          connectionId,
+          bindingId,
+          userId,
+          dependencies.allowedProjectIds,
+        );
         if (locked.binding.inboundEnabled && locked.binding.bootstrapState === "ready") {
           return { importedCount: 0, issueKeys: [] as string[], replayed: true };
         }
@@ -851,7 +878,9 @@ export async function activateRedmineIssueImport(
     );
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      const binding = await prisma.integrationProjectBinding.findUnique({ where: { id: bindingId } });
+      const binding = await prisma.integrationProjectBinding.findFirst({
+        where: { id: bindingId, releaseRequestedAt: null, releasedAt: null },
+      });
       if (binding?.inboundEnabled && binding.bootstrapState === "ready") {
         return { importedCount: 0, issueKeys: [] as string[], replayed: true };
       }

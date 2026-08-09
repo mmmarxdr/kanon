@@ -19,6 +19,7 @@ const connection = {
   lifecycleEpoch: 1,
   serviceFallbackEnabled: false,
   serviceCredentialStatus: "invalid",
+  serviceCredentialIsCaller: true,
   syncHealth: {
     status: "credential_blocked",
     blockedWork: {
@@ -53,6 +54,7 @@ const connection = {
       timeActivityId: "9",
       lifecycle: "active",
       lifecycleEpoch: 1,
+      releasePending: false,
     },
   ],
   callerCredential: credential,
@@ -68,6 +70,7 @@ describe("integrationConnectionSchema", () => {
     expect(result.bindings[0]?.readMap).toEqual({ "1": "backlog" });
     expect(result.providerMaps?.priorityReadMap).toEqual({ "4": "high" });
     expect(result.serviceCredentialStatus).toBe("invalid");
+    expect(result.serviceCredentialIsCaller).toBe(true);
     expect(result.syncHealth).toMatchObject({
       status: "credential_blocked",
       blockedWork: { total: 1, items: [{ state: "dead" }] },

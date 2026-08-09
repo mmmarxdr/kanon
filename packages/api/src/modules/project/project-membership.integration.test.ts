@@ -153,8 +153,8 @@ describe("KAN-16: Project Membership Enforcement", () => {
 
   // ── R-KAN16 (e): createProject creator auto-gets owner PM row ────────────
 
-  it("(e) R-KAN16: workspace member creating a project gets owner PM row auto-inserted", async () => {
-    const member = await seedTestMemberWithRole(workspaceId, "member");
+  it("(e) R-KAN16: workspace owner creating a project gets owner PM row auto-inserted", async () => {
+    const member = await seedTestMemberWithRole(workspaceId, "owner");
 
     const createRes = await app.inject({
       method: "POST",
@@ -184,8 +184,8 @@ describe("KAN-16: Project Membership Enforcement", () => {
     expect(pm?.role).toBe("owner");
   });
 
-  it("(e) R-KAN16: after createProject, creator's subsequent project-scoped GET returns 200", async () => {
-    const member = await seedTestMemberWithRole(workspaceId, "member");
+  it("(e) R-KAN16: after owner createProject, creator's subsequent project-scoped GET returns 200", async () => {
+    const member = await seedTestMemberWithRole(workspaceId, "owner");
 
     const createRes = await app.inject({
       method: "POST",
@@ -207,6 +207,58 @@ describe("KAN-16: Project Membership Enforcement", () => {
     });
 
     expect(getRes.statusCode).toBe(200);
+  });
+
+  it("rejects project creation by a non-owner workspace member", async () => {
+    const member = await seedTestMemberWithRole(workspaceId, "member");
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/workspaces/${workspaceId}/projects`,
+      headers: { authorization: `Bearer ${member.token}` },
+      payload: { key: "NOOWN", name: "Forbidden" },
+    });
+
+    expect(response.statusCode).toBe(403);
+    await expect(prisma.project.count({ where: { key: "NOOWN" } })).resolves.toBe(0);
+  });
+
+  it("scopes owner project edits and archives by workspace and project id", async () => {
+    const owner = await seedTestMemberWithRole(workspaceId, "owner");
+    const otherWorkspace = await seedTestWorkspace();
+    await prisma.member.create({
+      data: {
+        userId: owner.userId,
+        workspaceId: otherWorkspace.id,
+        username: "two-workspace-owner",
+        role: "owner",
+      },
+    });
+    const project = await seedTestProject(workspaceId, "OWNCRD");
+
+    const wrongWorkspace = await app.inject({
+      method: "PATCH",
+      url: `/api/workspaces/${otherWorkspace.id}/projects/${project.id}`,
+      headers: { authorization: `Bearer ${owner.token}` },
+      payload: { name: "Wrong workspace" },
+    });
+    expect(wrongWorkspace.statusCode).toBe(404);
+
+    const updated = await app.inject({
+      method: "PATCH",
+      url: `/api/workspaces/${workspaceId}/projects/${project.id}`,
+      headers: { authorization: `Bearer ${owner.token}` },
+      payload: { name: "Owner managed" },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({ id: project.id, name: "Owner managed" });
+
+    const archived = await app.inject({
+      method: "DELETE",
+      url: `/api/workspaces/${workspaceId}/projects/${project.id}`,
+      headers: { authorization: `Bearer ${owner.token}` },
+    });
+    expect(archived.statusCode).toBe(200);
+    expect(archived.json()).toMatchObject({ id: project.id, archived: true });
   });
 
   // ── R-KAN16-bug: cross-workspace key collision scoped to user's workspace ─

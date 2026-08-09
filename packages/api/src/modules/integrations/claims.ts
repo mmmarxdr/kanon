@@ -16,6 +16,9 @@ function genuinelyClaimable(at: Prisma.Sql, excludeComments: boolean): Prisma.Sq
   return Prisma.sql`
     connection."lifecycle" = 'active'::"IntegrationLifecycle"
     AND binding."lifecycle" = 'active'::"IntegrationLifecycle"
+    AND binding."released_at" IS NULL
+    AND binding."release_requested_at" IS NULL
+    AND project."archived" = false
     AND binding."bootstrap_state" IN (
       'not_required'::"IntegrationBootstrapState",
       'ready'::"IntegrationBootstrapState"
@@ -64,8 +67,9 @@ export async function claimIntegrationWork(
     const eligibility = genuinelyClaimable(dueAt, options.excludeComments === true);
     const bindings = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
       SELECT binding."id"
-      FROM "integration_connections" AS connection
-      JOIN "integration_project_bindings" AS binding ON binding."connection_id" = connection."id"
+       FROM "integration_connections" AS connection
+       JOIN "integration_project_bindings" AS binding ON binding."connection_id" = connection."id"
+       JOIN "projects" AS project ON project."id" = binding."project_id"
       CROSS JOIN LATERAL (
         SELECT work."sequence"
         FROM "integration_sync_work" AS work
@@ -89,8 +93,9 @@ export async function claimIntegrationWork(
                work."lease_until", work."entity_type", work."payload", work."actor_key",
                work."actor_kind", work."auth_credential_id", binding."lifecycle_epoch"
         FROM "integration_sync_work" AS work
-        JOIN "integration_project_bindings" AS binding ON binding."id" = work."binding_id"
-        JOIN "integration_connections" AS connection ON connection."id" = binding."connection_id"
+         JOIN "integration_project_bindings" AS binding ON binding."id" = work."binding_id"
+         JOIN "integration_connections" AS connection ON connection."id" = binding."connection_id"
+         JOIN "projects" AS project ON project."id" = binding."project_id"
         WHERE binding."id" IN (${bindingIds}) AND ${eligibility}
         ORDER BY work."sequence", binding."id"
         LIMIT ${limit}

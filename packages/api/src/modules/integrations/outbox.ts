@@ -170,14 +170,19 @@ export async function captureIntegrationWorkTx(
     where: { id: capture.bindingId },
     select: {
       lifecycleEpoch: true,
+      releaseRequestedAt: true,
+      releasedAt: true,
       connectionId: true,
       projectId: true,
       connection: { select: { workspaceId: true } },
-      project: { select: { workspaceId: true } },
+      project: { select: { workspaceId: true, archived: true } },
     },
   });
   if (!binding) {
     throw new Error(`Integration project binding ${capture.bindingId} was not found`);
+  }
+  if (binding.releaseRequestedAt || binding.releasedAt || binding.project.archived) {
+    throw new Error(`Integration project binding ${capture.bindingId} is not current`);
   }
   if (binding.connection.workspaceId !== binding.project.workspaceId) {
     throw new Error(`Integration project binding ${capture.bindingId} has mismatched ownership`);

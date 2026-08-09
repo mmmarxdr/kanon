@@ -23,6 +23,7 @@ import {
   withTargetedExternalRefBackfillWriteGate,
 } from "./backfill.js";
 import { claimIntegrationWork } from "./claims.js";
+import { finalizeDrainedBindingReleases } from "./service.js";
 import { decrypt as decryptCredential } from "./core/crypto.js";
 import {
   ISSUE_CAPTURE_FIELDS,
@@ -197,7 +198,7 @@ async function lockWork(
     where: { id: work.id },
     include: {
       binding: {
-        include: { connection: true, project: { select: { workspaceId: true } } },
+        include: { connection: true, project: { select: { workspaceId: true, archived: true } } },
       },
     },
   });
@@ -210,8 +211,10 @@ async function entityOwned(
 ): Promise<boolean> {
   if (
     current.binding.connection.workspaceId !== current.binding.project.workspaceId ||
+    current.binding.project.archived ||
     current.binding.connection.lifecycle !== "active" ||
-    current.binding.lifecycle !== "active"
+    current.binding.lifecycle !== "active" ||
+    current.binding.releasedAt !== null
   ) {
     return false;
   }
@@ -222,6 +225,7 @@ async function entityOwned(
         where: {
           id: current.entityId,
           workspaceId: current.binding.connection.workspaceId,
+          archived: false,
         },
       })) === 1
     );
@@ -351,12 +355,13 @@ async function credential(
   }
   const value = await transaction.memberIntegrationCredential.findUnique({
     where: { id },
-    include: { member: { select: { workspaceId: true } } },
+    include: { member: { select: { workspaceId: true, role: true } } },
   });
   if (
     !value ||
     value.connectionId !== current.binding.connectionId ||
     value.member.workspaceId !== current.binding.connection.workspaceId ||
+    (current.actorKind !== "user" && value.member.role !== "owner") ||
     value.revokedAt ||
     (current.actorKind === "user" && current.actorKey !== `member:${value.memberId}`)
   ) {
@@ -406,6 +411,8 @@ async function prepare(
       !leased(current, claimed, now) ||
       current.binding.lifecycle !== "active" ||
       current.binding.connection.lifecycle !== "active" ||
+      current.binding.releaseRequestedAt !== null ||
+      current.binding.releasedAt !== null ||
       current.binding.lifecycleEpoch !== current.epoch
     )
       return { kind: "stale" };
@@ -823,14 +830,17 @@ async function claimAmbiguous(
     Prisma.sql`
       SELECT work."id", work."binding_id" AS "bindingId"
       FROM "integration_sync_work" AS work
-      JOIN "integration_project_bindings" AS binding ON binding."id" = work."binding_id"
-      JOIN "integration_connections" AS connection ON connection."id" = binding."connection_id"
+       JOIN "integration_project_bindings" AS binding ON binding."id" = work."binding_id"
+       JOIN "integration_connections" AS connection ON connection."id" = binding."connection_id"
+       JOIN "projects" AS project ON project."id" = binding."project_id"
       WHERE work."direction" = 'outbound'::"SyncDirection"
         AND work."state" = 'ambiguous'::"SyncWorkState"
         AND (${d.commentDispatchEnabled} OR work."entity_type" <> 'comment')
         AND work."skipped_reason" IS DISTINCT FROM 'credential_invalid'
         AND work."available_at" <= ${dueAt}
-        AND binding."lifecycle" = 'active'::"IntegrationLifecycle"
+         AND binding."lifecycle" = 'active'::"IntegrationLifecycle"
+         AND binding."released_at" IS NULL
+         AND project."archived" = false
         AND connection."lifecycle" = 'active'::"IntegrationLifecycle"
         AND NOT EXISTS (
           SELECT 1 FROM "integration_conflicts" AS conflict
@@ -849,9 +859,11 @@ async function claimAmbiguous(
       !current ||
       current.state !== "ambiguous" ||
       current.skippedReason === "credential_invalid" ||
-      current.availableAt > now ||
-      current.binding.lifecycle !== "active" ||
-      current.binding.connection.lifecycle !== "active" ||
+       current.availableAt > now ||
+       current.binding.lifecycle !== "active" ||
+       current.binding.releasedAt !== null ||
+       current.binding.project.archived ||
+       current.binding.connection.lifecycle !== "active" ||
       (await transaction.integrationConflict.count({
         where: { workId: current.id, state: "open" },
       })) > 0
@@ -1680,6 +1692,7 @@ export async function runIntegrationWorkerCycle(
   const deadline = performance.now() + timeBudgetMs;
   const canContinue = () => !d.shouldStop?.() && performance.now() < deadline;
   let remaining = limit;
+  await finalizeDrainedBindingReleases(database, limit);
   while (remaining > 0 && canContinue()) {
     const ambiguity = await claimAmbiguous(database, d);
     if (ambiguity.kind === "none") break;
@@ -1701,6 +1714,7 @@ export async function runIntegrationWorkerCycle(
     remaining -= 1;
     await process(database, work, d);
   }
+  await finalizeDrainedBindingReleases(database, limit);
 }
 
 export async function readIntegrationWorkerStartupSnapshot(
