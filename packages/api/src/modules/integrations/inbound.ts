@@ -694,6 +694,7 @@ async function persistInboundCommentsTx(
           remoteUpdatedAt: change.changedAt,
           lastCorrelationId: correlationId,
           metadata: {
+            ...metadata,
             remoteVersion: change.sourceVersion,
             remoteIssueId,
             privacy: "private",

@@ -1575,10 +1575,12 @@ export async function getConnection(
     serviceCredentialIsCaller: credential?.id === connection.serviceCredentialId,
     syncHealth: {
       status:
-        privacyUncertainTotal > 0
-          ? ("attention_required" as const)
-          : serviceCredentialStatus !== "valid" || blockedWorkTotal > 0
+        serviceCredentialStatus !== "valid"
           ? ("credential_blocked" as const)
+          : privacyUncertainTotal > 0
+            ? ("attention_required" as const)
+            : blockedWorkTotal > 0
+              ? ("credential_blocked" as const)
           : connection.lifecycle !== "active"
             ? ("inactive" as const)
           : ("healthy" as const),

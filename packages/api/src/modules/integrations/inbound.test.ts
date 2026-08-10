@@ -596,6 +596,7 @@ describe("Redmine inbound sync", () => {
     await expect(prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })).resolves.toMatchObject({
       metadata: expect.objectContaining({
         remoteVersion: privateComment.sourceVersion,
+        remoteActorId: "5",
         privacy: "private",
         bodySha256,
       }),
