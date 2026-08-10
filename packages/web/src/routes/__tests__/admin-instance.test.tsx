@@ -137,6 +137,31 @@ describe("AdminInstanceForm — instance settings page", () => {
     expect(screen.getByRole("textbox", { name: "Workspace name" })).toBeInTheDocument();
   });
 
+  it("shows only Instance to a pure super-admin", async () => {
+    mockUser.value.isInstanceAdmin = false;
+    mockFetchApi.mockResolvedValueOnce(makeSettings());
+
+    render(<AdminInstancePage />);
+
+    await screen.findByTestId("admin-instance-form");
+    expect(screen.getAllByRole("tab")).toHaveLength(1);
+    expect(screen.getByRole("tab", { name: "Instance" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Users" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Workspaces" })).not.toBeInTheDocument();
+  });
+
+  it("shows only Users and Workspaces to a pure instance-admin", () => {
+    mockUser.value.isSuperAdmin = false;
+
+    render(<AdminInstancePage />);
+
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
+    expect(screen.queryByRole("tab", { name: "Instance" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Users" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Workspaces" })).toBeInTheDocument();
+    expect(screen.getByTestId("admin-users-stub")).toBeInTheDocument();
+  });
+
   // ── (b) 403 → redirect to / ────────────────────────────────────────────────
 
   it("(b) GET /api/instance/settings returns 403 → navigates to /", async () => {
