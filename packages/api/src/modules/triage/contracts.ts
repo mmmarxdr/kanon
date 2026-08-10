@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { canonicalJson } from "./canonical.js";
+import { ISSUE_PRIORITIES, ISSUE_STATES, ISSUE_TYPES } from "../../shared/constants.js";
 export const ConfidenceBandSchema = z.enum(["low", "medium", "high"]);
 export const CompletenessSchema = z.enum(["complete", "bounded", "timed_out", "degraded"]);
 export const SemanticErrorCategorySchema = z.enum([
@@ -11,7 +12,7 @@ const IdSchema = z.string().min(1).max(200);
 const IsoDateTimeSchema = z.string().datetime({ offset: true });
 const ScopeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("project") }).strict(),
-  z.object({ kind: z.literal("workspace"), workspaceId: IdSchema }).strict(),
+  z.object({ kind: z.literal("workspace"), workspaceId: z.string().uuid() }).strict(),
 ]);
 const EffectiveScopeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("project"), workspaceId: IdSchema, projectId: IdSchema }).strict(),
@@ -25,27 +26,28 @@ export const IssueSearchInputSchema = z.object({
     if ((normalized.match(/[\p{L}\p{N}]+/gu) ?? []).length === 0) context.addIssue({ code: z.ZodIssueCode.custom, message: "query must contain an alphanumeric token" });
   }).transform((value) => value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase("en-US")),
   filters: z.object({
-    state: z.string().min(1).max(80).optional(), type: z.string().min(1).max(80).optional(),
-    priority: z.string().min(1).max(80).optional(), label: z.string().min(1).max(80).optional(),
-    group: IdSchema.optional(), assignee: IdSchema.optional(), cycle: IdSchema.optional(),
+    state: z.enum(ISSUE_STATES).optional(), type: z.enum(ISSUE_TYPES).optional(),
+    priority: z.enum(ISSUE_PRIORITIES).optional(), label: z.string().min(1).max(80).optional(),
+    group: z.string().min(1).max(200).optional(), assignee: z.string().uuid().optional(), cycle: z.string().uuid().optional(),
   }).strict().optional(),
   scope: ScopeSchema.optional(),
   projection: z.enum(["compact", "full"]).default("compact"),
   limit: z.number().int().min(1).max(10).default(10),
-  targetIssueId: IdSchema.optional(),
-  cursor: z.string().min(1).max(2048).optional(),
+  targetIssueId: z.string().uuid().optional(),
+  cursor: z.string().min(1).max(8192).optional(),
   deadlineMs: z.number().int().min(100).max(900).optional(),
 }).strict();
 export const IssueSearchRowSchema = z.object({
   issueId: IdSchema, issueKey: IdSchema, projectId: IdSchema, projectKey: IdSchema,
   title: z.string().max(500), state: z.string(), type: z.string().nullable(), priority: z.string().nullable(),
   labels: z.array(z.string()).max(8), groupKey: IdSchema.nullable(), assigneeId: IdSchema.nullable(), cycleId: IdSchema.nullable(), createdAt: IsoDateTimeSchema, updatedAt: IsoDateTimeSchema, rank: z.number().int().positive(), sourceVersion: IdSchema, sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+  descriptionExcerpt: z.string().max(240).optional(),
 }).strict();
 export const IssueSearchResponseSchema = z.object({
   contractVersion: z.literal("issue-search.v1"), orderingVersion: z.literal("issue-search.v1"),
   completeness: CompletenessSchema, limit: z.number().int().min(1).max(10), returnedCount: z.number().int().nonnegative(),
   effectiveScope: EffectiveScopeSchema, correlationId: IdSchema, degradation: z.array(z.string()).max(8),
-  rows: z.array(IssueSearchRowSchema).max(10), nextCursor: z.string().max(2048).optional(),
+  rows: z.array(IssueSearchRowSchema).max(10), nextCursor: z.string().max(8192).optional(),
 }).strict().superRefine((value, context) => {
   if (value.returnedCount !== value.rows.length) context.addIssue({ code: z.ZodIssueCode.custom, path: ["returnedCount"], message: "returnedCount must equal rows.length" });
   if (value.completeness === "complete" && value.nextCursor !== undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ["nextCursor"], message: "complete responses cannot include nextCursor" });
@@ -99,7 +101,7 @@ const CandidateSchema = z.object({
 }).strict();
 export const PreviewEnvelopeSchema = z.object({
   contractVersion: z.literal("triage-preview.v1"), previewIdentity: IdSchema, previewSeal: IdSchema,
-  contextToken: IdSchema.optional(), target: TargetSchema, observedAt: IsoDateTimeSchema, generatedAt: IsoDateTimeSchema,
+  contextToken: z.string().min(1).max(16_384).optional(), target: TargetSchema, observedAt: IsoDateTimeSchema, generatedAt: IsoDateTimeSchema,
   authorizationPolicyVersion: IdSchema, effectiveScope: EffectiveScopeSchema, searchCompleteness: CompletenessSchema,
   correlationId: IdSchema, policy: PolicySchema, recommendations: z.array(RecommendationSchema).max(10),
   candidates: z.array(CandidateSchema).max(10), conflicts: z.array(IdSchema).max(20), unknowns: z.array(IdSchema).max(20),

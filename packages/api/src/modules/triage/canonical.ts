@@ -5,6 +5,7 @@ export const TRIAGE_PROPOSAL_CONTRACT_VERSION = "triage-proposal.v1";
 export const TRIAGE_PREVIEW_CONTRACT_VERSION = "triage-preview.v1";
 export const ISSUE_SEARCH_CONTRACT_VERSION = "issue-search.v1";
 export const TRIAGE_PROPOSAL_LIST_CONTRACT_VERSION = "triage-proposal-list.v1";
+export const AUTHORIZATION_POLICY_VERSION = "authz-policy.v1";
 
 export type JsonPrimitive = null | boolean | number | string;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
