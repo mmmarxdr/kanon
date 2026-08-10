@@ -1,14 +1,14 @@
 /**
- * /admin/instance — Super-admin instance settings page (KAN-49).
+ * /admin/instance — Unified instance administration page.
  *
  * On mount: fetches GET /api/instance/settings via fetchApi.
  *  - 403 FORBIDDEN → navigate to / (not super-admin)
  *  - 401 UNAUTHORIZED → navigate to /login (not authenticated)
  *  - 200 → render settings form
  *
- * The _authenticated parent route handles the base auth guard (redirects to
- * /login if no session). This route adds the super-admin check: if the
- * authenticated user is not the instance owner, they see a redirect to /.
+ * The _authenticated parent route handles the base auth guard. Tabs are shown
+ * from /me flags: instance settings for super-admins, users/workspaces for
+ * instance-admins.
  *
  * Pattern: in-component useEffect fetch + navigate (mirrors invite.tsx).
  * Extracted presentational component (AdminInstanceForm) for testability.
@@ -23,9 +23,12 @@ import { authenticatedRoute } from "../_authenticated";
 import { fetchApi, ApiError } from "@/lib/api-client";
 import { useAuthStore } from "@/stores/auth-store";
 import { SUPPORTED_LOCALES } from "@kanon/shared";
+import { AdminUsersPage } from "@/features/admin-users/admin-users-page";
 import { SettingsShell } from "@/components/ui/settings-shell";
 import { SettingsCard } from "@/components/ui/settings-card";
 import { SettingsField, SETTINGS_INPUT_CLASS } from "@/components/ui/settings-field";
+import { CreateWorkspaceForm } from "./workspace-select";
+import { useSetActiveWorkspace } from "@/hooks/use-workspace-query";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -61,9 +64,13 @@ export const adminInstanceRoute = createRoute({
 
 interface AdminInstanceFormProps {
   onNavigate: ReturnType<typeof useNavigate>;
+  embedded?: boolean;
 }
 
-export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
+export function AdminInstanceForm({
+  onNavigate,
+  embedded = false,
+}: AdminInstanceFormProps) {
   const { t } = useTranslation("settings");
   const user = useAuthStore((s) => s.user);
 
@@ -220,8 +227,8 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
     );
   }
 
-  return (
-    <SettingsShell title="Instance Settings" eyebrow="super-admin">
+  const content = (
+    <>
       {user?.isSuperAdmin && (
         <SettingsCard
           testId="invite-admin-section"
@@ -394,13 +401,95 @@ export function AdminInstanceForm({ onNavigate }: AdminInstanceFormProps) {
           </div>
         </form>
       </SettingsCard>
+    </>
+  );
+
+  if (embedded) return content;
+
+  return (
+    <SettingsShell title="Instance Settings" eyebrow="super-admin">
+      {content}
     </SettingsShell>
   );
 }
 
 // ─── Route wrapper ────────────────────────────────────────────────────────────
 
-function AdminInstancePage() {
+type AdminTab = "instance" | "users" | "workspaces";
+
+export function AdminInstancePage() {
   const navigate = useNavigate();
-  return <AdminInstanceForm onNavigate={navigate} />;
+  const { t } = useTranslation("admin");
+  const user = useAuthStore((s) => s.user);
+  const setActiveWorkspace = useSetActiveWorkspace();
+  const [selectedTab, setSelectedTab] = useState<AdminTab>("instance");
+
+  useEffect(() => {
+    if (user && !user.isSuperAdmin && !user.isInstanceAdmin) {
+      void navigate({ to: "/" });
+    }
+  }, [navigate, user]);
+
+  const tabs: Array<{ key: AdminTab; label: string }> = [];
+  if (user?.isSuperAdmin) {
+    tabs.push({ key: "instance", label: t("tabInstance") });
+  }
+  if (user?.isInstanceAdmin) {
+    tabs.push(
+      { key: "users", label: t("tabUsers") },
+      { key: "workspaces", label: t("tabWorkspaces") },
+    );
+  }
+
+  const activeTab = tabs.some((tab) => tab.key === selectedTab)
+    ? selectedTab
+    : tabs[0]?.key;
+
+  if (!activeTab) {
+    return (
+      <div className="p-6 text-sm text-muted-foreground">
+        {t("forbiddenRedirect")}
+      </div>
+    );
+  }
+
+  return (
+    <SettingsShell
+      title={t("title")}
+      eyebrow={t("eyebrow")}
+      maxWidth={activeTab === "users" ? "wide" : "default"}
+      tabs={{
+        idPrefix: "admin",
+        tabs,
+        activeKey: activeTab,
+        onChange: (key) => setSelectedTab(key as AdminTab),
+      }}
+      tabPanel={{
+        id: `admin-panel-${activeTab}`,
+        ariaLabelledBy: `admin-tab-${activeTab}`,
+      }}
+    >
+      {activeTab === "instance" && (
+        <AdminInstanceForm onNavigate={navigate} embedded />
+      )}
+      {activeTab === "users" && <AdminUsersPage embedded />}
+      {activeTab === "workspaces" && (
+        <SettingsCard
+          testId="admin-create-workspace"
+          title={t("newWorkspaceTitle")}
+          description={t("newWorkspaceDescription")}
+        >
+          <CreateWorkspaceForm
+            onCreated={(workspaceId) => {
+              setActiveWorkspace(workspaceId);
+              void navigate({
+                to: "/workspaces/$workspaceId/projects",
+                params: { workspaceId },
+              });
+            }}
+          />
+        </SettingsCard>
+      )}
+    </SettingsShell>
+  );
 }

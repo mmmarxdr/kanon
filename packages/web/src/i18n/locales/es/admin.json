@@ -1,4 +1,11 @@
 {
+  "title": "Administración",
+  "eyebrow": "administración de instancia",
+  "tabInstance": "Instancia",
+  "tabUsers": "Usuarios",
+  "tabWorkspaces": "Espacios",
+  "newWorkspaceTitle": "Nuevo espacio",
+  "newWorkspaceDescription": "Creá un espacio y continuá con la configuración de proyectos.",
   "usersTitle": "Usuarios",
   "usersEyebrow": "admin de instancia",
   "usersNav": "Usuarios",

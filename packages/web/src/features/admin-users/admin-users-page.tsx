@@ -63,7 +63,7 @@ function sharedWorkspacesForSelection(
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export function AdminUsersPage() {
+export function AdminUsersPage({ embedded = false }: { embedded?: boolean }) {
   const { t } = useTranslation("admin");
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
@@ -224,9 +224,8 @@ export function AdminUsersPage() {
     />,
   );
 
-  return (
-    <SettingsShell title={t("usersTitle")} eyebrow={t("usersEyebrow")} maxWidth="wide">
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,440px)] xl:items-start">
+  const content = (
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,440px)] xl:items-start">
       <SettingsCard testId="admin-users-page">
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -447,7 +446,7 @@ export function AdminUsersPage() {
                     >
                       {u.email}
                     </button>,
-                    <span key="name" className="text-sm truncate">
+                    <span key="name" className="block w-full truncate text-sm">
                       {u.displayName ?? "—"}
                     </span>,
                     <span key="ver" className="text-sm">
@@ -455,7 +454,7 @@ export function AdminUsersPage() {
                     </span>,
                     <span
                       key="ws"
-                      className="text-sm truncate"
+                      className="block w-full truncate text-sm"
                       title={(u.workspaces ?? []).map((w) => w.name).join(", ")}
                     >
                       {(u.workspaces ?? []).length === 0
@@ -507,7 +506,14 @@ export function AdminUsersPage() {
           <p className="text-sm text-muted-foreground">{t("detailEmpty")}</p>
         </SettingsCard>
       )}
-      </div>
+    </div>
+  );
+
+  if (embedded) return content;
+
+  return (
+    <SettingsShell title={t("usersTitle")} eyebrow={t("usersEyebrow")} maxWidth="wide">
+      {content}
     </SettingsShell>
   );
 }

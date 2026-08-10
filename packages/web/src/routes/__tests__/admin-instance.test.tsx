@@ -13,13 +13,23 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { AdminInstanceForm } from "../_authenticated/admin.instance";
+import {
+  AdminInstanceForm,
+  AdminInstancePage,
+} from "../_authenticated/admin.instance";
 
 // ─── hoisted mocks ────────────────────────────────────────────────────────────
 
-const { mockNavigate, mockFetchApi } = vi.hoisted(() => ({
+const { mockNavigate, mockFetchApi, mockUser } = vi.hoisted(() => ({
   mockNavigate: vi.fn(),
   mockFetchApi: vi.fn(),
+  mockUser: {
+    value: {
+      email: "admin@kanon.io",
+      isSuperAdmin: true,
+      isInstanceAdmin: true,
+    },
+  },
 }));
 
 // ─── navigate mock ────────────────────────────────────────────────────────────
@@ -42,6 +52,23 @@ vi.mock("@/lib/api-client", async (importOriginal) => {
   };
 });
 
+vi.mock("@/stores/auth-store", () => ({
+  useAuthStore: (selector: (s: { user: typeof mockUser.value }) => unknown) =>
+    selector({ user: mockUser.value }),
+}));
+
+vi.mock("@/hooks/use-workspace-query", () => ({
+  useSetActiveWorkspace: () => vi.fn(),
+}));
+
+vi.mock("@/hooks/use-create-workspace-mutation", () => ({
+  useCreateWorkspaceMutation: () => ({ mutate: vi.fn(), isPending: false }),
+}));
+
+vi.mock("@/features/admin-users/admin-users-page", () => ({
+  AdminUsersPage: () => <div data-testid="admin-users-stub">Users</div>,
+}));
+
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 function makeSettings(instanceName = "My Kanon") {
@@ -63,6 +90,11 @@ function makeSettings(instanceName = "My Kanon") {
 describe("AdminInstanceForm — instance settings page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUser.value = {
+      email: "admin@kanon.io",
+      isSuperAdmin: true,
+      isInstanceAdmin: true,
+    };
   });
 
   afterEach(() => {
@@ -80,6 +112,54 @@ describe("AdminInstanceForm — instance settings page", () => {
     expect(input).toBeTruthy();
     expect(screen.queryByTestId("admin-redmine-api-key")).toBeNull();
     expect(screen.queryByTestId("admin-redmine-test-connection")).toBeNull();
+  });
+
+  it("consolidates instance administration into accessible tabs", async () => {
+    mockFetchApi.mockResolvedValueOnce(makeSettings("Acme Kanon"));
+
+    render(<AdminInstancePage />);
+
+    await screen.findByTestId("admin-instance-form");
+    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    expect(screen.getByRole("tab", { name: "Instance" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Users" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Workspaces" })).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel")).toHaveAttribute(
+      "aria-labelledby",
+      "admin-tab-instance",
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Users" }));
+    expect(screen.getByTestId("admin-users-stub")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Workspaces" }));
+    expect(screen.getByTestId("admin-create-workspace")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Workspace name" })).toBeInTheDocument();
+  });
+
+  it("shows only Instance to a pure super-admin", async () => {
+    mockUser.value.isInstanceAdmin = false;
+    mockFetchApi.mockResolvedValueOnce(makeSettings());
+
+    render(<AdminInstancePage />);
+
+    await screen.findByTestId("admin-instance-form");
+    expect(screen.getAllByRole("tab")).toHaveLength(1);
+    expect(screen.getByRole("tab", { name: "Instance" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Users" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Workspaces" })).not.toBeInTheDocument();
+  });
+
+  it("shows only Users and Workspaces to a pure instance-admin", () => {
+    mockUser.value.isSuperAdmin = false;
+
+    render(<AdminInstancePage />);
+
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
+    expect(screen.queryByRole("tab", { name: "Instance" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Users" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Workspaces" })).toBeInTheDocument();
+    expect(screen.getByTestId("admin-users-stub")).toBeInTheDocument();
   });
 
   // ── (b) 403 → redirect to / ────────────────────────────────────────────────

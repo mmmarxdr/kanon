@@ -473,7 +473,7 @@ function InviteListRow({
               : t("invitesAccessSummaryWorkspace")}
           </span>
         </span>,
-        <span key="email" className="text-xs text-muted-foreground truncate">
+        <span key="email" className="block w-full truncate text-xs text-muted-foreground">
           {invite.email ?? "—"}
         </span>,
         <span key="uses" className="text-xs text-muted-foreground">
@@ -482,7 +482,7 @@ function InviteListRow({
         <span key="expires" className="text-xs text-muted-foreground">
           {expiresText}
         </span>,
-        <span key="createdBy" className="text-xs text-muted-foreground truncate">
+        <span key="createdBy" className="block w-full truncate text-xs text-muted-foreground">
           {byText}
         </span>,
         <div key="actions" className="flex items-center justify-end gap-1">

@@ -25,7 +25,7 @@ interface CreateWorkspaceFormProps {
   onCreated: (workspaceId: string) => void;
 }
 
-function CreateWorkspaceForm({ onCreated }: CreateWorkspaceFormProps) {
+export function CreateWorkspaceForm({ onCreated }: CreateWorkspaceFormProps) {
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugEdited, setSlugEdited] = useState(false);

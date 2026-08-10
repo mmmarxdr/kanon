@@ -470,98 +470,27 @@ export function AppSidebar() {
               gap: 4,
             }}
           >
-            {user.isSuperAdmin && (
-              <Link to="/admin/instance">
-                <div
-                  data-testid="admin-nav-link"
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    height: 26,
-                    padding: "0 8px",
-                    borderRadius: 4,
-                    fontSize: 12,
-                    color: "var(--ink-3)",
-                    cursor: "pointer",
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-3)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-                >
-                  <Icon.Settings style={{ color: "var(--ink-4)" }} />
-                  <span>{t("admin")}</span>
-                </div>
-              </Link>
-            )}
-            {user.isInstanceAdmin && (
-              <Link to="/admin/users">
-                <div
-                  data-testid="admin-users-nav-link"
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    height: 26,
-                    padding: "0 8px",
-                    borderRadius: 4,
-                    fontSize: 12,
-                    color: "var(--ink-3)",
-                    cursor: "pointer",
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-3)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-                >
-                  <Icon.User style={{ color: "var(--ink-4)" }} />
-                  <span>{t("adminUsers")}</span>
-                </div>
-              </Link>
-            )}
-            {user.isInstanceAdmin && (
-              <Link to="/workspaces">
-                <div
-                  data-testid="workspace-create-link"
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    height: 26,
-                    padding: "0 8px",
-                    borderRadius: 4,
-                    fontSize: 12,
-                    color: "var(--ink-3)",
-                    cursor: "pointer",
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-3)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-                >
-                  <Icon.Plus style={{ color: "var(--ink-4)" }} />
-                  <span>{t("newWorkspace")}</span>
-                </div>
-              </Link>
-            )}
-            {user.isSuperAdmin && (
-              <Link to="/admin/instance">
-                <div
-                  data-testid="invite-admin-link"
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    height: 26,
-                    padding: "0 8px",
-                    borderRadius: 4,
-                    fontSize: 12,
-                    color: "var(--ink-3)",
-                    cursor: "pointer",
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-3)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-                >
-                  <Icon.User style={{ color: "var(--ink-4)" }} />
-                  <span>{t("inviteAdmin")}</span>
-                </div>
-              </Link>
-            )}
+            <Link to="/admin/instance">
+              <div
+                data-testid="admin-nav-link"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  height: 26,
+                  padding: "0 8px",
+                  borderRadius: 4,
+                  fontSize: 12,
+                  color: "var(--ink-3)",
+                  cursor: "pointer",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-3)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+              >
+                <Icon.Settings style={{ color: "var(--ink-4)" }} />
+                <span>{t("admin")}</span>
+              </div>
+            </Link>
           </div>
         )}
 
