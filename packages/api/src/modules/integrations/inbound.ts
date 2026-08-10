@@ -8,6 +8,7 @@ import { AppError } from "../../shared/types.js";
 import { checkAndAdvanceParent } from "../issue/auto-transition.js";
 import { validateTransition } from "../issue/state-machine.js";
 import { reconcileIssueTime } from "../issue/reconcile.js";
+import { createCommentWithActivityTx } from "../comment/service.js";
 import { syncRoadmapItemStatus } from "../roadmap/roadmap-sync.js";
 import { SESSION_TTL_MS } from "../work-session/service.js";
 import { decrypt as decryptCredential } from "./core/crypto.js";
@@ -465,7 +466,7 @@ async function recordHistoricalClosedIssue(
 
 async function persistInboundCommentsTx(
   transaction: Prisma.TransactionClient,
-  binding: Pick<ClaimedBinding, "id" | "connectionId" | "actorMemberId">,
+  binding: Pick<ClaimedBinding, "id" | "connectionId">,
   issueId: string,
   remoteIssueId: string,
   comments: readonly RedmineCommentChange[],
@@ -508,6 +509,7 @@ async function persistInboundCommentsTx(
 
     const marker = parseCommentMarker(change.fields.body);
     if (marker) {
+      const remoteActorId = change.actor?.remoteId;
       const parentRef = await transaction.externalRef.findFirst({
         where: {
           bindingId: binding.id,
@@ -518,15 +520,17 @@ async function persistInboundCommentsTx(
         },
       });
       const [work] = parentRef
+        && remoteActorId
         ? await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
             SELECT work."id" FROM "integration_sync_work" work
             WHERE work."binding_id" = ${binding.id}::uuid
               AND work."entity_type" = 'comment' AND work."entity_id" = ${marker.commentId}::uuid
               AND work."direction" = 'outbound'::"SyncDirection" AND work."operation" = 'create'::"SyncOperation"
               AND work."payload"->>'issueId' = ${issueId}
-              AND work."payload"->>'parentRefId' = ${parentRef.id}
-              AND work."payload"->>'parentRemoteIssueId' = ${remoteIssueId}
-              AND work."marker" = ${marker.marker}
+               AND work."payload"->>'parentRefId' = ${parentRef.id}
+               AND work."payload"->>'parentRemoteIssueId' = ${remoteIssueId}
+               AND work."payload"->>'credentialRemoteUserId' = ${remoteActorId}
+               AND work."marker" = ${marker.marker}
               AND work."state" IN ('leased'::"SyncWorkState", 'ambiguous'::"SyncWorkState", 'done'::"SyncWorkState")
             ORDER BY work."created_at" LIMIT 1 FOR UPDATE OF work
           `)
@@ -539,6 +543,7 @@ async function persistInboundCommentsTx(
                 { payload: { path: ["issueId"], equals: issueId } },
                 { payload: { path: ["parentRefId"], equals: parentRef!.id } },
                 { payload: { path: ["parentRemoteIssueId"], equals: remoteIssueId } },
+                { payload: { path: ["credentialRemoteUserId"], equals: remoteActorId! } },
               ],
               state: { in: ["leased", "ambiguous", "done"] },
               conflicts: { none: { state: "open" } },
@@ -603,14 +608,56 @@ async function persistInboundCommentsTx(
       }
     }
 
-    const comment = await transaction.comment.create({
-      data: {
-        issueId,
-        authorId: binding.actorMemberId,
-        body: change.fields.body,
-        source: "system",
-        via: "redmine-inbound",
-        createdAt: change.createdAt ?? change.changedAt,
+    if (!change.actor) {
+      await transaction.integrationInboundApplication.createMany({
+        data: {
+          bindingId: binding.id,
+          remoteEntityType: "comment",
+          remoteParentType: "issue",
+          remoteParentId: remoteIssueId,
+          remoteId: change.identity.remoteId,
+          remoteUpdatedAt: change.changedAt,
+          sourceVersion: change.sourceVersion,
+          applicationKey: correlationId,
+          correlationId,
+          state: "skipped",
+          outcome: { reason: "remote-comment-author-missing" },
+        },
+        skipDuplicates: true,
+      });
+      continue;
+    }
+
+    const remoteAuthor = await transaction.integrationExternalIdentity.upsert({
+      where: {
+        bindingId_remoteUserId: {
+          bindingId: binding.id,
+          remoteUserId: change.actor.remoteId,
+        },
+      },
+      create: {
+        bindingId: binding.id,
+        remoteUserId: change.actor.remoteId,
+        remoteLogin: change.actor.username ?? null,
+        remoteDisplayName: change.actor.displayName,
+      },
+      update: {
+        ...(change.actor.username === undefined
+          ? {}
+          : { remoteLogin: change.actor.username }),
+        remoteDisplayName: change.actor.displayName,
+      },
+    });
+    const comment = await createCommentWithActivityTx(transaction, {
+      issueId,
+      body: change.fields.body,
+      source: "system",
+      via: "redmine-inbound",
+      createdAt: change.createdAt ?? change.changedAt,
+      origin: {
+        kind: "remote",
+        bindingId: binding.id,
+        externalIdentityId: remoteAuthor.id,
       },
     });
     const ref = await transaction.externalRef.create({
@@ -1399,7 +1446,6 @@ async function importUnlinkedIssueTx(
     {
       id: context.bindingId,
       connectionId: context.connectionId,
-      actorMemberId: context.actorMemberId,
     },
     importedRef.entityId,
     detail.identity.remoteId,

@@ -455,15 +455,18 @@ async function prepare(
       });
       const parentRef = await transaction.externalRef.findUnique({ where: { id: captured.parentRefId } });
       ownRef = await findRef("comment", current.entityId, false);
-      const changed =
+      if (
         !comment ||
+        comment.authorId === null ||
+        comment.author === null ||
+        comment.remoteAuthorId !== null ||
         ownRef !== null ||
         current.operation !== "create" ||
         current.marker !== `<!-- kanon-comment:${current.entityId} -->` ||
         captured.body !== comment.body ||
         captured.bodySha256 !== createHash("sha256").update(comment.body).digest("hex") ||
-        captured.commentUpdatedAt !== comment.updatedAt.toISOString();
-      if (changed) {
+        captured.commentUpdatedAt !== comment.updatedAt.toISOString()
+      ) {
         const superseded = await transaction.integrationSyncWork.updateMany({
           where: { ...fenced(claimed), leaseUntil: { gt: now } },
           data: { state: "superseded", leaseToken: null, leaseUntil: null },

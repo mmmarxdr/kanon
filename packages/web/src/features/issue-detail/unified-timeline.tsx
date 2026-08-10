@@ -127,7 +127,7 @@ function RowContent({ item }: { item: TimelineItem }) {
       return (
         <div>
           <span style={{ fontWeight: 500, marginRight: 6 }}>
-            {item.author?.username ?? "unknown"}
+            <ActorName actor={item.author} />
           </span>
           <div style={{ marginTop: 2, color: "var(--ink)" }}>
             <Markdown>{item.body}</Markdown>
@@ -214,7 +214,10 @@ function RowContent({ item }: { item: TimelineItem }) {
 
 function ActorName({ actor }: { actor: import("./timeline-types").Actor }) {
   return (
-    <span style={{ fontWeight: 500 }}>{actor?.username ?? "unknown"}</span>
+    <span style={{ fontWeight: 500 }}>
+      {actor?.username ?? "unknown"}
+      {actor?.provider ? ` (${actor.provider})` : ""}
+    </span>
   );
 }
 

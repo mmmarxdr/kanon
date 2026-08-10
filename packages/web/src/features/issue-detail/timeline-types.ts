@@ -13,7 +13,7 @@
 
 import type { CommentSource } from "@/types/issue";
 
-export type Actor = { id: string; username: string } | null;
+export type Actor = { id?: string; username: string; provider?: string } | null;
 
 type TimelineBase = { id: string; via: string | null; createdAt: string };
 

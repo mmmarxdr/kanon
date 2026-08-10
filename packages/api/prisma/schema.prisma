@@ -682,10 +682,14 @@ model ActivityLog {
   issueId String @map("issue_id") @db.Uuid
   issue   Issue  @relation(fields: [issueId], references: [id], onDelete: Cascade)
 
-  memberId String @map("member_id") @db.Uuid
-  member   Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  memberId String? @map("member_id") @db.Uuid
+  member   Member? @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  remoteActorId String?                      @map("remote_actor_id") @db.Uuid
+  remoteActor   IntegrationExternalIdentity? @relation(fields: [remoteActorId], references: [id], onDelete: Restrict)
 
   @@index([issueId, createdAt])
+  @@index([remoteActorId])
   @@map("activity_logs")
 }
 
@@ -700,13 +704,17 @@ model Comment {
   issueId String @map("issue_id") @db.Uuid
   issue   Issue  @relation(fields: [issueId], references: [id], onDelete: Cascade)
 
-  authorId String @map("author_id") @db.Uuid
-  author   Member @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  authorId String? @map("author_id") @db.Uuid
+  author   Member? @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  remoteAuthorId String?                      @map("remote_author_id") @db.Uuid
+  remoteAuthor   IntegrationExternalIdentity? @relation(fields: [remoteAuthorId], references: [id], onDelete: Restrict)
 
   mentions      Mention[]
   notifications Notification[]
 
   @@index([issueId, createdAt])
+  @@index([remoteAuthorId])
   @@map("comments")
 }
 
@@ -1269,6 +1277,8 @@ model IntegrationExternalIdentity {
   binding   IntegrationProjectBinding @relation(fields: [bindingId], references: [id], onDelete: Cascade)
   memberId  String?                   @map("member_id") @db.Uuid
   member    Member?                   @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  authoredComments Comment[]
+  activityLogs     ActivityLog[]
 
   @@unique([bindingId, memberId])
   @@unique([bindingId, remoteUserId])
