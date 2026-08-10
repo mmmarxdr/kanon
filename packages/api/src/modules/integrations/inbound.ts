@@ -476,7 +476,37 @@ async function persistInboundCommentsTx(
       .update(`${binding.id}|comment|${change.identity.remoteId}|${change.sourceVersion}`)
       .digest("hex");
 
+    const existing = await transaction.externalRef.findUnique({
+      where: {
+        connectionId_entityType_externalId: {
+          connectionId: binding.connectionId,
+          entityType: "comment",
+          externalId: change.identity.remoteId,
+        },
+      },
+    });
+
     if (change.operation !== "upsert" || !("body" in change.fields)) {
+      if (!existing) {
+        await transaction.integrationInboundApplication.createMany({
+          data: {
+            bindingId: binding.id,
+            remoteEntityType: "comment",
+            remoteParentType: "issue",
+            remoteParentId: remoteIssueId,
+            remoteId: change.identity.remoteId,
+            remoteUpdatedAt: change.changedAt,
+            sourceVersion: change.sourceVersion,
+            applicationKey: correlationId,
+            correlationId,
+            state: "skipped",
+            outcome: { reason: "private-comment" },
+          },
+          skipDuplicates: true,
+        });
+        continue;
+      }
+
       await transaction.integrationInboundApplication.createMany({
         data: {
           bindingId: binding.id,
@@ -488,23 +518,235 @@ async function persistInboundCommentsTx(
           sourceVersion: change.sourceVersion,
           applicationKey: correlationId,
           correlationId,
-          state: "skipped",
-          outcome: { reason: "private-comment" },
+          refId: existing.id,
         },
         skipDuplicates: true,
+      });
+      const application = await transaction.integrationInboundApplication.findFirstOrThrow({
+        where: {
+          OR: [
+            { applicationKey: correlationId },
+            {
+              bindingId: binding.id,
+              remoteEntityType: "comment",
+              remoteParentType: "issue",
+              remoteParentId: remoteIssueId,
+              remoteId: change.identity.remoteId,
+              sourceVersion: change.sourceVersion,
+            },
+          ],
+        },
+      });
+      if (application.state === "applied" || application.state === "conflict") continue;
+      if (existing.remoteUpdatedAt && existing.remoteUpdatedAt > change.changedAt) {
+        await transaction.integrationInboundApplication.update({
+          where: { id: application.id },
+          data: {
+            state: "skipped",
+            refId: existing.id,
+            outcome: {
+              reason: "stale-private-comment",
+              observedRemoteVersion: existing.remoteUpdatedAt.toISOString(),
+            },
+          },
+        });
+        continue;
+      }
+
+      const comment = await transaction.comment.findFirst({
+        where: { id: existing.entityId, issueId },
+        select: { id: true, body: true, source: true, authorId: true, remoteAuthorId: true },
+      });
+      if (!comment || existing.bindingId !== binding.id) {
+        await transaction.integrationConflict.create({
+          data: {
+            kind: "inbound-reference",
+            bindingId: binding.id,
+            applicationId: application.id,
+            refId: existing.id,
+            localEvidence: {
+              reason: comment ? "binding-mismatch" : "local-comment-missing",
+              commentId: existing.entityId,
+            },
+            remoteEvidence: {
+              provider: "redmine",
+              remoteIssueId,
+              remoteCommentId: change.identity.remoteId,
+              remoteVersion: change.sourceVersion,
+            },
+          },
+        });
+        await transaction.integrationInboundApplication.update({
+          where: { id: application.id },
+          data: {
+            state: "conflict",
+            refId: existing.id,
+            outcome: { reason: comment ? "REFERENCE_BINDING_MISMATCH" : "LOCAL_COMMENT_MISSING" },
+          },
+        });
+        continue;
+      }
+
+      const metadata =
+        existing.metadata && typeof existing.metadata === "object" && !Array.isArray(existing.metadata)
+          ? existing.metadata
+          : {};
+      if (comment.remoteAuthorId === null) {
+        await transaction.externalRef.update({
+          where: { id: existing.id },
+          data: {
+            remoteUpdatedAt: change.changedAt,
+            lastCorrelationId: correlationId,
+            metadata: {
+              ...metadata,
+              remoteVersion: change.sourceVersion,
+              privacy: "private",
+              localContentRetained: true,
+            },
+          },
+        });
+        await transaction.integrationInboundApplication.update({
+          where: { id: application.id },
+          data: {
+            state: "skipped",
+            refId: existing.id,
+            outcome: { reason: "local-comment-preserved", provenance: "redmine-inbound" },
+          },
+        });
+        continue;
+      }
+
+      const bodySha256 =
+        metadata["privacy"] === "private" && typeof metadata["bodySha256"] === "string"
+          ? metadata["bodySha256"]
+          : createHash("sha256").update(comment.body).digest("hex");
+      const mentions = await transaction.mention.findMany({
+        where: { commentId: comment.id },
+        select: { id: true },
+      });
+      await transaction.notification.deleteMany({
+        where: {
+          OR: [
+            { commentId: comment.id },
+            { mentionId: { in: mentions.map(({ id }) => id) } },
+          ],
+        },
+      });
+      await transaction.mention.deleteMany({ where: { commentId: comment.id } });
+      await transaction.activityLog.updateMany({
+        where: {
+          issueId,
+          details: { path: ["commentId"], equals: comment.id },
+        },
+        data: { details: { commentId: comment.id, source: comment.source, redacted: true } },
+      });
+      const works = await transaction.integrationSyncWork.findMany({
+        where: {
+          bindingId: binding.id,
+          entityType: "comment",
+          entityId: comment.id,
+          direction: "outbound",
+        },
+        select: { id: true, state: true, skippedReason: true, payload: true },
+      });
+      const uncertainWorkIds: string[] = [];
+      for (const work of works) {
+        const payload =
+          work.payload && typeof work.payload === "object" && !Array.isArray(work.payload)
+            ? { ...work.payload }
+            : {};
+        delete payload["body"];
+        const uncertain =
+          work.state === "leased" ||
+          work.state === "ambiguous" ||
+          (work.state === "dead" && work.skippedReason === "private-comment-write-uncertain");
+        if (uncertain) uncertainWorkIds.push(work.id);
+        await transaction.integrationSyncWork.update({
+          where: { id: work.id },
+          data: {
+            payload: { ...payload, redacted: true, bodySha256 },
+            ...(work.state === "leased" || work.state === "ambiguous"
+              ? {
+                  state: "dead",
+                  skippedReason: "private-comment-write-uncertain",
+                  leaseToken: null,
+                  leaseUntil: null,
+                  fence: { increment: 1 },
+                }
+              : work.state === "queued" || work.state === "retry"
+                ? {
+                    state: "superseded",
+                    leaseToken: null,
+                    leaseUntil: null,
+                    fence: { increment: 1 },
+                  }
+                : {}),
+          },
+        });
+      }
+      await transaction.comment.update({
+        where: { id: comment.id },
+        data: { body: "[Redacted private Redmine comment]" },
+      });
+      await transaction.externalRef.update({
+        where: { id: existing.id },
+        data: {
+          remoteUpdatedAt: change.changedAt,
+          lastCorrelationId: correlationId,
+          metadata: {
+            remoteVersion: change.sourceVersion,
+            remoteIssueId,
+            privacy: "private",
+            bodySha256,
+          },
+        },
+      });
+      const localEvidence = {
+        commentId: comment.id,
+        bodySha256,
+        ...(uncertainWorkIds.length > 0
+          ? { outboundWriteUncertain: true, uncertainWorkIds }
+          : {}),
+      };
+      const remoteEvidence = {
+        provider: "redmine",
+        remoteIssueId,
+        remoteCommentId: change.identity.remoteId,
+        remoteVersion: change.sourceVersion,
+        reason: "private",
+      };
+      const retained = await transaction.integrationConflict.updateMany({
+        where: {
+          bindingId: binding.id,
+          refId: existing.id,
+          kind: "inbound-comment-privacy",
+          state: "open",
+        },
+        data: { applicationId: application.id, localEvidence, remoteEvidence },
+      });
+      if (retained.count === 0) {
+        await transaction.integrationConflict.create({
+          data: {
+            kind: "inbound-comment-privacy",
+            bindingId: binding.id,
+            applicationId: application.id,
+            refId: existing.id,
+            localEvidence,
+            remoteEvidence,
+          },
+        });
+      }
+      await transaction.integrationInboundApplication.update({
+        where: { id: application.id },
+        data: {
+          state: "conflict",
+          refId: existing.id,
+          outcome: { reason: "private-comment-redacted", provenance: "redmine-inbound" },
+        },
       });
       continue;
     }
 
-    const existing = await transaction.externalRef.findUnique({
-      where: {
-        connectionId_entityType_externalId: {
-          connectionId: binding.connectionId,
-          entityType: "comment",
-          externalId: change.identity.remoteId,
-        },
-      },
-    });
     if (existing) continue;
 
     const marker = parseCommentMarker(change.fields.body);

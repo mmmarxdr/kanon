@@ -14,6 +14,7 @@ import { transitionIssue } from "../issue/service.js";
 import type { InboundCursor, InboundIssueStatusChange } from "./core/types.js";
 import { runInboundSyncCycle, type InboundIssueDetailOptions } from "./inbound.js";
 import { withIssueMutationTx } from "./issue-tx.js";
+import { getConnection } from "./service.js";
 import type {
   RedmineCommentChange,
   RedmineIssueChange,
@@ -429,6 +430,518 @@ describe("Redmine inbound sync", () => {
     await expect(prisma.comment.count({ where: { issueId: issue.id } })).resolves.toBe(1);
   });
 
+  it("redacts an imported comment when its Redmine journal becomes private", async () => {
+    const { workspace, owner, binding, issue } = await fixture();
+    const publicAt = new Date("2026-08-01T10:01:00.000Z");
+    const body = "Private later @owner";
+    const publicComment: RedmineCommentChange = {
+      identity: {
+        type: "comment",
+        remoteId: "private-transition",
+        remoteProjectId: "41",
+        parent: { type: "issue", remoteId: "100" },
+      },
+      operation: "upsert",
+      changedAt: publicAt,
+      createdAt: publicAt,
+      sourceVersion: "sha256:private-transition-public",
+      actor: { remoteId: "5", displayName: "Remote author", username: "author" },
+      fields: { body },
+    };
+    const publicSetup = dependencies([change(publicAt, "review")]);
+    publicSetup.loadIssueDetail.mockResolvedValue({
+      ...detailChange(publicAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+      }),
+      comments: [publicComment],
+    });
+    await runInboundSyncCycle(prisma, publicSetup);
+
+    const comment = await prisma.comment.findFirstOrThrow({
+      where: { issueId: issue.id, remoteAuthorId: { not: null } },
+    });
+    const ref = await prisma.externalRef.findFirstOrThrow({
+      where: { bindingId: binding.id, entityType: "comment", entityId: comment.id },
+    });
+    const mention = await prisma.mention.create({
+      data: {
+        workspaceId: workspace.id,
+        issueId: issue.id,
+        commentId: comment.id,
+        mentionedMemberId: owner.id,
+        mentionedByMemberId: owner.id,
+        context: body,
+      },
+    });
+    const notification = await prisma.notification.create({
+      data: {
+        kind: "mention",
+        workspaceId: workspace.id,
+        recipientId: owner.id,
+        actorId: owner.id,
+        issueId: issue.id,
+        mentionId: mention.id,
+        commentId: null,
+        payload: { context: body },
+      },
+    });
+    await prisma.activityLog.updateMany({
+      where: {
+        issueId: issue.id,
+        action: "commented",
+        details: { path: ["commentId"], equals: comment.id },
+      },
+      data: { details: { commentId: comment.id, source: "system", previousBody: body } },
+    });
+    const work = await prisma.integrationSyncWork.create({
+      data: {
+        bindingId: binding.id,
+        entityType: "comment",
+        entityId: comment.id,
+        direction: "outbound",
+        operation: "create",
+        dedupeKey: randomUUID(),
+        laneKey: issue.id,
+        actorKey: `remote:${comment.remoteAuthorId}`,
+        actorKind: "remote",
+        payload: { version: 1, body, bodySha256: createHash("sha256").update(body).digest("hex") },
+        correlationId: randomUUID(),
+        epoch: binding.lifecycleEpoch,
+      },
+    });
+    const uncertainWork = await prisma.integrationSyncWork.create({
+      data: {
+        bindingId: binding.id,
+        entityType: "comment",
+        entityId: comment.id,
+        direction: "outbound",
+        operation: "create",
+        dedupeKey: randomUUID(),
+        laneKey: issue.id,
+        actorKey: `remote:${comment.remoteAuthorId}`,
+        actorKind: "remote",
+        payload: { version: 1, body, bodySha256: createHash("sha256").update(body).digest("hex") },
+        correlationId: randomUUID(),
+        epoch: binding.lifecycleEpoch,
+        state: "leased",
+        leaseToken: randomUUID(),
+        leaseUntil: new Date("2026-08-01T11:00:00.000Z"),
+      },
+    });
+
+    const privateAt = publicAt;
+    const issuePrivateAt = new Date("2026-08-01T10:02:00.000Z");
+    const privateComment: RedmineCommentChange = {
+      identity: publicComment.identity,
+      operation: "tombstone",
+      changedAt: privateAt,
+      createdAt: publicAt,
+      sourceVersion: "sha256:private-transition-private",
+      fields: { reason: "private" },
+    };
+    const privateCorrelationId = createHash("sha256")
+      .update(`${binding.id}|comment|${privateComment.identity.remoteId}|${privateComment.sourceVersion}`)
+      .digest("hex");
+    await prisma.integrationInboundApplication.create({
+      data: {
+        bindingId: binding.id,
+        remoteEntityType: "comment",
+        remoteParentType: "issue",
+        remoteParentId: "100",
+        remoteId: privateComment.identity.remoteId,
+        remoteUpdatedAt: privateComment.changedAt,
+        sourceVersion: privateComment.sourceVersion,
+        applicationKey: privateCorrelationId,
+        correlationId: privateCorrelationId,
+        state: "skipped",
+        outcome: { reason: "private-comment" },
+      },
+    });
+    const privateSetup = dependencies([change(issuePrivateAt, "review")]);
+    privateSetup.loadIssueDetail.mockResolvedValue({
+      ...detailChange(issuePrivateAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+      }),
+      comments: [privateComment],
+    });
+    await runInboundSyncCycle(prisma, privateSetup);
+
+    const bodySha256 = createHash("sha256").update(body).digest("hex");
+    await expect(prisma.comment.findUniqueOrThrow({ where: { id: comment.id } })).resolves.toMatchObject({
+      body: "[Redacted private Redmine comment]",
+      remoteAuthorId: comment.remoteAuthorId,
+    });
+    await expect(listComments(issue.key)).resolves.toEqual([
+      expect.objectContaining({ id: comment.id, body: "[Redacted private Redmine comment]" }),
+    ]);
+    await expect(prisma.mention.count({ where: { commentId: comment.id } })).resolves.toBe(0);
+    await expect(prisma.notification.findUnique({ where: { id: notification.id } })).resolves.toBeNull();
+    const activities = await prisma.activityLog.findMany({
+      where: { issueId: issue.id, details: { path: ["commentId"], equals: comment.id } },
+    });
+    expect(JSON.stringify(activities)).not.toContain(body);
+    await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({
+      state: "superseded",
+      payload: { version: 1, redacted: true, bodySha256 },
+    });
+    const uncertain = await prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: uncertainWork.id } });
+    expect(uncertain).toMatchObject({
+      state: "dead",
+      skippedReason: "private-comment-write-uncertain",
+      leaseToken: null,
+      leaseUntil: null,
+      payload: { version: 1, redacted: true, bodySha256 },
+    });
+    expect(uncertain.payload).not.toHaveProperty("body");
+    await expect(prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })).resolves.toMatchObject({
+      metadata: expect.objectContaining({
+        remoteVersion: privateComment.sourceVersion,
+        privacy: "private",
+        bodySha256,
+      }),
+    });
+    const application = await prisma.integrationInboundApplication.findFirstOrThrow({
+      where: {
+        bindingId: binding.id,
+        remoteEntityType: "comment",
+        remoteId: privateComment.identity.remoteId,
+        sourceVersion: privateComment.sourceVersion,
+      },
+    });
+    expect(application).toMatchObject({
+      state: "conflict",
+      refId: ref.id,
+      outcome: { reason: "private-comment-redacted", provenance: "redmine-inbound" },
+    });
+    const conflict = await prisma.integrationConflict.findFirstOrThrow({
+      where: { applicationId: application.id, kind: "inbound-comment-privacy" },
+    });
+    expect(conflict).toMatchObject({
+      refId: ref.id,
+      localEvidence: {
+        commentId: comment.id,
+        bodySha256,
+        outboundWriteUncertain: true,
+        uncertainWorkIds: [uncertainWork.id],
+      },
+      remoteEvidence: {
+        provider: "redmine",
+        remoteIssueId: "100",
+        remoteCommentId: privateComment.identity.remoteId,
+        remoteVersion: privateComment.sourceVersion,
+        reason: "private",
+      },
+    });
+    expect(JSON.stringify(conflict)).not.toContain(body);
+
+    const replayAt = new Date("2026-08-01T10:03:00.000Z");
+    const replay = dependencies([change(replayAt, "review")]);
+    replay.loadIssueDetail.mockResolvedValue({
+      ...detailChange(replayAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+      }),
+      comments: [privateComment],
+    });
+    await runInboundSyncCycle(prisma, replay);
+
+    await expect(
+      prisma.integrationConflict.count({
+        where: { refId: ref.id, kind: "inbound-comment-privacy" },
+      }),
+    ).resolves.toBe(1);
+
+    const newerPrivateAt = new Date("2026-08-01T10:04:00.000Z");
+    const newerPrivateSetup = dependencies([change(newerPrivateAt, "review")]);
+    newerPrivateSetup.loadIssueDetail.mockResolvedValue({
+      ...detailChange(newerPrivateAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+      }),
+      comments: [
+        {
+          ...privateComment,
+          changedAt: newerPrivateAt,
+          sourceVersion: "sha256:private-transition-private-v2",
+        },
+      ],
+    });
+    await runInboundSyncCycle(prisma, newerPrivateSetup);
+
+    await expect(prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })).resolves.toMatchObject({
+      metadata: expect.objectContaining({ bodySha256 }),
+    });
+    await expect(
+      prisma.integrationConflict.count({
+        where: { refId: ref.id, kind: "inbound-comment-privacy" },
+      }),
+    ).resolves.toBe(1);
+    const latestConflict = await prisma.integrationConflict.findFirstOrThrow({
+      where: { refId: ref.id, kind: "inbound-comment-privacy" },
+    });
+    expect(latestConflict.localEvidence).toMatchObject({
+      outboundWriteUncertain: true,
+      uncertainWorkIds: [uncertainWork.id],
+    });
+    const connection = await getConnection(binding.connectionId, owner.userId, workspace.id);
+    expect(connection.syncHealth).toMatchObject({
+      status: "attention_required",
+      blockedWork: {
+        total: 1,
+        items: [
+          expect.objectContaining({
+            id: uncertainWork.id,
+            reason: "private-comment-write-uncertain",
+          }),
+        ],
+      },
+    });
+  });
+
+  it("keeps a local comment visible when its exported Redmine journal becomes private", async () => {
+    const { owner, binding, connection, issue } = await fixture();
+    const local = await createComment(
+      issue.key,
+      { body: "Locally owned body", source: "human" },
+      owner.id,
+      null,
+      false,
+    );
+    const ref = await prisma.externalRef.create({
+      data: {
+        connectionId: connection.id,
+        bindingId: binding.id,
+        entityType: "comment",
+        entityId: local.id,
+        externalId: "local-export",
+        metadata: { marker: `<!-- kanon-comment:${local.id} -->` },
+      },
+    });
+    const observedAt = new Date("2026-08-01T10:01:00.000Z");
+    const setup = dependencies([change(observedAt, "review")]);
+    setup.loadIssueDetail.mockResolvedValue({
+      ...detailChange(observedAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+      }),
+      comments: [
+        {
+          identity: {
+            type: "comment",
+            remoteId: "local-export",
+            remoteProjectId: "41",
+            parent: { type: "issue", remoteId: "100" },
+          },
+          operation: "tombstone",
+          changedAt: observedAt,
+          createdAt: observedAt,
+          sourceVersion: "sha256:local-export-private",
+          fields: { reason: "private" },
+        },
+      ],
+    });
+
+    await runInboundSyncCycle(prisma, setup);
+
+    await expect(prisma.comment.findUniqueOrThrow({ where: { id: local.id } })).resolves.toMatchObject({
+      body: "Locally owned body",
+      authorId: owner.id,
+      remoteAuthorId: null,
+    });
+    await expect(prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })).resolves.toMatchObject({
+      metadata: expect.objectContaining({
+        marker: `<!-- kanon-comment:${local.id} -->`,
+        privacy: "private",
+        localContentRetained: true,
+      }),
+    });
+    await expect(
+      prisma.integrationInboundApplication.findFirstOrThrow({
+        where: {
+          bindingId: binding.id,
+          remoteEntityType: "comment",
+          remoteId: "local-export",
+        },
+      }),
+    ).resolves.toMatchObject({
+      state: "skipped",
+      refId: ref.id,
+      outcome: { reason: "local-comment-preserved", provenance: "redmine-inbound" },
+    });
+    await expect(
+      prisma.integrationConflict.count({
+        where: { refId: ref.id, kind: "inbound-comment-privacy" },
+      }),
+    ).resolves.toBe(0);
+  });
+
+  it("ignores a stale private journal after a newer public source version", async () => {
+    const { binding, issue } = await fixture();
+    const publicAt = new Date("2026-08-01T10:02:00.000Z");
+    const publicComment: RedmineCommentChange = {
+      identity: {
+        type: "comment",
+        remoteId: "stale-private",
+        remoteProjectId: "41",
+        parent: { type: "issue", remoteId: "100" },
+      },
+      operation: "upsert",
+      changedAt: publicAt,
+      createdAt: publicAt,
+      sourceVersion: "sha256:stale-private-public-v2",
+      actor: { remoteId: "5", displayName: "Remote author" },
+      fields: { body: "Newest public body" },
+    };
+    const publicSetup = dependencies([change(publicAt, "review")]);
+    publicSetup.loadIssueDetail.mockResolvedValue({
+      ...detailChange(publicAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+      }),
+      comments: [publicComment],
+    });
+    await runInboundSyncCycle(prisma, publicSetup);
+    const comment = await prisma.comment.findFirstOrThrow({
+      where: { issueId: issue.id, remoteAuthorId: { not: null } },
+    });
+
+    const issueObservedAt = new Date("2026-08-01T10:03:00.000Z");
+    const stalePrivateAt = new Date("2026-08-01T10:01:00.000Z");
+    const privateSetup = dependencies([change(issueObservedAt, "review")]);
+    privateSetup.loadIssueDetail.mockResolvedValue({
+      ...detailChange(issueObservedAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+      }),
+      comments: [
+        {
+          identity: publicComment.identity,
+          operation: "tombstone",
+          changedAt: stalePrivateAt,
+          createdAt: publicAt,
+          sourceVersion: "sha256:stale-private-v1",
+          fields: { reason: "private" },
+        },
+      ],
+    });
+
+    await runInboundSyncCycle(prisma, privateSetup);
+
+    await expect(prisma.comment.findUniqueOrThrow({ where: { id: comment.id } })).resolves.toMatchObject({
+      body: "Newest public body",
+    });
+    await expect(
+      prisma.integrationInboundApplication.findFirstOrThrow({
+        where: {
+          bindingId: binding.id,
+          remoteEntityType: "comment",
+          remoteId: "stale-private",
+          sourceVersion: "sha256:stale-private-v1",
+        },
+      }),
+    ).resolves.toMatchObject({
+      state: "skipped",
+      outcome: {
+        reason: "stale-private-comment",
+        observedRemoteVersion: publicAt.toISOString(),
+      },
+    });
+    await expect(
+      prisma.integrationConflict.count({
+        where: { kind: "inbound-comment-privacy" },
+      }),
+    ).resolves.toBe(0);
+  });
+
+  it("rolls back private journal cleanup when redaction cannot commit", async () => {
+    const { workspace, owner, binding, issue } = await fixture();
+    const publicAt = new Date("2026-08-01T10:01:00.000Z");
+    const body = "Must survive rollback";
+    const publicComment: RedmineCommentChange = {
+      identity: {
+        type: "comment",
+        remoteId: "private-rollback",
+        remoteProjectId: "41",
+        parent: { type: "issue", remoteId: "100" },
+      },
+      operation: "upsert",
+      changedAt: publicAt,
+      createdAt: publicAt,
+      sourceVersion: "sha256:private-rollback-public",
+      actor: { remoteId: "5", displayName: "Remote author" },
+      fields: { body },
+    };
+    const publicSetup = dependencies([change(publicAt, "review")]);
+    publicSetup.loadIssueDetail.mockResolvedValue({
+      ...detailChange(publicAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+      }),
+      comments: [publicComment],
+    });
+    await runInboundSyncCycle(prisma, publicSetup);
+    const comment = await prisma.comment.findFirstOrThrow({
+      where: { issueId: issue.id, remoteAuthorId: { not: null } },
+    });
+    const mention = await prisma.mention.create({
+      data: {
+        workspaceId: workspace.id,
+        issueId: issue.id,
+        commentId: comment.id,
+        mentionedMemberId: owner.id,
+        mentionedByMemberId: owner.id,
+        context: body,
+      },
+    });
+    await prisma.notification.create({
+      data: {
+        kind: "mention",
+        workspaceId: workspace.id,
+        recipientId: owner.id,
+        issueId: issue.id,
+        mentionId: mention.id,
+        commentId: comment.id,
+        payload: { context: body },
+      },
+    });
+    const privateAt = new Date("2026-08-01T10:02:00.000Z");
+    const privateSetup = dependencies([change(privateAt, "review")]);
+    privateSetup.loadIssueDetail.mockResolvedValue({
+      ...detailChange(privateAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+      }),
+      comments: [
+        {
+          identity: publicComment.identity,
+          operation: "tombstone",
+          changedAt: privateAt,
+          createdAt: publicAt,
+          sourceVersion: "sha256:private-rollback-private",
+          fields: { reason: "private" },
+        },
+      ],
+    });
+    await prisma.$executeRawUnsafe(
+      `ALTER TABLE "comments" ADD CONSTRAINT "test_private_comment_redaction_rollback" CHECK ("body" <> '[Redacted private Redmine comment]')`,
+    );
+
+    try {
+      await runInboundSyncCycle(prisma, privateSetup);
+
+      await expect(prisma.comment.findUniqueOrThrow({ where: { id: comment.id } })).resolves.toMatchObject({ body });
+      await expect(prisma.mention.count({ where: { commentId: comment.id } })).resolves.toBe(1);
+      await expect(prisma.notification.count({ where: { commentId: comment.id } })).resolves.toBe(1);
+      await expect(
+        prisma.integrationInboundApplication.count({
+          where: {
+            bindingId: binding.id,
+            remoteEntityType: "comment",
+            remoteId: "private-rollback",
+            sourceVersion: "sha256:private-rollback-private",
+          },
+        }),
+      ).resolves.toBe(0);
+    } finally {
+      await prisma.$executeRawUnsafe(
+        'ALTER TABLE "comments" DROP CONSTRAINT IF EXISTS "test_private_comment_redaction_rollback"',
+      );
+    }
+  });
+
   it("fails closed when a public comment has no remote actor", async () => {
     const { binding, issue } = await fixture();
     const observedAt = new Date("2026-08-01T10:01:00.000Z");
@@ -657,7 +1170,7 @@ describe("Redmine inbound sync", () => {
   });
 
   it("applies remote-only linked fields atomically without an outbound echo", async () => {
-    const { workspace, project, binding, issue, ref } = await fixture();
+    const { workspace, binding, issue, ref } = await fixture();
     const assignee = await seedTestMember(workspace.id);
     await prisma.integrationExternalIdentity.create({
       data: {

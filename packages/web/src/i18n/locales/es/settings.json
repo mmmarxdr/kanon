@@ -112,6 +112,7 @@
   "redmineDisconnect": "Desconectar",
   "redmineSyncBlockedTitle": "La sincronización de Redmine requiere atención",
   "redmineSyncBlockedHelp": "La sincronización está bloqueada por una credencial Redmine rechazada. Pedile al owner de la credencial o a un owner del workspace que la reemplace.",
+  "redmineSyncPrivacyAttentionHelp": "Es posible que un comentario privado de Redmine se haya enviado antes de la redacción. Revisá la operación bloqueada antes de reanudar el envío de comentarios.",
   "redmineSyncInactiveTitle": "La sincronización de Redmine está inactiva",
   "redmineSyncInactiveHelp": "La conexión no está activa, por lo que no se sincronizan tickets ni tiempo dedicado. Pedile a un owner del workspace que complete el mapeo y la active.",
   "redmineBlockedCount_one": "{{count}} operación de sincronización bloqueada",

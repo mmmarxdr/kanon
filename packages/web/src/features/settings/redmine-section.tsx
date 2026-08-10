@@ -34,7 +34,13 @@ export function RedmineCredentialHealth({
   return (
     <SettingsCard className="border-amber-500/40 bg-amber-500/5">
       <h2 className="font-semibold text-foreground">{t("redmineSyncBlockedTitle")}</h2>
-      <p className="mt-1 text-sm text-muted-foreground">{t("redmineSyncBlockedHelp")}</p>
+      <p className="mt-1 text-sm text-muted-foreground">
+        {t(
+          connection.syncHealth.status === "attention_required"
+            ? "redmineSyncPrivacyAttentionHelp"
+            : "redmineSyncBlockedHelp",
+        )}
+      </p>
       {blocked && (
         <div className="mt-4">
           <p className="text-sm font-medium text-foreground">

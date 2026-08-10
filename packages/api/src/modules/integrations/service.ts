@@ -1470,9 +1470,14 @@ export async function getConnection(
   }
   const memberId = member.id;
   const operator = member.role === "owner" && !allowedProjectIds;
-  const authBlockedWhere = {
+  const blockedWorkWhere = {
     binding: { connectionId, releasedAt: null },
-    skippedReason: "credential_invalid",
+    skippedReason: { in: ["credential_invalid", "private-comment-write-uncertain"] },
+    state: { in: ["dead", "ambiguous"] },
+  } satisfies Prisma.IntegrationSyncWorkWhereInput;
+  const privacyUncertainWhere = {
+    binding: { connectionId, releasedAt: null },
+    skippedReason: "private-comment-write-uncertain",
     state: { in: ["dead", "ambiguous"] },
   } satisfies Prisma.IntegrationSyncWorkWhereInput;
 
@@ -1484,6 +1489,7 @@ export async function getConnection(
     connectedCredentials,
     serviceCredentialRecord,
     blockedWorkTotal,
+    privacyUncertainTotal,
     blockedWork,
   ] = await Promise.all([
       memberId
@@ -1529,10 +1535,11 @@ export async function getConnection(
             },
           })
         : Promise.resolve(null),
-      prisma.integrationSyncWork.count({ where: authBlockedWhere }),
+      prisma.integrationSyncWork.count({ where: blockedWorkWhere }),
+      prisma.integrationSyncWork.count({ where: privacyUncertainWhere }),
       operator
         ? prisma.integrationSyncWork.findMany({
-            where: authBlockedWhere,
+            where: blockedWorkWhere,
             orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
             take: 20,
             select: {
@@ -1541,6 +1548,7 @@ export async function getConnection(
               entityId: true,
               operation: true,
               state: true,
+              skippedReason: true,
               updatedAt: true,
             },
           })
@@ -1567,12 +1575,22 @@ export async function getConnection(
     serviceCredentialIsCaller: credential?.id === connection.serviceCredentialId,
     syncHealth: {
       status:
-        serviceCredentialStatus !== "valid" || blockedWorkTotal > 0
+        privacyUncertainTotal > 0
+          ? ("attention_required" as const)
+          : serviceCredentialStatus !== "valid" || blockedWorkTotal > 0
           ? ("credential_blocked" as const)
           : connection.lifecycle !== "active"
             ? ("inactive" as const)
           : ("healthy" as const),
-      blockedWork: operator ? { total: blockedWorkTotal, items: blockedWork } : null,
+      blockedWork: operator
+        ? {
+            total: blockedWorkTotal,
+            items: blockedWork.map(({ skippedReason, ...work }) => ({
+              ...work,
+              reason: skippedReason!,
+            })),
+          }
+        : null,
     },
     discoveredStatuses: operator ? connection.discoveredStatuses : null,
     providerMaps: operator

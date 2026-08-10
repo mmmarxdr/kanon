@@ -323,6 +323,38 @@ describe("RedmineSection", () => {
     expect(screen.queryByRole("list", { name: /blocked sync operations/i })).not.toBeInTheDocument();
   });
 
+  it("warns owners when a private comment write may have escaped", () => {
+    vi.mocked(useRedmineConnectionQuery).mockReturnValue({
+      data: {
+        ...healthyConnection,
+        syncHealth: {
+          status: "attention_required",
+          blockedWork: {
+            total: 1,
+            items: [
+              {
+                id: "66666666-6666-4666-8666-666666666666",
+                entityType: "comment",
+                entityId: "77777777-7777-4777-8777-777777777777",
+                operation: "create",
+                state: "dead",
+                reason: "private-comment-write-uncertain",
+                updatedAt: "2026-08-10T10:00:00.000Z",
+              },
+            ],
+          },
+        },
+      },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
+
+    render(<RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />);
+
+    expect(screen.getByText(/private Redmine comment may have been sent before redaction/i)).toBeInTheDocument();
+    expect(screen.getByText("1 blocked sync operation")).toBeInTheDocument();
+  });
+
   it("offers personal replacement and caps owner health details at 20", () => {
     const items = Array.from({ length: 20 }, (_, index) => ({
       id: `${String(index + 1).padStart(8, "0")}-6666-4666-8666-666666666666`,
@@ -330,6 +362,7 @@ describe("RedmineSection", () => {
       entityId: `${String(index + 1).padStart(8, "0")}-7777-4777-8777-777777777777`,
       operation: "update" as const,
       state: "dead" as const,
+      reason: "credential_invalid" as const,
       updatedAt: "2026-08-04T10:00:00.000Z",
     }));
     vi.mocked(useRedmineConnectionQuery).mockReturnValue({

@@ -607,6 +607,7 @@ describe("integration credentials", () => {
       "entityType",
       "id",
       "operation",
+      "reason",
       "state",
       "updatedAt",
     ]);

@@ -389,14 +389,6 @@ describe("integration inbound application and conflict schema", () => {
           "remoteParentType",
           "remoteParentId",
           "remoteId",
-          "remoteUpdatedAt",
-        ],
-        [
-          "bindingId",
-          "remoteEntityType",
-          "remoteParentType",
-          "remoteParentId",
-          "remoteId",
           "sourceVersion",
         ],
       ]),
@@ -418,7 +410,7 @@ describe("integration inbound application and conflict schema", () => {
     expect(field("IntegrationConflict", "state")?.default).toBe("open");
   });
 
-  it("persists tuple-keyed replay state and conflict evidence", async () => {
+  it("persists source-keyed replay state and conflict evidence", async () => {
     const { binding, externalRef, work } = await createFixture();
     const remoteUpdatedAt = new Date("2026-07-27T12:30:00.000Z");
     const application = await prisma.integrationInboundApplication.create({
@@ -426,6 +418,7 @@ describe("integration inbound application and conflict schema", () => {
         remoteEntityType: "issue",
         remoteId: "remote-application-issue",
         remoteUpdatedAt,
+        sourceVersion: "sha256:version-1",
         applicationKey: "application-key-1",
         correlationId: "remote-correlation-1",
         leaseToken: "application-lease-1",
@@ -453,14 +446,20 @@ describe("integration inbound application and conflict schema", () => {
     };
     await expect(
       prisma.integrationInboundApplication.create({
-        data: { ...duplicate, applicationKey: "duplicate-tuple", correlationId: "duplicate-tuple" },
+        data: {
+          ...duplicate,
+          sourceVersion: "sha256:version-2",
+          applicationKey: "same-timestamp-source",
+          correlationId: "same-timestamp-source",
+        },
       })
-    ).rejects.toMatchObject({ code: "P2002" });
+    ).resolves.toMatchObject({ sourceVersion: "sha256:version-2" });
     await expect(
       prisma.integrationInboundApplication.create({
         data: {
           ...duplicate,
           remoteUpdatedAt: new Date("2026-07-27T12:30:01.000Z"),
+          sourceVersion: "sha256:version-3",
           applicationKey: "application-key-1",
           correlationId: "duplicate-key",
         },
@@ -471,6 +470,18 @@ describe("integration inbound application and conflict schema", () => {
         data: {
           ...duplicate,
           remoteUpdatedAt: new Date("2026-07-27T12:30:01.000Z"),
+          sourceVersion: "sha256:version-1",
+          applicationKey: "duplicate-source-version",
+          correlationId: "duplicate-source-version",
+        },
+      })
+    ).rejects.toMatchObject({ code: "P2002" });
+    await expect(
+      prisma.integrationInboundApplication.create({
+        data: {
+          ...duplicate,
+          remoteUpdatedAt: new Date("2026-07-27T12:30:01.000Z"),
+          sourceVersion: "sha256:version-3",
           applicationKey: "application-key-2",
           correlationId: "remote-correlation-2",
         },
@@ -546,14 +557,13 @@ describe("integration inbound application and conflict schema", () => {
     ).resolves.toBeNull();
   });
 
-  it("creates the tuple replay and conflict state indexes", async () => {
+  it("creates the source replay and conflict state indexes", async () => {
     const indexes = await prisma.$queryRaw<
       Array<{ indexname: string }>
     >`SELECT indexname FROM pg_indexes WHERE tablename IN ('integration_inbound_applications', 'integration_conflicts')`;
     expect(indexes.map(({ indexname }) => indexname)).toEqual(
       expect.arrayContaining([
         "integration_inbound_applications_application_key_key",
-        "uq_inbound_application_remote_timestamp",
         "uq_inbound_application_source",
         "integration_conflicts_binding_id_state_idx",
       ])
