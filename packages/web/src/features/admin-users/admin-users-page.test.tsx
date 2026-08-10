@@ -185,6 +185,13 @@ describe("AdminUsersPage", () => {
     expect(screen.getByTestId("admin-user-detail-empty")).toBeTruthy();
   });
 
+  it("constrains multi-workspace text to its grid cell", async () => {
+    await mockHooks();
+    render(<AdminUsersPage />, { wrapper: createWrapper() });
+
+    expect(screen.getByTitle("Acme, Beta")).toHaveClass("block", "w-full", "truncate");
+  });
+
   it("shows remove panel with shared workspace picker after selecting users", async () => {
     await mockHooks();
     render(<AdminUsersPage />, { wrapper: createWrapper() });

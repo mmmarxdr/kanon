@@ -1,4 +1,11 @@
 {
+  "title": "Admin",
+  "eyebrow": "instance administration",
+  "tabInstance": "Instance",
+  "tabUsers": "Users",
+  "tabWorkspaces": "Workspaces",
+  "newWorkspaceTitle": "New workspace",
+  "newWorkspaceDescription": "Create a workspace and continue with project setup.",
   "usersTitle": "Users",
   "usersEyebrow": "instance admin",
   "usersNav": "Users",

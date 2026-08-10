@@ -3,11 +3,8 @@
  *
  * Tests:
  *  (a) sidebar + button click opens create-project modal
- *  (b) isSuperAdmin:true → "Admin" nav entry visible linking to /admin/instance
- *  (c1) isInstanceAdmin:true, isSuperAdmin:false → workspace-create visible; invite-admin NOT visible
- *  (c2) isSuperAdmin:true (+ isInstanceAdmin:true) → invite-admin link visible
- *  (d) both flags false → no admin nav, no workspace-create, no invite-admin
- *  (e) isSuperAdmin:false but isInstanceAdmin:true → admin nav NOT shown, workspace-create shown
+ *  (b) super-admin or instance-admin → one Admin entry linking to /admin/instance
+ *  (c) both flags false → no Admin entry
  *  Soft-collapse: Show all / Show less, active pin, footer with many projects
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -221,53 +218,41 @@ describe("AppSidebar", () => {
     expect(screen.getByTestId("admin-nav-link")).toBeTruthy();
   });
 
-  // ── (c1) isInstanceAdmin:true, isSuperAdmin:false → workspace-create visible; invite-admin NOT ─
+  // ── (c1) instance-admin gets the unified Admin entry ──────────────────────
 
-  it("(c1) isInstanceAdmin:true, isSuperAdmin:false → workspace-create visible, invite-admin NOT visible", () => {
+  it("(c1) isInstanceAdmin:true, isSuperAdmin:false → one Admin entry", () => {
     mockUser.value = makeUser({ isInstanceAdmin: true, isSuperAdmin: false });
     render(<AppSidebar />);
 
-    expect(screen.getByTestId("workspace-create-link")).toBeTruthy();
-    expect(screen.getByTestId("admin-users-nav-link")).toBeTruthy();
-    expect(screen.queryByTestId("invite-admin-link")).toBeNull();
+    expect(screen.getAllByTestId("admin-nav-link")).toHaveLength(1);
+    expect(screen.getByTestId("link-/admin/instance")).toBeTruthy();
   });
 
-  // ── (c2) isSuperAdmin:true → invite-admin link visible ────────────────────
+  // ── (c2) combined role still gets only one entry ─────────────────────────
 
-  it("(c2) isSuperAdmin:true (with isInstanceAdmin:true) → invite-admin link visible", () => {
+  it("(c2) isSuperAdmin:true with isInstanceAdmin:true → one Admin entry", () => {
     mockUser.value = makeUser({ isSuperAdmin: true, isInstanceAdmin: true });
     render(<AppSidebar />);
 
-    expect(screen.getByTestId("invite-admin-link")).toBeTruthy();
+    expect(screen.getAllByTestId("admin-nav-link")).toHaveLength(1);
   });
 
-  // ── (d) both false → none rendered ────────────────────────────────────────
+  // ── (d) both false → no Admin entry ──────────────────────────────────────
 
-  it("(d) both flags false → no admin nav, no workspace-create, no invite-admin", () => {
+  it("(d) both flags false → no Admin entry", () => {
     mockUser.value = makeUser({ isSuperAdmin: false, isInstanceAdmin: false });
     render(<AppSidebar />);
 
     expect(screen.queryByTestId("admin-nav-link")).toBeNull();
-    expect(screen.queryByTestId("workspace-create-link")).toBeNull();
-    expect(screen.queryByTestId("invite-admin-link")).toBeNull();
   });
 
-  // ── (e) only isInstanceAdmin → no admin nav, no invite-admin ──────────────
+  // ── (e) pure instance-admin uses the same Admin destination ───────────────
 
-  it("(e) isInstanceAdmin:true but isSuperAdmin:false → admin nav NOT shown, users + workspace-create shown", () => {
+  it("(e) isInstanceAdmin:true but isSuperAdmin:false → Admin entry shown", () => {
     mockUser.value = makeUser({ isInstanceAdmin: true, isSuperAdmin: false });
     render(<AppSidebar />);
 
-    expect(screen.queryByTestId("admin-nav-link")).toBeNull();
-    expect(screen.getByTestId("admin-users-nav-link")).toBeTruthy();
-    expect(screen.getByTestId("workspace-create-link")).toBeTruthy();
-    expect(screen.queryByTestId("invite-admin-link")).toBeNull();
-  });
-
-  it("isInstanceAdmin:false → users nav NOT shown", () => {
-    mockUser.value = makeUser({ isInstanceAdmin: false, isSuperAdmin: false });
-    render(<AppSidebar />);
-    expect(screen.queryByTestId("admin-users-nav-link")).toBeNull();
+    expect(screen.getByTestId("admin-nav-link")).toBeTruthy();
   });
 
   // ── Soft-collapse ─────────────────────────────────────────────────────────
@@ -318,14 +303,13 @@ describe("AppSidebar", () => {
     expect(screen.getAllByTestId("project-name")).toHaveLength(5);
   });
 
-  it("18 projects + admin flags → Admin, New workspace, Logout still present", () => {
+  it("18 projects + admin flags → Admin and Logout still present", () => {
     mockProjects.value = makeProjects(18);
     mockProjectsExpanded.value = false;
     mockUser.value = makeUser({ isSuperAdmin: true, isInstanceAdmin: true });
     render(<AppSidebar />);
 
     expect(screen.getByTestId("admin-nav-link")).toBeTruthy();
-    expect(screen.getByTestId("workspace-create-link")).toBeTruthy();
     expect(screen.getByTitle("Logout")).toBeTruthy();
   });
 
