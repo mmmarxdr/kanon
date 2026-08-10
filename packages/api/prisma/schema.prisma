@@ -1414,7 +1414,6 @@ model IntegrationInboundApplication {
   work             IntegrationSyncWork?      @relation(fields: [workId], references: [id], onDelete: SetNull)
   conflicts        IntegrationConflict[]
 
-  @@unique([bindingId, remoteEntityType, remoteParentType, remoteParentId, remoteId, remoteUpdatedAt], map: "uq_inbound_application_remote_timestamp")
   @@unique([bindingId, remoteEntityType, remoteParentType, remoteParentId, remoteId, sourceVersion], map: "uq_inbound_application_source")
   @@map("integration_inbound_applications")
 }

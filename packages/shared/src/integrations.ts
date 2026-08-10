@@ -48,7 +48,7 @@ export const integrationConnectionSchema = z.object({
   serviceCredentialStatus: integrationCredentialStatusSchema,
   serviceCredentialIsCaller: z.boolean(),
   syncHealth: z.object({
-    status: z.enum(["healthy", "inactive", "credential_blocked"]),
+    status: z.enum(["healthy", "inactive", "credential_blocked", "attention_required"]),
     blockedWork: z
       .object({
         total: z.number().int().nonnegative(),
@@ -60,6 +60,7 @@ export const integrationConnectionSchema = z.object({
               entityId: z.string().uuid(),
               operation: z.enum(["create", "update", "delete", "close"]),
               state: z.enum(["dead", "ambiguous"]),
+              reason: z.enum(["credential_invalid", "private-comment-write-uncertain"]),
               updatedAt: z.string(),
             }),
           )

@@ -31,6 +31,7 @@ const connection = {
           entityId: "77777777-7777-4777-8777-777777777777",
           operation: "update",
           state: "dead",
+          reason: "credential_invalid",
           updatedAt: "2026-08-04T10:00:00.000Z",
         },
       ],
@@ -104,6 +105,31 @@ describe("integrationConnectionSchema", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+
+  it("parses owner-visible private comment uncertainty", () => {
+    const result = integrationConnectionSchema.parse({
+      ...connection,
+      syncHealth: {
+        status: "attention_required",
+        blockedWork: {
+          total: 1,
+          items: [
+            {
+              ...connection.syncHealth.blockedWork.items[0],
+              reason: "private-comment-write-uncertain",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(result.syncHealth).toMatchObject({
+      status: "attention_required",
+      blockedWork: {
+        items: [{ reason: "private-comment-write-uncertain" }],
+      },
+    });
   });
 
   it("rejects more than 20 auth-blocked work details", () => {
