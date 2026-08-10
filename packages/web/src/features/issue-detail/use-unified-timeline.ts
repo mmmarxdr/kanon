@@ -35,8 +35,14 @@ export function mergeTimeline(
   activity: ActivityLog[],
 ): TimelineItem[] {
   const commentItems: TimelineItem[] = comments.map((c) => {
-    const actor: Actor = c.author ?? null;
-    if (AGENT_SOURCES.has(c.source)) {
+    const actor: Actor = c.author ??
+      (c.remoteAuthor
+        ? {
+            username: c.remoteAuthor.displayName,
+            provider: c.remoteAuthor.provider,
+          }
+        : null);
+    if (!c.remoteAuthor && AGENT_SOURCES.has(c.source)) {
       return {
         kind: "agent-comment",
         id: c.id,
@@ -69,7 +75,13 @@ export function mergeTimeline(
 }
 
 function mapActivityToItem(log: ActivityLog): TimelineItem {
-  const actor: Actor = log.actor ?? null;
+  const actor: Actor = log.actor ??
+    (log.remoteActor
+      ? {
+          username: log.remoteActor.displayName,
+          provider: log.remoteActor.provider,
+        }
+      : null);
   const base = { id: log.id, via: log.via, createdAt: log.createdAt };
 
   switch (log.action) {

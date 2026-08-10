@@ -22,7 +22,11 @@ function makeComment(
     id: overrides.id,
     body: overrides.body ?? "hello",
     source: overrides.source ?? "human",
-    author: overrides.author ?? { id: "u1", username: "alice" },
+    author:
+      overrides.author === undefined
+        ? { id: "u1", username: "alice" }
+        : overrides.author,
+    remoteAuthor: overrides.remoteAuthor ?? null,
     via: overrides.via ?? null,
     createdAt: overrides.createdAt,
     updatedAt: overrides.createdAt,
@@ -43,7 +47,11 @@ function makeActivity(
     oldValue: overrides.oldValue,
     newValue: overrides.newValue,
     via: overrides.via ?? null,
-    actor: overrides.actor ?? { id: "u1", username: "alice" },
+    actor:
+      overrides.actor === undefined
+        ? { id: "u1", username: "alice" }
+        : overrides.actor,
+    remoteActor: overrides.remoteActor ?? null,
     createdAt: overrides.createdAt,
   };
 }
@@ -167,6 +175,29 @@ describe("mergeTimeline — comment source classification", () => {
       }
     },
   );
+
+  it("classifies a remote-authored system comment as human", () => {
+    const items = mergeTimeline(
+      [
+        makeComment({
+          id: "remote-comment",
+          createdAt: "2026-06-01T10:00:00Z",
+          source: "system",
+          author: null,
+          remoteAuthor: { provider: "redmine", displayName: "Remote author" },
+        }),
+      ],
+      [],
+    );
+
+    expect(items[0]).toMatchObject({
+      kind: "human-comment",
+      author: {
+        username: "Remote author",
+        provider: "redmine",
+      },
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

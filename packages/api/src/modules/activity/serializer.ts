@@ -19,6 +19,10 @@ interface RawActivityLog {
   via?: string | null;
   createdAt: Date;
   member?: { id: string; username: string } | null;
+  remoteActor?: {
+    remoteDisplayName: string | null;
+    binding: { connection: { provider: string } };
+  } | null;
 }
 
 export interface SerializedActivityLog {
@@ -28,7 +32,8 @@ export interface SerializedActivityLog {
   oldValue: string | undefined;
   newValue: string | undefined;
   via: string | null;
-  actor: { id: string; username: string };
+  actor: { id: string; username: string } | null;
+  remoteActor: { provider: string; displayName: string } | null;
   createdAt: Date;
 }
 
@@ -56,7 +61,15 @@ export function serializeActivityLog(log: RawActivityLog): SerializedActivityLog
     via: log.via ?? null,
     actor: log.member
       ? { id: log.member.id, username: log.member.username }
-      : { id: "unknown", username: "unknown" },
+      : null,
+    remoteActor: log.remoteActor
+      ? {
+          provider: log.remoteActor.binding.connection.provider,
+          displayName:
+            log.remoteActor.remoteDisplayName?.trim().slice(0, 200) ||
+            "Remote user",
+        }
+      : null,
     createdAt: log.createdAt,
   };
 }

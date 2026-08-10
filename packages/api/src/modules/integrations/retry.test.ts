@@ -347,6 +347,63 @@ describe("integration worker retry and completion", () => {
     await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({ state: "done" });
   });
 
+  it("supersedes accidentally queued remote-authored comments before provider I/O", async () => {
+    const fixture = await createFixture();
+    await prisma.integrationProjectBinding.update({
+      where: { id: fixture.binding.id },
+      data: { commentDispatchEnabled: true },
+    });
+    const parentRef = await createRef(fixture, "issue", fixture.issue.id, "42");
+    const remoteAuthor = await prisma.integrationExternalIdentity.create({
+      data: {
+        bindingId: fixture.binding.id,
+        remoteUserId: "remote-comment-author",
+        remoteDisplayName: "Remote comment author",
+      },
+    });
+    const comment = await prisma.comment.create({
+      data: {
+        body: "Remote body",
+        issueId: fixture.issue.id,
+        remoteAuthorId: remoteAuthor.id,
+      },
+    });
+    const bodySha256 = createHash("sha256").update(comment.body).digest("hex");
+    const work = await createWork(fixture, {
+      entityType: "comment",
+      entityId: comment.id,
+      operation: "create",
+      marker: `<!-- kanon-comment:${comment.id} -->`,
+      payload: {
+        version: 1,
+        body: comment.body,
+        bodySha256,
+        commentUpdatedAt: comment.updatedAt.toISOString(),
+        issueId: fixture.issue.id,
+        parentRefId: parentRef.id,
+        parentRemoteIssueId: parentRef.externalId,
+        bindingEpoch: fixture.binding.lifecycleEpoch,
+        credentialId: fixture.credential.id,
+        credentialLastValidatedAt: null,
+        credentialRemoteUserId: "remote-user",
+      },
+    });
+    const pushComment = vi.fn();
+
+    await runIntegrationWorkerCycle(
+      prisma,
+      dependencies(adapter({ pushComment }), {
+        commentDispatchEnabled: true,
+        limit: 1,
+      }).deps,
+    );
+
+    expect(pushComment).not.toHaveBeenCalled();
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } }),
+    ).resolves.toMatchObject({ state: "superseded" });
+  });
+
   it("shares one non-overlapping cycle across concurrent wake-ups", async () => {
     let release!: () => void;
     const pending = new Promise<void>((resolve) => {

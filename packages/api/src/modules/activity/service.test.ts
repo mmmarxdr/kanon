@@ -148,6 +148,14 @@ describe("Activity Service — unit tests (mocked DB)", () => {
               user: { select: { email: true } },
             },
           },
+          remoteActor: {
+            select: {
+              remoteDisplayName: true,
+              binding: {
+                select: { connection: { select: { provider: true } } },
+              },
+            },
+          },
         },
       });
       expect(result).toHaveLength(2);

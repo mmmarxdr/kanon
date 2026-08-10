@@ -38,6 +38,14 @@ export async function getActivityByIssue(issueId: string) {
           user: { select: { email: true } },
         },
       },
+      remoteActor: {
+        select: {
+          remoteDisplayName: true,
+          binding: {
+            select: { connection: { select: { provider: true } } },
+          },
+        },
+      },
     },
   });
 }

@@ -3,13 +3,91 @@ import { Prisma } from "@prisma/client";
 import { env } from "../../config/env.js";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
-import { createActivityLog } from "../activity/service.js";
 import { parseAndUpsertMentions, emitMentionEvents } from "../mentions/service.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import { autoSubscribe } from "../issue-subscription/service.js";
 import type { CreateCommentBody } from "./schema.js";
 import { captureIntegrationWorkTx, createIntegrationWorkLaneKey } from "../integrations/outbox.js";
 import { hasReservedCommentMarker } from "../integrations/providers/redmine/comment-marker.js";
+
+type CommentOrigin =
+  | { kind: "local"; memberId: string }
+  | { kind: "remote"; bindingId: string; externalIdentityId: string };
+
+export async function createCommentWithActivityTx(
+  transaction: Prisma.TransactionClient,
+  params: {
+    issueId: string;
+    body: string;
+    source: CreateCommentBody["source"];
+    via?: string | null;
+    createdAt?: Date;
+    origin: CommentOrigin;
+  },
+) {
+  if (params.origin.kind === "remote") {
+    const identity = await transaction.integrationExternalIdentity.findFirst({
+      where: {
+        id: params.origin.externalIdentityId,
+        bindingId: params.origin.bindingId,
+        binding: { project: { issues: { some: { id: params.issueId } } } },
+      },
+      select: { id: true },
+    });
+    if (!identity) {
+      throw new AppError(
+        409,
+        "REMOTE_COMMENT_AUTHOR_INVALID",
+        "Remote comment author does not belong to the issue binding",
+      );
+    }
+  }
+
+  const comment = await transaction.comment.create({
+    data: {
+      body: params.body,
+      source: params.source,
+      issueId: params.issueId,
+      via: params.via ?? null,
+      createdAt: params.createdAt,
+      ...(params.origin.kind === "local"
+        ? { authorId: params.origin.memberId }
+        : { remoteAuthorId: params.origin.externalIdentityId }),
+    },
+    select: {
+      id: true,
+      body: true,
+      source: true,
+      via: true,
+      createdAt: true,
+      updatedAt: true,
+      issueId: true,
+      authorId: true,
+      author: {
+        select: {
+          id: true,
+          username: true,
+          user: { select: { email: true } },
+        },
+      },
+    },
+  });
+
+  await transaction.activityLog.create({
+    data: {
+      issueId: params.issueId,
+      action: "commented",
+      details: { commentId: comment.id, source: comment.source },
+      via: params.via ?? null,
+      createdAt: params.createdAt,
+      ...(params.origin.kind === "local"
+        ? { memberId: params.origin.memberId }
+        : { remoteActorId: params.origin.externalIdentityId }),
+    },
+  });
+
+  return comment;
+}
 
 /**
  * Create a comment on an issue and log the activity.
@@ -39,25 +117,6 @@ export async function createComment(
       `Issue "${issueKey}" not found`,
     );
   }
-
-  const create = {
-    data: {
-      body: body.body,
-      source: body.source,
-      issueId: issue.id,
-      authorId: memberId,
-      via: via ?? null,
-    },
-    include: {
-      author: {
-        select: {
-          id: true,
-          username: true,
-          user: { select: { email: true } },
-        },
-      },
-    },
-  } satisfies Prisma.CommentCreateArgs;
 
   const comment = commentCaptureEnabled
     ? await prisma.$transaction(async (transaction) => {
@@ -104,9 +163,12 @@ export async function createComment(
               },
               select: { id: true, externalUserId: true, lastValidatedAt: true },
             });
-        const value = await transaction.comment.create(create);
-        await transaction.activityLog.create({
-          data: { issueId: issue.id, memberId, action: "commented", details: { commentId: value.id, source: value.source }, via: via ?? null },
+        const value = await createCommentWithActivityTx(transaction, {
+          issueId: issue.id,
+          body: body.body,
+          source: body.source,
+          via,
+          origin: { kind: "local", memberId },
         });
         if (binding && parentRef && credential?.externalUserId) {
           const marker = `<!-- kanon-comment:${value.id} -->`;
@@ -152,18 +214,15 @@ export async function createComment(
         }
         return value;
       })
-    : await prisma.comment.create(create);
-
-  // Auto-create activity log for comment
-  if (!commentCaptureEnabled) {
-    await createActivityLog({
-      issueId: issue.id,
-      memberId,
-      action: "commented",
-      details: { commentId: comment.id, source: comment.source },
-      via,
-    });
-  }
+    : await prisma.$transaction((transaction) =>
+        createCommentWithActivityTx(transaction, {
+          issueId: issue.id,
+          body: body.body,
+          source: body.source,
+          via,
+          origin: { kind: "local", memberId },
+        }),
+      );
 
   // Auto-subscribe commenter (best-effort, D9)
   void autoSubscribe(issue.id, memberId, "commenter");
@@ -341,10 +400,18 @@ export async function listComments(issueKey: string) {
     );
   }
 
-  return prisma.comment.findMany({
+  const comments = await prisma.comment.findMany({
     where: { issueId: issue.id },
     orderBy: { createdAt: "asc" },
-    include: {
+    select: {
+      id: true,
+      body: true,
+      source: true,
+      via: true,
+      createdAt: true,
+      updatedAt: true,
+      issueId: true,
+      authorId: true,
       author: {
         select: {
           id: true,
@@ -352,6 +419,25 @@ export async function listComments(issueKey: string) {
           user: { select: { email: true } },
         },
       },
+      remoteAuthor: {
+        select: {
+          remoteDisplayName: true,
+          binding: {
+            select: { connection: { select: { provider: true } } },
+          },
+        },
+      },
     },
   });
+
+  return comments.map(({ remoteAuthor, ...comment }) => ({
+    ...comment,
+    remoteAuthor: remoteAuthor
+      ? {
+          provider: remoteAuthor.binding.connection.provider,
+          displayName:
+            remoteAuthor.remoteDisplayName?.trim().slice(0, 200) || "Remote user",
+        }
+      : null,
+  }));
 }

@@ -59,3 +59,23 @@ describe("UnifiedTimeline — Scenario 8: loading state", () => {
     expect(screen.getByTestId("timeline-loading")).toBeDefined();
   });
 });
+
+describe("UnifiedTimeline — remote authors", () => {
+  it("renders the provider beside the remote display name", () => {
+    const item: TimelineItem = {
+      kind: "human-comment",
+      id: "remote-comment",
+      via: "redmine-inbound",
+      createdAt: "2026-06-01T10:00:00Z",
+      body: "Remote body",
+      author: {
+        username: "Remote author",
+        provider: "redmine",
+      },
+    };
+
+    render(<UnifiedTimeline items={[item]} isLoading={false} isError={false} />);
+
+    expect(screen.getByText("Remote author (redmine)")).toBeDefined();
+  });
+});

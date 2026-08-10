@@ -12,6 +12,7 @@ vi.mock("../../../config/prisma.js", () => {
   const transaction = {
     comment: {
       findUnique: vi.fn(),
+      findMany: vi.fn(),
       update: vi.fn(),
       create: vi.fn(),
     },
@@ -27,6 +28,7 @@ vi.mock("../../../config/prisma.js", () => {
     memberIntegrationCredential: { findFirst: vi.fn() },
     integrationSyncWork: { update: vi.fn() },
     integrationConflict: { create: vi.fn() },
+    integrationExternalIdentity: { findFirst: vi.fn() },
     $queryRaw: vi.fn(),
   };
   return { prisma: { ...transaction, $transaction: vi.fn((operation) => operation(transaction)) } };
@@ -42,19 +44,20 @@ vi.mock("../../mentions/service.js", () => ({
   parseAndUpsertMentions: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Mock createActivityLog (used by createComment — indirect dep but listed for safety)
-vi.mock("../../activity/service.js", () => ({
-  createActivityLog: vi.fn().mockResolvedValue({}),
-}));
-
 import { prisma } from "../../../config/prisma.js";
 import { parseAndUpsertMentions } from "../../mentions/service.js";
-import { updateComment, createComment } from "../service.js";
+import {
+  createComment,
+  createCommentWithActivityTx,
+  listComments,
+  updateComment,
+} from "../service.js";
 import { captureIntegrationWorkTx } from "../../integrations/outbox.js";
 
 const mockIssueFindUnique = vi.mocked(prisma.issue.findUnique);
 const mockCommentCreate = vi.mocked(prisma.comment.create);
 const mockCommentFindUnique = vi.mocked(prisma.comment.findUnique);
+const mockCommentFindMany = vi.mocked(prisma.comment.findMany);
 const mockCommentUpdate = vi.mocked(prisma.comment.update);
 const mockActivityLogCreate = vi.mocked(prisma.activityLog.create);
 const mockParseAndUpsertMentions = vi.mocked(parseAndUpsertMentions);
@@ -363,5 +366,113 @@ describe("A6.1 — createComment wires parseAndUpsertMentions", () => {
     const call = mockParseAndUpsertMentions.mock.calls[0]![0];
     // workspaceId must come from issue.project.workspaceId (ws-99, not ws-1)
     expect(call.workspaceId).toBe("ws-99");
+  });
+});
+
+describe("remote comment authorship", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("creates the comment and activity with the same remote principal", async () => {
+    vi.mocked(prisma.integrationExternalIdentity.findFirst).mockResolvedValue({
+      id: "remote-author-1",
+    } as any);
+    mockCommentCreate.mockResolvedValue({
+      ...makeCreatedComment(),
+      authorId: null,
+      remoteAuthorId: "remote-author-1",
+      author: null,
+    } as any);
+
+    await createCommentWithActivityTx(prisma as any, {
+      issueId: "iss-1",
+      body: "Remote body",
+      source: "system",
+      via: "redmine-inbound",
+      origin: {
+        kind: "remote",
+        bindingId: "binding-1",
+        externalIdentityId: "remote-author-1",
+      },
+    });
+
+    const commentData = mockCommentCreate.mock.calls[0]![0].data;
+    expect(commentData).toMatchObject({ remoteAuthorId: "remote-author-1" });
+    expect(commentData).not.toHaveProperty("authorId");
+    const activityData = mockActivityLogCreate.mock.calls[0]![0].data;
+    expect(activityData).toMatchObject({ remoteActorId: "remote-author-1" });
+    expect(activityData).not.toHaveProperty("memberId");
+    expect(mockCaptureIntegrationWorkTx).not.toHaveBeenCalled();
+  });
+
+  it("rejects a remote principal outside the issue binding", async () => {
+    vi.mocked(prisma.integrationExternalIdentity.findFirst).mockResolvedValue(null);
+
+    await expect(
+      createCommentWithActivityTx(prisma as any, {
+        issueId: "iss-1",
+        body: "Remote body",
+        source: "system",
+        origin: {
+          kind: "remote",
+          bindingId: "binding-1",
+          externalIdentityId: "remote-author-1",
+        },
+      }),
+    ).rejects.toMatchObject({ code: "REMOTE_COMMENT_AUTHOR_INVALID" });
+
+    expect(mockCommentCreate).not.toHaveBeenCalled();
+    expect(mockActivityLogCreate).not.toHaveBeenCalled();
+  });
+
+  it("returns only bounded remote author metadata", async () => {
+    mockIssueFindUnique.mockResolvedValue({ id: "iss-1" } as any);
+    mockCommentFindMany.mockResolvedValue([
+      {
+        id: "cmt-remote",
+        body: "Remote body",
+        source: "system",
+        via: "redmine-inbound",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        issueId: "iss-1",
+        authorId: null,
+        author: null,
+        remoteAuthor: {
+          remoteDisplayName: `  ${"x".repeat(250)}  `,
+          binding: { connection: { provider: "redmine" } },
+        },
+      },
+      {
+        id: "cmt-remote-fallback",
+        body: "Remote body",
+        source: "system",
+        via: "redmine-inbound",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        issueId: "iss-1",
+        authorId: null,
+        author: null,
+        remoteAuthor: {
+          remoteDisplayName: null,
+          binding: { connection: { provider: "redmine" } },
+        },
+      },
+    ] as any);
+
+    const [comment, fallback] = await listComments("TEST-1");
+
+    expect(comment).toMatchObject({
+      author: null,
+      remoteAuthor: { provider: "redmine", displayName: "x".repeat(200) },
+    });
+    expect(comment).not.toHaveProperty("remoteAuthorId");
+    expect(comment!.remoteAuthor).not.toHaveProperty("remoteUserId");
+    expect(comment!.remoteAuthor).not.toHaveProperty("remoteLogin");
+    expect(fallback!.remoteAuthor).toEqual({
+      provider: "redmine",
+      displayName: "Remote user",
+    });
   });
 });

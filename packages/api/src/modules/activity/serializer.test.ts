@@ -114,7 +114,7 @@ describe("serializeActivityLog — state_changed (KAN-41)", () => {
     expect(result.newValue).toBe("member-uuid");
   });
 
-  it("returns unknown actor when member is null", () => {
+  it("returns no local or remote actor when both relations are null", () => {
     const log = {
       id: "log-4",
       action: "state_changed",
@@ -125,9 +125,33 @@ describe("serializeActivityLog — state_changed (KAN-41)", () => {
 
     const result = serializeActivityLog(log);
 
-    expect(result.actor).toEqual({ id: "unknown", username: "unknown" });
+    expect(result.actor).toBeNull();
+    expect(result.remoteActor).toBeNull();
     expect(result.oldValue).toBe("backlog");
     expect(result.newValue).toBe("review");
+  });
+
+  it("returns bounded remote actor metadata without provider identifiers", () => {
+    const log = {
+      id: "log-remote",
+      action: "commented",
+      details: { commentId: "comment-1" },
+      createdAt: new Date("2026-06-01T13:00:00Z"),
+      member: null,
+      remoteActor: {
+        remoteDisplayName: ` ${"r".repeat(250)} `,
+        binding: { connection: { provider: "redmine" } },
+      },
+    };
+
+    const result = serializeActivityLog(log);
+
+    expect(result.actor).toBeNull();
+    expect(result.remoteActor).toEqual({
+      provider: "redmine",
+      displayName: "r".repeat(200),
+    });
+    expect(result.remoteActor).not.toHaveProperty("id");
   });
 
   it("returns blank from/to when details is null", () => {

@@ -114,6 +114,7 @@ export interface IssueDetail extends Omit<Issue, "children" | "assignee"> {
 }
 
 export type CommentSource = "human" | "mcp" | "engram_sync" | "system" | "adr";
+export type RemoteActor = { provider: string; displayName: string };
 
 // Re-export DocumentKind from shared so file-local usage is consistent.
 export type { DocumentKind };
@@ -140,7 +141,8 @@ export interface Comment {
   id: string;
   body: string;
   source: CommentSource;
-  author: { id: string; username: string };
+  author: { id: string; username: string } | null;
+  remoteAuthor?: RemoteActor | null;
   /** Provenance: tool that created this comment. Null for pre-KAN-30 rows. */
   via: string | null;
   createdAt: string;
@@ -158,6 +160,7 @@ export interface ActivityLog {
   newValue?: string;
   /** Provenance: tool that created this activity. Null for pre-KAN-30 rows. */
   via: string | null;
-  actor: { id: string; username: string };
+  actor: { id: string; username: string } | null;
+  remoteActor?: RemoteActor | null;
   createdAt: string;
 }

@@ -9,6 +9,7 @@ import {
   seedTestProject,
   seedTestWorkspace,
 } from "../../test/helpers.js";
+import { createComment, listComments } from "../comment/service.js";
 import { transitionIssue } from "../issue/service.js";
 import type { InboundCursor, InboundIssueStatusChange } from "./core/types.js";
 import { runInboundSyncCycle, type InboundIssueDetailOptions } from "./inbound.js";
@@ -288,7 +289,7 @@ describe("Redmine inbound sync", () => {
   });
 
   it("imports public Redmine comments once and excludes private notes", async () => {
-    const { owner, binding, issue } = await fixture();
+    const { binding, issue } = await fixture();
     const observedAt = new Date("2026-08-01T10:01:00.000Z");
     const publicComment: RedmineCommentChange = {
       identity: {
@@ -343,9 +344,53 @@ describe("Redmine inbound sync", () => {
       body: "Comment created in Redmine",
       source: "system",
       via: "redmine-inbound",
-      authorId: owner.id,
+      authorId: null,
+      remoteAuthorId: expect.any(String),
       createdAt: observedAt,
     });
+    const remoteAuthor = await prisma.integrationExternalIdentity.findUniqueOrThrow({
+      where: {
+        bindingId_remoteUserId: { bindingId: binding.id, remoteUserId: "5" },
+      },
+    });
+    expect(remoteAuthor).toMatchObject({
+      remoteLogin: "author",
+      remoteDisplayName: "Remote author",
+    });
+    const [readComment] = await listComments(issue.key);
+    expect(readComment).toMatchObject({
+      author: null,
+      remoteAuthor: {
+        provider: "redmine",
+        displayName: "Remote author",
+      },
+    });
+    expect(readComment).not.toHaveProperty("remoteAuthorId");
+    expect(readComment!.remoteAuthor).not.toHaveProperty("remoteUserId");
+    expect(readComment!.remoteAuthor).not.toHaveProperty("remoteLogin");
+    await prisma.integrationExternalIdentity.update({
+      where: { id: remoteAuthor.id },
+      data: { remoteDisplayName: null },
+    });
+    await expect(listComments(issue.key)).resolves.toEqual([
+      expect.objectContaining({
+        remoteAuthor: { provider: "redmine", displayName: "Remote user" },
+      }),
+    ]);
+    await expect(
+      prisma.activityLog.findFirstOrThrow({
+        where: { issueId: issue.id, action: "commented" },
+      }),
+    ).resolves.toMatchObject({
+      memberId: null,
+      remoteActorId: remoteAuthor.id,
+      createdAt: observedAt,
+    });
+    await expect(
+      prisma.integrationSyncWork.count({
+        where: { entityType: "comment", entityId: comment.id },
+      }),
+    ).resolves.toBe(0);
     await expect(
       prisma.externalRef.findUniqueOrThrow({
         where: {
@@ -382,6 +427,233 @@ describe("Redmine inbound sync", () => {
     await runInboundSyncCycle(prisma, replay);
 
     await expect(prisma.comment.count({ where: { issueId: issue.id } })).resolves.toBe(1);
+  });
+
+  it("fails closed when a public comment has no remote actor", async () => {
+    const { binding, issue } = await fixture();
+    const observedAt = new Date("2026-08-01T10:01:00.000Z");
+    const setup = dependencies([change(observedAt, "review")]);
+    const detail = {
+      ...detailChange(observedAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+      }),
+      comments: [
+        {
+          identity: {
+            type: "comment",
+            remoteId: "actorless",
+            remoteProjectId: "41",
+            parent: { type: "issue", remoteId: "100" },
+          },
+          operation: "upsert",
+          changedAt: observedAt,
+          createdAt: observedAt,
+          sourceVersion: "sha256:actorless",
+          fields: { body: "Actorless comment" },
+        },
+      ],
+    };
+    setup.loadIssueDetail.mockResolvedValue(detail);
+
+    await runInboundSyncCycle(prisma, setup);
+
+    await expect(prisma.comment.count({ where: { issueId: issue.id } })).resolves.toBe(0);
+    await expect(
+      prisma.integrationInboundApplication.findFirstOrThrow({
+        where: {
+          bindingId: binding.id,
+          remoteEntityType: "comment",
+          remoteId: "actorless",
+        },
+      }),
+    ).resolves.toMatchObject({
+      state: "skipped",
+      outcome: { reason: "remote-comment-author-missing" },
+    });
+  });
+
+  it("enforces exactly one local or remote principal in the database", async () => {
+    const { owner, binding, issue } = await fixture();
+    const remote = await prisma.integrationExternalIdentity.create({
+      data: {
+        bindingId: binding.id,
+        remoteUserId: "constraint-actor",
+        remoteDisplayName: "Constraint actor",
+      },
+    });
+
+    await expect(
+      prisma.comment.create({
+        data: {
+          issueId: issue.id,
+          body: "No author",
+          authorId: null,
+          remoteAuthorId: null,
+        },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      prisma.comment.create({
+        data: {
+          issueId: issue.id,
+          body: "Two authors",
+          authorId: owner.id,
+          remoteAuthorId: remote.id,
+        },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      prisma.activityLog.create({
+        data: {
+          issueId: issue.id,
+          action: "commented",
+          memberId: null,
+          remoteActorId: null,
+        },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      prisma.activityLog.create({
+        data: {
+          issueId: issue.id,
+          action: "commented",
+          memberId: owner.id,
+          remoteActorId: remote.id,
+        },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("rolls back a local comment when its shadow activity fails", async () => {
+    const { owner, issue } = await fixture();
+    await prisma.$executeRawUnsafe(
+      `ALTER TABLE "activity_logs" ADD CONSTRAINT "test_local_comment_activity_rollback" CHECK ("action" <> 'commented')`,
+    );
+
+    try {
+      await expect(
+        createComment(
+          issue.key,
+          { body: "Rollback local comment", source: "human" },
+          owner.id,
+          null,
+          false,
+        ),
+      ).rejects.toThrow();
+      await expect(
+        prisma.comment.count({
+          where: { issueId: issue.id, body: "Rollback local comment" },
+        }),
+      ).resolves.toBe(0);
+    } finally {
+      await prisma.$executeRawUnsafe(
+        'ALTER TABLE "activity_logs" DROP CONSTRAINT IF EXISTS "test_local_comment_activity_rollback"',
+      );
+    }
+  });
+
+  it("rolls back the remote principal, comment, and activity when ref creation fails", async () => {
+    const { binding, issue } = await fixture();
+    const observedAt = new Date("2026-08-01T10:01:00.000Z");
+    const setup = dependencies([change(observedAt, "review")]);
+    const detail = {
+      ...detailChange(observedAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+      }),
+      comments: [
+        {
+          identity: {
+            type: "comment",
+            remoteId: "rollback-comment",
+            remoteProjectId: "41",
+            parent: { type: "issue", remoteId: "100" },
+          },
+          operation: "upsert",
+          changedAt: observedAt,
+          createdAt: observedAt,
+          sourceVersion: "sha256:rollback-comment",
+          actor: {
+            remoteId: "rollback-author",
+            displayName: "Rollback author",
+          },
+          fields: { body: "Rollback body" },
+        },
+      ],
+    };
+    setup.loadIssueDetail.mockResolvedValue(detail);
+    await prisma.$executeRawUnsafe(
+      `ALTER TABLE "external_refs" ADD CONSTRAINT "test_remote_comment_ref_rollback" CHECK ("external_id" <> 'rollback-comment')`,
+    );
+
+    try {
+      await runInboundSyncCycle(prisma, setup);
+
+      await expect(
+        prisma.integrationExternalIdentity.count({
+          where: { bindingId: binding.id, remoteUserId: "rollback-author" },
+        }),
+      ).resolves.toBe(0);
+      await expect(
+        prisma.comment.count({ where: { issueId: issue.id } }),
+      ).resolves.toBe(0);
+      await expect(
+        prisma.activityLog.count({
+          where: { issueId: issue.id, action: "commented" },
+        }),
+      ).resolves.toBe(0);
+      await expect(
+        prisma.externalRef.count({
+          where: { bindingId: binding.id, externalId: "rollback-comment" },
+        }),
+      ).resolves.toBe(0);
+      await expect(
+        prisma.integrationInboundApplication.count({
+          where: {
+            bindingId: binding.id,
+            remoteEntityType: "comment",
+            remoteId: "rollback-comment",
+          },
+        }),
+      ).resolves.toBe(0);
+    } finally {
+      await prisma.$executeRawUnsafe(
+        'ALTER TABLE "external_refs" DROP CONSTRAINT IF EXISTS "test_remote_comment_ref_rollback"',
+      );
+    }
+
+    const replay = dependencies([change(observedAt, "review")]);
+    replay.now = () => new Date(baseline.getTime() + 60_001);
+    replay.loadIssueDetail.mockResolvedValue(detail);
+    await runInboundSyncCycle(prisma, replay);
+    await runInboundSyncCycle(prisma, replay);
+
+    await expect(
+      prisma.integrationExternalIdentity.count({
+        where: { bindingId: binding.id, remoteUserId: "rollback-author" },
+      }),
+    ).resolves.toBe(1);
+    await expect(
+      prisma.comment.count({ where: { issueId: issue.id } }),
+    ).resolves.toBe(1);
+    await expect(
+      prisma.activityLog.count({
+        where: { issueId: issue.id, action: "commented" },
+      }),
+    ).resolves.toBe(1);
+    await expect(
+      prisma.externalRef.count({
+        where: { bindingId: binding.id, externalId: "rollback-comment" },
+      }),
+    ).resolves.toBe(1);
+    await expect(
+      prisma.integrationInboundApplication.findFirstOrThrow({
+        where: {
+          bindingId: binding.id,
+          remoteEntityType: "comment",
+          remoteId: "rollback-comment",
+        },
+      }),
+    ).resolves.toMatchObject({ state: "applied" });
   });
 
   it("applies remote-only linked fields atomically without an outbound echo", async () => {
@@ -2009,7 +2281,13 @@ describe("Redmine inbound comment echoes", () => {
         laneKey: issue.id,
         actorKey: `member:${owner.id}`,
         actorKind: "user",
-        payload: { version: 1, issueId: issue.id, parentRefId: ref.id, parentRemoteIssueId: "100" },
+        payload: {
+          version: 1,
+          issueId: issue.id,
+          parentRefId: ref.id,
+          parentRemoteIssueId: "100",
+          credentialRemoteUserId: "5",
+        },
         correlationId: local.id,
         epoch: binding.lifecycleEpoch,
         refId: null,
@@ -2027,6 +2305,10 @@ describe("Redmine inbound comment echoes", () => {
     await runInboundSyncCycle(prisma, setup);
 
     await expect(prisma.comment.count({ where: { issueId: issue.id } })).resolves.toBe(1);
+    await expect(prisma.comment.findUniqueOrThrow({ where: { id: local.id } })).resolves.toMatchObject({
+      authorId: owner.id,
+      remoteAuthorId: null,
+    });
     await expect(
       prisma.externalRef.findUniqueOrThrow({
         where: { connectionId_entityType_externalId: { connectionId: connection.id, entityType: "comment", externalId: "902" } },
@@ -2037,6 +2319,104 @@ describe("Redmine inbound comment echoes", () => {
       outcome: expect.objectContaining({ provenance: "redmine-inbound-echo", marker }),
     });
   });
+
+  it.each([
+    [
+      "mismatched",
+      { remoteId: "6", displayName: "Different remote author" },
+      2,
+    ],
+    ["missing", undefined, 1],
+  ] as const)(
+    "does not accept a %s remote actor as outbound echo proof",
+    async (_proof, actor, expectedComments) => {
+      const { owner, binding, connection, issue, ref } = await fixture();
+      const local = await prisma.comment.create({
+        data: {
+          id: commentUuid,
+          issueId: issue.id,
+          authorId: owner.id,
+          body: "Delivered body",
+        },
+      });
+      const work = await prisma.integrationSyncWork.create({
+        data: {
+          bindingId: binding.id,
+          entityType: "comment",
+          entityId: local.id,
+          direction: "outbound",
+          operation: "create",
+          dedupeKey: `comment-echo-actor-${_proof}`,
+          laneKey: issue.id,
+          actorKey: `member:${owner.id}`,
+          actorKind: "user",
+          payload: {
+            version: 1,
+            issueId: issue.id,
+            parentRefId: ref.id,
+            parentRemoteIssueId: "100",
+            credentialRemoteUserId: "5",
+          },
+          correlationId: local.id,
+          epoch: binding.lifecycleEpoch,
+          refId: null,
+          marker,
+          state: "leased",
+        },
+      });
+      const observedAt = new Date("2026-08-01T10:01:00.000Z");
+      const setup = dependencies([change(observedAt, "review")]);
+      setup.loadIssueDetail.mockResolvedValue({
+        ...detailChange(observedAt, {
+          identity: {
+            type: "issue",
+            remoteId: "100",
+            remoteProjectId: "41",
+          },
+        }),
+        comments: [{ ...markedJournal(observedAt), actor }],
+      });
+
+      await runInboundSyncCycle(prisma, setup);
+
+      await expect(
+        prisma.comment.count({ where: { issueId: issue.id } }),
+      ).resolves.toBe(expectedComments);
+      await expect(
+        prisma.integrationSyncWork.findUniqueOrThrow({
+          where: { id: work.id },
+        }),
+      ).resolves.toMatchObject({ state: "leased", refId: null });
+      await expect(
+        prisma.externalRef.findFirst({
+          where: {
+            connectionId: connection.id,
+            entityType: "comment",
+            entityId: local.id,
+          },
+        }),
+      ).resolves.toBeNull();
+      if (actor) {
+        await expect(
+          prisma.integrationInboundApplication.findFirstOrThrow({
+            where: { bindingId: binding.id, remoteId: "902" },
+          }),
+        ).resolves.toMatchObject({
+          workId: null,
+          outcome: { provenance: "redmine-inbound" },
+        });
+      } else {
+        await expect(
+          prisma.integrationInboundApplication.findFirstOrThrow({
+            where: { bindingId: binding.id, remoteId: "902" },
+          }),
+        ).resolves.toMatchObject({
+          state: "skipped",
+          outcome: { reason: "remote-comment-author-missing" },
+        });
+      }
+    },
+  );
 
   it("imports an altered marked journal without claiming its local comment proof", async () => {
     const { owner, binding, connection, issue, ref } = await fixture();
@@ -2081,6 +2461,8 @@ describe("Redmine inbound comment echoes", () => {
       body: alteredBody,
       source: "system",
       via: "redmine-inbound",
+      authorId: null,
+      remoteAuthorId: expect.any(String),
     });
     await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({ state: "leased" });
     await expect(
@@ -2168,7 +2550,14 @@ describe("Redmine inbound comment echoes", () => {
           laneKey: issue.id,
           actorKey: `member:${owner.id}`,
           actorKind: "user",
-          payload: { version: 1, issueId: issue.id, parentRefId: ref.id, parentRemoteIssueId: "100", ...payloadOverride },
+          payload: {
+            version: 1,
+            issueId: issue.id,
+            parentRefId: ref.id,
+            parentRemoteIssueId: "100",
+            credentialRemoteUserId: "5",
+            ...payloadOverride,
+          },
           correlationId: local.id,
           epoch: binding.lifecycleEpoch,
           refId: null,
