@@ -496,6 +496,50 @@ describe("RedmineProviderAdapter", () => {
     ]);
   });
 
+  it("walks a non-monotonic Redmine workflow when reopening", async () => {
+    const http = client();
+    http.put.mockResolvedValue(undefined);
+    http.get
+      .mockResolvedValueOnce({
+        issue: { id: 99, status: { id: 13 }, updated_on: "2026-08-10T01:00:00Z" },
+      })
+      .mockResolvedValueOnce({
+        issue_statuses: [{ id: 3 }, { id: 10 }, { id: 11 }, { id: 2 }, { id: 8 }, { id: 13 }],
+      })
+      .mockResolvedValueOnce({
+        issue: { id: 99, status: { id: 13 }, allowed_statuses: [{ id: 13 }, { id: 2 }] },
+      })
+      .mockResolvedValueOnce({
+        issue: { id: 99, status: { id: 2 }, allowed_statuses: [{ id: 2 }, { id: 8 }] },
+      })
+      .mockResolvedValueOnce({
+        issue: {
+          id: 99,
+          status: { id: 8 },
+          allowed_statuses: [{ id: 8 }],
+          updated_on: "2026-08-10T01:05:00Z",
+        },
+      });
+    const adapter = new RedmineProviderAdapter(http, {
+      writeMap: { in_progress: "8" },
+      resolveExternalId: async (type) => (type === "issue" ? "99" : null),
+    });
+    const statusPatch = {
+      ...noChange,
+      status: { kind: "set", value: "in_progress" },
+    } as const;
+
+    await expect(adapter.pushIssue(issue, statusPatch)).resolves.toMatchObject({
+      requestedStatusId: "8",
+      achievedStatusId: "8",
+    });
+    expect(http.put.mock.calls.map((call) => call[1])).toEqual([
+      { issue: { status_id: "8" } },
+      { issue: { status_id: "2" } },
+      { issue: { status_id: "8" } },
+    ]);
+  });
+
   it("rejects a requested status without a Redmine mapping", async () => {
     const http = client();
     const adapter = new RedmineProviderAdapter(http, {

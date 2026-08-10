@@ -564,21 +564,16 @@ export class RedmineProviderAdapter implements PmProviderAdapter {
       if (currentStatusId === targetStatusId) return current;
       visited.add(currentStatusId);
 
-      const currentIndex = order.get(currentStatusId);
-      if (currentIndex === undefined || !Array.isArray(current.issue.allowed_statuses)) return current;
-      const forward = targetIndex > currentIndex;
+      if (!order.has(currentStatusId) || !Array.isArray(current.issue.allowed_statuses)) return current;
       const candidates = current.issue.allowed_statuses
         .map((status) => ({ id: externalId(status.id), index: order.get(externalId(status.id)) }))
         .filter(
           (candidate): candidate is { id: string; index: number } =>
-            candidate.index !== undefined &&
-            !visited.has(candidate.id) &&
-            (forward
-              ? candidate.index > currentIndex && candidate.index <= targetIndex
-              : candidate.index < currentIndex && candidate.index >= targetIndex),
+            candidate.index !== undefined && !visited.has(candidate.id),
         )
-        .sort((left, right) =>
-          forward ? right.index - left.index : left.index - right.index,
+        .sort(
+          (left, right) =>
+            Math.abs(left.index - targetIndex) - Math.abs(right.index - targetIndex),
         );
       const next = candidates[0];
       if (!next) return current;
