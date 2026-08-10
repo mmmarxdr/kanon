@@ -112,6 +112,7 @@
   "redmineDisconnect": "Disconnect",
   "redmineSyncBlockedTitle": "Redmine sync needs attention",
   "redmineSyncBlockedHelp": "Synchronization is blocked by a rejected Redmine credential. Ask the credential owner or a workspace owner to replace it.",
+  "redmineSyncPrivacyAttentionHelp": "A private Redmine comment may have been sent before redaction. Review the blocked operation before resuming comment delivery.",
   "redmineSyncInactiveTitle": "Redmine sync is inactive",
   "redmineSyncInactiveHelp": "The connection is not active, so no issues or time entries are being synchronized. Ask a workspace owner to finish the mapping and activate it.",
   "redmineBlockedCount_one": "{{count}} blocked sync operation",

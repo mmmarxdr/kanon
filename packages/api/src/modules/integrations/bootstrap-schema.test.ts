@@ -120,6 +120,20 @@ describe("Redmine inbound bootstrap persistence", () => {
       prisma.integrationInboundApplication.create({
         data: {
           ...application,
+          sourceVersion: "sha256:version-2",
+          applicationKey: randomUUID(),
+          correlationId: randomUUID(),
+        },
+      }),
+    ).resolves.toMatchObject({
+      remoteUpdatedAt: application.remoteUpdatedAt,
+      sourceVersion: "sha256:version-2",
+    });
+
+    await expect(
+      prisma.integrationInboundApplication.create({
+        data: {
+          ...application,
           remoteUpdatedAt: new Date("2026-08-03T10:01:00.000Z"),
           applicationKey: randomUUID(),
           correlationId: randomUUID(),

@@ -589,6 +589,16 @@ describe("integration credentials", () => {
         skippedReason: "provider_failure",
       }),
     });
+    await prisma.integrationSyncWork.create({
+      data: blockedWorkData({
+        bindingId: binding.id,
+        credentialId: credential.id,
+        entityId: project.id,
+        actorKey: `member:${owner.id}`,
+        operation: "create",
+        skippedReason: "private-comment-write-uncertain",
+      }),
+    });
 
     const ownerResponse = await app.inject({
       method: "GET",
@@ -599,7 +609,7 @@ describe("integration credentials", () => {
     expect(ownerDetail.serviceCredentialStatus).toBe("invalid");
     expect(ownerDetail.syncHealth).toMatchObject({
       status: "credential_blocked",
-      blockedWork: { total: 22 },
+      blockedWork: { total: 23 },
     });
     expect(ownerDetail.syncHealth.blockedWork?.items).toHaveLength(20);
     expect(Object.keys(ownerDetail.syncHealth.blockedWork!.items[0]!).sort()).toEqual([
@@ -607,6 +617,7 @@ describe("integration credentials", () => {
       "entityType",
       "id",
       "operation",
+      "reason",
       "state",
       "updatedAt",
     ]);
