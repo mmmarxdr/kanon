@@ -48,11 +48,10 @@ export const PREVIEW_PROFILE = {
 /** Assert search source encodes LIMIT (limit+1) and authorized_projects join before match. */
 export function assertPreviewSqlPlanBoundaries(searchSource: string): void {
   expectContains(searchSource, "authorized_projects");
-  expectContains(searchSource, "LIMIT ${fetchLimit}");
-  expectContains(searchSource, "fetchLimit = limit + 1");
+  expectContains(searchSource, "LIMIT ${limit + 1}");
   // Visibility CTE / join precedes WHERE title/key match predicates.
   const authIdx = searchSource.indexOf("authorized_projects");
-  const whereIdx = searchSource.indexOf("WHERE (LOWER(i.title)");
+  const whereIdx = searchSource.indexOf("WHERE ${tokenMatchPredicate}");
   if (authIdx === -1 || whereIdx === -1 || authIdx > whereIdx) {
     throw new Error("search plan must join authorized_projects before match predicates");
   }
