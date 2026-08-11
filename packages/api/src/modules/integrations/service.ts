@@ -68,6 +68,7 @@ type Database = Pick<
   | "user"
   | "integrationConnection"
   | "integrationProjectBinding"
+  | "integrationSyncWork"
   | "integrationExternalIdentity"
   | "memberIntegrationCredential"
 >;
@@ -384,6 +385,38 @@ async function lockRemoteProject(
   );
 }
 
+const unresolvedIssueDeleteWhere = {
+  entityType: "issue",
+  operation: "delete",
+  state: { notIn: ["done", "superseded"] },
+} satisfies Prisma.IntegrationSyncWorkWhereInput;
+
+const releaseBlockingWorkWhere = {
+  OR: [
+    { state: { in: ["leased", "ambiguous"] } },
+    unresolvedIssueDeleteWhere,
+  ],
+} satisfies Prisma.IntegrationSyncWorkWhereInput;
+
+async function assertNoUnresolvedIssueDeletes(
+  database: Database,
+  connectionId: string,
+) {
+  const unresolved = await database.integrationSyncWork.count({
+    where: {
+      binding: { connectionId, releasedAt: null },
+      ...unresolvedIssueDeleteWhere,
+    },
+  });
+  if (unresolved > 0) {
+    throw new AppError(
+      409,
+      "REMOTE_DELETE_IN_PROGRESS",
+      "Wait for queued remote issue deletions to finish before changing the integration.",
+    );
+  }
+}
+
 async function redriveAuthBlockedWork(
   transaction: Prisma.TransactionClient,
   connectionId: string,
@@ -409,6 +442,22 @@ async function redriveAuthBlockedWork(
     select: { id: true, lifecycleEpoch: true, releaseRequestedAt: true },
   });
   for (const binding of bindings) {
+    await transaction.integrationSyncWork.updateMany({
+      where: {
+        ...where,
+        bindingId: binding.id,
+        entityType: "issue",
+        operation: "delete",
+        state: { in: ["dead", "ambiguous", "skipped"] },
+      },
+      data: {
+        state: "retry",
+        epoch: binding.lifecycleEpoch,
+        availableAt: now,
+        skippedReason: null,
+        authCredentialId: replacementCredentialId,
+      },
+    });
     if (binding.releaseRequestedAt) {
       await transaction.integrationSyncWork.updateMany({
         where: { ...where, bindingId: binding.id, state: "ambiguous" },
@@ -571,6 +620,7 @@ export async function configureProviderMaps(
   return prisma.$transaction(async (transaction) => {
     await lockConnection(transaction, connectionId);
     const current = await ownedConnection(transaction, connectionId, userId, workspaceId);
+    await assertNoUnresolvedIssueDeletes(transaction, connectionId);
     const releasePending = await transaction.integrationProjectBinding.count({
       where: { connectionId, releaseRequestedAt: { not: null }, releasedAt: null },
     });
@@ -681,6 +731,7 @@ export async function bindProject(
       if (localBinding.remoteProjectId === input.remoteProjectId) return localBinding;
       throw new AppError(409, "PROJECT_ALREADY_BOUND", "Kanon project is already bound to Redmine");
     }
+    await assertNoUnresolvedIssueDeletes(transaction, connectionId);
     const remoteBinding = await transaction.integrationProjectBinding.findFirst({
       where: {
         remoteProjectId: input.remoteProjectId,
@@ -706,7 +757,7 @@ export async function bindProject(
       const unresolved = await transaction.integrationSyncWork.count({
         where: {
           bindingId: historical.id,
-          state: { in: ["leased", "ambiguous"] },
+          ...releaseBlockingWorkWhere,
         },
       });
       const openConflicts = await transaction.integrationConflict.count({
@@ -825,7 +876,7 @@ export async function unbindProject(
 
     await lockRemoteProject(transaction, connection, binding.remoteProjectId);
     const existingUnresolvedWork = await transaction.integrationSyncWork.count({
-      where: { bindingId, state: { in: ["leased", "ambiguous"] } },
+      where: { bindingId, ...releaseBlockingWorkWhere },
     });
     if (
       existingUnresolvedWork > 0 &&
@@ -857,7 +908,7 @@ export async function unbindProject(
       },
     });
     const unresolvedWork = await transaction.integrationSyncWork.count({
-      where: { bindingId, state: { in: ["leased", "ambiguous"] } },
+      where: { bindingId, ...releaseBlockingWorkWhere },
     });
     if (unresolvedWork > 0) {
       return { status: "draining" as const, binding: releaseRequested };
@@ -954,7 +1005,7 @@ export async function finalizeDrainedBindingReleases(
     where: {
       releaseRequestedAt: { not: null },
       releasedAt: null,
-      works: { none: { state: { in: ["leased", "ambiguous"] } } },
+      works: { none: releaseBlockingWorkWhere },
     },
     orderBy: { releaseRequestedAt: "asc" },
     take: limit,
@@ -972,7 +1023,7 @@ export async function finalizeDrainedBindingReleases(
       });
       if (!current?.releaseRequestedAt || current.releasedAt) return 0;
       const unresolved = await transaction.integrationSyncWork.count({
-        where: { bindingId: current.id, state: { in: ["leased", "ambiguous"] } },
+        where: { bindingId: current.id, ...releaseBlockingWorkWhere },
       });
       if (unresolved > 0) return 0;
       await transaction.integrationProjectBinding.update({
@@ -1144,6 +1195,9 @@ export async function setConnectionLifecycle(
     await lockConnection(transaction, connectionId);
     const locked = await ownedConnection(transaction, connectionId, userId, workspaceId);
     if (locked.lifecycle === lifecycle) return locked;
+    if (lifecycle !== "active") {
+      await assertNoUnresolvedIssueDeletes(transaction, connectionId);
+    }
     const lockedReleasePending = await transaction.integrationProjectBinding.count({
       where: { connectionId, releaseRequestedAt: { not: null }, releasedAt: null },
     });

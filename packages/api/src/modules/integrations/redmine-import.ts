@@ -486,6 +486,31 @@ export async function persistRedmineIssueImportsTx(
   return issueKeys;
 }
 
+const unresolvedIssueDeleteWhere = {
+  entityType: "issue",
+  operation: "delete",
+  state: { notIn: ["done", "superseded"] },
+} satisfies Prisma.IntegrationSyncWorkWhereInput;
+
+async function assertBootstrapMutationAvailable(
+  transaction: Prisma.TransactionClient,
+  bindingId: string,
+) {
+  await transaction.$queryRaw(
+    Prisma.sql`SELECT "id" FROM "integration_project_bindings" WHERE "id" = ${bindingId}::uuid FOR UPDATE`,
+  );
+  const unresolved = await transaction.integrationSyncWork.count({
+    where: { bindingId, ...unresolvedIssueDeleteWhere },
+  });
+  if (unresolved > 0) {
+    throw new AppError(
+      409,
+      "REMOTE_DELETE_IN_PROGRESS",
+      "Wait for queued remote issue deletions to finish before changing the integration.",
+    );
+  }
+}
+
 export async function previewRedmineIssueImport(
   connectionId: string,
   bindingId: string,
@@ -561,6 +586,7 @@ export async function previewRedmineIssueImport(
     const cutoff = resumable
       ? current.binding.bootstrapCutoff!
       : new Date(Math.floor(claimedAt.getTime() / 1_000) * 1_000);
+    await assertBootstrapMutationAvailable(transaction, bindingId);
     const leaseToken = randomUUID();
     const binding = await transaction.integrationProjectBinding.update({
       where: { id: bindingId },
@@ -693,25 +719,28 @@ export async function previewRedmineIssueImport(
       unmappedPriorityIds: sortRemoteIds(unmappedPriorityIds),
       unmappedAssigneeIds: sortRemoteIds(unmappedAssigneeIds),
     };
-    const persisted = await prisma.integrationProjectBinding.updateMany({
-      where: {
-        id: bindingId,
-        connectionId,
-        lifecycle: "active",
-        lifecycleEpoch: claim.binding.lifecycleEpoch,
-        bootstrapState: "pending",
-        bootstrapLeaseToken: claim.leaseToken,
-        bootstrapFence: claim.fence,
-        connection: { lifecycle: "active" },
-      },
-      data: {
-        bootstrapState: evidence.complete ? "previewed" : "pending",
-        bootstrapPageToken: evidence as unknown as Prisma.InputJsonValue,
-        bootstrapLeaseToken: evidence.complete ? null : claim.leaseToken,
-        bootstrapLeaseUntil: evidence.complete
-          ? null
-          : new Date(now().getTime() + BOOTSTRAP_LEASE_MS),
-      },
+    const persisted = await prisma.$transaction(async (transaction) => {
+      await assertBootstrapMutationAvailable(transaction, bindingId);
+      return transaction.integrationProjectBinding.updateMany({
+        where: {
+          id: bindingId,
+          connectionId,
+          lifecycle: "active",
+          lifecycleEpoch: claim.binding.lifecycleEpoch,
+          bootstrapState: "pending",
+          bootstrapLeaseToken: claim.leaseToken,
+          bootstrapFence: claim.fence,
+          connection: { lifecycle: "active" },
+        },
+        data: {
+          bootstrapState: evidence.complete ? "previewed" : "pending",
+          bootstrapPageToken: evidence as unknown as Prisma.InputJsonValue,
+          bootstrapLeaseToken: evidence.complete ? null : claim.leaseToken,
+          bootstrapLeaseUntil: evidence.complete
+            ? null
+            : new Date(now().getTime() + BOOTSTRAP_LEASE_MS),
+        },
+      });
     });
     if (persisted.count !== 1) {
       throw new AppError(409, "REDMINE_PREVIEW_STALE", "The Redmine project binding changed");
@@ -737,22 +766,26 @@ export async function previewRedmineIssueImport(
     };
   } catch (error) {
     const drifted = error instanceof RedminePaginationDriftError;
-    await prisma.integrationProjectBinding.updateMany({
-      where: {
-        id: bindingId,
-        bootstrapLeaseToken: claim.leaseToken,
-        bootstrapFence: claim.fence,
-      },
-      data: {
-        bootstrapLeaseToken: null,
-        bootstrapLeaseUntil: null,
-        ...(drifted
-          ? {
-              bootstrapState: "pending" as const,
-              bootstrapPageToken: emptyEvidence() as unknown as Prisma.InputJsonValue,
-            }
-          : {}),
-      },
+    await prisma.$transaction(async (transaction) => {
+      await assertBootstrapMutationAvailable(transaction, bindingId);
+      await transaction.integrationProjectBinding.updateMany({
+        where: {
+          id: bindingId,
+          bootstrapState: "pending",
+          bootstrapLeaseToken: claim.leaseToken,
+          bootstrapFence: claim.fence,
+        },
+        data: {
+          bootstrapLeaseToken: null,
+          bootstrapLeaseUntil: null,
+          ...(drifted
+            ? {
+                bootstrapState: "pending" as const,
+                bootstrapPageToken: emptyEvidence() as unknown as Prisma.InputJsonValue,
+              }
+            : {}),
+        },
+      });
     });
     if (drifted) {
       throw new AppError(
@@ -838,6 +871,7 @@ export async function activateRedmineIssueImport(
         "A Redmine import activation is already running",
       );
     }
+    await assertBootstrapMutationAvailable(transaction, bindingId);
     const leaseToken = randomUUID();
     const binding = await transaction.integrationProjectBinding.update({
       where: { id: bindingId },
@@ -1017,22 +1051,26 @@ export async function activateRedmineIssueImport(
     );
   } catch (error) {
     const restartPreview = error instanceof AppError && error.code === "REDMINE_PREVIEW_STALE";
-    await prisma.integrationProjectBinding.updateMany({
-      where: {
-        id: bindingId,
-        bootstrapLeaseToken: claim.leaseToken,
-        bootstrapFence: claim.fence,
-      },
-      data: {
-        bootstrapLeaseToken: null,
-        bootstrapLeaseUntil: null,
-        ...(restartPreview
-          ? {
-              bootstrapState: "pending" as const,
-              bootstrapPageToken: emptyEvidence() as unknown as Prisma.InputJsonValue,
-            }
-          : {}),
-      },
+    await prisma.$transaction(async (transaction) => {
+      await assertBootstrapMutationAvailable(transaction, bindingId);
+      await transaction.integrationProjectBinding.updateMany({
+        where: {
+          id: bindingId,
+          bootstrapState: "bootstrapping",
+          bootstrapLeaseToken: claim.leaseToken,
+          bootstrapFence: claim.fence,
+        },
+        data: {
+          bootstrapLeaseToken: null,
+          bootstrapLeaseUntil: null,
+          ...(restartPreview
+            ? {
+                bootstrapState: "pending" as const,
+                bootstrapPageToken: emptyEvidence() as unknown as Prisma.InputJsonValue,
+              }
+            : {}),
+        },
+      });
     });
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       const binding = await prisma.integrationProjectBinding.findFirst({

@@ -250,6 +250,32 @@ describe("claimIntegrationWork", () => {
     );
   });
 
+  it("continues claiming queued and retry issue deletes while a binding drains", async () => {
+    const fixture = await createFixture();
+    const now = new Date("2026-08-10T12:00:00.000Z");
+    await prisma.integrationProjectBinding.update({
+      where: { id: fixture.binding.id },
+      data: { releaseRequestedAt: now },
+    });
+    const queuedDelete = await createWork(fixture.binding, {
+      operation: "delete",
+      availableAt: now,
+    });
+    const retryDelete = await createWork(fixture.binding, {
+      operation: "delete",
+      state: "retry",
+      availableAt: now,
+    });
+    const ordinaryUpdate = await createWork(fixture.binding, { availableAt: now });
+
+    const claimed = await claimIntegrationWork(prisma, { now, limit: 10 });
+
+    expect(claimed.map(({ id }) => id)).toEqual([queuedDelete.id, retryDelete.id]);
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: ordinaryUpdate.id } }),
+    ).resolves.toMatchObject({ state: "queued", leaseToken: null });
+  });
+
   it("holds outbound work until an inbound bootstrap is ready", async () => {
     const { binding } = await createFixture();
     const work = await createWork(binding);

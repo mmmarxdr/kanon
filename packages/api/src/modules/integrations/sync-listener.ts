@@ -25,6 +25,7 @@ function eventEntityKey(event: DomainEvent): string | null {
         : null;
     }
     case "issue.transitioned":
+    case "issue.deleted":
     case "schedule.updated":
     case "estimate.revised":
       return issueId && `issue:${issueId}`;

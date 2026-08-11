@@ -292,6 +292,89 @@ async function runUpgrade(unresolved: boolean) {
   }
 }
 
+async function runLegacyOwnershipProof(beforeMigrationName: string) {
+  const baseUrl = new URL(
+    process.env["DATABASE_URL"] ?? "postgresql://kanon:kanon@localhost:5432/kanon_test",
+  );
+  const schemaName = `binding_proof_${randomUUID().replaceAll("-", "")}`;
+  const adminUrl = new URL(baseUrl);
+  adminUrl.searchParams.set("schema", "public");
+  const databaseUrl = new URL(baseUrl);
+  databaseUrl.searchParams.set("schema", schemaName);
+  const admin = new PrismaClient({ datasourceUrl: adminUrl.toString() });
+  const directory = await mkdtemp(join(tmpdir(), "kanon-binding-proof-"));
+  let database: PrismaClient | undefined;
+
+  try {
+    await admin.$executeRawUnsafe(`CREATE SCHEMA ${quoteIdentifier(schemaName)}`);
+    const names = (await readdir(migrationsDirectory, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+    const migrationIndex = names.indexOf(beforeMigrationName);
+    if (migrationIndex < 0) throw new Error(`Missing ${beforeMigrationName}`);
+    await prepareMigrationWorkspace(directory, names.slice(0, migrationIndex));
+    await deployMigrations(directory, databaseUrl.toString());
+
+    database = new PrismaClient({ datasourceUrl: databaseUrl.toString() });
+    await expect(proveExternalRefBindings(database)).resolves.toBeUndefined();
+
+    const workspaceId = randomUUID();
+    const projectId = randomUUID();
+    const connectionId = randomUUID();
+    const bindingId = randomUUID();
+    await database.$transaction([
+      database.$executeRaw`
+        INSERT INTO "workspaces" ("id", "name", "slug", "updated_at")
+        VALUES (${workspaceId}::uuid, 'Legacy proof', ${`legacy-proof-${workspaceId}`} , CURRENT_TIMESTAMP)
+      `,
+      database.$executeRaw`
+        INSERT INTO "projects" ("id", "key", "name", "workspace_id", "updated_at")
+        VALUES (${projectId}::uuid, 'LEG', 'Legacy proof', ${workspaceId}::uuid, CURRENT_TIMESTAMP)
+      `,
+      database.$executeRaw`
+        INSERT INTO "integration_connections" (
+          "id", "provider", "base_url", "workspace_id", "lifecycle", "updated_at"
+        ) VALUES (
+          ${connectionId}::uuid, 'redmine', 'https://legacy-proof.example.test',
+          ${workspaceId}::uuid, 'active'::"IntegrationLifecycle", CURRENT_TIMESTAMP
+        )
+      `,
+      database.$executeRaw`
+        INSERT INTO "integration_project_bindings" (
+          "id", "remote_project_id", "read_map", "write_map", "lifecycle",
+          "connection_id", "project_id", "updated_at"
+        ) VALUES (
+          ${bindingId}::uuid, 'legacy-project', '{}'::jsonb, '{}'::jsonb,
+          'active'::"IntegrationLifecycle", ${connectionId}::uuid, ${projectId}::uuid,
+          CURRENT_TIMESTAMP
+        )
+      `,
+      database.$executeRaw`
+        INSERT INTO "external_refs" (
+          "id", "entity_type", "entity_id", "external_id", "connection_id", "binding_id",
+          "updated_at"
+        ) VALUES (
+          ${randomUUID()}::uuid, 'issue', ${randomUUID()}::uuid, 'legacy-orphan',
+          ${connectionId}::uuid, ${bindingId}::uuid, CURRENT_TIMESTAMP
+        )
+      `,
+    ]);
+
+    await expect(proveExternalRefBindings(database)).rejects.toMatchObject({
+      name: ExternalRefBindingProofError.name,
+      diagnostics: [{ reason: "local-entity-not-found", count: 1 }],
+    });
+  } finally {
+    if (database) await database.$disconnect().catch(() => undefined);
+    await admin
+      .$executeRawUnsafe(`DROP SCHEMA IF EXISTS ${quoteIdentifier(schemaName)} CASCADE`)
+      .catch(() => undefined);
+    await admin.$disconnect().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 async function createFixture() {
   const workspace = await prisma.workspace.create({
     data: { name: "Binding hardening", slug: `binding-hardening-${randomUUID()}` },
@@ -437,5 +520,13 @@ describe("ExternalRef binding hardening", () => {
 
   it("rolls back the migration when an unresolved reference remains", { timeout: 120_000 }, async () => {
     await runUpgrade(true);
+  });
+
+  it("proves legacy ownership before the sync outbox schema exists", { timeout: 120_000 }, async () => {
+    await runLegacyOwnershipProof("20260722_pm_work_outbox");
+  });
+
+  it("proves legacy ownership before the bootstrap schema exists", { timeout: 120_000 }, async () => {
+    await runLegacyOwnershipProof("20260803135500_redmine_inbound_bootstrap_state");
   });
 });
