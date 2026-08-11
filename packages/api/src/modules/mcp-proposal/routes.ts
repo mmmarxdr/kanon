@@ -4,8 +4,13 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
-import { requireMember, requireProposalRole } from "../../middleware/require-role.js";
+import {
+  enforceProjectAccess,
+  requireMember,
+  requireProposalRole,
+} from "../../middleware/require-role.js";
 import { scopedProjectIds } from "../../shared/token-scope.js";
+import { observeProposalOp } from "../triage/observability.js";
 
 // KAN-80: proposals are small JSON action-descriptor objects. Bound the shape
 // (object, not arbitrary JSON) and the serialized size to prevent DB bloat / DoS
@@ -136,15 +141,78 @@ export async function proposalActionRoutes(
       preHandler: [
         // Triage-first UUID resolution: never treat a triage proposal id as legacy apply.
         async (request, _reply) => {
+          const started = performance.now();
+          const observe = (
+            outcome: "not_found_or_not_visible" | "temporary_unavailability" | "unsupported_non_executable",
+          ) => observeProposalOp(
+            fastify.triageMetrics,
+            { operation: "rejected_apply", outcome },
+            (performance.now() - started) / 1000,
+          );
+          const load = async <T>(query: () => Promise<T>): Promise<T> => {
+            try {
+              return await query();
+            } catch {
+              observe("temporary_unavailability");
+              throw new AppError(503, "TRIAGE_GUARD_UNAVAILABLE", "Triage apply guard is unavailable");
+            }
+          };
           const id = (request.params as Record<string, string>)["id"];
           if (!id) throw new AppError(400, "PROPOSAL_ID_REQUIRED", "Proposal ID is required");
 
-          const tp = await prisma.triageProposal.findUnique({ where: { id }, select: { id: true } });
+          const tp = await load(() => prisma.triageProposal.findUnique({
+            where: { id },
+            select: { id: true, targetIssueId: true, projectId: true, workspaceId: true },
+          }));
           if (!tp) return;
-
-          if (process.env["FF_MCP_TRIAGE_APPLY"] !== "true") {
-            throw new AppError(403, "CAPABILITY_DISABLED", "Triage capability is disabled");
+          const user = request.user;
+          if (!user) throw new AppError(401, "UNAUTHORIZED", "Authentication required");
+          const target = await load(() => prisma.issue.findFirst({
+            where: { id: tp.targetIssueId, projectId: tp.projectId },
+            select: { id: true },
+          }));
+          if (!target) {
+            observe("not_found_or_not_visible");
+            throw new AppError(404, "PROPOSAL_NOT_FOUND", "Proposal not found");
           }
+          let memberId: string;
+          try {
+            const access = await enforceProjectAccess(
+              user.userId,
+              tp.projectId,
+              tp.workspaceId,
+              "member",
+              user.allowedProjectIds,
+            );
+            memberId = access.member.id;
+          } catch (error) {
+            if (error instanceof AppError && (error.statusCode === 403 || error.statusCode === 404)) {
+              observe("not_found_or_not_visible");
+              throw new AppError(404, "PROPOSAL_NOT_FOUND", "Proposal not found");
+            }
+            observe("temporary_unavailability");
+            throw new AppError(503, "TRIAGE_GUARD_UNAVAILABLE", "Triage apply guard is unavailable");
+          }
+          try {
+            await prisma.adminAuditLog.create({
+              data: {
+                entityType: "triage_proposal",
+                entityId: tp.id,
+                action: "apply_rejected",
+                payload: {
+                  correlationId: request.id,
+                  client: request.via ?? null,
+                  nonExecutable: true,
+                },
+                authorId: memberId,
+                reason: "Triage proposals are non-executable",
+              },
+            });
+          } catch {
+            observe("temporary_unavailability");
+            throw new AppError(503, "AUDIT_UNAVAILABLE", "Rejected apply could not be audited");
+          }
+          observe("unsupported_non_executable");
           throw new AppError(
             422,
             "TRIAGE_PROPOSAL_NON_EXECUTABLE",
