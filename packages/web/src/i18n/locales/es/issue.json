@@ -42,5 +42,13 @@
   "relativeHoursAgo": "hace {{count}}h",
   "relativeDaysAgo": "hace {{count}}d",
   "collapseDesignRecord": "Contraer registro de diseño",
-  "expandDesignRecord": "Expandir registro de diseño"
+  "expandDesignRecord": "Expandir registro de diseño",
+  "moreActions": "Más acciones",
+  "deleteTitle": "¿Eliminar {{key}}?",
+  "deleteDescription": "Esto elimina permanentemente el ticket y su historial local. Esta acción no se puede deshacer.",
+  "deleteRedmineWarning": "Se pondrá en cola una eliminación en Redmine. Este ticket se elimina aquí de inmediato; la eliminación remota se completa de forma asíncrona.",
+  "deleteCriticalPrompt": "Escribe {{key}} para confirmar",
+  "deleteCancel": "Cancelar",
+  "deleteConfirm": "Eliminar permanentemente",
+  "deleteDeleting": "Eliminando…"
 }

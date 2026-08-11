@@ -8,6 +8,7 @@ import { IssueTimelineDock } from "@/features/issue-detail/issue-timeline-dock";
 import { IssueScheduleSlot } from "@/features/issue-detail/issue-schedule-slot";
 import { SyncedFromToolsSlot } from "@/features/issue-detail/synced-from-tools-slot";
 import { Icon } from "@/components/ui/icons";
+import { IssueDeleteAction } from "@/features/issue-detail/issue-delete-action";
 
 export default function IssuePage() {
   const { key: issueKey } = issueRoute.useParams();
@@ -82,9 +83,13 @@ export default function IssuePage() {
             isSubscriptionPending={d.isSubscriptionPending}
             onToggle={d.onSubscribeToggle}
           />
-          <button type="button" style={{ color: "var(--ink-4)" }}>
-            <Icon.More />
-          </button>
+          <IssueDeleteAction
+            issueKey={d.issue.key}
+            priority={d.issue.priority}
+            capability={d.issue.deleteCapability ?? { allowed: false, redmineLinked: false }}
+            projectKey={d.projectKey}
+            onDeleted={d.onDeleted}
+          />
         </div>
 
         <IssueDetailHeader
