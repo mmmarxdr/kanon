@@ -20,6 +20,10 @@ process.env["JWT_REFRESH_SECRET"] =
 process.env["COOKIE_SECRET"] =
   process.env["COOKIE_SECRET"] ?? "test-cookie-secret-at-least-32-chars-long";
 process.env["PORT"] = process.env["PORT"] ?? "3001";
+process.env["TRIAGE_SEARCH_ENABLED"] = process.env["TRIAGE_SEARCH_ENABLED"] ?? "true";
+process.env["TRIAGE_PREVIEW_ENABLED"] = process.env["TRIAGE_PREVIEW_ENABLED"] ?? "true";
+process.env["TRIAGE_PROPOSAL_READS_ENABLED"] = process.env["TRIAGE_PROPOSAL_READS_ENABLED"] ?? "true";
+process.env["TRIAGE_PROPOSALS_ENABLED"] = process.env["TRIAGE_PROPOSALS_ENABLED"] ?? "true";
 
 // Vitest mirrors Vite's `import.meta.env.BASE_URL` into `process.env.BASE_URL`,
 // defaulting to "/" — which pisses off `new URL(env.BASE_URL)` in service code

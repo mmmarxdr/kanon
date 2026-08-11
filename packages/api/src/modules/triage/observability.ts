@@ -250,13 +250,15 @@ export function observeSearch(
     outcome: (typeof TRIAGE_OUTCOMES)[number];
   },
   durationSeconds: number,
-  rows: { logicalScanned: number; returned: number },
+  rows: { logicalScanned: number | null; returned: number },
 ): void {
   assertSafeLabelValue(labels.scope);
   assertSafeLabelValue(labels.completeness);
   assertSafeLabelValue(labels.outcome);
   metrics.searchDuration.observe(labels, durationSeconds);
-  metrics.searchRows.observe({ measure: "logical_scanned" }, rows.logicalScanned);
+  if (rows.logicalScanned !== null) {
+    metrics.searchRows.observe({ measure: "logical_scanned" }, rows.logicalScanned);
+  }
   metrics.searchRows.observe({ measure: "returned" }, rows.returned);
 }
 
@@ -300,4 +302,19 @@ export function observeProposalOp(
       listReturnedRows.count,
     );
   }
+}
+
+export function triageOutcome(error: unknown): (typeof TRIAGE_OUTCOMES)[number] {
+  const value = error && typeof error === "object"
+    ? error as { code?: unknown; statusCode?: unknown }
+    : {};
+  const code = typeof value.code === "string" ? value.code : "";
+  if (value.statusCode === 404) return "not_found_or_not_visible";
+  if (value.statusCode === 401 || value.statusCode === 403) return "authorization";
+  if (value.statusCode === 400) return "validation";
+  if (value.statusCode === 503) return "temporary_unavailability";
+  if (code === "CONCURRENCY_ERROR") return "temporary_unavailability";
+  if (/SOURCE|POLICY|CONTEXT/.test(code)) return "source_conflict";
+  if (value.statusCode === 409) return "terminal_lifecycle";
+  return "error";
 }

@@ -52,7 +52,7 @@ describe("executePreview", () => {
     issueKey = issue.key;
   });
 
-  const execute = (request: unknown, allowedProjectIds: string[] = []) => executePreview({
+  const execute = (request: unknown, allowedProjectIds?: string[]) => executePreview({
     issueKey,
     userId,
     allowedProjectIds,

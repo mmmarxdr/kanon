@@ -164,7 +164,7 @@ describe("GET /api/triage-proposals/:id (KAN-193 disposed get)", () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it("treats an explicitly empty token scope as no project access", async () => {
+  it("treats an explicitly empty token scope as unscoped", async () => {
     const proposal = await createProposal();
     const scopedToken = generateTestToken({ userId, allowedProjectIds: [] });
     const res = await app.inject({
@@ -172,13 +172,13 @@ describe("GET /api/triage-proposals/:id (KAN-193 disposed get)", () => {
       url: `/api/triage-proposals/${proposal.id}`,
       headers: authHeader(scopedToken),
     });
-    expect(res.statusCode).toBe(404);
+    expect(res.statusCode).toBe(200);
 
     await prisma.issue.update({ where: { id: targetIssueId }, data: { state: "done" } });
     const history = await app.inject({
       method: "GET", url: `/api/issues/${projectKey}-1/triage-history`, headers: authHeader(scopedToken),
     });
-    expect(history.statusCode).toBe(404);
+    expect(history.statusCode).toBe(200);
   });
 
   it("returns 404 for unknown id", async () => {

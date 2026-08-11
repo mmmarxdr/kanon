@@ -177,6 +177,26 @@ export const envSchema = z.object({
     .optional()
     .default("false")
     .transform((value) => value === "true"),
+  TRIAGE_SEARCH_ENABLED: z
+    .enum(["true", "false"])
+    .optional()
+    .default("false")
+    .transform((value) => value === "true"),
+  TRIAGE_PREVIEW_ENABLED: z
+    .enum(["true", "false"])
+    .optional()
+    .default("false")
+    .transform((value) => value === "true"),
+  TRIAGE_PROPOSAL_READS_ENABLED: z
+    .enum(["true", "false"])
+    .optional()
+    .default("false")
+    .transform((value) => value === "true"),
+  TRIAGE_PROPOSALS_ENABLED: z
+    .enum(["true", "false"])
+    .optional()
+    .default("false")
+    .transform((value) => value === "true"),
   REDMINE_ENDPOINT_ALLOWLIST: z
     .string()
     .optional()
