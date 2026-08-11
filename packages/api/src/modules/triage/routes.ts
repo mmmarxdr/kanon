@@ -1,12 +1,45 @@
 import { FastifyInstance } from "fastify";
+import type { MemberRole } from "@prisma/client";
 import { z } from "zod";
 import { ZodTypeProvider } from "fastify-type-provider-zod";
 import { getIssueTriageHistory } from "./issue-history.js";
-import { requireIssueMember, requireProjectMember } from "../../middleware/require-role.js";
+import {
+  enforceProjectAccess,
+  requireIssueMember,
+  requireProjectMember,
+} from "../../middleware/require-role.js";
 import { prisma } from "../../config/prisma.js";
 import { getTriageProposal } from "./proposal-read.js";
 import { listTriageProposals } from "./proposal-list.js";
 import { AppError } from "../../shared/types.js";
+
+async function requireVisibleProjectAccess(
+  userId: string,
+  allowedProjectIds: string[] | undefined,
+  projectId: string,
+  workspaceId: string,
+  minimumRole?: MemberRole,
+) {
+  if (allowedProjectIds && !allowedProjectIds.includes(projectId)) {
+    throw new AppError(404, "NOT_FOUND_OR_NOT_VISIBLE", "Resource not found");
+  }
+  const [member, projectMember] = await Promise.all([
+    prisma.member.findUnique({
+      where: { userId_workspaceId: { userId, workspaceId } },
+      select: { role: true, projectAccess: true },
+    }),
+    prisma.projectMember.findUnique({
+      where: { userId_projectId: { userId, projectId } },
+      select: { id: true },
+    }),
+  ]);
+  const visible = member && (
+    member.role === "owner" || member.role === "admin" ||
+    member.projectAccess === "workspace" || projectMember
+  );
+  if (!visible) throw new AppError(404, "NOT_FOUND_OR_NOT_VISIBLE", "Resource not found");
+  return enforceProjectAccess(userId, projectId, workspaceId, minimumRole, allowedProjectIds);
+}
 
 export async function triageProposalReadRoutes(appRaw: FastifyInstance) {
   const app = appRaw.withTypeProvider<ZodTypeProvider>();
@@ -113,7 +146,7 @@ export async function triageProposalReadRoutes(appRaw: FastifyInstance) {
     {
       schema: {
         params: z.object({ id: z.string().uuid() }),
-        body: z.object({ reason: z.string().optional() }),
+        body: z.object({ reason: z.string().trim().min(1).max(1000) }).strict(),
       },
     },
     async (request, reply) => {
@@ -124,42 +157,32 @@ export async function triageProposalReadRoutes(appRaw: FastifyInstance) {
 
       const proposal = await prisma.triageProposal.findUnique({
         where: { id: request.params.id },
-        select: { projectId: true, workspaceId: true },
+        select: { projectId: true, workspaceId: true, targetIssueId: true },
       });
 
       if (!proposal) {
-        return reply.status(404).send({ error: "Proposal not found" });
+        throw new AppError(404, "NOT_FOUND_OR_NOT_VISIBLE", "Proposal not found");
       }
-
-      const member = await prisma.member.findUnique({
-        where: {
-          userId_workspaceId: {
-            userId: user.userId,
-            workspaceId: proposal.workspaceId,
-          },
-        },
+      const target = await prisma.issue.findFirst({
+        where: { id: proposal.targetIssueId, projectId: proposal.projectId },
+        select: { id: true },
       });
-
-      if (!member) {
-        return reply.status(403).send({ error: "Forbidden" });
-      }
-
-      const projectMember = await prisma.projectMember.findUnique({
-        where: {
-          userId_projectId: { userId: user.userId, projectId: proposal.projectId },
-        },
-      });
-
-      if (!projectMember) {
-        return reply.status(403).send({ error: "Forbidden: Not a project member" });
-      }
+      if (!target) throw new AppError(404, "NOT_FOUND_OR_NOT_VISIBLE", "Proposal not found");
+      const { member } = await requireVisibleProjectAccess(
+        user.userId,
+        user.allowedProjectIds,
+        proposal.projectId,
+        proposal.workspaceId,
+        "member",
+      );
 
       const { dismissTriageProposal } = await import("./lifecycle.js");
       try {
         const result = await dismissTriageProposal(
           request.params.id,
           member.id,
-          request.body?.reason,
+          request.body.reason,
+          { correlationId: request.id, client: request.via ?? null },
         );
         return reply.send({
           ok: true,
