@@ -124,6 +124,10 @@ describe("POST /api/triage-proposals/:id/dismiss (KAN-193 PR8)", () => {
     expect(updated?.lifecycleEvents.length).toBe(1);
     expect(updated?.lifecycleEvents[0].state).toBe("dismissed");
     expect(updated?.lifecycleEvents[0].reason).toBe("Not relevant");
+    expect(updated?.lifecycleEvents[0].details).toEqual({
+      correlationId: expect.any(String),
+      client: null,
+    });
   });
 
   it("should be idempotent if already dismissed", async () => {
@@ -161,7 +165,7 @@ describe("POST /api/triage-proposals/:id/dismiss (KAN-193 PR8)", () => {
       method: "POST",
       url: `/api/triage-proposals/${proposal.id}/dismiss`,
       headers: authHeader(userToken),
-      payload: {},
+      payload: { reason: "Expired" },
     });
 
     expect(res.statusCode).toBe(409);
@@ -174,7 +178,7 @@ describe("POST /api/triage-proposals/:id/dismiss (KAN-193 PR8)", () => {
       method: "POST",
       url: `/api/triage-proposals/${proposal.id}/dismiss`,
       headers: authHeader(userToken),
-      payload: {},
+      payload: { reason: "Expired" },
     });
 
     expect(res.statusCode).toBe(409);
@@ -196,7 +200,7 @@ describe("POST /api/triage-proposals/:id/dismiss (KAN-193 PR8)", () => {
       method: "POST",
       url: `/api/triage-proposals/${proposal.id}/dismiss`,
       headers: authHeader(userToken),
-      payload: {},
+      payload: { reason: "Disposed" },
     });
 
     expect(res.statusCode).toBe(409);
@@ -207,13 +211,13 @@ describe("POST /api/triage-proposals/:id/dismiss (KAN-193 PR8)", () => {
       method: "POST",
       url: `/api/triage-proposals/00000000-0000-0000-0000-000000000000/dismiss`,
       headers: authHeader(userToken),
-      payload: {},
+      payload: { reason: "Missing" },
     });
 
     expect(res.statusCode).toBe(404);
   });
 
-  it("should return 403 if user is not a project member", async () => {
+  it("should return permission-safe 404 if user is not a project member", async () => {
     const otherUser = await seedTestMember(workspaceId);
     const proposal = await createProposal("pending");
 
@@ -221,10 +225,10 @@ describe("POST /api/triage-proposals/:id/dismiss (KAN-193 PR8)", () => {
       method: "POST",
       url: `/api/triage-proposals/${proposal.id}/dismiss`,
       headers: authHeader(otherUser.token),
-      payload: {},
+      payload: { reason: "Forbidden" },
     });
 
-    expect(res.statusCode).toBe(403);
+    expect(res.statusCode).toBe(404);
   });
 
   it("should do zero domain writes to Issue or ActivityLog", async () => {
@@ -236,7 +240,7 @@ describe("POST /api/triage-proposals/:id/dismiss (KAN-193 PR8)", () => {
       method: "POST",
       url: `/api/triage-proposals/${proposal.id}/dismiss`,
       headers: authHeader(userToken),
-      payload: {},
+      payload: { reason: "No domain writes" },
     });
 
     const issuesAfter = await prisma.issue.findMany();
@@ -254,13 +258,13 @@ describe("POST /api/triage-proposals/:id/dismiss (KAN-193 PR8)", () => {
         method: "POST",
         url: `/api/triage-proposals/${proposal.id}/dismiss`,
         headers: authHeader(userToken),
-        payload: {},
+        payload: { reason: "Concurrent" },
       }),
       app.inject({
         method: "POST",
         url: `/api/triage-proposals/${proposal.id}/dismiss`,
         headers: authHeader(userToken),
-        payload: {},
+        payload: { reason: "Concurrent" },
       }),
     ]);
 

@@ -1482,11 +1482,15 @@ model TriageProposal {
   /// Captured from policy at disposition time (null until disposed).
   dispositionListVisible  Boolean? @map("disposition_list_visible")
   
-  supersedesId      String?  @map("supersedes_id") @db.Uuid
+  supersedesId      String?  @unique @map("supersedes_id") @db.Uuid
   
   workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   project           Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   policy            TriagePolicy @relation(fields: [policyId], references: [id], onDelete: Restrict)
+  /// Self-links are blocked by SQL constraint `triage_proposals_supersedes_not_self`
+  /// in migration `20260810150000_triage_supersession_unique`; Prisma cannot express it.
+  supersedes        TriageProposal? @relation("TriageProposalSupersession", fields: [supersedesId], references: [id], onDelete: Restrict)
+  successor         TriageProposal? @relation("TriageProposalSupersession")
   
   content           TriageProposalContent?
   lifecycleEvents   TriageProposalLifecycleEvent[]
