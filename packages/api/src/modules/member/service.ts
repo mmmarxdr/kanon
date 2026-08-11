@@ -1,4 +1,4 @@
-import type { MemberRole } from "@prisma/client";
+import { Prisma, type MemberRole } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 import type { UpdateProfileBody } from "./schema.js";
@@ -328,25 +328,58 @@ export async function removeMember(
     throw new AppError(403, "FORBIDDEN", "Insufficient permissions to remove this member");
   }
 
-  await prisma.$transaction([
-    prisma.projectMember.deleteMany({
+  await prisma.$transaction(async (transaction) => {
+    const locked = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT "id"
+      FROM "members"
+      WHERE "id" = ${memberId}::uuid AND "workspace_id" = ${workspaceId}::uuid
+      FOR UPDATE
+    `);
+    if (locked.length !== 1) {
+      throw new AppError(404, "MEMBER_NOT_FOUND", "Member not found");
+    }
+    await transaction.$queryRaw(Prisma.sql`
+      SELECT "id"
+      FROM "member_integration_credentials"
+      WHERE "member_id" = ${memberId}::uuid
+      ORDER BY "id"
+      FOR UPDATE
+    `);
+    const unresolvedDelete = await transaction.integrationSyncWork.findFirst({
+      where: {
+        entityType: "issue",
+        operation: "delete",
+        state: { notIn: ["done", "superseded"] },
+        authCredential: { is: { memberId } },
+      },
+      select: { id: true },
+    });
+    if (unresolvedDelete) {
+      throw new AppError(
+        409,
+        "REMOTE_DELETE_IN_PROGRESS",
+        "Wait for queued remote issue deletions to finish before removing this member.",
+      );
+    }
+
+    await transaction.projectMember.deleteMany({
       where: {
         userId: member.userId,
         project: { workspaceId },
       },
-    }),
+    });
     // KAN-75: revoke the removed member's refresh tokens for THIS workspace so a
     // fired user cannot keep renewing API access via /exchange. Scoped to the
     // workspace — removal from one workspace must not kill the user's sessions
     // in others.
-    prisma.refreshToken.updateMany({
+    await transaction.refreshToken.updateMany({
       where: { userId: member.userId, workspaceId, revokedAt: null },
       data: { revokedAt: new Date() },
-    }),
-    prisma.member.delete({
+    });
+    await transaction.member.delete({
       where: { id: memberId },
-    }),
-  ]);
+    });
+  });
 
   // Emit domain event (fire-and-forget)
   try {

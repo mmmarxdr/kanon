@@ -252,6 +252,7 @@ export interface PmProviderAdapter extends ProviderCreateReconciler {
   ensureProject(project: CanonicalProject): Promise<PushResult>;
   ensureCycle(cycle: CanonicalCycle): Promise<PushResult>;
   pushIssue(issue: CanonicalIssue, patch: CanonicalIssuePatch): Promise<PushResult>;
+  deleteIssue(remoteIssueId: string): Promise<PushResult>;
   pushComment(comment: CanonicalComment, remoteIssueId: string): Promise<PushResult>;
   pushTimeEntry(entry: CanonicalTimeEntry, activityId: string): Promise<PushResult>;
 }

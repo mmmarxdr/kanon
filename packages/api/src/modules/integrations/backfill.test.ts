@@ -124,6 +124,80 @@ describe("external reference binding integrity", () => {
       .resolves.toBe("valid");
   });
 
+  it("accepts only an exact recoverable pending issue-delete tombstone", async () => {
+    const { workspace, project, connection, binding } = await fixture();
+    const member = await seedTestMember(workspace.id);
+    await prisma.integrationConnection.update({
+      where: { id: connection.id },
+      data: { lifecycle: "active" },
+    });
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: { lifecycle: "active", bootstrapState: "ready" },
+    });
+    const credential = await prisma.memberIntegrationCredential.create({
+      data: {
+        connectionId: connection.id,
+        memberId: member.id,
+        encryptedKey: "encrypted",
+        lastAuthStatus: "valid",
+      },
+    });
+    const issueId = randomUUID();
+    const ref = await prisma.externalRef.create({
+      data: {
+        connectionId: connection.id,
+        bindingId: binding.id,
+        entityType: "issue",
+        entityId: issueId,
+        externalId: "pending-delete-42",
+      },
+    });
+    const work = await prisma.integrationSyncWork.create({
+      data: {
+        bindingId: binding.id,
+        entityType: "issue",
+        entityId: issueId,
+        direction: "outbound",
+        operation: "delete",
+        dedupeKey: randomUUID(),
+        laneKey: randomUUID(),
+        actorKey: `member:${member.id}`,
+        actorKind: "user",
+        payload: {
+          version: 1,
+          refId: ref.id,
+          externalId: ref.externalId,
+          issueKey: `${project.key}-1`,
+        },
+        correlationId: randomUUID(),
+        authCredentialId: credential.id,
+        refId: ref.id,
+        epoch: binding.lifecycleEpoch,
+      },
+    });
+
+    await expect(proveExternalRefBindings(prisma)).resolves.toBeUndefined();
+    await expect(withExternalRefBackfillWriteGate(prisma, async () => "valid"))
+      .resolves.toBe("valid");
+
+    await prisma.integrationSyncWork.update({
+      where: { id: work.id },
+      data: {
+        payload: {
+          version: 1,
+          refId: ref.id,
+          externalId: "wrong-remote-id",
+          issueKey: `${project.key}-1`,
+        },
+      },
+    });
+    await expect(proveExternalRefBindings(prisma)).rejects.toMatchObject({
+      name: ExternalRefBindingProofError.name,
+      diagnostics: [{ reason: "local-entity-not-found", count: 1 }],
+    });
+  });
+
   it("validates a targeted worker write", async () => {
     const { ref } = await fixture();
 

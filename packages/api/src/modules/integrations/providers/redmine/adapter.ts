@@ -508,6 +508,17 @@ export class RedmineProviderAdapter implements PmProviderAdapter {
     };
   }
 
+  async deleteIssue(remoteIssueId: string): Promise<PushResult> {
+    try {
+      await this.client.delete(`/issues/${encodeURIComponent(remoteIssueId)}.json`);
+    } catch (error) {
+      if (!(error instanceof RedmineHttpError) || error.statusCode !== 404) {
+        retryableFailure(error);
+      }
+    }
+    return { ...result(remoteIssueId), deleted: true };
+  }
+
   async pushComment(comment: CanonicalComment, remoteIssueId: string): Promise<PushResult> {
     const remoteUserId = await this.requireExternalId("user", comment.author.id);
     const marker = `<!-- kanon-comment:${comment.id} -->`;

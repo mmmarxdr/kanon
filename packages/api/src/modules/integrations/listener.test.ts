@@ -65,11 +65,15 @@ describe("integration sync listener", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(wake).toHaveBeenCalledOnce();
 
+    fire("issue.deleted", { issueId: "issue-1" });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(wake).toHaveBeenCalledTimes(2);
+
     fire("estimate.revised", { issueId: "issue-1" });
     fire("issue.transitioned", { issueId: "issue-2" });
     fire("cycle.closed", { cycleId: "cycle-1" });
     await vi.advanceTimersByTimeAsync(2_000);
-    expect(wake).toHaveBeenCalledTimes(2);
+    expect(wake).toHaveBeenCalledTimes(3);
 
     const error = new Error("scan failed");
     wake.mockRejectedValueOnce(error);
@@ -83,7 +87,7 @@ describe("integration sync listener", () => {
     await unsubscribe();
     fire("issue.transitioned", { issueId: "issue-4" });
     await vi.advanceTimersByTimeAsync(2_000);
-    expect(wake).toHaveBeenCalledTimes(3);
+    expect(wake).toHaveBeenCalledTimes(4);
   });
 
   it("coalesces a pending burst while a scan is still running", async () => {

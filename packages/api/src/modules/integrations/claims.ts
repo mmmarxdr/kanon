@@ -17,7 +17,11 @@ function genuinelyClaimable(at: Prisma.Sql, excludeComments: boolean): Prisma.Sq
     connection."lifecycle" = 'active'::"IntegrationLifecycle"
     AND binding."lifecycle" = 'active'::"IntegrationLifecycle"
     AND binding."released_at" IS NULL
-    AND binding."release_requested_at" IS NULL
+    AND CASE
+      WHEN binding."release_requested_at" IS NULL THEN true
+      ELSE work."entity_type" = 'issue'
+        AND work."operation" = 'delete'::"SyncOperation"
+    END
     AND project."archived" = false
     AND binding."bootstrap_state" IN (
       'not_required'::"IntegrationBootstrapState",
