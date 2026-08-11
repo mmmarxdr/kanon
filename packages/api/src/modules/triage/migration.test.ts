@@ -102,6 +102,46 @@ describe("Triage Proposal Migration Schema", () => {
     await prisma.triageProposal.delete({ where: { id: proposal.id } });
   });
 
+  it("allows only one successor per proposal", async () => {
+    const createdAt = new Date();
+    const proposalData = () => ({
+      identityDigest: crypto.randomBytes(32).toString("hex"),
+      targetIssueId: crypto.randomUUID(),
+      workspaceId: workspace.id,
+      projectId: project.id,
+      policyId: policy.id,
+      lifecycle: "pending" as const,
+      listSummary: { title: "test" },
+      createdAt,
+      expiresAt: new Date(createdAt.getTime() + 7 * 86400000),
+      retentionEligibleAt: new Date(createdAt.getTime() + 365 * 86400000),
+      capturedRetentionDays: 365,
+      capturedPolicyVersion: "1",
+    });
+    const predecessor = await prisma.triageProposal.create({ data: proposalData() });
+    const successor = await prisma.triageProposal.create({
+      data: { ...proposalData(), supersedesId: predecessor.id },
+    });
+
+    await expect(
+      prisma.triageProposal.create({
+        data: { ...proposalData(), supersedesId: predecessor.id },
+      }),
+    ).rejects.toThrow(/Unique constraint failed/);
+
+    await expect(prisma.triageProposal.delete({ where: { id: predecessor.id } })).rejects.toThrow();
+    const selfId = crypto.randomUUID();
+    await expect(prisma.triageProposal.create({
+      data: { ...proposalData(), id: selfId, supersedesId: selfId },
+    })).rejects.toThrow();
+    await expect(prisma.triageProposal.create({
+      data: { ...proposalData(), supersedesId: crypto.randomUUID() },
+    })).rejects.toThrow();
+
+    await prisma.triageProposal.delete({ where: { id: successor.id } });
+    await prisma.triageProposal.delete({ where: { id: predecessor.id } });
+  });
+
   it("rejects retention_days below the seven-day minimum", async () => {
     await expect(
       prisma.triagePolicy.create({
@@ -142,5 +182,3 @@ describe("Triage Proposal Migration Schema", () => {
     await prisma.triageProposal.delete({ where: { id: proposal.id } });
   });
 });
-
-

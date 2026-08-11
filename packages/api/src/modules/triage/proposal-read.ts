@@ -66,6 +66,18 @@ function redactCandidateData(value: unknown, hiddenRefs: ReadonlySet<string>): u
     }
   }
 
+  for (const sourceProvenance of [provenance, objectValue(payload?.["provenance"])]) {
+    const sourceSnapshots = objectValue(sourceProvenance?.["sourceSnapshots"]);
+    if (sourceSnapshots && Array.isArray(sourceSnapshots["candidates"])) {
+      sourceSnapshots["candidates"] = sourceSnapshots["candidates"].filter((entry) => {
+        const snapshot = objectValue(objectValue(entry)?.["snapshot"]);
+        return !snapshot || ![snapshot["issueId"], snapshot["issueKey"]].some(
+          (ref) => typeof ref === "string" && hiddenRefs.has(ref),
+        );
+      });
+    }
+  }
+
   const preview = objectValue(provenance["preview"]);
   if (!preview) return content;
   const hidesEvidence = (item: unknown) => {
