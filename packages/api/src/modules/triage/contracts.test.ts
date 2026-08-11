@@ -17,7 +17,7 @@ describe("strict triage v1 contracts", () => {
     expect(IssueSearchInputSchema.safeParse({ q: "duplicate", unsupported: true }).success).toBe(false);
     expect(IssueSearchInputSchema.safeParse({ q: "x", limit: 11 }).success).toBe(false);
     expect(IssueSearchInputSchema.safeParse({ q: "x", scope: { kind: "project" } }).success).toBe(true);
-    expect(IssueSearchInputSchema.safeParse({ q: "x", scope: { kind: "workspace", workspaceId: "w1" } }).success).toBe(true);
+    expect(IssueSearchInputSchema.safeParse({ q: "x", scope: { kind: "workspace", workspaceId: "00000000-0000-4000-8000-000000000001" } }).success).toBe(true);
     expect(IssueSearchInputSchema.safeParse({ q: "x", scope: { kind: "project", workspaceId: "w1" } }).success).toBe(false);
     expect(IssueSearchInputSchema.safeParse({ q: "é".repeat(130) }).success).toBe(false);
     expect(IssueSearchInputSchema.safeParse({ q: Array.from({ length: 13 }, (_, i) => `t${i}`).join(" ") }).success).toBe(false);
