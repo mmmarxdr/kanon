@@ -57,6 +57,18 @@ function redactCandidateData(value: unknown, hiddenRefs: ReadonlySet<string>): u
   }
 
   const provenance = objectValue(content["provenance"]);
+  for (const sourceProvenance of [provenance, objectValue(payload?.["provenance"])]) {
+    const sourceSnapshots = objectValue(sourceProvenance?.["sourceSnapshots"]);
+    if (sourceSnapshots && Array.isArray(sourceSnapshots["candidates"])) {
+      sourceSnapshots["candidates"] = sourceSnapshots["candidates"].filter((entry) => {
+        const snapshot = objectValue(objectValue(entry)?.["snapshot"]);
+        return !!snapshot && ![snapshot["issueId"], snapshot["issueKey"]].some(
+          (ref) => typeof ref === "string" && hiddenRefs.has(ref),
+        );
+      });
+    }
+  }
+
   if (!provenance) return content;
   for (const field of ["retainedCandidateIds", "retainedItemIds"] as const) {
     if (Array.isArray(provenance[field])) {
