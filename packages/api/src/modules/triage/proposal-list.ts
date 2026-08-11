@@ -71,7 +71,8 @@ function parseCursor(token: string, expected: CursorBinding): ListCursor {
     cursor.authorizationPolicyVersion !== expected.authorizationPolicyVersion ||
     typeof cursor.sourceFingerprint !== "string" ||
     !Number.isFinite(new Date(cursor.snapshotAt).getTime()) ||
-    !Number.isFinite(new Date(cursor.lastCreatedAt).getTime())
+    !Number.isFinite(new Date(cursor.lastCreatedAt).getTime()) ||
+    !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/iu.test(cursor.lastId)
   ) {
     throw new AppError(400, "CURSOR_BINDING_MISMATCH", "Proposal cursor does not match the query");
   }
@@ -129,7 +130,7 @@ function compactSummary(summary: Prisma.JsonValue): Prisma.JsonValue {
     Array.isArray(input)
       ? input.filter((item): item is string => typeof item === "string")
         .slice(0, maxItems)
-        .map((item) => item.slice(0, maxLength))
+        .map((item) => boundedString(item, maxLength) ?? "")
       : undefined;
   return {
     targetIssueKey: boundedString(value["targetIssueKey"], 120),
@@ -158,17 +159,16 @@ function isListTimeout(error: unknown): boolean {
   const meta = value.meta && typeof value.meta === "object"
     ? value.meta as { code?: unknown; message?: unknown }
     : {};
-  return value.code === "P2024" || value.code === "P2028" || meta.code === "57014" ||
-    /statement timeout|canceling statement|57014/i.test(
-      [value.message, meta.message].filter((item) => typeof item === "string").join(" "),
-    );
+  const message = [value.message, meta.message].filter((item) => typeof item === "string").join(" ");
+  return value.code === "P2024" || (value.code === "P2028" && /timeout|expired/i.test(message)) ||
+    meta.code === "57014" || /statement timeout|canceling statement|57014/i.test(message);
 }
 
 export async function listTriageProposals(
   userId: string,
   projectId: string,
   query: ListTriageProposalsQuery = {},
-  allowedProjectIds: readonly string[] = [],
+  allowedProjectIds: readonly string[] | undefined = undefined,
   correlationId: string = randomUUID(),
 ) {
   const requestedAt = new Date();
@@ -188,7 +188,7 @@ export async function listTriageProposals(
       where: { id: projectId },
       select: { id: true, workspaceId: true, archived: true },
     });
-    if (project?.archived || !project || (allowedProjectIds.length > 0 && !allowedProjectIds.includes(project.id))) {
+    if (project?.archived || !project || (allowedProjectIds && !allowedProjectIds.includes(project.id))) {
       throw new AppError(404, "NOT_FOUND", "Project not found");
     }
 
@@ -229,7 +229,7 @@ export async function listTriageProposals(
       role: member.role,
       projectAccess: member.projectAccess,
       projectRole: projectMember?.role ?? null,
-      allowedProjectIds: [...allowedProjectIds].sort(),
+      allowedProjectIds: allowedProjectIds ? [...allowedProjectIds].sort() : null,
     }, { setFields: ["allowedProjectIds"] }));
     const cursorBinding: CursorBinding = {
       version: 1,
@@ -255,9 +255,8 @@ export async function listTriageProposals(
     const degradedPredicate = query.degraded === undefined
       ? Prisma.empty
       : Prisma.sql`AND (tp.list_summary->>'degraded')::boolean = ${query.degraded}`;
-
-    const [source] = await tx.$queryRaw<[{ sourceFingerprint: string }]>(Prisma.sql`
-      WITH visible AS (
+    const visibleCte = Prisma.sql`
+      visible AS (
         SELECT tp.*,
           COALESCE((
             SELECT event.state::text
@@ -284,6 +283,10 @@ export async function listTriageProposals(
           ${generatorPredicate}
           ${degradedPredicate}
       )
+    `;
+
+    const [source] = await tx.$queryRaw<[{ sourceFingerprint: string }]>(Prisma.sql`
+      WITH ${visibleCte}
       SELECT md5(COALESCE(string_agg(
         concat_ws(':', e.id::text, e.created_at::text, e.snapshot_lifecycle,
           e.expires_at::text, (e.successor_id IS NOT NULL)::text, e.target_issue_id::text,
@@ -308,29 +311,7 @@ export async function listTriageProposals(
       isSuperseded: boolean;
       successorId: string | null;
     }>>(Prisma.sql`
-      WITH visible AS (
-        SELECT tp.*,
-          COALESCE((
-            SELECT event.state::text
-            FROM triage_proposal_lifecycle_events event
-            WHERE event.proposal_id = tp.id AND event.created_at <= ${snapshotAt}
-            ORDER BY event.created_at DESC, event.id DESC
-            LIMIT 1
-          ), tp.lifecycle::text) AS snapshot_lifecycle,
-          (
-            SELECT child.id FROM triage_proposals child
-            WHERE child.supersedes_id = tp.id AND child.created_at <= ${snapshotAt}
-            ORDER BY child.created_at, child.id
-            LIMIT 1
-          ) AS successor_id
-        FROM triage_proposals tp
-        JOIN issues i ON i.id = tp.target_issue_id AND i.project_id = tp.project_id
-        WHERE tp.project_id = ${project.id}::uuid
-          AND tp.created_at <= ${snapshotAt}
-          ${targetPredicate}
-          ${generatorPredicate}
-          ${degradedPredicate}
-      )
+      WITH ${visibleCte}
       SELECT e.id, e.snapshot_lifecycle AS "snapshotLifecycle",
         e.successor_id IS NOT NULL AS "isSuperseded", e.successor_id AS "successorId"
       FROM visible e

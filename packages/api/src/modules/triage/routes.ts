@@ -89,7 +89,7 @@ export async function triageProposalReadRoutes(appRaw: FastifyInstance) {
             degraded: request.query.degraded,
             cursor: request.query.cursor,
           },
-          user.allowedProjectIds ?? [],
+          user.allowedProjectIds,
           request.id,
         );
         return reply.send(result);

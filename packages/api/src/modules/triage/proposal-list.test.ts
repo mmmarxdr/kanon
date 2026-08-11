@@ -299,10 +299,15 @@ describe("GET /api/projects/:key/triage-proposals (KAN-193 disposed list)", () =
     });
 
     expect(second.statusCode).toBe(200);
+    expect(second.json().rows).toHaveLength(1);
+    expect(second.json().rows[0]).toMatchObject({
+      id: predecessor.id, lifecycle: "current", successorId: null,
+    });
   });
 
   it("keeps a maximum list page within 32 KiB", async () => {
     const long = `${"x".repeat(199)}😀`;
+    const now = Date.now();
     await prisma.triageProposal.createMany({
       data: Array.from({ length: 50 }, (_, index) => ({
         workspaceId,
@@ -323,7 +328,7 @@ describe("GET /api/projects/:key/triage-proposals (KAN-193 disposed list)", () =
           degradationCategories: Array.from({ length: 8 }, () => long),
           nonExecutable: true,
         },
-        createdAt: new Date(Date.now() - index),
+        createdAt: new Date(now - index),
         expiresAt: new Date(Date.now() + 86400_000),
         retentionEligibleAt: new Date(Date.now() + 30 * 86400_000),
         capturedRetentionDays: 30,
