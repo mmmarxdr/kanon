@@ -206,6 +206,23 @@ describe("searchIssues (KAN-193 PR4)", () => {
     expect(response.rows[0].issueKey).toBe("SRC-1");
   });
 
+  it("treats LIKE metacharacters as literal ranking text", async () => {
+    await prisma.issue.createMany({
+      data: [
+        { key: "LOGINX-1", title: "Login wildcard", projectId, sequenceNum: 1 },
+        { key: "SRC-2", title: "login%", projectId, sequenceNum: 2 },
+      ],
+    });
+
+    const response = await searchIssues(workspaceId, userId, {
+      q: "login%",
+      projection: "compact",
+      scope: { kind: "workspace", workspaceId },
+    });
+
+    expect(response.rows[0].issueKey).toBe("SRC-2");
+  });
+
   it("paginates maximum-length Unicode titles with a bounded cursor", async () => {
     await prisma.issue.createMany({
       data: Array.from({ length: 3 }, (_, index) => ({
@@ -239,8 +256,8 @@ describe("searchIssues (KAN-193 PR4)", () => {
     await prisma.issue.create({
       data: {
         key: "SRC-1",
-        title: "Login failure",
-        description: "Detailed candidate evidence",
+        title: `Login ${"x".repeat(500)}`,
+        description: `${"a".repeat(239)}😀`,
         projectId,
         sequenceNum: 1,
       },
@@ -257,7 +274,8 @@ describe("searchIssues (KAN-193 PR4)", () => {
     ]);
 
     expect(compact.rows[0]).not.toHaveProperty("descriptionExcerpt");
-    expect(full.rows[0]).toMatchObject({ descriptionExcerpt: "Detailed candidate evidence" });
+    expect(full.rows[0].title).toHaveLength(500);
+    expect(full.rows[0].descriptionExcerpt).toBe("a".repeat(239));
   });
 
   it("rejects malformed and unsupported filters before SQL", () => {

@@ -94,6 +94,12 @@ function normalizedFilters(filters: SearchInput["filters"]): SearchCursor["filte
   };
 }
 
+function boundedText(value: string, maxUnits: number): string {
+  const bounded = value.slice(0, maxUnits);
+  const last = bounded.charCodeAt(bounded.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? bounded.slice(0, -1) : bounded;
+}
+
 function parseSearchCursor(
   token: string,
   expected: Omit<SearchCursor, "populationFingerprint" | "offset" | "last">,
@@ -257,6 +263,7 @@ export async function searchIssues(
           )`
         : Prisma.empty;
       const queryText = normalizedQuery;
+      const likeQueryText = queryText.replace(/[!%_]/gu, "!$&");
       const rows = await tx.$queryRaw<SearchSqlRow[]>(Prisma.sql`
         WITH authorized_projects AS (
           SELECT p.id
@@ -288,10 +295,11 @@ export async function searchIssues(
             (${tokenOverlap})::integer AS "tokenOverlap",
             CASE
               WHEN LOWER(i.key) = ${queryText} THEN 1
-              WHEN LOWER(i.key) LIKE ${`${queryText}%`} THEN 2
+              WHEN LOWER(i.key) LIKE ${`${likeQueryText}%`} ESCAPE '!' THEN 2
               WHEN LOWER(i.title) = ${queryText} THEN 3
               WHEN ${allTitleTokens} THEN 4
-              WHEN LOWER(i.title) LIKE ${`%${queryText}%`} OR LOWER(i.key) LIKE ${`%${queryText}%`} THEN 5
+              WHEN LOWER(i.title) LIKE ${`%${likeQueryText}%`} ESCAPE '!'
+                OR LOWER(i.key) LIKE ${`%${likeQueryText}%`} ESCAPE '!' THEN 5
               ELSE 6
             END AS "matchRank"
           FROM issues i
@@ -347,7 +355,7 @@ export async function searchIssues(
         issueKey: row.issueKey,
         projectId: row.projectId,
         projectKey: row.projectKey,
-        title: row.title,
+        title: boundedText(row.title, 500),
         state: row.state,
         type: row.type,
         priority: row.priority,
@@ -379,7 +387,7 @@ export async function searchIssues(
           projectUpdatedAt: row.projectUpdatedAt,
         }),
         ...(input.projection === "full"
-          ? { descriptionExcerpt: (row.description ?? "").slice(0, 240) }
+          ? { descriptionExcerpt: boundedText(row.description ?? "", 240) }
           : {}),
       }));
       const last = page.at(-1);
