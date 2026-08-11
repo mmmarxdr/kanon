@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ── Mock prisma ────────────────────────────────────────────────────────────
 vi.mock("../../config/prisma.js", () => ({
@@ -6,9 +6,12 @@ vi.mock("../../config/prisma.js", () => ({
     issue: { findUnique: vi.fn(), update: vi.fn() },
     workSession: {
       upsert: vi.fn(),
+      create: vi.fn(),
       findUnique: vi.fn(),
       findFirst: vi.fn(),
       findMany: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
       delete: vi.fn(),
       deleteMany: vi.fn(),
     },
@@ -17,6 +20,7 @@ vi.mock("../../config/prisma.js", () => ({
     // KAN-103 PR3: findMany added for pre-close query before emit.
     interruption: { updateMany: vi.fn(), create: vi.fn(), findMany: vi.fn() },
     $transaction: vi.fn(),
+    $queryRaw: vi.fn(),
   },
 }));
 
@@ -42,18 +46,31 @@ vi.mock("../schedule/service.js", () => ({
 
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
-import { startWork, heartbeat, stopWork, getActiveWorkers, cleanupExpired, recordInterruption } from "./service.js";
+import {
+  captureTransitionInterval,
+  startWork,
+  heartbeat,
+  stopWork,
+  getActiveWorkers,
+  cleanupExpired,
+  recordInterruption,
+} from "./service.js";
 import { transitionIssue, updateIssue } from "../issue/service.js";
 import { upsertPlan } from "../schedule/service.js";
 
 const mockIssueFind = vi.mocked(prisma.issue.findUnique);
 const mockIssueUpdate = vi.mocked(prisma.issue.update);
 const mockSessionUpsert = vi.mocked(prisma.workSession.upsert);
+const mockSessionCreate = vi.mocked(prisma.workSession.create);
 const mockSessionFindUnique = vi.mocked(prisma.workSession.findUnique);
 const mockSessionFindMany = vi.mocked(prisma.workSession.findMany);
 const mockSessionFindFirst = vi.mocked(prisma.workSession.findFirst);
+const mockSessionUpdate = vi.mocked(prisma.workSession.update);
+const mockSessionUpdateMany = vi.mocked(prisma.workSession.updateMany);
 const mockSessionDelete = vi.mocked(prisma.workSession.delete);
+const mockSessionDeleteMany = vi.mocked(prisma.workSession.deleteMany);
 const mockTransaction = vi.mocked(prisma.$transaction);
+const mockQueryRaw = vi.mocked(prisma.$queryRaw);
 const mockWorkLogCreate = vi.mocked(prisma.workLog.create);
 const mockEmit = vi.mocked(eventBus.emit);
 const mockUpdateIssue = vi.mocked(updateIssue);
@@ -93,8 +110,20 @@ describe("WorkSessionService", () => {
     mockInterruptionUpdateManyGlobal.mockResolvedValue({ count: 0 } as any);
     // KAN-160: default — no other active worker on the issue unless a test sets one.
     mockSessionFindFirst.mockResolvedValue(null as any);
+    mockSessionDeleteMany.mockResolvedValue({ count: 1 } as any);
+    mockSessionCreate.mockResolvedValue(fakeSession);
+    mockWorkLogCreate.mockResolvedValue({ id: "wl-default" } as any);
+    mockQueryRaw.mockResolvedValue([{ state: "in_progress" }] as any);
+    mockTransaction.mockImplementation(async (operation: any) => {
+      if (typeof operation === "function") return operation(prisma);
+      return Promise.all(operation);
+    });
     mockUpdateIssue.mockResolvedValue({} as any);
     mockUpsertPlan.mockResolvedValue({} as any);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   // ── startWork ──────────────────────────────────────────────────────────
@@ -129,6 +158,201 @@ describe("WorkSessionService", () => {
           update: expect.objectContaining({ source: "mcp" }),
         })
       );
+    });
+
+    it("adopts a fresh session without changing its id or startedAt", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-08-11T12:04:00.000Z"));
+      const startedAt = new Date("2026-08-11T12:00:00.000Z");
+      const existing = {
+        ...fakeSession,
+        id: "session-existing",
+        startedAt,
+        lastHeartbeat: new Date("2026-08-11T12:03:00.000Z"),
+      };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(existing);
+      mockSessionUpsert.mockResolvedValue({
+        ...existing,
+        lastHeartbeat: new Date("2026-08-11T12:04:00.000Z"),
+      });
+
+      const result = await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      expect(result.session.id).toBe("session-existing");
+      expect(result.session.startedAt).toEqual(startedAt);
+      const update = mockSessionUpsert.mock.calls[0]![0].update;
+      expect(update).not.toHaveProperty("startedAt");
+      expect(update).toMatchObject({
+        lastHeartbeat: new Date("2026-08-11T12:04:00.000Z"),
+        source: "mcp",
+      });
+      expect(mockTransaction).toHaveBeenCalledOnce();
+    });
+
+    it("finalizes an expired lease once before opening a distinct window", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-08-11T12:10:00.000Z"));
+      const stale = {
+        ...fakeSession,
+        id: "session-stale",
+        startedAt: new Date("2026-08-11T12:00:00.000Z"),
+        lastHeartbeat: new Date("2026-08-11T12:00:00.000Z"),
+      };
+      const reopened = {
+        ...fakeSession,
+        id: "session-new-window",
+        startedAt: new Date("2026-08-11T12:10:00.000Z"),
+        lastHeartbeat: new Date("2026-08-11T12:10:00.000Z"),
+      };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(stale);
+      mockSessionDeleteMany.mockResolvedValue({ count: 1 } as any);
+      mockWorkLogCreate.mockResolvedValue({ id: "wl-stale", durationS: 300 } as any);
+      mockSessionCreate.mockResolvedValue(reopened);
+
+      const result = await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      expect(mockTransaction).toHaveBeenCalledOnce();
+      expect(mockWorkLogCreate).toHaveBeenCalledOnce();
+      expect(mockWorkLogCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          startedAt: new Date("2026-08-11T12:00:00.000Z"),
+          endedAt: new Date("2026-08-11T12:05:00.000Z"),
+          durationS: 300,
+          reason: "expired",
+        }),
+      });
+      expect(result.session.id).toBe("session-new-window");
+      expect(result.session.startedAt).toEqual(new Date("2026-08-11T12:10:00.000Z"));
+    });
+
+    it("rolls back stale finalization when replacement creation fails", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-08-11T12:10:00.000Z"));
+      const stale = {
+        ...fakeSession,
+        id: "session-stale",
+        startedAt: new Date("2026-08-11T12:00:00.000Z"),
+        lastHeartbeat: new Date("2026-08-11T12:00:00.000Z"),
+      };
+      const tx = {
+        $queryRaw: vi.fn().mockResolvedValue([{ state: "in_progress" }]),
+        workSession: {
+          findUnique: vi.fn().mockResolvedValue(stale),
+          deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+          create: vi.fn().mockRejectedValue(new Error("replacement failed")),
+          updateMany: vi.fn(),
+        },
+        workLog: {
+          create: vi.fn().mockResolvedValue({ id: "wl-stale", durationS: 300 }),
+        },
+      };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(stale);
+      mockTransaction.mockImplementation(async (operation: any) => {
+        expect(typeof operation).toBe("function");
+        return operation(tx);
+      });
+
+      await expect(
+        startWork("KAN-42", "member-1", "user-1", "mcp"),
+      ).rejects.toThrow("replacement failed");
+
+      expect(tx.workSession.deleteMany).toHaveBeenCalledWith({
+        where: { id: "session-stale", lastHeartbeat: stale.lastHeartbeat },
+      });
+      expect(tx.workLog.create).toHaveBeenCalledOnce();
+      expect(tx.workSession.create).toHaveBeenCalledOnce();
+      expect(mockSessionUpsert).not.toHaveBeenCalled();
+    });
+
+    it("adopts a newer generation when stale rollover loses its compare-and-swap", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-08-11T12:10:00.000Z"));
+      const stale = {
+        ...fakeSession,
+        id: "session-stale",
+        startedAt: new Date("2026-08-11T12:00:00.000Z"),
+        lastHeartbeat: new Date("2026-08-11T12:00:00.000Z"),
+      };
+      const newer = {
+        ...fakeSession,
+        id: "session-newer",
+        startedAt: new Date("2026-08-11T12:09:00.000Z"),
+        lastHeartbeat: new Date("2026-08-11T12:09:30.000Z"),
+      };
+      const adopted = {
+        ...newer,
+        lastHeartbeat: new Date("2026-08-11T12:10:00.000Z"),
+      };
+      const tx = {
+        $queryRaw: vi.fn().mockResolvedValue([{ state: "in_progress" }]),
+        workSession: {
+          findUnique: vi.fn()
+            .mockResolvedValueOnce(stale)
+            .mockResolvedValueOnce(newer),
+          deleteMany: vi.fn().mockResolvedValueOnce({ count: 0 }),
+          create: vi.fn(),
+          upsert: vi.fn().mockResolvedValue(adopted),
+        },
+        workLog: { create: vi.fn() },
+      };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(stale);
+      mockTransaction.mockImplementation(async (operation: any) => {
+        expect(typeof operation).toBe("function");
+        return operation(tx);
+      });
+
+      const result = await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      expect(result.session).toMatchObject({
+        id: "session-newer",
+        startedAt: newer.startedAt,
+        lastHeartbeat: adopted.lastHeartbeat,
+      });
+      expect(tx.workSession.deleteMany).toHaveBeenCalledOnce();
+      expect(tx.workSession.upsert).toHaveBeenCalledOnce();
+      expect(tx.workLog.create).not.toHaveBeenCalled();
+      expect(tx.workSession.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects a closed incident start without displacing work or opening an interruption", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-08-11T12:10:00.000Z"));
+      const closedIncident = {
+        ...fakeIssue,
+        id: "incident-closed",
+        key: "KAN-99",
+        type: "incident",
+        state: "review",
+      };
+      const displaced = {
+        ...fakeSession,
+        id: "session-task-active",
+        issueId: "task-active",
+        startedAt: new Date("2026-08-11T12:09:00.000Z"),
+        lastHeartbeat: new Date("2026-08-11T12:10:00.000Z"),
+        issue: { key: "KAN-42" },
+      };
+      mockIssueFind.mockResolvedValue(closedIncident);
+      mockQueryRaw.mockResolvedValue([{ state: "review" }] as any);
+      mockSessionFindMany.mockResolvedValue([displaced] as any);
+      mockInterruptionCreateGlobal.mockResolvedValue({
+        id: "interruption-orphan",
+        incidentIssueId: "incident-closed",
+        interruptedIssueId: "task-active",
+        memberId: "member-1",
+      } as any);
+
+      const result = await startWork("KAN-99", "member-1", "user-1", "mcp");
+
+      expect(result.session).toBeNull();
+      expect(mockSessionFindMany).not.toHaveBeenCalled();
+      expect(mockSessionDelete).not.toHaveBeenCalled();
+      expect(mockWorkLogCreate).not.toHaveBeenCalled();
+      expect(mockInterruptionCreateGlobal).not.toHaveBeenCalled();
     });
 
     // ── KAN-160: single active worker per ticket ──────────────────────────
@@ -275,19 +499,179 @@ describe("WorkSessionService", () => {
   // ── heartbeat ──────────────────────────────────────────────────────────
 
   describe("heartbeat", () => {
-    it("updates lastHeartbeat for existing session", async () => {
-      mockIssueFind.mockResolvedValue({ id: "issue-1" } as any);
-      mockSessionFindUnique.mockResolvedValue(fakeSession);
-      const updatedSession = { ...fakeSession, lastHeartbeat: new Date() };
-      (prisma.workSession.update as any) = vi.fn().mockResolvedValue(updatedSession);
+    it("does not replace the session a close already snapshotted when the issue is now review", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-08-11T12:10:00.000Z"));
+      const stale = {
+        ...fakeSession,
+        id: "session-close-snapshot",
+        startedAt: new Date("2026-08-11T12:00:00.000Z"),
+        lastHeartbeat: new Date("2026-08-11T12:00:00.000Z"),
+      };
+      const replacement = {
+        ...stale,
+        id: "session-heartbeat-replacement",
+        startedAt: new Date("2026-08-11T12:10:00.000Z"),
+        lastHeartbeat: new Date("2026-08-11T12:10:00.000Z"),
+      };
+      const tx = {
+        $queryRaw: vi.fn().mockResolvedValue([{ state: "review" }]),
+        workSession: {
+          findUnique: vi.fn().mockResolvedValue(stale),
+          deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+          create: vi.fn().mockResolvedValue(replacement),
+          upsert: vi.fn(),
+        },
+        workLog: {
+          create: vi.fn().mockResolvedValue({ id: "wl-close-race", durationS: 300 }),
+        },
+        interruption: { findMany: vi.fn(), updateMany: vi.fn() },
+      };
+      mockIssueFind
+        .mockResolvedValueOnce(fakeIssue)
+        .mockResolvedValueOnce({ ...fakeIssue, state: "review" });
+      mockSessionFindUnique.mockResolvedValue(null);
+      mockTransaction.mockImplementation(async (operation: any) => operation(tx));
+
+      // The close handler has already snapshotted session A. Its identity-aware
+      // stop will no-op after heartbeat claims A, so heartbeat must not leave B.
+      const heartbeatResult = await heartbeat("KAN-42", "user-1");
+      const closeResult = await stopWork(
+        "KAN-42",
+        "user-1",
+        "member-1",
+        null,
+        new Date("2026-08-11T12:09:00.000Z"),
+        stale.id,
+      );
+
+      expect(heartbeatResult).toBeNull();
+      expect(closeResult.deleted).toBe(false);
+      expect(tx.workSession.deleteMany).toHaveBeenCalledWith({
+        where: { id: stale.id, lastHeartbeat: stale.lastHeartbeat },
+      });
+      expect(tx.workLog.create).toHaveBeenCalledOnce();
+      expect(tx.workSession.create).not.toHaveBeenCalled();
+    });
+
+    it("does not reuse stale fallback identity after a retry observes review and no session", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-08-11T12:10:00.000Z"));
+      const stale = {
+        ...fakeSession,
+        id: "session-stale-retry",
+        startedAt: new Date("2026-08-11T12:00:00.000Z"),
+        lastHeartbeat: new Date("2026-08-11T12:00:00.000Z"),
+      };
+      const replacement = {
+        ...fakeSession,
+        id: "session-invalid-fallback",
+        startedAt: new Date("2026-08-11T12:10:00.000Z"),
+        lastHeartbeat: new Date("2026-08-11T12:10:00.000Z"),
+      };
+      const tx = {
+        $queryRaw: vi.fn()
+          .mockResolvedValueOnce([{ state: "in_progress" }])
+          .mockResolvedValueOnce([{ state: "review" }]),
+        workSession: {
+          findUnique: vi.fn()
+            .mockResolvedValueOnce(stale)
+            .mockResolvedValueOnce(null),
+          deleteMany: vi.fn().mockResolvedValueOnce({ count: 0 }),
+          create: vi.fn(),
+          upsert: vi.fn().mockResolvedValue(replacement),
+        },
+        workLog: { create: vi.fn() },
+        interruption: { findMany: vi.fn(), updateMany: vi.fn() },
+      };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockTransaction.mockImplementation(async (operation: any) => operation(tx));
 
       const result = await heartbeat("KAN-42", "user-1");
 
-      expect(result).toBeTruthy();
+      expect(result).toBeNull();
+      expect(tx.workSession.deleteMany).toHaveBeenCalledOnce();
+      expect(tx.workSession.upsert).not.toHaveBeenCalled();
+      expect(tx.workSession.create).not.toHaveBeenCalled();
+    });
+
+    it("finalizes an expired generation once and opens a distinct heartbeat window", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-08-11T12:10:00.000Z"));
+      const stale = {
+        ...fakeSession,
+        id: "session-stale-heartbeat",
+        startedAt: new Date("2026-08-11T12:00:00.000Z"),
+        lastHeartbeat: new Date("2026-08-11T12:00:00.000Z"),
+      };
+      const replacement = {
+        ...stale,
+        id: "session-heartbeat-window",
+        startedAt: new Date("2026-08-11T12:10:00.000Z"),
+        lastHeartbeat: new Date("2026-08-11T12:10:00.000Z"),
+      };
+      const tx = {
+        $queryRaw: vi.fn().mockResolvedValue([{ state: "in_progress" }]),
+        workSession: {
+          findUnique: vi.fn().mockResolvedValue(stale),
+          deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+          create: vi.fn().mockResolvedValue(replacement),
+          updateMany: vi.fn(),
+        },
+        workLog: {
+          create: vi.fn().mockResolvedValue({ id: "wl-heartbeat", durationS: 300 }),
+        },
+      };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(stale);
+      mockTransaction.mockImplementation(async (operation: any) => {
+        expect(typeof operation).toBe("function");
+        return operation(tx);
+      });
+
+      const result = await heartbeat("KAN-42", "user-1");
+
+      expect(result).toMatchObject({
+        id: "session-heartbeat-window",
+        startedAt: new Date("2026-08-11T12:10:00.000Z"),
+      });
+      expect(tx.workLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          startedAt: stale.startedAt,
+          endedAt: new Date("2026-08-11T12:05:00.000Z"),
+          durationS: 300,
+          reason: "expired",
+        }),
+      });
+      expect(tx.workLog.create).toHaveBeenCalledOnce();
+      expect(tx.workSession.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: "user-1",
+          issueId: "issue-1",
+          memberId: "member-1",
+          startedAt: new Date("2026-08-11T12:10:00.000Z"),
+        }),
+      });
+    });
+
+    it("updates lastHeartbeat for existing session", async () => {
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(fakeSession);
+      const updatedSession = { ...fakeSession, lastHeartbeat: new Date() };
+      mockSessionUpsert.mockResolvedValue(updatedSession);
+
+      const result = await heartbeat("KAN-42", "user-1");
+
+      expect(result).toBe(updatedSession);
+      expect(mockSessionUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({ lastHeartbeat: expect.any(Date) }),
+        }),
+      );
     });
 
     it("returns null when no active session exists", async () => {
-      mockIssueFind.mockResolvedValue({ id: "issue-1" } as any);
+      mockIssueFind.mockResolvedValue(fakeIssue);
       mockSessionFindUnique.mockResolvedValue(null);
 
       const result = await heartbeat("KAN-42", "user-1");
@@ -302,10 +686,42 @@ describe("WorkSessionService", () => {
     });
   });
 
+  describe("captureTransitionInterval", () => {
+    it("writes exactly one positive WorkLog bounded by the active-entry and close timestamps", async () => {
+      const startedAt = new Date("2026-08-11T12:00:00.000Z");
+      const observedAt = new Date("2026-08-11T12:02:00.000Z");
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockWorkLogCreate.mockResolvedValue({ id: "wl-historical-transition" } as any);
+
+      const result = await captureTransitionInterval(
+        "KAN-42",
+        "user-1",
+        "member-1",
+        startedAt,
+        observedAt,
+        "transition-listener",
+      );
+
+      expect(result.workLog).toEqual({ id: "wl-historical-transition", durationS: 120 });
+      expect(mockWorkLogCreate).toHaveBeenCalledOnce();
+      expect(mockWorkLogCreate).toHaveBeenCalledWith({
+        data: {
+          startedAt,
+          endedAt: observedAt,
+          durationS: 120,
+          reason: "stopped",
+          via: null,
+          issueId: "issue-1",
+          memberId: "member-1",
+        },
+      });
+    });
+  });
+
   // ── stopWork ───────────────────────────────────────────────────────────
   //
-  // S2 / KAN-26: stopWork must create a WorkLog atomically with session
-  // deletion when duration ≥ 60s, and skip WorkLog for < 60s sessions.
+  // stopWork persists every positive whole-second duration atomically with
+  // session deletion. Zero-second windows are deleted without a WorkLog.
 
   describe("stopWork", () => {
     it("deletes the session and returns deleted: true (legacy path, no session found recheck)", async () => {
@@ -343,21 +759,23 @@ describe("WorkSessionService", () => {
       expect(mockTransaction).toHaveBeenCalledOnce();
     });
 
-    it("skips WorkLog for < 60s session: plain delete only", async () => {
-      const startedAt = new Date(Date.now() - 30_000); // 30 seconds ago
-      const session30s = { ...fakeSession, startedAt, lastHeartbeat: new Date() };
+    it.each([1, 59])("persists a positive %d-second session", async (durationS) => {
+      const startedAt = new Date(Date.now() - durationS * 1000);
+      const session = { ...fakeSession, startedAt, lastHeartbeat: new Date() };
       mockIssueFind.mockResolvedValue(fakeIssue);
-      mockSessionFindUnique.mockResolvedValue(session30s);
-      mockSessionDelete.mockResolvedValue(session30s);
+      mockSessionFindUnique.mockResolvedValue(session);
+      mockTransaction.mockResolvedValue([
+        { id: `wl-${durationS}`, durationS },
+        session,
+      ]);
 
       const result = await stopWork("KAN-42", "user-1", "member-1");
 
-      expect(result.ok).toBe(true);
-      expect(result.deleted).toBe(true);
-      expect(result.workLog).toBeNull();
-      // Plain delete, NOT $transaction
-      expect(mockTransaction).not.toHaveBeenCalled();
-      expect(mockSessionDelete).toHaveBeenCalledWith({ where: { id: "session-1" } });
+      expect(result.workLog).toEqual({ id: `wl-${durationS}`, durationS });
+      expect(mockTransaction).toHaveBeenCalledOnce();
+      expect(mockWorkLogCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({ durationS }),
+      });
     });
 
     it("returns deleted: false when no session exists", async () => {
@@ -419,7 +837,7 @@ describe("WorkSessionService", () => {
       const session30s = { ...fakeSession, startedAt, lastHeartbeat: new Date() };
       mockIssueFind.mockResolvedValue(fakeIssue);
       mockSessionFindUnique.mockResolvedValue(session30s);
-      mockSessionDelete.mockResolvedValue(session30s);
+      mockTransaction.mockResolvedValue([{ id: "wl-30", durationS: 30 }, session30s]);
 
       mockEmit.mockClear();
       await stopWork("KAN-42", "user-1", "member-1");
@@ -432,19 +850,19 @@ describe("WorkSessionService", () => {
       );
     });
 
-    it("emits work_session.ended even for < 60s (no workLog in payload)", async () => {
+    it("emits work_session.ended with a WorkLog for positive sub-minute work", async () => {
       const startedAt = new Date(Date.now() - 30_000);
       const session30s = { ...fakeSession, startedAt, lastHeartbeat: new Date() };
       mockIssueFind.mockResolvedValue(fakeIssue);
       mockSessionFindUnique.mockResolvedValue(session30s);
-      mockSessionDelete.mockResolvedValue(session30s);
+      mockTransaction.mockResolvedValue([{ id: "wl-30", durationS: 30 }, session30s]);
 
       await stopWork("KAN-42", "user-1", "member-1");
 
       expect(mockEmit).toHaveBeenCalledWith(
         expect.objectContaining({
           type: "work_session.ended",
-          payload: expect.objectContaining({ workLogId: null }),
+          payload: expect.objectContaining({ workLogId: "wl-30" }),
         })
       );
     });
@@ -509,8 +927,7 @@ describe("WorkSessionService", () => {
       );
     });
 
-    // ── Fix 6: 60s exact boundary ──────────────────────────────────────────
-    // durationS === 60 → WorkLog written; durationS === 59 → discarded.
+    // ── Whole-second boundary ───────────────────────────────────────────────
 
     it("writes WorkLog when durationS is exactly 60 (boundary)", async () => {
       const startedAt = new Date(Date.now() - 60_000);
@@ -528,12 +945,12 @@ describe("WorkSessionService", () => {
       expect(mockWorkLogCreate).toHaveBeenCalledOnce();
     });
 
-    it("discards WorkLog when durationS is exactly 59 (boundary)", async () => {
-      const startedAt = new Date(Date.now() - 59_000);
-      const session59s = { ...fakeSession, startedAt, lastHeartbeat: new Date() };
+    it("deletes without a WorkLog when durationS is zero", async () => {
+      const startedAt = new Date();
+      const session0s = { ...fakeSession, startedAt, lastHeartbeat: new Date() };
       mockIssueFind.mockResolvedValue(fakeIssue);
-      mockSessionFindUnique.mockResolvedValue(session59s);
-      mockSessionDelete.mockResolvedValue(session59s);
+      mockSessionFindUnique.mockResolvedValue(session0s);
+      mockSessionDelete.mockResolvedValue(session0s);
 
       const result = await stopWork("KAN-42", "user-1", "member-1");
 
@@ -591,11 +1008,92 @@ describe("WorkSessionService", () => {
   // ── cleanupExpired ─────────────────────────────────────────────────────
   //
   // S2 / KAN-26: cleanupExpired must use per-session loop with try/catch,
-  // use lastHeartbeat − startedAt for duration (D4), create WorkLog for ≥ 60s,
-  // skip WorkLog for < 60s, and isolate one-session failure from siblings.
+  // cap duration at the activity lease, persist every positive whole second,
+  // and isolate one-session failure from siblings.
 
   describe("cleanupExpired", () => {
-    it("creates WorkLog for ≥ 60s expired session using lastHeartbeat − startedAt (D4)", async () => {
+    it("does not finalize a stale snapshot after the same generation was renewed", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-08-11T12:10:00.000Z"));
+      const staleHeartbeat = new Date("2026-08-11T12:00:00.000Z");
+      const staleSnapshot = {
+        id: "s-renewed",
+        memberId: "m-1",
+        userId: "u-1",
+        issueId: "i-1",
+        source: "mcp",
+        startedAt: staleHeartbeat,
+        lastHeartbeat: staleHeartbeat,
+        issue: {
+          key: "KAN-1",
+          type: "task",
+          project: { workspaceId: "ws-1" },
+        },
+      };
+      const tx = {
+        workSession: {
+          deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        },
+        workLog: { create: vi.fn() },
+        interruption: { findMany: vi.fn(), updateMany: vi.fn() },
+      };
+      mockSessionFindMany.mockResolvedValue([staleSnapshot] as any);
+      mockTransaction.mockImplementation(async (operation: any) => {
+        expect(typeof operation).toBe("function");
+        return operation(tx);
+      });
+
+      const count = await cleanupExpired();
+
+      expect(count).toBe(0);
+      expect(tx.workSession.deleteMany).toHaveBeenCalledWith({
+        where: { id: "s-renewed", lastHeartbeat: staleHeartbeat },
+      });
+      expect(tx.workLog.create).not.toHaveBeenCalled();
+      expect(mockSessionDelete).not.toHaveBeenCalled();
+      expect(mockEmit).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: "work_session.ended" }),
+      );
+    });
+
+    it("persists the initial lease for an automatic transition session", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-08-11T12:06:00.000Z"));
+      const startedAt = new Date("2026-08-11T12:00:00.000Z");
+      const automaticSession = {
+        id: "s-transition",
+        memberId: "m-1",
+        userId: "u-1",
+        issueId: "i-1",
+        source: "transition-listener",
+        startedAt,
+        lastHeartbeat: startedAt,
+        issue: {
+          key: "KAN-1",
+          type: "task",
+          project: { workspaceId: "ws-1" },
+        },
+      };
+      mockSessionFindMany.mockResolvedValue([automaticSession] as any);
+      mockWorkLogCreate.mockResolvedValue({ id: "wl-transition", durationS: 300 } as any);
+
+      const count = await cleanupExpired();
+
+      expect(count).toBe(1);
+      expect(mockWorkLogCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          startedAt,
+          endedAt: new Date("2026-08-11T12:05:00.000Z"),
+          durationS: 300,
+          reason: "expired",
+        }),
+      });
+      expect(mockSessionDeleteMany).toHaveBeenCalledWith({
+        where: { id: "s-transition", lastHeartbeat: startedAt },
+      });
+    });
+
+    it("creates WorkLog for an expired session using the bounded activity lease", async () => {
       const startedAt = new Date(Date.now() - 120_000); // 2 min ago
       const lastHeartbeat = new Date(Date.now() - 10_000); // 10s ago (expired but was alive)
       const expiredSessions = [
@@ -612,8 +1110,6 @@ describe("WorkSessionService", () => {
       ] as any;
 
       mockSessionFindMany.mockResolvedValue(expiredSessions);
-      // Per-session loop uses $transaction for ≥ 60s
-      mockTransaction.mockResolvedValue([{ id: "wl-1", durationS: 110 }, {}]);
 
       const count = await cleanupExpired();
 
@@ -622,7 +1118,7 @@ describe("WorkSessionService", () => {
       expect(mockTransaction).toHaveBeenCalledOnce();
     });
 
-    it("skips WorkLog for < 60s expired session", async () => {
+    it("persists a positive sub-minute expired session", async () => {
       const startedAt = new Date(Date.now() - 30_000);
       const lastHeartbeat = new Date(Date.now() - 20_000); // duration: ~10s
       const expiredSessions = [
@@ -639,14 +1135,12 @@ describe("WorkSessionService", () => {
       ] as any;
 
       mockSessionFindMany.mockResolvedValue(expiredSessions);
-      mockSessionDelete.mockResolvedValue({} as any);
 
       const count = await cleanupExpired();
 
       expect(count).toBe(1);
-      // No $transaction — plain delete
-      expect(mockTransaction).not.toHaveBeenCalled();
-      expect(mockSessionDelete).toHaveBeenCalledWith({ where: { id: "s-short" } });
+      expect(mockTransaction).toHaveBeenCalledOnce();
+      expect(mockWorkLogCreate).toHaveBeenCalledOnce();
     });
 
     it("isolates one-session failure: other sessions complete (D4)", async () => {
@@ -693,10 +1187,10 @@ describe("WorkSessionService", () => {
 
       mockSessionFindMany.mockResolvedValue(expiredSessions);
       // s-1 succeeds, s-2 throws, s-3 succeeds
-      mockTransaction
-        .mockResolvedValueOnce([{ id: "wl-1" }, {}])
+      mockWorkLogCreate
+        .mockResolvedValueOnce({ id: "wl-1" } as any)
         .mockRejectedValueOnce(new Error("constraint violation"))
-        .mockResolvedValueOnce([{ id: "wl-3" }, {}]);
+        .mockResolvedValueOnce({ id: "wl-3" } as any);
 
       const logger = { info: vi.fn(), error: vi.fn() };
       const count = await cleanupExpired(logger);
@@ -736,7 +1230,6 @@ describe("WorkSessionService", () => {
       ] as any;
 
       mockSessionFindMany.mockResolvedValue(expiredSessions);
-      mockTransaction.mockResolvedValue([{ id: "wl-x" }, {}]);
 
       await cleanupExpired();
 
@@ -768,7 +1261,6 @@ describe("WorkSessionService", () => {
           issue: { key: "KAN-1", project: { workspaceId: "ws-1" } },
         },
       ] as any);
-      mockTransaction.mockResolvedValue([{ id: "wl-1" }, {}]);
 
       const logger = { info: vi.fn(), error: vi.fn() };
       await cleanupExpired(logger);
@@ -776,7 +1268,7 @@ describe("WorkSessionService", () => {
       expect(logger.info).toHaveBeenCalledWith({ count: 1 }, "Cleaned up expired work sessions");
     });
 
-    // ── Fix 6: 60s exact boundary (expiry path) ────────────────────────────
+    // ── Whole-second boundary (expiry path) ────────────────────────────────
 
     it("writes WorkLog when expiry durationS is exactly 60 (boundary)", async () => {
       const now = Date.now();
@@ -797,7 +1289,6 @@ describe("WorkSessionService", () => {
       ] as any;
 
       mockSessionFindMany.mockResolvedValue(expiredSessions);
-      mockTransaction.mockResolvedValue([{ id: "wl-exact60" }, {}]);
 
       const count = await cleanupExpired();
 
@@ -807,9 +1298,9 @@ describe("WorkSessionService", () => {
       expect(mockWorkLogCreate).toHaveBeenCalledOnce();
     });
 
-    it("discards WorkLog when expiry durationS is exactly 59 (boundary)", async () => {
+    it("persists WorkLog when expiry durationS is exactly 59", async () => {
       const now = Date.now();
-      // lastHeartbeat - startedAt = exactly 59s → plain delete, no WorkLog
+      // observed close - startedAt = exactly 59s → WorkLog is preserved
       const startedAt = new Date(now - 59_000);
       const lastHeartbeat = new Date(now);
       const expiredSessions = [
@@ -826,15 +1317,12 @@ describe("WorkSessionService", () => {
       ] as any;
 
       mockSessionFindMany.mockResolvedValue(expiredSessions);
-      mockSessionDelete.mockResolvedValue({} as any);
 
       const count = await cleanupExpired();
 
       expect(count).toBe(1);
-      expect(mockTransaction).not.toHaveBeenCalled();
-      // Plain delete (awaited, not part of a transaction)
-      expect(mockSessionDelete).toHaveBeenCalledOnce();
-      expect(mockWorkLogCreate).not.toHaveBeenCalled();
+      expect(mockTransaction).toHaveBeenCalledOnce();
+      expect(mockWorkLogCreate).toHaveBeenCalledOnce();
     });
 
     // ── Fix 2: session started with via 'claude-code' → expires → WorkLog.via='claude-code'
@@ -858,7 +1346,6 @@ describe("WorkSessionService", () => {
       ] as any;
 
       mockSessionFindMany.mockResolvedValue(expiredSessions);
-      mockTransaction.mockResolvedValue([{ id: "wl-cc" }, {}]);
 
       await cleanupExpired();
 
@@ -906,12 +1393,15 @@ describe("WorkSessionService", () => {
       });
     });
 
-    it("does NOT emit worklog.created for < 60s stopWork", async () => {
+    it("emits worklog.created for positive sub-minute stopWork", async () => {
       const startedAt = new Date(Date.now() - 30_000); // 30 s — sub-minute
       const session30s = { ...fakeSession, startedAt, lastHeartbeat: new Date() };
       mockIssueFind.mockResolvedValue(fakeIssue);
       mockSessionFindUnique.mockResolvedValue(session30s);
-      mockSessionDelete.mockResolvedValue(session30s);
+      mockTransaction.mockResolvedValue([
+        { id: "wl-created-30", durationS: 30 },
+        session30s,
+      ]);
 
       mockEmit.mockClear();
       await stopWork("KAN-42", "user-1", "member-1");
@@ -919,7 +1409,7 @@ describe("WorkSessionService", () => {
       const worklogEmit = mockEmit.mock.calls.find(
         ([arg]) => (arg as { type: string }).type === "worklog.created"
       );
-      expect(worklogEmit).toBeUndefined();
+      expect(worklogEmit).toBeDefined();
     });
   });
 
@@ -942,7 +1432,7 @@ describe("WorkSessionService", () => {
 
       mockSessionFindMany.mockResolvedValue(expiredSessions);
       const fakeWorkLog = { id: "wl-expired-1", durationS: 110 };
-      mockTransaction.mockResolvedValue([fakeWorkLog, {}]);
+      mockWorkLogCreate.mockResolvedValue(fakeWorkLog as any);
 
       mockEmit.mockClear();
       await cleanupExpired();
@@ -961,7 +1451,7 @@ describe("WorkSessionService", () => {
       });
     });
 
-    it("does NOT emit worklog.created for < 60s expiry cleanup", async () => {
+    it("emits worklog.created for positive sub-minute expiry cleanup", async () => {
       const startedAt = new Date(Date.now() - 30_000);
       const lastHeartbeat = new Date(Date.now() - 20_000); // duration ~10s
       const expiredSessions = [
@@ -978,7 +1468,7 @@ describe("WorkSessionService", () => {
       ] as any;
 
       mockSessionFindMany.mockResolvedValue(expiredSessions);
-      mockSessionDelete.mockResolvedValue({} as any);
+      mockWorkLogCreate.mockResolvedValue({ id: "wl-expired-10", durationS: 30 } as any);
 
       mockEmit.mockClear();
       await cleanupExpired();
@@ -986,7 +1476,7 @@ describe("WorkSessionService", () => {
       const worklogEmit = mockEmit.mock.calls.find(
         ([arg]) => (arg as { type: string }).type === "worklog.created"
       );
-      expect(worklogEmit).toBeUndefined();
+      expect(worklogEmit).toBeDefined();
     });
   });
 
@@ -1096,7 +1586,7 @@ describe("WorkSessionService", () => {
       // delete + create were issued in the same transaction callback (atomic unit).
       expect(mockSessionDelete).toHaveBeenCalledWith({ where: { id: "s-displaced" } });
       expect(mockInterruptionCreate).toHaveBeenCalledOnce();
-      // Sub-minute displaced session → no WorkLog written before the failure.
+      // Zero-second displaced session → no WorkLog written before the failure.
       expect(mockWorkLogCreate).not.toHaveBeenCalled();
       // No success event leaks out when the transaction fails.
       const openedEmit = mockEmit.mock.calls.find(
@@ -1137,11 +1627,13 @@ describe("WorkSessionService", () => {
       mockIssueFind.mockResolvedValue(incidentIssue);
       mockSessionFindUnique.mockResolvedValue({
         id: "s-inc",
+        userId: "u-1",
+        issueId: "incident-1",
         startedAt: new Date(Date.now() - 30_000),
         lastHeartbeat: new Date(),
         memberId: "m-1",
       } as any);
-      mockSessionDelete.mockResolvedValue({} as any);
+      mockTransaction.mockResolvedValue([{ id: "wl-inc", durationS: 30 }, {}]);
       mockInterruptionFindMany.mockResolvedValue([
         { id: "int-2", incidentIssueId: "incident-1", interruptedIssueId: "task-1", memberId: "m-1" },
       ] as any);
@@ -1166,8 +1658,11 @@ describe("WorkSessionService", () => {
     });
 
     it("cleanupExpired on expired incident session closes open interruptions and emits interruption.closed", async () => {
-      const lastHeartbeat = new Date(Date.now() - 10_000);
-      const startedAt = new Date(Date.now() - 120_000);
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-08-11T12:10:00.000Z"));
+      const lastHeartbeat = new Date("2026-08-11T12:00:00.000Z");
+      const startedAt = new Date("2026-08-11T11:58:00.000Z");
+      const leaseEndsAt = new Date("2026-08-11T12:05:00.000Z");
       const expiredIncidentSession = {
         id: "s-inc-expired",
         memberId: "m-1",
@@ -1184,7 +1679,7 @@ describe("WorkSessionService", () => {
       } as any;
 
       mockSessionFindMany.mockResolvedValue([expiredIncidentSession]);
-      mockTransaction.mockResolvedValue([{ id: "wl-exp", durationS: 110 }, {}]);
+      mockWorkLogCreate.mockResolvedValue({ id: "wl-exp", durationS: 420 } as any);
       mockInterruptionFindMany.mockResolvedValue([
         { id: "int-exp-1", incidentIssueId: "incident-1", interruptedIssueId: "task-99", memberId: "m-1" },
       ] as any);
@@ -1193,11 +1688,11 @@ describe("WorkSessionService", () => {
       mockEmit.mockClear();
       await cleanupExpired();
 
-      // Interruption must be closed with endedAt = lastHeartbeat
+      // Interruption closes at the same bounded lease end as its WorkSession.
       expect(mockInterruptionUpdateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ incidentIssueId: "incident-1", memberId: "m-1", endedAt: null }),
-          data: { endedAt: lastHeartbeat },
+          data: { endedAt: leaseEndsAt },
         })
       );
 
@@ -1310,17 +1805,24 @@ describe("WorkSessionService", () => {
       );
     });
 
-    it("sub-minute sessions still write no WorkLog (unchanged)", async () => {
+    it("positive sub-minute sessions preserve WorkLog provenance", async () => {
       const startedAt = new Date(Date.now() - 30_000);
       const sessionShort = { ...fakeSession, startedAt, source: "claude-code" };
       mockIssueFind.mockResolvedValue(fakeIssue);
       mockSessionFindUnique.mockResolvedValue(sessionShort);
-      mockSessionDelete.mockResolvedValue(sessionShort);
+      mockTransaction.mockResolvedValue([
+        { id: "wl-provenance-short", durationS: 30 },
+        sessionShort,
+      ]);
 
       const result = await stopWork("KAN-42", "user-1", "member-1");
 
-      expect(result.workLog).toBeNull();
-      expect(mockTransaction).not.toHaveBeenCalled();
+      expect(result.workLog).toEqual({ id: "wl-provenance-short", durationS: 30 });
+      expect(mockWorkLogCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ via: "claude-code", durationS: 30 }),
+        }),
+      );
     });
   });
 
@@ -1389,36 +1891,40 @@ describe("WorkSessionService", () => {
     it("does NOT transition review issue", async () => {
       const reviewIssue = { ...fakeIssue, state: "review", assigneeId: "existing" };
       mockIssueFind.mockResolvedValue(reviewIssue);
-      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockQueryRaw.mockResolvedValue([{ state: "review" }] as any);
       mockSessionFindMany.mockResolvedValue([]);
 
-      await startWork("KAN-42", "member-1", "user-1", "mcp");
+      const result = await startWork("KAN-42", "member-1", "user-1", "mcp");
 
       expect(mockTransitionIssue).not.toHaveBeenCalled();
+      expect(result.session).toBeNull();
+      expect(mockSessionUpsert).not.toHaveBeenCalled();
     });
 
     it("does NOT transition done issue", async () => {
       const doneIssue = { ...fakeIssue, state: "done", assigneeId: "existing" };
       mockIssueFind.mockResolvedValue(doneIssue);
-      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockQueryRaw.mockResolvedValue([{ state: "done" }] as any);
       mockSessionFindMany.mockResolvedValue([]);
 
-      await startWork("KAN-42", "member-1", "user-1", "mcp");
+      const result = await startWork("KAN-42", "member-1", "user-1", "mcp");
 
       expect(mockTransitionIssue).not.toHaveBeenCalled();
+      expect(result.session).toBeNull();
+      expect(mockSessionUpsert).not.toHaveBeenCalled();
     });
 
-    it("swallows transition error — session still opens (best-effort guard)", async () => {
+    it("swallows transition error but does not open while the issue remains backlog", async () => {
       const backlogIssue = { ...fakeIssue, state: "backlog", assigneeId: "existing" };
       mockIssueFind.mockResolvedValue(backlogIssue);
-      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockQueryRaw.mockResolvedValue([{ state: "backlog" }] as any);
       mockSessionFindMany.mockResolvedValue([]);
       mockTransitionIssue.mockRejectedValueOnce(new Error("workflow guard blocked transition"));
 
-      // Must NOT throw — session opens even if transition fails
       const result = await startWork("KAN-42", "member-1", "user-1", "mcp");
 
-      expect(result.session).toEqual(fakeSession);
+      expect(result.session).toBeNull();
+      expect(mockSessionUpsert).not.toHaveBeenCalled();
     });
 
     it("auto-assign fires before transition (assign first, then move to in_progress)", async () => {
@@ -1461,15 +1967,15 @@ describe("WorkSessionService", () => {
     it("calls logger.error when transition fails (FIX 2: no silent swallow)", async () => {
       const backlogIssue = { ...fakeIssue, state: "backlog", assigneeId: "existing" };
       mockIssueFind.mockResolvedValue(backlogIssue);
-      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockQueryRaw.mockResolvedValue([{ state: "backlog" }] as any);
       mockSessionFindMany.mockResolvedValue([]);
       mockTransitionIssue.mockRejectedValueOnce(new Error("db down"));
 
       const logger = { info: vi.fn(), error: vi.fn() };
       const result = await startWork("KAN-42", "member-1", "user-1", "mcp", undefined, logger);
 
-      // Session still opens
-      expect(result.session).toEqual(fakeSession);
+      expect(result.session).toBeNull();
+      expect(mockSessionUpsert).not.toHaveBeenCalled();
       // Error was logged
       expect(logger.error).toHaveBeenCalledOnce();
       expect(logger.error).toHaveBeenCalledWith(
@@ -1481,7 +1987,7 @@ describe("WorkSessionService", () => {
     it("does not throw when no logger provided and transition fails (backward-compat)", async () => {
       const backlogIssue = { ...fakeIssue, state: "backlog", assigneeId: "existing" };
       mockIssueFind.mockResolvedValue(backlogIssue);
-      mockSessionUpsert.mockResolvedValue(fakeSession);
+      mockQueryRaw.mockResolvedValue([{ state: "backlog" }] as any);
       mockSessionFindMany.mockResolvedValue([]);
       mockTransitionIssue.mockRejectedValueOnce(new Error("workflow guard"));
 

@@ -13,7 +13,8 @@
  *     stopWork returns ok:true/deleted:false when none open (no-op).
  *
  * Fire-and-forget: a session failure MUST NEVER break the transition emitter.
- * Mirrors the pattern in forecast/listener.ts.
+ * Lifecycle effects are serialized per issue so an older transition cannot
+ * finish after a newer close/rework signal and mutate the wrong generation.
  *
  * KAN-143 circular guard SEAM: if the event carries `cause: "start_work"`,
  * the listener skips it to avoid the loop where start_work auto-advances the
@@ -23,7 +24,7 @@
  */
 
 import { prisma } from "../../config/prisma.js";
-import { startWork, stopWork, SESSION_TTL_MS } from "./service.js";
+import { captureTransitionInterval, startWork, stopWork } from "./service.js";
 import type { IEventBus } from "../../services/event-bus/interface.js";
 import type { DomainEvent, IssueTransitionedPayload } from "../../services/event-bus/types.js";
 
@@ -32,6 +33,13 @@ import type { DomainEvent, IssueTransitionedPayload } from "../../services/event
 export interface TransitionListenerLogger {
   error(obj: unknown, msg?: string): void;
 }
+
+type PendingTransitionStart = {
+  issueKey: string;
+  userId: string;
+  memberId: string;
+  startedAt: Date;
+};
 
 // ─── State classification ──────────────────────────────────────────────────
 
@@ -69,6 +77,8 @@ export function registerTransitionListener(
   // Active flag guards the race where handleEvent awaits a DB lookup and
   // tries to act after unsubscribe() has already been called.
   let active = true;
+  const issueQueues = new Map<string, Promise<void>>();
+  const pendingTransitionStarts = new Map<string, PendingTransitionStart>();
 
   async function handleEvent(event: DomainEvent): Promise<void> {
     if (!active) return;
@@ -112,13 +122,49 @@ export function registerTransitionListener(
 
       if (!active) return; // re-check after await
 
+      const activeSignalAt = new Date(event.timestamp);
+      const currentIssue = await prisma.issue.findUnique({
+        where: { key: issueKey },
+        select: { id: true, state: true },
+      });
+      if (!currentIssue || !active) return;
+
+      // The event is authoritative evidence that work began even if delivery
+      // lag means the database has already advanced to review/done. Defer that
+      // historical start until its ordered close event so no live session is
+      // created on a currently closed issue.
+      if (!isActiveWork(currentIssue.state)) {
+        pendingTransitionStarts.set(currentIssue.id, {
+          issueKey,
+          userId,
+          memberId: actorMemberId,
+          startedAt: activeSignalAt,
+        });
+        return;
+      }
+
       // autoAssign:false — a state transition must not assign the actor (KAN-156).
       // onConflict:skip — KAN-160: if another member already works the issue, do
       // NOT open a second session and do NOT throw (the transition must succeed).
-      await startWork(issueKey, actorMemberId, userId, "transition-listener", null, undefined, {
+      const opened = await startWork(issueKey, actorMemberId, userId, "transition-listener", null, undefined, {
         autoAssign: false,
         onConflict: "skip",
+        transitionObservedAt: activeSignalAt,
       });
+      if (!opened.session) {
+        const latestIssue = await prisma.issue.findUnique({
+          where: { key: issueKey },
+          select: { id: true, state: true },
+        });
+        if (latestIssue && !isActiveWork(latestIssue.state)) {
+          pendingTransitionStarts.set(latestIssue.id, {
+            issueKey,
+            userId,
+            memberId: actorMemberId,
+            startedAt: activeSignalAt,
+          });
+        }
+      }
       return;
     }
 
@@ -129,32 +175,66 @@ export function registerTransitionListener(
       // Look up the issue to get its id, then find all open sessions.
       const issueRow = await prisma.issue.findUnique({
         where: { key: issueKey },
-        select: { id: true },
+        select: { id: true, state: true },
       });
       if (!issueRow) return; // issue deleted between emit and handler
 
       if (!active) return; // re-check after await
 
-      const ttlCutoff = new Date(Date.now() - SESSION_TTL_MS);
       const openSessions = await prisma.workSession.findMany({
-        where: { issueId: issueRow.id, lastHeartbeat: { gt: ttlCutoff } },
+        // Close every remaining window, including an expired lease that cleanup
+        // has not finalized yet. stopWork applies the same lease cap for both.
+        where: { issueId: issueRow.id },
         select: { id: true, userId: true, memberId: true },
       });
 
       if (!active) return; // re-check after await
 
-      // Fire-and-forget each stopWork; errors per session are caught individually
-      // so one failure does not block the others.
-      for (const session of openSessions) {
-        if (!active) break;
-        await stopWork(issueKey, session.userId, session.memberId, null).catch(
-          (err: unknown) => {
+      const pendingStart = pendingTransitionStarts.get(issueRow.id);
+      if (pendingStart) {
+        const hasMatchingSession = openSessions.some(
+          (session) => session.userId === pendingStart.userId,
+        );
+        if (hasMatchingSession) {
+          pendingTransitionStarts.delete(issueRow.id);
+        } else {
+          try {
+            await captureTransitionInterval(
+              pendingStart.issueKey,
+              pendingStart.userId,
+              pendingStart.memberId,
+              pendingStart.startedAt,
+              new Date(event.timestamp),
+              "transition-listener",
+            );
+            pendingTransitionStarts.delete(issueRow.id);
+          } catch (err: unknown) {
             logger.error(
-              { err, issueKey, sessionId: session.id },
-              "transition-listener: stopWork failed for session"
+              { err, issueKey, issueId: issueRow.id },
+              "transition-listener: historical interval capture failed"
             );
           }
-        );
+        }
+      }
+
+      // Fire-and-forget each stopWork; errors per session are caught individually
+      // so one failure does not block the others.
+      const observedAt = new Date(event.timestamp);
+      for (const session of openSessions) {
+        if (!active) break;
+        await stopWork(
+          issueKey,
+          session.userId,
+          session.memberId,
+          null,
+          observedAt,
+          session.id,
+        ).catch((err: unknown) => {
+          logger.error(
+            { err, issueKey, sessionId: session.id },
+            "transition-listener: stopWork failed for session"
+          );
+        });
       }
       return;
     }
@@ -164,12 +244,24 @@ export function registerTransitionListener(
 
   // ── Subscribe — single handler for all domain events ──────────────────
   const unsubscribeBus = bus.subscribe((event) => {
-    void handleEvent(event).catch((err: unknown) => {
-      logger.error(
-        { err, eventType: event.type, eventId: event.id },
-        "transition-listener event handler failed"
-      );
-    });
+    if (event.type !== "issue.transitioned") return;
+
+    const payload = event.payload as unknown as IssueTransitionedPayload;
+    const queueKey = payload.issueId || payload.issueKey;
+    const previous = issueQueues.get(queueKey) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(() => handleEvent(event));
+    issueQueues.set(queueKey, next);
+
+    void next
+      .catch((err: unknown) => {
+        logger.error(
+          { err, eventType: event.type, eventId: event.id },
+          "transition-listener event handler failed"
+        );
+      })
+      .finally(() => {
+        if (issueQueues.get(queueKey) === next) issueQueues.delete(queueKey);
+      });
   }, "work-session-transition-listener");
 
   // ── Return unsubscribe ────────────────────────────────────────────────

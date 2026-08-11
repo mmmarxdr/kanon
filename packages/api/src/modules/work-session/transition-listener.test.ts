@@ -30,11 +30,12 @@ vi.mock("../../config/prisma.js", () => ({
 vi.mock("./service.js", () => ({
   startWork: vi.fn(),
   stopWork: vi.fn(),
+  captureTransitionInterval: vi.fn(),
   SESSION_TTL_MS: 5 * 60 * 1000,
 }));
 
 import { prisma } from "../../config/prisma.js";
-import { startWork, stopWork, SESSION_TTL_MS } from "./service.js";
+import { captureTransitionInterval, startWork, stopWork } from "./service.js";
 import { registerTransitionListener } from "./transition-listener.js";
 import type { IEventBus } from "../../services/event-bus/interface.js";
 import type { DomainEvent } from "../../services/event-bus/types.js";
@@ -45,6 +46,7 @@ const mockIssueFindUnique = vi.mocked(prisma.issue.findUnique);
 const mockWorkSessionFindMany = vi.mocked(prisma.workSession.findMany);
 const mockStartWork = vi.mocked(startWork);
 const mockStopWork = vi.mocked(stopWork);
+const mockCaptureTransitionInterval = vi.mocked(captureTransitionInterval);
 
 // ── Fake event bus ─────────────────────────────────────────────────────────
 function makeFakeBus(): { bus: IEventBus; emit: (e: DomainEvent) => void } {
@@ -62,6 +64,20 @@ function makeFakeBus(): { bus: IEventBus; emit: (e: DomainEvent) => void } {
     bus,
     emit: (e: DomainEvent) => handler?.(e),
   };
+}
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+async function flushMicrotasks(): Promise<void> {
+  for (let i = 0; i < 8; i++) await Promise.resolve();
 }
 
 // ── Helper: build an issue.transitioned event ──────────────────────────────
@@ -103,12 +119,15 @@ describe("registerTransitionListener", () => {
     vi.resetAllMocks();
     mockMemberFindUnique.mockResolvedValue(fakeMember as any);
     // Default: issue found, one open session owned by the actor
-    mockIssueFindUnique.mockResolvedValue({ id: "issue-1" } as any);
+    mockIssueFindUnique.mockResolvedValue({ id: "issue-1", state: "in_progress" } as any);
     mockWorkSessionFindMany.mockResolvedValue([
       { id: "session-1", userId: "user-1", memberId: "member-1" },
     ] as any);
     mockStartWork.mockResolvedValue({ session: {}, warnings: [], autoAssigned: false } as any);
     mockStopWork.mockResolvedValue({ ok: true, deleted: true, workLog: null } as any);
+    mockCaptureTransitionInterval.mockResolvedValue({
+      workLog: { id: "wl-transition-interval", durationS: 120 },
+    } as any);
   });
 
   // ─── Registration ─────────────────────────────────────────────────────────
@@ -141,7 +160,7 @@ describe("registerTransitionListener", () => {
       "transition-listener",
       null,
       undefined,
-      { autoAssign: false, onConflict: "skip" }
+      { autoAssign: false, onConflict: "skip", transitionObservedAt: expect.any(Date) }
     );
   });
 
@@ -201,7 +220,9 @@ describe("registerTransitionListener", () => {
       "KAN-42",
       "user-1",   // session.userId from workSession.findMany
       "member-1", // session.memberId from workSession.findMany
-      null
+      null,
+      expect.any(Date),
+      "session-1",
     );
   });
 
@@ -283,7 +304,7 @@ describe("registerTransitionListener", () => {
       "transition-listener",
       null,
       undefined,
-      { autoAssign: false, onConflict: "skip" }
+      { autoAssign: false, onConflict: "skip", transitionObservedAt: expect.any(Date) }
     );
   });
 
@@ -340,7 +361,9 @@ describe("registerTransitionListener", () => {
       "KAN-99",
       "user-bob",
       "member-bob",
-      null
+      null,
+      expect.any(Date),
+      "session-bob",
     );
   });
 
@@ -358,8 +381,22 @@ describe("registerTransitionListener", () => {
     emit(makeTransitionEvent("in_progress", "done"));
     await vi.waitFor(() => expect(mockStopWork).toHaveBeenCalledTimes(2));
 
-    expect(mockStopWork).toHaveBeenCalledWith("KAN-42", "user-1", "member-1", null);
-    expect(mockStopWork).toHaveBeenCalledWith("KAN-42", "user-2", "member-2", null);
+    expect(mockStopWork).toHaveBeenCalledWith(
+      "KAN-42",
+      "user-1",
+      "member-1",
+      null,
+      expect.any(Date),
+      "s-1",
+    );
+    expect(mockStopWork).toHaveBeenCalledWith(
+      "KAN-42",
+      "user-2",
+      "member-2",
+      null,
+      expect.any(Date),
+      "s-2",
+    );
   });
 
   it("is a no-op when no sessions exist on close transition (BUG-4 idempotency)", async () => {
@@ -426,40 +463,36 @@ describe("registerTransitionListener", () => {
     expect(mockStartWork).not.toHaveBeenCalled();
   });
 
-  // ─── FIX 1 (BUG-1): zombie session TTL filter ─────────────────────────
+  // ─── Close-state finalization includes expired leases ─────────────────
 
-  it("ZOMBIE: does NOT call stopWork for a stale session (lastHeartbeat older than SESSION_TTL_MS)", async () => {
-    // Stale session: lastHeartbeat = SESSION_TTL_MS + 1 second ago → zombie
-    const staleSessions = [
-      { id: "session-zombie", userId: "user-zombie", memberId: "member-zombie" },
-    ];
-    // workSession.findMany should return empty because listener filters by TTL —
-    // this mock simulates the CORRECT post-fix behaviour where the query
-    // already excludes zombies. For the RED phase the test proves the
-    // listener passes the TTL filter to findMany (checked via mock args).
+  it("finalizes a stale session when the issue enters review", async () => {
+    const staleSession = {
+      id: "session-stale",
+      userId: "user-stale",
+      memberId: "member-stale",
+      lastHeartbeat: new Date("2026-08-11T11:00:00.000Z"),
+    };
     mockIssueFindUnique.mockResolvedValue({ id: "issue-1" } as any);
-    // Pre-fix: findMany returns stale session → stopWork would be called (bug).
-    // Post-fix: findMany called with TTL filter → mock returns [] → stopWork NOT called.
-    mockWorkSessionFindMany.mockResolvedValue([] as any);
+    mockWorkSessionFindMany.mockResolvedValue([staleSession] as any);
 
     const { bus, emit } = makeFakeBus();
     registerTransitionListener(bus);
 
-    emit(makeTransitionEvent("in_progress", "review"));
+    const reviewEvent = makeTransitionEvent("in_progress", "review");
+    reviewEvent.timestamp = "2026-08-11T12:00:00.000Z";
+    emit(reviewEvent);
 
-    await vi.waitFor(() => {
-      const calls = mockWorkSessionFindMany.mock.calls;
-      return calls.length > 0;
-    });
-
-    // Assert the TTL filter was passed to findMany
+    await vi.waitFor(() => expect(mockStopWork).toHaveBeenCalledOnce());
     const call = mockWorkSessionFindMany.mock.calls[0]![0] as any;
-    expect(call.where).toHaveProperty("lastHeartbeat");
-    expect(call.where.lastHeartbeat).toHaveProperty("gt");
-
-    // No stopWork — zombie was excluded
-    expect(mockStopWork).not.toHaveBeenCalled();
-    void staleSessions; // suppress unused warning
+    expect(call.where).toEqual({ issueId: "issue-1" });
+    expect(mockStopWork).toHaveBeenCalledWith(
+      "KAN-42",
+      "user-stale",
+      "member-stale",
+      null,
+      new Date("2026-08-11T12:00:00.000Z"),
+      "session-stale",
+    );
   });
 
   it("FRESH: closes a fresh session (recent lastHeartbeat) and produces a stopWork call", async () => {
@@ -473,7 +506,14 @@ describe("registerTransitionListener", () => {
     emit(makeTransitionEvent("in_progress", "review"));
 
     await vi.waitFor(() => expect(mockStopWork).toHaveBeenCalledOnce());
-    expect(mockStopWork).toHaveBeenCalledWith("KAN-42", "user-1", "member-1", null);
+    expect(mockStopWork).toHaveBeenCalledWith(
+      "KAN-42",
+      "user-1",
+      "member-1",
+      null,
+      expect.any(Date),
+      "session-fresh",
+    );
   });
 
   // ─── FIX 2a: done → in_progress reopen ────────────────────────────────
@@ -492,7 +532,7 @@ describe("registerTransitionListener", () => {
       "transition-listener",
       null,
       undefined,
-      { autoAssign: false, onConflict: "skip" }
+      { autoAssign: false, onConflict: "skip", transitionObservedAt: expect.any(Date) }
     );
   });
 
@@ -537,7 +577,7 @@ describe("registerTransitionListener", () => {
       "transition-listener",
       null,
       undefined,
-      { autoAssign: false, onConflict: "skip" }
+      { autoAssign: false, onConflict: "skip", transitionObservedAt: expect.any(Date) }
     );
   });
 
@@ -554,7 +594,14 @@ describe("registerTransitionListener", () => {
     emit(makeTransitionEvent("backlog", "done"));
     await vi.waitFor(() => expect(mockStopWork).toHaveBeenCalledOnce());
 
-    expect(mockStopWork).toHaveBeenCalledWith("KAN-42", "user-1", "member-1", null);
+    expect(mockStopWork).toHaveBeenCalledWith(
+      "KAN-42",
+      "user-1",
+      "member-1",
+      null,
+      expect.any(Date),
+      "session-open",
+    );
   });
 
   // ─── FIX 2e: rapid flapping in_progress → review → in_progress ───────
@@ -580,8 +627,70 @@ describe("registerTransitionListener", () => {
       "transition-listener",
       null,
       undefined,
-      { autoAssign: false, onConflict: "skip" }
+      { autoAssign: false, onConflict: "skip", transitionObservedAt: expect.any(Date) }
     );
+  });
+
+  it("serializes an overlapping open before the later close", async () => {
+    const openGate = deferred<any>();
+    mockStartWork.mockReturnValueOnce(openGate.promise);
+    const { bus, emit } = makeFakeBus();
+    registerTransitionListener(bus);
+
+    emit(makeTransitionEvent("backlog", "analysis"));
+    await vi.waitFor(() => expect(mockStartWork).toHaveBeenCalledOnce());
+    emit(makeTransitionEvent("analysis", "review"));
+    await flushMicrotasks();
+
+    expect(mockStopWork).not.toHaveBeenCalled();
+
+    openGate.resolve({ session: {}, warnings: [], autoAssigned: false });
+    await vi.waitFor(() => expect(mockStopWork).toHaveBeenCalledOnce());
+  });
+
+  it("serializes an overlapping close before the later rework open", async () => {
+    const closeGate = deferred<any>();
+    mockStopWork.mockReturnValueOnce(closeGate.promise);
+    const { bus, emit } = makeFakeBus();
+    registerTransitionListener(bus);
+
+    emit(makeTransitionEvent("in_progress", "review"));
+    await vi.waitFor(() => expect(mockStopWork).toHaveBeenCalledOnce());
+    emit(makeTransitionEvent("review", "in_progress"));
+    await flushMicrotasks();
+
+    expect(mockStartWork).not.toHaveBeenCalled();
+
+    closeGate.resolve({ ok: true, deleted: true, workLog: null });
+    await vi.waitFor(() => expect(mockStartWork).toHaveBeenCalledOnce());
+  });
+
+  it("preserves a delayed active-entry interval when the issue is already closed", async () => {
+    mockIssueFindUnique.mockResolvedValue({ id: "issue-1", state: "review" } as any);
+    mockWorkSessionFindMany.mockResolvedValue([] as any);
+    const { bus, emit } = makeFakeBus();
+    registerTransitionListener(bus);
+    const activeAt = "2026-08-11T12:00:00.000Z";
+    const closedAt = "2026-08-11T12:02:00.000Z";
+    const activeEvent = makeTransitionEvent("backlog", "analysis");
+    activeEvent.timestamp = activeAt;
+    const closeEvent = makeTransitionEvent("analysis", "review");
+    closeEvent.timestamp = closedAt;
+
+    emit(activeEvent);
+    emit(closeEvent);
+
+    await vi.waitFor(() => expect(mockCaptureTransitionInterval).toHaveBeenCalledOnce());
+    expect(mockCaptureTransitionInterval).toHaveBeenCalledWith(
+      "KAN-42",
+      "user-1",
+      "member-1",
+      new Date(activeAt),
+      new Date(closedAt),
+      "transition-listener",
+    );
+    expect(mockStartWork).not.toHaveBeenCalled();
+    expect(mockStopWork).not.toHaveBeenCalled();
   });
 
   // ─── Unsubscribe ──────────────────────────────────────────────────────
