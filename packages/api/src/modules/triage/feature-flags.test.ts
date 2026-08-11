@@ -45,6 +45,7 @@ describe("triage feature flags", () => {
   afterAll(async () => {
     await app.close();
     await helpers.disconnectTestDb();
+    process.env["TRIAGE_SEARCH_ENABLED"] = "true";
     process.env["TRIAGE_PREVIEW_ENABLED"] = "true";
     process.env["TRIAGE_PROPOSAL_READS_ENABLED"] = "true";
     process.env["TRIAGE_PROPOSALS_ENABLED"] = "true";
@@ -134,4 +135,3 @@ describe("triage feature flags", () => {
     await expect(prisma.triageProposal.count()).resolves.toBe(0);
   });
 });
-    process.env["TRIAGE_SEARCH_ENABLED"] = "true";

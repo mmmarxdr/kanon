@@ -47,7 +47,7 @@ describe("persistTriageProposal", () => {
     const preview = await executePreview({
       issueKey: target.key,
       userId: member.userId,
-      allowedProjectIds: [],
+      allowedProjectIds: undefined,
       correlationId,
       request: { phase: "prepare", aiIntent: "none", format: "compact" },
     });
@@ -87,7 +87,7 @@ describe("persistTriageProposal", () => {
     const correctionPreview = await executePreview({
       issueKey: target.key,
       userId: member.userId,
-      allowedProjectIds: [],
+      allowedProjectIds: undefined,
       correlationId,
       request: { phase: "prepare", aiIntent: "none", format: "compact" },
     });
@@ -108,7 +108,7 @@ describe("persistTriageProposal", () => {
     const conflictingPreview = await executePreview({
       issueKey: target.key,
       userId: member.userId,
-      allowedProjectIds: [],
+      allowedProjectIds: undefined,
       correlationId,
       request: { phase: "prepare", aiIntent: "none", format: "compact" },
     });
