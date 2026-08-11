@@ -14,7 +14,7 @@ import { createSourceIdentity } from "./source.js";
 const DAY_MS = 86_400_000;
 const VALIDITY_DAYS = 7;
 const MAX_RETRIES = 3;
-const PERSISTENCE_DEADLINE_MS = 2900;
+const PERSISTENCE_DEADLINE_MS = 2500;
 
 export const PersistTriageProposalBodySchema = z
   .object({
@@ -64,7 +64,7 @@ async function canViewProject(
   allowedProjectIds: readonly string[] | undefined,
   requireWrite: boolean,
 ): Promise<boolean> {
-  if (allowedProjectIds && !allowedProjectIds.includes(projectId)) return false;
+  if (allowedProjectIds?.length && !allowedProjectIds.includes(projectId)) return false;
   const member = await transaction.member.findUnique({
     where: { userId_workspaceId: { userId, workspaceId } },
     select: { role: true, projectAccess: true },
@@ -323,7 +323,7 @@ export async function persistTriageProposal(
         for (const candidate of retained.sourceCandidates) {
           const current = currentById.get(candidate.issueId);
           const member = current ? memberByWorkspace.get(current.project.workspaceId) : null;
-          const visible = current && (!input.allowedProjectIds || input.allowedProjectIds.includes(current.projectId)) &&
+          const visible = current && (!input.allowedProjectIds?.length || input.allowedProjectIds.includes(current.projectId)) &&
             member && (member.role === "owner" || member.role === "admin" || member.projectAccess === "workspace" ||
               memberProjects.has(current.projectId));
           if (!visible) {
@@ -517,7 +517,26 @@ export async function persistTriageProposal(
         throw new AppError(503, "PERSISTENCE_TIMED_OUT", "Proposal persistence deadline exceeded");
       }
       if (knownRequestError(error, "P2002")) {
-        const existing = await prisma.triageProposal.findUnique({ where: { identityDigest } });
+        const remaining = Math.floor(deadlineAt - performance.now());
+        if (remaining < 2) {
+          throw new AppError(503, "PERSISTENCE_TIMED_OUT", "Proposal persistence deadline exceeded");
+        }
+        const maxWait = Math.max(1, Math.min(250, Math.floor(remaining / 4)));
+        let existing;
+        try {
+          existing = await prisma.$transaction(
+            (tx) => tx.triageProposal.findUnique({ where: { identityDigest } }),
+            { maxWait, timeout: Math.max(1, remaining - maxWait) },
+          );
+        } catch (recoveryError) {
+          if (persistenceTimeout(recoveryError)) {
+            throw new AppError(503, "PERSISTENCE_TIMED_OUT", "Proposal persistence deadline exceeded");
+          }
+          throw recoveryError;
+        }
+        if (performance.now() >= deadlineAt) {
+          throw new AppError(503, "PERSISTENCE_TIMED_OUT", "Proposal persistence deadline exceeded");
+        }
         if (existing) return deduplicated(existing, input.body.supersedesId);
         if (input.body.supersedesId) {
           throw new AppError(409, "SUPERSESSION_CONFLICT", "A successor already exists");

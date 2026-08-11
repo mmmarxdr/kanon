@@ -188,7 +188,7 @@ export async function listTriageProposals(
       where: { id: projectId },
       select: { id: true, workspaceId: true, archived: true },
     });
-    if (project?.archived || !project || (allowedProjectIds && !allowedProjectIds.includes(project.id))) {
+    if (project?.archived || !project || (allowedProjectIds?.length && !allowedProjectIds.includes(project.id))) {
       throw new AppError(404, "NOT_FOUND", "Project not found");
     }
 
@@ -229,7 +229,7 @@ export async function listTriageProposals(
       role: member.role,
       projectAccess: member.projectAccess,
       projectRole: projectMember?.role ?? null,
-      allowedProjectIds: allowedProjectIds ? [...allowedProjectIds].sort() : null,
+      allowedProjectIds: allowedProjectIds?.length ? [...allowedProjectIds].sort() : null,
     }, { setFields: ["allowedProjectIds"] }));
     const cursorBinding: CursorBinding = {
       version: 1,

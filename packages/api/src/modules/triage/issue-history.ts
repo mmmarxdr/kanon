@@ -22,7 +22,7 @@ export async function getIssueTriageHistory(
       where: { key: params.key },
       select: { id: true, state: true, projectId: true, project: { select: { workspaceId: true } } },
     });
-    if (!issue || (user.allowedProjectIds && !user.allowedProjectIds.includes(issue.projectId))) {
+    if (!issue || (user.allowedProjectIds?.length && !user.allowedProjectIds.includes(issue.projectId))) {
       return reply.status(404).send({ error: "Not found" });
     }
     if (issue.state !== "done") {

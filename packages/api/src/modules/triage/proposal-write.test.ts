@@ -117,9 +117,15 @@ describe("persistTriageProposal", () => {
       body: { ...correctionInput.body, preview: conflictingPreview, previewSeal: conflictingPreview.previewSeal },
     })).rejects.toMatchObject({ statusCode: 409, code: "SUPERSESSION_CONFLICT" });
 
-    await expect(persistTriageProposal({ ...input, allowedProjectIds: [] })).rejects.toMatchObject({
-      statusCode: 404,
-      code: "NOT_FOUND_OR_NOT_VISIBLE",
+    await expect(persistTriageProposal({
+      ...input,
+      allowedProjectIds: [],
+      body: { preview: conflictingPreview, previewSeal: conflictingPreview.previewSeal },
+    })).resolves.toMatchObject({ outcome: "created" });
+
+    await expect(persistTriageProposal(input, performance.now() - 1)).rejects.toMatchObject({
+      statusCode: 503,
+      code: "PERSISTENCE_TIMED_OUT",
     });
   });
 });

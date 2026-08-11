@@ -20,7 +20,8 @@ import {
 import { observePreview, observeProposalOp, triageOutcome } from "./observability.js";
 
 const PREVIEW_API_DEADLINE_MS = 2500;
-const PERSIST_API_DEADLINE_MS = 2900;
+const PERSIST_API_DEADLINE_MS = 2500;
+const DISMISS_API_DEADLINE_MS = 1500;
 const triageRequestStartedAt = new WeakMap<object, number>();
 
 function requireCapability(enabled: boolean, message: string): preHandlerHookHandler {
@@ -39,7 +40,7 @@ async function resolveVisibleProjectAccess(
   workspaceId: string,
   minimumRole?: MemberRole,
 ) {
-  if (allowedProjectIds && !allowedProjectIds.includes(projectId)) {
+  if (allowedProjectIds?.length && !allowedProjectIds.includes(projectId)) {
     throw new AppError(404, "NOT_FOUND_OR_NOT_VISIBLE", "Resource not found");
   }
   const [member, projectMember] = await Promise.all([
@@ -88,19 +89,6 @@ async function boundedAuthorization<T>(deadlineAt: number, run: (tx: Prisma.Tran
     }
     throw error;
   }
-}
-
-async function requireVisibleProjectAccess(
-  userId: string,
-  allowedProjectIds: string[] | undefined,
-  projectId: string,
-  workspaceId: string,
-  minimumRole?: MemberRole,
-) {
-  return boundedAuthorization(
-    performance.now() + PERSIST_API_DEADLINE_MS,
-    (tx) => resolveVisibleProjectAccess(tx, userId, allowedProjectIds, projectId, workspaceId, minimumRole),
-  );
 }
 
 function requireVisibleTriageIssue(
@@ -375,40 +363,41 @@ export async function triageProposalReadRoutes(appRaw: FastifyInstance) {
       },
     },
     async (request, reply) => {
+      const started = performance.now();
+      const deadlineAt = started + DISMISS_API_DEADLINE_MS;
       const user = request.user;
       if (!user) {
         return reply.status(401).send({ error: "Unauthorized" });
       }
 
-      const proposal = await prisma.triageProposal.findUnique({
-        where: { id: request.params.id },
-        select: { projectId: true, workspaceId: true, targetIssueId: true },
-      });
-
-      if (!proposal) {
-        throw new AppError(404, "NOT_FOUND_OR_NOT_VISIBLE", "Proposal not found");
-      }
-      const target = await prisma.issue.findFirst({
-        where: { id: proposal.targetIssueId, projectId: proposal.projectId },
-        select: { id: true },
-      });
-      if (!target) throw new AppError(404, "NOT_FOUND_OR_NOT_VISIBLE", "Proposal not found");
-      const { member } = await requireVisibleProjectAccess(
-        user.userId,
-        user.allowedProjectIds,
-        proposal.projectId,
-        proposal.workspaceId,
-        "member",
-      );
-
-      const { dismissTriageProposal } = await import("./lifecycle.js");
       try {
-        const result = await observedProposal("dismiss", () => dismissTriageProposal(
-          request.params.id,
-          member.id,
-          request.body.reason,
-          { correlationId: request.id, client: request.via ?? null },
-        ));
+        const result = await observedProposal("dismiss", async () => {
+          const { member } = await boundedAuthorization(deadlineAt, async (tx) => {
+            const proposal = await tx.triageProposal.findUnique({
+              where: { id: request.params.id },
+              select: { projectId: true, workspaceId: true, targetIssueId: true },
+            });
+            if (!proposal) {
+              throw new AppError(404, "NOT_FOUND_OR_NOT_VISIBLE", "Proposal not found");
+            }
+            const target = await tx.issue.findFirst({
+              where: { id: proposal.targetIssueId, projectId: proposal.projectId },
+              select: { id: true },
+            });
+            if (!target) throw new AppError(404, "NOT_FOUND_OR_NOT_VISIBLE", "Proposal not found");
+            return resolveVisibleProjectAccess(
+              tx, user.userId, user.allowedProjectIds, proposal.projectId, proposal.workspaceId, "member",
+            );
+          });
+          const { dismissTriageProposal } = await import("./lifecycle.js");
+          return dismissTriageProposal(
+            request.params.id,
+            member.id,
+            request.body.reason,
+            { correlationId: request.id, client: request.via ?? null },
+            deadlineAt,
+          );
+        }, undefined, started);
         return reply.send({
           ok: true,
           status: result.proposal.lifecycle,

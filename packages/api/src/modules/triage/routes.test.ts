@@ -106,6 +106,6 @@ describe("triage HTTP capabilities", () => {
       headers: { cookie: emptyCookie },
       payload: { q: "login", scope: { kind: "project" }, targetIssueId: target.id },
     });
-    expect(emptySearch.statusCode).toBe(404);
+    expect(emptySearch.statusCode).toBe(200);
   });
 });

@@ -170,7 +170,7 @@ export async function searchIssues(
     targetIssueId: input.targetIssueId ?? null,
     limit,
     allowedProjectIdsDigest: sha256Hex(canonicalJsonBytes(
-      allowedProjectIds ? [...allowedProjectIds].sort() : null,
+      allowedProjectIds?.length ? [...allowedProjectIds].sort() : null,
     )),
     authorizationPolicyVersion: AUTHORIZATION_POLICY_VERSION,
   };
@@ -194,7 +194,7 @@ export async function searchIssues(
           select: { projectId: true, project: { select: { workspaceId: true, archived: true } } },
         });
         const tokenAllowsTarget = target && (
-          !allowedProjectIds || allowedProjectIds.includes(target.projectId)
+          !allowedProjectIds?.length || allowedProjectIds.includes(target.projectId)
         );
         let authorized = false;
         if (target && !target.project.archived && tokenAllowsTarget && target.project.workspaceId === workspaceId) {
@@ -229,13 +229,11 @@ export async function searchIssues(
       const projectPredicate = scopeKind === "project" && targetProjectId
         ? Prisma.sql`AND p.id = ${targetProjectId}::uuid`
         : Prisma.empty;
-      const tokenPredicate = !allowedProjectIds
+      const tokenPredicate = !allowedProjectIds?.length
         ? Prisma.empty
-        : allowedProjectIds.length === 0
-          ? Prisma.sql`AND FALSE`
-          : Prisma.sql`AND p.id IN (${Prisma.join(
-              allowedProjectIds.map((id) => Prisma.sql`${id}::uuid`),
-            )})`;
+        : Prisma.sql`AND p.id IN (${Prisma.join(
+            allowedProjectIds.map((id) => Prisma.sql`${id}::uuid`),
+          )})`;
       const targetPredicate = input.targetIssueId
         ? Prisma.sql`AND i.id <> ${input.targetIssueId}::uuid`
         : Prisma.empty;

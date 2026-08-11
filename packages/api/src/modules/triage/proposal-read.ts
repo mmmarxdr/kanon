@@ -138,7 +138,7 @@ async function assertProjectMember(
   workspaceId: string,
   allowedProjectIds: readonly string[] | undefined,
 ) {
-  if (allowedProjectIds && !allowedProjectIds.includes(projectId)) {
+  if (allowedProjectIds?.length && !allowedProjectIds.includes(projectId)) {
     throw new AppError(404, "NOT_FOUND", "Proposal not found");
   }
   const member = await database.member.findUnique({
@@ -255,7 +255,7 @@ async function getTriageProposalSnapshot(
     for (const stored of storedCandidates) {
       const candidate = byId.get(stored.issueId);
       const member = candidate ? memberByWorkspace.get(candidate.project.workspaceId) : null;
-      const visible = candidate && (!allowedProjectIds || allowedProjectIds.includes(candidate.projectId)) && member && (
+      const visible = candidate && (!allowedProjectIds?.length || allowedProjectIds.includes(candidate.projectId)) && member && (
         member.role === "owner" || member.role === "admin" || member.projectAccess === "workspace" ||
         memberProjects.has(candidate.projectId)
       );

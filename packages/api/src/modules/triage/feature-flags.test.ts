@@ -1,137 +1,94 @@
-import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+const flags = [
+  "TRIAGE_SEARCH_ENABLED",
+  "TRIAGE_PREVIEW_ENABLED",
+  "TRIAGE_PROPOSAL_READS_ENABLED",
+  "TRIAGE_PROPOSALS_ENABLED",
+] as const;
 describe("triage feature flags", () => {
-  let app: FastifyInstance;
-  let helpers: typeof import("../../test/helpers.js");
-  let prisma: typeof import("../../config/prisma.js").prisma;
-  let token: string;
-  let workspaceId: string;
-  let projectKey: string;
-  let issueKey: string;
-  let issueId: string;
-  let policyId: string;
+  let app: FastifyInstance | undefined;
+  let helpers: typeof import("../../test/helpers.js") | undefined;
+  async function closeApp() {
+    await app?.close();
+    await helpers?.disconnectTestDb();
+    app = undefined;
+    helpers = undefined;
+  }
 
-  beforeAll(async () => {
-    process.env["TRIAGE_SEARCH_ENABLED"] = "false";
-    process.env["TRIAGE_PREVIEW_ENABLED"] = "false";
-    process.env["TRIAGE_PROPOSAL_READS_ENABLED"] = "false";
-    process.env["TRIAGE_PROPOSALS_ENABLED"] = "false";
+  async function setup(disabled: (typeof flags)[number]) {
+    await closeApp();
+    for (const flag of flags) process.env[flag] = flag === disabled ? "false" : "true";
+    vi.resetModules();
     helpers = await import("../../test/helpers.js");
-    prisma = (await import("../../config/prisma.js")).prisma;
+    const { prisma } = await import("../../config/prisma.js");
     await helpers.cleanDatabase();
-    const workspace = await helpers.seedTestWorkspace(`flags-${randomUUID().slice(0, 8)}`);
+    const workspace = await helpers.seedTestWorkspace();
     const member = await helpers.seedTestMember(workspace.id);
-    const project = await helpers.seedTestProject(workspace.id, `F${randomUUID().slice(0, 4)}`);
-    await prisma.projectMember.create({
-      data: { projectId: project.id, userId: member.userId, role: "member" },
-    });
-    const issue = await prisma.issue.create({
+    const project = await helpers.seedTestProject(workspace.id);
+    await prisma.projectMember.create({ data: { projectId: project.id, userId: member.userId, role: "member" } });
+    await prisma.triagePolicy.create({ data: { workspaceId: workspace.id, version: "v1" } });
+    const target = await prisma.issue.create({
       data: { projectId: project.id, key: `${project.key}-1`, sequenceNum: 1, title: "Flag target" },
     });
-    const policy = await prisma.triagePolicy.create({
-      data: { workspaceId: workspace.id, version: "v1" },
+    const done = await prisma.issue.create({
+      data: { projectId: project.id, key: `${project.key}-2`, sequenceNum: 2, title: "Flag history", state: "done" },
     });
-    token = member.token;
-    workspaceId = workspace.id;
-    projectKey = project.key;
-    issueKey = issue.key;
-    issueId = issue.id;
-    policyId = policy.id;
     app = await helpers.createTestApp();
-  });
-
-  afterAll(async () => {
-    await app.close();
-    await helpers.disconnectTestDb();
-    process.env["TRIAGE_SEARCH_ENABLED"] = "true";
-    process.env["TRIAGE_PREVIEW_ENABLED"] = "true";
-    process.env["TRIAGE_PROPOSAL_READS_ENABLED"] = "true";
-    process.env["TRIAGE_PROPOSALS_ENABLED"] = "true";
-  });
-
-  it("keeps search, preview, reads, and writes disabled independently", async () => {
-    const now = new Date().toISOString();
-    const preview = {
-      contractVersion: "triage-preview.v1",
-      previewIdentity: "preview",
-      previewSeal: "seal",
-      target: {
-        workspaceId,
-        projectId: "00000000-0000-4000-8000-000000000001",
-        issueId,
-        issueKey,
-        projectKey,
-        sourceVersion: "source-v1",
-        sourceHash: "0".repeat(64),
+    const headers = helpers.authHeader(member.token);
+    const request = (method: "GET" | "POST", url: string, payload?: unknown) =>
+      app!.inject({ method, url, headers, ...(payload === undefined ? {} : { payload }) });
+    const preview = () => request("POST", `/api/issues/${target.key}/triage/preview`, { phase: "prepare" });
+    return {
+      preview,
+      search: () => request("POST", `/api/workspaces/${workspace.id}/issue-search.v1`, {
+        q: "flag", scope: { kind: "workspace", workspaceId: workspace.id },
+      }),
+      reads: () => Promise.all([
+        request("GET", `/api/projects/${project.key}/triage-proposals`),
+        request("GET", "/api/triage-proposals/00000000-0000-4000-8000-000000000000"),
+        request("GET", `/api/issues/${done.key}/triage-history`),
+      ]),
+      writes: async () => {
+        const prepared = await preview();
+        expect(prepared.statusCode).toBe(200);
+        return Promise.all([
+          request("POST", `/api/issues/${target.key}/triage-proposals`, {
+            preview: prepared.json(), previewSeal: prepared.json().previewSeal,
+          }),
+          request("POST", "/api/triage-proposals/00000000-0000-4000-8000-000000000000/dismiss", { reason: "disabled" }),
+        ]);
       },
-      observedAt: now,
-      generatedAt: now,
-      authorizationPolicyVersion: "authz-policy.v1",
-      effectiveScope: {
-        kind: "project",
-        workspaceId,
-        projectId: "00000000-0000-4000-8000-000000000001",
-      },
-      searchCompleteness: "complete",
-      correlationId: "correlation",
-      policy: { id: policyId, version: "v1" },
-      recommendations: [{
-        itemId: "policy:urgency",
-        state: "supported",
-        normalized: { concept: "urgency", operation: "recommend", value: "medium", metadataOnly: true },
-        source: "deterministic_policy",
-        reason: "Policy",
-        evidence: [{ evidenceRefId: "target:priority", sourceClass: "deterministic_fact", field: "priority", fact: "medium" }],
-        confidence: "high",
-        confidenceBasis: "Direct field",
-        ruleVersion: "v1",
-      }],
-      candidates: [],
-      conflicts: [],
-      unknowns: [],
-      degradation: [],
     };
-    const headers = helpers.authHeader(token);
-    const responses = await Promise.all([
-      app.inject({
-        method: "POST",
-        url: `/api/workspaces/${workspaceId}/issue-search.v1`,
-        headers,
-        payload: { q: "flag", scope: { kind: "workspace", workspaceId } },
-      }),
-      app.inject({
-        method: "POST",
-        url: `/api/issues/${issueKey}/triage/preview`,
-        headers,
-        payload: { phase: "prepare" },
-      }),
-      app.inject({
-        method: "GET",
-        url: `/api/projects/${projectKey}/triage-proposals`,
-        headers,
-      }),
-      app.inject({
-        method: "GET",
-        url: `/api/triage-proposals/${randomUUID()}`,
-        headers,
-      }),
-      app.inject({
-        method: "POST",
-        url: `/api/issues/${issueKey}/triage-proposals`,
-        headers,
-        payload: { preview, previewSeal: "seal" },
-      }),
-      app.inject({
-        method: "POST",
-        url: `/api/triage-proposals/${randomUUID()}/dismiss`,
-        headers,
-        payload: { reason: "disabled" },
-      }),
-    ]);
+  }
 
-    expect(responses.map((response) => response.statusCode)).toEqual([503, 503, 503, 503, 503, 503]);
-    await expect(prisma.triageProposal.count()).resolves.toBe(0);
+  function expectDisabled(responses: Awaited<ReturnType<FastifyInstance["inject"]>>[]) {
+    expect(responses.map((response) => response.statusCode)).toEqual(responses.map(() => 503));
+    expect(responses.map((response) => response.json().code)).toEqual(
+      responses.map(() => "CAPABILITY_DISABLED"),
+    );
+  }
+
+  afterEach(async () => {
+    await closeApp();
+    for (const flag of flags) process.env[flag] = "true";
+  });
+
+  it("guards each capability independently", async () => {
+    let routes = await setup("TRIAGE_SEARCH_ENABLED");
+    expectDisabled([await routes.search()]);
+    expect((await routes.preview()).statusCode).toBe(200);
+
+    routes = await setup("TRIAGE_PREVIEW_ENABLED");
+    expectDisabled([await routes.preview()]);
+    expect((await routes.search()).statusCode).toBe(200);
+
+    routes = await setup("TRIAGE_PROPOSAL_READS_ENABLED");
+    expectDisabled(await routes.reads());
+    expect((await routes.preview()).statusCode).toBe(200);
+
+    routes = await setup("TRIAGE_PROPOSALS_ENABLED");
+    expectDisabled(await routes.writes());
   });
 });

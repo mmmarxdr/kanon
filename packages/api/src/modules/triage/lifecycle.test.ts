@@ -10,6 +10,7 @@ import {
   authHeader,
 } from "../../test/helpers.js";
 import type { FastifyInstance } from "fastify";
+import { dismissTriageProposal } from "./lifecycle.js";
 
 describe("POST /api/triage-proposals/:id/dismiss (KAN-193 PR8)", () => {
   let workspaceId: string;
@@ -275,5 +276,15 @@ describe("POST /api/triage-proposals/:id/dismiss (KAN-193 PR8)", () => {
       where: { proposalId: proposal.id },
     });
     expect(events.length).toBe(1);
+  });
+
+  it("rejects before writing when the dismissal deadline has elapsed", async () => {
+    const proposal = await createProposal("pending");
+
+    await expect(
+      dismissTriageProposal(proposal.id, memberId, "Too late", undefined, performance.now() - 1),
+    ).rejects.toMatchObject({ statusCode: 503, code: "DISMISSAL_TIMED_OUT" });
+    await expect(prisma.triageProposal.findUniqueOrThrow({ where: { id: proposal.id } }))
+      .resolves.toMatchObject({ lifecycle: "pending" });
   });
 });

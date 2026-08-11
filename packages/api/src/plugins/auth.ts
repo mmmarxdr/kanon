@@ -64,7 +64,7 @@ function tryVerifyAccessToken(token: string): TokenPayload | null {
 
 function authUser(payload: TokenPayload): AuthUser {
   const scopedPayload = payload as unknown as Partial<AccessTokenPayload>;
-  const allowedProjectIds = Array.isArray(scopedPayload.allowedProjectIds)
+  const allowedProjectIds = Array.isArray(scopedPayload.allowedProjectIds) && scopedPayload.allowedProjectIds.length > 0
     ? scopedPayload.allowedProjectIds
     : undefined;
   return {
