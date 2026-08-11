@@ -190,7 +190,6 @@ describe("GET /api/issues/:key/triage-history (KAN-193 PR7)", () => {
           projectId,
           policyId: policy.id,
           lifecycle: "dismissed",
-          disposedAt: now,
           listSummary: {},
           createdAt: new Date(now.getTime() - 5000),
           expiresAt: new Date(now.getTime() + 10000),

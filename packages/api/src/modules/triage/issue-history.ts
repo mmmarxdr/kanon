@@ -3,6 +3,8 @@ import { prisma } from "../../config/prisma.js";
 import { Prisma } from "@prisma/client";
 import { encodeIssueSearchCursor, decodeIssueSearchCursor } from "./cursor.js";
 import { calculateEffectiveState } from "./history-helper.js";
+import { redactedSummary } from "./proposal-read.js";
+import { disposedTombstoneProjection } from "./retention.js";
 
 export async function getIssueTriageHistory(
   request: FastifyRequest,
@@ -13,35 +15,39 @@ export async function getIssueTriageHistory(
   const limit = Math.max(1, Math.min(20, query.limit ?? 10));
   const cursorStr = query.cursor;
 
-  const issue = await prisma.issue.findUnique({
-    where: { key: params.key },
-    select: { id: true, state: true, projectId: true },
-  });
-  if (!issue) {
-     return reply.status(404).send({ error: "Not found" });
-  }
-
-  // fails for non-archived target
-  if (issue.state !== "done") {
-    return reply.status(400).send({ error: "Target issue must be archived or done" });
-  }
-  
-  // Non-archived target failing case?
-  // Actually, wait, "fails for non-archived target". 
-  // What does the target issue state have to be? 
-  // "archived/triage-bound"
-  // If `issue.state !== 'done'`? Or what? 
-  // Maybe `issue.project.archived === false`? 
-  // I will skip that check and see if tests pass or if it's supposed to be enforced.
-
-  // The PR says "zero domain writes", "REPEATABLE READ snapshot query", "sorting {createdAt DESC, id DESC}".
-
-  // Let's implement the query.
-  // We need proposals targeting this issue.
   return prisma.$transaction(async (tx) => {
-    // effective-state calculation?
+    const user = request.user;
+    if (!user) return reply.status(401).send({ error: "Unauthorized" });
+    const issue = await tx.issue.findUnique({
+      where: { key: params.key },
+      select: { id: true, state: true, projectId: true, project: { select: { workspaceId: true } } },
+    });
+    if (!issue || (user.allowedProjectIds && !user.allowedProjectIds.includes(issue.projectId))) {
+      return reply.status(404).send({ error: "Not found" });
+    }
+    if (issue.state !== "done") {
+      return reply.status(400).send({ error: "Target issue must be archived or done" });
+    }
+    const [member, projectMember] = await Promise.all([
+      tx.member.findUnique({
+        where: { userId_workspaceId: { userId: user.userId, workspaceId: issue.project.workspaceId } },
+        select: { role: true, projectAccess: true },
+      }),
+      tx.projectMember.findUnique({
+        where: { userId_projectId: { userId: user.userId, projectId: issue.projectId } },
+        select: { id: true },
+      }),
+    ]);
+    if (!member || (
+      member.role !== "owner" && member.role !== "admin" &&
+      member.projectAccess !== "workspace" && !projectMember
+    )) {
+      return reply.status(404).send({ error: "Not found" });
+    }
+
     let where: Prisma.TriageProposalWhereInput = {
       targetIssueId: issue.id,
+      OR: [{ disposedAt: null }, { dispositionListVisible: true }],
     };
 
     if (cursorStr) {
@@ -57,11 +63,14 @@ export async function getIssueTriageHistory(
         }
         
         where = {
-          ...where,
-          OR: [
-            { createdAt: { lt: new Date(cursorCreatedAt) } },
-            { createdAt: new Date(cursorCreatedAt), id: { lt: cursorId } }
-          ]
+          targetIssueId: issue.id,
+          AND: [
+            { OR: [{ disposedAt: null }, { dispositionListVisible: true }] },
+            { OR: [
+              { createdAt: { lt: new Date(cursorCreatedAt) } },
+              { createdAt: new Date(cursorCreatedAt), id: { lt: cursorId } },
+            ] },
+          ],
         };
       } catch (e) {
         return reply.status(400).send({ error: "Invalid cursor" });
@@ -82,10 +91,28 @@ export async function getIssueTriageHistory(
         createdAt: true,
         expiresAt: true,
         disposedAt: true,
+        dispositionListVisible: true,
         supersedesId: true,
         listSummary: true,
+        policyId: true,
+        capturedPolicyVersion: true,
+        capturedRetentionDays: true,
+        targetIssueId: true,
       }
     });
+    const successorRows = await tx.triageProposal.findMany({
+      where: { supersedesId: { in: proposals.map((proposal) => proposal.id) } },
+      select: { supersedesId: true },
+    });
+    const supersededIds = new Set(successorRows.flatMap((row) => row.supersedesId ? [row.supersedesId] : []));
+    const visiblePredecessors = await tx.triageProposal.findMany({
+      where: {
+        id: { in: proposals.flatMap((proposal) => proposal.supersedesId ? [proposal.supersedesId] : []) },
+        OR: [{ disposedAt: null }, { dispositionListVisible: true }],
+      },
+      select: { id: true },
+    });
+    const visiblePredecessorIds = new Set(visiblePredecessors.map(({ id }) => id));
 
     let nextCursor: string | undefined = undefined;
     if (proposals.length > limit) {
@@ -99,15 +126,30 @@ export async function getIssueTriageHistory(
     // "32 KiB cap"
     const responsePayload = {
       rows: proposals.map(p => {
+        if (p.lifecycle === "disposed" || p.disposedAt) {
+          return {
+            ...disposedTombstoneProjection({
+              id: p.id,
+              lifecycle: "disposed",
+              disposedAt: p.disposedAt,
+              policyId: p.policyId,
+              capturedPolicyVersion: p.capturedPolicyVersion,
+              capturedRetentionDays: p.capturedRetentionDays,
+              dispositionListVisible: p.dispositionListVisible,
+              targetIssueId: p.targetIssueId,
+            }),
+            createdAt: p.createdAt,
+          };
+        }
         return {
           id: p.id,
           identityDigest: p.identityDigest,
-          lifecycle: calculateEffectiveState(p.lifecycle, p.expiresAt),
+          lifecycle: calculateEffectiveState(p.lifecycle, p.expiresAt, new Date(), supersededIds.has(p.id)),
           createdAt: p.createdAt,
           expiresAt: p.expiresAt,
           disposedAt: p.disposedAt,
-          supersedesId: p.supersedesId,
-          listSummary: p.listSummary,
+          supersedesId: p.supersedesId && visiblePredecessorIds.has(p.supersedesId) ? p.supersedesId : null,
+          listSummary: redactedSummary(p.listSummary),
         };
       }),
       nextCursor,
