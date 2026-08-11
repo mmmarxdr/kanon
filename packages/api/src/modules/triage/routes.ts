@@ -31,6 +31,7 @@ export async function triageProposalReadRoutes(appRaw: FastifyInstance) {
     {
       schema: {
         params: z.object({ id: z.string().uuid() }),
+        querystring: z.object({ format: z.enum(["compact", "full"]).default("full") }).strict(),
       },
     },
     async (request, reply) => {
@@ -39,7 +40,12 @@ export async function triageProposalReadRoutes(appRaw: FastifyInstance) {
         return reply.status(401).send({ error: "Unauthorized" });
       }
       try {
-        const result = await getTriageProposal(user.userId, request.params.id);
+        const result = await getTriageProposal(
+          user.userId,
+          request.params.id,
+          user.allowedProjectIds,
+          request.query.format,
+        );
         return reply.status(result.statusCode).send(result.body);
       } catch (err) {
         if (err instanceof AppError) {
