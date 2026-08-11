@@ -67,7 +67,7 @@ export type PreviewRequest = z.infer<typeof PreviewRequestSchema>;
 interface ExecutePreviewInput {
   readonly issueKey: string;
   readonly userId: string;
-  readonly allowedProjectIds: readonly string[];
+  readonly allowedProjectIds: readonly string[] | undefined;
   readonly correlationId: string;
   readonly request: PreviewRequest;
   readonly deadlineAt?: number;
@@ -206,7 +206,7 @@ export function verifyPreviewSeal(
 async function preparePreview(
   issueKey: string,
   userId: string,
-  allowedProjectIds: readonly string[],
+  allowedProjectIds: readonly string[] | undefined,
   correlationId: string,
   scope: z.infer<typeof ScopeSchema>,
   format: "compact" | "full",

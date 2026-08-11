@@ -144,7 +144,7 @@ export async function searchIssues(
   workspaceId: string,
   userId: string,
   input: SearchInput,
-  allowedProjectIds: readonly string[] = [],
+  allowedProjectIds: readonly string[] | undefined = undefined,
 ): Promise<SearchResponse> {
   const deadlineMs = Math.max(100, Math.min(900, input.deadlineMs ?? 900));
   const deadlineAt = performance.now() + deadlineMs;
@@ -169,7 +169,9 @@ export async function searchIssues(
     filters: normalizedFilters(input.filters),
     targetIssueId: input.targetIssueId ?? null,
     limit,
-    allowedProjectIdsDigest: sha256Hex(canonicalJsonBytes([...allowedProjectIds].sort())),
+    allowedProjectIdsDigest: sha256Hex(canonicalJsonBytes(
+      allowedProjectIds ? [...allowedProjectIds].sort() : null,
+    )),
     authorizationPolicyVersion: AUTHORIZATION_POLICY_VERSION,
   };
   const cursor = input.cursor ? parseSearchCursor(input.cursor, cursorBinding) : null;
@@ -192,7 +194,7 @@ export async function searchIssues(
           select: { projectId: true, project: { select: { workspaceId: true, archived: true } } },
         });
         const tokenAllowsTarget = target && (
-          allowedProjectIds.length === 0 || allowedProjectIds.includes(target.projectId)
+          !allowedProjectIds || allowedProjectIds.includes(target.projectId)
         );
         let authorized = false;
         if (target && !target.project.archived && tokenAllowsTarget && target.project.workspaceId === workspaceId) {
@@ -227,11 +229,13 @@ export async function searchIssues(
       const projectPredicate = scopeKind === "project" && targetProjectId
         ? Prisma.sql`AND p.id = ${targetProjectId}::uuid`
         : Prisma.empty;
-      const tokenPredicate = allowedProjectIds.length > 0
-        ? Prisma.sql`AND p.id IN (${Prisma.join(
-            allowedProjectIds.map((id) => Prisma.sql`${id}::uuid`),
-          )})`
-        : Prisma.empty;
+      const tokenPredicate = !allowedProjectIds
+        ? Prisma.empty
+        : allowedProjectIds.length === 0
+          ? Prisma.sql`AND FALSE`
+          : Prisma.sql`AND p.id IN (${Prisma.join(
+              allowedProjectIds.map((id) => Prisma.sql`${id}::uuid`),
+            )})`;
       const targetPredicate = input.targetIssueId
         ? Prisma.sql`AND i.id <> ${input.targetIssueId}::uuid`
         : Prisma.empty;

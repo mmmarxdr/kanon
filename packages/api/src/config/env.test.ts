@@ -227,6 +227,17 @@ describe("envSchema — comment rollout", () => {
     expect(envSchema.parse(base).INTEGRATION_COMMENT_CAPTURE_ENABLED).toBe(false);
     expect(envSchema.parse({ ...base, INTEGRATION_COMMENT_CAPTURE_ENABLED: "true" }).INTEGRATION_COMMENT_CAPTURE_ENABLED).toBe(true);
   });
+
+  it("keeps triage capabilities off unless explicitly enabled", () => {
+    expect(envSchema.parse(base).TRIAGE_SEARCH_ENABLED).toBe(false);
+    expect(envSchema.parse(base).TRIAGE_PREVIEW_ENABLED).toBe(false);
+    expect(envSchema.parse(base).TRIAGE_PROPOSAL_READS_ENABLED).toBe(false);
+    expect(envSchema.parse(base).TRIAGE_PROPOSALS_ENABLED).toBe(false);
+    expect(envSchema.parse({ ...base, TRIAGE_SEARCH_ENABLED: "true" }).TRIAGE_SEARCH_ENABLED).toBe(true);
+    expect(envSchema.parse({ ...base, TRIAGE_PREVIEW_ENABLED: "true" }).TRIAGE_PREVIEW_ENABLED).toBe(true);
+    expect(envSchema.parse({ ...base, TRIAGE_PROPOSAL_READS_ENABLED: "true" }).TRIAGE_PROPOSAL_READS_ENABLED).toBe(true);
+    expect(envSchema.parse({ ...base, TRIAGE_PROPOSALS_ENABLED: "true" }).TRIAGE_PROPOSALS_ENABLED).toBe(true);
+  });
 });
 
 describe("envSchema — REDMINE_ENDPOINT_ALLOWLIST", () => {
