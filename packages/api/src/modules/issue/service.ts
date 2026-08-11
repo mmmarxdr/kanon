@@ -522,7 +522,7 @@ export async function listIssueGroups(projectId: string) {
  * so the web client can reflect subscription state on the issue-detail page
  * without a second round-trip (KAN-38).
  */
-export async function getIssue(key: string, memberId?: string) {
+export async function getIssue(key: string, memberId?: string, canDelete = false) {
   const issue = await prisma.issue.findUnique({
     where: { key },
     include: {
@@ -559,16 +559,25 @@ export async function getIssue(key: string, memberId?: string) {
     throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${key}" not found`);
   }
 
-  const [activeWorkers, subscriptionStatus] = await Promise.all([
+  const [activeWorkers, subscriptionStatus, redmineReference] = await Promise.all([
     getActiveWorkers(issue.id),
     memberId
       ? getSubscriptionStatus(issue.id, memberId).catch(() => null)
       : Promise.resolve(null),
+    prisma.externalRef.findFirst({
+      where: {
+        entityType: "issue",
+        entityId: issue.id,
+        connection: { provider: "redmine" },
+      },
+      select: { id: true },
+    }),
   ]);
 
   return {
     ...issue,
     activeWorkers,
+    deleteCapability: { allowed: canDelete, redmineLinked: redmineReference !== null },
     ...(subscriptionStatus !== null ? { subscribed: subscriptionStatus.subscribed } : {}),
   };
 }

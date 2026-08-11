@@ -9,6 +9,7 @@ export type DomainEventType =
   | "issue.updated"
   | "issue.transitioned"
   | "issue.assigned"
+  | "issue.deleted"
   | "project.created"
   | "project.updated"
   | "project.archived"

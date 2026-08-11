@@ -222,8 +222,22 @@ export const issueDetailSchema = z.object({
   blockedBy: z.array(issueDependencyEdgeSchema).optional(),
   cycle: z.object({ id: z.string(), name: z.string() }).nullable().optional(),
   subscribed: z.boolean().optional(),
+  deleteCapability: z
+    .object({
+      allowed: z.boolean(),
+      redmineLinked: z.boolean(),
+    })
+    .optional(),
 });
 export type IssueDetail = z.infer<typeof issueDetailSchema>;
+
+export const deleteIssueResultSchema = z.object({
+  auditLogId: z.string(),
+  deletedIssueId: z.string(),
+  deletedIssueKey: z.string(),
+  remoteDeleteQueued: z.boolean(),
+});
+export type DeleteIssueResult = z.infer<typeof deleteIssueResultSchema>;
 
 // ─── Array schemas ────────────────────────────────────────────────────────────
 

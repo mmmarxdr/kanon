@@ -12,6 +12,7 @@ import {
   GroupKeyParam,
   IssueFilterQuery,
   ReconcileTimeBody,
+  DeleteIssueBody,
 } from "./schema.js";
 import { IssueSearchInputSchema } from "../triage/contracts.js";
 import {
@@ -24,6 +25,7 @@ import {
 import * as issueService from "./service.js";
 import { searchIssues } from "../triage/search.js";
 import { reconcileIssueTime } from "./reconcile.js";
+import { deleteIssue } from "./delete-issue.js";
 
 /**
  * Issue routes plugin.
@@ -108,7 +110,28 @@ export default async function issueRoutes(
       },
     },
     async (request, _reply) => {
-      return issueService.getIssue(request.params.key, request.member?.id);
+      return issueService.getIssue(
+        request.params.key,
+        request.member?.id,
+        request.projectRole === "admin" || request.projectRole === "owner",
+      );
+    },
+  );
+
+  app.delete(
+    "/issues/:key",
+    {
+      preHandler: [requireIssueRole("key", "admin")],
+      schema: { params: IssueKeyParam, body: DeleteIssueBody },
+    },
+    async (request, reply) => {
+      const deleted = await deleteIssue(
+        request.issueId!,
+        request.params.key,
+        request.body,
+        request.member!.id,
+      );
+      return reply.status(200).send(deleted);
     },
   );
 
