@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
+import type { DeleteIssueResult } from "@kanon/shared";
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import { AppError } from "../../shared/types.js";
@@ -7,29 +8,35 @@ import { acquireExternalRefBackfillWriteGate } from "../integrations/backfill.js
 import { captureIntegrationWorkTx } from "../integrations/outbox.js";
 import type { DeleteIssueBody } from "./schema.js";
 
-export interface DeleteIssueResult {
-  auditLogId: string;
-  deletedIssueId: string;
-  deletedIssueKey: string;
-  remoteDeleteQueued: boolean;
-}
-
 const unsafeStates = ["leased", "ambiguous"] as const;
 const supersedableStates = ["queued", "retry", "dead", "skipped"] as const;
 const remotelyDeletableBootstrapStates = new Set(["not_required", "ready"]);
+
+function isRetryableTransactionTimeout(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2028") {
+    return false;
+  }
+  const meta = error.meta as { message?: unknown } | undefined;
+  const message = [error.message, meta?.message]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  return /timeout|timed out|expired/i.test(message);
+}
 
 export async function deleteIssue(
   issueId: string,
   authorizedKey: string,
   body: DeleteIssueBody,
   authorId: string,
+  dependencies: { database?: typeof prisma } = {},
 ): Promise<DeleteIssueResult> {
+  const database = dependencies.database ?? prisma;
   let result: DeleteIssueResult & { workspaceId: string; projectId: string; projectKey: string };
 
   // Resolve only the lock-order keys outside the transaction. The row is
   // re-fetched under lock below; this avoids issue→binding deadlocks with
   // ordinary captured mutations, which lock binding→issue.
-  const target = await prisma.issue.findUnique({
+  const target = await database.issue.findUnique({
     where: { id: issueId },
     select: { projectId: true },
   });
@@ -38,7 +45,7 @@ export async function deleteIssue(
   }
 
   try {
-    result = await prisma.$transaction(async (transaction) => {
+    result = await database.$transaction(async (transaction) => {
       await transaction.$queryRaw`
         SELECT connection."id"
         FROM "integration_connections" AS connection
@@ -147,8 +154,8 @@ export async function deleteIssue(
         if (binding.connection.provider !== "redmine") {
           throw new AppError(
             409,
-            "REMOTE_DELETE_UNAVAILABLE",
-            `Remote deletion is not supported for provider "${binding.connection.provider}".`,
+            "EXTERNAL_REFERENCE_EXISTS",
+            "The issue cannot be deleted while an external reference exists.",
           );
         }
         if (
@@ -244,6 +251,11 @@ export async function deleteIssue(
         });
       }
 
+      const {
+        timeEntries: detachedTimeEntryCount,
+        ...cascadedRecordCounts
+      } = issue._count;
+
       const audit = await transaction.adminAuditLog.create({
         data: {
           entityType: "issue",
@@ -276,7 +288,8 @@ export async function deleteIssue(
               updatedAt: issue.updatedAt,
             },
             childIssuesDetached: issue.children,
-            cascadedRecordCounts: issue._count,
+            cascadedRecordCounts,
+            detachedRecordCounts: { timeEntries: detachedTimeEntryCount },
             remoteReferences: captures.map(({ ref }) => ({
               provider: ref.binding.connection.provider,
               connectionId: ref.connectionId,
@@ -300,17 +313,25 @@ export async function deleteIssue(
         deletedIssueId: issue.id,
         deletedIssueKey: issue.key,
         remoteDeleteQueued: captures.length > 0,
+        detachedTimeEntryCount,
         workspaceId: issue.project.workspaceId,
         projectId: issue.projectId,
         projectKey: issue.project.key,
       };
-    });
+    }, { maxWait: 250, timeout: 30_000 });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") {
       throw new AppError(
         404,
         "ISSUE_NOT_FOUND",
         "Issue not found (it may have been deleted concurrently).",
+      );
+    }
+    if (isRetryableTransactionTimeout(error)) {
+      throw new AppError(
+        503,
+        "CONCURRENCY_ERROR",
+        "Issue deletion could not be serialized; retry the request.",
       );
     }
     throw error;
@@ -338,5 +359,6 @@ export async function deleteIssue(
     deletedIssueId: result.deletedIssueId,
     deletedIssueKey: result.deletedIssueKey,
     remoteDeleteQueued: result.remoteDeleteQueued,
+    detachedTimeEntryCount: result.detachedTimeEntryCount,
   };
 }

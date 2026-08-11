@@ -122,7 +122,11 @@ describe("issue deletion HTTP API", () => {
       payload: { confirmationKey: "KEY-7" },
     });
     expect(deleted.statusCode).toBe(200);
-    expect(deleted.json()).toMatchObject({ deletedIssueKey: "KEY-7", remoteDeleteQueued: false });
+    expect(deleted.json()).toMatchObject({
+      deletedIssueKey: "KEY-7",
+      remoteDeleteQueued: false,
+      detachedTimeEntryCount: 0,
+    });
   });
 
   it("deletes only the exact issue identity resolved by the authorization middleware", async () => {
