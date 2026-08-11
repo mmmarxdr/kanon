@@ -173,6 +173,25 @@ describe("useDomainEvents — KAN-88 Slice 1: scoped invalidation", () => {
     );
   });
 
+  it("issue.deleted removes the stale detail and invalidates the scoped list", async () => {
+    const { queryClient, wrapper } = createWrapper();
+    queryClient.setQueryData(issueKeys.detail("PROJ-9"), { id: "id-9" });
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { useDomainEvents } = await import("../use-domain-events");
+    renderHook(() => useDomainEvents(WORKSPACE_ID), { wrapper });
+    act(() => {
+      FakeEventSource.lastInstance!.dispatch("issue.deleted", {
+        payload: { issueKey: "PROJ-9", issueId: "id-9", projectKey: PROJECT_KEY },
+      });
+    });
+
+    expect(queryClient.getQueryData(issueKeys.detail("PROJ-9"))).toBeUndefined();
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: issueKeys.list(PROJECT_KEY) }),
+    );
+  });
+
   // ── KAN-88-S1-A: issue.created scoped invalidation ────────────────────────
 
   it("KAN-88-S1-A: issue.created with projectKey → invalidates list+groups, NOT issueKeys.all", async () => {

@@ -36,6 +36,7 @@ export interface UseIssueDetailResult {
   onSubscribeToggle: () => void;
   // handlers (stable callbacks)
   onBack: () => void;
+  onDeleted: () => void;
   onTitleChange: (t: string) => void;
   onFieldChange: (p: Record<string, unknown>) => void;
   onTransition: (s: IssueState) => void;
@@ -98,6 +99,14 @@ export function useIssueDetail(issueKey: string): UseIssueDetailResult {
     } else {
       void navigate({ to: "/inbox" });
     }
+  }, [navigate, from, projectKey]);
+
+  const onDeleted = useCallback(() => {
+    if (from === "board" && projectKey) {
+      void navigate({ to: "/board/$projectKey", params: { projectKey }, replace: true });
+      return;
+    }
+    void navigate({ to: "/inbox", replace: true });
   }, [navigate, from, projectKey]);
 
   const onTitleChange = useCallback(
@@ -189,6 +198,7 @@ export function useIssueDetail(issueKey: string): UseIssueDetailResult {
     isSubscriptionPending,
     onSubscribeToggle,
     onBack,
+    onDeleted,
     onTitleChange,
     onFieldChange,
     onTransition,

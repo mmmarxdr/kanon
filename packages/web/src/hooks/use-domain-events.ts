@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { issueKeys, projectKeys, workspaceKeys, cycleKeys, notificationKeys, scheduleTimelineKeys } from "@/lib/query-keys";
+import { activityKeys, commentKeys, issueKeys, projectKeys, workspaceKeys, cycleKeys, notificationKeys, scheduleTimelineKeys } from "@/lib/query-keys";
 
 /**
  * Connects to the workspace-scoped SSE endpoint for domain events
@@ -86,6 +86,22 @@ export function useDomainEvents(workspaceId: string | undefined): void {
     es.addEventListener("issue.updated", handleIssueEvent);
     es.addEventListener("issue.transitioned", handleIssueEvent);
     es.addEventListener("issue.assigned", handleIssueEvent);
+    const handleIssueDeleted = (ev: MessageEvent) => {
+      try {
+        const frame = JSON.parse(ev.data as string) as { payload?: { issueKey?: string } };
+        const issueKey = frame.payload?.issueKey;
+        if (issueKey) {
+          queryClient.removeQueries({ queryKey: issueKeys.detail(issueKey), exact: true });
+          queryClient.removeQueries({ queryKey: issueKeys.documents(issueKey), exact: true });
+          queryClient.removeQueries({ queryKey: commentKeys.list(issueKey), exact: true });
+          queryClient.removeQueries({ queryKey: activityKeys.list(issueKey), exact: true });
+        }
+      } catch {
+        // The collection invalidation below remains a safe degraded fallback.
+      }
+      handleIssueEvent(ev);
+    };
+    es.addEventListener("issue.deleted", handleIssueDeleted);
 
     // ── Cycle events ──────────────────────────────────────────────────
     // cycle.deleted is a structural change — always invalidate regardless of
