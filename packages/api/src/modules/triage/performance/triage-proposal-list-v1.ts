@@ -45,11 +45,12 @@ export const LIST_PROFILE = {
   },
 } as const;
 
-/** Assert list source authorizes project before findMany and uses take: limit+1 without content join. */
+/** Assert list source authorizes target visibility before bounded projection without content joins. */
 export function assertListSqlPlanBoundaries(listSource: string): void {
   const projectAuth =
     listSource.indexOf("prisma.project.findFirst") !== -1 ||
-    listSource.indexOf("project.findFirst") !== -1;
+    listSource.indexOf("project.findFirst") !== -1 ||
+    listSource.indexOf("project.findUnique") !== -1;
   const memberAuth = listSource.includes("projectMember") || listSource.includes("member.findUnique");
   const findMany = listSource.indexOf("triageProposal.findMany");
   if (!projectAuth || !memberAuth) {
@@ -63,8 +64,13 @@ export function assertListSqlPlanBoundaries(listSource: string): void {
   if (authMarker === -1 || authMarker > findMany) {
     throw new Error("visibility/authorization must precede proposal predicates/findMany");
   }
-  if (!listSource.includes("take: limit + 1") && !listSource.includes("take: limit+1")) {
+  if (!listSource.includes("LIMIT ${limit + 1}")) {
     throw new Error("list must fetch limit+1 (LIMIT 51 at max)");
+  }
+  const targetVisibility = listSource.indexOf("JOIN issues i ON i.id = tp.target_issue_id");
+  const stateFilter = listSource.indexOf("statePredicate(state, snapshotAt)");
+  if (targetVisibility === -1 || stateFilter === -1 || targetVisibility > stateFilter) {
+    throw new Error("target visibility must precede proposal state predicates");
   }
   if (/include:\s*\{[^}]*content/i.test(listSource) || listSource.includes("triageProposalContent")) {
     throw new Error("list must not fetch content table");

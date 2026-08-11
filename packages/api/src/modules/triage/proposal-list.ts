@@ -1,11 +1,19 @@
+import { Prisma } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import { prisma } from "../../config/prisma.js";
+import { env } from "../../config/env.js";
 import { AppError } from "../../shared/types.js";
-import type { Prisma, TriageProposalLifecycleState } from "@prisma/client";
-import { calculateEffectiveState } from "./history-helper.js";
-import { disposedListDiscoveryAllowed } from "./retention.js";
+import {
+  AUTHORIZATION_POLICY_VERSION,
+  TRIAGE_PROPOSAL_LIST_CONTRACT_VERSION,
+  canonicalJsonBytes,
+  sha256Hex,
+} from "./canonical.js";
+import { decodeProposalListCursor, encodeProposalListCursor } from "./cursor.js";
 
 export type ListStateFilter =
   | "current"
+  | "superseded"
   | "expired"
   | "dismissed"
   | "disposed"
@@ -14,141 +22,420 @@ export type ListStateFilter =
 export interface ListTriageProposalsQuery {
   state?: ListStateFilter;
   limit?: number;
+  targetIssueKey?: string;
   targetIssueId?: string;
+  generatorSource?: "deterministic_policy" | "host_ai" | "mixed";
+  degraded?: boolean;
+  cursor?: string;
 }
 
-/**
- * Project-scoped compact list. Disposed rows appear only for explicit
- * `disposed`/`all` filters when dispositionListVisible was captured true.
- */
+interface ListCursor {
+  readonly version: 1;
+  readonly projectId: string;
+  readonly userId: string;
+  readonly state: ListStateFilter;
+  readonly targetIssueKey: string | null;
+  readonly targetIssueId: string | null;
+  readonly generatorSource: string | null;
+  readonly degraded: boolean | null;
+  readonly authorizationContext: string;
+  readonly authorizationPolicyVersion: string;
+  readonly sourceFingerprint: string;
+  readonly snapshotAt: string;
+  readonly lastCreatedAt: string;
+  readonly lastId: string;
+}
+
+type CursorBinding = Omit<
+  ListCursor,
+  "sourceFingerprint" | "snapshotAt" | "lastCreatedAt" | "lastId"
+>;
+
+function parseCursor(token: string, expected: CursorBinding): ListCursor {
+  let cursor: ListCursor;
+  try {
+    cursor = decodeProposalListCursor<ListCursor>(token, env.JWT_SECRET);
+  } catch {
+    throw new AppError(400, "INVALID_CURSOR", "Proposal cursor is invalid");
+  }
+  if (
+    cursor.version !== expected.version ||
+    cursor.projectId !== expected.projectId ||
+    cursor.userId !== expected.userId ||
+    cursor.state !== expected.state ||
+    cursor.targetIssueKey !== expected.targetIssueKey ||
+    cursor.targetIssueId !== expected.targetIssueId ||
+    cursor.generatorSource !== expected.generatorSource ||
+    cursor.degraded !== expected.degraded ||
+    cursor.authorizationContext !== expected.authorizationContext ||
+    cursor.authorizationPolicyVersion !== expected.authorizationPolicyVersion ||
+    typeof cursor.sourceFingerprint !== "string" ||
+    !Number.isFinite(new Date(cursor.snapshotAt).getTime()) ||
+    !Number.isFinite(new Date(cursor.lastCreatedAt).getTime()) ||
+    !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/iu.test(cursor.lastId)
+  ) {
+    throw new AppError(400, "CURSOR_BINDING_MISMATCH", "Proposal cursor does not match the query");
+  }
+  return cursor;
+}
+
+function statePredicate(state: ListStateFilter, snapshotAt: Date): Prisma.Sql {
+  if (state === "current") {
+    return Prisma.sql`e.snapshot_lifecycle = 'pending' AND e.expires_at > ${snapshotAt} AND e.successor_id IS NULL`;
+  }
+  if (state === "superseded") {
+    return Prisma.sql`e.snapshot_lifecycle = 'pending' AND e.expires_at > ${snapshotAt} AND e.successor_id IS NOT NULL`;
+  }
+  if (state === "expired") {
+    return Prisma.sql`(e.snapshot_lifecycle = 'expired' OR (e.snapshot_lifecycle = 'pending' AND e.expires_at <= ${snapshotAt})) AND e.disposed_at IS NULL`;
+  }
+  if (state === "dismissed") {
+    return Prisma.sql`e.snapshot_lifecycle = 'dismissed' AND e.disposed_at IS NULL`;
+  }
+  if (state === "disposed") {
+    return Prisma.sql`e.snapshot_lifecycle = 'disposed' AND e.disposition_list_visible = TRUE`;
+  }
+  return Prisma.sql`(e.snapshot_lifecycle <> 'disposed' OR e.disposition_list_visible = TRUE)`;
+}
+
+function effectiveState(
+  lifecycle: string,
+  expiresAt: Date,
+  snapshotAt: Date,
+  superseded: boolean,
+): "current" | "superseded" | "dismissed" | "expired" | "disposed" {
+  if (lifecycle === "disposed" || lifecycle === "dismissed" || lifecycle === "expired") {
+    return lifecycle;
+  }
+  if (expiresAt <= snapshotAt) return "expired";
+  return superseded ? "superseded" : "current";
+}
+
+function compactSummary(summary: Prisma.JsonValue): Prisma.JsonValue {
+  if (!summary || typeof summary !== "object" || Array.isArray(summary)) return { nonExecutable: true };
+  const value = summary as Prisma.JsonObject;
+  const policy = value["policy"] && typeof value["policy"] === "object" && !Array.isArray(value["policy"])
+    ? value["policy"] as Prisma.JsonObject
+    : null;
+  const model = value["model"] && typeof value["model"] === "object" && !Array.isArray(value["model"])
+    ? value["model"] as Prisma.JsonObject
+    : null;
+  const boundedString = (input: Prisma.JsonValue | undefined, max: number) => {
+    if (typeof input !== "string") return undefined;
+    const bounded = input.slice(0, max);
+    const last = bounded.charCodeAt(bounded.length - 1);
+    return last >= 0xd800 && last <= 0xdbff ? bounded.slice(0, -1) : bounded;
+  };
+  const boundedStrings = (input: Prisma.JsonValue | undefined, maxItems: number, maxLength: number) =>
+    Array.isArray(input)
+      ? input.filter((item): item is string => typeof item === "string")
+        .slice(0, maxItems)
+        .map((item) => boundedString(item, maxLength) ?? "")
+      : undefined;
+  return {
+    targetIssueKey: boundedString(value["targetIssueKey"], 120),
+    targetTitle: boundedString(value["targetTitle"], 200),
+    actionKinds: boundedStrings(value["actionKinds"], 10, 40),
+    generatorSource: boundedString(value["generatorSource"], 32),
+    ...(policy ? { policy: {
+      id: boundedString(policy["id"], 200),
+      version: boundedString(policy["version"], 200),
+    } } : {}),
+    ...(model ? { model: {
+      provider: boundedString(model["provider"], 200),
+      model: boundedString(model["model"], 200),
+      modelVersion: boundedString(model["modelVersion"], 200),
+    } } : {}),
+    confidenceBands: boundedStrings(value["confidenceBands"], 3, 6),
+    degraded: value["degraded"] === true,
+    degradationCategories: boundedStrings(value["degradationCategories"], 8, 80),
+    nonExecutable: true,
+  };
+}
+
+function isListTimeout(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const value = error as { code?: unknown; message?: unknown; meta?: unknown };
+  const meta = value.meta && typeof value.meta === "object"
+    ? value.meta as { code?: unknown; message?: unknown }
+    : {};
+  const message = [value.message, meta.message].filter((item) => typeof item === "string").join(" ");
+  return value.code === "P2024" || (value.code === "P2028" && /timeout|expired/i.test(message)) ||
+    meta.code === "57014" || /statement timeout|canceling statement|57014/i.test(message);
+}
+
 export async function listTriageProposals(
   userId: string,
-  projectKey: string,
+  projectId: string,
   query: ListTriageProposalsQuery = {},
+  allowedProjectIds: readonly string[] | undefined = undefined,
+  correlationId: string = randomUUID(),
 ) {
-  const stateFilter: ListStateFilter = query.state ?? "current";
-  const limit = Math.min(50, Math.max(1, query.limit ?? 20));
-
-  const project = await prisma.project.findFirst({
-    where: { key: projectKey, archived: false },
-    select: { id: true, workspaceId: true, key: true },
-  });
-  if (!project) {
-    throw new AppError(404, "NOT_FOUND", "Project not found");
+  const requestedAt = new Date();
+  const state = query.state ?? "current";
+  const limit = query.limit ?? 20;
+  if (limit < 1 || limit > 50) {
+    throw new AppError(400, "INVALID_LIMIT", "Proposal list limit must be from 1 through 50");
+  }
+  if (query.targetIssueKey && query.targetIssueId) {
+    throw new AppError(400, "INVALID_TARGET_FILTER", "Use one target issue filter");
   }
 
-  const member = await prisma.member.findUnique({
-    where: {
-      userId_workspaceId: { userId, workspaceId: project.workspaceId },
-    },
-    select: { id: true, role: true },
-  });
-  if (!member) {
-    throw new AppError(404, "NOT_FOUND", "Project not found");
-  }
-  if (member.role !== "owner" && member.role !== "admin") {
-    const pm = await prisma.projectMember.findUnique({
-      where: { userId_projectId: { userId, projectId: project.id } },
-      select: { id: true },
+  try {
+    return await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT set_config('statement_timeout', '1400ms', true)`;
+    const project = await tx.project.findUnique({
+      where: { id: projectId },
+      select: { id: true, workspaceId: true, archived: true },
     });
-    if (!pm) {
+    if (project?.archived || !project || (allowedProjectIds && !allowedProjectIds.includes(project.id))) {
       throw new AppError(404, "NOT_FOUND", "Project not found");
     }
-  }
 
-  const where: Prisma.TriageProposalWhereInput = {
-    projectId: project.id,
-  };
-  if (query.targetIssueId) {
-    where.targetIssueId = query.targetIssueId;
-  }
+    const [member, projectMember] = await Promise.all([
+      tx.member.findUnique({
+        where: { userId_workspaceId: { userId, workspaceId: project.workspaceId } },
+        select: { role: true, projectAccess: true },
+      }),
+      tx.projectMember.findUnique({
+        where: { userId_projectId: { userId, projectId: project.id } },
+        select: { role: true },
+      }),
+    ]);
+    if (
+      !member ||
+      (member.role !== "owner" &&
+        member.role !== "admin" &&
+        member.projectAccess !== "workspace" &&
+        !projectMember)
+    ) {
+      throw new AppError(404, "NOT_FOUND", "Project not found");
+    }
 
-  // Pre-filter at SQL where possible; disposed discovery gated after load.
-  if (stateFilter === "current") {
-    where.lifecycle = "pending";
-    where.disposedAt = null;
-    where.expiresAt = { gt: new Date() };
-  } else if (stateFilter === "expired") {
-    where.OR = [
-      { lifecycle: "expired" },
-      { lifecycle: "pending", expiresAt: { lte: new Date() } },
-    ];
-    where.disposedAt = null;
-  } else if (stateFilter === "dismissed") {
-    where.lifecycle = "dismissed";
-    where.disposedAt = null;
-  } else if (stateFilter === "disposed") {
-    where.lifecycle = "disposed";
-  }
-  // "all" — no lifecycle prefilter
+    let targetIssueId = query.targetIssueId;
+    if (query.targetIssueKey || targetIssueId) {
+      const target = await tx.issue.findFirst({
+        where: {
+          projectId: project.id,
+          ...(query.targetIssueKey ? { key: query.targetIssueKey } : { id: targetIssueId }),
+        },
+        select: { id: true },
+      });
+      if (!target) throw new AppError(404, "NOT_FOUND", "Target issue not found");
+      targetIssueId = target.id;
+    }
 
-  const rows = await prisma.triageProposal.findMany({
-    where,
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take: limit + 1,
-    select: {
-      id: true,
-      lifecycle: true,
-      listSummary: true,
-      createdAt: true,
-      expiresAt: true,
-      disposedAt: true,
-      dispositionListVisible: true,
-      targetIssueId: true,
-      capturedPolicyVersion: true,
-      capturedRetentionDays: true,
-      policyId: true,
-    },
-  });
+    const authorizationContext = sha256Hex(canonicalJsonBytes({
+      role: member.role,
+      projectAccess: member.projectAccess,
+      projectRole: projectMember?.role ?? null,
+      allowedProjectIds: allowedProjectIds ? [...allowedProjectIds].sort() : null,
+    }, { setFields: ["allowedProjectIds"] }));
+    const cursorBinding: CursorBinding = {
+      version: 1,
+      projectId: project.id,
+      userId,
+      state,
+      targetIssueKey: query.targetIssueKey ?? null,
+      targetIssueId: targetIssueId ?? null,
+      generatorSource: query.generatorSource ?? null,
+      degraded: query.degraded ?? null,
+      authorizationContext,
+      authorizationPolicyVersion: AUTHORIZATION_POLICY_VERSION,
+    };
+    const cursor = query.cursor ? parseCursor(query.cursor, cursorBinding) : null;
+    const snapshotAt = cursor ? new Date(cursor.snapshotAt) : requestedAt;
 
-  const hasMore = rows.length > limit;
-  const page = hasMore ? rows.slice(0, limit) : rows;
+    const targetPredicate = targetIssueId
+      ? Prisma.sql`AND tp.target_issue_id = ${targetIssueId}::uuid`
+      : Prisma.empty;
+    const generatorPredicate = query.generatorSource
+      ? Prisma.sql`AND tp.list_summary->>'generatorSource' = ${query.generatorSource}`
+      : Prisma.empty;
+    const degradedPredicate = query.degraded === undefined
+      ? Prisma.empty
+      : Prisma.sql`AND (tp.list_summary->>'degraded')::boolean = ${query.degraded}`;
+    const visibleCte = Prisma.sql`
+      visible AS (
+        SELECT tp.*,
+          COALESCE((
+            SELECT event.state::text
+            FROM triage_proposal_lifecycle_events event
+            WHERE event.proposal_id = tp.id AND event.created_at <= ${snapshotAt}
+            ORDER BY event.created_at DESC, event.id DESC
+            LIMIT 1
+          ), tp.lifecycle::text) AS snapshot_lifecycle,
+          (
+            SELECT child.id FROM triage_proposals child
+            WHERE child.supersedes_id = tp.id AND child.created_at <= ${snapshotAt}
+            ORDER BY child.created_at, child.id
+            LIMIT 1
+          ) AS successor_id,
+          EXISTS (
+            SELECT 1 FROM triage_proposal_contents content
+            WHERE content.proposal_id = tp.id
+          ) AS content_present
+        FROM triage_proposals tp
+        JOIN issues i ON i.id = tp.target_issue_id AND i.project_id = tp.project_id
+        WHERE tp.project_id = ${project.id}::uuid
+          AND tp.created_at <= ${snapshotAt}
+          ${targetPredicate}
+          ${generatorPredicate}
+          ${degradedPredicate}
+      )
+    `;
 
-  const compact = page
-    .map((row) => {
-      const effective = calculateEffectiveState(row.lifecycle, row.expiresAt);
-      const isDisposed = row.lifecycle === "disposed" || row.disposedAt !== null;
+    const [source] = await tx.$queryRaw<[{ sourceFingerprint: string }]>(Prisma.sql`
+      WITH ${visibleCte}
+      SELECT md5(COALESCE(string_agg(
+        concat_ws(':', e.id::text, e.created_at::text, e.snapshot_lifecycle,
+          e.expires_at::text, (e.successor_id IS NOT NULL)::text, e.target_issue_id::text,
+          e.project_id::text, e.content_present::text,
+          COALESCE(e.disposition_list_visible::text, '')),
+        ',' ORDER BY e.created_at DESC, e.id DESC
+      ), 'empty')) AS "sourceFingerprint"
+      FROM visible e
+      WHERE ${statePredicate(state, snapshotAt)}
+    `);
+    const sourceFingerprint = source?.sourceFingerprint ?? "";
+    if (cursor && cursor.sourceFingerprint !== sourceFingerprint) {
+      throw new AppError(409, "CURSOR_SOURCE_CONFLICT", "Proposal list changed; restart listing");
+    }
 
-      if (isDisposed) {
-        if (!disposedListDiscoveryAllowed(stateFilter, row.dispositionListVisible)) {
-          return null;
-        }
-        return {
-          id: row.id,
-          lifecycle: "disposed" as const,
-          disposedAt: row.disposedAt,
-          createdAt: row.createdAt,
-          targetIssueId: row.targetIssueId,
+    const seekPredicate = cursor
+      ? Prisma.sql`AND (e.created_at < ${new Date(cursor.lastCreatedAt)} OR (e.created_at = ${new Date(cursor.lastCreatedAt)} AND e.id < ${cursor.lastId}::uuid))`
+      : Prisma.empty;
+    const pageIds = await tx.$queryRaw<Array<{
+      id: string;
+      snapshotLifecycle: string;
+      isSuperseded: boolean;
+      successorId: string | null;
+    }>>(Prisma.sql`
+      WITH ${visibleCte}
+      SELECT e.id, e.snapshot_lifecycle AS "snapshotLifecycle",
+        e.successor_id IS NOT NULL AS "isSuperseded", e.successor_id AS "successorId"
+      FROM visible e
+      WHERE ${statePredicate(state, snapshotAt)} ${seekPredicate}
+      ORDER BY e.created_at DESC, e.id DESC
+      LIMIT ${limit + 1}
+    `);
+    const hasMore = pageIds.length > limit;
+    const page = pageIds.slice(0, limit);
+    const proposals = await tx.triageProposal.findMany({
+      where: { id: { in: page.map(({ id }) => id) } },
+      select: {
+        id: true,
+        listSummary: true,
+        createdAt: true,
+        expiresAt: true,
+        disposedAt: true,
+        dispositionListVisible: true,
+        targetIssueId: true,
+        capturedPolicyVersion: true,
+        capturedRetentionDays: true,
+        policyId: true,
+        supersedesId: true,
+      },
+    });
+    const byId = new Map(proposals.map((proposal) => [proposal.id, proposal]));
+    const relatedIds = [...new Set([
+      ...page.flatMap(({ successorId }) => successorId ? [successorId] : []),
+      ...proposals.flatMap(({ supersedesId }) => supersedesId ? [supersedesId] : []),
+    ])];
+    const visibleRelatedIds = new Set((await tx.triageProposal.findMany({
+      where: {
+        id: { in: relatedIds },
+        OR: [{ lifecycle: { not: "disposed" }, disposedAt: null }, { dispositionListVisible: true }],
+      },
+      select: { id: true },
+    })).map(({ id }) => id));
+    const rows = page.flatMap<{ id: string; [key: string]: unknown }>(
+      ({ id, snapshotLifecycle, isSuperseded, successorId }) => {
+      const proposal = byId.get(id);
+      if (!proposal) return [];
+      const lifecycle = effectiveState(
+        snapshotLifecycle,
+        proposal.expiresAt,
+        snapshotAt,
+        isSuperseded,
+      );
+      if (lifecycle === "disposed") {
+        return [{
+          id,
+          kind: "issue_triage_v1" as const,
+          contractVersion: "triage-proposal.v1" as const,
+          lifecycle,
+          current: false,
+          disposedAt: proposal.disposedAt,
+          createdAt: proposal.createdAt,
+          targetIssueId: proposal.targetIssueId,
           dispositionListVisible: true,
           retentionPolicy: {
-            id: row.policyId,
-            version: row.capturedPolicyVersion,
-            retentionDays: row.capturedRetentionDays,
+            id: proposal.policyId,
+            version: proposal.capturedPolicyVersion,
+            retentionDays: proposal.capturedRetentionDays,
           },
-        };
+        }];
       }
-
-      if (stateFilter === "current" && effective !== "pending") {
-        return null;
-      }
-      if (stateFilter === "expired" && effective !== "expired") {
-        return null;
-      }
-
+      return [{
+        id,
+        kind: "issue_triage_v1" as const,
+        contractVersion: "triage-proposal.v1" as const,
+        lifecycle,
+        current: lifecycle === "current",
+        listSummary: compactSummary(proposal.listSummary),
+        createdAt: proposal.createdAt,
+        expiresAt: proposal.expiresAt,
+        targetIssueId: proposal.targetIssueId,
+        supersedesId: proposal.supersedesId && visibleRelatedIds.has(proposal.supersedesId)
+          ? proposal.supersedesId
+          : null,
+        successorId: successorId && visibleRelatedIds.has(successorId) ? successorId : null,
+      }];
+      },
+    );
+    const boundedRows = [...rows];
+    const buildResponse = () => {
+      const lastRow = boundedRows.at(-1);
+      const lastProposal = lastRow ? byId.get(lastRow.id) : null;
+      const more = hasMore || boundedRows.length < rows.length;
       return {
-        id: row.id,
-        lifecycle: effective as TriageProposalLifecycleState,
-        listSummary: row.listSummary,
-        createdAt: row.createdAt,
-        expiresAt: row.expiresAt,
-        targetIssueId: row.targetIssueId,
+        contractVersion: TRIAGE_PROPOSAL_LIST_CONTRACT_VERSION,
+        orderingVersion: TRIAGE_PROPOSAL_LIST_CONTRACT_VERSION,
+        projection: "compact" as const,
+        effectiveScope: { kind: "project" as const, workspaceId: project.workspaceId, projectId: project.id },
+        correlationId,
+        returnedCount: boundedRows.length,
+        rows: boundedRows,
+        snapshotAt,
+        ...(more && lastProposal
+          ? {
+              nextCursor: encodeProposalListCursor({
+                ...cursorBinding,
+                sourceFingerprint,
+                snapshotAt: snapshotAt.toISOString(),
+                lastCreatedAt: lastProposal.createdAt.toISOString(),
+                lastId: lastProposal.id,
+              }, env.JWT_SECRET),
+            }
+          : {}),
       };
-    })
-    .filter((r): r is NonNullable<typeof r> => r !== null);
-
-  return {
-    rows: compact,
-    count: compact.length,
-    hasMore,
-  };
+    };
+    let response = buildResponse();
+    while (Buffer.byteLength(JSON.stringify(response)) > 32 * 1024 && boundedRows.length > 1) {
+      boundedRows.pop();
+      response = buildResponse();
+    }
+    return response;
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+      maxWait: 250,
+      timeout: 2000,
+    });
+  } catch (error) {
+    if (isListTimeout(error)) {
+      throw new AppError(503, "LIST_TIMED_OUT", "Proposal list deadline exceeded");
+    }
+    throw error;
+  }
 }

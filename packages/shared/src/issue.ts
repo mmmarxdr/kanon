@@ -236,6 +236,7 @@ export const deleteIssueResultSchema = z.object({
   deletedIssueId: z.string(),
   deletedIssueKey: z.string(),
   remoteDeleteQueued: z.boolean(),
+  detachedTimeEntryCount: z.number().int().nonnegative(),
 });
 export type DeleteIssueResult = z.infer<typeof deleteIssueResultSchema>;
 

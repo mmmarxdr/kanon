@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { IntegrationBootstrapState } from "@prisma/client";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { Prisma, type IntegrationBootstrapState } from "@prisma/client";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import type { DomainEvent } from "../../services/event-bus/types.js";
@@ -81,6 +81,18 @@ describe("deleteIssue", () => {
 
   it("writes an audit snapshot before hard-deleting an unlinked issue", async () => {
     const value = await fixture();
+    const comment = await prisma.comment.create({
+      data: { issueId: value.issue.id, authorId: value.member.id, body: "Cascade me" },
+    });
+    const timeEntry = await prisma.timeEntry.create({
+      data: {
+        issueId: value.issue.id,
+        memberId: value.member.id,
+        hours: 1,
+        workedOn: new Date("2026-08-11T00:00:00.000Z"),
+        via: "test",
+      },
+    });
 
     const events: DomainEvent[] = [];
     const unsubscribe = eventBus.subscribe((event) => events.push(event), "delete-issue-test");
@@ -91,17 +103,25 @@ describe("deleteIssue", () => {
       deletedIssueId: value.issue.id,
       deletedIssueKey: value.issue.key,
       remoteDeleteQueued: false,
+      detachedTimeEntryCount: 1,
     });
     await expect(prisma.issue.findUnique({ where: { id: value.issue.id } })).resolves.toBeNull();
+    await expect(prisma.comment.findUnique({ where: { id: comment.id } })).resolves.toBeNull();
+    await expect(prisma.timeEntry.findUniqueOrThrow({ where: { id: timeEntry.id } })).resolves
+      .toMatchObject({ issueId: null });
     const audit = await prisma.adminAuditLog.findFirstOrThrow({
       where: { entityType: "issue", entityId: value.issue.id },
     });
     expect(audit).toMatchObject({ action: "delete", authorId: value.member.id });
     expect(audit.payload).toMatchObject({
       issueSnapshot: expect.objectContaining({ id: value.issue.id, key: value.issue.key }),
+      cascadedRecordCounts: expect.objectContaining({ comments: 1 }),
+      detachedRecordCounts: { timeEntries: 1 },
       remoteReferences: [],
       remoteDeleteQueued: false,
     });
+    expect((audit.payload as { cascadedRecordCounts: object }).cascadedRecordCounts)
+      .not.toHaveProperty("timeEntries");
     expect(events).toContainEqual(
       expect.objectContaining({
         type: "issue.deleted",
@@ -130,11 +150,74 @@ describe("deleteIssue", () => {
     await expect(deleteIssue(value.issue.id, value.issue.key, {}, value.member.id)).resolves.toMatchObject({
       deletedIssueId: value.issue.id,
       remoteDeleteQueued: true,
+      detachedTimeEntryCount: 0,
     });
     await expect(prisma.issue.findUnique({ where: { id: value.issue.id } })).resolves.toBeNull();
     await expect(prisma.externalRef.findUnique({ where: { id: ref.id } })).resolves.not.toBeNull();
     await expect(prisma.integrationSyncWork.findFirst({ where: { entityId: value.issue.id, operation: "delete" } }))
       .resolves.toMatchObject({ state: "queued", refId: ref.id, authCredentialId: value.credential!.id });
+  });
+
+  it("rejects a non-Redmine external reference without mislabeling it as Redmine", async () => {
+    const value = await fixture();
+    await prisma.integrationConnection.update({
+      where: { id: value.connection.id },
+      data: { provider: "other" },
+    });
+    const ref = await prisma.externalRef.create({
+      data: {
+        connectionId: value.connection.id,
+        bindingId: value.binding.id,
+        entityType: "issue",
+        entityId: value.issue.id,
+        externalId: "other-20",
+      },
+    });
+
+    await expect(deleteIssue(value.issue.id, value.issue.key, {}, value.member.id)).rejects
+      .toMatchObject({ statusCode: 409, code: "EXTERNAL_REFERENCE_EXISTS" });
+    await expect(prisma.issue.findUnique({ where: { id: value.issue.id } })).resolves.not.toBeNull();
+    await expect(prisma.externalRef.findUnique({ where: { id: ref.id } })).resolves.not.toBeNull();
+  });
+
+  it("maps only timeout-form P2028 failures to the retryable concurrency error", async () => {
+    const value = await fixture();
+    const timeout = new Prisma.PrismaClientKnownRequestError(
+      "Transaction API error: Transaction already closed: the transaction has expired",
+      { code: "P2028", clientVersion: "6.19.2" },
+    );
+    const transaction = vi.fn().mockRejectedValueOnce(timeout);
+    const database = {
+      issue: { findUnique: vi.fn().mockResolvedValue({ projectId: value.project.id }) },
+      $transaction: transaction,
+    } as unknown as typeof prisma;
+
+    const deletion = deleteIssue(value.issue.id, value.issue.key, {}, value.member.id, { database })
+      .catch((error: unknown) => error);
+    await vi.waitFor(() => expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
+      maxWait: 250,
+      timeout: 30_000,
+    }));
+    await expect(deletion).resolves
+      .toMatchObject({ statusCode: 503, code: "CONCURRENCY_ERROR" });
+  });
+
+  it("preserves unrelated P2028 failures", async () => {
+    const value = await fixture();
+    const unrelated = new Prisma.PrismaClientKnownRequestError(
+      "Transaction API error: unsupported transaction operation",
+      { code: "P2028", clientVersion: "6.19.2" },
+    );
+    const transaction = vi.fn().mockRejectedValueOnce(unrelated);
+    const database = {
+      issue: { findUnique: vi.fn().mockResolvedValue({ projectId: value.project.id }) },
+      $transaction: transaction,
+    } as unknown as typeof prisma;
+
+    const deletion = deleteIssue(value.issue.id, value.issue.key, {}, value.member.id, { database })
+      .catch((error: unknown) => error);
+    await vi.waitFor(() => expect(transaction).toHaveBeenCalled());
+    await expect(deletion).resolves.toBe(unrelated);
   });
 
   it("cleans descendant references and pending work before deleting locally", async () => {

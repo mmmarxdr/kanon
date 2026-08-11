@@ -53,10 +53,23 @@ export const IssueSearchResponseSchema = z.object({
   if (value.completeness === "complete" && value.nextCursor !== undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ["nextCursor"], message: "complete responses cannot include nextCursor" });
   if (value.completeness === "bounded" && value.nextCursor === undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ["nextCursor"], message: "bounded responses require nextCursor" });
 });
+const SourceSnapshotSchema = z.object({
+  workspaceId: IdSchema.nullable(), projectId: IdSchema, issueId: IdSchema, issueKey: IdSchema,
+  projectKey: IdSchema, title: z.string().max(500), descriptionDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  type: IdSchema.nullable(), priority: IdSchema.nullable(), state: IdSchema, labels: z.array(IdSchema).max(100),
+  groupId: IdSchema.nullable(), assigneeId: IdSchema.nullable(), cycleId: IdSchema.nullable(),
+  parentId: IdSchema.nullable(), issueUpdatedAt: IsoDateTimeSchema, projectUpdatedAt: IsoDateTimeSchema,
+}).strict();
 export const ProvenanceSchema = z.object({
   authorizationPolicyVersion: IdSchema.optional(), sourceVersion: IdSchema.optional(), sourceHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   policyId: IdSchema.optional(), policyVersion: IdSchema.optional(), traceId: IdSchema.optional(),
   initiator: IdSchema.optional(), client: IdSchema.optional(),
+  sourceSnapshots: z.object({
+    target: SourceSnapshotSchema,
+    candidates: z.array(z.object({
+      sourceVersion: IdSchema, sourceHash: z.string().regex(/^[a-f0-9]{64}$/), snapshot: SourceSnapshotSchema,
+    }).strict()).max(10),
+  }).strict().optional(),
 }).strict();
 export const SemanticErrorSchema = z.object({
   apiContractVersion: z.literal("triage-api.v1"), category: SemanticErrorCategorySchema, code: IdSchema,
