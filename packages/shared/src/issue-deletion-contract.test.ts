@@ -32,12 +32,14 @@ describe("issue deletion response contract", () => {
         deletedIssueId: "issue-1",
         deletedIssueKey: "KAN-179",
         remoteDeleteQueued: false,
+        detachedTimeEntryCount: 2,
       }),
     ).toEqual({
       auditLogId: "audit-1",
       deletedIssueId: "issue-1",
       deletedIssueKey: "KAN-179",
       remoteDeleteQueued: false,
+      detachedTimeEntryCount: 2,
     });
   });
 });
