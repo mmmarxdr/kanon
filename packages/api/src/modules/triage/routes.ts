@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { ZodTypeProvider } from "fastify-type-provider-zod";
 import { getIssueTriageHistory } from "./issue-history.js";
-import { requireIssueMember } from "../../middleware/require-role.js";
+import { requireIssueMember, requireProjectMember } from "../../middleware/require-role.js";
 import { prisma } from "../../config/prisma.js";
 import { getTriageProposal } from "./proposal-read.js";
 import { listTriageProposals } from "./proposal-list.js";
@@ -53,15 +53,22 @@ export async function triageProposalReadRoutes(appRaw: FastifyInstance) {
   app.get(
     "/api/projects/:key/triage-proposals",
     {
+      preHandler: [requireProjectMember("key")],
       schema: {
         params: z.object({ key: z.string() }),
         querystring: z.object({
           state: z
-            .enum(["current", "expired", "dismissed", "disposed", "all"])
+            .enum(["current", "superseded", "expired", "dismissed", "disposed", "all"])
             .optional(),
           limit: z.coerce.number().int().min(1).max(50).optional(),
+          targetIssueKey: z.string().min(1).max(120).optional(),
           targetIssueId: z.string().uuid().optional(),
-        }),
+          generatorSource: z
+            .enum(["deterministic_policy", "host_ai", "mixed"])
+            .optional(),
+          degraded: z.enum(["true", "false"]).transform((value) => value === "true").optional(),
+          cursor: z.string().min(1).max(2048).optional(),
+        }).strict(),
       },
     },
     async (request, reply) => {
@@ -70,11 +77,21 @@ export async function triageProposalReadRoutes(appRaw: FastifyInstance) {
         return reply.status(401).send({ error: "Unauthorized" });
       }
       try {
-        const result = await listTriageProposals(user.userId, request.params.key, {
-          state: request.query.state,
-          limit: request.query.limit,
-          targetIssueId: request.query.targetIssueId,
-        });
+        const result = await listTriageProposals(
+          user.userId,
+          request.projectId!,
+          {
+            state: request.query.state,
+            limit: request.query.limit,
+            targetIssueKey: request.query.targetIssueKey,
+            targetIssueId: request.query.targetIssueId,
+            generatorSource: request.query.generatorSource,
+            degraded: request.query.degraded,
+            cursor: request.query.cursor,
+          },
+          user.allowedProjectIds ?? [],
+          request.id,
+        );
         return reply.send(result);
       } catch (err) {
         if (err instanceof AppError) {
