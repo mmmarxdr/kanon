@@ -42,5 +42,13 @@
   "relativeHoursAgo": "{{count}}h ago",
   "relativeDaysAgo": "{{count}}d ago",
   "collapseDesignRecord": "Collapse design record",
-  "expandDesignRecord": "Expand design record"
+  "expandDesignRecord": "Expand design record",
+  "moreActions": "More actions",
+  "deleteTitle": "Delete {{key}}?",
+  "deleteDescription": "This permanently deletes the ticket and its local history. This action cannot be undone.",
+  "deleteRedmineWarning": "A Redmine deletion will be queued. This ticket is deleted here immediately; remote deletion completes asynchronously.",
+  "deleteCriticalPrompt": "Type {{key}} to confirm",
+  "deleteCancel": "Cancel",
+  "deleteConfirm": "Delete permanently",
+  "deleteDeleting": "Deleting…"
 }

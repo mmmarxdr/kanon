@@ -111,6 +111,10 @@ export interface IssueDetail extends Omit<Issue, "children" | "assignee"> {
    * Optional for backward compat with cached data from before KAN-38.
    */
   subscribed?: boolean;
+  deleteCapability?: {
+    allowed: boolean;
+    redmineLinked: boolean;
+  };
 }
 
 export type CommentSource = "human" | "mcp" | "engram_sync" | "system" | "adr";
