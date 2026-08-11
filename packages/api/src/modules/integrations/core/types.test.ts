@@ -188,7 +188,8 @@ describe("integrations/core/types", () => {
       whoAmI: async () => ({ id: "remote-user-1", displayName: user.displayName }),
       ensureProject: async () => pushResult,
       ensureCycle: async () => pushResult,
-       pushIssue: async () => pushResult,
+      pushIssue: async () => pushResult,
+      deleteIssue: async () => ({ ...pushResult, deleted: true }),
        reconcileCreate: async () => [pushResult],
      };
     const inbound: InboundSource = {

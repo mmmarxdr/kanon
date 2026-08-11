@@ -23,9 +23,13 @@ vi.mock("../../config/prisma.js", () => ({
     refreshToken: {
       updateMany: vi.fn(),
     },
+    integrationSyncWork: {
+      findFirst: vi.fn(),
+    },
     user: {
       findUnique: vi.fn(),
     },
+    $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   },
 }));
@@ -43,10 +47,18 @@ const mockMemberCount = vi.mocked(prisma.member.count);
 const mockUserFindUnique = vi.mocked(prisma.user.findUnique);
 const mockTransaction = vi.mocked(prisma.$transaction);
 const mockRefreshTokenUpdateMany = vi.mocked(prisma.refreshToken.updateMany);
+const mockIntegrationSyncWorkFindFirst = vi.mocked(prisma.integrationSyncWork.findFirst);
+const mockQueryRaw = vi.mocked(prisma.$queryRaw);
 
 describe("Member Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockQueryRaw.mockResolvedValue([{ id: "m1" }] as never);
+    mockIntegrationSyncWorkFindFirst.mockResolvedValue(null);
+    mockTransaction.mockImplementation((async (input: unknown) =>
+      typeof input === "function"
+        ? input(prisma)
+        : Promise.all(input as readonly PromiseLike<unknown>[])) as never);
   });
 
   // ── listMembers ─────────────────────────────────────────────────────
@@ -221,9 +233,6 @@ describe("Member Service", () => {
         workspaceId: "ws-1",
         userId: "u-target",
       } as any);
-      // $transaction receives an array of pending operations; resolve with void array
-      mockTransaction.mockResolvedValue([{ count: 0 }, {}] as any);
-
       await expect(
         removeMember("ws-1", "m1", "u-acting", "admin"),
       ).resolves.toBeUndefined();
@@ -277,6 +286,28 @@ describe("Member Service", () => {
         statusCode: 404,
         code: "MEMBER_NOT_FOUND",
       });
+    });
+
+    it("prevents removing a member whose credential owns unresolved issue deletion", async () => {
+      mockMemberFindFirst.mockResolvedValue({
+        id: "m1",
+        role: "member",
+        workspaceId: "ws-1",
+        userId: "u-target",
+      } as never);
+      mockIntegrationSyncWorkFindFirst.mockResolvedValue({ id: "delete-work" } as never);
+
+      await expect(
+        removeMember("ws-1", "m1", "u-acting", "admin"),
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        code: "REMOTE_DELETE_IN_PROGRESS",
+      });
+      expect(mockMemberDelete).not.toHaveBeenCalled();
+      expect(mockQueryRaw).toHaveBeenCalledTimes(2);
+      expect(mockQueryRaw.mock.invocationCallOrder[1]).toBeLessThan(
+        mockIntegrationSyncWorkFindFirst.mock.invocationCallOrder[0]!,
+      );
     });
   });
 });

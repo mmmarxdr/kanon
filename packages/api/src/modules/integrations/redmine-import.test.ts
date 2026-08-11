@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "../../config/prisma.js";
 import {
@@ -12,6 +13,7 @@ import {
   previewRedmineIssueImport,
   type RedmineImportDependencies,
 } from "./redmine-import.js";
+import { proveExternalRefBindings } from "./backfill.js";
 import { retryRedmineIssueImport } from "./inbound.js";
 import { RedmineHttpError } from "./providers/redmine/http-client.js";
 
@@ -479,6 +481,97 @@ describe("Redmine-created issue import", () => {
     await expect(
       prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
     ).resolves.toMatchObject({ bootstrapState: "not_required", bootstrapFence: 0 });
+  });
+
+  it("keeps pending issue deletion claimable until finalization before preview", async () => {
+    const { owner, project, connection, credential, binding } = await fixture();
+    const issueId = randomUUID();
+    const ref = await prisma.externalRef.create({
+      data: {
+        connectionId: connection.id,
+        bindingId: binding.id,
+        entityType: "issue",
+        entityId: issueId,
+        externalId: "pending-delete-42",
+      },
+    });
+    const work = await prisma.integrationSyncWork.create({
+      data: {
+        bindingId: binding.id,
+        entityType: "issue",
+        entityId: issueId,
+        direction: "outbound",
+        operation: "delete",
+        dedupeKey: randomUUID(),
+        laneKey: `issue:${issueId}`,
+        actorKey: `member:${owner.id}`,
+        actorKind: "user",
+        payload: {
+          version: 1,
+          refId: ref.id,
+          externalId: ref.externalId,
+          issueKey: `${project.key}-1`,
+        },
+        correlationId: randomUUID(),
+        authCredentialId: credential.id,
+        refId: ref.id,
+        epoch: binding.lifecycleEpoch,
+      },
+    });
+    const transport = remote({ issues: [], total_count: 0, offset: 0, limit: 100 });
+    const before = await prisma.integrationProjectBinding.findUniqueOrThrow({
+      where: { id: binding.id },
+    });
+
+    await expect(
+      previewRedmineIssueImport(
+        connection.id,
+        binding.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).rejects.toMatchObject({ statusCode: 409, code: "REMOTE_DELETE_IN_PROGRESS" });
+    expect(transport.get).not.toHaveBeenCalled();
+    await expect(
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+    ).resolves.toMatchObject({
+      bootstrapState: before.bootstrapState,
+      bootstrapCutoff: before.bootstrapCutoff,
+      bootstrapPageToken: before.bootstrapPageToken,
+      bootstrapLeaseToken: before.bootstrapLeaseToken,
+      bootstrapLeaseUntil: before.bootstrapLeaseUntil,
+      bootstrapFence: before.bootstrapFence,
+    });
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } }),
+    ).resolves.toMatchObject({
+      state: "queued",
+      attempts: 0,
+      epoch: binding.lifecycleEpoch,
+      authCredentialId: credential.id,
+      refId: ref.id,
+    });
+    await expect(proveExternalRefBindings(prisma)).resolves.toBeUndefined();
+
+    await prisma.$transaction([
+      prisma.integrationSyncWork.update({
+        where: { id: work.id },
+        data: { state: "done" },
+      }),
+      prisma.externalRef.delete({ where: { id: ref.id } }),
+    ]);
+    await expect(proveExternalRefBindings(prisma)).resolves.toBeUndefined();
+    await expect(
+      previewRedmineIssueImport(
+        connection.id,
+        binding.id,
+        owner.userId,
+        transport.dependencies,
+      ),
+    ).resolves.toMatchObject({ eligibleUnlinkedCount: 0 });
+    await expect(
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+    ).resolves.toMatchObject({ bootstrapState: "previewed", bootstrapFence: 1 });
   });
 
   it("ignores unsettled outbound work from a superseded lifecycle epoch", async () => {

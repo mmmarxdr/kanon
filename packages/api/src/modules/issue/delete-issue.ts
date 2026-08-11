@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import { AppError } from "../../shared/types.js";
 import { acquireExternalRefBackfillWriteGate } from "../integrations/backfill.js";
+import { captureIntegrationWorkTx } from "../integrations/outbox.js";
 import type { DeleteIssueBody } from "./schema.js";
 
 export interface DeleteIssueResult {
@@ -14,6 +16,7 @@ export interface DeleteIssueResult {
 
 const unsafeStates = ["leased", "ambiguous"] as const;
 const supersedableStates = ["queued", "retry", "dead", "skipped"] as const;
+const remotelyDeletableBootstrapStates = new Set(["not_required", "ready"]);
 
 export async function deleteIssue(
   issueId: string,
@@ -60,6 +63,8 @@ export async function deleteIssue(
         include: {
           project: { select: { id: true, key: true, workspaceId: true } },
           children: { select: { id: true, key: true } },
+          comments: { select: { id: true } },
+          timeEntries: { select: { id: true } },
           _count: {
             select: {
               activityLogs: true,
@@ -88,38 +93,104 @@ export async function deleteIssue(
         );
       }
 
+      const descendantEntityFilters: Prisma.IntegrationSyncWorkWhereInput[] = [
+        {
+          entityType: "comment",
+          entityId: { in: issue.comments.map(({ id }) => id) },
+        },
+        {
+          entityType: "time_entry",
+          entityId: { in: issue.timeEntries.map(({ id }) => id) },
+        },
+      ];
+      const affectedEntities: Prisma.IntegrationSyncWorkWhereInput = {
+        OR: [
+          { entityType: "issue", entityId: issue.id },
+          ...descendantEntityFilters,
+        ],
+      };
+
       const unsafe = await transaction.integrationSyncWork.findFirst({
         where: {
-          entityType: "issue",
-          entityId: issue.id,
+          ...affectedEntities,
           state: { in: [...unsafeStates] },
         },
-        select: { id: true, operation: true, state: true },
+        select: { id: true, entityType: true, operation: true, state: true },
       });
       if (unsafe) {
+        const unresolvedIssueCreate =
+          unsafe.entityType === "issue" && unsafe.operation === "create";
         throw new AppError(
           409,
-          unsafe.operation === "create" ? "REMOTE_CREATE_UNRESOLVED" : "REMOTE_SYNC_IN_FLIGHT",
-          unsafe.operation === "create"
+          unresolvedIssueCreate ? "REMOTE_CREATE_UNRESOLVED" : "REMOTE_SYNC_IN_FLIGHT",
+          unresolvedIssueCreate
             ? "The remote issue creation outcome is unresolved. Resolve synchronization before deleting locally."
             : "Remote synchronization is in flight or ambiguous. Retry deletion after it settles.",
           { workId: unsafe.id, state: unsafe.state },
         );
       }
 
-      const linkedReference = await transaction.externalRef.findFirst({
+      const references = await transaction.externalRef.findMany({
         where: {
           entityType: "issue",
           entityId: issue.id,
         },
-        select: { id: true },
+        include: { binding: { include: { connection: true } } },
+        orderBy: { id: "asc" },
       });
-      if (linkedReference) {
-        throw new AppError(
-          409,
-          "REMOTE_DELETE_UNAVAILABLE",
-          "The linked Redmine issue cannot be deleted until durable remote deletion is available.",
-        );
+      const captures: Array<{
+        ref: (typeof references)[number];
+        credentialId: string;
+      }> = [];
+      for (const ref of references) {
+        const { binding } = ref;
+        if (binding.connection.provider !== "redmine") {
+          throw new AppError(
+            409,
+            "REMOTE_DELETE_UNAVAILABLE",
+            `Remote deletion is not supported for provider "${binding.connection.provider}".`,
+          );
+        }
+        if (
+          binding.projectId !== issue.projectId ||
+          binding.connectionId !== ref.connectionId ||
+          binding.lifecycle !== "active" ||
+          binding.releaseRequestedAt !== null ||
+          binding.releasedAt !== null ||
+          !remotelyDeletableBootstrapStates.has(binding.bootstrapState) ||
+          binding.connection.lifecycle !== "active" ||
+          binding.connection.workspaceId !== issue.project.workspaceId
+        ) {
+          if (!remotelyDeletableBootstrapStates.has(binding.bootstrapState)) {
+            throw new AppError(
+              409,
+              "REMOTE_DELETE_BOOTSTRAP_INCOMPLETE",
+              "Wait for Redmine bootstrap to finish before deleting this linked issue.",
+            );
+          }
+          throw new AppError(
+            409,
+            "REMOTE_DELETE_UNAVAILABLE",
+            "The linked Redmine issue cannot be deleted while its integration is inactive or releasing.",
+          );
+        }
+        const credential = await transaction.memberIntegrationCredential.findFirst({
+          where: {
+            memberId: authorId,
+            connectionId: ref.connectionId,
+            lastAuthStatus: "valid",
+            revokedAt: null,
+          },
+          select: { id: true },
+        });
+        if (!credential) {
+          throw new AppError(
+            409,
+            "REMOTE_DELETE_CREDENTIAL_REQUIRED",
+            "Connect a valid Redmine account before deleting this linked issue.",
+          );
+        }
+        captures.push({ ref, credentialId: credential.id });
       }
 
       await transaction.integrationSyncWork.updateMany({
@@ -130,6 +201,48 @@ export async function deleteIssue(
         },
         data: { state: "superseded", leaseToken: null, leaseUntil: null },
       });
+      const supersededDescendantWork = await transaction.integrationSyncWork.updateMany({
+        where: {
+          OR: descendantEntityFilters,
+          state: { in: [...supersedableStates] },
+        },
+        data: { state: "superseded", leaseToken: null, leaseUntil: null },
+      });
+      const deletedDescendantRefs = await transaction.externalRef.deleteMany({
+        where: {
+          OR: [
+            {
+              entityType: "comment",
+              entityId: { in: issue.comments.map(({ id }) => id) },
+            },
+            {
+              entityType: "time_entry",
+              entityId: { in: issue.timeEntries.map(({ id }) => id) },
+            },
+          ],
+        },
+      });
+
+      for (const { ref, credentialId } of captures) {
+        await captureIntegrationWorkTx(transaction, {
+          bindingId: ref.bindingId,
+          entityType: "issue",
+          entityId: issue.id,
+          direction: "outbound",
+          operation: "delete",
+          actorKey: `member:${authorId}`,
+          actorKind: "user",
+          payload: {
+            version: 1,
+            refId: ref.id,
+            externalId: ref.externalId,
+            issueKey: issue.key,
+          },
+          correlationId: randomUUID(),
+          refId: ref.id,
+          authCredentialId: credentialId,
+        });
+      }
 
       const audit = await transaction.adminAuditLog.create({
         data: {
@@ -164,8 +277,18 @@ export async function deleteIssue(
             },
             childIssuesDetached: issue.children,
             cascadedRecordCounts: issue._count,
-            remoteReferences: [],
-            remoteDeleteQueued: false,
+            remoteReferences: captures.map(({ ref }) => ({
+              provider: ref.binding.connection.provider,
+              connectionId: ref.connectionId,
+              bindingId: ref.bindingId,
+              refId: ref.id,
+              externalId: ref.externalId,
+            })),
+            descendantIntegrationCleanup: {
+              externalReferencesDeleted: deletedDescendantRefs.count,
+              workItemsSuperseded: supersededDescendantWork.count,
+            },
+            remoteDeleteQueued: captures.length > 0,
           },
         },
         select: { id: true },
@@ -176,7 +299,7 @@ export async function deleteIssue(
         auditLogId: audit.id,
         deletedIssueId: issue.id,
         deletedIssueKey: issue.key,
-        remoteDeleteQueued: false,
+        remoteDeleteQueued: captures.length > 0,
         workspaceId: issue.project.workspaceId,
         projectId: issue.projectId,
         projectKey: issue.project.key,

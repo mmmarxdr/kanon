@@ -310,6 +310,23 @@ describe("RedmineProviderAdapter", () => {
     expect(http.post).not.toHaveBeenCalled();
   });
 
+  it("deletes an issue and treats a remote 404 as idempotent success", async () => {
+    const http = client();
+    const adapter = new RedmineProviderAdapter(http, {
+      writeMap: {},
+      resolveExternalId: async () => null,
+    });
+
+    await expect(adapter.deleteIssue("179")).resolves.toMatchObject({
+      externalId: "179",
+      deleted: true,
+    });
+    expect(http.delete).toHaveBeenCalledWith("/issues/179.json");
+
+    http.delete.mockRejectedValueOnce(new RedmineHttpError(404));
+    await expect(adapter.deleteIssue("179")).resolves.toMatchObject({ deleted: true });
+  });
+
   it("reconciles an uncertain time-entry create by its exact stable marker", async () => {
     const http = client();
     http.get.mockResolvedValue({

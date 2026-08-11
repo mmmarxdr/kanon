@@ -93,7 +93,7 @@ describe("issue deletion HTTP API", () => {
       payload: {},
     });
     expect(linkedDelete.statusCode).toBe(409);
-    expect(linkedDelete.json().code).toBe("REMOTE_DELETE_UNAVAILABLE");
+    expect(linkedDelete.json().code).toBe("REMOTE_DELETE_CREDENTIAL_REQUIRED");
     await expect(prisma.issue.findUnique({ where: { id: issue.id } })).resolves.not.toBeNull();
   });
 

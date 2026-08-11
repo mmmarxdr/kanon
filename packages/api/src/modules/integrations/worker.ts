@@ -51,7 +51,7 @@ type ExternalEntityType = "project" | "cycle" | "issue" | "time_entry" | "user";
 export type IntegrationDispatchAdapter = Pick<
   PmProviderAdapter,
   "ensureProject" | "ensureCycle" | "pushIssue" | "reconcileCreate"
-> & Partial<Pick<PmProviderAdapter, "pushComment" | "pushTimeEntry">>;
+> & Partial<Pick<PmProviderAdapter, "pushComment" | "pushTimeEntry" | "deleteIssue">>;
 export interface IntegrationWorkerLogger {
   info(context: unknown, message: string): void;
   warn(context: unknown, message: string): void;
@@ -81,6 +81,7 @@ type Dispatch =
   | { kind: "project"; entity: CanonicalProject }
   | { kind: "cycle"; entity: CanonicalCycle }
   | { kind: "issue"; entity: CanonicalIssue; patch: CanonicalIssuePatch }
+  | { kind: "issue-delete"; remoteIssueId: string }
   | { kind: "comment"; entity: CanonicalComment; remoteIssueId: string; proof: ProviderCreateReconciliationRequest }
   | { kind: "time_entry"; entity: CanonicalTimeEntry; activityId: string };
 type Prepared = {
@@ -205,6 +206,10 @@ async function lockWork(
 }
 type LockedWork = NonNullable<Awaited<ReturnType<typeof lockWork>>>;
 
+const isIssueDelete = (
+  work: Pick<IntegrationSyncWork, "entityType" | "operation">,
+) => work.entityType === "issue" && work.operation === "delete";
+
 async function entityOwned(
   transaction: Prisma.TransactionClient,
   current: LockedWork,
@@ -270,6 +275,33 @@ async function entityOwned(
   }
   return false;
 }
+
+async function deletedIssueOwned(
+  transaction: Prisma.TransactionClient,
+  current: LockedWork,
+): Promise<boolean> {
+  if (
+    current.entityType !== "issue" ||
+    current.operation !== "delete" ||
+    current.binding.connection.workspaceId !== current.binding.project.workspaceId ||
+    current.binding.project.archived ||
+    current.binding.connection.lifecycle !== "active" ||
+    current.binding.lifecycle !== "active" ||
+    current.binding.releasedAt !== null ||
+    (await transaction.issue.count({ where: { id: current.entityId } })) !== 0
+  ) {
+    return false;
+  }
+  const payload = issueDeletePayload(current.payload);
+  if (current.refId !== payload.refId) return false;
+  const ref = await transaction.externalRef.findUnique({ where: { id: payload.refId } });
+  return !!ref &&
+    ref.bindingId === current.bindingId &&
+    ref.connectionId === current.binding.connectionId &&
+    ref.entityType === "issue" &&
+    ref.entityId === current.entityId &&
+    ref.externalId === payload.externalId;
+}
 function issueFields(payload: Prisma.JsonValue) {
   if (
     !payload ||
@@ -319,6 +351,24 @@ function confirmedTimePayload(payload: Prisma.JsonValue) {
   return {
     targetHours: payload["targetHours"],
     entryIds: [...payload["entryIds"]].sort() as string[],
+  };
+}
+function issueDeletePayload(payload: Prisma.JsonValue) {
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    Array.isArray(payload) ||
+    payload["version"] !== 1 ||
+    typeof payload["refId"] !== "string" ||
+    typeof payload["externalId"] !== "string" ||
+    typeof payload["issueKey"] !== "string"
+  ) {
+    throw new TerminalError("Unsupported integration issue-delete payload");
+  }
+  return {
+    refId: payload["refId"],
+    externalId: payload["externalId"],
+    issueKey: payload["issueKey"],
   };
 }
 const omit = { kind: "omit" } as const;
@@ -406,22 +456,32 @@ async function prepare(
   return database.$transaction(async (transaction) => {
     const current = await lockWork(transaction, claimed);
     const now = await databaseNow(transaction, d.now);
+    const deletingIssue = current ? isIssueDelete(current) : false;
     if (
       !current ||
       !leased(current, claimed, now) ||
       current.binding.lifecycle !== "active" ||
       current.binding.connection.lifecycle !== "active" ||
-      current.binding.releaseRequestedAt !== null ||
+      (current.binding.releaseRequestedAt !== null && !deletingIssue) ||
       current.binding.releasedAt !== null ||
       current.binding.lifecycleEpoch !== current.epoch
     )
       return { kind: "stale" };
     const auth = await credential(transaction, current, d);
     if (!auth.ok) {
-      const state = auth.credential ? "dead" : "skipped", authCredentialId = auth.credential?.id;
+      const state = deletingIssue ? "dead" : auth.credential ? "dead" : "skipped";
+      const authCredentialId = deletingIssue
+        ? current.authCredentialId
+        : auth.credential?.id;
       const changed = await transaction.integrationSyncWork.updateMany({
         where: { ...fenced(claimed), leaseUntil: { gt: now } },
-        data: { state, skippedReason: auth.reason, authCredentialId, leaseToken: null, leaseUntil: null },
+        data: {
+          state,
+          skippedReason: deletingIssue ? "credential_invalid" : auth.reason,
+          authCredentialId,
+          leaseToken: null,
+          leaseUntil: null,
+        },
       });
       return changed.count
         ? { kind: "skipped", reason: auth.reason, state }
@@ -513,6 +573,24 @@ async function prepare(
           expectedCredentialRemoteUserId: captured.credentialRemoteUserId,
         },
       };
+    } else if (current.entityType === "issue" && current.operation === "delete") {
+      const captured = issueDeletePayload(current.payload);
+      if ((await transaction.issue.count({ where: { id: current.entityId } })) !== 0) {
+        throw new TerminalError("Canonical issue still exists for remote-delete work");
+      }
+      ownRef = await transaction.externalRef.findUnique({ where: { id: captured.refId } });
+      if (
+        !ownRef ||
+        current.refId !== ownRef.id ||
+        ownRef.bindingId !== current.bindingId ||
+        ownRef.connectionId !== current.binding.connectionId ||
+        ownRef.entityType !== "issue" ||
+        ownRef.entityId !== current.entityId ||
+        ownRef.externalId !== captured.externalId
+      ) {
+        throw new TerminalError("Captured issue-delete reference is stale or invalid");
+      }
+      dispatch = { kind: "issue-delete", remoteIssueId: ownRef.externalId };
     } else if (current.entityType === "issue") {
       // ponytail: tolerate persisted estimate payloads, but discard them until units are defined.
       const fields = Object.fromEntries(
@@ -1238,7 +1316,9 @@ async function finalize(
       current.binding.lifecycle !== "active" ||
       current.binding.connection.lifecycle !== "active" ||
       (!allowStaleEpoch && current.binding.lifecycleEpoch !== work.epoch) ||
-      !(await entityOwned(transaction, current))
+      !(current.entityType === "issue" && current.operation === "delete"
+        ? await deletedIssueOwned(transaction, current)
+        : await entityOwned(transaction, current))
     ) {
       throw new StaleFinalizeError();
     }
@@ -1413,13 +1493,22 @@ async function reconcileAmbiguity(
   }
 }
 
-async function moveAmbiguous(database: PrismaClient, work: IntegrationSyncWork) {
+async function moveAmbiguous(database: PrismaClient, work: IntegrationSyncWork, d: Deps) {
+  const retryDelete = work.entityType === "issue" && work.operation === "delete";
+  const now = retryDelete ? await databaseNow(database, d.now) : undefined;
+  const attempts = work.attempts + 1;
   return (
     (
       await database.integrationSyncWork.updateMany({
         where: fenced(work),
         data: {
-          state: "ambiguous",
+          state: retryDelete ? "retry" : "ambiguous",
+          ...(retryDelete
+            ? {
+                attempts,
+                availableAt: new Date(now!.getTime() + retryDelayMs(attempts, d.jitter)),
+              }
+            : {}),
           leaseToken: null,
           leaseUntil: null,
         },
@@ -1518,13 +1607,16 @@ async function fail(
     return failAuthentication(database, work, prepared.credential, error, mode, d);
   }
   const attempts = work.attempts + 1;
+  const deletingIssue = isIssueDelete(work);
   const explicitOutcome = error instanceof ProviderDispatchError ? error.outcome : null;
   const retryable = explicitOutcome === "retry" || isRetryableProviderError(error);
   const ambiguous =
     explicitOutcome === "ambiguous" ||
     (explicitOutcome === null && !!prepared && !prepared.hasRemoteRef && retryable);
   const state =
-    ambiguous
+    deletingIssue
+      ? "retry"
+      : ambiguous
       ? "ambiguous"
       : retryable && attempts < MAX_ATTEMPTS
         ? "retry"
@@ -1601,7 +1693,13 @@ async function process(database: PrismaClient, work: IntegrationSyncWork, d: Dep
   try {
     const adapter = d.createAdapter(prepared.adapter);
     pushed =
-      prepared.dispatch.kind === "issue"
+      prepared.dispatch.kind === "issue-delete"
+        ? adapter.deleteIssue
+          ? await adapter.deleteIssue(prepared.dispatch.remoteIssueId)
+          : (() => {
+              throw new TerminalError("Integration adapter cannot delete issues");
+            })()
+      : prepared.dispatch.kind === "issue"
         ? await adapter.pushIssue(prepared.dispatch.entity, prepared.dispatch.patch)
         : prepared.dispatch.kind === "comment"
           ? adapter.pushComment
@@ -1624,6 +1722,9 @@ async function process(database: PrismaClient, work: IntegrationSyncWork, d: Dep
     if (prepared.dispatch.kind === "comment" && !provesComment(prepared.dispatch.proof, pushed)) {
       throw new ProviderDispatchError("ambiguous", new Error("Redmine comment proof mismatch"));
     }
+    if (prepared.dispatch.kind === "issue-delete" && pushed.deleted !== true) {
+      throw new TerminalError("Integration adapter did not confirm issue deletion");
+    }
   } catch (error) {
     return fail(database, prepared, work, error, d);
   }
@@ -1631,7 +1732,7 @@ async function process(database: PrismaClient, work: IntegrationSyncWork, d: Dep
     await finalize(database, prepared.work, pushed, d);
     log(d, "info", { workId: work.id, state: "done" }, "Integration work completed");
   } catch (error) {
-    const ambiguous = await moveAmbiguous(database, work).catch((transitionError) => {
+    const ambiguous = await moveAmbiguous(database, work, d).catch((transitionError) => {
       log(
         d,
         "error",
@@ -1661,7 +1762,7 @@ async function process(database: PrismaClient, work: IntegrationSyncWork, d: Dep
 }
 
 async function expireLeases(database: PrismaClient, d: Deps, limit: number) {
-  const rows = await database.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+  const rows = await database.$queryRaw<Array<{ id: string; state: "retry" | "ambiguous" }>>(Prisma.sql`
     WITH expired AS MATERIALIZED (
       SELECT "id" FROM "integration_sync_work"
       WHERE "state" = 'leased'::"SyncWorkState" AND "lease_until" <= clock_timestamp()
@@ -1670,12 +1771,24 @@ async function expireLeases(database: PrismaClient, d: Deps, limit: number) {
       FOR UPDATE SKIP LOCKED
     )
     UPDATE "integration_sync_work" AS work
-    SET "state" = 'ambiguous'::"SyncWorkState", "lease_token" = NULL,
+    SET "state" = CASE
+          WHEN work."entity_type" = 'issue' AND work."operation" = 'delete'::"SyncOperation"
+            THEN 'retry'::"SyncWorkState"
+          ELSE 'ambiguous'::"SyncWorkState"
+        END,
+        "lease_token" = NULL,
         "lease_until" = NULL, "updated_at" = clock_timestamp()
-    FROM expired WHERE work."id" = expired."id" RETURNING work."id"
+    FROM expired WHERE work."id" = expired."id" RETURNING work."id", work."state"
   `);
   for (const row of rows)
-    log(d, "warn", { workId: row.id, state: "ambiguous" }, "Integration work became ambiguous");
+    log(
+      d,
+      "warn",
+      { workId: row.id, state: row.state },
+      row.state === "retry"
+        ? "Idempotent integration delete scheduled for retry"
+        : "Integration work became ambiguous",
+    );
   return rows.length;
 }
 
