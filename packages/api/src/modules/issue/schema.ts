@@ -66,6 +66,11 @@ export const IssueKeyParam = z.object({
   key: z.string(),
 });
 
+export const DeleteIssueBody = z.object({
+  confirmationKey: z.string().optional(),
+});
+export type DeleteIssueBody = z.infer<typeof DeleteIssueBody>;
+
 /**
  * Issue list query filters.
  *
