@@ -483,10 +483,6 @@ export async function persistTriageProposal(
                   preview: storedPreview,
                   retainedItemIds: retained.retainedItemIds,
                   retainedCandidateIds: retained.sourceCandidates.map((candidate) => candidate.issueId),
-                  sourceSnapshots: {
-                    target: source.canonicalSource,
-                    candidates: candidateSources,
-                  },
                 } as unknown as Prisma.InputJsonValue,
               },
             },

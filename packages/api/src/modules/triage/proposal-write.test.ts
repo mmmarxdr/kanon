@@ -82,6 +82,41 @@ describe("persistTriageProposal", () => {
       provenance: { sourceSnapshots: { target: { issueId: target.id } } },
     });
     await expect(prisma.issue.findUniqueOrThrow({ where: { id: target.id } })).resolves.toEqual(issueBefore);
+
+    await prisma.issue.update({ where: { id: target.id }, data: { priority: "low" } });
+    const correctionPreview = await executePreview({
+      issueKey: target.key,
+      userId: member.userId,
+      allowedProjectIds: [],
+      correlationId,
+      request: { phase: "prepare", aiIntent: "none", format: "compact" },
+    });
+    const correctionInput = {
+      ...input,
+      body: {
+        preview: correctionPreview,
+        previewSeal: correctionPreview.previewSeal,
+        supersedesId: proposal.id,
+      },
+    };
+    const correction = await persistTriageProposal(correctionInput);
+    await expect(persistTriageProposal(correctionInput)).resolves.toMatchObject({
+      id: correction.id,
+      outcome: "deduplicated",
+    });
+    await prisma.issue.update({ where: { id: target.id }, data: { priority: "medium" } });
+    const conflictingPreview = await executePreview({
+      issueKey: target.key,
+      userId: member.userId,
+      allowedProjectIds: [],
+      correlationId,
+      request: { phase: "prepare", aiIntent: "none", format: "compact" },
+    });
+    await expect(persistTriageProposal({
+      ...input,
+      body: { ...correctionInput.body, preview: conflictingPreview, previewSeal: conflictingPreview.previewSeal },
+    })).rejects.toMatchObject({ statusCode: 409, code: "SUPERSESSION_CONFLICT" });
+
     await expect(persistTriageProposal({ ...input, allowedProjectIds: [] })).rejects.toMatchObject({
       statusCode: 404,
       code: "NOT_FOUND_OR_NOT_VISIBLE",

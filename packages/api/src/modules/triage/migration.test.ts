@@ -129,14 +129,15 @@ describe("Triage Proposal Migration Schema", () => {
       }),
     ).rejects.toThrow(/Unique constraint failed/);
 
-    await expect(prisma.triageProposal.delete({ where: { id: predecessor.id } })).rejects.toThrow();
+    await expect(prisma.triageProposal.delete({ where: { id: predecessor.id } }))
+      .rejects.toThrow(/triage_proposals_supersedes_id_fkey/);
     const selfId = crypto.randomUUID();
     await expect(prisma.triageProposal.create({
       data: { ...proposalData(), id: selfId, supersedesId: selfId },
-    })).rejects.toThrow();
+    })).rejects.toThrow(/triage_proposals_supersedes_not_self/);
     await expect(prisma.triageProposal.create({
       data: { ...proposalData(), supersedesId: crypto.randomUUID() },
-    })).rejects.toThrow();
+    })).rejects.toThrow(/triage_proposals_supersedes_id_fkey/);
 
     await prisma.triageProposal.delete({ where: { id: successor.id } });
     await prisma.triageProposal.delete({ where: { id: predecessor.id } });
