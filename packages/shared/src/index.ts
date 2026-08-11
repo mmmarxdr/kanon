@@ -98,6 +98,7 @@ export {
   groupSummarySchema,
   issueDependencyEdgeSchema,
   issueDetailSchema,
+  deleteIssueResultSchema,
   issueListSchema,
   groupSummaryListSchema,
 } from "./issue.js";
@@ -113,4 +114,5 @@ export type {
   GroupSummary,
   IssueDependencyEdge,
   IssueDetail,
+  DeleteIssueResult,
 } from "./issue.js";

@@ -75,6 +75,9 @@ vi.mock("../../config/prisma.js", () => ({
     integrationProjectBinding: {
       findFirst: vi.fn(),
     },
+    externalRef: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
     // KAN-157: reconciliation gate reads workLog + timeEntry before →done.
     workLog: {
       findMany: vi.fn(),
@@ -176,6 +179,15 @@ describe("getIssue()", () => {
 
     expect(result.cycle).toBeNull();
     expect(result.cycleId).toBeNull();
+  });
+
+  it("returns the server-derived delete capability and Redmine link metadata", async () => {
+    mockIssueFindUnique.mockResolvedValue(makeIssueRow() as never);
+    vi.mocked(prisma.externalRef.findFirst).mockResolvedValue({ id: "ref-1" } as never);
+
+    const result = await getIssue("TEST-1", undefined, true);
+
+    expect(result.deleteCapability).toEqual({ allowed: true, redmineLinked: true });
   });
 
   it("throws 404 when issue does not exist", async () => {
