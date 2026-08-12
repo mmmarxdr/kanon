@@ -4,21 +4,16 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as nodeFs from "node:fs";
 import { KanonClient } from "./kanon-client.js";
-import { registerProjectTools } from "./tools/projects.js";
-import { registerGroupTools } from "./tools/groups.js";
-import { registerIssueTools } from "./tools/issues.js";
-import { registerRoadmapTools } from "./tools/roadmap.js";
-import { registerWorkSessionTools } from "./tools/work-sessions.js";
-import { registerCycleTools } from "./tools/cycles.js";
-import { registerDocumentTools } from "./tools/documents.js";
-import { registerTimesheetTools } from "./tools/timesheet.js";
-import { registerMemberTools } from "./tools/members.js";
-import { registerCommentTools } from "./tools/comments.js";
-import { registerCaptureTools } from "./tools/capture.js";
-import { registerTriageTools } from "./tools/triage.js";
+import { isTriageToolsEnabled } from "./tools/triage.js";
+import { registerKanonTools } from "./register-tools.js";
 import { shutdownAllHeartbeats, wrapHandlerWithActivity } from "./heartbeat.js";
 import { startSseClient, stopSseClient } from "./sse-client.js";
-import { SERVER_INSTRUCTIONS, DEFERRED_TOOLS } from "./instructions.js";
+import {
+  DEFERRED_TOOLS,
+  LEGACY_DEFERRED_TOOLS,
+  LEGACY_SERVER_INSTRUCTIONS,
+  SERVER_INSTRUCTIONS,
+} from "./instructions.js";
 import { MCP_VERSION } from "./version.js";
 import { findKanonConfig } from "./kanon-binding.js";
 import type { KanonBinding } from "./kanon-binding.js";
@@ -71,6 +66,8 @@ const kanonBinding: KanonBinding | InvalidBinding | null = (() => {
   }
 })();
 
+const triageToolsEnabled = isTriageToolsEnabled();
+const runtimeDeferredTools = triageToolsEnabled ? DEFERRED_TOOLS : LEGACY_DEFERRED_TOOLS;
 const server = new McpServer(
   {
     name: "kanon",
@@ -78,7 +75,7 @@ const server = new McpServer(
     version: MCP_VERSION,
   },
   {
-    instructions: SERVER_INSTRUCTIONS,
+    instructions: triageToolsEnabled ? SERVER_INSTRUCTIONS : LEGACY_SERVER_INSTRUCTIONS,
   },
 );
 
@@ -104,18 +101,7 @@ const server = new McpServer(
 
 // ─── Register Tools ─────────────────────────────────────────────────────────
 
-registerProjectTools(server, client, kanonBinding);
-registerGroupTools(server, client, kanonBinding);
-registerIssueTools(server, client, kanonBinding);
-registerRoadmapTools(server, client, kanonBinding);
-registerWorkSessionTools(server, client);
-registerCycleTools(server, client, kanonBinding);
-registerDocumentTools(server, client);
-registerTimesheetTools(server, client);
-registerMemberTools(server, client);
-registerCommentTools(server, client);
-registerCaptureTools(server, client);
-registerTriageTools(server, client);
+registerKanonTools(server, client, kanonBinding, triageToolsEnabled);
 
 // ─── Connect ────────────────────────────────────────────────────────────────
 
@@ -129,7 +115,7 @@ async function main(): Promise<void> {
         ._registeredTools ?? {},
     ).length || "?";
   console.error(
-    `Kanon MCP ${MCP_VERSION} — ${toolCount} tools registered, ${DEFERRED_TOOLS.length} declared deferred via instructions`,
+    `Kanon MCP ${MCP_VERSION} — ${toolCount} tools registered, ${runtimeDeferredTools.length} declared deferred via instructions`,
   );
 
   // Start background SSE client if workspace ID is configured

@@ -58,9 +58,9 @@ describe("Win B — SERVER_INSTRUCTIONS deferred tools block", () => {
     }
   });
 
-  it("B5: index.ts source wires instructions: SERVER_INSTRUCTIONS into McpServer constructor", () => {
+  it("B5: index.ts selects full or rollback instructions in McpServer constructor", () => {
     const src = readFileSync(join(__dirname, "index.ts"), "utf8");
-    expect(src).toMatch(/instructions\s*:\s*SERVER_INSTRUCTIONS/);
+    expect(src).toMatch(/instructions\s*:\s*triageToolsEnabled\s*\?\s*SERVER_INSTRUCTIONS\s*:\s*LEGACY_SERVER_INSTRUCTIONS/);
   });
 });
 

@@ -189,6 +189,7 @@ export async function triageProposalReadRoutes(appRaw: FastifyInstance) {
           correlationId: request.id,
           request: request.body,
           deadlineAt: started + PREVIEW_API_DEADLINE_MS,
+          metrics: appRaw.triageMetrics,
         });
         observePreview(
           appRaw.triageMetrics,
@@ -346,6 +347,16 @@ export async function triageProposalReadRoutes(appRaw: FastifyInstance) {
         return reply.send(result);
       } catch (err) {
         if (err instanceof AppError) {
+          if (err.code === "LIST_OUTPUT_BUDGET_EXCEEDED") {
+            return reply.status(err.statusCode).send({
+              apiContractVersion: "triage-api.v1",
+              category: "temporary_unavailability",
+              code: err.code,
+              message: err.message,
+              correlationId: request.id,
+              retry: "retry",
+            });
+          }
           return reply.status(err.statusCode).send({ error: err.message, code: err.code });
         }
         throw err;
@@ -356,7 +367,7 @@ export async function triageProposalReadRoutes(appRaw: FastifyInstance) {
   app.post(
     "/api/triage-proposals/:id/dismiss",
     {
-      preHandler: [requireCapability(env.TRIAGE_PROPOSALS_ENABLED, "Triage proposals are disabled")],
+      preHandler: [requireCapability(env.TRIAGE_DISMISS_ENABLED, "Triage proposal dismissal is disabled")],
       schema: {
         params: z.object({ id: z.string().uuid() }),
         body: z.object({ reason: z.string().trim().min(1).max(1000) }).strict(),

@@ -1498,6 +1498,8 @@ model TriageProposal {
   @@index([targetIssueId])
   @@index([workspaceId, lifecycle])
   @@index([projectId, lifecycle])
+  @@index([projectId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([projectId, targetIssueId, createdAt(sort: Desc), id(sort: Desc)])
   @@index([expiresAt])
   @@index([retentionEligibleAt])
   @@map("triage_proposals")

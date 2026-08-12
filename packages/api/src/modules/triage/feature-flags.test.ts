@@ -6,6 +6,8 @@ const flags = [
   "TRIAGE_PREVIEW_ENABLED",
   "TRIAGE_PROPOSAL_READS_ENABLED",
   "TRIAGE_PROPOSALS_ENABLED",
+  "TRIAGE_DISMISS_ENABLED",
+  "TRIAGE_RETENTION_ENABLED",
 ] as const;
 describe("triage feature flags", () => {
   let app: FastifyInstance | undefined;
@@ -17,7 +19,10 @@ describe("triage feature flags", () => {
     helpers = undefined;
   }
 
-  async function setup(disabled: (typeof flags)[number]) {
+  async function setup(
+    disabled: (typeof flags)[number],
+    retentionRegister?: typeof import("./retention.js").registerRetentionHousekeeping,
+  ) {
     await closeApp();
     for (const flag of flags) process.env[flag] = flag === disabled ? "false" : "true";
     vi.resetModules();
@@ -35,7 +40,7 @@ describe("triage feature flags", () => {
     const done = await prisma.issue.create({
       data: { projectId: project.id, key: `${project.key}-2`, sequenceNum: 2, title: "Flag history", state: "done" },
     });
-    app = await helpers.createTestApp();
+    app = await helpers.createTestApp({ retentionRegister });
     const headers = helpers.authHeader(member.token);
     const request = (method: "GET" | "POST", url: string, payload?: unknown) =>
       app!.inject({ method, url, headers, ...(payload === undefined ? {} : { payload }) });
@@ -50,16 +55,14 @@ describe("triage feature flags", () => {
         request("GET", "/api/triage-proposals/00000000-0000-4000-8000-000000000000"),
         request("GET", `/api/issues/${done.key}/triage-history`),
       ]),
-      writes: async () => {
+      persist: async () => {
         const prepared = await preview();
         expect(prepared.statusCode).toBe(200);
-        return Promise.all([
-          request("POST", `/api/issues/${target.key}/triage-proposals`, {
-            preview: prepared.json(), previewSeal: prepared.json().previewSeal,
-          }),
-          request("POST", "/api/triage-proposals/00000000-0000-4000-8000-000000000000/dismiss", { reason: "disabled" }),
-        ]);
+        return request("POST", `/api/issues/${target.key}/triage-proposals`, {
+          preview: prepared.json(), previewSeal: prepared.json().previewSeal,
+        });
       },
+      dismiss: () => request("POST", "/api/triage-proposals/00000000-0000-4000-8000-000000000000/dismiss", { reason: "disabled" }),
     };
   }
 
@@ -89,6 +92,21 @@ describe("triage feature flags", () => {
     expect((await routes.preview()).statusCode).toBe(200);
 
     routes = await setup("TRIAGE_PROPOSALS_ENABLED");
-    expectDisabled(await routes.writes());
+    expectDisabled([await routes.persist()]);
+    expect((await routes.dismiss()).statusCode).not.toBe(503);
+
+    routes = await setup("TRIAGE_DISMISS_ENABLED");
+    expectDisabled([await routes.dismiss()]);
+    expect((await routes.persist()).statusCode).toBe(201);
+  });
+
+  it("registers retention only when its last-stage flag is enabled", async () => {
+    const disabledRegister = vi.fn(() => vi.fn());
+    await setup("TRIAGE_RETENTION_ENABLED", disabledRegister);
+    expect(disabledRegister).not.toHaveBeenCalled();
+
+    const enabledRegister = vi.fn(() => vi.fn());
+    await setup("TRIAGE_SEARCH_ENABLED", enabledRegister);
+    expect(enabledRegister).toHaveBeenCalledOnce();
   });
 });

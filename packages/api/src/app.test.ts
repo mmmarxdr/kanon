@@ -25,6 +25,10 @@ describe("app correlation and triage redaction (KAN-193)", () => {
     expect(TRIAGE_PINO_REDACT_PATHS.length).toBeGreaterThan(0);
     expect(TRIAGE_PINO_REDACT_PATHS).toContain("req.body.suggestions");
   });
+
+  it("starts retention only behind its last-stage flag", () => {
+    expect(appSource).toContain("if (env.TRIAGE_RETENTION_ENABLED)");
+  });
 });
 
 // Lightweight runtime check — only when DB/env allow full buildApp.

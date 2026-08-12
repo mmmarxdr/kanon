@@ -22,6 +22,9 @@ describe("triage-proposal-list-v1 profile contract", () => {
   it("asserts SQL-plan boundaries: visibility before predicates, LIMIT 51, no content fetch", () => {
     const source = loadListSource();
     expect(() => assertListSqlPlanBoundaries(source)).not.toThrow();
+    expect(source).not.toContain("triage_proposal_contents");
+    expect(() => assertListSqlPlanBoundaries(`${source}\nSELECT 1 FROM triage_proposal_contents`))
+      .toThrow(/content table/i);
   });
 
   it("fixture list/dismiss samples meet engineering targets", () => {

@@ -233,10 +233,14 @@ describe("envSchema — comment rollout", () => {
     expect(envSchema.parse(base).TRIAGE_PREVIEW_ENABLED).toBe(false);
     expect(envSchema.parse(base).TRIAGE_PROPOSAL_READS_ENABLED).toBe(false);
     expect(envSchema.parse(base).TRIAGE_PROPOSALS_ENABLED).toBe(false);
+    expect(envSchema.parse(base).TRIAGE_DISMISS_ENABLED).toBe(false);
+    expect(envSchema.parse(base).TRIAGE_RETENTION_ENABLED).toBe(false);
     expect(envSchema.parse({ ...base, TRIAGE_SEARCH_ENABLED: "true" }).TRIAGE_SEARCH_ENABLED).toBe(true);
     expect(envSchema.parse({ ...base, TRIAGE_PREVIEW_ENABLED: "true" }).TRIAGE_PREVIEW_ENABLED).toBe(true);
     expect(envSchema.parse({ ...base, TRIAGE_PROPOSAL_READS_ENABLED: "true" }).TRIAGE_PROPOSAL_READS_ENABLED).toBe(true);
     expect(envSchema.parse({ ...base, TRIAGE_PROPOSALS_ENABLED: "true" }).TRIAGE_PROPOSALS_ENABLED).toBe(true);
+    expect(envSchema.parse({ ...base, TRIAGE_DISMISS_ENABLED: "true" }).TRIAGE_DISMISS_ENABLED).toBe(true);
+    expect(envSchema.parse({ ...base, TRIAGE_RETENTION_ENABLED: "true" }).TRIAGE_RETENTION_ENABLED).toBe(true);
   });
 });
 

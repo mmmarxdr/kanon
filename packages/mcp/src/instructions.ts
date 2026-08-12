@@ -5,8 +5,8 @@
 // declared here so the host can hide them behind a ToolSearch step rather than
 // surfacing them eagerly in every turn's context.
 //
-// The server still registers every tool normally — hosts that ignore
-// `instructions` simply surface every tool. No SDK feature detection needed.
+// The server registers every tool unless KANON_TRIAGE_TOOLS_ENABLED=false
+// selects the documented 44-tool rollback surface.
 // Exact inventory: 49 tools = 26 core + 23 deferred (KAN-193).
 
 /** Exact post-change inventory (KAN-193). Do not re-anchor without design review. */
@@ -47,6 +47,10 @@ export const DEFERRED_TOOLS = [
   "list_triage_proposals",
   "dismiss_triage_proposal",
 ] as const;
+
+export const LEGACY_DEFERRED_TOOLS = DEFERRED_TOOLS.filter(
+  (tool) => !tool.includes("triage_proposal") && tool !== "preview_issue_triage",
+);
 
 /**
  * Instructions block passed to `new McpServer({ instructions })`.
@@ -91,3 +95,7 @@ create_cycle, update_cycle_scope, close_cycle,
 list_my_worklogs, promote_worklog, update_time_entry,
 submit_time_entry, reconcile_time
 `.trim();
+
+export const LEGACY_SERVER_INSTRUCTIONS = SERVER_INSTRUCTIONS
+  .replace(/\n## Triage \(ToolSearch\)[\s\S]*?(?=\n## DEFERRED TOOLS)/, "")
+  .replace(DEFERRED_TOOLS.join("\n- "), LEGACY_DEFERRED_TOOLS.join("\n- "));

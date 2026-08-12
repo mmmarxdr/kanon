@@ -67,10 +67,11 @@ export interface BuildAppOptions {
   integrationScan?: () => Promise<unknown>;
   /** Optional inbound poller override for lifecycle tests. */
   inboundScan?: () => Promise<unknown>;
+  /** Optional retention registration override for lifecycle tests. */
+  retentionRegister?: typeof registerRetentionHousekeeping;
   /**
-   * Force-enable rate limiting even under NODE_ENV=test (KAN-77). Rate limiting
-   * is normally off in test to avoid cross-test interference; integration tests
-   * that assert the limiter's behavior opt in via this flag.
+   * Override rate limiting. Tests normally disable it; performance profiles can
+   * explicitly disable it without changing production defaults.
    */
   enableRateLimit?: boolean;
 }
@@ -167,7 +168,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   // auth routes apply stricter per-route limits via routeConfig.
   // Disabled in test mode to avoid false failures in integration tests,
   // unless a test explicitly opts in via opts.enableRateLimit (KAN-77).
-  if (env.NODE_ENV !== "test" || opts.enableRateLimit) {
+  if (opts.enableRateLimit ?? env.NODE_ENV !== "test") {
     await app.register(rateLimit, {
       max: 1000,
       timeWindow: "1 minute",
@@ -389,7 +390,12 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     app.log.info(
       `Work session cleanup interval started (every ${CLEANUP_INTERVAL_MS / 1000}s, non-overlapping)`
     );
-    stopRetention = registerRetentionHousekeeping(app.log);
+    if (env.TRIAGE_RETENTION_ENABLED) {
+      stopRetention = (opts.retentionRegister ?? registerRetentionHousekeeping)(
+        app.log,
+        app.triageMetrics,
+      );
+    }
   });
 
   app.addHook("onClose", async () => {
