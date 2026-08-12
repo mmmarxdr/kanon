@@ -247,9 +247,9 @@ describe("IssuePage — single-scroll workspace (KAN-108)", () => {
 
 describe("IssuePage stale-query safety", () => {
   it.each([
-    [new ApiError(404, "NOT_FOUND", "Issue not found"), "This issue could not be found.", "Back"],
-    [new ApiError(500, "INTERNAL_SERVER_ERROR", "Issue failed"), "Unable to load this issue.", "Retry"],
-  ])("hides retained editable issue content for %s", async (error, message, action) => {
+    [new ApiError(404, "NOT_FOUND", "Issue not found"), "This issue could not be found."],
+    [new ApiError(500, "INTERNAL_SERVER_ERROR", "Issue failed"), "Unable to load this issue."],
+  ])("keeps retained editable issue content visible for %s", async (error, message) => {
     issueQueryState.value = {
       data: {
         id: "i-1", key: "KAN-1", title: "Stale issue", type: "task", priority: "medium", state: "todo", description: "stale", project: { id: "p-1", key: "KAN", name: "Kanon" }, children: [], blocks: [], blockedBy: [], subscribed: false, activeWorkers: [],
@@ -262,11 +262,11 @@ describe("IssuePage stale-query safety", () => {
 
     await renderIssuePage();
 
-    expect(screen.getAllByText(message)).toHaveLength(5);
-    expect(screen.getAllByRole("button", { name: action })).toHaveLength(action === "Retry" ? 5 : 1);
-    expect(screen.queryByTestId("issue-detail-header")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("description-section")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("unified-timeline")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Send" })).not.toBeInTheDocument();
+    expect(screen.queryByText(message)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("issue-detail-header")).toBeInTheDocument();
+    expect(screen.getByTestId("description-section")).toHaveTextContent("stale");
+    expect(screen.getAllByTestId("unified-timeline")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
   });
 });
