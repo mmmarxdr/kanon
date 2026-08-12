@@ -101,6 +101,10 @@ export function runListProfileFixture(samples: {
       dismissP95Ok: dismissSummary.p95Ms < LIST_PROFILE.budgets.dismissP95TargetMs,
       listBytesOk: listSummary.maxOutputBytes <= LIST_PROFILE.budgets.listMaxBytes,
       dismissBytesOk: dismissSummary.maxOutputBytes <= LIST_PROFILE.budgets.dismissMaxBytes,
+      listUnexpectedErrorsOk: listSummary.unexpectedErrorPct <= CANARY_GATES.unexpectedErrorPagePct,
+      dismissUnexpectedErrorsOk: dismissSummary.unexpectedErrorPct <= CANARY_GATES.unexpectedErrorPagePct,
+      disableAllSafe: Math.max(listSummary.unexpectedErrorPct, dismissSummary.unexpectedErrorPct) <=
+        CANARY_GATES.unexpectedErrorDisableAllPct,
     },
   };
 }

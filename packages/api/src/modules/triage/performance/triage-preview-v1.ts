@@ -90,6 +90,9 @@ export function runPreviewProfileFixture(samples: LatencySample[]) {
     gates: {
       p95Ok: summary.p95Ms < PREVIEW_PROFILE.budgets.p95MaxMs,
       compactOk: summary.maxOutputBytes <= PREVIEW_PROFILE.budgets.compactMaxBytes,
+      unexpectedErrorsOk: summary.unexpectedErrorPct <= CANARY_GATES.unexpectedErrorPagePct,
+      typedDegradationOk: summary.typedDegradationPct <= CANARY_GATES.typedDegradationHaltPct,
+      disableAllSafe: summary.unexpectedErrorPct <= CANARY_GATES.unexpectedErrorDisableAllPct,
     },
   };
 }

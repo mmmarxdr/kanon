@@ -35,6 +35,16 @@ describe("triage-proposal-list-v1 profile contract", () => {
     expect(result.gates.dismissBytesOk).toBe(true);
   });
 
+  it("enforces exact canary error boundaries for list and dismiss", () => {
+    const error = { durationMs: 1, outputBytes: 10, outcome: "error" } as const;
+    for (const [listErrors, dismissErrors, expected] of [[1, 1, [true, true, true]], [2, 1, [false, true, true]], [1, 2, [true, false, true]], [5, 0, [false, true, true]], [6, 0, [false, true, false]], [0, 6, [true, false, false]]] as const) {
+      const list = syntheticListSamples(100).fill(error, 0, listErrors);
+      const dismiss = syntheticDismissSamples(100).fill(error, 0, dismissErrors);
+      const gates = runListProfileFixture({ list, dismiss }).gates;
+      expect([gates.listUnexpectedErrorsOk, gates.dismissUnexpectedErrorsOk, gates.disableAllSafe]).toEqual(expected);
+    }
+  });
+
   it("full 1000-sample path is gated behind TRIAGE_PERF=1", () => {
     if (!isFullPerfEnabled()) {
       expect(() =>
