@@ -112,7 +112,7 @@ function requireVisibleTriageIssue(
           select: { id: true, project: { select: { id: true, workspaceId: true, archived: true } } },
         });
         if (!issue || issue.project.archived) {
-          throw new AppError(404, "NOT_FOUND_OR_NOT_VISIBLE", "Issue not found");
+          throw new AppError(404, "NOT_FOUND_OR_NOT_VISIBLE", "Resource not found");
         }
         const access = await resolveVisibleProjectAccess(
           tx, user.userId, user.allowedProjectIds, issue.project.id, issue.project.workspaceId, minimumRole,
