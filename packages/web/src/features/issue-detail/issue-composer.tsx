@@ -17,12 +17,13 @@ export function IssueComposer({ onSubmit, isPending, error }: IssueComposerProps
 
   const handleSubmit = async () => {
     if (isPending || isSubmitting) return;
-    const trimmed = draft.trim();
+    const submittedDraft = draft;
+    const trimmed = submittedDraft.trim();
     if (!trimmed) return;
     setIsSubmitting(true);
     try {
       await onSubmit(trimmed);
-      setDraft("");
+      setDraft((currentDraft) => currentDraft === submittedDraft ? "" : currentDraft);
       textareaRef.current?.focus();
     } catch {
       // The mutation error is rendered from the owner; keep the user draft for retry.

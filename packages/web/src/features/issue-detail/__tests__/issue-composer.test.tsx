@@ -60,6 +60,24 @@ describe("IssueComposer lifecycle feedback", () => {
 });
 
 describe("IssueComposer mutation contract", () => {
+  it("keeps a newer draft when an earlier submission resolves", async () => {
+    const user = userEvent.setup();
+    let resolveSubmission!: () => void;
+    const onSubmit = vi.fn(() => new Promise<void>((resolve) => { resolveSubmission = resolve; }));
+    render(<IssueComposer isPending={false} onSubmit={onSubmit} />);
+    const textarea = screen.getByRole("textbox");
+
+    await user.type(textarea, "Submitted draft");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.clear(textarea);
+    await user.type(textarea, "Newer draft");
+    await act(async () => { resolveSubmission(); await Promise.resolve(); });
+
+    expect(onSubmit).toHaveBeenCalledWith("Submitted draft");
+    expect(textarea).toHaveValue("Newer draft");
+    expect(textarea).toHaveFocus();
+  });
+
   it("retains a rejected pending draft, then clears and focuses exactly once after a retry resolves", async () => {
     const user = userEvent.setup();
     let rejectFirst!: (reason?: unknown) => void;
