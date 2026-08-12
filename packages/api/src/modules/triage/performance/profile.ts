@@ -14,7 +14,7 @@ export function isFullPerfEnabled(): boolean {
 export interface LatencySample {
   durationMs: number;
   outputBytes: number;
-  outcome: "success" | "timeout" | "source_conflict" | "error";
+  outcome: "success" | "degraded" | "timeout" | "source_conflict" | "error";
 }
 
 export interface LatencySummary {
@@ -26,6 +26,9 @@ export interface LatencySummary {
   successCount: number;
   timeoutCount: number;
   sourceConflictCount: number;
+  typedDegradationPct: number;
+  errorCount: number;
+  unexpectedErrorPct: number;
 }
 
 export function percentile(sortedAscending: number[], p: number): number {
@@ -39,6 +42,7 @@ export function percentile(sortedAscending: number[], p: number): number {
 
 export function summarizeLatencies(samples: LatencySample[]): LatencySummary {
   const durations = samples.map((s) => s.durationMs).sort((a, b) => a - b);
+  const errorCount = samples.filter((s) => s.outcome === "error").length;
   return {
     count: samples.length,
     p50Ms: percentile(durations, 50),
@@ -48,6 +52,9 @@ export function summarizeLatencies(samples: LatencySample[]): LatencySummary {
     successCount: samples.filter((s) => s.outcome === "success").length,
     timeoutCount: samples.filter((s) => s.outcome === "timeout").length,
     sourceConflictCount: samples.filter((s) => s.outcome === "source_conflict").length,
+    typedDegradationPct: samples.length === 0 ? 0 : (samples.filter((s) => s.outcome === "degraded" || s.outcome === "timeout").length / samples.length) * 100,
+    errorCount,
+    unexpectedErrorPct: samples.length === 0 ? 0 : (errorCount / samples.length) * 100,
   };
 }
 
