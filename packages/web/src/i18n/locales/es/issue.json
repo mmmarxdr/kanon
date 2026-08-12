@@ -17,6 +17,7 @@
   "sectionDependencies": "Dependencias",
   "depBlockedBy": "Bloqueada por",
   "depBlocks": "Bloquea",
+  "docsLoadError": "No se pudieron cargar los registros de diseño.",
   "docsLoading": "Cargando registros de diseño…",
   "docsEmpty": "Aún no hay registros de diseño.",
   "docsEmptyHint": "Usa kanon_create_document vía MCP para registrar un ADR, PDR, RFC o nota.",
@@ -50,5 +51,16 @@
   "deleteCriticalPrompt": "Escribe {{key}} para confirmar",
   "deleteCancel": "Cancelar",
   "deleteConfirm": "Eliminar permanentemente",
-  "deleteDeleting": "Eliminando…"
+  "deleteDeleting": "Eliminando…",
+  "notes": "Notas de Kanon / Redmine",
+  "sectionGeneral": "General",
+  "sectionActivity": "Actividad",
+  "sectionRelationships": "Relaciones",
+  "relationshipsEmpty": "Aún no hay relaciones.",
+  "sectionResources": "Recursos",
+  "sectionDevelopment": "Desarrollo",
+  "developmentUnavailable": "Los datos de desarrollo no están disponibles.",
+  "issueNotFound": "No se encontró esta issue.",
+  "issueLoadError": "No se pudo cargar esta issue.",
+  "retry": "Reintentar"
 }

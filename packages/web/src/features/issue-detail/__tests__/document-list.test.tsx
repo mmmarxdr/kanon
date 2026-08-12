@@ -316,3 +316,19 @@ describe("DocumentList (KAN-107 / KAN-108)", () => {
     expect(screen.queryByTestId("document-full-page-link")).toBeNull();
   });
 });
+
+  it("DL-13: keeps loading, error, empty, and data resources states distinct", async () => {
+    const { DocumentList } = await import("@/features/issue-detail/document-list");
+    const { rerender } = render(<DocumentList documents={[]} isLoading issueKey={ISSUE_KEY} />);
+    expect(screen.getByText(/loading design records/i)).toBeInTheDocument();
+
+    rerender(<DocumentList documents={[]} isLoading={false} isError error={new Error("Documents rejected")} issueKey={ISSUE_KEY} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(/unable to load design records/i);
+    expect(screen.queryByText(/no design records yet/i)).not.toBeInTheDocument();
+
+    rerender(<DocumentList documents={[]} isLoading={false} issueKey={ISSUE_KEY} />);
+    expect(screen.getByText(/no design records yet/i)).toBeInTheDocument();
+
+    rerender(<DocumentList documents={[makeDoc()]} isLoading={false} issueKey={ISSUE_KEY} />);
+    expect(screen.getByTestId("document-card")).toBeInTheDocument();
+  });

@@ -73,8 +73,6 @@ export function SyncedFromToolsSlot({ issueKey }: SyncedFromToolsSlotProps) {
           display: "flex",
           flexDirection: "column",
           gap: 6,
-          maxHeight: 280,
-          overflowY: "auto",
         }}
       >
         {isLoading ? (
@@ -100,7 +98,7 @@ export function SyncedFromToolsSlot({ issueKey }: SyncedFromToolsSlotProps) {
  * reverse to newest-first. Pure & exported for unit testing.
  */
 export function filterAndReverse(
-  items: TimelineItem[],
+  items: readonly TimelineItem[],
   supported: ReadonlySet<string>,
 ): TimelineItem[] {
   return items.filter((i) => i.via !== null && supported.has(i.via)).reverse();

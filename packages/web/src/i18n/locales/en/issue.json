@@ -17,6 +17,7 @@
   "sectionDependencies": "Dependencies",
   "depBlockedBy": "Blocked by",
   "depBlocks": "Blocks",
+  "docsLoadError": "Unable to load design records.",
   "docsLoading": "Loading design records…",
   "docsEmpty": "No design records yet.",
   "docsEmptyHint": "Use kanon_create_document via MCP to record an ADR, PDR, RFC, or note.",
@@ -50,5 +51,16 @@
   "deleteCriticalPrompt": "Type {{key}} to confirm",
   "deleteCancel": "Cancel",
   "deleteConfirm": "Delete permanently",
-  "deleteDeleting": "Deleting…"
+  "deleteDeleting": "Deleting…",
+  "notes": "Kanon / Redmine notes",
+  "sectionGeneral": "General",
+  "sectionActivity": "Activity",
+  "sectionRelationships": "Relationships",
+  "relationshipsEmpty": "No relationships yet.",
+  "sectionResources": "Resources",
+  "sectionDevelopment": "Development",
+  "developmentUnavailable": "Development data is unavailable.",
+  "issueNotFound": "This issue could not be found.",
+  "issueLoadError": "Unable to load this issue.",
+  "retry": "Retry"
 }

@@ -74,6 +74,14 @@ export function mergeTimeline(
   });
 }
 
+/** Shared comment-only projection for the General notes summary. */
+export function selectCommentTimelineItems(items: TimelineItem[]): TimelineItem[] {
+  return items.filter(
+    (item): item is Extract<TimelineItem, { kind: "human-comment" | "agent-comment" }> =>
+      item.kind === "human-comment" || item.kind === "agent-comment",
+  );
+}
+
 function mapActivityToItem(log: ActivityLog): TimelineItem {
   const actor: Actor = log.actor ??
     (log.remoteActor

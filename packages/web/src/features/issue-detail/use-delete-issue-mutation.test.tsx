@@ -15,6 +15,7 @@ describe("useDeleteIssueMutation", () => {
     queryClient.setQueryData(issueKeys.documents("KAN-1"), []);
     queryClient.setQueryData(commentKeys.list("KAN-1"), []);
     queryClient.setQueryData(activityKeys.list("KAN-1"), []);
+    queryClient.setQueryData(issueKeys.list("KAN"), [{ key: "KAN-1" }, { key: "KAN-2" }]);
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
     const { result } = renderHook(() => useDeleteIssueMutation("KAN-1", "KAN"), { wrapper });
@@ -25,6 +26,9 @@ describe("useDeleteIssueMutation", () => {
     expect(queryClient.getQueryData(issueKeys.documents("KAN-1"))).toBeUndefined();
     expect(queryClient.getQueryData(commentKeys.list("KAN-1"))).toBeUndefined();
     expect(queryClient.getQueryData(activityKeys.list("KAN-1"))).toBeUndefined();
+    expect(queryClient.getQueryData(issueKeys.list("KAN"))).toEqual([{ key: "KAN-2" }]);
     expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: issueKeys.list("KAN") }));
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: issueKeys.groups("KAN") }));
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ queryKey: issueKeys.backlog("KAN") }));
   });
 });

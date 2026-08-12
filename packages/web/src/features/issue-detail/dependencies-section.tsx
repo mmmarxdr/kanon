@@ -6,17 +6,19 @@ import { StatePip } from "@/components/ui/primitives";
 interface DependenciesSectionProps {
   blocks: IssueDependencyEdge[];
   blockedBy: IssueDependencyEdge[];
+  childrenCount?: number;
 }
 
 export function DependenciesSection({
   blocks,
   blockedBy,
+  childrenCount = 0,
 }: DependenciesSectionProps) {
   const { t } = useTranslation("issue");
   const { t: tCommon } = useTranslation("common");
 
   if (blocks.length === 0 && blockedBy.length === 0) {
-    return null;
+    return childrenCount === 0 ? <p>{t("relationshipsEmpty")}</p> : null;
   }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>

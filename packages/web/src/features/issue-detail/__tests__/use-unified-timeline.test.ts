@@ -8,7 +8,7 @@
  * All other sources → human-comment
  */
 import { describe, it, expect } from "vitest";
-import { mergeTimeline } from "../use-unified-timeline";
+import { mergeTimeline, selectCommentTimelineItems } from "../use-unified-timeline";
 import type { Comment, ActivityLog } from "@/types/issue";
 
 // ---------------------------------------------------------------------------
@@ -55,6 +55,23 @@ function makeActivity(
     createdAt: overrides.createdAt,
   };
 }
+
+describe("selectCommentTimelineItems", () => {
+  it("keeps both human and Kanon/Redmine comment rows in chronological order", () => {
+    const items = mergeTimeline([
+      makeComment({ id: "human", createdAt: "2026-06-01T12:00:00Z" }),
+      makeComment({ id: "redmine", createdAt: "2026-06-01T10:00:00Z", via: "redmine" }),
+    ], [makeActivity({ id: "activity", action: "created", createdAt: "2026-06-01T11:00:00Z" })]);
+
+    expect(selectCommentTimelineItems(items).map((item) => item.id)).toEqual(["redmine", "human"]);
+  });
+
+  it("excludes non-comment timeline entries", () => {
+    const items = mergeTimeline([], [makeActivity({ id: "created", action: "created", createdAt: "2026-06-01T10:00:00Z" })]);
+
+    expect(selectCommentTimelineItems(items)).toEqual([]);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Scenario 1 — interleaved by createdAt ASC

@@ -1,23 +1,44 @@
 /**
  * KAN-108 — IssuePage layout: all sections render simultaneously (no tab gating).
  *
- * Direction C zone+dock layout: tab strip and ?tab= search param are gone.
- * Every section is always present in the DOM at the same time:
- *  - IssueTopZone: description, design records, sub-issues, dependencies
- *  - IssueTimelineDock: unified timeline + composer
+ * Single-scroll workspace: all five semantic sections are mounted together.
  *
- * T1 — timeline dock is always present (no ?tab= needed)
- * T2 — all top-zone sections render simultaneously
- * T3 — no tab strip is rendered
+ * T1 — Activity remains in the workspace document
+ * T2 — General, relationships and resources remain simultaneously available
+ * T3 — section navigation is location navigation, not tabs
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
+import { ApiError } from "@/lib/api-client";
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
 const navigateSpy = vi.fn();
+const issueQueryState = vi.hoisted(() => ({
+  value: {
+    data: {
+      id: "i-1",
+      key: "KAN-1",
+      title: "Test issue",
+      type: "task",
+      priority: "medium",
+      state: "todo",
+      description: "A description",
+      project: { id: "p-1", key: "KAN", name: "Kanon" },
+      children: [{ id: "c-1", key: "KAN-2", title: "Child", state: "todo", labels: [] }],
+      blocks: [],
+      blockedBy: [],
+      subscribed: false,
+      activeWorkers: [],
+    } as Record<string, unknown> | undefined,
+    isLoading: false,
+    isError: false,
+    error: null as Error | null,
+    refetch: vi.fn(),
+  },
+}));
 vi.mock("@tanstack/react-router", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tanstack/react-router")>();
   return {
@@ -40,24 +61,7 @@ vi.mock("../_authenticated/issue", () => ({
 
 // Issue detail queries
 vi.mock("@/features/issue-detail/use-issue-detail-queries", () => ({
-  useIssueDetailQuery: () => ({
-    data: {
-      id: "i-1",
-      key: "KAN-1",
-      title: "Test issue",
-      type: "task",
-      priority: "medium",
-      state: "todo",
-      description: "A description",
-      project: { id: "p-1", key: "KAN", name: "Kanon" },
-      children: [{ id: "c-1", key: "KAN-2", title: "Child", state: "todo", labels: [] }],
-      blocks: [],
-      blockedBy: [],
-      subscribed: false,
-      activeWorkers: [],
-    },
-    isLoading: false,
-  }),
+  useIssueDetailQuery: () => issueQueryState.value,
   useIssueDocuments: () => ({
     data: [
       {
@@ -70,16 +74,19 @@ vi.mock("@/features/issue-detail/use-issue-detail-queries", () => ({
       },
     ],
     isLoading: false,
+    isError: false,
+    error: null,
   }),
 }));
 
 vi.mock("@/features/issue-detail/use-unified-timeline", () => ({
   useUnifiedTimeline: () => ({ items: [], isLoading: false, isError: false }),
+  selectCommentTimelineItems: (items: unknown[]) => items,
 }));
 
 vi.mock("@/features/issue-detail/use-issue-mutations", () => ({
   useUpdateIssueMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useAddCommentMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useAddCommentMutation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(async () => undefined), isPending: false, isError: false, error: null }),
 }));
 
 vi.mock("@/features/board/use-transition-mutation", () => ({
@@ -164,55 +171,102 @@ async function renderIssuePage() {
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe("IssuePage — zone+dock layout: all sections always present (KAN-108)", () => {
+describe("IssuePage — single-scroll workspace (KAN-108)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    issueQueryState.value = {
+      data: {
+        id: "i-1",
+        key: "KAN-1",
+        title: "Test issue",
+        type: "task",
+        priority: "medium",
+        state: "todo",
+        description: "A description",
+        project: { id: "p-1", key: "KAN", name: "Kanon" },
+        children: [{ id: "c-1", key: "KAN-2", title: "Child", state: "todo", labels: [] }],
+        blocks: [],
+        blockedBy: [],
+        subscribed: false,
+        activeWorkers: [],
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    };
   });
 
-  it("T1 — timeline dock is always present in the DOM (no ?tab= needed)", async () => {
-    mockUseSearch.mockReturnValue({ from: undefined });
+  it("T1 — keeps Activity and its composer inside the one workspace document", async () => {
     await renderIssuePage();
-
-    // Timeline dock container is always rendered
-    expect(screen.getByTestId("timeline-dock")).toBeInTheDocument();
-    // Unified timeline inside the dock
-    expect(screen.getByTestId("unified-timeline")).toBeInTheDocument();
-    // Composer is inside the dock — check for the Send button
-    expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+    const workspace = screen.getByTestId("issue-detail-scroll");
+    const activity = screen.getByRole("region", { name: "Activity" });
+    expect(workspace).toContainElement(screen.getByRole("heading", { name: "Activity" }));
+    expect(activity).toBe(workspace.querySelector("#issue-section-activity"));
+    expect(within(activity).getByTestId("unified-timeline")).toBeInTheDocument();
+    expect(within(activity).getByRole("button", { name: "Send" })).toBeInTheDocument();
   });
 
-  it("T2 — all top-zone and rail sections render simultaneously (no tab gating)", async () => {
-    mockUseSearch.mockReturnValue({ from: undefined });
+  it("T2 — keeps General, relationships, resources, and metadata mounted in the workspace", async () => {
     await renderIssuePage();
-
-    // Top zone container present
-    expect(screen.getByTestId("issue-top-zone")).toBeInTheDocument();
-
-    // All sections visible at once — no switching needed
-    expect(screen.getByTestId("description-section")).toBeInTheDocument();
-    expect(screen.getByTestId("document-list")).toBeInTheDocument();
-    expect(screen.getByTestId("children-section")).toBeInTheDocument();
-    expect(screen.getByTestId("dependencies-section")).toBeInTheDocument();
-
-    // Right rail sections stay mounted together as KAN-33 adds provenance UI.
-    expect(screen.getByTestId("metadata-section")).toBeInTheDocument();
-    expect(screen.getByTestId("synced-from-tools")).toBeInTheDocument();
-    expect(screen.getByTestId("schedule-slot")).toBeInTheDocument();
+    const workspace = screen.getByTestId("issue-detail-scroll");
+    expect(workspace).toContainElement(screen.getByTestId("description-section"));
+    expect(workspace).toContainElement(screen.getByTestId("document-list"));
+    expect(workspace).toContainElement(screen.getByTestId("children-section"));
+    expect(workspace).toContainElement(screen.getByTestId("dependencies-section"));
+    expect(workspace).toContainElement(screen.getByTestId("metadata-section"));
+    expect(workspace).toContainElement(screen.getByTestId("synced-from-tools"));
+    expect(workspace).toContainElement(screen.getByTestId("schedule-slot"));
   });
 
-  it("T3 — sections are disclosures, not a tab strip", async () => {
-    mockUseSearch.mockReturnValue({ from: undefined });
+  it("T3 — exposes section-location navigation rather than a tab strip", async () => {
     await renderIssuePage();
-
-    // Timeline lives always-on in the dock — it is no longer a tab/toggle button.
+    expect(screen.getByRole("navigation", { name: "Issue sections" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "General" })).toBeInTheDocument();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Timeline$/ })).not.toBeInTheDocument();
-    // The remaining sections render as collapsible disclosures (aria-expanded present),
-    // i.e. they are NOT tab-strip buttons.
-    expect(screen.getByRole("button", { name: /Sub-issues/ })).toHaveAttribute(
-      "aria-expanded",
-    );
-    expect(screen.getByRole("button", { name: /Design Records/ })).toHaveAttribute(
-      "aria-expanded",
-    );
+  });
+
+  it("T4 — maps the API client's typed 404 to the safe five-landmark not-found state", async () => {
+    issueQueryState.value = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new ApiError(404, "NOT_FOUND", "Issue not found"),
+      refetch: vi.fn(),
+    };
+
+    await renderIssuePage();
+
+    expect(screen.getAllByRole("region")).toHaveLength(5);
+    expect(screen.getAllByText("This issue could not be found.")).toHaveLength(5);
+    expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+  });
+});
+
+describe("IssuePage stale-query safety", () => {
+  it.each([
+    [new ApiError(404, "NOT_FOUND", "Issue not found"), "This issue could not be found.", "Back"],
+    [new ApiError(500, "INTERNAL_SERVER_ERROR", "Issue failed"), "Unable to load this issue.", "Retry"],
+  ])("hides retained editable issue content for %s", async (error, message, action) => {
+    issueQueryState.value = {
+      data: {
+        id: "i-1", key: "KAN-1", title: "Stale issue", type: "task", priority: "medium", state: "todo", description: "stale", project: { id: "p-1", key: "KAN", name: "Kanon" }, children: [], blocks: [], blockedBy: [], subscribed: false, activeWorkers: [],
+      },
+      isLoading: false,
+      isError: true,
+      error,
+      refetch: vi.fn(),
+    };
+
+    await renderIssuePage();
+
+    expect(screen.getAllByText(message)).toHaveLength(5);
+    expect(screen.getAllByRole("button", { name: action })).toHaveLength(action === "Retry" ? 5 : 1);
+    expect(screen.queryByTestId("issue-detail-header")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("description-section")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("unified-timeline")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send" })).not.toBeInTheDocument();
   });
 });

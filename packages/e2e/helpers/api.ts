@@ -13,13 +13,19 @@ const API_BASE = `http://localhost:${process.env["API_PORT"] ?? "3001"}`;
  * Make a POST request directly to the API (bypassing the browser).
  * Useful for test data setup.
  */
-export async function apiPost<T>(urlPath: string, body: object, token?: string): Promise<T> {
+export async function apiPost<T>(
+  urlPath: string,
+  body: object,
+  token?: string,
+  options?: { headers?: Record<string, string> },
+): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
+  Object.assign(headers, options?.headers);
 
   const response = await fetch(`${API_BASE}${urlPath}`, {
     method: "POST",
@@ -64,15 +70,16 @@ export async function apiGet<T>(urlPath: string, token: string): Promise<T> {
  * Make a DELETE request directly to the API (bypassing the browser).
  * Useful for test data setup/teardown (e.g. stopping a work session).
  */
-export async function apiDelete<T>(urlPath: string, token: string): Promise<T> {
-  // No Content-Type header: this is a bodyless DELETE, and Fastify's JSON
-  // body parser rejects a request that declares application/json with an
-  // empty body (FST_ERR_CTP_EMPTY_JSON_BODY).
+export async function apiDelete<T>(urlPath: string, token: string, body?: object): Promise<T> {
+  // Some delete endpoints require an explicit JSON confirmation object while
+  // others reject Content-Type on an empty body. Keep both call styles valid.
   const response = await fetch(`${API_BASE}${urlPath}`, {
     method: "DELETE",
     headers: {
       Authorization: `Bearer ${token}`,
+      ...(body ? { "Content-Type": "application/json" } : {}),
     },
+    ...(body ? { body: JSON.stringify(body) } : {}),
   });
 
   if (!response.ok) {
