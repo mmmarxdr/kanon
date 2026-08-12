@@ -197,6 +197,16 @@ export const envSchema = z.object({
     .optional()
     .default("false")
     .transform((value) => value === "true"),
+  TRIAGE_DISMISS_ENABLED: z
+    .enum(["true", "false"])
+    .optional()
+    .default("false")
+    .transform((value) => value === "true"),
+  TRIAGE_RETENTION_ENABLED: z
+    .enum(["true", "false"])
+    .optional()
+    .default("false")
+    .transform((value) => value === "true"),
   REDMINE_ENDPOINT_ALLOWLIST: z
     .string()
     .optional()

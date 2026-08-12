@@ -20,6 +20,8 @@ import {
   disconnectTestDb,
 } from "../../test/helpers.js";
 import { randomUUID } from "node:crypto";
+import client from "prom-client";
+import { registerTriageMetrics } from "./observability.js";
 
 /** Helper to create a policy with retention days */
 async function createPolicy(
@@ -470,6 +472,48 @@ describe("Triage Retention (KAN-193 PR9)", () => {
       stop();
       expect(mockLogger.info).toHaveBeenCalledWith("Triage retention housekeeping stopped");
     });
+
+    it("emits correlated expiry metrics and stage traces", async () => {
+      vi.useFakeTimers();
+      const logger = { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() };
+      const metrics = registerTriageMetrics(new client.Registry());
+      const expiry = vi.fn().mockResolvedValue(0);
+      const stop = registerRetentionHousekeeping(logger, metrics, expiry);
+      try {
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(expiry).toHaveBeenCalledOnce();
+        const requests = await metrics.proposalRequests.get();
+        expect(requests.values).toEqual(expect.arrayContaining([
+          expect.objectContaining({ labels: { operation: "expire", outcome: "success" } }),
+        ]));
+        expect(logger.info).toHaveBeenCalledWith(
+          expect.objectContaining({ correlationId: expect.any(String), operation: "expire", stage: "sweep" }),
+          "Triage expiry sweep completed",
+        );
+      } finally {
+        stop();
+        vi.useRealTimers();
+      }
+    });
+
+    it("correlates expiry failure logs", async () => {
+      vi.useFakeTimers();
+      const logger = { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() };
+      const expiry = vi.fn().mockRejectedValue(new Error("failed"));
+      const stop = registerRetentionHousekeeping(logger, undefined, expiry);
+      try {
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.objectContaining({
+            correlationId: expect.any(String), operation: "expire", stage: "sweep",
+          }),
+          "Triage expiry sweep failed",
+        );
+      } finally {
+        stop();
+        vi.useRealTimers();
+      }
+    });
   });
 
   // ── TRIANGULATE: Concurrent workers ───────────────────────────────────
@@ -849,4 +893,3 @@ describe("Triage Retention (KAN-193 PR9)", () => {
     });
   });
 });
-

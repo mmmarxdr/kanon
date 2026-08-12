@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterAll, beforeAll } from "vitest";
+import { describe, it, expect, beforeEach, afterAll, beforeAll, vi } from "vitest";
 import { prisma } from "../../config/prisma.js";
 import {
   seedTestWorkspace,
@@ -159,8 +159,11 @@ describe("POST /api/triage-proposals/:id/dismiss (KAN-193 PR8)", () => {
     expect(events.length).toBe(1);
   });
 
-  it("should reject dismissal for expired proposal", async () => {
+  it("returns the existing terminal state for an expired proposal", async () => {
     const proposal = await createProposal("expired", true);
+    await prisma.triageProposalLifecycleEvent.create({
+      data: { proposalId: proposal.id, state: "expired", reason: "validity_expired" },
+    });
 
     const res = await app.inject({
       method: "POST",
@@ -169,10 +172,14 @@ describe("POST /api/triage-proposals/:id/dismiss (KAN-193 PR8)", () => {
       payload: { reason: "Expired" },
     });
 
-    expect(res.statusCode).toBe(409);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, status: "expired" });
+    expect(await prisma.triageProposalLifecycleEvent.count({
+      where: { proposalId: proposal.id, state: "expired" },
+    })).toBe(1);
   });
 
-  it("should auto-expire during check if expiresAt is in the past", async () => {
+  it("materializes expiry once when dismissal loses the expiry race", async () => {
     const proposal = await createProposal("pending", true);
 
     const res = await app.inject({
@@ -182,12 +189,59 @@ describe("POST /api/triage-proposals/:id/dismiss (KAN-193 PR8)", () => {
       payload: { reason: "Expired" },
     });
 
-    expect(res.statusCode).toBe(409);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, status: "expired" });
 
     const updated = await prisma.triageProposal.findUnique({
       where: { id: proposal.id },
     });
     expect(updated?.lifecycle).toBe("expired");
+    expect(await prisma.triageProposalLifecycleEvent.count({
+      where: { proposalId: proposal.id, state: "expired" },
+    })).toBe(1);
+  });
+
+  it("lets expiry win when the row lock wait crosses expiresAt", async () => {
+    const proposal = await createProposal("pending");
+    const expiresAt = new Date(Date.now() + 400);
+    await prisma.triageProposal.update({ where: { id: proposal.id }, data: { expiresAt } });
+    let release!: () => void;
+    let locked!: () => void;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const ready = new Promise<void>((resolve) => { locked = resolve; });
+    const blocker = prisma.$transaction(async (transaction) => {
+      await transaction.$queryRaw`SELECT "id" FROM "triage_proposals" WHERE "id" = ${proposal.id}::uuid FOR UPDATE`;
+      locked();
+      await hold;
+    });
+    await Promise.race([ready, blocker]);
+
+    const response = app.inject({
+      method: "POST",
+      url: `/api/triage-proposals/${proposal.id}/dismiss`,
+      headers: authHeader(userToken),
+      payload: { reason: "Race expiry" },
+    });
+    try {
+      await vi.waitFor(async () => {
+        const [row] = await prisma.$queryRaw<Array<{ expired: boolean; waiting: number }>>`
+          SELECT clock_timestamp() >= ${expiresAt} AS expired,
+            (SELECT COUNT(*)::int FROM pg_stat_activity
+              WHERE datname = current_database() AND wait_event_type = 'Lock'
+                AND query ILIKE '%FROM "triage_proposals"%FOR UPDATE%') AS waiting
+        `;
+        expect(row).toMatchObject({ expired: true, waiting: expect.any(Number) });
+        expect(row!.waiting).toBeGreaterThanOrEqual(1);
+      }, { timeout: 1_000, interval: 20 });
+    } finally {
+      release();
+      await blocker.catch(() => undefined);
+    }
+
+    expect((await response).json()).toMatchObject({ ok: true, status: "expired" });
+    expect(await prisma.triageProposalLifecycleEvent.count({
+      where: { proposalId: proposal.id, state: "expired" },
+    })).toBe(1);
   });
 
   it("should reject dismissal for disposed proposal", async () => {

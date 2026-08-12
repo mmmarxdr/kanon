@@ -66,6 +66,7 @@ export default async function issueRoutes(
           request.member!.userId,
           request.body,
           request.user?.allowedProjectIds,
+          request.id,
         );
         observeSearch(
           fastify.triageMetrics,

@@ -143,6 +143,18 @@ describe("Triage Proposal Migration Schema", () => {
     await prisma.triageProposal.delete({ where: { id: predecessor.id } });
   });
 
+  it("has proposal-list keyset indexes", async () => {
+    const indexes = await prisma.$queryRaw<Array<{ indexname: string }>>`
+      SELECT indexname FROM pg_indexes
+      WHERE schemaname = current_schema() AND tablename = 'triage_proposals'
+    `;
+
+    expect(indexes.map(({ indexname }) => indexname)).toEqual(expect.arrayContaining([
+      "triage_proposals_project_id_created_at_id_idx",
+      "triage_proposals_project_id_target_issue_id_created_at_id_idx",
+    ]));
+  });
+
   it("rejects retention_days below the seven-day minimum", async () => {
     await expect(
       prisma.triagePolicy.create({
