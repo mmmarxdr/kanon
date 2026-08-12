@@ -30,12 +30,18 @@ vi.mock("../../config/prisma.js", () => ({
 vi.mock("./service.js", () => ({
   startWork: vi.fn(),
   stopWork: vi.fn(),
+  stageTransitionStart: vi.fn(),
   captureTransitionInterval: vi.fn(),
   SESSION_TTL_MS: 5 * 60 * 1000,
 }));
 
 import { prisma } from "../../config/prisma.js";
-import { captureTransitionInterval, startWork, stopWork } from "./service.js";
+import {
+  captureTransitionInterval,
+  stageTransitionStart,
+  startWork,
+  stopWork,
+} from "./service.js";
 import { registerTransitionListener } from "./transition-listener.js";
 import type { IEventBus } from "../../services/event-bus/interface.js";
 import type { DomainEvent } from "../../services/event-bus/types.js";
@@ -46,6 +52,7 @@ const mockIssueFindUnique = vi.mocked(prisma.issue.findUnique);
 const mockWorkSessionFindMany = vi.mocked(prisma.workSession.findMany);
 const mockStartWork = vi.mocked(startWork);
 const mockStopWork = vi.mocked(stopWork);
+const mockStageTransitionStart = vi.mocked(stageTransitionStart);
 const mockCaptureTransitionInterval = vi.mocked(captureTransitionInterval);
 
 // ── Fake event bus ─────────────────────────────────────────────────────────
@@ -125,6 +132,7 @@ describe("registerTransitionListener", () => {
     ] as any);
     mockStartWork.mockResolvedValue({ session: {}, warnings: [], autoAssigned: false } as any);
     mockStopWork.mockResolvedValue({ ok: true, deleted: true, workLog: null } as any);
+    mockStageTransitionStart.mockResolvedValue({ session: null } as any);
     mockCaptureTransitionInterval.mockResolvedValue({
       workLog: { id: "wl-transition-interval", durationS: 120 },
     } as any);
@@ -233,6 +241,28 @@ describe("registerTransitionListener", () => {
     emit(makeTransitionEvent("in_progress", "done"));
     await vi.waitFor(() => expect(mockStopWork).toHaveBeenCalledOnce());
   });
+
+  it.each(["todo", "backlog"])(
+    "closes the session at the exact boundary when active work regresses to '%s'",
+    async (targetState) => {
+      const { bus, emit } = makeFakeBus();
+      registerTransitionListener(bus);
+      const event = makeTransitionEvent("analysis", targetState);
+      event.timestamp = "2026-08-11T12:02:03.000Z";
+
+      emit(event);
+
+      await vi.waitFor(() => expect(mockStopWork).toHaveBeenCalledOnce());
+      expect(mockStopWork).toHaveBeenCalledWith(
+        "KAN-42",
+        "user-1",
+        "member-1",
+        null,
+        new Date("2026-08-11T12:02:03.000Z"),
+        "session-1",
+      );
+    },
+  );
 
   // ─── Idempotency: close when none open is a no-op ──────────────────────
 
@@ -665,9 +695,18 @@ describe("registerTransitionListener", () => {
     await vi.waitFor(() => expect(mockStartWork).toHaveBeenCalledOnce());
   });
 
-  it("preserves a delayed active-entry interval when the issue is already closed", async () => {
+  it("durably stages a delayed active-entry interval when the issue is already closed", async () => {
     mockIssueFindUnique.mockResolvedValue({ id: "issue-1", state: "review" } as any);
-    mockWorkSessionFindMany.mockResolvedValue([] as any);
+    mockStageTransitionStart.mockResolvedValue({
+      session: {
+        id: "historical-session",
+        userId: "user-1",
+        memberId: "member-1",
+      },
+    } as any);
+    mockWorkSessionFindMany.mockResolvedValue([
+      { id: "historical-session", userId: "user-1", memberId: "member-1" },
+    ] as any);
     const { bus, emit } = makeFakeBus();
     registerTransitionListener(bus);
     const activeAt = "2026-08-11T12:00:00.000Z";
@@ -680,17 +719,49 @@ describe("registerTransitionListener", () => {
     emit(activeEvent);
     emit(closeEvent);
 
-    await vi.waitFor(() => expect(mockCaptureTransitionInterval).toHaveBeenCalledOnce());
-    expect(mockCaptureTransitionInterval).toHaveBeenCalledWith(
+    await vi.waitFor(() => expect(mockStageTransitionStart).toHaveBeenCalledOnce());
+    expect(mockStageTransitionStart).toHaveBeenCalledWith(
       "KAN-42",
       "user-1",
       "member-1",
       new Date(activeAt),
-      new Date(closedAt),
       "transition-listener",
     );
+    await vi.waitFor(() => expect(mockStopWork).toHaveBeenCalledOnce());
+    expect(mockStopWork).toHaveBeenCalledWith(
+      "KAN-42",
+      "user-1",
+      "member-1",
+      null,
+      new Date(closedAt),
+      "historical-session",
+    );
     expect(mockStartWork).not.toHaveBeenCalled();
-    expect(mockStopWork).not.toHaveBeenCalled();
+    expect(mockCaptureTransitionInterval).not.toHaveBeenCalled();
+  });
+
+  it("does not attribute a delayed historical interval across another worker's lifecycle", async () => {
+    mockIssueFindUnique.mockResolvedValue({ id: "issue-1", state: "review" } as any);
+    mockStageTransitionStart.mockResolvedValue({ session: null } as any);
+    mockWorkSessionFindMany.mockResolvedValue([
+      { id: "session-b", userId: "user-b", memberId: "member-b" },
+    ] as any);
+    const { bus, emit } = makeFakeBus();
+    registerTransitionListener(bus);
+    const activeEvent = makeTransitionEvent("backlog", "analysis", {
+      actorMemberId: "member-a",
+      actorUserId: "user-a",
+    });
+    activeEvent.timestamp = "2026-08-11T12:00:00.000Z";
+    const closeEvent = makeTransitionEvent("analysis", "review");
+    closeEvent.timestamp = "2026-08-11T12:02:00.000Z";
+
+    emit(activeEvent);
+    emit(closeEvent);
+
+    await vi.waitFor(() => expect(mockStageTransitionStart).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(mockStopWork).toHaveBeenCalledOnce());
+    expect(mockCaptureTransitionInterval).not.toHaveBeenCalled();
   });
 
   // ─── Unsubscribe ──────────────────────────────────────────────────────

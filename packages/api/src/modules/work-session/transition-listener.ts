@@ -24,7 +24,7 @@
  */
 
 import { prisma } from "../../config/prisma.js";
-import { captureTransitionInterval, startWork, stopWork } from "./service.js";
+import { stageTransitionStart, startWork, stopWork } from "./service.js";
 import type { IEventBus } from "../../services/event-bus/interface.js";
 import type { DomainEvent, IssueTransitionedPayload } from "../../services/event-bus/types.js";
 
@@ -33,13 +33,6 @@ import type { DomainEvent, IssueTransitionedPayload } from "../../services/event
 export interface TransitionListenerLogger {
   error(obj: unknown, msg?: string): void;
 }
-
-type PendingTransitionStart = {
-  issueKey: string;
-  userId: string;
-  memberId: string;
-  startedAt: Date;
-};
 
 // ─── State classification ──────────────────────────────────────────────────
 
@@ -78,7 +71,6 @@ export function registerTransitionListener(
   // tries to act after unsubscribe() has already been called.
   let active = true;
   const issueQueues = new Map<string, Promise<void>>();
-  const pendingTransitionStarts = new Map<string, PendingTransitionStart>();
 
   async function handleEvent(event: DomainEvent): Promise<void> {
     if (!active) return;
@@ -104,7 +96,7 @@ export function registerTransitionListener(
     // ── Determine action ──────────────────────────────────────────────────
     const toIsActive = isActiveWork(to);
     const fromIsActive = isActiveWork(from);
-    const toIsClose = isCloseState(to);
+    const shouldClose = isCloseState(to) || (fromIsActive && !toIsActive);
 
     if (toIsActive && !fromIsActive) {
       // First entry into active-work: open a session for the actor.
@@ -134,12 +126,13 @@ export function registerTransitionListener(
       // historical start until its ordered close event so no live session is
       // created on a currently closed issue.
       if (!isActiveWork(currentIssue.state)) {
-        pendingTransitionStarts.set(currentIssue.id, {
+        await stageTransitionStart(
           issueKey,
           userId,
-          memberId: actorMemberId,
-          startedAt: activeSignalAt,
-        });
+          actorMemberId,
+          activeSignalAt,
+          "transition-listener",
+        );
         return;
       }
 
@@ -157,18 +150,19 @@ export function registerTransitionListener(
           select: { id: true, state: true },
         });
         if (latestIssue && !isActiveWork(latestIssue.state)) {
-          pendingTransitionStarts.set(latestIssue.id, {
+          await stageTransitionStart(
             issueKey,
             userId,
-            memberId: actorMemberId,
-            startedAt: activeSignalAt,
-          });
+            actorMemberId,
+            activeSignalAt,
+            "transition-listener",
+          );
         }
       }
       return;
     }
 
-    if (toIsClose) {
+    if (shouldClose) {
       // BUG-4 fix: close ALL open WorkSessions for the issue, not just the actor's.
       // The work phase is ending regardless of who performed the transition —
       // a PM/third party closing the issue must stop any worker's open session.
@@ -189,33 +183,6 @@ export function registerTransitionListener(
       });
 
       if (!active) return; // re-check after await
-
-      const pendingStart = pendingTransitionStarts.get(issueRow.id);
-      if (pendingStart) {
-        const hasMatchingSession = openSessions.some(
-          (session) => session.userId === pendingStart.userId,
-        );
-        if (hasMatchingSession) {
-          pendingTransitionStarts.delete(issueRow.id);
-        } else {
-          try {
-            await captureTransitionInterval(
-              pendingStart.issueKey,
-              pendingStart.userId,
-              pendingStart.memberId,
-              pendingStart.startedAt,
-              new Date(event.timestamp),
-              "transition-listener",
-            );
-            pendingTransitionStarts.delete(issueRow.id);
-          } catch (err: unknown) {
-            logger.error(
-              { err, issueKey, issueId: issueRow.id },
-              "transition-listener: historical interval capture failed"
-            );
-          }
-        }
-      }
 
       // Fire-and-forget each stopWork; errors per session are caught individually
       // so one failure does not block the others.
