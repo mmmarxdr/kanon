@@ -270,11 +270,7 @@ export async function listTriageProposals(
             WHERE child.supersedes_id = tp.id AND child.created_at <= ${snapshotAt}
             ORDER BY child.created_at, child.id
             LIMIT 1
-          ) AS successor_id,
-          EXISTS (
-            SELECT 1 FROM triage_proposal_contents content
-            WHERE content.proposal_id = tp.id
-          ) AS content_present
+          ) AS successor_id
         FROM triage_proposals tp
         JOIN issues i ON i.id = tp.target_issue_id AND i.project_id = tp.project_id
         WHERE tp.project_id = ${project.id}::uuid
@@ -290,8 +286,7 @@ export async function listTriageProposals(
       SELECT md5(COALESCE(string_agg(
         concat_ws(':', e.id::text, e.created_at::text, e.snapshot_lifecycle,
           e.expires_at::text, (e.successor_id IS NOT NULL)::text, e.target_issue_id::text,
-          e.project_id::text, e.content_present::text,
-          COALESCE(e.disposition_list_visible::text, '')),
+          e.project_id::text, COALESCE(e.disposition_list_visible::text, '')),
         ',' ORDER BY e.created_at DESC, e.id DESC
       ), 'empty')) AS "sourceFingerprint"
       FROM visible e
@@ -394,21 +389,19 @@ export async function listTriageProposals(
       }];
       },
     );
-    const boundedRows = [...rows];
-    const buildResponse = () => {
-      const lastRow = boundedRows.at(-1);
-      const lastProposal = lastRow ? byId.get(lastRow.id) : null;
-      const more = hasMore || boundedRows.length < rows.length;
-      return {
+     const buildResponse = () => {
+       const lastRow = rows.at(-1);
+       const lastProposal = lastRow ? byId.get(lastRow.id) : null;
+       return {
         contractVersion: TRIAGE_PROPOSAL_LIST_CONTRACT_VERSION,
         orderingVersion: TRIAGE_PROPOSAL_LIST_CONTRACT_VERSION,
         projection: "compact" as const,
         effectiveScope: { kind: "project" as const, workspaceId: project.workspaceId, projectId: project.id },
         correlationId,
-        returnedCount: boundedRows.length,
-        rows: boundedRows,
-        snapshotAt,
-        ...(more && lastProposal
+         returnedCount: rows.length,
+         rows,
+         snapshotAt,
+         ...(hasMore && lastProposal
           ? {
               nextCursor: encodeProposalListCursor({
                 ...cursorBinding,
@@ -420,12 +413,11 @@ export async function listTriageProposals(
             }
           : {}),
       };
-    };
-    let response = buildResponse();
-    while (Buffer.byteLength(JSON.stringify(response)) > 32 * 1024 && boundedRows.length > 1) {
-      boundedRows.pop();
-      response = buildResponse();
-    }
+     };
+     const response = buildResponse();
+     if (Buffer.byteLength(JSON.stringify(response)) > 32 * 1024) {
+       throw new AppError(503, "LIST_OUTPUT_BUDGET_EXCEEDED", "Proposal list output exceeds its fixed budget");
+     }
     return response;
     }, {
       isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,

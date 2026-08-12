@@ -305,7 +305,7 @@ describe("GET /api/projects/:key/triage-proposals (KAN-193 disposed list)", () =
     });
   });
 
-  it("keeps a maximum list page within 32 KiB", async () => {
+  it("rejects an oversized page instead of silently returning fewer rows", async () => {
     const long = `${"x".repeat(199)}😀`;
     const now = Date.now();
     await prisma.triageProposal.createMany({
@@ -342,9 +342,13 @@ describe("GET /api/projects/:key/triage-proposals (KAN-193 disposed list)", () =
       headers: authHeader(userToken),
     });
 
-    expect(response.statusCode).toBe(200);
-    expect(Buffer.byteLength(response.body)).toBeLessThanOrEqual(32 * 1024);
-    expect(response.json().rows[1].listSummary.targetTitle).toBe("x".repeat(199));
-    expect(response.json().nextCursor).toMatch(/^cur\.v1\./);
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({
+      apiContractVersion: "triage-api.v1",
+      category: "temporary_unavailability",
+      code: "LIST_OUTPUT_BUDGET_EXCEEDED",
+      correlationId: response.headers["x-kanon-correlation-id"],
+      retry: "retry",
+    });
   });
 });

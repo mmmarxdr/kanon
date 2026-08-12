@@ -72,7 +72,8 @@ export function assertListSqlPlanBoundaries(listSource: string): void {
   if (targetVisibility === -1 || stateFilter === -1 || targetVisibility > stateFilter) {
     throw new Error("target visibility must precede proposal state predicates");
   }
-  if (/include:\s*\{[^}]*content/i.test(listSource) || listSource.includes("triageProposalContent")) {
+  if (/include:\s*\{[^}]*content/i.test(listSource) ||
+    /triage_?proposal_?contents?/i.test(listSource)) {
     throw new Error("list must not fetch content table");
   }
 }

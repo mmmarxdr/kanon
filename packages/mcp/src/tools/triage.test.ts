@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
-import { registerTriageTools, TRIAGE_DEFERRED_TOOLS } from "./triage.js";
+import { isTriageToolsEnabled, registerTriageTools, TRIAGE_DEFERRED_TOOLS } from "./triage.js";
 import type { KanonClient } from "../kanon-client.js";
 import { KanonApiError } from "../kanon-client.js";
 import {
@@ -71,6 +71,12 @@ const CORRELATION = "550e8400-e29b-41d4-a716-446655440000";
 const PROPOSAL_ID = "11111111-1111-4111-8111-111111111111";
 
 describe("registerTriageTools — registration", () => {
+  it("keeps triage tools by default and supports explicit 44-tool rollback", () => {
+    expect(isTriageToolsEnabled()).toBe(true);
+    expect(isTriageToolsEnabled("true")).toBe(true);
+    expect(isTriageToolsEnabled("false")).toBe(false);
+    expect(() => isTriageToolsEnabled("FALSE")).toThrow(/must be true or false/);
+  });
   it("registers all five deferred triage tools", () => {
     const tools = triageTools(registerTriageTools, {} as KanonClient);
     expect([...tools.keys()].sort()).toEqual([...TRIAGE_DEFERRED_TOOLS].sort());
@@ -353,6 +359,37 @@ describe("list_triage_proposals", () => {
       limit: 51,
     });
     expect(over.isError).toBe(true);
+  });
+
+  it("preserves oversized-page retry guidance", async () => {
+    const mockClient = {
+      listTriageProposals: vi.fn().mockRejectedValue(new KanonApiError(
+        503,
+        "LIST_OUTPUT_BUDGET_EXCEEDED",
+        "Proposal list output exceeds its fixed budget",
+        undefined,
+        {
+          category: "temporary_unavailability",
+          retry: "retry",
+          correlationId: CORRELATION,
+          apiContractVersion: "triage-api.v1",
+        },
+      )),
+    };
+    const tools = triageTools(registerTriageTools, mockClient as unknown as KanonClient);
+
+    const result = await tools.get("list_triage_proposals")!.handler({
+      projectKey: "KAN",
+      limit: 50,
+      correlationId: CORRELATION,
+    });
+
+    expect(parseResult(result)).toMatchObject({
+      category: "temporary_unavailability",
+      retry: "retry",
+      correlationId: CORRELATION,
+      code: "LIST_OUTPUT_BUDGET_EXCEEDED",
+    });
   });
 });
 

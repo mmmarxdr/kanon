@@ -17,6 +17,8 @@ import {
 } from "./tools/__tests__/baseline.fixture.js";
 import {
   SERVER_INSTRUCTIONS,
+  LEGACY_DEFERRED_TOOLS,
+  LEGACY_SERVER_INSTRUCTIONS,
   DEFERRED_TOOLS,
   MCP_TOOL_COUNT,
   MCP_CORE_TOOL_COUNT,
@@ -25,6 +27,9 @@ import {
   DESCRIPTION_TOPLINE_CEILING_BYTES,
 } from "./instructions.js";
 import { TRIAGE_DEFERRED_TOOLS } from "./tools/triage.js";
+import { registerKanonTools } from "./register-tools.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { KanonClient } from "./kanon-client.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TOOLS_DIR = join(__dirname, "tools");
@@ -119,6 +124,22 @@ describe("KAN-193 inventory counts", () => {
     for (const name of LEGACY_44_TOOL_NAMES) {
       expect(names.has(name)).toBe(true);
     }
+  });
+
+  it("advertises only the legacy deferred inventory during 44-tool rollback", () => {
+    expect(LEGACY_DEFERRED_TOOLS).toHaveLength(18);
+    for (const tool of TRIAGE_DEFERRED_TOOLS) {
+      expect(LEGACY_SERVER_INSTRUCTIONS).not.toContain(tool);
+    }
+  });
+
+  it("registers exactly the 44 legacy tools during rollback", () => {
+    const names: string[] = [];
+    const server = { tool: (name: string) => names.push(name) } as unknown as McpServer;
+
+    registerKanonTools(server, {} as KanonClient, null, false);
+
+    expect(names.sort()).toEqual([...LEGACY_44_TOOL_NAMES].sort());
   });
 });
 

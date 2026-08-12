@@ -33,7 +33,7 @@ export async function dismissTriageProposal(
       return await prisma.$transaction(
         async (tx) => {
           await tx.$queryRaw`SELECT "id" FROM "triage_proposals" WHERE "id" = ${proposalId}::uuid FOR UPDATE`;
-          const [clock] = await tx.$queryRaw<[{ now: Date }]>`SELECT CURRENT_TIMESTAMP AS "now"`;
+          const [clock] = await tx.$queryRaw<[{ now: Date }]>`SELECT clock_timestamp() AS "now"`;
           const proposal = await tx.triageProposal.findUnique({
             where: { id: proposalId },
             select: { lifecycle: true, expiresAt: true, disposedAt: true, id: true }
@@ -56,16 +56,19 @@ export async function dismissTriageProposal(
           }
 
           if (proposal.lifecycle === "expired" || proposal.expiresAt <= clock.now) {
+            let expiredProposal = proposal;
             if (proposal.lifecycle !== "expired") {
-              await tx.triageProposal.update({
+              expiredProposal = await tx.triageProposal.update({
                 where: { id: proposalId },
                 data: { lifecycle: "expired" },
               });
-              await tx.triageProposalLifecycleEvent.create({
-                data: { proposalId, state: "expired", actorId: null },
-              });
             }
-            return { expired: true as const };
+            const event = await tx.triageProposalLifecycleEvent.upsert({
+              where: { proposalId_state: { proposalId, state: "expired" } },
+              create: { proposalId, state: "expired", actorId: null, reason: "validity_expired" },
+              update: {},
+            });
+            return { proposal: expiredProposal, event };
           }
 
           const updatedProposal = await tx.triageProposal.update({
@@ -90,12 +93,7 @@ export async function dismissTriageProposal(
           maxWait,
           timeout: Math.max(1, remaining - maxWait),
         }
-      ).then((result) => {
-        if ("expired" in result) {
-          throw new AppError(409, "INVALID_STATE", "Cannot dismiss an expired proposal");
-        }
-        return result;
-      });
+      );
     } catch (err) {
       if (isTransactionTimeout(err)) {
         throw new AppError(503, "DISMISSAL_TIMED_OUT", "Proposal dismissal deadline exceeded");

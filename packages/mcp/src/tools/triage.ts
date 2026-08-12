@@ -36,6 +36,12 @@ export const TRIAGE_DEFERRED_TOOLS = [
   "dismiss_triage_proposal",
 ] as const;
 
+export function isTriageToolsEnabled(value = process.env["KANON_TRIAGE_TOOLS_ENABLED"]): boolean {
+  if (value === undefined || value === "true") return true;
+  if (value === "false") return false;
+  throw new Error("KANON_TRIAGE_TOOLS_ENABLED must be true or false");
+}
+
 const READ_ANNOTATIONS: ToolAnnotations = {
   readOnlyHint: true,
   destructiveHint: false,

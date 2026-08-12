@@ -1,5 +1,12 @@
 import { prisma } from "../../config/prisma.js";
 import { Prisma } from "@prisma/client";
+import { randomUUID } from "node:crypto";
+import {
+  buildStageTrace,
+  observeProposalOp,
+  triageOutcome,
+  type TriageMetrics,
+} from "./observability.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -297,7 +304,7 @@ export async function sweepRetention(options?: { limit?: number }): Promise<numb
 // ── Housekeeping registration ─────────────────────────────────────────────────
 
 interface HousekeepingLogger {
-  info: (msg: string, ...args: unknown[]) => void;
+  info: (obj: unknown, msg?: string, ...args: unknown[]) => void;
   error: (obj: Record<string, unknown>, msg: string) => void;
   debug?: (msg: string, ...args: unknown[]) => void;
 }
@@ -306,7 +313,12 @@ interface HousekeepingLogger {
  * Register retention housekeeping workers (expiry 60s / retention 24h + jitter).
  * Both timers use `unref()`. Returns a stop function.
  */
-export function registerRetentionHousekeeping(logger: HousekeepingLogger): () => void {
+export function registerRetentionHousekeeping(
+  logger: HousekeepingLogger,
+  metrics?: TriageMetrics,
+  runExpiry = sweepExpiry,
+  runRetention = sweepRetention,
+): () => void {
   let expiryTimer: ReturnType<typeof setTimeout> | undefined;
   let retentionTimer: ReturnType<typeof setTimeout> | undefined;
   let expiryRunning = false;
@@ -319,13 +331,27 @@ export function registerRetentionHousekeeping(logger: HousekeepingLogger): () =>
         return;
       }
       expiryRunning = true;
-      sweepExpiry({ limit: EXPIRY_BATCH_LIMIT })
+      const started = performance.now();
+      const correlationId = randomUUID();
+      runExpiry({ limit: EXPIRY_BATCH_LIMIT })
         .then((count) => {
+          const durationMs = performance.now() - started;
+          if (metrics) observeProposalOp(metrics, { operation: "expire", outcome: "success" }, durationMs / 1000);
+          logger.info(buildStageTrace({
+            correlationId, operation: "expire", stage: "sweep", durationMs,
+            outcome: "success", details: { processed: count },
+          }), "Triage expiry sweep completed");
           if (count > 0) {
             logger.info(`Triage expiry sweep processed ${count} proposals`);
           }
         })
         .catch((err) => {
+          const durationMs = performance.now() - started;
+          const outcome = triageOutcome(err);
+          if (metrics) observeProposalOp(metrics, { operation: "expire", outcome }, durationMs / 1000);
+          logger.info(buildStageTrace({
+            correlationId, operation: "expire", stage: "sweep", durationMs, outcome,
+          }), "Triage expiry sweep failed");
           logger.error({ err }, "Triage expiry sweep failed");
         })
         .finally(() => {
@@ -343,13 +369,27 @@ export function registerRetentionHousekeeping(logger: HousekeepingLogger): () =>
         return;
       }
       retentionRunning = true;
-      sweepRetention({ limit: RETENTION_BATCH_LIMIT })
+      const started = performance.now();
+      const correlationId = randomUUID();
+      runRetention({ limit: RETENTION_BATCH_LIMIT })
         .then((count) => {
+          const durationMs = performance.now() - started;
+          if (metrics) observeProposalOp(metrics, { operation: "retain", outcome: "success" }, durationMs / 1000);
+          logger.info(buildStageTrace({
+            correlationId, operation: "retain", stage: "sweep", durationMs,
+            outcome: "success", details: { processed: count },
+          }), "Triage retention sweep completed");
           if (count > 0) {
             logger.info(`Triage retention sweep disposed ${count} proposals`);
           }
         })
         .catch((err) => {
+          const durationMs = performance.now() - started;
+          const outcome = triageOutcome(err);
+          if (metrics) observeProposalOp(metrics, { operation: "retain", outcome }, durationMs / 1000);
+          logger.info(buildStageTrace({
+            correlationId, operation: "retain", stage: "sweep", durationMs, outcome,
+          }), "Triage retention sweep failed");
           logger.error({ err }, "Triage retention sweep failed");
         })
         .finally(() => {

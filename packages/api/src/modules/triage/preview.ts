@@ -11,7 +11,8 @@ import {
 } from "./canonical.js";
 import { decodeCursor, encodeCursor } from "./cursor.js";
 import { PreviewEnvelopeSchema, type PreviewEnvelope } from "./contracts.js";
-import { searchIssues } from "./search.js";
+import { SEARCH_LOGICAL_SCANNED, searchIssues } from "./search.js";
+import { observeSearch, triageOutcome, type TriageMetrics } from "./observability.js";
 import { createSourceIdentity } from "./source.js";
 
 const PREVIEW_TOKEN_CONTEXT = "triage-preview-context.v1";
@@ -71,6 +72,7 @@ interface ExecutePreviewInput {
   readonly correlationId: string;
   readonly request: PreviewRequest;
   readonly deadlineAt?: number;
+  readonly metrics?: TriageMetrics;
 }
 
 interface PreviewContext {
@@ -212,6 +214,7 @@ async function preparePreview(
   format: "compact" | "full",
   previewIdentity: string = randomUUID(),
   deadlineAt = performance.now() + PREVIEW_API_DEADLINE_MS,
+  metrics?: TriageMetrics,
 ): Promise<UnsignedPreview> {
   const remaining = Math.floor(deadlineAt - performance.now());
   if (remaining < 2) throw new AppError(503, "PREVIEW_TIMED_OUT", "Triage preview deadline exceeded");
@@ -263,6 +266,7 @@ async function preparePreview(
     projectUpdatedAt: issue.project.updatedAt,
   });
   let search: Awaited<ReturnType<typeof searchIssues>>;
+  const searchStarted = performance.now();
   const searchDeadlineMs = Math.floor(deadlineAt - performance.now());
   if (searchDeadlineMs < 100) {
     throw new AppError(503, "PREVIEW_TIMED_OUT", "Triage preview deadline exceeded");
@@ -280,9 +284,17 @@ async function preparePreview(
         deadlineMs: Math.min(900, searchDeadlineMs),
       },
       allowedProjectIds,
+      correlationId,
     );
   } catch (error) {
-    if (!isStatementTimeout(error)) throw error;
+    if (!isStatementTimeout(error)) {
+      if (metrics) {
+        observeSearch(metrics, {
+          scope: scope.kind, completeness: "degraded", outcome: triageOutcome(error),
+        }, (performance.now() - searchStarted) / 1000, { logicalScanned: null, returned: 0 });
+      }
+      throw error;
+    }
     search = {
       contractVersion: "issue-search.v1",
       orderingVersion: "issue-search.v1",
@@ -296,6 +308,16 @@ async function preparePreview(
       degradation: ["candidate_timeout"],
       rows: [],
     };
+  }
+  if (metrics) {
+    observeSearch(metrics, {
+      scope: search.effectiveScope.kind,
+      completeness: search.completeness,
+      outcome: search.degradation.length > 0 ? "degraded_success" : "success",
+    }, (performance.now() - searchStarted) / 1000, {
+      logicalScanned: search[SEARCH_LOGICAL_SCANNED] ?? null,
+      returned: search.returnedCount,
+    });
   }
   const policyEvidence = {
     evidenceRefId: `target:${issue.id}:priority`,
@@ -479,6 +501,7 @@ export async function executePreview(input: ExecutePreviewInput): Promise<Previe
       input.request.format,
       randomUUID(),
       deadlineAt,
+      input.metrics,
     );
     const expiresAt = new Date(Date.now() + PREVIEW_TTL_MS);
     const previewSeal = sealFor(preview, expiresAt);
@@ -522,6 +545,7 @@ export async function executePreview(input: ExecutePreviewInput): Promise<Previe
     input.request.format,
     context.previewIdentity,
     deadlineAt,
+    input.metrics,
   );
   if (contextExpiresAt.getTime() <= Date.now()) {
     throw new AppError(409, "PREVIEW_EXPIRED", "Preview expired; rerun preview");

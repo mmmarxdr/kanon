@@ -90,6 +90,20 @@ describe("searchIssues (KAN-193 PR4)", () => {
     expect(res.rows[0].issueKey).toBe("SRC-1");
   });
 
+  it("preserves the inbound correlation identity", async () => {
+    await prisma.issue.create({
+      data: { key: "SRC-1", title: "Correlated result", projectId, sequenceNum: 1 },
+    });
+    const correlationId = "550e8400-e29b-41d4-a716-446655440000";
+
+    const response = await searchIssues(workspaceId, userId, {
+      q: "correlated", limit: 10, projection: "compact",
+      scope: { kind: "workspace", workspaceId },
+    }, undefined, correlationId);
+
+    expect(response.correlationId).toBe(correlationId);
+  });
+
   it("excludes target issue when targetIssueId is provided", async () => {
     const issue1 = await prisma.issue.create({
       data: {

@@ -145,6 +145,7 @@ export async function searchIssues(
   userId: string,
   input: SearchInput,
   allowedProjectIds: readonly string[] | undefined = undefined,
+  correlationId: string = randomUUID(),
 ): Promise<SearchResponse> {
   const deadlineMs = Math.max(100, Math.min(900, input.deadlineMs ?? 900));
   const deadlineAt = performance.now() + deadlineMs;
@@ -403,7 +404,7 @@ export async function searchIssues(
         limit,
         returnedCount: resultRows.length,
         effectiveScope,
-        correlationId: randomUUID(),
+        correlationId,
         degradation: [],
         rows: resultRows,
         ...(hasMore && last
