@@ -144,10 +144,11 @@ test.describe("Issue detail single-scroll workspace", () => {
     const general = page.locator("#issue-section-general");
     await expect(general.getByRole("heading", { name: "Kanon / Redmine notes" })).toBeVisible();
     await expect(general.getByText("Visible Kanon note")).toBeVisible();
-    await expect(general.getByText("Synced history row 0")).toBeVisible();
+    await expect(general.getByText("Synced history row 0")).toHaveCount(0);
     await expect(general.getByText(/created this issue/)).toHaveCount(0);
 
     await page.getByRole("button", { name: "Activity" }).click();
+    await expect(page.locator("#issue-section-activity").getByText("Synced history row 0")).toBeVisible();
     await expect(page.locator("#issue-section-activity").getByText(/created this issue/)).toBeVisible();
 
     await page.getByRole("button", { name: "Resources" }).click();

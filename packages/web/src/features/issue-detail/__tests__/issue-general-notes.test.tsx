@@ -9,8 +9,16 @@ const comment: TimelineItem = {
   kind: "human-comment",
   body: "Imported Redmine note",
   author: { username: "marie", provider: "redmine" },
-  via: "codex",
+  via: "redmine",
   createdAt: "2026-08-12T10:00:00.000Z",
+};
+const toolComment: TimelineItem = {
+  id: "codex-note",
+  kind: "human-comment",
+  body: "Synced from Codex",
+  author: { username: "marie" },
+  via: "codex",
+  createdAt: "2026-08-12T10:30:00.000Z",
 };
 const activity: TimelineItem = {
   id: "state-change",
@@ -30,16 +38,17 @@ describe("IssueGeneralNotes", () => {
   it("renders only comment notes with author, provider, via and timestamp while Activity retains the full timeline", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-12T12:00:00.000Z"));
-    render(<><IssueGeneralNotes items={[comment, activity]} isLoading={false} isError={false} /><section aria-label="Activity"><UnifiedTimeline items={[comment, activity]} isLoading={false} isError={false} /></section></>);
+    render(<><IssueGeneralNotes items={[comment, toolComment, activity]} isLoading={false} isError={false} /><section aria-label="Activity"><UnifiedTimeline items={[comment, toolComment, activity]} isLoading={false} isError={false} /></section></>);
 
     const notes = screen.getByRole("region", { name: "Kanon / Redmine notes" });
     expect(within(notes).getByText("Imported Redmine note")).toBeInTheDocument();
     expect(within(notes).getByText("marie (redmine)")).toBeInTheDocument();
-    expect(within(notes).getByText("Codex")).toBeInTheDocument();
+    expect(within(notes).queryByText("Synced from Codex")).not.toBeInTheDocument();
     expect(within(notes).getByText("2h ago")).toBeInTheDocument();
     expect(within(notes).queryByText(/changed state/)).not.toBeInTheDocument();
 
     const activityRegion = screen.getByRole("region", { name: "Activity" });
+    expect(within(activityRegion).getByText("Synced from Codex")).toBeInTheDocument();
     expect(within(activityRegion).getByText(/changed state/)).toBeInTheDocument();
   });
 

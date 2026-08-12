@@ -67,12 +67,13 @@ export function getIssueWorkspaceState(
   result: Pick<UseIssueDetailResult, "issue" | "isLoading" | "isError" | "error">,
 ): IssueWorkspaceState {
   if (result.isLoading) return { kind: "loading" };
+  if (result.issue) return { kind: "ready" };
   if (result.isError) {
     return result.error instanceof ApiError && result.error.status === 404
       ? { kind: "not-found" }
       : { kind: "error" };
   }
-  return result.issue ? { kind: "ready" } : { kind: "not-found" };
+  return { kind: "not-found" };
 }
 
 /**
