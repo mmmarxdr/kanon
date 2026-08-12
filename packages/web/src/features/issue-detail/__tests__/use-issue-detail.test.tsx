@@ -62,4 +62,15 @@ describe("useIssueDetail query state", () => {
     expect(getIssueWorkspaceState(result.current)).toEqual({ kind: "not-found" });
     expect(getIssueWorkspaceState({ ...result.current, error: new ApiError(500, "INTERNAL_ERROR", "No"), isError: true })).toEqual({ kind: "error" });
   });
+
+  it("suppresses retained issue data while the query reports an error", async () => {
+    const issue = { project: { key: "KAN" }, subscribed: true };
+    const error = new ApiError(500, "INTERNAL_ERROR", "Background refetch failed");
+    queryState.value = { data: issue, isLoading: false, isError: true, error, refetch: vi.fn() };
+    const { getIssueWorkspaceState, useIssueDetail } = await import("../use-issue-detail");
+    const { result } = renderHook(() => useIssueDetail("KAN-1"));
+
+    expect(result.current.issue).toBe(issue);
+    expect(getIssueWorkspaceState(result.current)).toEqual({ kind: "error" });
+  });
 });

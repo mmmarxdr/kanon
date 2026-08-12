@@ -1,5 +1,6 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import i18n from "@/i18n";
 import { SyncedToolsSummaryContent } from "../synced-tools-summary";
 import type { TimelineItem } from "../timeline-types";
 
@@ -21,6 +22,12 @@ const latest: TimelineItem = {
   createdAt: "2026-08-12T12:00:00.000Z",
 };
 
+afterEach(async () => {
+  await act(async () => {
+    await i18n.changeLanguage("en");
+  });
+});
+
 describe("SyncedToolsSummaryContent", () => {
   it("renders the synced count and only the latest provenance row", () => {
     render(<SyncedToolsSummaryContent items={[oldest, latest]} isLoading={false} isError={false} />);
@@ -41,5 +48,30 @@ describe("SyncedToolsSummaryContent", () => {
 
     expect(screen.getByTestId("synced-tools-summary")).toHaveTextContent(expected);
     expect(screen.queryByTestId("synced-tools-summary-latest")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["en", [latest], "1 synced tool item"],
+    ["en", [oldest, latest], "2 synced tool items"],
+    ["es", [latest], "1 elemento sincronizado desde herramientas"],
+    ["es", [oldest, latest], "2 elementos sincronizados desde herramientas"],
+  ] as const)("renders the %s singular/plural count for %s items", async (language, items, expected) => {
+    await i18n.changeLanguage(language);
+    render(<SyncedToolsSummaryContent items={items} isLoading={false} isError={false} />);
+
+    expect(screen.getByTestId("synced-tools-summary")).toHaveTextContent(expected);
+  });
+
+  it("localizes every summary state", async () => {
+    await i18n.changeLanguage("es");
+    const { rerender } = render(<SyncedToolsSummaryContent items={[latest]} isLoading isError={false} />);
+
+    expect(screen.getByTestId("synced-tools-summary")).toHaveTextContent("Cargando herramientas sincronizadas…");
+
+    rerender(<SyncedToolsSummaryContent items={[latest]} isLoading={false} isError />);
+    expect(screen.getByTestId("synced-tools-summary")).toHaveTextContent("Las herramientas sincronizadas no están disponibles.");
+
+    rerender(<SyncedToolsSummaryContent items={[]} isLoading={false} isError={false} />);
+    expect(screen.getByTestId("synced-tools-summary")).toHaveTextContent("No hay actividad sincronizada desde herramientas.");
   });
 });

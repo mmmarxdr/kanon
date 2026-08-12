@@ -93,7 +93,7 @@ export function IssueDescription({ value, onSave }: IssueDescriptionProps) {
               fontSize: 13,
               lineHeight: 1.55,
               outline: "none",
-              resize: "vertical",
+              resize: "none",
               fontFamily: "Inter Tight",
               boxSizing: "border-box",
             }}

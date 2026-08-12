@@ -1,7 +1,14 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import i18n from "@/i18n";
 import { IssueComposer } from "../issue-composer";
+
+afterEach(async () => {
+  await act(async () => {
+    await i18n.changeLanguage("en");
+  });
+});
 
 describe("IssueComposer", () => {
   it("grows to the draft height and hides its own vertical overflow", async () => {
@@ -32,6 +39,15 @@ describe("IssueComposer", () => {
 });
 
 describe("IssueComposer lifecycle feedback", () => {
+  it("localizes the pending status, placeholder, and submit action", async () => {
+    await i18n.changeLanguage("es");
+    render(<IssueComposer isPending onSubmit={async () => undefined} />);
+
+    expect(screen.getByRole("status")).toHaveTextContent("Enviando comentario…");
+    expect(screen.getByRole("textbox")).toHaveAttribute("placeholder", "Comenta, o @claude para delegar…");
+    expect(screen.getByRole("button", { name: "Enviar" })).toBeDisabled();
+  });
+
   it("announces a pending submission and does not submit a second draft", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn(async () => undefined);

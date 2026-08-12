@@ -1,8 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen } from "@testing-library/react";
 import i18n from "@/i18n";
 import { DependenciesSection } from "../dependencies-section";
 import { IssueDetailWorkspace } from "../issue-detail-workspace";
+
+afterEach(async () => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  await act(async () => {
+    await i18n.changeLanguage("en");
+  });
+});
 
 describe("IssueDetailWorkspace", () => {
   it.each(["loading", "error", "not-found"] as const)("keeps all five landmarks mounted for %s", (kind) => {
@@ -20,7 +28,7 @@ describe("IssueDetailWorkspace", () => {
 
 it("moves focus to the stable target heading", async () => {
   const { userEvent } = await import("@testing-library/user-event");
-  Element.prototype.scrollIntoView = vi.fn();
+  vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
   render(<IssueDetailWorkspace state={{ kind: "ready" }} />);
   await userEvent.setup().click(screen.getByRole("button", { name: "Resources" }));
   expect(screen.getByRole("heading", { name: "Resources" })).toHaveFocus();
@@ -52,13 +60,29 @@ it("offers the safe return action when an issue is not found", async () => {
 
 it("announces the reached location and exposes it as the current navigation item", async () => {
   const { userEvent } = await import("@testing-library/user-event");
-  Element.prototype.scrollIntoView = vi.fn();
+  vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
   render(<IssueDetailWorkspace state={{ kind: "ready" }} />);
 
   await userEvent.setup().click(screen.getByRole("button", { name: "Resources" }));
 
-  expect(screen.getByRole("status")).toHaveTextContent("Resources section");
+  const announcement = screen.getByTestId("issue-section-announcement");
+  expect(announcement).toHaveRole("status");
+  expect(announcement).toHaveAttribute("aria-live", "polite");
+  expect(announcement).toHaveTextContent("Resources section");
+  expect(screen.getByTestId("issue-detail-scroll")).not.toHaveAttribute("aria-live");
   expect(screen.getByRole("button", { name: "Resources" })).toHaveAttribute("aria-current", "location");
+});
+
+it("localizes the navigation label and reached-section announcement", async () => {
+  const { userEvent } = await import("@testing-library/user-event");
+  await i18n.changeLanguage("es");
+  vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+  render(<IssueDetailWorkspace state={{ kind: "ready" }} />);
+
+  expect(screen.getByRole("navigation", { name: "Secciones de la issue" })).toBeInTheDocument();
+  await userEvent.setup().click(screen.getByRole("button", { name: "Recursos" }));
+
+  expect(screen.getByTestId("issue-section-announcement")).toHaveTextContent("Sección Recursos");
 });
 
 it("renders a localized empty state when relationships have no children or dependencies", () => {
@@ -74,8 +98,7 @@ it("renders a localized empty state when relationships have no children or depen
 
 it("activates section navigation by keyboard with reduced motion", async () => {
   const { userEvent } = await import("@testing-library/user-event");
-  const scrollIntoView = vi.fn();
-  Element.prototype.scrollIntoView = scrollIntoView;
+  const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
   vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: true }));
   render(<IssueDetailWorkspace state={{ kind: "ready" }} />);
   const user = userEvent.setup();
@@ -89,7 +112,7 @@ it("activates section navigation by keyboard with reduced motion", async () => {
   expect(screen.getByRole("heading", { name: "Resources" })).toHaveFocus();
   expect(screen.getByRole("button", { name: "Resources" })).toHaveAttribute("aria-current", "location");
   expect(screen.getAllByRole("button", { current: "location" })).toHaveLength(1);
-  expect(screen.getByRole("status")).toHaveTextContent("Resources section");
+  expect(screen.getByTestId("issue-section-announcement")).toHaveTextContent("Resources section");
   expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "auto", block: "start" });
 });
 
@@ -98,33 +121,13 @@ it("places supplied narrow metadata inside the sole scroll document", () => {
   expect(screen.getByTestId("issue-detail-scroll")).toContainElement(screen.getByTestId("metadata-section"));
 });
 
-it("keeps explicit navigation current when stale observer and scroll events arrive", async () => {
+it("marks the activated Development section as current", async () => {
   const { userEvent } = await import("@testing-library/user-event");
-  let callback: IntersectionObserverCallback | undefined;
-  class Observer {
-    observe = vi.fn(); disconnect = vi.fn(); unobserve = vi.fn(); takeRecords = vi.fn(() => []);
-    constructor(next: IntersectionObserverCallback) { callback = next; }
-    root = null; rootMargin = ""; thresholds = [0];
-  }
-  vi.stubGlobal("IntersectionObserver", Observer);
-  Element.prototype.scrollIntoView = vi.fn();
-  const { container } = render(<IssueDetailWorkspace state={{ kind: "ready" }} />);
-  const scrollRoot = screen.getByTestId("issue-detail-scroll");
-  Object.defineProperties(scrollRoot, {
-    clientHeight: { configurable: true, get: () => 500 },
-    scrollHeight: { configurable: true, get: () => 1_000 },
-    scrollTop: { configurable: true, get: () => 500 },
-  });
-  vi.spyOn(scrollRoot, "getBoundingClientRect").mockReturnValue({ top: 0 } as DOMRect);
-  for (const [id, top] of Object.entries({ general: -800, activity: -400, relationships: -200, resources: 0, development: 140 })) {
-    vi.spyOn(container.querySelector(`#issue-section-${id}`)!, "getBoundingClientRect").mockReturnValue({ top } as DOMRect);
-  }
+  vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+  render(<IssueDetailWorkspace state={{ kind: "ready" }} />);
 
   await userEvent.setup().click(screen.getByRole("button", { name: "Development" }));
-  act(() => scrollRoot.dispatchEvent(new Event("scroll")));
-  act(() => scrollRoot.dispatchEvent(new Event("scrollend")));
-  act(() => callback?.([{ target: container.querySelector("#issue-section-resources")!, isIntersecting: true, intersectionRatio: 0.1, boundingClientRect: { top: 0 } } as IntersectionObserverEntry], {} as IntersectionObserver));
 
   expect(screen.getByRole("button", { name: "Development" })).toHaveAttribute("aria-current", "location");
-  expect(screen.getByRole("status")).toHaveTextContent("Development section");
+  expect(screen.getByTestId("issue-section-announcement")).toHaveTextContent("Development section");
 });

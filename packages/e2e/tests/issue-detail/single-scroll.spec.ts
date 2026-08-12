@@ -131,7 +131,7 @@ test.describe("Issue detail single-scroll workspace", () => {
       await page.getByRole("button", { name: section }).click();
       await expect(page.getByRole("heading", { name: section })).toBeFocused();
       await expect(page.getByRole("button", { name: section })).toHaveAttribute("aria-current", "location");
-      await expect(page.getByRole("status")).toHaveText(`${section} section`);
+      await expect(page.getByTestId("issue-section-announcement")).toHaveText(`${section} section`);
     }
 
     await expect.poll(() => page.evaluate(() => (globalThis as any).issueScrollBehaviors)).toContain("auto");
