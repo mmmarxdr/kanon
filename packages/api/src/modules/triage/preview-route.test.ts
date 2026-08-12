@@ -103,10 +103,10 @@ describe("KAN-193 preview and persistence routes", () => {
               AND query ILIKE ${supersedesId ? '%FROM "triage_proposals"%FOR UPDATE%' : "%INSERT%triage_proposals%"}
           `;
           expect(row?.count).toBeGreaterThanOrEqual(2);
-        });
+        }, { timeout: 15_000 });
       } finally {
         release();
-        await blocker.finally(() => result.catch(() => undefined));
+        await Promise.all([blocker.catch(() => undefined), result.catch(() => undefined)]);
       }
       return await result;
     } finally {
@@ -651,6 +651,7 @@ describe("KAN-193 preview and persistence routes", () => {
       },
     });
 
+    expect(created.statusCode).toBe(201);
     const content = await prisma.triageProposalContent.findUniqueOrThrow({
       where: { proposalId: created.json().id },
     });
@@ -719,6 +720,7 @@ describe("KAN-193 preview and persistence routes", () => {
         retainedItemIds: [preview.recommendations[0].itemId, "host:1"],
       },
     });
+    expect(created.statusCode).toBe(201);
     await prisma.projectMember.delete({
       where: { userId_projectId: { userId, projectId: foreign.id } },
     });

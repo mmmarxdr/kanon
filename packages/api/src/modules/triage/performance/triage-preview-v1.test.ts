@@ -30,10 +30,9 @@ describe("triage-preview-v1 profile contract", () => {
   });
 
   it("enforces exact canary error boundaries even when errors are fast", () => {
-    const samples = syntheticPreviewSamples(100);
     const error = { durationMs: 1, outputBytes: 10, outcome: "error" } as const;
     for (const [count, expected] of [[1, [true, true]], [2, [false, true]], [5, [false, true]], [6, [false, false]]] as const) {
-      samples.fill(error, 0, count);
+      const samples = syntheticPreviewSamples(100).fill(error, 0, count);
       const gates = runPreviewProfileFixture(samples).gates;
       expect([gates.unexpectedErrorsOk, gates.disableAllSafe]).toEqual(expected);
     }
