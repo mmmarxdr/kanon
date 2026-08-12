@@ -495,6 +495,25 @@ describe("Triage Retention (KAN-193 PR9)", () => {
         vi.useRealTimers();
       }
     });
+
+    it("correlates expiry failure logs", async () => {
+      vi.useFakeTimers();
+      const logger = { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() };
+      const expiry = vi.fn().mockRejectedValue(new Error("failed"));
+      const stop = registerRetentionHousekeeping(logger, undefined, expiry);
+      try {
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.objectContaining({
+            correlationId: expect.any(String), operation: "expire", stage: "sweep",
+          }),
+          "Triage expiry sweep failed",
+        );
+      } finally {
+        stop();
+        vi.useRealTimers();
+      }
+    });
   });
 
   // ── TRIANGULATE: Concurrent workers ───────────────────────────────────

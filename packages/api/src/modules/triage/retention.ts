@@ -352,7 +352,7 @@ export function registerRetentionHousekeeping(
           logger.info(buildStageTrace({
             correlationId, operation: "expire", stage: "sweep", durationMs, outcome,
           }), "Triage expiry sweep failed");
-          logger.error({ err }, "Triage expiry sweep failed");
+          logger.error({ err, correlationId, operation: "expire", stage: "sweep" }, "Triage expiry sweep failed");
         })
         .finally(() => {
           expiryRunning = false;
@@ -390,7 +390,7 @@ export function registerRetentionHousekeeping(
           logger.info(buildStageTrace({
             correlationId, operation: "retain", stage: "sweep", durationMs, outcome,
           }), "Triage retention sweep failed");
-          logger.error({ err }, "Triage retention sweep failed");
+          logger.error({ err, correlationId, operation: "retain", stage: "sweep" }, "Triage retention sweep failed");
         })
         .finally(() => {
           retentionRunning = false;
