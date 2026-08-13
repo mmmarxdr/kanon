@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { useNavigate } from "@tanstack/react-router";
+import { getIssueDeletedDestination } from "./issue-route-lifecycle";
 import { issueRoute } from "@/routes/_authenticated/issue";
 import {
   useIssueDetailQuery,
@@ -22,12 +23,17 @@ import { useUnifiedTimeline } from "@/features/issue-detail/use-unified-timeline
 import type { IssueState } from "@/stores/board-store";
 import type { IssueDocument } from "@/types/issue";
 import type { UnifiedTimelineResult } from "@/features/issue-detail/use-unified-timeline";
+import { ApiError } from "@/lib/api-client";
 
 export interface UseIssueDetailResult {
   issue: NonNullable<ReturnType<typeof useIssueDetailQuery>["data"]> | undefined;
   isLoading: boolean;
+  isError: boolean;
+  error: Error | null;
+  refetch: () => void;
   documents: IssueDocument[] | undefined;
   documentsLoading: boolean;
+  documentsError: Error | null;
   timeline: UnifiedTimelineResult;
   projectKey: string;
   // subscription
@@ -40,11 +46,34 @@ export interface UseIssueDetailResult {
   onTitleChange: (t: string) => void;
   onFieldChange: (p: Record<string, unknown>) => void;
   onTransition: (s: IssueState) => void;
-  onAddComment: (body: string) => void;
+  onAddComment: (body: string) => Promise<unknown>;
   onSelectChild: (key: string) => void;
   onDescriptionSave: (next: string) => void;
   onCycleChange: (nextId: string | null, curId: string | null) => void;
   addCommentPending: boolean;
+  addCommentError: Error | null;
+}
+
+export type IssueWorkspaceState = {
+  kind: "loading" | "error" | "not-found" | "ready";
+};
+
+/**
+ * Keeps the page's empty-state decision aligned with the API client's typed
+ * error semantics. fetchApi rejects 404 responses, so an absent query value
+ * alone is not enough to make a real missing issue reachable.
+ */
+export function getIssueWorkspaceState(
+  result: Pick<UseIssueDetailResult, "issue" | "isLoading" | "isError" | "error">,
+): IssueWorkspaceState {
+  if (result.isLoading) return { kind: "loading" };
+  if (result.issue) return { kind: "ready" };
+  if (result.isError) {
+    return result.error instanceof ApiError && result.error.status === 404
+      ? { kind: "not-found" }
+      : { kind: "error" };
+  }
+  return { kind: "not-found" };
 }
 
 /**
@@ -59,8 +88,8 @@ export function useIssueDetail(issueKey: string): UseIssueDetailResult {
   const { from } = issueRoute.useSearch();
   const navigate = useNavigate();
 
-  const { data: issue, isLoading } = useIssueDetailQuery(issueKey);
-  const { data: documents, isLoading: documentsLoading } =
+  const { data: issue, isLoading, isError, error, refetch } = useIssueDetailQuery(issueKey);
+  const { data: documents, isLoading: documentsLoading, isError: documentsIsError, error: documentsQueryError } =
     useIssueDocuments(issueKey);
   const timeline = useUnifiedTimeline(issueKey);
 
@@ -102,11 +131,7 @@ export function useIssueDetail(issueKey: string): UseIssueDetailResult {
   }, [navigate, from, projectKey]);
 
   const onDeleted = useCallback(() => {
-    if (from === "board" && projectKey) {
-      void navigate({ to: "/board/$projectKey", params: { projectKey }, replace: true });
-      return;
-    }
-    void navigate({ to: "/inbox", replace: true });
+    void navigate(getIssueDeletedDestination({ from, projectKey }));
   }, [navigate, from, projectKey]);
 
   const onTitleChange = useCallback(
@@ -129,7 +154,7 @@ export function useIssueDetail(issueKey: string): UseIssueDetailResult {
   );
 
   const onAddComment = useCallback(
-    (body: string) => addCommentMutation.mutate(body),
+    (body: string) => addCommentMutation.mutateAsync(body),
     [addCommentMutation],
   );
 
@@ -190,8 +215,12 @@ export function useIssueDetail(issueKey: string): UseIssueDetailResult {
   return {
     issue,
     isLoading,
+    isError,
+    error,
+    refetch: () => { void refetch(); },
     documents,
     documentsLoading,
+    documentsError: documentsIsError ? documentsQueryError : null,
     timeline,
     projectKey,
     isSubscribed,
@@ -207,5 +236,6 @@ export function useIssueDetail(issueKey: string): UseIssueDetailResult {
     onDescriptionSave,
     onCycleChange,
     addCommentPending: addCommentMutation.isPending,
+    addCommentError: addCommentMutation.isError ? addCommentMutation.error : null,
   };
 }

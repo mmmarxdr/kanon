@@ -8,6 +8,8 @@ import i18n from "@/i18n";
 interface DocumentListProps {
   documents: IssueDocument[];
   isLoading: boolean;
+  isError?: boolean;
+  error?: Error | null;
   issueKey: string;
 }
 
@@ -23,7 +25,7 @@ interface DocumentListProps {
  * KAN-108 slice 4: inline expand preserves the lazy Mermaid load win — the
  * MermaidBlock only mounts when a card is expanded (unmounted on collapse).
  */
-export function DocumentList({ documents, isLoading, issueKey }: DocumentListProps) {
+export function DocumentList({ documents, isLoading, isError = false, error, issueKey }: DocumentListProps) {
   const { t } = useTranslation("issue");
 
   if (isLoading) {
@@ -39,6 +41,14 @@ export function DocumentList({ documents, isLoading, issueKey }: DocumentListPro
         }}
       >
         {t("docsLoading")}
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div role="alert" style={{ padding: "32px 0", color: "var(--ink-3)", fontSize: 12.5 }}>
+        {t("docsLoadError")}{error ? ` ${error.message}` : ""}
       </div>
     );
   }

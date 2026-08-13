@@ -19,6 +19,7 @@ import { useMemo } from "react";
 import type { Comment, ActivityLog } from "@/types/issue";
 import { useCommentsQuery, useActivityQuery } from "./use-issue-detail-queries";
 import type { TimelineItem, Actor } from "./timeline-types";
+import { SUPPORTED_TOOL_VIAS } from "./via-badge";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -72,6 +73,15 @@ export function mergeTimeline(
     if (timeDiff !== 0) return timeDiff;
     return a.id.localeCompare(b.id);
   });
+}
+
+/** Shared comment-only projection for the General notes summary. */
+export function selectCommentTimelineItems(items: TimelineItem[]): TimelineItem[] {
+  return items.filter(
+    (item): item is Extract<TimelineItem, { kind: "human-comment" | "agent-comment" }> =>
+      (item.kind === "human-comment" || item.kind === "agent-comment") &&
+      !SUPPORTED_TOOL_VIAS.has(item.via ?? ""),
+  );
 }
 
 function mapActivityToItem(log: ActivityLog): TimelineItem {

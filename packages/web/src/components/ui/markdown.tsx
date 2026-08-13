@@ -40,7 +40,7 @@ export function Markdown({ children, className }: MarkdownProps) {
             );
           },
           table: ({ node: _node, ...props }) => (
-            <div style={{ overflowX: "auto", maxWidth: "100%" }}>
+            <div className="markdown-table-scroll" style={{ overflowX: "auto", maxWidth: "100%" }}>
               <table {...props} />
             </div>
           ),

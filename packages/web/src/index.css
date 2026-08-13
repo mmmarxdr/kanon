@@ -291,48 +291,27 @@ input, textarea, select { font: inherit; color: inherit; }
 }
 
 /* ===========================================================================
-   Issue layout — responsive two-column → single-column collapse (KAN-108 slice 5)
-   ---------------------------------------------------------------------------
-   Base (≥ 1024px): two columns — main pane (fluid) + properties rail (380px).
-   The inline gridTemplateColumns was moved here so that the @media rule below
-   can override it. Inline styles cannot be overridden by CSS media queries.
-
-   Similarly, the dock height is set here (not inline) so the @media block can
-   shrink it on narrow/short viewports via min(300px, 40vh).
-   --------------------------------------------------------------------------- */
-.issue-layout {
-  grid-template-columns: minmax(0, 1fr) 380px;
-}
-
-/* Base dock height — matches the 300px contract from slice 2.
-   Defined here (not inline) so the @media block below can override it. */
-.issue-timeline-dock {
-  height: 300px;
-}
-
+   Issue detail single-scroll workspace
+   =========================================================================== */
+.issue-page { height: 100%; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
+.issue-subtoolbar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line); flex: none; }
+.issue-subtoolbar > span { flex: 1; }
+.issue-detail-layout { display: grid; grid-template-columns: minmax(140px, 180px) minmax(0, 1fr); min-height: 0; flex: 1; }
+.issue-detail-workspace { display: contents; }
+.issue-detail-nav { padding: 16px; position: sticky; top: 0; align-self: start; display: flex; flex-direction: column; gap: 4px; }
+.issue-detail-nav button { text-align: left; padding: 7px 8px; color: var(--ink-3); }
+.issue-detail-nav button[aria-current="location"] { color: var(--ink); background: var(--bg-2); font-weight: 600; }
+.issue-detail-scroll { display: grid; grid-template-columns: minmax(0, 1fr) 340px; column-gap: 24px; overflow-y: auto; min-width: 0; padding: 16px 28px 32px; border-left: 1px solid var(--line); }
+.issue-detail-section { grid-column: 1; min-width: 0; margin-bottom: 32px; scroll-margin-top: 16px; }
+.issue-detail-section > h2 { font-size: 14px; margin: 0 0 12px; }
+.issue-metadata-rail { grid-column: 2; grid-row: 1 / span 5; position: sticky; top: 0; align-self: start; padding: 0 18px; min-width: 0; }
+.issue-detail-scroll pre, .issue-detail-scroll .markdown-table-scroll { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
 @media (max-width: 1023px) {
-  /* Collapse to a single column; rail stacks ABOVE the main pane via order. */
-  .issue-layout {
-    grid-template-columns: 1fr;
-  }
-
-  /* Rail moves above the main pane. The .issue-rail class on the right pane div
-     makes this more explicit/robust than the positional :last-child selector.
-     height:auto / overflow:visible so the rail is not viewport-clipped when stacked. */
-  .issue-rail {
-    order: -1;
-    height: auto;
-    overflow: visible;
-    border-right: none;
-    border-bottom: 1px solid var(--line);
-  }
-
-  /* Dock height adapts to viewport height on narrow/short screens.
-     min(300px, 40vh): ≤300px always; shrinks on viewports shorter than 750px.
-     This overrides the base .issue-timeline-dock rule above. */
-  .issue-timeline-dock {
-    height: min(300px, 40vh);
-  }
+  .issue-detail-layout { grid-template-columns: 1fr; }
+  .issue-detail-nav, .issue-metadata-rail { position: static; }
+  .issue-detail-nav { order: -2; flex-direction: row; overflow-x: auto; }
+  .issue-detail-scroll { display: block; min-height: 0; }
+  .issue-metadata-rail { padding: 16px 0; }
 }
 
 /* ===========================================================================

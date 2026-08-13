@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Markdown } from "@/components/ui/markdown";
 
 export interface IssueDescriptionProps {
@@ -35,6 +35,13 @@ export function IssueDescription({ value, onSave }: IssueDescriptionProps) {
   useEffect(() => {
     if (isEditing) textareaRef.current?.focus();
   }, [isEditing]);
+
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea || !isEditing) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, [descriptionDraft, isEditing]);
 
   const handleSave = useCallback(() => {
     setIsEditing(false);
@@ -76,7 +83,8 @@ export function IssueDescription({ value, onSave }: IssueDescriptionProps) {
             style={{
               width: "100%",
               minHeight: 96,
-              maxHeight: "40vh",
+              overflowY: "hidden",
+              overflowX: "hidden",
               padding: "10px 12px",
               background: "var(--panel)",
               border: "1px solid var(--line)",
@@ -85,7 +93,7 @@ export function IssueDescription({ value, onSave }: IssueDescriptionProps) {
               fontSize: 13,
               lineHeight: 1.55,
               outline: "none",
-              resize: "vertical",
+              resize: "none",
               fontFamily: "Inter Tight",
               boxSizing: "border-box",
             }}
@@ -109,10 +117,10 @@ export function IssueDescription({ value, onSave }: IssueDescriptionProps) {
               minHeight: 56,
               // maxHeight: 240 removed — inner div scrolls via overflowY: auto;
               // top-zone outer scroll (flex:1/minHeight:0/overflowY:auto) lands in slice 2.
-              overflowY: "auto",
+              overflowY: "visible",
               // "clip" was clipping child <pre> horizontal scroll (ASCII/code-block bug).
               // "auto" lets wide code blocks scroll independently.
-              overflowX: "auto",
+              overflowX: "visible",
               padding: "10px 12px",
               background: "var(--panel)",
               border: "1px solid var(--line)",

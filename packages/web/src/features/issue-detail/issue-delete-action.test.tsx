@@ -49,6 +49,26 @@ describe("IssueDeleteAction", () => {
     expect(confirm).toBeEnabled();
   });
 
+  it("keeps real Tab focus inside the critical Redmine confirmation modal", async () => {
+    const { userEvent } = await import("@testing-library/user-event");
+    vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{} as DOMRect] as unknown as DOMRectList);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 1, height: 1 } as DOMRect);
+    renderAction({ priority: "critical", linked: true });
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    const dialog = screen.getByRole("dialog", { name: "Delete KAN-179?" });
+    const confirmation = screen.getByLabelText("Type KAN-179 to confirm");
+    const user = userEvent.setup();
+
+    confirmation.focus();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await user.tab();
+    expect(confirmation).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
   it("warns that linked Redmine deletion is queued rather than synchronous", () => {
     renderAction({ linked: true });
     fireEvent.click(screen.getByRole("button", { name: "More actions" }));
