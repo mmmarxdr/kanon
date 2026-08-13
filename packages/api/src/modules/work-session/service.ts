@@ -85,6 +85,7 @@ async function openOrRefreshSessionWindow(input: {
   issueId: string;
   userId: string;
   now: Date;
+  authoritativeStartedAt?: Date;
   createIdentity?: { memberId: string; source: string };
   sourceOverride?: string;
   via?: string | null;
@@ -272,6 +273,12 @@ async function openOrRefreshSessionWindow(input: {
               existing && existing.lastHeartbeat.getTime() > input.now.getTime()
                 ? existing.lastHeartbeat
                 : input.now;
+            const startedAt =
+              existing &&
+              input.authoritativeStartedAt &&
+              existing.startedAt.getTime() > input.authoritativeStartedAt.getTime()
+                ? input.authoritativeStartedAt
+                : undefined;
             const session = await tx.workSession.upsert({
               where: {
                 userId_issueId: { userId: input.userId, issueId: input.issueId },
@@ -285,6 +292,7 @@ async function openOrRefreshSessionWindow(input: {
                 lastHeartbeat: input.now,
               },
               update: {
+                ...(startedAt ? { startedAt } : {}),
                 lastHeartbeat: heartbeatAt,
                 ...(input.sourceOverride ? { source: input.sourceOverride } : {}),
               },
@@ -559,6 +567,7 @@ export async function startWork(
     issueId: issue.id,
     userId,
     now,
+    authoritativeStartedAt: opts?.transitionObservedAt,
     createIdentity: { memberId, source: sessionSource },
     sourceOverride: sessionSource,
     via,

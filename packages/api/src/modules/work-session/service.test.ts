@@ -192,7 +192,7 @@ describe("WorkSessionService", () => {
       expect(mockTransaction).toHaveBeenCalledOnce();
     });
 
-    it("does not regress a newer heartbeat when a delayed transition start arrives", async () => {
+    it("preserves an earlier transition start without regressing a newer heartbeat", async () => {
       const transitionAt = new Date("2026-08-11T12:00:00.000Z");
       const existing = {
         ...fakeSession,
@@ -201,9 +201,12 @@ describe("WorkSessionService", () => {
       };
       mockIssueFind.mockResolvedValue(fakeIssue);
       mockSessionFindUnique.mockResolvedValue(existing);
-      mockSessionUpsert.mockResolvedValue(existing);
+      mockSessionUpsert.mockResolvedValue({
+        ...existing,
+        startedAt: transitionAt,
+      });
 
-      await startWork(
+      const result = await startWork(
         "KAN-42",
         "member-1",
         "user-1",
@@ -217,9 +220,17 @@ describe("WorkSessionService", () => {
         },
       );
 
+      expect(result.session).toMatchObject({
+        id: existing.id,
+        startedAt: transitionAt,
+        lastHeartbeat: existing.lastHeartbeat,
+      });
       expect(mockSessionUpsert).toHaveBeenCalledWith(
         expect.objectContaining({
-          update: expect.objectContaining({ lastHeartbeat: existing.lastHeartbeat }),
+          update: expect.objectContaining({
+            startedAt: transitionAt,
+            lastHeartbeat: existing.lastHeartbeat,
+          }),
         }),
       );
       expect(mockSessionUpsert).not.toHaveBeenCalledWith(
