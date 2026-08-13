@@ -170,7 +170,7 @@ interface TransportOptions {
 type Transport = (
   url: string,
   options: TransportOptions,
-) => Promise<{ statusCode: number; body: { text(): Promise<string> } }>;
+) => Promise<{ statusCode: number; headers?: Record<string, string | string[] | undefined>; body: { text(): Promise<string> } }>;
 
 interface RedmineHttpClientOptions {
   endpointAllowlist?: Readonly<Record<string, readonly string[]>>;
@@ -200,6 +200,11 @@ function withAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
       },
     );
   });
+}
+
+export interface RedmineHttpResponse<T> {
+  readonly value: T;
+  readonly httpDate: string | readonly string[] | null;
 }
 
 export class RedmineHttpError extends Error {
@@ -237,8 +242,12 @@ export class RedmineHttpClient {
     this.sleep = options.sleep ?? defaultSleep;
   }
 
-  get<T>(path: string): Promise<T> {
-    return this.send<T>("GET", path);
+  async get<T>(path: string): Promise<T> {
+    return (await this.getWithResponse<T>(path)).value;
+  }
+
+  getWithResponse<T>(path: string): Promise<RedmineHttpResponse<T>> {
+    return this.send<T>("GET", path, undefined, undefined, true);
   }
 
   post<T>(path: string, body: unknown): Promise<T> {
@@ -257,7 +266,27 @@ export class RedmineHttpClient {
     return this.send<T>("DELETE", path);
   }
 
-  private async send<T>(method: Dispatcher.HttpMethod, path: string, value?: unknown, limit?: number): Promise<T> {
+  private send<T>(
+    method: Dispatcher.HttpMethod,
+    path: string,
+    value?: unknown,
+    limit?: number,
+    includeMetadata?: false,
+  ): Promise<T>;
+  private send<T>(
+    method: Dispatcher.HttpMethod,
+    path: string,
+    value: unknown | undefined,
+    limit: number | undefined,
+    includeMetadata: true,
+  ): Promise<RedmineHttpResponse<T>>;
+  private async send<T>(
+    method: Dispatcher.HttpMethod,
+    path: string,
+    value?: unknown,
+    limit?: number,
+    includeMetadata = false,
+  ): Promise<T | RedmineHttpResponse<T>> {
     const target = new URL(path.replace(/^\/+/, ""), this.baseUrl);
     if (target.origin !== this.baseUrl.origin) throw unsafe("request path changed origin");
 
@@ -276,6 +305,7 @@ export class RedmineHttpClient {
 
       let statusCode: number;
       let text: string;
+      let httpDate: string | readonly string[] | null = null;
       let dispatcher: Agent | undefined;
       try {
         const endpoint = await withAbort(
@@ -300,6 +330,8 @@ export class RedmineHttpClient {
           bodyTimeout: this.timeoutMs,
         });
         statusCode = response.statusCode;
+        const date = response.headers?.["date"];
+        httpDate = date === undefined ? null : date;
         text = await response.body.text();
       } finally {
         clearTimeout(timeout);
@@ -307,7 +339,8 @@ export class RedmineHttpClient {
       }
 
       if (statusCode >= 200 && statusCode < 300) {
-        return (text ? JSON.parse(text) : undefined) as T;
+        const parsed = (text ? JSON.parse(text) : undefined) as T;
+        return includeMetadata ? { value: parsed, httpDate } : parsed;
       }
       if ((statusCode === 429 || (statusCode >= 500 && statusCode <= 599)) && attempt + 1 < attempts) {
         await this.sleep(100 * 2 ** attempt);

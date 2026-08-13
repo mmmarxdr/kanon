@@ -2,8 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { RedmineHttpClient, RedmineHttpError } from "./http-client.js";
 
 const publicDns = async () => [{ address: "203.0.114.10", family: 4 } as const];
-const response = (statusCode: number, body = "") => ({
+const response = (statusCode: number, body = "", headers?: Record<string, string | string[]>) => ({
   statusCode,
+  headers,
   body: { text: vi.fn().mockResolvedValue(body) },
 });
 
@@ -29,6 +30,21 @@ describe("RedmineHttpClient", () => {
       bodyTimeout: 10_000,
     });
     expect(options.dispatcher).toBeDefined();
+  });
+
+  it("returns HTTP Date metadata separately from the decoded payload", async () => {
+    const transport = vi.fn().mockResolvedValue(response(200, '{"issues":[]}', {
+      date: "Tue, 04 Aug 2026 10:30:00 GMT",
+    }));
+    const client = new RedmineHttpClient("https://redmine.example", "secret", {
+      resolve: publicDns,
+      transport,
+    });
+
+    await expect(client.getWithResponse("/issues.json")).resolves.toEqual({
+      value: { issues: [] },
+      httpDate: "Tue, 04 Aug 2026 10:30:00 GMT",
+    });
   });
 
   it("serializes request bodies and does not retry non-idempotent creates", async () => {
