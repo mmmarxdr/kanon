@@ -79,6 +79,9 @@ describe("RedmineAuditSource", () => {
 
     const missingJournal = new RedmineAuditSource(client({ value: { issue: { ...issue, journals: [] } }, httpDate: "Tue, 04 Aug 2026 10:30:00 GMT" }), { remoteProjectId: "7" });
     await expect(missingJournal.readComment("42", "90")).resolves.toEqual({ kind: "not_visible_in_scope" });
+
+    const hiddenJournal = new RedmineAuditSource({ getWithResponse: async () => { throw new RedmineHttpError(403); } }, { remoteProjectId: "7" });
+    await expect(hiddenJournal.readComment("42", "90")).resolves.toEqual({ kind: "unknown", reasonCode: "unauthorized" });
   });
 });
 

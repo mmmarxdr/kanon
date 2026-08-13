@@ -1,6 +1,6 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
-import type { AuditCheckpoint, AuditObservation } from "./core/audit-evidence.js";
-import type { AuditCensusLease, AuditCensusPersistence } from "./audit.js";
+import type { AuditCheckpoint, AuditObservation, TerminalAuditTrustRead } from "./core/audit-evidence.js";
+import type { AuditCensusLease, AuditCensusPersistence, AuditTerminalPersistence } from "./audit.js";
 import { lockPollSnapshot, type BindingPollLease } from "./inbound.js";
 const MAX_AUDIT_REASON_LENGTH = 96;
 export type DurableAuditCensusLease = AuditCensusLease & BindingPollLease;
@@ -40,7 +40,8 @@ function boundedReason(reasonCode: string): string {
  * deliberately claims no additional mutex, so provider I/O and audit writes
  * share the existing binding fence.
  */
-export function createPrismaAuditCensusRepository(database: PrismaClient) {
+export function createPrismaAuditCensusRepository(database: PrismaClient, options: { readonly terminalFreshnessMs: number }) {
+  if (!Number.isSafeInteger(options.terminalFreshnessMs) || options.terminalFreshnessMs < 1) throw new RangeError("terminalFreshnessMs must be positive");
   async function loadOrCreateRun(lease: DurableAuditCensusLease): Promise<DurableAuditRun | null> {
     if (!hasCanonicalLeaseIdentity(lease)) return null;
     return database.$transaction(async (transaction) => {
@@ -128,13 +129,41 @@ export function createPrismaAuditCensusRepository(database: PrismaClient) {
       if (!clock) throw new Error("Database clock unavailable");
       await transaction.integrationAuditRun.update({
         where: { id: run.id },
-        data: { state: "complete", reasonCode: null, completedAt: clock.now },
+        data: { state: "complete", reasonCode: null, completedAt: clock.now, validUntil: new Date(clock.now.getTime() + options.terminalFreshnessMs) },
       });
       await transaction.integrationProjectBinding.update({
         where: { id: lease.bindingId },
         data: { auditCompletedAt: clock.now },
       });
       return true;
+    });
+  }
+
+  async function readTerminalTrust(lease: DurableAuditCensusLease): Promise<TerminalAuditTrustRead | null> {
+    if (!hasCanonicalLeaseIdentity(lease)) return null;
+    return database.$transaction(async (transaction) => {
+      if (!(await hasCurrentPollLease(transaction, lease))) return null;
+      const [clock] = await transaction.$queryRaw<Array<{ now: Date }>>(Prisma.sql`SELECT clock_timestamp() AS "now"`);
+      if (!clock) throw new Error("Database clock unavailable");
+      const run = await transaction.integrationAuditRun.findFirst({
+        where: {
+          bindingId: lease.bindingId,
+          scopeFingerprint: lease.scopeFingerprint,
+          state: "complete",
+          completedAt: { not: null },
+          validUntil: { gt: clock.now },
+        },
+        orderBy: { completedAt: "desc" },
+      });
+      return {
+        trust: run ? {
+          state: run.state,
+          completedAt: run.completedAt,
+          validUntil: run.validUntil,
+          scopeFingerprint: run.scopeFingerprint,
+        } : null,
+        databaseNow: clock.now,
+      };
     });
   }
 
@@ -166,5 +195,9 @@ export function createPrismaAuditCensusRepository(database: PrismaClient) {
     };
   }
 
-  return { loadOrCreateRun, commitIssue, finish, markFailed, persistence };
+  function terminalPersistence(lease: DurableAuditCensusLease): AuditTerminalPersistence {
+    return { readTerminalTrust: (currentLease) => currentLease === lease ? readTerminalTrust(lease) : Promise.resolve(null) };
+  }
+
+  return { loadOrCreateRun, commitIssue, finish, readTerminalTrust, markFailed, persistence, terminalPersistence };
 }

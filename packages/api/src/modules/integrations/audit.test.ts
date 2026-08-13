@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   isCompleteCurrentVisibleCensus,
   runRedmineAuditCensus,
+  verifyCurrentVisibleIdentity,
+  createHeldTerminalTrustVerifier,
   type AuditCensusLease,
   type AuditCensusPersistence,
   type AuditCensusSource,
@@ -224,5 +226,83 @@ describe("runRedmineAuditCensus", () => {
     const store = persistence({ current: [false] });
     await expect(runRedmineAuditCensus(source([["42"]]), store.result, lease, { maxPasses: 2, pageSize: 10 }))
       .resolves.toEqual({ kind: "unknown", reasonCode: "scope_or_fence_changed" });
+  });
+});
+
+describe("verifyCurrentVisibleIdentity", () => {
+  it("returns direct visible issue and scoped non-visibility only while the exact held terminal trust remains current", async () => {
+    const calls: string[] = [];
+    const source = {
+      async readIssue(issueId: string) {
+        calls.push(`issue:${issueId}`);
+        return { kind: "visible" as const, providerObservedAt: changedAt, issueId };
+      },
+      async readComment(issueId: string, journalId: string) {
+        calls.push(`comment:${issueId}:${journalId}`);
+        return { kind: "not_visible_in_scope" as const };
+      },
+    };
+    const terminal = {
+      async readTerminalTrust() {
+        return { trust: { state: "complete" as const, completedAt: changedAt, validUntil: new Date("2026-08-05T10:30:00Z"), scopeFingerprint: lease.scopeFingerprint }, databaseNow: new Date("2026-08-04T11:00:00Z") };
+      },
+    };
+
+    await expect(verifyCurrentVisibleIdentity(source, terminal, lease, { kind: "issue", issueId: "42" }))
+      .resolves.toEqual({ kind: "visible" });
+    await expect(verifyCurrentVisibleIdentity(source, terminal, lease, { kind: "comment", issueId: "42", journalId: "90" }))
+      .resolves.toEqual({ kind: "not_visible_in_scope" });
+    expect(calls).toEqual(["issue:42", "comment:42:90"]);
+  });
+
+  it("fails closed for stale evidence, fence or exact binding/configuration scope drift, and provider failures without reading provider content", async () => {
+    const source = {
+      async readIssue() { return { kind: "unknown" as const, reasonCode: "timeout" as const }; },
+      async readComment() { return { kind: "not_visible_in_scope" as const }; },
+    };
+    const trusted = { state: "complete" as const, completedAt: changedAt, validUntil: new Date("2026-08-05T10:30:00Z"), scopeFingerprint: lease.scopeFingerprint };
+    for (const evidence of [
+      null,
+      { ...trusted, state: "stale" as const },
+      { ...trusted, validUntil: new Date("2026-08-04T10:30:00Z") },
+      { ...trusted, scopeFingerprint: "different-binding-connection-credential-base-url-project" },
+    ]) {
+      await expect(verifyCurrentVisibleIdentity(source, { async readTerminalTrust() { return { trust: evidence, databaseNow: new Date("2026-08-04T11:00:00Z") }; } }, lease, { kind: "issue", issueId: "42" }))
+        .resolves.toEqual({ kind: "unknown" });
+    }
+    await expect(verifyCurrentVisibleIdentity(source, { async readTerminalTrust() { return { trust: trusted, databaseNow: new Date("2026-08-04T11:00:00Z") }; } }, lease, { kind: "issue", issueId: "42" }))
+      .resolves.toEqual({ kind: "unknown" });
+
+    let read = 0;
+    await expect(verifyCurrentVisibleIdentity({
+      async readIssue() { return { kind: "visible" as const, providerObservedAt: changedAt, issueId: "42" }; },
+      async readComment() { throw new Error("not reached"); },
+    }, {
+      async readTerminalTrust() {
+        return { trust: read++ === 0 ? trusted : { ...trusted, scopeFingerprint: "changed-after-direct-read" }, databaseNow: new Date("2026-08-04T11:00:00Z") };
+      },
+    }, lease, { kind: "issue", issueId: "42" })).resolves.toEqual({ kind: "unknown" });
+  });
+
+  it("obtains fresh database time after provider I/O so expiry crosses fail closed", async () => {
+    const trust = { state: "complete" as const, completedAt: changedAt, validUntil: new Date("2026-08-04T11:00:01Z"), scopeFingerprint: lease.scopeFingerprint };
+    const databaseTimes = [new Date("2026-08-04T11:00:00Z"), new Date("2026-08-04T11:00:01Z")];
+    await expect(verifyCurrentVisibleIdentity({
+      async readIssue() { return { kind: "visible" as const, providerObservedAt: changedAt, issueId: "42" }; },
+      async readComment() { throw new Error("not reached"); },
+    }, {
+      async readTerminalTrust() { return { trust, databaseNow: databaseTimes.shift()! }; },
+    }, lease, { kind: "issue", issueId: "42" })).resolves.toEqual({ kind: "unknown" });
+  });
+
+  it("composes one held terminal verifier from the Redmine source, durable repository seam, and lease", async () => {
+    const source = { async readIssue() { return { kind: "visible" as const, providerObservedAt: changedAt, issueId: "42" }; }, async readComment() { throw new Error("not reached"); } };
+    const persistence = { async readTerminalTrust() { return { trust: { state: "complete" as const, completedAt: changedAt, validUntil: new Date("2026-08-05T10:30:00Z"), scopeFingerprint: lease.scopeFingerprint }, databaseNow: new Date("2026-08-04T11:00:00Z") }; } };
+    const repository = { terminalPersistence: (heldLease: AuditCensusLease) => {
+      expect(heldLease).toBe(lease);
+      return persistence;
+    } };
+
+    await expect(createHeldTerminalTrustVerifier({ source: source as never, repository, lease })({ kind: "issue", issueId: "42" })).resolves.toEqual({ kind: "visible" });
   });
 });

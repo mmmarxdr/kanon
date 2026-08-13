@@ -30,6 +30,32 @@ export interface AuditObservation {
   readonly sourceUpdatedAt: Date;
 }
 
+/** Narrow, provider-content-free trust record used by terminal readers. */
+export interface TerminalAuditTrust {
+  readonly state: AuditRunState;
+  readonly completedAt: Date | null;
+  readonly validUntil: Date | null;
+  readonly scopeFingerprint: string;
+}
+
+export interface TerminalAuditTrustRead {
+  readonly trust: TerminalAuditTrust | null;
+  readonly databaseNow: Date;
+}
+
+/** Completion is evidence only while it is fresh and matches the held scope. */
+export function isCurrentTerminalAuditEvidence(
+  evidence: TerminalAuditTrust | null,
+  heldScopeFingerprint: string,
+  now: Date,
+): boolean {
+  return evidence?.state === "complete" &&
+    evidence.completedAt !== null &&
+    evidence.validUntil !== null &&
+    evidence.validUntil.getTime() > now.getTime() &&
+    evidence.scopeFingerprint === heldScopeFingerprint;
+}
+
 export function createAuditScopeFingerprint(scope: AuditScope): string {
   return createHash("sha256")
     .update(JSON.stringify([scope.bindingId, scope.connectionId, scope.normalizedBaseUrl, scope.remoteProjectId, scope.credentialId, scope.credentialFingerprint]))

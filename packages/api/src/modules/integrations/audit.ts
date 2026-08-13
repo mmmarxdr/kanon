@@ -1,7 +1,7 @@
-import type { AuditCheckpoint, AuditObservation, AuditRunState } from "./core/audit-evidence.js";
+import { isCurrentTerminalAuditEvidence, type AuditCheckpoint, type AuditObservation, type AuditRunState, type TerminalAuditTrustRead } from "./core/audit-evidence.js";
 import type { PollCheckpoint } from "./core/types.js";
 import type { DecodedRedmineIssue, RedmineIssueChange } from "./providers/redmine/decoder.js";
-import type { RedmineAuditFailureCode, RedmineAuditRead } from "./providers/redmine/audit-source.js";
+import type { RedmineAuditFailureCode, RedmineAuditIdentityRead, RedmineAuditRead, RedmineAuditSource } from "./providers/redmine/audit-source.js";
 
 export interface AuditCensusLease {
   readonly bindingId: string;
@@ -42,6 +42,27 @@ export interface AuditCensusOptions {
   readonly maxPasses: number;
 }
 
+export type AuditTerminalIdentity =
+  | { readonly kind: "issue"; readonly issueId: string }
+  | { readonly kind: "comment"; readonly issueId: string; readonly journalId: string };
+
+export type AuditTerminalResult = { readonly kind: "visible" | "not_visible_in_scope" | "unknown" };
+
+/** The repository rechecks the held binding poll fence and exact scope on every read. */
+export interface AuditTerminalPersistence {
+  readTerminalTrust(lease: AuditCensusLease): Promise<TerminalAuditTrustRead | null>;
+}
+
+/** Kept identity-only so consumers cannot receive provider content or credentials. */
+export interface AuditTerminalSource {
+  readIssue(issueId: string): Promise<RedmineAuditIdentityRead>;
+  readComment(issueId: string, journalId: string): Promise<RedmineAuditIdentityRead>;
+}
+
+export interface HeldTerminalTrustRepository {
+  terminalPersistence(lease: AuditCensusLease): AuditTerminalPersistence;
+}
+
 /** A durable run is complete only after its fenced census transition. */
 export function isCompleteCurrentVisibleCensus(run: {
   readonly state: AuditRunState;
@@ -49,6 +70,43 @@ export function isCompleteCurrentVisibleCensus(run: {
   readonly completedAt: Date | null;
 }): boolean {
   return run.state === "complete" && run.scopeFingerprint.length > 0 && run.completedAt !== null;
+}
+
+function terminalResult(read: RedmineAuditIdentityRead): AuditTerminalResult {
+  return read.kind === "visible" || read.kind === "not_visible_in_scope"
+    ? { kind: read.kind }
+    : { kind: "unknown" };
+}
+
+/**
+ * Directly reads one identity through the already-held Redmine client. It never
+ * turns a converged census, missing record, or missing journal into absence.
+ */
+export async function verifyCurrentVisibleIdentity(
+  source: AuditTerminalSource,
+  persistence: AuditTerminalPersistence,
+  lease: AuditCensusLease,
+  identity: AuditTerminalIdentity,
+): Promise<AuditTerminalResult> {
+  const before = await persistence.readTerminalTrust(lease);
+  if (!before || !isCurrentTerminalAuditEvidence(before.trust, lease.scopeFingerprint, before.databaseNow)) return { kind: "unknown" };
+  const read = identity.kind === "issue"
+    ? await source.readIssue(identity.issueId)
+    : await source.readComment(identity.issueId, identity.journalId);
+  const after = await persistence.readTerminalTrust(lease);
+  return after && isCurrentTerminalAuditEvidence(after.trust, lease.scopeFingerprint, after.databaseNow)
+    ? terminalResult(read)
+    : { kind: "unknown" };
+}
+
+/** Production seam: one held Redmine source, durable lease, and repository trust reader. */
+export function createHeldTerminalTrustVerifier(input: {
+  readonly source: RedmineAuditSource;
+  readonly repository: HeldTerminalTrustRepository;
+  readonly lease: AuditCensusLease;
+}): (identity: AuditTerminalIdentity) => Promise<AuditTerminalResult> {
+  const persistence = input.repository.terminalPersistence(input.lease);
+  return (identity) => verifyCurrentVisibleIdentity(input.source, persistence, input.lease, identity);
 }
 
 function unknown(reasonCode: Extract<AuditCensusResult, { readonly kind: "unknown" }>["reasonCode"]): AuditCensusResult {
