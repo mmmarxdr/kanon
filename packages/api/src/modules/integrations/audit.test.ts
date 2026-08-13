@@ -112,6 +112,72 @@ describe("runRedmineAuditCensus", () => {
     expect(store.committed[1]).toMatchObject({ observations: [{ identityType: "issue", remoteId: "42" }] });
   });
 
+  it("resumes inclusively from the saved checkpoint and retains the original provider observation time", async () => {
+    const committed: unknown[] = [];
+    const resumedAt = new Date("2026-08-04T10:30:00Z");
+    const laterAt = new Date("2026-08-04T10:31:00Z");
+    const store: AuditCensusPersistence = {
+      async loadRun() {
+        return {
+          checkpoint: { pass: 0, offset: 0, itemIndex: 0, expectedTotal: 2, lastIssueUpdatedAt: changedAt, lastIssueId: "42" },
+          providerObservedAt: resumedAt,
+        };
+      },
+      async isLeaseCurrent() { return true; },
+      async commitIssue(input) { committed.push(input); return true; },
+      async finish(input) { return input.providerObservedAt.getTime() === resumedAt.getTime(); },
+    };
+    const resumedSource: AuditCensusSource = {
+      async readPage(offset) {
+        expect(offset).toBe(0);
+        return { kind: "accepted", providerObservedAt: laterAt, value: {
+          changes: ["42", "43"].map((id) => ({ identity: { remoteId: id }, changedAt })), nextCheckpoint: null, hasMore: false,
+        } };
+      },
+      async readIssueDetail(issueId) {
+        return { kind: "accepted", providerObservedAt: laterAt, value: { issue: { identity: { remoteId: issueId }, changedAt }, comments: [], journalIds: [] } };
+      },
+    };
+
+    await expect(runRedmineAuditCensus(resumedSource, store, lease, { maxPasses: 2, pageSize: 10 }))
+      .resolves.toEqual({ kind: "complete-current-visible", scopeFingerprint: "scope-1" });
+    expect(committed).toHaveLength(4);
+    expect(committed[0]).toMatchObject({ providerObservedAt: resumedAt, checkpoint: { offset: 0, itemIndex: 0, lastIssueId: "42" } });
+    expect(committed[1]).toMatchObject({ providerObservedAt: resumedAt, checkpoint: { offset: 0, itemIndex: 1, lastIssueId: "43" } });
+    expect(laterAt.getTime()).not.toBe(resumedAt.getTime());
+  });
+
+  it("uses a saved nonzero offset only for the resumed partial pass before restarting convergence at zero", async () => {
+    const offsets: number[] = [];
+    const store: AuditCensusPersistence = {
+      async loadRun() {
+        return {
+          checkpoint: { pass: 0, offset: 1, itemIndex: 0, expectedTotal: 1, lastIssueUpdatedAt: changedAt, lastIssueId: "43" },
+          providerObservedAt: changedAt,
+        };
+      },
+      async isLeaseCurrent() { return true; },
+      async commitIssue() { return true; },
+      async finish() { return true; },
+    };
+    const resumedSource: AuditCensusSource = {
+      async readPage(offset) {
+        offsets.push(offset);
+        const ids = offset === 1 ? ["43"] : ["42", "43"];
+        return { kind: "accepted", providerObservedAt: changedAt, value: {
+          changes: ids.map((id) => ({ identity: { remoteId: id }, changedAt })), nextCheckpoint: null, hasMore: false,
+        } };
+      },
+      async readIssueDetail(issueId) {
+        return { kind: "accepted", providerObservedAt: changedAt, value: { issue: { identity: { remoteId: issueId }, changedAt }, comments: [], journalIds: [] } };
+      },
+    };
+
+    await expect(runRedmineAuditCensus(resumedSource, store, lease, { maxPasses: 2, pageSize: 10 }))
+      .resolves.toEqual({ kind: "unknown", reasonCode: "did_not_converge" });
+    expect(offsets).toEqual([1, 0]);
+  });
+
   it("keeps timeout, detail failure, and incomplete pages non-complete", async () => {
     const timeout: AuditCensusSource = {
       async readPage() { return { kind: "unknown", reasonCode: "timeout" }; },
@@ -135,9 +201,19 @@ describe("runRedmineAuditCensus", () => {
   });
 
   it("does not let bounded non-convergence become complete", async () => {
-    const result = await runRedmineAuditCensus(source([["42"], ["43"]]), persistence().result, lease, { maxPasses: 2, pageSize: 10 });
+    const store = persistence();
+    const result = await runRedmineAuditCensus(source([["42", "43"], ["42"], ["42"]]), store.result, lease, { maxPasses: 3, pageSize: 10 });
 
-    expect(result).toEqual({ kind: "unknown", reasonCode: "did_not_converge" });
+    expect(result).toEqual({ kind: "complete-current-visible", scopeFingerprint: "scope-1" });
+    expect(store.committed.at(-1)).toMatchObject({ replace: true, observations: [{ remoteId: "42" }] });
+  });
+
+  it("persists an empty converged census before it completes", async () => {
+    const store = persistence();
+    await expect(runRedmineAuditCensus(source([[], []]), store.result, lease, { maxPasses: 2, pageSize: 10 }))
+      .resolves.toEqual({ kind: "complete-current-visible", scopeFingerprint: "scope-1" });
+    expect(store.committed).toHaveLength(1);
+    expect(store.committed[0]).toMatchObject({ replace: true, observations: [], checkpoint: { expectedTotal: 0, lastIssueId: null } });
   });
 
   it("never treats partial, failed, stale, timeout, or scope-change outcomes as complete", async () => {

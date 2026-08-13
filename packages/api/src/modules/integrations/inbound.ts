@@ -96,7 +96,7 @@ export interface InboundSyncDependencies {
   readonly shouldStop?: () => boolean;
 }
 
-type ClaimedBinding = {
+export type BindingPollLease = {
   readonly id: string;
   readonly connectionId: string;
   readonly projectId: string;
@@ -112,6 +112,9 @@ type ClaimedBinding = {
   readonly encryptedKey: string;
   readonly credentialId: string;
   readonly credentialLastValidatedAt: Date | null;
+};
+
+type ClaimedBinding = BindingPollLease & {
   readonly actorMemberId: string;
 };
 
@@ -247,9 +250,9 @@ function outboundIssueIds(description: string | null): string[] {
   );
 }
 
-async function lockPollSnapshot(
+export async function lockPollSnapshot(
   transaction: Prisma.TransactionClient,
-  binding: ClaimedBinding,
+  binding: BindingPollLease,
 ) {
   await transaction.$queryRaw(
     Prisma.sql`SELECT "id" FROM "integration_connections" WHERE "id" = ${binding.connectionId}::uuid FOR UPDATE`,
@@ -270,6 +273,7 @@ async function lockPollSnapshot(
       inboundEnabled: true,
       bootstrapState: "ready",
       lifecycleEpoch: binding.lifecycleEpoch,
+      remoteProjectId: binding.remoteProjectId,
       pollLeaseToken: binding.pollLeaseToken,
       pollFence: binding.pollFence,
       connection: { lifecycle: "active" },
@@ -277,7 +281,7 @@ async function lockPollSnapshot(
     },
     include: {
       project: { select: { key: true } },
-      connection: { select: { serviceCredentialId: true, workspaceId: true } },
+      connection: { select: { serviceCredentialId: true, workspaceId: true, baseUrl: true } },
     },
   });
   if (!active) return null;
@@ -298,6 +302,7 @@ async function lockPollSnapshot(
   if (
     !credential ||
     active.connection.serviceCredentialId !== binding.credentialId ||
+    active.connection.baseUrl !== binding.baseUrl ||
     credential.connectionId !== binding.connectionId ||
     credential.encryptedKey !== binding.encryptedKey ||
     !sameValidation ||

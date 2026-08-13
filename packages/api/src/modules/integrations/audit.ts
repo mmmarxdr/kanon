@@ -11,6 +11,8 @@ export interface AuditCensusLease {
 }
 
 export interface AuditCensusPersistence {
+  /** Loads the partial run under the held lease so a restart can retain its checkpoint and observation time. */
+  loadRun?(lease: AuditCensusLease): Promise<{ readonly checkpoint: AuditCheckpoint | null; readonly providerObservedAt: Date | null } | null>;
   /** Must check the existing binding poll lease token/fence and exact claimed scope. */
   isLeaseCurrent(lease: AuditCensusLease): Promise<boolean>;
   /** Must atomically write observations and checkpoint behind that same poll fence. */
@@ -19,6 +21,8 @@ export interface AuditCensusPersistence {
     readonly providerObservedAt: Date;
     readonly observations: readonly AuditObservation[];
     readonly checkpoint: AuditCheckpoint;
+    /** Replace prior-pass evidence only as the converged pass is committed. */
+    readonly replace?: boolean;
   }): Promise<boolean>;
   /** Must conditionally mark the run complete behind the same fence and scope predicate. */
   finish(input: { readonly lease: AuditCensusLease; readonly providerObservedAt: Date }): Promise<boolean>;
@@ -70,15 +74,15 @@ function checkpoint(
   offset: number,
   itemIndex: number,
   expectedTotal: number,
-  issue: RedmineIssueChange,
+  issue?: RedmineIssueChange,
 ): AuditCheckpoint {
   return {
     pass,
     offset,
     itemIndex,
     expectedTotal,
-    lastIssueUpdatedAt: issue.changedAt,
-    lastIssueId: issue.identity.remoteId,
+    lastIssueUpdatedAt: issue?.changedAt ?? null,
+    lastIssueId: issue?.identity.remoteId ?? null,
   };
 }
 
@@ -102,32 +106,39 @@ export async function runRedmineAuditCensus(
   if (!Number.isSafeInteger(options.pageSize) || options.pageSize < 1) throw new RangeError("pageSize must be positive");
   if (!Number.isSafeInteger(options.maxPasses) || options.maxPasses < 2) throw new RangeError("maxPasses must be at least two");
 
+  const resumedRun = await persistence.loadRun?.(lease);
+  if (resumedRun === null) return unknown("scope_or_fence_changed");
+  const resumeOffset = resumedRun?.checkpoint?.offset ?? 0;
   let previousPass: string | null = null;
-  let providerObservedAt: Date | null = null;
+  let providerObservedAt: Date | null = resumedRun?.providerObservedAt ?? null;
   for (let pass = 0; pass < options.maxPasses; pass += 1) {
     const passObservations: AuditObservation[] = [];
-    let offset = 0;
+    let offset = pass === 0 ? resumeOffset : 0;
     let expectedTotal = 0;
+    let finalCheckpoint = checkpoint(pass, offset, 0, 0);
     let pageCheckpoint: PollCheckpoint | null = null;
+    let responseObservedAt: Date | null = null;
     do {
       if (!(await persistence.isLeaseCurrent(lease))) return unknown("scope_or_fence_changed");
       const page = await source.readPage(offset, options.pageSize, pageCheckpoint);
       if (page.kind !== "accepted") return unknown(page.reasonCode);
+      responseObservedAt ??= page.providerObservedAt;
       providerObservedAt ??= page.providerObservedAt;
-      if (page.providerObservedAt.getTime() !== providerObservedAt.getTime()) return unknown("malformed_response");
+      if (page.providerObservedAt.getTime() !== responseObservedAt.getTime()) return unknown("malformed_response");
       expectedTotal += page.value.changes.length;
       for (let itemIndex = 0; itemIndex < page.value.changes.length; itemIndex += 1) {
         if (!(await persistence.isLeaseCurrent(lease))) return unknown("scope_or_fence_changed");
         const issue = page.value.changes[itemIndex]!;
         const detail = await source.readIssueDetail(issue.identity.remoteId);
         if (detail.kind !== "accepted") return unknown(detail.kind === "unknown" ? detail.reasonCode : "detail_drift");
-        if (detail.providerObservedAt.getTime() !== providerObservedAt.getTime()) return unknown("malformed_response");
+        if (detail.providerObservedAt.getTime() !== responseObservedAt.getTime()) return unknown("malformed_response");
         const observations = normalizedObservations(detail.value);
         const nextCheckpoint = checkpoint(pass, offset, itemIndex, expectedTotal, issue);
-        if (!(await persistence.commitIssue({ lease, providerObservedAt, observations, checkpoint: nextCheckpoint }))) {
+        if (!(await persistence.commitIssue({ lease, providerObservedAt, observations, checkpoint: nextCheckpoint, replace: pass > 0 && passObservations.length === 0 }))) {
           return unknown("scope_or_fence_changed");
         }
         passObservations.push(...observations);
+        finalCheckpoint = nextCheckpoint;
       }
       offset += page.value.changes.length;
       pageCheckpoint = page.value.nextCheckpoint;
@@ -137,6 +148,9 @@ export async function runRedmineAuditCensus(
 
     const currentPass = fingerprint(passObservations);
     if (previousPass === currentPass) {
+      if (passObservations.length === 0 && !(await persistence.commitIssue({ lease, providerObservedAt: providerObservedAt!, observations: [], checkpoint: finalCheckpoint, replace: true }))) {
+        return unknown("scope_or_fence_changed");
+      }
       if (!(await persistence.isLeaseCurrent(lease)) || !(await persistence.finish({ lease, providerObservedAt: providerObservedAt! }))) {
         return unknown("scope_or_fence_changed");
       }
