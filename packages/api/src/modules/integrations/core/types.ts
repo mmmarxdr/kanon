@@ -1,5 +1,7 @@
 import type { IssuePriority, IssueState } from "@prisma/client";
 
+export type { AuditCheckpoint, AuditObservation, AuditRunState, AuditScope, TerminalAuditEvidenceState } from "./audit-evidence.js";
+
 export const CANONICAL_ENTITY_TYPES = [
   "project",
   "cycle",
