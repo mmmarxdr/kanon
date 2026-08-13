@@ -112,11 +112,15 @@ function selection(preview: PreviewEnvelope, retainedItemIds?: readonly string[]
     recommendations.flatMap((recommendation) =>
       recommendation.evidence.map((evidence) => evidence.evidenceRefId)),
   );
-  const sourceCandidates = [...new Map(
-    [...candidates, ...preview.candidates.filter((candidate) =>
-      candidate.evidence.some((evidence) => evidenceRefs.has(evidence.evidenceRefId)),
-    )].map((candidate) => [candidate.issueId, candidate] as const),
-  ).values()].sort((left, right) => left.issueId.localeCompare(right.issueId));
+  const sourceCandidateIds = new Set([
+    ...candidates.map((candidate) => candidate.issueId),
+    ...preview.candidates
+      .filter((candidate) => candidate.evidence.some((evidence) => evidenceRefs.has(evidence.evidenceRefId)))
+      .map((candidate) => candidate.issueId),
+  ]);
+  // Candidate rank is semantic preview evidence, unlike canonical retained IDs.
+  // Filter in the original preview order rather than lexicographically sorting UUIDs.
+  const sourceCandidates = preview.candidates.filter((candidate) => sourceCandidateIds.has(candidate.issueId));
   return {
     recommendations,
     candidates,
