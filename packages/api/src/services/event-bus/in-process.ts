@@ -13,6 +13,12 @@ export interface BusLogger {
   error(obj: unknown, msg?: string): void;
 }
 
+type DeliveryResult =
+  | { ok: true }
+  | { ok: false; error: unknown };
+
+const DELIVERED: DeliveryResult = { ok: true };
+
 /**
  * In-process event bus backed by Node.js EventEmitter.
  *
@@ -61,17 +67,7 @@ export class InProcessEventBus implements IEventBus {
   // ─── IEventBus ─────────────────────────────────────────────────────────
 
   emit(input: DomainEventInput): void {
-    const event: DomainEvent = {
-      ...input,
-      id: ++this.sequenceCounter,
-      timestamp: new Date().toISOString(),
-    };
-
-    // Push to replay buffer, evicting oldest if full
-    this.replayBuffer.push(event);
-    if (this.replayBuffer.length > REPLAY_BUFFER_SIZE) {
-      this.replayBuffer.shift();
-    }
+    const event = this.prepareEvent(input);
 
     // Fire to subscribers — per-subscriber isolation is applied at registration
     // time (see subscribe / subscribeToWorkspace). This outer guard is a last
@@ -82,6 +78,32 @@ export class InProcessEventBus implements IEventBus {
       this.logger.error(
         { err, eventType: event.type, eventId: event.id },
         "event-bus unhandled emit error",
+      );
+    }
+  }
+
+  /**
+   * Deliver an event and wait for every current subscriber to settle.
+   *
+   * Normal domain mutations use `emit()` and remain fire-and-forget. Durable
+   * outbox publishers use this acknowledgement-aware path so an async handler
+   * rejection leaves the database effect pending for a later retry.
+   */
+  async emitAndWait(input: DomainEventInput): Promise<void> {
+    const event = this.prepareEvent(input);
+    const listeners = this.emitter.listeners("domain_event") as Array<
+      (event: DomainEvent) => DeliveryResult | Promise<DeliveryResult>
+    >;
+    const results = await Promise.all(
+      listeners.map((listener) => Promise.resolve(listener(event))),
+    );
+    const failures = results.filter(
+      (result): result is Extract<DeliveryResult, { ok: false }> => !result.ok,
+    );
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures.map((failure) => failure.error),
+        "event-bus subscriber delivery failed",
       );
     }
   }
@@ -110,14 +132,16 @@ export class InProcessEventBus implements IEventBus {
     // exact registered reference. The filter comparison is inside its own
     // guard: a malformed event (unsafe cast at an emit site) must not abort
     // the emitter loop for later listeners.
-    const filtered = (event: DomainEvent): void => {
+    const filtered = (
+      event: DomainEvent,
+    ): DeliveryResult | Promise<DeliveryResult> => {
       try {
-        if (event.workspaceId !== workspaceId) return;
+        if (event.workspaceId !== workspaceId) return DELIVERED;
       } catch (err) {
         this.logSubscriberError(subscriberName, event, err);
-        return;
+        return { ok: false, error: err };
       }
-      safeHandler(event);
+      return safeHandler(event);
     };
 
     this.emitter.on("domain_event", filtered);
@@ -135,6 +159,19 @@ export class InProcessEventBus implements IEventBus {
 
   // ─── Private helpers ────────────────────────────────────────────────────
 
+  private prepareEvent(input: DomainEventInput): DomainEvent {
+    const event: DomainEvent = {
+      ...input,
+      id: ++this.sequenceCounter,
+      timestamp: new Date().toISOString(),
+    };
+    this.replayBuffer.push(event);
+    if (this.replayBuffer.length > REPLAY_BUFFER_SIZE) {
+      this.replayBuffer.shift();
+    }
+    return event;
+  }
+
   /**
    * Wraps a subscriber handler so that:
    * - Synchronous throws are caught and logged.
@@ -145,8 +182,8 @@ export class InProcessEventBus implements IEventBus {
   private wrapHandler(
     handler: (event: DomainEvent) => void,
     name: string,
-  ): (event: DomainEvent) => void {
-    return (event: DomainEvent): void => {
+  ): (event: DomainEvent) => DeliveryResult | Promise<DeliveryResult> {
+    return (event: DomainEvent): DeliveryResult | Promise<DeliveryResult> => {
       try {
         const result = handler(event) as unknown;
         // Thenable check (not instanceof Promise): a subscriber returning a
@@ -156,12 +193,18 @@ export class InProcessEventBus implements IEventBus {
           result != null &&
           typeof (result as { then?: unknown }).then === "function"
         ) {
-          Promise.resolve(result).catch((err: unknown) => {
-            this.logSubscriberError(name, event, err);
-          });
+          return Promise.resolve(result).then(
+            () => DELIVERED,
+            (err: unknown) => {
+              this.logSubscriberError(name, event, err);
+              return { ok: false, error: err };
+            },
+          );
         }
+        return DELIVERED;
       } catch (err) {
         this.logSubscriberError(name, event, err);
+        return { ok: false, error: err };
       }
     };
   }

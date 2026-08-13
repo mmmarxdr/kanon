@@ -15,10 +15,28 @@ vi.mock("../../config/prisma.js", () => ({
       delete: vi.fn(),
       deleteMany: vi.fn(),
     },
-    workLog: { create: vi.fn(), findMany: vi.fn() },
+    workLog: {
+      create: vi.fn(),
+      findUnique: vi.fn(),
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+      deleteMany: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    workTransitionLifecycle: {
+      create: vi.fn(),
+      delete: vi.fn(),
+      findFirst: vi.fn(),
+      findUnique: vi.fn(),
+      findMany: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+    },
     // KAN-103: startWork closes open interruptions (resume); incident-start opens them.
     // KAN-103 PR3: findMany added for pre-close query before emit.
     interruption: { updateMany: vi.fn(), create: vi.fn(), findMany: vi.fn() },
+    activityLog: { create: vi.fn() },
     $transaction: vi.fn(),
     $queryRaw: vi.fn(),
   },
@@ -26,7 +44,7 @@ vi.mock("../../config/prisma.js", () => ({
 
 // ── Mock eventBus ──────────────────────────────────────────────────────────
 vi.mock("../../services/event-bus/index.js", () => ({
-  eventBus: { emit: vi.fn() },
+  eventBus: { emit: vi.fn(), emitAndWait: vi.fn() },
 }));
 
 // ── Mock activity log ──────────────────────────────────────────────────────
@@ -38,6 +56,13 @@ vi.mock("../activity/service.js", () => ({
 vi.mock("../issue/service.js", () => ({
   transitionIssue: vi.fn(),
   updateIssue: vi.fn(),
+  publishStartWorkIssueMutationEffects: vi.fn(),
+}));
+
+vi.mock("../integrations/issue-tx.js", () => ({
+  resolveIssueCaptureContext: vi.fn(),
+  lockIssueCaptureBindingTx: vi.fn(),
+  captureIssueMutationTx: vi.fn(),
 }));
 
 vi.mock("../schedule/service.js", () => ({
@@ -47,7 +72,7 @@ vi.mock("../schedule/service.js", () => ({
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
 import {
-  captureTransitionInterval,
+  captureTransitionClose,
   stageTransitionStart,
   startWork,
   heartbeat,
@@ -56,7 +81,17 @@ import {
   cleanupExpired,
   recordInterruption,
 } from "./service.js";
-import { transitionIssue, updateIssue } from "../issue/service.js";
+import * as workSessionService from "./service.js";
+import {
+  publishStartWorkIssueMutationEffects,
+  transitionIssue,
+  updateIssue,
+} from "../issue/service.js";
+import {
+  captureIssueMutationTx,
+  lockIssueCaptureBindingTx,
+  resolveIssueCaptureContext,
+} from "../integrations/issue-tx.js";
 import { upsertPlan } from "../schedule/service.js";
 
 const mockIssueFind = vi.mocked(prisma.issue.findUnique);
@@ -73,8 +108,24 @@ const mockSessionDeleteMany = vi.mocked(prisma.workSession.deleteMany);
 const mockTransaction = vi.mocked(prisma.$transaction);
 const mockQueryRaw = vi.mocked(prisma.$queryRaw);
 const mockWorkLogCreate = vi.mocked(prisma.workLog.create);
+const mockWorkLogFindUnique = vi.mocked(prisma.workLog.findUnique);
+const mockWorkLogFindFirst = vi.mocked(prisma.workLog.findFirst);
+const mockWorkLogUpdate = vi.mocked(prisma.workLog.update);
+const mockLifecycleCreate = vi.mocked(prisma.workTransitionLifecycle.create);
+const mockLifecycleFindFirst = vi.mocked(prisma.workTransitionLifecycle.findFirst);
+const mockLifecycleFindUnique = vi.mocked(prisma.workTransitionLifecycle.findUnique);
+const mockLifecycleUpdate = vi.mocked(prisma.workTransitionLifecycle.update);
+const mockLifecycleUpdateMany = vi.mocked(prisma.workTransitionLifecycle.updateMany);
 const mockEmit = vi.mocked(eventBus.emit);
+const mockEmitAndWait = vi.mocked(eventBus.emitAndWait);
 const mockUpdateIssue = vi.mocked(updateIssue);
+const mockTransitionIssueGlobal = vi.mocked(transitionIssue);
+const mockPublishStartWorkIssueMutationEffects = vi.mocked(
+  publishStartWorkIssueMutationEffects,
+);
+const mockResolveIssueCaptureContext = vi.mocked(resolveIssueCaptureContext);
+const mockLockIssueCaptureBindingTx = vi.mocked(lockIssueCaptureBindingTx);
+const mockCaptureIssueMutationTx = vi.mocked(captureIssueMutationTx);
 const mockUpsertPlan = vi.mocked(upsertPlan);
 
 const fakeIssue = {
@@ -99,6 +150,21 @@ const fakeSession = {
   lastHeartbeat: new Date(),
 } as any;
 
+function mockLockedIssue(
+  state: string,
+  assigneeId: string | null = "existing",
+  owner: { username: string } | null = null,
+) {
+  mockQueryRaw.mockImplementation(async (query: any) => {
+    const sql = Array.isArray(query) ? query.join(" ") : String(query);
+    if (sql.includes("pg_advisory_xact_lock")) return [] as any;
+    if (sql.includes('SELECT "state"')) {
+      return [{ state, assigneeId }] as any;
+    }
+    return owner ? [owner] as any : [] as any;
+  });
+}
+
 const mockInterruptionFindManyGlobal = vi.mocked(prisma.interruption.findMany);
 const mockInterruptionUpdateManyGlobal = vi.mocked(prisma.interruption.updateMany);
 const mockInterruptionCreateGlobal = vi.mocked(prisma.interruption.create);
@@ -112,15 +178,29 @@ describe("WorkSessionService", () => {
     // KAN-160: default — no other active worker on the issue unless a test sets one.
     mockSessionFindFirst.mockResolvedValue(null as any);
     mockSessionFindMany.mockResolvedValue([] as any);
+    mockSessionUpdateMany.mockResolvedValue({ count: 1 } as any);
     mockSessionDeleteMany.mockResolvedValue({ count: 1 } as any);
     mockSessionCreate.mockResolvedValue(fakeSession);
     mockWorkLogCreate.mockResolvedValue({ id: "wl-default" } as any);
-    mockQueryRaw.mockResolvedValue([{ state: "in_progress" }] as any);
+    mockWorkLogFindUnique.mockResolvedValue(null as any);
+    mockWorkLogFindFirst.mockResolvedValue(null as any);
+    mockLifecycleFindFirst.mockResolvedValue(null as any);
+    mockLifecycleFindUnique.mockResolvedValue(null as any);
+    mockLifecycleUpdateMany.mockResolvedValue({ count: 1 } as any);
+    mockEmitAndWait.mockResolvedValue(undefined);
+    mockLockedIssue("in_progress");
     mockTransaction.mockImplementation(async (operation: any) => {
       if (typeof operation === "function") return operation(prisma);
       return Promise.all(operation);
     });
     mockUpdateIssue.mockResolvedValue({} as any);
+    mockIssueUpdate.mockResolvedValue(fakeIssue as any);
+    mockPublishStartWorkIssueMutationEffects.mockResolvedValue(undefined);
+    mockResolveIssueCaptureContext.mockResolvedValue(null);
+    mockLockIssueCaptureBindingTx.mockResolvedValue(undefined);
+    mockCaptureIssueMutationTx.mockImplementation(async (_tx, mutation) =>
+      mutation.result,
+    );
     mockUpsertPlan.mockResolvedValue({} as any);
   });
 
@@ -131,6 +211,87 @@ describe("WorkSessionService", () => {
   // ── startWork ──────────────────────────────────────────────────────────
 
   describe("startWork", () => {
+    it("does not auto-assign or transition when the issue-locked ownership check loses", async () => {
+      mockIssueFind.mockResolvedValue({
+        ...fakeIssue,
+        assigneeId: null,
+        state: "backlog",
+      });
+      // The advisory read races and sees no owner; the issue-locked transaction
+      // is authoritative and sees the winner before any caller-visible mutation.
+      mockSessionFindFirst.mockResolvedValue(null as any);
+      mockQueryRaw.mockImplementation(async (query: any) => {
+        const sql = Array.isArray(query) ? query.join(" ") : String(query);
+        if (sql.includes("pg_advisory_xact_lock")) return [] as any;
+        if (sql.includes('SELECT "state"')) {
+          return [{ state: "backlog", assigneeId: null }] as any;
+        }
+        return [{ username: "winner" }] as any;
+      });
+
+      await expect(
+        startWork("KAN-42", "member-loser", "user-loser", "mcp"),
+      ).rejects.toMatchObject({ statusCode: 409, code: "ISSUE_BUSY" });
+
+      expect(mockUpdateIssue).not.toHaveBeenCalled();
+      expect(mockTransitionIssueGlobal).not.toHaveBeenCalled();
+      expect(mockSessionUpsert).not.toHaveBeenCalled();
+      expect(mockSessionCreate).not.toHaveBeenCalled();
+    });
+
+    it("writes issue side effects and the session through the same reservation transaction", async () => {
+      const backlogIssue = {
+        ...fakeIssue,
+        assigneeId: null,
+        state: "backlog",
+      };
+      const advancedIssue = {
+        ...backlogIssue,
+        assigneeId: "member-1",
+        state: "in_progress",
+      };
+      mockIssueFind.mockResolvedValue(backlogIssue);
+      mockIssueUpdate.mockResolvedValue(advancedIssue as any);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      const transactionQueryRaw = vi.fn(async (query: any) => {
+        const sql = Array.isArray(query) ? query.join(" ") : String(query);
+        if (sql.includes("pg_advisory_xact_lock")) return [] as any;
+        if (sql.includes('SELECT "state"')) {
+          return [{ state: "backlog", assigneeId: null }] as any;
+        }
+        return [] as any;
+      });
+      mockTransaction.mockImplementation(async (operation: any) =>
+        operation({ ...prisma, $queryRaw: transactionQueryRaw }),
+      );
+
+      const result = await startWork(
+        "KAN-42",
+        "member-1",
+        "user-1",
+        "mcp",
+      );
+
+      expect(result.session).toEqual(fakeSession);
+      expect(mockIssueUpdate).toHaveBeenCalledWith({
+        where: { id: "issue-1" },
+        data: {
+          assigneeId: "member-1",
+          state: "in_progress",
+          completedAt: null,
+        },
+      });
+      expect(mockSessionUpsert).toHaveBeenCalledOnce();
+      expect(mockUpdateIssue).not.toHaveBeenCalled();
+      expect(mockTransitionIssueGlobal).not.toHaveBeenCalled();
+      const advisoryQuery = transactionQueryRaw.mock.calls
+        .map(([query]) => (Array.isArray(query) ? query.join(" ") : String(query)))
+        .find((sql) => sql.includes("pg_advisory_xact_lock"));
+      expect(advisoryQuery).toContain('SELECT 1::integer AS "locked"');
+      expect(advisoryQuery).toContain("FROM pg_advisory_xact_lock");
+      expect(mockQueryRaw).not.toHaveBeenCalled();
+    });
+
     it("creates a session and returns no warnings when no conflicts", async () => {
       mockIssueFind.mockResolvedValue(fakeIssue);
       mockSessionUpsert.mockResolvedValue(fakeSession);
@@ -192,19 +353,17 @@ describe("WorkSessionService", () => {
       expect(mockTransaction).toHaveBeenCalledOnce();
     });
 
-    it("preserves an earlier transition start without regressing a newer heartbeat", async () => {
+    it("does not backdate or refresh a later same-user generation without a close boundary", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-08-11T12:10:00.000Z"));
       const transitionAt = new Date("2026-08-11T12:00:00.000Z");
       const existing = {
         ...fakeSession,
-        startedAt: new Date("2026-08-11T12:01:00.000Z"),
-        lastHeartbeat: new Date("2026-08-11T12:04:00.000Z"),
+        startedAt: new Date("2026-08-11T12:08:00.000Z"),
+        lastHeartbeat: new Date("2026-08-11T12:09:00.000Z"),
       };
       mockIssueFind.mockResolvedValue(fakeIssue);
       mockSessionFindUnique.mockResolvedValue(existing);
-      mockSessionUpsert.mockResolvedValue({
-        ...existing,
-        startedAt: transitionAt,
-      });
 
       const result = await startWork(
         "KAN-42",
@@ -220,24 +379,76 @@ describe("WorkSessionService", () => {
         },
       );
 
-      expect(result.session).toMatchObject({
-        id: existing.id,
-        startedAt: transitionAt,
-        lastHeartbeat: existing.lastHeartbeat,
+      expect(result.session).toBeNull();
+      expect(mockSessionUpsert).not.toHaveBeenCalled();
+      expect(mockSessionUpdateMany).not.toHaveBeenCalled();
+      expect(mockSessionDeleteMany).not.toHaveBeenCalled();
+    });
+
+    it("rejects a delayed transition start when a foreign lease owned the event boundary", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-08-11T12:10:00.000Z"));
+      const transitionAt = new Date("2026-08-11T12:04:00.000Z");
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      // The processing-time advisory lookup no longer sees worker A, whose
+      // 12:03 heartbeat expired at 12:08.
+      mockSessionFindFirst.mockResolvedValue(null as any);
+      mockLockedIssue("in_progress", "existing", { username: "alice" });
+
+      const result = await startWork(
+        "KAN-42",
+        "member-b",
+        "user-b",
+        "transition-listener",
+        null,
+        undefined,
+        {
+          autoAssign: false,
+          onConflict: "skip",
+          transitionObservedAt: transitionAt,
+        },
+      );
+
+      expect(result.session).toBeNull();
+      expect(mockQueryRaw).toHaveBeenCalledTimes(3);
+      expect(mockSessionUpsert).not.toHaveBeenCalled();
+      expect(mockSessionCreate).not.toHaveBeenCalled();
+      expect(mockWorkLogCreate).not.toHaveBeenCalled();
+    });
+
+    it("rejects a delayed open when foreign live or finalized evidence begins after the event boundary", async () => {
+      vi.useFakeTimers();
+      const processingAt = new Date("2026-08-11T12:10:00.000Z");
+      vi.setSystemTime(processingAt);
+      const transitionAt = new Date("2026-08-11T12:00:00.000Z");
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindFirst.mockResolvedValue(null as any);
+      mockLockedIssue("in_progress", "existing", {
+        username: "later-owner",
       });
-      expect(mockSessionUpsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          update: expect.objectContaining({
-            startedAt: transitionAt,
-            lastHeartbeat: existing.lastHeartbeat,
-          }),
-        }),
+
+      const result = await startWork(
+        "KAN-42",
+        "member-a",
+        "user-a",
+        "transition-listener",
+        null,
+        undefined,
+        {
+          autoAssign: false,
+          onConflict: "skip",
+          transitionObservedAt: transitionAt,
+        },
       );
-      expect(mockSessionUpsert).not.toHaveBeenCalledWith(
-        expect.objectContaining({
-          update: expect.objectContaining({ lastHeartbeat: transitionAt }),
-        }),
-      );
+
+      expect(result.session).toBeNull();
+      const ownerQuery = mockQueryRaw.mock.calls[2]!;
+      expect(ownerQuery[0].join(" ")).toContain('FROM "work_sessions"');
+      expect(ownerQuery[0].join(" ")).toContain('FROM "work_logs"');
+      expect((ownerQuery[3] as any).strings.join(" ")).toContain("<");
+      expect((ownerQuery[3] as any).values).toEqual([processingAt]);
+      expect(mockSessionUpsert).not.toHaveBeenCalled();
+      expect(mockWorkLogCreate).not.toHaveBeenCalled();
     });
 
     it("finalizes an expired lease once before opening a distinct window", async () => {
@@ -287,7 +498,9 @@ describe("WorkSessionService", () => {
         lastHeartbeat: new Date("2026-08-11T12:00:00.000Z"),
       };
       const tx = {
-        $queryRaw: vi.fn().mockResolvedValue([{ state: "in_progress" }]),
+        $queryRaw: vi
+          .fn()
+          .mockResolvedValue([{ state: "in_progress", assigneeId: "existing" }]),
         workSession: {
           findUnique: vi.fn().mockResolvedValueOnce(stale).mockResolvedValueOnce(null),
           deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -337,7 +550,9 @@ describe("WorkSessionService", () => {
         lastHeartbeat: new Date("2026-08-11T12:10:00.000Z"),
       };
       const tx = {
-        $queryRaw: vi.fn().mockResolvedValue([{ state: "in_progress" }]),
+        $queryRaw: vi
+          .fn()
+          .mockResolvedValue([{ state: "in_progress", assigneeId: "existing" }]),
         workSession: {
           findUnique: vi.fn()
             .mockResolvedValueOnce(stale)
@@ -459,30 +674,30 @@ describe("WorkSessionService", () => {
     it("auto-assigns unassigned issue to the caller", async () => {
       const unassignedIssue = { ...fakeIssue, assigneeId: null };
       mockIssueFind.mockResolvedValue(unassignedIssue);
+      mockLockedIssue("in_progress", null);
       mockSessionUpsert.mockResolvedValue(fakeSession);
       mockSessionFindMany.mockResolvedValue([]);
 
       const result = await startWork("KAN-42", "member-1", "user-1", "mcp");
 
       expect(result.autoAssigned).toBe(true);
-      expect(mockUpdateIssue).toHaveBeenCalledWith(
-        "KAN-42",
-        { assigneeId: "member-1" },
-        "member-1",
-        null,
-      );
+      expect(mockIssueUpdate).toHaveBeenCalledWith({
+        where: { id: "issue-1" },
+        data: { assigneeId: "member-1" },
+      });
     });
 
     it("does not auto-assign when issue already has assignee", async () => {
       const assignedIssue = { ...fakeIssue, assigneeId: "someone-else" };
       mockIssueFind.mockResolvedValue(assignedIssue);
+      mockLockedIssue("in_progress", "someone-else");
       mockSessionUpsert.mockResolvedValue(fakeSession);
       mockSessionFindMany.mockResolvedValue([]);
 
       const result = await startWork("KAN-42", "member-1", "user-1", "mcp");
 
       expect(result.autoAssigned).toBe(false);
-      expect(mockUpdateIssue).not.toHaveBeenCalled();
+      expect(mockIssueUpdate).not.toHaveBeenCalled();
     });
 
     it("sets the current start date when work begins without a plan", async () => {
@@ -833,274 +1048,595 @@ describe("WorkSessionService", () => {
     });
   });
 
-  describe("captureTransitionInterval", () => {
-    it("writes exactly one positive WorkLog bounded by the active-entry and close timestamps", async () => {
+  describe("durable transition lifecycle", () => {
+    it("caps lifecycle completion at the active lease and closes incident interruptions atomically", async () => {
+      const startedAt = new Date("2026-08-11T12:00:00.000Z");
+      const lastHeartbeat = new Date("2026-08-11T12:01:00.000Z");
+      const observedAt = new Date("2026-08-11T12:10:00.000Z");
+      const leaseEndedAt = new Date("2026-08-11T12:06:00.000Z");
+      const waitingStart = {
+        id: "lifecycle-live-lease",
+        issueId: "issue-1",
+        source: "transition-listener",
+        startIdentity: "start-key",
+        closeIdentity: null,
+        startedAt,
+        endedAt: null,
+        memberId: "member-1",
+        userId: "user-1",
+        workLogId: null,
+        effectsClaimedAt: null,
+        effectClaimToken: null,
+        effectsEmittedAt: null,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      };
+      const paired = {
+        ...waitingStart,
+        closeIdentity: "close-key",
+        endedAt: observedAt,
+      };
+      const completed = { ...paired, workLogId: "wl-lease" };
+      const liveSession = {
+        ...fakeSession,
+        id: "session-live-lease",
+        startedAt,
+        lastHeartbeat,
+        transitionLifecycleId: waitingStart.id,
+      };
+      const interruption = {
+        id: "interruption-1",
+        incidentIssueId: "issue-1",
+        interruptedIssueId: "issue-interrupted",
+        memberId: "member-1",
+      };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockLifecycleFindUnique
+        .mockResolvedValueOnce(null as any)
+        .mockResolvedValueOnce({
+          ...completed,
+          workLog: {
+            id: "wl-lease",
+            durationS: 360,
+            reason: "expired",
+            endedAt: leaseEndedAt,
+          },
+          issue: {
+            id: "issue-1",
+            key: "KAN-42",
+            project: { workspaceId: "ws-1" },
+          },
+        } as any);
+      mockLifecycleFindFirst.mockResolvedValue(waitingStart as any);
+      mockLifecycleUpdate
+        .mockResolvedValueOnce(paired as any)
+        .mockResolvedValueOnce(completed as any);
+      mockSessionFindUnique.mockResolvedValue(liveSession);
+      mockSessionDeleteMany.mockResolvedValue({ count: 1 } as any);
+      mockWorkLogCreate.mockResolvedValue({ id: "wl-lease" } as any);
+      mockInterruptionFindManyGlobal.mockResolvedValue([interruption] as any);
+
+      await captureTransitionClose("KAN-42", observedAt);
+
+      expect(mockSessionDeleteMany).toHaveBeenCalledWith({
+        where: {
+          id: liveSession.id,
+          lastHeartbeat,
+        },
+      });
+      expect(mockWorkLogCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          startedAt,
+          endedAt: leaseEndedAt,
+          durationS: 360,
+          reason: "expired",
+        }),
+      });
+      expect(mockInterruptionUpdateManyGlobal).toHaveBeenCalledWith({
+        where: {
+          incidentIssueId: "issue-1",
+          memberId: "member-1",
+          endedAt: null,
+          startedAt: { lte: leaseEndedAt },
+        },
+        data: { endedAt: leaseEndedAt },
+      });
+      expect(mockEmitAndWait).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "interruption.closed",
+          payload: expect.objectContaining({ interruptionId: interruption.id }),
+        }),
+      );
+    });
+
+    it("publishes an exact WorkLog attached by an ordinary finalizer without duplicating it", async () => {
+      const startedAt = new Date("2026-08-11T12:00:00.000Z");
+      const observedAt = new Date("2026-08-11T12:04:00.000Z");
+      const existingWorkLog = {
+        id: "wl-existing-stop",
+        startedAt,
+        endedAt: new Date("2026-08-11T12:03:00.000Z"),
+        durationS: 180,
+        reason: "stopped",
+      };
+      const waitingStart = {
+        id: "lifecycle-finalized-elsewhere",
+        issueId: "issue-1",
+        source: "transition-listener",
+        startIdentity: "start-key",
+        closeIdentity: null,
+        startedAt,
+        endedAt: null,
+        memberId: "member-1",
+        userId: "user-1",
+        workLogId: existingWorkLog.id,
+        effectsClaimedAt: null,
+        effectClaimToken: null,
+        effectsEmittedAt: null,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      };
+      const paired = {
+        ...waitingStart,
+        closeIdentity: "close-key",
+        endedAt: observedAt,
+      };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockLifecycleFindUnique
+        .mockResolvedValueOnce(null as any)
+        .mockResolvedValue({
+          ...paired,
+          workLog: existingWorkLog,
+          issue: {
+            id: "issue-1",
+            key: "KAN-42",
+            project: { workspaceId: "ws-1" },
+          },
+        } as any);
+      mockLifecycleFindFirst.mockResolvedValue(waitingStart as any);
+      mockLifecycleUpdate.mockResolvedValueOnce(paired as any);
+      mockWorkLogFindUnique.mockResolvedValue(existingWorkLog as any);
+      mockSessionFindUnique.mockResolvedValue(null as any);
+
+      const result = await captureTransitionClose("KAN-42", observedAt);
+
+      expect(result.workLog).toEqual({ id: existingWorkLog.id });
+      expect(mockWorkLogCreate).not.toHaveBeenCalled();
+      expect(mockEmitAndWait).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "worklog.created" }),
+      );
+      expect(
+        mockLifecycleUpdateMany.mock.calls.some(
+          ([arg]) => (arg as any).data?.effectsEmittedAt,
+        ),
+      ).toBe(true);
+    });
+
+    it("corrects only the lifecycle-linked WorkLog and reopens its durable effects", async () => {
       const startedAt = new Date("2026-08-11T12:00:00.000Z");
       const observedAt = new Date("2026-08-11T12:02:00.000Z");
-      mockIssueFind.mockResolvedValue(fakeIssue);
-      mockWorkLogCreate.mockResolvedValue({ id: "wl-historical-transition" } as any);
-
-      const result = await captureTransitionInterval(
-        "KAN-42",
-        "user-1",
-        "member-1",
+      const provisionalEndedAt = new Date("2026-08-11T12:04:00.000Z");
+      const waitingStart = {
+        id: "lifecycle-provisional-close",
+        issueId: "issue-1",
+        source: "transition-listener",
+        startIdentity: "start-key-provisional",
+        closeIdentity: null,
         startedAt,
-        observedAt,
-        "transition-listener",
-      );
+        endedAt: null,
+        memberId: "member-1",
+        userId: "user-1",
+        workLogId: "wl-provisional-close",
+        effectsClaimedAt: provisionalEndedAt,
+        effectClaimToken: "a677ad73-0e02-46cc-9cc7-8fb1189c5051",
+        effectsEmittedAt: provisionalEndedAt,
+        createdAt: startedAt,
+        updatedAt: provisionalEndedAt,
+      };
+      const paired = {
+        ...waitingStart,
+        closeIdentity: "close-key-authoritative",
+        endedAt: observedAt,
+      };
+      const corrected = {
+        ...paired,
+        effectsClaimedAt: null,
+        effectClaimToken: null,
+        effectsEmittedAt: null,
+      };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockLifecycleFindUnique
+        .mockResolvedValueOnce(null as any)
+        .mockResolvedValueOnce({
+          ...corrected,
+          workLog: {
+            id: waitingStart.workLogId,
+            durationS: 120,
+            reason: "stopped",
+            endedAt: observedAt,
+          },
+          issue: {
+            id: "issue-1",
+            key: "KAN-42",
+            project: { workspaceId: "ws-1" },
+          },
+        } as any);
+      mockLifecycleFindFirst.mockResolvedValue(waitingStart as any);
+      mockLifecycleUpdate
+        .mockResolvedValueOnce(paired as any)
+        .mockResolvedValueOnce(corrected as any);
+      mockWorkLogFindUnique.mockResolvedValue({
+        startedAt,
+        endedAt: provisionalEndedAt,
+      } as any);
+      mockWorkLogUpdate.mockResolvedValue({ id: waitingStart.workLogId } as any);
 
-      expect(result.workLog).toEqual({ id: "wl-historical-transition", durationS: 120 });
-      expect(mockWorkLogCreate).toHaveBeenCalledOnce();
-      expect(mockWorkLogCreate).toHaveBeenCalledWith({
+      const result = await captureTransitionClose("KAN-42", observedAt);
+
+      expect(result.workLog).toEqual({ id: waitingStart.workLogId });
+      expect(mockWorkLogUpdate).toHaveBeenCalledOnce();
+      expect(mockWorkLogUpdate).toHaveBeenCalledWith({
+        where: { id: waitingStart.workLogId },
         data: {
-          startedAt,
           endedAt: observedAt,
           durationS: 120,
           reason: "stopped",
-          via: null,
+        },
+      });
+      expect(mockWorkLogCreate).not.toHaveBeenCalled();
+      expect(mockLifecycleUpdate).toHaveBeenNthCalledWith(2, {
+        where: { id: waitingStart.id },
+        data: {
+          effectsClaimedAt: null,
+          effectClaimToken: null,
+          effectsEmittedAt: null,
+        },
+      });
+      expect(mockEmitAndWait).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "work_session.ended",
+          payload: expect.objectContaining({
+            workLogId: waitingStart.workLogId,
+            durationS: 120,
+          }),
+        }),
+      );
+    });
+
+    it("does not link an unrelated same-user WorkLog that merely overlaps the lifecycle start", async () => {
+      const startedAt = new Date("2026-08-11T12:00:00.000Z");
+      const observedAt = new Date("2026-08-11T12:04:00.000Z");
+      const unrelatedWorkLog = {
+        id: "wl-overlapping-other-generation",
+        startedAt: new Date("2026-08-11T11:59:00.000Z"),
+        endedAt: new Date("2026-08-11T12:01:00.000Z"),
+        durationS: 120,
+        reason: "stopped",
+      };
+      const waitingStart = {
+        id: "lifecycle-exact-generation",
+        issueId: "issue-1",
+        source: "transition-listener",
+        startIdentity: "start-key-exact",
+        closeIdentity: null,
+        startedAt,
+        endedAt: null,
+        memberId: "member-1",
+        userId: "user-1",
+        workLogId: null,
+        effectsClaimedAt: null,
+        effectClaimToken: null,
+        effectsEmittedAt: null,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      };
+      const paired = {
+        ...waitingStart,
+        closeIdentity: "close-key-exact",
+        endedAt: observedAt,
+      };
+      const completed = { ...paired, workLogId: "wl-exact-generation" };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockLifecycleFindUnique
+        .mockResolvedValueOnce(null as any)
+        .mockResolvedValue({
+          ...completed,
+          workLog: {
+            id: "wl-exact-generation",
+            durationS: 240,
+            reason: "stopped",
+            endedAt: observedAt,
+          },
+          issue: {
+            id: "issue-1",
+            key: "KAN-42",
+            project: { workspaceId: "ws-1" },
+          },
+        } as any);
+      mockLifecycleFindFirst.mockResolvedValue(waitingStart as any);
+      mockLifecycleUpdate
+        .mockResolvedValueOnce(paired as any)
+        .mockResolvedValueOnce(completed as any);
+      mockSessionFindUnique.mockResolvedValue(null as any);
+      mockWorkLogFindFirst.mockResolvedValue(unrelatedWorkLog as any);
+      mockWorkLogCreate.mockResolvedValue({ id: "wl-exact-generation" } as any);
+
+      const result = await captureTransitionClose("KAN-42", observedAt);
+
+      expect(result.workLog).toEqual({ id: "wl-exact-generation" });
+      expect(mockWorkLogCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          startedAt,
+          endedAt: observedAt,
           issueId: "issue-1",
           memberId: "member-1",
-        },
-      });
-    });
-  });
-
-  describe("stageTransitionStart", () => {
-    it("does not let expired or historical rows hide active foreign ownership", async () => {
-      const startedAt = new Date("2026-08-11T12:10:00.000Z");
-      const historical = {
-        ...fakeSession,
-        id: "historical-session-worker-c",
-        userId: "user-c",
-        memberId: "member-c",
-        source: "historical-transition:transition-listener",
-        startedAt: new Date("2026-08-11T11:55:00.000Z"),
-        lastHeartbeat: new Date("2026-08-11T11:55:00.000Z"),
-      };
-      const expiredForeign = {
-        ...fakeSession,
-        id: "expired-session-worker-b",
-        userId: "user-b",
-        memberId: "member-b",
-        startedAt: new Date("2026-08-11T12:00:00.000Z"),
-        lastHeartbeat: new Date("2026-08-11T12:04:00.000Z"),
-      };
-      const activeForeign = {
-        ...fakeSession,
-        id: "active-session-worker-d",
-        userId: "user-d",
-        memberId: "member-d",
-        startedAt: new Date("2026-08-11T12:02:00.000Z"),
-        lastHeartbeat: new Date("2026-08-11T12:09:00.000Z"),
-      };
-      mockIssueFind.mockResolvedValue(fakeIssue);
-      mockSessionFindFirst.mockResolvedValue(expiredForeign as any);
-      mockSessionFindMany.mockResolvedValue([
-        historical,
-        expiredForeign,
-        activeForeign,
-      ] as any);
-
-      const result = await stageTransitionStart(
-        "KAN-42",
-        "user-a",
-        "member-a",
-        startedAt,
-      );
-
-      expect(result.session).toBeNull();
-      expect(mockSessionFindMany).toHaveBeenCalledWith({
-        where: { issueId: "issue-1" },
-        orderBy: [{ startedAt: "asc" }, { id: "asc" }],
-      });
-      expect(mockSessionDeleteMany).not.toHaveBeenCalled();
-      expect(mockWorkLogCreate).not.toHaveBeenCalled();
-      expect(mockSessionCreate).not.toHaveBeenCalled();
-      expect(mockEmit).not.toHaveBeenCalled();
-    });
-
-    it("persists exact historical start evidence without overlapping another worker", async () => {
-      mockIssueFind.mockResolvedValue({ id: "issue-1" } as any);
-      mockSessionFindMany.mockResolvedValue([{
-        ...fakeSession,
-        id: "session-worker-b",
-        userId: "user-b",
-        memberId: "member-b",
-      }] as any);
-
-      const result = await stageTransitionStart(
-        "KAN-42",
-        "user-a",
-        "member-a",
-        new Date("2026-08-11T12:00:00.000Z"),
-      );
-
-      expect(result.session).toBeNull();
-      expect(mockSessionCreate).not.toHaveBeenCalled();
-    });
-
-    it("finalizes an expired foreign lease before staging a distinct historical marker", async () => {
-      const startedAt = new Date("2026-08-11T12:10:00.000Z");
-      const expiredForeign = {
-        ...fakeSession,
-        id: "session-worker-b",
-        userId: "user-b",
-        memberId: "member-b",
-        startedAt: new Date("2026-08-11T12:00:00.000Z"),
-        lastHeartbeat: new Date("2026-08-11T12:04:00.000Z"),
-      };
-      const staged = {
-        ...fakeSession,
-        id: "historical-session-worker-a",
-        userId: "user-a",
-        memberId: "member-a",
-        source: "historical-transition:transition-listener",
-        startedAt,
-        lastHeartbeat: startedAt,
-      };
-      mockIssueFind.mockResolvedValue(fakeIssue);
-      mockSessionFindMany.mockResolvedValue([expiredForeign] as any);
-      mockWorkLogCreate.mockResolvedValue({ id: "wl-worker-b" } as any);
-      mockSessionCreate.mockResolvedValue(staged);
-
-      const result = await stageTransitionStart(
-        "KAN-42",
-        "user-a",
-        "member-a",
-        startedAt,
-      );
-
-      expect(result.session).toEqual(staged);
-      expect(mockSessionDeleteMany).toHaveBeenCalledOnce();
-      expect(mockSessionDeleteMany).toHaveBeenCalledWith({
-        where: {
-          id: expiredForeign.id,
-          lastHeartbeat: expiredForeign.lastHeartbeat,
-        },
-      });
-      expect(mockWorkLogCreate).toHaveBeenCalledOnce();
-      expect(mockWorkLogCreate).toHaveBeenCalledWith({
-        data: {
-          startedAt: expiredForeign.startedAt,
-          endedAt: new Date("2026-08-11T12:09:00.000Z"),
-          durationS: 540,
-          reason: "expired",
-          via: null,
-          issueId: "issue-1",
-          memberId: "member-b",
-        },
-      });
-      expect(mockSessionCreate).toHaveBeenCalledOnce();
-      expect(mockSessionCreate).toHaveBeenCalledWith({
-        data: {
-          userId: "user-a",
-          issueId: "issue-1",
-          memberId: "member-a",
-          source: "historical-transition:transition-listener",
-          startedAt,
-          lastHeartbeat: startedAt,
-        },
-      });
-    });
-
-    it("marks staged transition evidence as historical rather than renewable work", async () => {
-      const startedAt = new Date("2026-08-11T12:00:00.000Z");
-      mockIssueFind.mockResolvedValue({ id: "issue-1" } as any);
-      mockSessionFindMany.mockResolvedValue([]);
-      mockSessionCreate.mockResolvedValue({
-        ...fakeSession,
-        source: "historical-transition:transition-listener",
-        startedAt,
-        lastHeartbeat: startedAt,
-      });
-
-      await stageTransitionStart("KAN-42", "user-1", "member-1", startedAt);
-
-      expect(mockSessionCreate).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          source: "historical-transition:transition-listener",
-          startedAt,
-          lastHeartbeat: startedAt,
         }),
       });
     });
 
-    it("keeps a later same-user start in a distinct generation", async () => {
-      vi.useFakeTimers();
-      vi.setSystemTime(new Date("2026-08-11T12:02:00.000Z"));
-      const historical = {
+    it("keeps ordinary-stop effects recoverable when async delivery fails", async () => {
+      const startedAt = new Date("2026-08-11T12:00:00.000Z");
+      const stoppedAt = new Date("2026-08-11T12:02:00.000Z");
+      const transitionSession = {
         ...fakeSession,
-        id: "historical-session",
-        source: "historical-transition:transition-listener",
-        startedAt: new Date("2026-08-11T12:00:00.000Z"),
-        lastHeartbeat: new Date("2026-08-11T12:00:00.000Z"),
+        id: "session-transition-generation",
+        source: "transition-listener",
+        startedAt,
+        lastHeartbeat: stoppedAt,
+        transitionLifecycleId: "lifecycle-transition-generation",
       };
-      const live = {
-        ...fakeSession,
-        id: "live-session",
-        source: "mcp",
-        startedAt: new Date("2026-08-11T12:02:00.000Z"),
-        lastHeartbeat: new Date("2026-08-11T12:02:00.000Z"),
-      };
-      mockIssueFind.mockResolvedValue(fakeIssue);
-      mockSessionFindUnique.mockResolvedValue(historical);
-      mockSessionCreate.mockResolvedValue(live);
-      mockWorkLogCreate.mockResolvedValue({ id: "wl-historical" } as any);
-
-      const result = await startWork("KAN-42", "member-1", "user-1", "mcp");
-
-      expect(result.session).toEqual(live);
-      expect(mockSessionUpsert).not.toHaveBeenCalled();
-      expect(mockSessionDeleteMany).toHaveBeenCalledWith({
-        where: { id: historical.id, lastHeartbeat: historical.lastHeartbeat },
-      });
-      expect(mockWorkLogCreate).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          startedAt: historical.startedAt,
-          endedAt: new Date("2026-08-11T12:02:00.000Z"),
+      const lifecycle = {
+        id: "lifecycle-transition-generation",
+        issueId: "issue-1",
+        source: "transition-listener",
+        startIdentity: "start-key-stop",
+        closeIdentity: null,
+        startedAt,
+        endedAt: null,
+        memberId: "member-1",
+        userId: "user-1",
+        workLogId: "wl-stop-durable",
+        effectsClaimedAt: null,
+        effectClaimToken: null,
+        effectsEmittedAt: null,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+        workLog: {
+          id: "wl-stop-durable",
           durationS: 120,
-        }),
-      });
-      expect(mockSessionCreate).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          startedAt: new Date("2026-08-11T12:02:00.000Z"),
-          lastHeartbeat: new Date("2026-08-11T12:02:00.000Z"),
-        }),
-      });
-    });
-
-    it("does not let historical evidence block another worker", async () => {
-      mockIssueFind.mockResolvedValue(fakeIssue);
-      mockSessionFindMany.mockResolvedValue([]);
-      mockSessionUpsert.mockResolvedValue(fakeSession);
-
-      await startWork("KAN-42", "member-2", "user-2", "mcp");
-
-      expect(mockSessionFindFirst).toHaveBeenCalledWith({
-        where: expect.objectContaining({
-          issueId: "issue-1",
-          userId: { not: "user-2" },
-          NOT: {
-            source: { startsWith: "historical-transition:" },
-          },
-        }),
-        select: { member: { select: { username: true } } },
-      });
-    });
-
-    it("retries serialization failures before durably staging the exact boundary", async () => {
-      const startedAt = new Date("2026-08-11T12:00:00.000Z");
-      const staged = {
-        ...fakeSession,
-        id: "historical-session",
-        startedAt,
-        lastHeartbeat: startedAt,
+          reason: "stopped",
+          endedAt: stoppedAt,
+        },
+        issue: {
+          id: "issue-1",
+          key: "KAN-42",
+          project: { workspaceId: "ws-1" },
+        },
       };
-      mockIssueFind.mockResolvedValue({ id: "issue-1" } as any);
-      mockSessionFindFirst.mockResolvedValue(null);
-      mockSessionCreate.mockResolvedValue(staged);
-      const conflict = new Error("transient storage failure");
-      mockTransaction.mockRejectedValueOnce(conflict).mockRejectedValueOnce(conflict);
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(transitionSession);
+      mockWorkLogCreate.mockResolvedValue({
+        id: "wl-stop-durable",
+        durationS: 120,
+      } as any);
+      mockLifecycleFindFirst.mockResolvedValue({
+        id: lifecycle.id,
+      } as any);
+      mockLifecycleFindUnique.mockResolvedValue(lifecycle as any);
+      mockEmitAndWait.mockRejectedValueOnce(new Error("subscriber failed"));
+
+      const result = await stopWork(
+        "KAN-42",
+        "user-1",
+        "member-1",
+        null,
+        stoppedAt,
+        transitionSession.id,
+      );
+
+      expect(result.workLog).toEqual({ id: "wl-stop-durable", durationS: 120 });
+      expect(mockLifecycleUpdateMany).toHaveBeenCalledWith({
+        where: {
+          id: lifecycle.id,
+          workLogId: null,
+        },
+        data: { workLogId: "wl-stop-durable" },
+      });
+      expect(
+        mockLifecycleUpdateMany.mock.calls.some(
+          ([arg]) => (arg as any).data?.effectsEmittedAt,
+        ),
+      ).toBe(false);
+      expect(mockEmit).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: "worklog.created" }),
+      );
+    });
+
+    it("preserves and rebases a session refreshed after an older close boundary", async () => {
+      const startedAt = new Date("2026-08-11T12:00:00.000Z");
+      const observedAt = new Date("2026-08-11T12:04:00.000Z");
+      const refreshedAt = new Date("2026-08-11T12:05:00.000Z");
+      const waitingStart = {
+        id: "lifecycle-old-close",
+        issueId: "issue-1",
+        source: "transition-listener",
+        startIdentity: "start-key",
+        closeIdentity: null,
+        startedAt,
+        endedAt: null,
+        memberId: "member-1",
+        userId: "user-1",
+        workLogId: null,
+        effectsClaimedAt: null,
+        effectClaimToken: null,
+        effectsEmittedAt: null,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      };
+      const paired = {
+        ...waitingStart,
+        closeIdentity: "close-key",
+        endedAt: observedAt,
+      };
+      const completed = { ...paired, workLogId: "wl-old-generation" };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockLifecycleFindUnique
+        .mockResolvedValueOnce(null as any)
+        .mockResolvedValueOnce({
+          ...completed,
+          workLog: {
+            id: "wl-old-generation",
+            durationS: 240,
+            reason: "stopped",
+            endedAt: observedAt,
+          },
+          issue: {
+            id: "issue-1",
+            key: "KAN-42",
+            project: { workspaceId: "ws-1" },
+          },
+        } as any);
+      mockLifecycleFindFirst.mockResolvedValue(waitingStart as any);
+      mockLifecycleUpdate
+        .mockResolvedValueOnce(paired as any)
+        .mockResolvedValueOnce(completed as any);
+      mockSessionFindUnique.mockResolvedValue({
+        ...fakeSession,
+        id: "session-refreshed",
+        startedAt,
+        lastHeartbeat: refreshedAt,
+        transitionLifecycleId: waitingStart.id,
+      });
+      mockWorkLogCreate.mockResolvedValue({ id: "wl-old-generation" } as any);
+
+      await captureTransitionClose("KAN-42", observedAt);
+
+      expect(mockSessionDeleteMany).not.toHaveBeenCalled();
+      expect(mockSessionUpdateMany).toHaveBeenCalledWith({
+        where: {
+          id: "session-refreshed",
+          lastHeartbeat: refreshedAt,
+          startedAt,
+        },
+        data: {
+          startedAt: refreshedAt,
+          transitionLifecycleId: null,
+        },
+      });
+      expect(mockWorkLogCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          startedAt,
+          endedAt: observedAt,
+          durationS: 240,
+        }),
+      });
+    });
+
+    it("releases an effect claim when an async subscriber rejects", async () => {
+      const completed = {
+        id: "lifecycle-pending-effect",
+        issueId: "issue-1",
+        source: "transition-listener",
+        startIdentity: "start-key",
+        closeIdentity: "close-key",
+        startedAt: new Date("2026-08-11T12:00:00.000Z"),
+        endedAt: new Date("2026-08-11T12:01:00.000Z"),
+        memberId: "member-1",
+        userId: "user-1",
+        workLogId: "wl-pending-effect",
+        effectsClaimedAt: null,
+        effectClaimToken: null,
+        effectsEmittedAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        workLog: {
+          id: "wl-pending-effect",
+          durationS: 60,
+          reason: "stopped",
+          endedAt: new Date("2026-08-11T12:01:00.000Z"),
+        },
+        issue: {
+          id: "issue-1",
+          key: "KAN-42",
+          project: { workspaceId: "ws-1" },
+        },
+      };
+      mockLifecycleFindUnique.mockResolvedValue(completed as any);
+      mockLifecycleFindUnique.mockResolvedValue(completed as any);
+      mockLifecycleUpdateMany
+        .mockResolvedValueOnce({ count: 1 } as any)
+        .mockResolvedValueOnce({ count: 1 } as any);
+      mockEmitAndWait.mockRejectedValueOnce(new Error("subscriber failed"));
+
+      await (workSessionService as any).drainTransitionLifecycleEffects([
+        completed.id,
+      ]);
+
+      expect(mockLifecycleUpdateMany).toHaveBeenLastCalledWith({
+        where: {
+          id: completed.id,
+          effectClaimToken: expect.any(String),
+          effectsEmittedAt: null,
+        },
+        data: { effectsClaimedAt: null, effectClaimToken: null },
+      });
+      expect(
+        mockLifecycleUpdateMany.mock.calls.some(
+          ([arg]) => (arg as any).data?.effectsEmittedAt,
+        ),
+      ).toBe(false);
+    });
+
+    it("pairs a delayed start with a close boundary that was durably recorded first", async () => {
+      const startedAt = new Date("2026-08-11T12:00:00.000Z");
+      const endedAt = new Date("2026-08-11T12:01:00.000Z");
+      const closeOnly = {
+        id: "lifecycle-close-first",
+        issueId: "issue-1",
+        source: "transition-listener",
+        startIdentity: null,
+        closeIdentity: "close-key",
+        startedAt: null,
+        endedAt,
+        memberId: null,
+        userId: null,
+        workLogId: null,
+        effectsClaimedAt: null,
+        effectClaimToken: null,
+        effectsEmittedAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      const paired = {
+        ...closeOnly,
+        startIdentity: "start-key",
+        startedAt,
+        memberId: "member-1",
+        userId: "user-1",
+      };
+      const completed = {
+        ...paired,
+        workLogId: "wl-close-first",
+      };
+      const publisherRow = {
+        ...completed,
+        workLog: { id: "wl-close-first", durationS: 60, reason: "stopped" },
+        issue: {
+          id: "issue-1",
+          key: "KAN-42",
+          project: { workspaceId: "ws-1" },
+        },
+      };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockLifecycleFindUnique
+        .mockResolvedValueOnce(null as any)
+        .mockResolvedValueOnce(publisherRow as any);
+      mockLifecycleFindFirst.mockResolvedValue(closeOnly as any);
+      mockLifecycleUpdate
+        .mockResolvedValueOnce(paired as any)
+        .mockResolvedValueOnce(completed as any);
+      mockWorkLogCreate.mockResolvedValue({ id: "wl-close-first" } as any);
+      mockLifecycleUpdateMany.mockResolvedValue({ count: 1 } as any);
 
       const result = await stageTransitionStart(
         "KAN-42",
@@ -1109,18 +1645,103 @@ describe("WorkSessionService", () => {
         startedAt,
       );
 
-      expect(result.session).toEqual(staged);
-      expect(mockTransaction).toHaveBeenCalledTimes(3);
-      expect(mockSessionCreate).toHaveBeenCalledWith({
-        data: expect.objectContaining({ startedAt, lastHeartbeat: startedAt }),
+      expect(result.lifecycle).toMatchObject({
+        id: closeOnly.id,
+        completed: true,
       });
+      expect(result.session).toBeNull();
+      expect(mockWorkLogCreate).toHaveBeenCalledOnce();
+      expect(mockWorkLogCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          issueId: "issue-1",
+          memberId: "member-1",
+          startedAt,
+          endedAt,
+          durationS: 60,
+        }),
+      });
+      expect(mockEmitAndWait).toHaveBeenCalledTimes(2);
+    });
+
+    it("treats a completed start identity as an exact replay without new state or effects", async () => {
+      const startedAt = new Date("2026-08-11T12:00:00.000Z");
+      const completed = {
+        id: "lifecycle-complete",
+        issueId: "issue-1",
+        source: "transition-listener",
+        startIdentity: "start-key",
+        closeIdentity: "close-key",
+        startedAt,
+        endedAt: new Date("2026-08-11T12:02:00.000Z"),
+        memberId: "member-1",
+        userId: "user-1",
+        workLogId: "wl-exact",
+        effectsClaimedAt: null,
+        effectClaimToken: null,
+        effectsEmittedAt: new Date("2026-08-11T12:02:01.000Z"),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockLifecycleFindUnique.mockResolvedValue(completed as any);
+      mockLifecycleUpdateMany.mockResolvedValue({ count: 0 } as any);
+
+      const result = await stageTransitionStart(
+        "KAN-42",
+        "user-1",
+        "member-1",
+        startedAt,
+      );
+
+      expect(result.lifecycle).toMatchObject({
+        id: "lifecycle-complete",
+        completed: true,
+      });
+      expect(mockLifecycleCreate).not.toHaveBeenCalled();
+      expect(mockLifecycleUpdate).not.toHaveBeenCalled();
+      expect(mockWorkLogCreate).not.toHaveBeenCalled();
+      expect(mockSessionCreate).not.toHaveBeenCalled();
+      expect(mockEmitAndWait).not.toHaveBeenCalled();
+    });
+
+    it("records an unmatched close as durable evidence without a WorkLog marker", async () => {
+      const observedAt = new Date("2026-08-11T12:01:00.000Z");
+      const closeOnly = {
+        id: "lifecycle-close-only",
+        issueId: "issue-1",
+        source: "transition-listener",
+        startIdentity: null,
+        closeIdentity: "close-key",
+        startedAt: null,
+        endedAt: observedAt,
+        memberId: null,
+        userId: null,
+        workLogId: null,
+        effectsClaimedAt: null,
+        effectClaimToken: null,
+        effectsEmittedAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockLifecycleFindUnique.mockResolvedValue(null as any);
+      mockLifecycleFindFirst.mockResolvedValue(null as any);
+      mockLifecycleCreate.mockResolvedValue(closeOnly as any);
+      mockLifecycleUpdateMany.mockResolvedValue({ count: 0 } as any);
+
+      const result = await captureTransitionClose("KAN-42", observedAt);
+
+      expect(result.workLog).toBeNull();
+      expect(result.lifecycle).toMatchObject({
+        id: closeOnly.id,
+        completed: false,
+      });
+      expect(mockLifecycleCreate).toHaveBeenCalledOnce();
+      expect(mockWorkLogCreate).not.toHaveBeenCalled();
+      expect(mockEmitAndWait).not.toHaveBeenCalled();
     });
   });
 
-  // ── stopWork ───────────────────────────────────────────────────────────
-  //
-  // stopWork persists every positive whole-second duration atomically with
-  // session deletion. Zero-second windows are deleted without a WorkLog.
 
   describe("stopWork", () => {
     it("does not let a delayed close delete a lifecycle refreshed after its boundary", async () => {
@@ -2468,73 +3089,66 @@ describe("WorkSessionService", () => {
   //
   // startWork must transition backlog/todo → in_progress when opening a session.
   // Issues already in_progress/review/done must NOT be touched (idempotent).
-  // The transition must use transitionIssue (issue service) so ActivityLog +
-  // issue.transitioned event fire consistently.
+  // The state update, activity, capture, and session reservation share one
+  // transaction; post-commit projections are published afterward.
 
   describe("Fix B — auto-advance issue state on startWork", () => {
-    const mockTransitionIssue = vi.mocked(transitionIssue);
-
-    beforeEach(() => {
-      mockTransitionIssue.mockResolvedValue({} as any);
-    });
-
     it("transitions backlog issue to in_progress on startWork", async () => {
       const backlogIssue = { ...fakeIssue, state: "backlog", assigneeId: "existing" };
       mockIssueFind.mockResolvedValue(backlogIssue);
+      mockLockedIssue("backlog");
+      mockIssueUpdate.mockResolvedValue({ ...backlogIssue, state: "in_progress" } as any);
       mockSessionUpsert.mockResolvedValue(fakeSession);
       mockSessionFindMany.mockResolvedValue([]);
 
       await startWork("KAN-42", "member-1", "user-1", "mcp");
 
-      // via is null when source="mcp" (transport, not identity) and no explicit via passed
-      // KAN-156: cause="start_work" is threaded to prevent the circular guard loop
-      expect(mockTransitionIssue).toHaveBeenCalledWith(
-        "KAN-42",
-        "in_progress",
-        "member-1",
-        null,
-        "start_work",
+      expect(mockIssueUpdate).toHaveBeenCalledWith({
+        where: { id: "issue-1" },
+        data: { state: "in_progress", completedAt: null },
+      });
+      expect(mockPublishStartWorkIssueMutationEffects).toHaveBeenCalledWith(
+        expect.objectContaining({ transitioned: true, fromState: "backlog" }),
       );
     });
 
     it("transitions todo issue to in_progress on startWork", async () => {
       const todoIssue = { ...fakeIssue, state: "todo", assigneeId: "existing" };
       mockIssueFind.mockResolvedValue(todoIssue);
+      mockLockedIssue("todo");
+      mockIssueUpdate.mockResolvedValue({ ...todoIssue, state: "in_progress" } as any);
       mockSessionUpsert.mockResolvedValue(fakeSession);
       mockSessionFindMany.mockResolvedValue([]);
 
       await startWork("KAN-42", "member-1", "user-1", "mcp");
 
-      // KAN-156: cause="start_work" is threaded to prevent the circular guard loop
-      expect(mockTransitionIssue).toHaveBeenCalledWith(
-        "KAN-42",
-        "in_progress",
-        "member-1",
-        null,
-        "start_work",
-      );
+      expect(mockIssueUpdate).toHaveBeenCalledWith({
+        where: { id: "issue-1" },
+        data: { state: "in_progress", completedAt: null },
+      });
     });
 
     it("does NOT transition in_progress issue (idempotent)", async () => {
       const inProgressIssue = { ...fakeIssue, state: "in_progress", assigneeId: "existing" };
       mockIssueFind.mockResolvedValue(inProgressIssue);
+      mockLockedIssue("in_progress");
       mockSessionUpsert.mockResolvedValue(fakeSession);
       mockSessionFindMany.mockResolvedValue([]);
 
       await startWork("KAN-42", "member-1", "user-1", "mcp");
 
-      expect(mockTransitionIssue).not.toHaveBeenCalled();
+      expect(mockIssueUpdate).not.toHaveBeenCalled();
     });
 
     it("does NOT transition review issue", async () => {
       const reviewIssue = { ...fakeIssue, state: "review", assigneeId: "existing" };
       mockIssueFind.mockResolvedValue(reviewIssue);
-      mockQueryRaw.mockResolvedValue([{ state: "review" }] as any);
+      mockLockedIssue("review");
       mockSessionFindMany.mockResolvedValue([]);
 
       const result = await startWork("KAN-42", "member-1", "user-1", "mcp");
 
-      expect(mockTransitionIssue).not.toHaveBeenCalled();
+      expect(mockIssueUpdate).not.toHaveBeenCalled();
       expect(result.session).toBeNull();
       expect(mockSessionUpsert).not.toHaveBeenCalled();
     });
@@ -2542,42 +3156,52 @@ describe("WorkSessionService", () => {
     it("does NOT transition done issue", async () => {
       const doneIssue = { ...fakeIssue, state: "done", assigneeId: "existing" };
       mockIssueFind.mockResolvedValue(doneIssue);
-      mockQueryRaw.mockResolvedValue([{ state: "done" }] as any);
+      mockLockedIssue("done");
       mockSessionFindMany.mockResolvedValue([]);
 
       const result = await startWork("KAN-42", "member-1", "user-1", "mcp");
 
-      expect(mockTransitionIssue).not.toHaveBeenCalled();
+      expect(mockIssueUpdate).not.toHaveBeenCalled();
       expect(result.session).toBeNull();
       expect(mockSessionUpsert).not.toHaveBeenCalled();
     });
 
-    it("swallows transition error but does not open while the issue remains backlog", async () => {
+    it("rolls back the reservation when the atomic issue transition fails", async () => {
       const backlogIssue = { ...fakeIssue, state: "backlog", assigneeId: "existing" };
       mockIssueFind.mockResolvedValue(backlogIssue);
-      mockQueryRaw.mockResolvedValue([{ state: "backlog" }] as any);
+      mockLockedIssue("backlog");
       mockSessionFindMany.mockResolvedValue([]);
-      mockTransitionIssue.mockRejectedValueOnce(new Error("workflow guard blocked transition"));
+      mockIssueUpdate.mockRejectedValueOnce(new Error("workflow guard blocked transition"));
 
-      const result = await startWork("KAN-42", "member-1", "user-1", "mcp");
+      await expect(
+        startWork("KAN-42", "member-1", "user-1", "mcp"),
+      ).rejects.toThrow("workflow guard blocked transition");
 
-      expect(result.session).toBeNull();
       expect(mockSessionUpsert).not.toHaveBeenCalled();
     });
 
-    it("auto-assign fires before transition (assign first, then move to in_progress)", async () => {
+    it("commits assignment and transition in one issue update", async () => {
       const backlogUnassigned = { ...fakeIssue, state: "backlog", assigneeId: null };
       mockIssueFind.mockResolvedValue(backlogUnassigned);
+      mockLockedIssue("backlog", null);
+      mockIssueUpdate.mockResolvedValue({
+        ...backlogUnassigned,
+        assigneeId: "member-1",
+        state: "in_progress",
+      } as any);
       mockSessionUpsert.mockResolvedValue(fakeSession);
       mockSessionFindMany.mockResolvedValue([]);
 
-      const callOrder: string[] = [];
-      mockUpdateIssue.mockImplementation(async () => { callOrder.push("assign"); return {} as any; });
-      mockTransitionIssue.mockImplementation(async () => { callOrder.push("transition"); return {} as any; });
-
       await startWork("KAN-42", "member-1", "user-1", "mcp");
 
-      expect(callOrder).toEqual(["assign", "transition"]);
+      expect(mockIssueUpdate).toHaveBeenCalledWith({
+        where: { id: "issue-1" },
+        data: {
+          assigneeId: "member-1",
+          state: "in_progress",
+          completedAt: null,
+        },
+      });
     });
 
     // ── FIX 1: generalize guard to all pre-in_progress states (ORDERED_STATES) ──
@@ -2585,19 +3209,17 @@ describe("WorkSessionService", () => {
     it("transitions analysis issue to in_progress on startWork (FIX 1 generalization)", async () => {
       const analysisIssue = { ...fakeIssue, state: "analysis", assigneeId: "existing" };
       mockIssueFind.mockResolvedValue(analysisIssue);
+      mockLockedIssue("analysis");
+      mockIssueUpdate.mockResolvedValue({ ...analysisIssue, state: "in_progress" } as any);
       mockSessionUpsert.mockResolvedValue(fakeSession);
       mockSessionFindMany.mockResolvedValue([]);
 
       await startWork("KAN-42", "member-1", "user-1", "mcp");
 
-      // KAN-156: cause="start_work" is threaded to prevent the circular guard loop
-      expect(mockTransitionIssue).toHaveBeenCalledWith(
-        "KAN-42",
-        "in_progress",
-        "member-1",
-        null,
-        "start_work",
-      );
+      expect(mockIssueUpdate).toHaveBeenCalledWith({
+        where: { id: "issue-1" },
+        data: { state: "in_progress", completedAt: null },
+      });
     });
 
     // ── FIX 2: logger threading — logger?.error called on transition failure ──
@@ -2605,32 +3227,34 @@ describe("WorkSessionService", () => {
     it("calls logger.error when transition fails (FIX 2: no silent swallow)", async () => {
       const backlogIssue = { ...fakeIssue, state: "backlog", assigneeId: "existing" };
       mockIssueFind.mockResolvedValue(backlogIssue);
-      mockQueryRaw.mockResolvedValue([{ state: "backlog" }] as any);
+      mockLockedIssue("backlog");
       mockSessionFindMany.mockResolvedValue([]);
-      mockTransitionIssue.mockRejectedValueOnce(new Error("db down"));
+      mockIssueUpdate.mockRejectedValueOnce(new Error("db down"));
 
       const logger = { info: vi.fn(), error: vi.fn() };
-      const result = await startWork("KAN-42", "member-1", "user-1", "mcp", undefined, logger);
+      await expect(
+        startWork("KAN-42", "member-1", "user-1", "mcp", undefined, logger),
+      ).rejects.toThrow("db down");
 
-      expect(result.session).toBeNull();
       expect(mockSessionUpsert).not.toHaveBeenCalled();
-      // Error was logged
       expect(logger.error).toHaveBeenCalledOnce();
       expect(logger.error).toHaveBeenCalledWith(
         expect.objectContaining({ issueKey: "KAN-42" }),
-        expect.stringContaining("auto-transition"),
+        expect.stringContaining("transaction"),
       );
     });
 
-    it("does not throw when no logger provided and transition fails (backward-compat)", async () => {
+    it("propagates an atomic issue-transition failure without a logger", async () => {
       const backlogIssue = { ...fakeIssue, state: "backlog", assigneeId: "existing" };
       mockIssueFind.mockResolvedValue(backlogIssue);
-      mockQueryRaw.mockResolvedValue([{ state: "backlog" }] as any);
+      mockLockedIssue("backlog");
       mockSessionFindMany.mockResolvedValue([]);
-      mockTransitionIssue.mockRejectedValueOnce(new Error("workflow guard"));
+      mockIssueUpdate.mockRejectedValueOnce(new Error("workflow guard"));
 
-      // No logger argument — must not throw
-      await expect(startWork("KAN-42", "member-1", "user-1", "mcp")).resolves.toBeTruthy();
+      await expect(
+        startWork("KAN-42", "member-1", "user-1", "mcp"),
+      ).rejects.toThrow("workflow guard");
+      expect(mockSessionUpsert).not.toHaveBeenCalled();
     });
   });
 });

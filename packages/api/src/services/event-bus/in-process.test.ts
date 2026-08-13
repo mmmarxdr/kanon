@@ -245,6 +245,23 @@ describe("InProcessEventBus", () => {
     expect(received).toHaveLength(1);
   });
 
+  it("lets durable publishers await and observe an async subscriber rejection", async () => {
+    const mockLogger = { error: vi.fn() };
+    bus.setLogger(mockLogger);
+    const delivered: DomainEvent[] = [];
+    bus.subscribe(async () => {
+      throw new Error("durable delivery failed");
+    }, "durable-failure");
+    bus.subscribe((event) => delivered.push(event), "durable-collector");
+
+    await expect(bus.emitAndWait(makeInput())).rejects.toThrow(
+      "subscriber delivery failed",
+    );
+
+    expect(mockLogger.error).toHaveBeenCalledOnce();
+    expect(delivered).toHaveLength(1);
+  });
+
   it("workspace-filtered: thrower in workspace A does not block another ws-A subscriber", () => {
     const received: DomainEvent[] = [];
 

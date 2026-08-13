@@ -24,7 +24,15 @@
  */
 
 import { prisma } from "../../config/prisma.js";
-import { stageTransitionStart, startWork, stopWork } from "./service.js";
+import {
+  captureTransitionClose,
+  captureTransitionInterval,
+  drainTransitionLifecycleEffects,
+  stageTransitionStart,
+  startWork,
+  stopWork,
+  TRANSITION_EFFECT_RECOVERY_INTERVAL_MS,
+} from "./service.js";
 import type { IEventBus } from "../../services/event-bus/interface.js";
 import type { DomainEvent, IssueTransitionedPayload } from "../../services/event-bus/types.js";
 
@@ -71,6 +79,43 @@ export function registerTransitionListener(
   // tries to act after unsubscribe() has already been called.
   let active = true;
   const issueQueues = new Map<string, Promise<void>>();
+  const pendingTransitions = new Map<string, DomainEvent[]>();
+
+  const recoverEffects = () => {
+    void drainTransitionLifecycleEffects().catch((err: unknown) => {
+      logger.error(
+        { err },
+        "transition-listener: lifecycle effect recovery failed",
+      );
+    });
+  };
+  recoverEffects();
+  const effectRecoveryTimer = setInterval(
+    recoverEffects,
+    TRANSITION_EFFECT_RECOVERY_INTERVAL_MS,
+  );
+  effectRecoveryTimer.unref();
+
+  function queuedCloseBoundary(
+    queueKey: string,
+    currentEvent: DomainEvent,
+  ): Date | null {
+    const pending = pendingTransitions.get(queueKey) ?? [];
+    const currentIndex = pending.indexOf(currentEvent);
+    if (currentIndex < 0) return null;
+
+    for (const candidate of pending.slice(currentIndex + 1)) {
+      if (candidate.type !== "issue.transitioned") continue;
+      const payload = candidate.payload as unknown as IssueTransitionedPayload;
+      const toIsActive = isActiveWork(payload.to);
+      const fromIsActive = isActiveWork(payload.from);
+      if (isCloseState(payload.to) || (fromIsActive && !toIsActive)) {
+        return new Date(candidate.timestamp);
+      }
+    }
+
+    return null;
+  }
 
   async function handleEvent(event: DomainEvent): Promise<void> {
     if (!active) return;
@@ -92,6 +137,7 @@ export function registerTransitionListener(
     // actorMemberId is non-null here — the guard above returned if falsy.
     const actorMemberId: string = p.actorMemberId;
     const { from, to, issueKey } = p;
+    const queueKey = p.issueId || issueKey;
 
     // ── Determine action ──────────────────────────────────────────────────
     const toIsActive = isActiveWork(to);
@@ -115,50 +161,74 @@ export function registerTransitionListener(
       if (!active) return; // re-check after await
 
       const activeSignalAt = new Date(event.timestamp);
+      // Persist the stable start identity BEFORE any live-session decision.
+      // This is the cross-process ordering primitive: an earlier close can
+      // already be waiting in the database, and an exact completed replay is
+      // detected here without creating a WorkSession or any marker WorkLog.
+      const staged = await stageTransitionStart(
+        issueKey,
+        userId,
+        actorMemberId,
+        activeSignalAt,
+        "transition-listener",
+      );
+      if (!active || staged.lifecycle.completed) return;
+
       const currentIssue = await prisma.issue.findUnique({
         where: { key: issueKey },
         select: { id: true, state: true },
       });
       if (!currentIssue || !active) return;
 
+      const queuedCloseAt = queuedCloseBoundary(queueKey, event);
+      if (queuedCloseAt) {
+        await captureTransitionInterval(
+          issueKey,
+          userId,
+          actorMemberId,
+          activeSignalAt,
+          queuedCloseAt,
+          "transition-listener",
+        );
+        return;
+      }
+
       // The event is authoritative evidence that work began even if delivery
       // lag means the database has already advanced to review/done. Defer that
       // historical start until its ordered close event so no live session is
       // created on a currently closed issue.
       if (!isActiveWork(currentIssue.state)) {
-        await stageTransitionStart(
-          issueKey,
-          userId,
-          actorMemberId,
-          activeSignalAt,
-          "transition-listener",
-        );
         return;
       }
 
       // autoAssign:false — a state transition must not assign the actor (KAN-156).
       // onConflict:skip — KAN-160: if another member already works the issue, do
       // NOT open a second session and do NOT throw (the transition must succeed).
-      const opened = await startWork(issueKey, actorMemberId, userId, "transition-listener", null, undefined, {
+      await startWork(issueKey, actorMemberId, userId, "transition-listener", null, undefined, {
         autoAssign: false,
         onConflict: "skip",
         transitionObservedAt: activeSignalAt,
+        transitionLifecycleIdentity:
+          staged.lifecycle.startIdentity ?? undefined,
       });
-      if (!opened.session) {
-        const latestIssue = await prisma.issue.findUnique({
-          where: { key: issueKey },
-          select: { id: true, state: true },
-        });
-        if (latestIssue && !isActiveWork(latestIssue.state)) {
-          await stageTransitionStart(
-            issueKey,
-            userId,
-            actorMemberId,
-            activeSignalAt,
-            "transition-listener",
-          );
-        }
+
+      // A close can arrive while startWork is awaiting its locked transaction.
+      // Re-check the ordered queue before deciding the active signal is unbounded.
+      const closeAfterOpen = queuedCloseBoundary(queueKey, event);
+      if (closeAfterOpen) {
+        await captureTransitionInterval(
+          issueKey,
+          userId,
+          actorMemberId,
+          activeSignalAt,
+          closeAfterOpen,
+          "transition-listener",
+        );
+        return;
       }
+
+      // An ownership conflict leaves the durable start open for a later
+      // authoritative close. No marker WorkLog is needed.
       return;
     }
 
@@ -174,6 +244,14 @@ export function registerTransitionListener(
       if (!issueRow) return; // issue deleted between emit and handler
 
       if (!active) return; // re-check after await
+
+      await captureTransitionClose(
+        issueKey,
+        new Date(event.timestamp),
+        "transition-listener",
+      );
+
+      if (!active) return; // re-check after durable close capture
 
       const openSessions = await prisma.workSession.findMany({
         // Close every remaining window, including an expired lease that cleanup
@@ -215,6 +293,9 @@ export function registerTransitionListener(
 
     const payload = event.payload as unknown as IssueTransitionedPayload;
     const queueKey = payload.issueId || payload.issueKey;
+    const pending = pendingTransitions.get(queueKey) ?? [];
+    pending.push(event);
+    pendingTransitions.set(queueKey, pending);
     const previous = issueQueues.get(queueKey) ?? Promise.resolve();
     const next = previous.catch(() => undefined).then(() => handleEvent(event));
     issueQueues.set(queueKey, next);
@@ -227,6 +308,12 @@ export function registerTransitionListener(
         );
       })
       .finally(() => {
+        const remaining = pendingTransitions.get(queueKey);
+        if (remaining) {
+          const index = remaining.indexOf(event);
+          if (index >= 0) remaining.splice(index, 1);
+          if (remaining.length === 0) pendingTransitions.delete(queueKey);
+        }
         if (issueQueues.get(queueKey) === next) issueQueues.delete(queueKey);
       });
   }, "work-session-transition-listener");
@@ -234,6 +321,7 @@ export function registerTransitionListener(
   // ── Return unsubscribe ────────────────────────────────────────────────
   return function unsubscribe(): void {
     active = false;
+    clearInterval(effectRecoveryTimer);
     unsubscribeBus();
   };
 }

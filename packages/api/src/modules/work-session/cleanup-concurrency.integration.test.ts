@@ -51,6 +51,8 @@ vi.mock("./service.js", () => ({
   getActiveWorkers: vi.fn(),
   getActiveWorkersForIssues: vi.fn(),
   recordInterruption: vi.fn(),
+  drainTransitionLifecycleEffects: vi.fn().mockResolvedValue(undefined),
+  TRANSITION_EFFECT_RECOVERY_INTERVAL_MS: 30_000,
 }));
 
 const CLEANUP_INTERVAL_MS = 60_000;
