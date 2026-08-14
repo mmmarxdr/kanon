@@ -110,7 +110,7 @@ export function ProjectMembersSection({
   const [addRole, setAddRole] = useState<MemberRole>("member");
 
   // Determine current user's effective role in this project
-  const currentUserRow = members?.find((m) => m.userId === currentUser?.id);
+  const currentUserRow = members?.find((m) => m.userId === currentUser?.userId);
   const currentUserRole = currentUserRow?.role;
   const isAdmin =
     currentUserRole === "admin" || currentUserRole === "owner";
@@ -173,7 +173,7 @@ export function ProjectMembersSection({
           data-testid="project-members-list"
         >
           {members.map((member) => {
-            const isCurrentUser = member.userId === currentUser?.id;
+            const isCurrentUser = member.userId === currentUser?.userId;
             const isExplicit = member.source === "project" && !!member.pmId;
             const isImplicit = member.source === "workspace" || !member.pmId;
             const isOwnerRow = member.role === "owner";

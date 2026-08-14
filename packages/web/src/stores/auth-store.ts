@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 export interface AuthUser {
-  id: string;
+  userId: string;
   email: string;
   displayName: string | null;
   avatarUrl: string | null;

@@ -15,7 +15,7 @@ import { EmailVerificationBanner } from "../email-verification-banner";
 
 function makeUser(emailVerified: boolean) {
   return {
-    id: "u1",
+    userId: "u1",
     email: "alice@co.com",
     displayName: "Alice",
     avatarUrl: null,
