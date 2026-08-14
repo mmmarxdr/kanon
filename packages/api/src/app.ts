@@ -393,7 +393,6 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     if (env.TRIAGE_RETENTION_ENABLED) {
       stopRetention = (opts.retentionRegister ?? registerRetentionHousekeeping)(
         app.log,
-        app.triageMetrics,
       );
     }
   });
