@@ -50,7 +50,7 @@ ON "work_transition_lifecycles"("issue_id", "started_at");
 CREATE INDEX "work_transition_lifecycles_issue_id_ended_at_idx"
 ON "work_transition_lifecycles"("issue_id", "ended_at");
 
-CREATE INDEX "work_transition_lifecycles_effects_emitted_at_effects_claimed_at_idx"
+CREATE INDEX "work_transition_lifecycles_effects_pending_idx"
 ON "work_transition_lifecycles"("effects_emitted_at", "effects_claimed_at");
 
 ALTER TABLE "work_transition_lifecycles"

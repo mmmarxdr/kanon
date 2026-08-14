@@ -874,7 +874,7 @@ model WorkTransitionLifecycle {
 
   @@index([issueId, startedAt])
   @@index([issueId, endedAt])
-  @@index([effectsEmittedAt, effectsClaimedAt])
+  @@index([effectsEmittedAt, effectsClaimedAt], map: "work_transition_lifecycles_effects_pending_idx")
   @@map("work_transition_lifecycles")
 }
 
