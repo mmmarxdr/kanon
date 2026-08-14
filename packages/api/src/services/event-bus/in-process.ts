@@ -5,6 +5,9 @@ import type { DomainEvent, DomainEventInput } from "./types.js";
 /** Maximum number of events kept in the replay buffer. */
 const REPLAY_BUFFER_SIZE = 1000;
 
+/** Must expire before the durable lifecycle claim can be recovered. */
+export const EVENT_BUS_DELIVERY_TIMEOUT_MS = 25_000;
+
 /**
  * Minimal logger interface — compatible with pino and console.
  * Kept local to this module; not part of IEventBus to avoid interface churn.
@@ -43,7 +46,11 @@ export class InProcessEventBus implements IEventBus {
   /** Count of subscriber errors observed — cheap observability hook. */
   private subscriberErrorCount = 0;
 
-  constructor() {
+  private readonly deliveryTimeoutMs: number;
+
+  constructor(options: { deliveryTimeoutMs?: number } = {}) {
+    this.deliveryTimeoutMs =
+      options.deliveryTimeoutMs ?? EVENT_BUS_DELIVERY_TIMEOUT_MS;
     // Allow many SSE clients without warnings
     this.emitter.setMaxListeners(0);
   }
@@ -95,7 +102,9 @@ export class InProcessEventBus implements IEventBus {
       (event: DomainEvent) => DeliveryResult | Promise<DeliveryResult>
     >;
     const results = await Promise.all(
-      listeners.map((listener) => Promise.resolve(listener(event))),
+      listeners.map((listener) =>
+        this.waitForDelivery(listener(event)),
+      ),
     );
     const failures = results.filter(
       (result): result is Extract<DeliveryResult, { ok: false }> => !result.ok,
@@ -158,6 +167,28 @@ export class InProcessEventBus implements IEventBus {
   }
 
   // ─── Private helpers ────────────────────────────────────────────────────
+
+  private waitForDelivery(
+    delivery: DeliveryResult | Promise<DeliveryResult>,
+  ): Promise<DeliveryResult> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<DeliveryResult>((resolve) => {
+      timeout = setTimeout(() => {
+        resolve({
+          ok: false,
+          error: new Error(
+            `event-bus subscriber delivery timed out after ${this.deliveryTimeoutMs}ms`,
+          ),
+        });
+      }, this.deliveryTimeoutMs);
+    });
+
+    // Promise.race observes the original delivery even if the deadline wins,
+    // so a later settlement cannot become an unhandled rejection.
+    return Promise.race([Promise.resolve(delivery), deadline]).finally(() => {
+      if (timeout) clearTimeout(timeout);
+    });
+  }
 
   private prepareEvent(input: DomainEventInput): DomainEvent {
     const event: DomainEvent = {
