@@ -140,6 +140,100 @@ function isStatementTimeout(error: unknown): boolean {
   );
 }
 
+export function buildSearchPageStatement(params: {
+  workspaceId: string;
+  userId: string;
+  projectPredicate: Prisma.Sql;
+  tokenPredicate: Prisma.Sql;
+  targetPredicate: Prisma.Sql;
+  tokenMatchPredicate: Prisma.Sql;
+  filterPredicate: Prisma.Sql;
+  tokenOverlap: Prisma.Sql;
+  queryText: string;
+  likeQueryText: string;
+  allTitleTokens: Prisma.Sql;
+  seekPredicate: Prisma.Sql;
+  limit: number;
+}): Prisma.Sql {
+  const {
+    workspaceId,
+    userId,
+    projectPredicate,
+    tokenPredicate,
+    targetPredicate,
+    tokenMatchPredicate,
+    filterPredicate,
+    tokenOverlap,
+    queryText,
+    likeQueryText,
+    allTitleTokens,
+    seekPredicate,
+    limit,
+  } = params;
+  return Prisma.sql`
+        WITH authorized_projects AS (
+          SELECT p.id
+          FROM projects p
+          WHERE p.workspace_id = ${workspaceId}::uuid
+            AND p.archived = FALSE
+            ${projectPredicate}
+            ${tokenPredicate}
+            AND (
+              EXISTS (
+                SELECT 1 FROM members m
+                WHERE m.user_id = ${userId}::uuid
+                  AND m.workspace_id = ${workspaceId}::uuid
+                  AND (m.role IN ('owner', 'admin') OR m.project_access = 'workspace')
+              ) OR EXISTS (
+                SELECT 1 FROM project_members pm
+                WHERE pm.project_id = p.id AND pm.user_id = ${userId}::uuid
+              )
+            )
+        ), matches AS (
+          SELECT
+            i.id AS "issueId", i.key AS "issueKey", i.title, i.description,
+            i.type::text AS type, i.priority::text AS priority, i.state::text AS state,
+            i.labels, i.group_key AS "groupKey", i.assignee_id AS "assigneeId",
+            i.cycle_id AS "cycleId", i.parent_id AS "parentId",
+            i.created_at AS "createdAt", i.updated_at AS "updatedAt",
+            p.id AS "projectId", p.key AS "projectKey", p.updated_at AS "projectUpdatedAt",
+            LOWER(i.title) AS "normalizedTitle",
+            (${tokenOverlap})::integer AS "tokenOverlap",
+            CASE
+              WHEN LOWER(i.key) = ${queryText} THEN 1
+              WHEN LOWER(i.key) LIKE ${`${likeQueryText}%`} ESCAPE '!' THEN 2
+              WHEN LOWER(i.title) = ${queryText} THEN 3
+              WHEN ${allTitleTokens} THEN 4
+              WHEN LOWER(i.title) LIKE ${`%${likeQueryText}%`} ESCAPE '!'
+                OR LOWER(i.key) LIKE ${`%${likeQueryText}%`} ESCAPE '!' THEN 5
+              ELSE 6
+            END AS "matchRank"
+          FROM issues i
+          JOIN projects p ON i.project_id = p.id
+          JOIN authorized_projects authorized ON authorized.id = p.id
+          WHERE ${tokenMatchPredicate} ${targetPredicate} ${filterPredicate}
+        ), metadata AS (
+          SELECT md5(COALESCE(string_agg(
+            concat_ws(':', matches."issueId"::text, matches."updatedAt"::text,
+              matches."projectId"::text, matches."projectUpdatedAt"::text),
+            ',' ORDER BY matches."issueId"
+          ), 'empty')) AS population_fingerprint,
+          COUNT(*)::integer AS logical_scanned
+          FROM matches
+        )
+        SELECT page.*, metadata.population_fingerprint AS "populationFingerprint",
+          metadata.logical_scanned AS "logicalScanned"
+        FROM metadata
+        LEFT JOIN LATERAL (
+          SELECT * FROM matches page
+          ${seekPredicate}
+          ORDER BY page."matchRank", page."tokenOverlap" DESC, page."normalizedTitle", page."issueKey", page."issueId"
+          LIMIT ${limit + 1}
+        ) page ON TRUE
+        ORDER BY page."matchRank" NULLS LAST, page."tokenOverlap" DESC, page."normalizedTitle", page."issueKey", page."issueId"
+      `;
+}
+
 export async function searchIssues(
   workspaceId: string,
   userId: string,
@@ -267,68 +361,21 @@ export async function searchIssues(
         : Prisma.empty;
       const queryText = normalizedQuery;
       const likeQueryText = queryText.replace(/[!%_]/gu, "!$&");
-      const rows = await tx.$queryRaw<SearchSqlRow[]>(Prisma.sql`
-        WITH authorized_projects AS (
-          SELECT p.id
-          FROM projects p
-          WHERE p.workspace_id = ${workspaceId}::uuid
-            AND p.archived = FALSE
-            ${projectPredicate}
-            ${tokenPredicate}
-            AND (
-              EXISTS (
-                SELECT 1 FROM members m
-                WHERE m.user_id = ${userId}::uuid
-                  AND m.workspace_id = ${workspaceId}::uuid
-                  AND (m.role IN ('owner', 'admin') OR m.project_access = 'workspace')
-              ) OR EXISTS (
-                SELECT 1 FROM project_members pm
-                WHERE pm.project_id = p.id AND pm.user_id = ${userId}::uuid
-              )
-            )
-        ), matches AS (
-          SELECT
-            i.id AS "issueId", i.key AS "issueKey", i.title, i.description,
-            i.type::text AS type, i.priority::text AS priority, i.state::text AS state,
-            i.labels, i.group_key AS "groupKey", i.assignee_id AS "assigneeId",
-            i.cycle_id AS "cycleId", i.parent_id AS "parentId",
-            i.created_at AS "createdAt", i.updated_at AS "updatedAt",
-            p.id AS "projectId", p.key AS "projectKey", p.updated_at AS "projectUpdatedAt",
-            LOWER(i.title) AS "normalizedTitle",
-            (${tokenOverlap})::integer AS "tokenOverlap",
-            CASE
-              WHEN LOWER(i.key) = ${queryText} THEN 1
-              WHEN LOWER(i.key) LIKE ${`${likeQueryText}%`} ESCAPE '!' THEN 2
-              WHEN LOWER(i.title) = ${queryText} THEN 3
-              WHEN ${allTitleTokens} THEN 4
-              WHEN LOWER(i.title) LIKE ${`%${likeQueryText}%`} ESCAPE '!'
-                OR LOWER(i.key) LIKE ${`%${likeQueryText}%`} ESCAPE '!' THEN 5
-              ELSE 6
-            END AS "matchRank"
-          FROM issues i
-          JOIN projects p ON i.project_id = p.id
-          JOIN authorized_projects authorized ON authorized.id = p.id
-          WHERE ${tokenMatchPredicate} ${targetPredicate} ${filterPredicate}
-        ), metadata AS (
-          SELECT md5(COALESCE(string_agg(
-            concat_ws(':', matches."issueId"::text, matches."updatedAt"::text,
-              matches."projectId"::text, matches."projectUpdatedAt"::text),
-            ',' ORDER BY matches."issueId"
-          ), 'empty')) AS population_fingerprint,
-          COUNT(*)::integer AS logical_scanned
-          FROM matches
-        )
-        SELECT page.*, metadata.population_fingerprint AS "populationFingerprint",
-          metadata.logical_scanned AS "logicalScanned"
-        FROM metadata
-        LEFT JOIN LATERAL (
-          SELECT * FROM matches page
-          ${seekPredicate}
-          ORDER BY page."matchRank", page."tokenOverlap" DESC, page."normalizedTitle", page."issueKey", page."issueId"
-          LIMIT ${limit + 1}
-        ) page ON TRUE
-        ORDER BY page."matchRank" NULLS LAST, page."tokenOverlap" DESC, page."normalizedTitle", page."issueKey", page."issueId"
-      `);
+      const rows = await tx.$queryRaw<SearchSqlRow[]>(buildSearchPageStatement({
+        workspaceId,
+        userId,
+        projectPredicate,
+        tokenPredicate,
+        targetPredicate,
+        tokenMatchPredicate,
+        filterPredicate,
+        tokenOverlap,
+        queryText,
+        likeQueryText,
+        allTitleTokens,
+        seekPredicate,
+        limit,
+      }));
       const populationFingerprint = rows[0]?.populationFingerprint ?? "";
       if (cursor && cursor.populationFingerprint !== populationFingerprint) {
         throw new AppError(409, "CURSOR_SOURCE_CONFLICT", "Issue search changed; restart search");
@@ -440,4 +487,36 @@ export async function searchIssues(
     }
     throw error;
   }
+}
+
+/**
+ * Live-gate bindings exercise the same page statement builder as searchIssues.
+ * This is intentionally exported from production code so performance evidence
+ * cannot substitute a companion query.
+ */
+export function buildRepresentativeSearchPlanStatement(params: {
+  workspaceId: string;
+  userId: string;
+  projectId: string;
+}): Prisma.Sql {
+  const { workspaceId, userId, projectId } = params;
+  const token = "shared";
+  const tokenMatchPredicate = Prisma.sql`(LOWER(i.title) LIKE ${`%${token}%`} OR LOWER(i.key) LIKE ${`%${token}%`})`;
+  const allTitleTokens = Prisma.sql`LOWER(i.title) LIKE ${`%${token}%`}`;
+  const tokenOverlap = Prisma.sql`CASE WHEN LOWER(i.title) LIKE ${`%${token}%`} OR LOWER(i.key) LIKE ${`%${token}%`} THEN 1 ELSE 0 END`;
+  return buildSearchPageStatement({
+    workspaceId,
+    userId,
+    projectPredicate: Prisma.sql`AND p.id = ${projectId}::uuid`,
+    tokenPredicate: Prisma.empty,
+    targetPredicate: Prisma.empty,
+    tokenMatchPredicate,
+    filterPredicate: Prisma.empty,
+    tokenOverlap,
+    queryText: token,
+    likeQueryText: token,
+    allTitleTokens,
+    seekPredicate: Prisma.empty,
+    limit: 10,
+  });
 }
