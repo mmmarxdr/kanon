@@ -1,77 +1,18 @@
 import { describe, it, expect } from "vitest";
-import client from "prom-client";
+import * as observabilityModule from "./observability.js";
 import {
-  registerTriageMetrics,
-  FORBIDDEN_TRIAGE_LABEL_NAMES,
   TRIAGE_PINO_REDACT_PATHS,
   TRIAGE_SQL_BOUNDARIES,
-  assertSafeLabelValue,
   isCorrelationUuid,
-  observeSearch,
-  observePreview,
-  observeProposalOp,
 } from "./observability.js";
 
-describe("triage observability — metrics registry", () => {
-  it("registers low-cardinality triage metrics on the injected registry", async () => {
-    const registry = new client.Registry();
-    const metrics = registerTriageMetrics(registry);
-    observeSearch(
-      metrics,
-      { scope: "project", completeness: "complete", outcome: "success" },
-      0.12,
-      { logicalScanned: 11, returned: 10 },
-    );
-    observePreview(
-      metrics,
-      { phase: "prepare", outcome: "success", ai_contributed: "false" },
-      0.2,
-      ["candidate_timeout"],
-    );
-    observeProposalOp(
-      metrics,
-      { operation: "list", outcome: "success" },
-      0.15,
-      { state_filter: "current", count: 20 },
-    );
-
-    const body = await registry.metrics();
-    expect(body).toContain("kanon_triage_search_duration_seconds");
-    expect(body).toContain("kanon_triage_search_rows");
-    expect(body).toContain("kanon_triage_preview_duration_seconds");
-    expect(body).toContain("kanon_triage_degradation_total");
-    expect(body).toContain("kanon_triage_proposal_requests_total");
-    expect(body).toContain("kanon_triage_proposal_duration_seconds");
-    expect(body).toContain("kanon_triage_proposal_list_rows");
-    expect(body).toContain('measure="returned"');
-    expect(body).toContain('operation="list"');
-  });
-
-  it("reuses metrics for the same registry (no duplicate registration)", () => {
-    const registry = new client.Registry();
-    const a = registerTriageMetrics(registry);
-    const b = registerTriageMetrics(registry);
-    expect(a).toBe(b);
-  });
-
-  it("forbids high-cardinality / sensitive label names", () => {
-    expect(FORBIDDEN_TRIAGE_LABEL_NAMES).toEqual(
-      expect.arrayContaining([
-        "query",
-        "cursor",
-        "model",
-        "issueKey",
-        "projectId",
-        "workspaceId",
-        "proposalId",
-        "evidence",
-      ]),
-    );
-  });
-
-  it("rejects unsafe label values", () => {
-    expect(() => assertSafeLabelValue("success")).not.toThrow();
-    expect(() => assertSafeLabelValue("prompt=drop tables")).toThrow(/Unsafe/);
+describe("triage observability — retired metrics API", () => {
+  it("does not export the retired triage metrics surface", () => {
+    expect(observabilityModule).not.toHaveProperty("registerTriageMetrics");
+    expect(observabilityModule).not.toHaveProperty("observeSearch");
+    expect(observabilityModule).not.toHaveProperty("observePreview");
+    expect(observabilityModule).not.toHaveProperty("observeProposalOp");
+    expect(observabilityModule).not.toHaveProperty("assertSafeLabelValue");
   });
 });
 
