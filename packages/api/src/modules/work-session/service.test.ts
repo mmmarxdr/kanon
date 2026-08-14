@@ -1016,6 +1016,55 @@ describe("WorkSessionService", () => {
       });
     });
 
+    it("emits terminal events when a lifecycle-linked sub-second window has no WorkLog", async () => {
+      vi.useFakeTimers();
+      const startedAt = new Date("2026-08-11T12:00:00.100Z");
+      vi.setSystemTime(new Date("2026-08-11T12:00:00.900Z"));
+      const session = {
+        ...fakeSession,
+        id: "session-sub-second",
+        startedAt,
+        lastHeartbeat: startedAt,
+        transitionLifecycleId: "lifecycle-sub-second",
+      };
+      const interruption = {
+        id: "interruption-sub-second",
+        incidentIssueId: "issue-1",
+        interruptedIssueId: "issue-interrupted",
+        memberId: "member-1",
+      };
+      mockIssueFind.mockResolvedValue({
+        ...fakeIssue,
+        type: "incident",
+        state: "review",
+      });
+      mockLockedIssue("review");
+      mockSessionFindUnique.mockResolvedValue(session);
+      mockInterruptionFindManyGlobal.mockResolvedValue([interruption] as any);
+
+      expect(await heartbeat("KAN-42", "user-1")).toBeNull();
+
+      expect(mockWorkLogCreate).not.toHaveBeenCalled();
+      expect(mockEmitAndWait).not.toHaveBeenCalled();
+      expect(
+        mockEmit.mock.calls.map(
+          ([event]) => (event as { type: string }).type,
+        ),
+      ).toEqual(["work_session.ended", "interruption.closed"]);
+      expect(mockEmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "work_session.ended",
+          payload: expect.objectContaining({
+            workLogId: null,
+            durationS: 0,
+          }),
+        }),
+      );
+      expect(mockEmit).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: "worklog.created" }),
+      );
+    });
+
     it("updates lastHeartbeat for existing session", async () => {
       mockIssueFind.mockResolvedValue(fakeIssue);
       mockSessionFindUnique.mockResolvedValue(fakeSession);
@@ -1528,6 +1577,78 @@ describe("WorkSessionService", () => {
           startedAt,
           endedAt: observedAt,
           durationS: 240,
+        }),
+      });
+    });
+
+    it("caps an older lifecycle at a later explicit same-user generation", async () => {
+      const startedAt = new Date("2026-08-11T12:00:00.000Z");
+      const laterStartedAt = new Date("2026-08-11T12:02:00.000Z");
+      const observedAt = new Date("2026-08-11T12:05:00.000Z");
+      const waitingStart = {
+        id: "lifecycle-older-generation",
+        issueId: "issue-1",
+        source: "transition-listener",
+        startIdentity: "start-key-older-generation",
+        closeIdentity: null,
+        startedAt,
+        endedAt: null,
+        memberId: "member-1",
+        userId: "user-1",
+        workLogId: null,
+        effectsClaimedAt: null,
+        effectClaimToken: null,
+        effectsEmittedAt: null,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      };
+      const paired = {
+        ...waitingStart,
+        closeIdentity: "close-key-older-generation",
+        endedAt: observedAt,
+      };
+      const completed = { ...paired, workLogId: "wl-older-generation" };
+      const laterSession = {
+        ...fakeSession,
+        id: "session-later-explicit-generation",
+        source: "mcp",
+        startedAt: laterStartedAt,
+        lastHeartbeat: observedAt,
+        transitionLifecycleId: null,
+      };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockLifecycleFindUnique
+        .mockResolvedValueOnce(null as any)
+        .mockResolvedValueOnce({
+          ...completed,
+          workLog: {
+            id: "wl-older-generation",
+            durationS: 120,
+            reason: "stopped",
+            endedAt: laterStartedAt,
+          },
+          issue: {
+            id: "issue-1",
+            key: "KAN-42",
+            project: { workspaceId: "ws-1" },
+          },
+        } as any);
+      mockLifecycleFindFirst.mockResolvedValue(waitingStart as any);
+      mockLifecycleUpdate
+        .mockResolvedValueOnce(paired as any)
+        .mockResolvedValueOnce(completed as any);
+      mockSessionFindUnique.mockResolvedValue(laterSession);
+      mockWorkLogCreate.mockResolvedValue({ id: "wl-older-generation" } as any);
+
+      await captureTransitionClose("KAN-42", observedAt);
+
+      expect(mockSessionDeleteMany).not.toHaveBeenCalled();
+      expect(mockSessionUpdateMany).not.toHaveBeenCalled();
+      expect(mockWorkLogCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          startedAt,
+          endedAt: laterStartedAt,
+          durationS: 120,
         }),
       });
     });

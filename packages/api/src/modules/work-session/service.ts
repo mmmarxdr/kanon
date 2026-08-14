@@ -540,7 +540,7 @@ async function emitFinalizedWindow(input: {
   finalized: FinalizedWindow;
 }) {
   const { finalized } = input;
-  if (finalized.transitionLifecycleId) {
+  if (finalized.transitionLifecycleId && finalized.workLog) {
     await publishTransitionLifecycleEffects(finalized.transitionLifecycleId);
     return;
   }
@@ -1228,6 +1228,42 @@ async function completeTransitionLifecycle(
     session?.transitionLifecycleId === row.id;
   let endedAt = row.endedAt;
   let reason: "expired" | "stopped" = "stopped";
+
+  if (!isExactGeneration) {
+    let laterGenerationBoundary: Date | null = null;
+    if (
+      session &&
+      session.startedAt.getTime() > row.startedAt.getTime() &&
+      session.startedAt.getTime() < endedAt.getTime()
+    ) {
+      laterGenerationBoundary = session.startedAt;
+    }
+
+    const laterWorkLog = await tx.workLog.findFirst({
+      where: {
+        issueId: row.issueId,
+        member: { userId: row.userId },
+        startedAt: { gt: row.startedAt, lt: row.endedAt },
+      },
+      orderBy: [{ startedAt: "asc" }, { id: "asc" }],
+      select: { startedAt: true },
+    });
+    if (
+      laterWorkLog &&
+      laterWorkLog.startedAt.getTime() > row.startedAt.getTime() &&
+      laterWorkLog.startedAt.getTime() < endedAt.getTime() &&
+      (!laterGenerationBoundary ||
+        laterWorkLog.startedAt.getTime() < laterGenerationBoundary.getTime())
+    ) {
+      laterGenerationBoundary = laterWorkLog.startedAt;
+    }
+
+    if (laterGenerationBoundary) {
+      // A different same-user generation owns the interval from its start
+      // onward, whether it is still live or already persisted as a WorkLog.
+      endedAt = laterGenerationBoundary;
+    }
+  }
 
   if (session && isExactGeneration) {
     if (session.lastHeartbeat.getTime() > row.endedAt.getTime()) {
