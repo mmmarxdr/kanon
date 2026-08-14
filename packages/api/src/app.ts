@@ -46,7 +46,10 @@ import { createEmailProvider } from "./services/email/index.js";
 import type { EmailProvider } from "./services/email/types.js";
 import { registerForecastListener } from "./modules/forecast/index.js";
 import { registerTransitionListener } from "./modules/work-session/transition-listener.js";
-import { startIntegrationScheduler } from "./modules/integrations/scheduler.js";
+import {
+  startAuditScheduler,
+  startIntegrationScheduler,
+} from "./modules/integrations/scheduler.js";
 import { registerIntegrationSyncListener } from "./modules/integrations/sync-listener.js";
 import {
   createIntegrationWorkerCycle,
@@ -54,6 +57,7 @@ import {
 } from "./modules/integrations/worker.js";
 import integrationRoutes from "./modules/integrations/routes.js";
 import { createInboundSyncCycle } from "./modules/integrations/inbound.js";
+import { runAuditOperationsCycle } from "./modules/integrations/audit-operations.js";
 import {
   isCorrelationUuid,
   TRIAGE_PINO_REDACT_PATHS,
@@ -67,6 +71,9 @@ export interface BuildAppOptions {
   integrationScan?: () => Promise<unknown>;
   /** Optional inbound poller override for lifecycle tests. */
   inboundScan?: () => Promise<unknown>;
+  /** Optional audit scan and gate overrides for lifecycle tests. */
+  auditScan?: (signal: AbortSignal) => Promise<unknown>;
+  auditEnabled?: boolean;
   /** Optional retention registration override for lifecycle tests. */
   retentionRegister?: typeof registerRetentionHousekeeping;
   /**
@@ -249,6 +256,16 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     ? undefined
     : createInboundSyncCycle(prisma, { logger: app.log });
   const inboundScan = injectedInboundScan ?? inboundWorker!;
+  const auditEnabled = opts.auditEnabled ?? env.INTEGRATION_AUDIT_ENABLED;
+  const auditScan = opts.auditScan ?? ((signal: AbortSignal) => runAuditOperationsCycle(prisma, {
+    maxBindings: env.INTEGRATION_AUDIT_MAX_BINDINGS,
+    leaseMs: env.INTEGRATION_AUDIT_TIMEOUT_MS,
+    timeoutMs: env.INTEGRATION_AUDIT_TIMEOUT_MS,
+    pageSize: env.INTEGRATION_AUDIT_PAGE_SIZE,
+    maxPasses: env.INTEGRATION_AUDIT_MAX_PASSES,
+    terminalFreshnessMs: env.INTEGRATION_AUDIT_FRESHNESS_MS,
+    signal,
+  }));
   const unsubscribeIntegrationSync = registerIntegrationSyncListener(
     eventBus,
     integrationScan,
@@ -256,6 +273,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   );
   let stopIntegrationScheduler: (() => Promise<void>) | undefined;
   let stopInboundScheduler: (() => Promise<void>) | undefined;
+  let stopAuditScheduler: (() => Promise<void>) | undefined;
   app.addHook("onReady", async () => {
     try {
       app.log.info(
@@ -271,6 +289,13 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     stopInboundScheduler = startIntegrationScheduler(inboundScan, (err) =>
       app.log.error({ err }, "Integration inbound poll failed")
     );
+    if (auditEnabled) {
+      stopAuditScheduler = startAuditScheduler(
+        auditScan,
+        (err) => app.log.error({ err }, "Integration audit scan failed"),
+        env.INTEGRATION_AUDIT_CADENCE_MS,
+      );
+    }
   });
   app.addHook("onClose", async () => {
     integrationWorker?.stop();
@@ -278,9 +303,11 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     const listenerDrain = unsubscribeIntegrationSync();
     const schedulerDrain = stopIntegrationScheduler?.() ?? Promise.resolve();
     const inboundDrain = stopInboundScheduler?.() ?? Promise.resolve();
+    const auditDrain = stopAuditScheduler?.() ?? Promise.resolve();
     stopIntegrationScheduler = undefined;
     stopInboundScheduler = undefined;
-    await Promise.all([listenerDrain, schedulerDrain, inboundDrain]);
+    stopAuditScheduler = undefined;
+    await Promise.all([listenerDrain, schedulerDrain, inboundDrain, auditDrain]);
   });
 
   // Health check with DB connectivity (always public, before auth)

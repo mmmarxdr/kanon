@@ -319,10 +319,10 @@ describe("envSchema — audit operations", () => {
     expect(audit.INTEGRATION_AUDIT_MAX_BINDINGS).toBe(1);
   });
 
-  it("rejects enabling audit runtime before it is delivered", () => {
-    expect(
-      envSchema.safeParse({ ...base, INTEGRATION_AUDIT_ENABLED: "true" }).success,
-    ).toBe(false);
+  it("accepts explicit audit enablement and rejects invalid gate values", () => {
+    expect(envSchema.parse({ ...base, INTEGRATION_AUDIT_ENABLED: "true" }).INTEGRATION_AUDIT_ENABLED)
+      .toBe(true);
+    expect(envSchema.safeParse({ ...base, INTEGRATION_AUDIT_ENABLED: "yes" }).success).toBe(false);
   });
 
   it("accepts configured safe audit limits and rejects unbounded values", () => {

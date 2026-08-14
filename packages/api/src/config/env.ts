@@ -177,13 +177,11 @@ export const envSchema = z.object({
     .optional()
     .default("false")
     .transform((value) => value === "true"),
-  // The scheduler is intentionally not delivered in PR5A. Keep this explicit
-  // gate default-off and reject attempts to enable a runtime that does not exist.
   INTEGRATION_AUDIT_ENABLED: z
-    .enum(["false"])
+    .enum(["true", "false"])
     .optional()
     .default("false")
-    .transform(() => false),
+    .transform((value) => value === "true"),
   INTEGRATION_AUDIT_CADENCE_MS: z.string().optional().default("300000").transform(Number).pipe(z.number().int().min(60_000).max(3_600_000)),
   INTEGRATION_AUDIT_MAX_PASSES: z.string().optional().default("2").transform(Number).pipe(z.number().int().min(2).max(5)),
   INTEGRATION_AUDIT_PAGE_SIZE: z.string().optional().default("100").transform(Number).pipe(z.number().int().min(1).max(100)),
