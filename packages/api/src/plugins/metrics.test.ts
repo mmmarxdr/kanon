@@ -126,28 +126,18 @@ describe("metricsPlugin", () => {
     await app.close();
   });
 
-  it("Case 6: registers low-cardinality triage metrics without sensitive labels", async () => {
+  it("Case 6: exposes process metrics without legacy triage metrics", async () => {
     delete process.env["METRICS_TOKEN"];
     const registry = makeRegistry();
     const app = Fastify();
     await app.register(metricsPlugin, { registry });
     await app.ready();
 
-    expect(app.triageMetrics).toBeDefined();
-    app.triageMetrics.proposalRequests.inc({
-      operation: "get",
-      outcome: "success",
-    });
-
     const res = await app.inject({ method: "GET", url: "/metrics" });
     expect(res.statusCode).toBe(200);
-    expect(res.body).toContain("kanon_triage_proposal_requests_total");
-    expect(res.body).toContain("kanon_triage_search_duration_seconds");
-    expect(res.body).toContain("kanon_triage_preview_duration_seconds");
-    // No high-cardinality identity labels in HELP/TYPE lines for triage metrics.
-    expect(res.body).not.toMatch(/kanon_triage_\w+\{[^}]*issueKey=/);
-    expect(res.body).not.toMatch(/kanon_triage_\w+\{[^}]*cursor=/);
-    expect(res.body).not.toMatch(/kanon_triage_\w+\{[^}]*model=/);
+    expect(res.body).toContain("process_cpu_seconds_total");
+    expect(res.body).not.toContain("kanon_triage_");
+    expect(app).not.toHaveProperty("triageMetrics");
 
     await app.close();
   });

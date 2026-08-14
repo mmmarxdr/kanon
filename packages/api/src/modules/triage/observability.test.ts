@@ -6,7 +6,6 @@ import {
   TRIAGE_PINO_REDACT_PATHS,
   TRIAGE_SQL_BOUNDARIES,
   assertSafeLabelValue,
-  buildStageTrace,
   isCorrelationUuid,
   observeSearch,
   observePreview,
@@ -76,26 +75,7 @@ describe("triage observability — metrics registry", () => {
   });
 });
 
-describe("triage observability — privacy traces and redaction", () => {
-  it("builds stage traces without forbidden detail keys", () => {
-    const trace = buildStageTrace({
-      correlationId: "550e8400-e29b-41d4-a716-446655440000",
-      operation: "preview",
-      stage: "policy",
-      durationMs: 12,
-      outcome: "success",
-      details: {
-        policyVersion: "v1",
-        issueKey: "KAN-42",
-        model: "gpt",
-        rowsReturned: 3,
-      },
-    });
-    expect(trace.details).toEqual({ policyVersion: "v1", rowsReturned: 3 });
-    expect(trace.details).not.toHaveProperty("issueKey");
-    expect(trace.details).not.toHaveProperty("model");
-  });
-
+describe("triage observability — redaction and correlation", () => {
   it("lists pino redaction paths for preview/suggestion bodies", () => {
     expect(TRIAGE_PINO_REDACT_PATHS).toEqual(
       expect.arrayContaining([

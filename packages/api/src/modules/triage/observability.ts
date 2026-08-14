@@ -195,36 +195,6 @@ export function assertSafeLabelValue(value: string): void {
   }
 }
 
-export interface StageTrace {
-  correlationId: string;
-  operation: string;
-  stage: string;
-  durationMs: number;
-  outcome: (typeof TRIAGE_OUTCOMES)[number];
-  /** Bounded structured fields — never prompt/evidence bodies. */
-  details?: Record<string, string | number | boolean | null>;
-}
-
-/** Build a privacy-safe stage trace (for structured logs under correlationId). */
-export function buildStageTrace(input: StageTrace): StageTrace {
-  const details = input.details ? { ...input.details } : undefined;
-  if (details) {
-    for (const key of Object.keys(details)) {
-      if ((FORBIDDEN_TRIAGE_LABEL_NAMES as readonly string[]).includes(key)) {
-        delete details[key];
-      }
-    }
-  }
-  return {
-    correlationId: input.correlationId,
-    operation: input.operation,
-    stage: input.stage,
-    durationMs: input.durationMs,
-    outcome: input.outcome,
-    ...(details ? { details } : {}),
-  };
-}
-
 /** UUID v4-ish check for inbound correlation headers. */
 export function isCorrelationUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -302,19 +272,4 @@ export function observeProposalOp(
       listReturnedRows.count,
     );
   }
-}
-
-export function triageOutcome(error: unknown): (typeof TRIAGE_OUTCOMES)[number] {
-  const value = error && typeof error === "object"
-    ? error as { code?: unknown; statusCode?: unknown }
-    : {};
-  const code = typeof value.code === "string" ? value.code : "";
-  if (value.statusCode === 404) return "not_found_or_not_visible";
-  if (value.statusCode === 401 || value.statusCode === 403) return "authorization";
-  if (value.statusCode === 400) return "validation";
-  if (value.statusCode === 503) return "temporary_unavailability";
-  if (code === "CONCURRENCY_ERROR") return "temporary_unavailability";
-  if (/SOURCE|POLICY|CONTEXT/.test(code)) return "source_conflict";
-  if (value.statusCode === 409) return "terminal_lifecycle";
-  return "error";
 }

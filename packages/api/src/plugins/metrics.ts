@@ -19,10 +19,6 @@ import fp from "fastify-plugin";
 import fastifyMetrics, { type IMetricsPluginOptions } from "fastify-metrics";
 import client from "prom-client";
 import { timingSafeEqual } from "node:crypto";
-import {
-  registerTriageMetrics,
-  type TriageMetrics,
-} from "../modules/triage/observability.js";
 
 export interface MetricsPluginOptions {
   /** Inject a custom Registry for test isolation. Defaults to a new Registry(). */
@@ -32,7 +28,6 @@ export interface MetricsPluginOptions {
 declare module "fastify" {
   interface FastifyInstance {
     metricsRegistry: client.Registry;
-    triageMetrics: TriageMetrics;
   }
 }
 
@@ -59,10 +54,7 @@ async function metricsPlugin(
   opts: MetricsPluginOptions,
 ): Promise<void> {
   const registry = opts.registry ?? new client.Registry();
-  // KAN-193: low-cardinality triage metrics share this registry (no second global).
-  const triageMetrics = registerTriageMetrics(registry);
   fastify.decorate("metricsRegistry", registry);
-  fastify.decorate("triageMetrics", triageMetrics);
 
   // Register fastify-metrics for collection only (endpoint: null — we expose
   // /metrics ourselves so we can enforce bearer auth and rate-limit exemption).
