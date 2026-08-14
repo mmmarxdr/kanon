@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { Prisma } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -12,6 +13,8 @@ import {
 } from "../../test/helpers.js";
 import { prisma } from "../../config/prisma.js";
 import { retryRedmineIssueImport } from "./inbound.js";
+import { auditHealthForScope, getBindingAuditHealth } from "./service.js";
+import { createAuditScopeFingerprint } from "./core/audit-evidence.js";
 
 vi.mock("./inbound.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./inbound.js")>()),
@@ -242,5 +245,73 @@ describe("integration retry route", () => {
       commentCaptureEnabled: true,
       commentDispatchEnabled: true,
     });
+  });
+});
+
+describe("integration audit health route", () => {
+  let app: FastifyInstance;
+  beforeAll(async () => { app = await createTestApp(); });
+  beforeEach(async () => { await cleanDatabase(); });
+  afterAll(async () => { await app.close(); });
+
+  it("returns only safe state to an unscoped owner", async () => {
+    const workspace = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const project = await seedTestProject(workspace.id);
+    const connection = await prisma.integrationConnection.create({ data: { workspaceId: workspace.id, provider: "redmine", baseUrl: "https://redmine.test" } });
+    const binding = await prisma.integrationProjectBinding.create({ data: { connectionId: connection.id, projectId: project.id, remoteProjectId: "remote", readMap: {}, writeMap: {} } });
+    const response = await app.inject({ method: "GET", url: `/api/integrations/workspaces/${workspace.id}/connections/${connection.id}/bindings/${binding.id}/audit-health`, headers: { authorization: `Bearer ${owner.token}` } });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ state: "unknown", completedAt: null, validUntil: null, fresh: false, reasonCode: null });
+  });
+
+  it("rejects non-owners and scoped owner tokens", async () => {
+    const workspace = await seedTestWorkspace();
+    const [owner, member] = await Promise.all([seedTestMemberWithRole(workspace.id, "owner"), seedTestMemberWithRole(workspace.id, "member")]);
+    const project = await seedTestProject(workspace.id);
+    const connection = await prisma.integrationConnection.create({ data: { workspaceId: workspace.id, provider: "redmine", baseUrl: "https://redmine.test" } });
+    const binding = await prisma.integrationProjectBinding.create({ data: { connectionId: connection.id, projectId: project.id, remoteProjectId: "remote", readMap: {}, writeMap: {} } });
+    const url = `/api/integrations/workspaces/${workspace.id}/connections/${connection.id}/bindings/${binding.id}/audit-health`;
+    expect((await app.inject({ method: "GET", url, headers: { authorization: `Bearer ${member.token}` } })).statusCode).toBe(403);
+    const scoped = generateTestToken({ userId: owner.userId, allowedProjectIds: [project.id] });
+    expect((await app.inject({ method: "GET", url, headers: { authorization: `Bearer ${scoped}` } })).statusCode).toBe(403);
+  });
+});
+
+
+describe("audit health scope", () => {
+  const current = { bindingId: "binding", connectionId: "connection", baseUrl: "https://redmine.test", remoteProjectId: "42", credentialId: "credential", encryptedKey: "cipher" };
+  const run = { state: "complete" as const, completedAt: new Date("2026-08-13T12:00:00Z"), validUntil: new Date("2026-08-13T12:05:00Z"), reasonCode: null };
+  it("returns complete only for the exact current scope and database-fresh evidence", () => {
+    const exactScope = createAuditScopeFingerprint({ bindingId: current.bindingId, connectionId: current.connectionId, normalizedBaseUrl: new URL(current.baseUrl).toString(), remoteProjectId: current.remoteProjectId, credentialId: current.credentialId, credentialFingerprint: createHash("sha256").update(current.encryptedKey).digest("hex") });
+    const valid = auditHealthForScope(current, { ...run, scopeFingerprint: exactScope }, new Date("2026-08-13T12:04:59Z"));
+    expect(valid).toMatchObject({ state: "complete", fresh: true });
+    expect(auditHealthForScope({ ...current, remoteProjectId: "43" }, { ...run, scopeFingerprint: exactScope }, new Date("2026-08-13T12:04:59Z"))).toEqual({ state: "unknown", completedAt: null, validUntil: null, fresh: false, reasonCode: null });
+    expect(auditHealthForScope(current, { ...run, scopeFingerprint: exactScope }, new Date("2026-08-13T12:05:00Z"))).toEqual({ state: "unknown", completedAt: null, validUntil: null, fresh: false, reasonCode: null });
+  });
+
+  it("waits for a credential replacement before reading audit evidence", async () => {
+    const workspace = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const project = await seedTestProject(workspace.id);
+    const connection = await prisma.integrationConnection.create({ data: { workspaceId: workspace.id, provider: "redmine", baseUrl: "https://redmine.test" } });
+    const binding = await prisma.integrationProjectBinding.create({ data: { connectionId: connection.id, projectId: project.id, remoteProjectId: "remote", readMap: {}, writeMap: {} } });
+    const credential = await prisma.memberIntegrationCredential.create({ data: { memberId: owner.id, connectionId: connection.id, encryptedKey: "old-key", lastAuthStatus: "valid" } });
+    await prisma.integrationConnection.update({ where: { id: connection.id }, data: { serviceCredentialId: credential.id } });
+    let healthResolved = false;
+    let health: Promise<Awaited<ReturnType<typeof getBindingAuditHealth>>> | undefined;
+    await prisma.$transaction(async (transaction) => {
+      await transaction.$queryRaw(Prisma.sql`SELECT "id" FROM "integration_connections" WHERE "id" = ${connection.id}::uuid FOR UPDATE`);
+      await transaction.memberIntegrationCredential.update({ where: { id: credential.id }, data: { encryptedKey: "new-key" } });
+      health = getBindingAuditHealth(connection.id, binding.id, owner.userId, workspace.id).then((result) => {
+        healthResolved = true;
+        return result;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(healthResolved).toBe(false);
+    });
+
+    await expect(health).resolves.toEqual({ state: "unknown", completedAt: null, validUntil: null, fresh: false, reasonCode: null });
   });
 });
