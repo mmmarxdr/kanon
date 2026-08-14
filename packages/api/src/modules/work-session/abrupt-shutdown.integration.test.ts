@@ -1,15 +1,16 @@
 /**
  * work-session-resilience (Slice A) — Phase 5
  *
- * Duration formula: lastHeartbeat - startedAt (D4: deliberate deviation
- * from proposal's "now - startedAt" which over-counts dead time).
+ * Duration formula: min(observed cleanup, lastHeartbeat + SESSION_TTL_MS)
+ * minus startedAt. The lease deliberately bounds over-count to at most the
+ * TTL after the last activity signal instead of silently losing that window.
  *
  * If an MCP process dies after `startWork` succeeds (process crash,
  * `kill -9`, OOM, machine sleep) and a `WorkSession` row persists past
  * `SESSION_TTL_MS`, the next `cleanupExpired` run must:
  *   - treat the session as expired
  *   - write a `WorkLog` row with `reason: "expired"`
- *   - compute `durationS` from `lastHeartbeat - startedAt` (NOT from now)
+ *   - cap `durationS` at the last heartbeat's five-minute lease
  *   - thread `via` from `normalizeVia(source)`
  *
  * The resulting `WorkLog` MUST be observable via the worklog-list endpoint.
@@ -64,18 +65,18 @@ describe("Abrupt MCP Shutdown → cleanupExpired → WorkLog (Slice A, Phase 5)"
     return { ws, member, project, issue };
   }
 
-  it("aged session (lastHeartbeat past TTL) is cleaned up to a WorkLog with reason: 'expired' and durationS ≈ 120", async () => {
+  it("aged session is cleaned up through its bounded lease with exact durationS 420", async () => {
     const { member, issue } = await seedContext();
 
     // Write a WorkSession row directly via Prisma — simulating the
     // case where an MCP process died after startWork and the row was
     // never cleaned up.
     //
-    // Duration formula (D4): lastHeartbeat - startedAt (NOT now - startedAt).
-    // We anchor a 2-min session where the last heartbeat was 6 min ago:
-    //   startedAt    = now - 8 min  (alive at 8 min ago)
-    //   lastHeartbeat = now - 6 min  (session went silent 6 min ago — past TTL of 5 min)
-    // → lastHeartbeat - startedAt = 120_000 ms → durationS = 120.
+    // The initial/last activity signal owns a five-minute lease:
+    //   startedAt     = now - 8 min
+    //   lastHeartbeat = now - 6 min
+    //   lease end     = lastHeartbeat + 5 min = now - 1 min
+    // → lease end - startedAt = 7 min = exactly 420 seconds.
     const now = Date.now();
     const startedAt = new Date(now - 8 * 60_000);
     const lastHeartbeat = new Date(now - 6 * 60_000);
@@ -100,9 +101,7 @@ describe("Abrupt MCP Shutdown → cleanupExpired → WorkLog (Slice A, Phase 5)"
     });
     expect(worklog).not.toBeNull();
     expect(worklog!.reason).toBe("expired");
-    // durationS = floor((lastHeartbeat - startedAt) / 1000) = 120
-    expect(worklog!.durationS).toBeGreaterThanOrEqual(120);
-    expect(worklog!.durationS).toBeLessThan(130);
+    expect(worklog!.durationS).toBe(420);
     // `via` is `normalizeVia('claude-code')` = 'claude-code' (known vocab)
     expect(worklog!.via).toBe("claude-code");
   });
@@ -135,8 +134,9 @@ describe("Abrupt MCP Shutdown → cleanupExpired → WorkLog (Slice A, Phase 5)"
   it("aged WorkLog is observable via GET /api/issues/:key/worklogs", async () => {
     const { member, issue } = await seedContext();
 
-    const startedAt = new Date(Date.now() - 8 * 60_000);
-    const lastHeartbeat = new Date(Date.now() - 6 * 60_000);
+    const now = Date.now();
+    const startedAt = new Date(now - 8 * 60_000);
+    const lastHeartbeat = new Date(now - 6 * 60_000);
     await prisma.workSession.create({
       data: {
         userId: member.userId,
@@ -159,8 +159,7 @@ describe("Abrupt MCP Shutdown → cleanupExpired → WorkLog (Slice A, Phase 5)"
     const body = res.json() as { worklogs: Array<{ reason: string; durationS: number; via: string }> };
     expect(body.worklogs.length).toBe(1);
     expect(body.worklogs[0]!.reason).toBe("expired");
-    expect(body.worklogs[0]!.durationS).toBeGreaterThanOrEqual(120);
-    expect(body.worklogs[0]!.durationS).toBeLessThan(130);
+    expect(body.worklogs[0]!.durationS).toBe(420);
     expect(body.worklogs[0]!.via).toBe("claude-code");
   });
 });

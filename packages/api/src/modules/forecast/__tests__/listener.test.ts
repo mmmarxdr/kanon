@@ -34,6 +34,7 @@ vi.mock("../service.js", () => ({
 import { prisma } from "../../../config/prisma.js";
 import { rebuildProjectForecast } from "../service.js";
 import { registerForecastListener } from "../listener.js";
+import { InProcessEventBus } from "../../../services/event-bus/in-process.js";
 import type { IEventBus } from "../../../services/event-bus/interface.js";
 import type { DomainEvent } from "../../../services/event-bus/types.js";
 
@@ -64,7 +65,7 @@ function makeStubBus(): IEventBus & { fire: (event: Partial<DomainEvent>) => voi
     getEventsSince: vi.fn().mockReturnValue([]),
     fire(event: Partial<DomainEvent>) {
       if (handler) {
-        handler({
+        const result = handler({
           id: 1,
           type: "schedule.updated",
           workspaceId: "ws-1",
@@ -73,6 +74,15 @@ function makeStubBus(): IEventBus & { fire: (event: Partial<DomainEvent>) => voi
           timestamp: new Date().toISOString(),
           ...event,
         } as DomainEvent);
+        // Mirror the real event bus's ordinary emit path: observe async
+        // rejection without awaiting delivery or producing an unhandled promise.
+        const maybePromise = result as unknown;
+        if (
+          maybePromise != null &&
+          typeof (maybePromise as { then?: unknown }).then === "function"
+        ) {
+          void Promise.resolve(maybePromise).catch(() => {});
+        }
       }
     },
   };
@@ -587,6 +597,70 @@ describe("L12 — outer-catch: bus handler logs 'forecast listener event handler
     await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10);
 
     expect(mockRebuild).not.toHaveBeenCalled();
+
+    unsub();
+  });
+});
+
+// ─── L15: durable delivery waits for the debounced rebuild ───────────────────────
+
+describe("L15 — durable delivery acknowledges the completed forecast side effect", () => {
+  it("keeps emitAndWait pending until the debounced rebuild completes", async () => {
+    const bus = new InProcessEventBus();
+    let resolveRebuild!: () => void;
+    mockRebuild.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRebuild = () => resolve({
+            issueCount: 1,
+            criticalCount: 0,
+            worstSlipDays: 0,
+          } as never);
+        }),
+    );
+    const unsub = registerForecastListener(bus, stubLogger);
+    let settled = false;
+
+    const delivery = bus.emitAndWait({
+      type: "worklog.created",
+      workspaceId: "ws-1",
+      actorId: "actor-1",
+      payload: { workLogId: "wl-1", issueId: "issue-1", workspaceId: "ws-1" },
+    });
+    void delivery.finally(() => {
+      settled = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(mockRebuild).toHaveBeenCalledWith("project-A");
+    expect(settled).toBe(false);
+
+    resolveRebuild();
+    await delivery;
+    expect(settled).toBe(true);
+
+    unsub();
+  });
+
+  it("propagates a rebuild rejection to emitAndWait for durable retry", async () => {
+    const bus = new InProcessEventBus();
+    const error = new Error("forecast rebuild unavailable");
+    mockRebuild.mockRejectedValueOnce(error);
+    const unsub = registerForecastListener(bus, stubLogger);
+
+    const delivery = bus.emitAndWait({
+      type: "worklog.created",
+      workspaceId: "ws-1",
+      actorId: "actor-1",
+      payload: { workLogId: "wl-1", issueId: "issue-1", workspaceId: "ws-1" },
+    });
+    const rejection = expect(delivery).rejects.toThrow("subscriber delivery failed");
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+
+    await rejection;
 
     unsub();
   });

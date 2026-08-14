@@ -112,14 +112,15 @@ describe("KAN-205 confirmed Redmine time capture", () => {
         },
       ],
     });
+    const capturedAt = Date.now();
     await prisma.workSession.create({
       data: {
         issueId: issue.id,
         memberId: workerA.id,
         userId: workerA.userId,
         source: "mcp",
-        startedAt: new Date(Date.now() - 10 * 60 * 1000),
-        lastHeartbeat: new Date(Date.now() - 6 * 60 * 1000),
+        startedAt: new Date(capturedAt - 10 * 60 * 1000),
+        lastHeartbeat: new Date(capturedAt - 6 * 60 * 1000),
       },
     });
 
@@ -133,7 +134,9 @@ describe("KAN-205 confirmed Redmine time capture", () => {
         where: { issueId: issue.id, reason: "expired" },
         select: { durationS: true },
       }),
-    ).resolves.toEqual({ durationS: 240 });
+    // The heartbeat's five-minute lease ends one minute before capturedAt:
+    // (capturedAt - 1 min) - (capturedAt - 10 min) = exactly 9 min = 540s.
+    ).resolves.toEqual({ durationS: 540 });
 
     const summary = await reconcileIssueTime(issue.id, finalizer.id);
     const entries = await prisma.timeEntry.findMany({

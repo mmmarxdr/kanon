@@ -25,6 +25,7 @@ import {
 import { prisma } from "../../config/prisma.js";
 import { transitionIssue, batchTransitionByKeys, transitionGroup } from "../issue/service.js";
 import { reconcileIssueTime } from "../issue/reconcile.js";
+import { cleanupExpired, SESSION_TTL_MS } from "./service.js";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -122,6 +123,40 @@ describe("transition-listener — end-to-end (KAN-156 Slice 1)", () => {
       where: { memberId: member.id, issueId: issue.id },
     });
     expect(session).not.toBeNull();
+  });
+
+  it("persists the initial transition lease when cleanup finalizes it", async () => {
+    const { member, issue } = await seedContext("backlog");
+
+    await transitionIssue(issue.key, "analysis", member.id, null);
+    await waitFor(async () => {
+      const session = await prisma.workSession.findFirst({
+        where: { memberId: member.id, issueId: issue.id },
+      });
+      return session !== null;
+    });
+
+    const leaseStartedAt = new Date(Date.now() - SESSION_TTL_MS - 1_000);
+    await prisma.workSession.updateMany({
+      where: { memberId: member.id, issueId: issue.id },
+      data: { startedAt: leaseStartedAt, lastHeartbeat: leaseStartedAt },
+    });
+
+    await cleanupExpired();
+
+    const session = await prisma.workSession.findFirst({
+      where: { memberId: member.id, issueId: issue.id },
+    });
+    const logs = await prisma.workLog.findMany({
+      where: { memberId: member.id, issueId: issue.id },
+    });
+    expect(session).toBeNull();
+    expect(logs).toHaveLength(1);
+    expect(logs[0]!.startedAt).toEqual(leaseStartedAt);
+    expect(logs[0]!.endedAt).toEqual(
+      new Date(leaseStartedAt.getTime() + SESSION_TTL_MS),
+    );
+    expect(logs[0]!.durationS).toBe(SESSION_TTL_MS / 1000);
   });
 
   // ── Close session on review/done ───────────────────────────────────────
@@ -435,7 +470,7 @@ describe("transition-listener — end-to-end (KAN-156 Slice 1)", () => {
     });
     expect(session).toBeNull();
 
-    // A WorkLog must have been written for Bob (durationS >= MIN threshold = 60s)
+    // A WorkLog must have been written for Bob's positive captured duration.
     const workLog = await prisma.workLog.findFirst({
       where: { memberId: bob.id, issueId: issue.id },
     });

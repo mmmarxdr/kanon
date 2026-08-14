@@ -146,6 +146,88 @@ async function transitionIssuesWithCapture(
   });
 }
 
+export type StartWorkIssueMutationEffects = {
+  issue: {
+    id: string;
+    key: string;
+    title: string;
+    project: { key: string; workspaceId: string };
+  };
+  updated: IssueMutationRow;
+  memberId: string;
+  userId: string;
+  via: string | null;
+  previousAssigneeId: string | null;
+  fromState: IssueState;
+  autoAssigned: boolean;
+  transitioned: boolean;
+};
+
+/** Publish the non-transactional projections of an atomic start-work mutation. */
+export async function publishStartWorkIssueMutationEffects(
+  input: StartWorkIssueMutationEffects,
+): Promise<void> {
+  if (input.autoAssigned) {
+    void autoSubscribe(input.issue.id, input.memberId, "assignee");
+    try {
+      eventBus.emit({
+        type: "issue.updated",
+        workspaceId: input.issue.project.workspaceId,
+        actorId: input.memberId,
+        payload: {
+          issueKey: input.issue.key,
+          issueId: input.issue.id,
+          projectKey: input.issue.project.key,
+          fields: ["assigneeId"],
+        },
+        via: input.via,
+      });
+      eventBus.emit({
+        type: "issue.assigned",
+        workspaceId: input.issue.project.workspaceId,
+        actorId: input.memberId,
+        payload: {
+          issueKey: input.issue.key,
+          issueId: input.issue.id,
+          projectKey: input.issue.project.key,
+          issueTitle: input.issue.title,
+          from: input.previousAssigneeId,
+          to: input.memberId,
+        },
+        via: input.via,
+      });
+    } catch {
+      // Never let event emission break a committed start-work mutation.
+    }
+  }
+
+  if (!input.transitioned) return;
+
+  await checkAndAdvanceParent(prisma, input.updated, input.memberId);
+  await syncRoadmapItemStatus(prisma, input.updated.id);
+  try {
+    const transitionedPayload: IssueTransitionedPayload = {
+      issueKey: input.issue.key,
+      issueId: input.issue.id,
+      projectKey: input.issue.project.key,
+      from: input.fromState,
+      to: "in_progress",
+      actorMemberId: input.memberId,
+      actorUserId: input.userId,
+      cause: "start_work",
+    };
+    eventBus.emit({
+      type: "issue.transitioned",
+      workspaceId: input.issue.project.workspaceId,
+      actorId: input.memberId,
+      payload: transitionedPayload as unknown as Record<string, unknown>,
+      via: input.via,
+    });
+  } catch {
+    // Never let event emission break a committed start-work mutation.
+  }
+}
+
 /**
  * Generate the next issue key for a project using an atomic counter increment.
  *

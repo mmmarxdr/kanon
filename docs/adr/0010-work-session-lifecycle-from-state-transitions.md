@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-06-24
+- Amended: 2026-08-11 (KAN-243 bounded activity lease)
 - Epic: ppm-foundation (work capture)
 - Issue: KAN-156 (+ companion reconciliation ticket, + editor-extension roadmap item)
 - Related: ADR-0001 (canonical hours & approval flow — amended here), KAN-143 (start_work→auto-advance, inverse coupling), KAN-144 (activity-gated heartbeat), KAN-33 (synced-from-tools rail)
@@ -23,7 +24,14 @@ Capture must be **organic and tool-agnostic** (identical in Claude Code / Cursor
    - Idempotent (≤ one open session per member+issue; re-entering an open state and closing-when-none-open are no-ops).
    - **KAN-143 circular guard:** the listener must ignore transitions that `start_work` itself caused, once KAN-143 lands.
 
-2. **Activity defines what accrues inside the window.** The heartbeat becomes **activity-driven** (emit on a real agent tool call / user prompt, debounced ~once/2 min) instead of a blind timer, and **source-agnostic** (any connected tool may heartbeat — MCP agent now, editor extension / git activity later). No activity → no heartbeat → the session pauses; the 5-min TTL + `cleanupExpired` (uses `lastHeartbeat`) trims the trailing gap. Bursty work within an active state expires and resumes as **multiple WorkLogs** — interval accounting falls out of existing primitives, no new accumulation schema. **Idle and off-hours are excluded organically — no timezone/working-hours config.**
+2. **Activity leases define what accrues inside the window.** The heartbeat becomes **activity-driven** (emit on a real agent tool call / user prompt, debounced ~once/2 min) instead of a blind timer, and **source-agnostic** (any connected tool may heartbeat — MCP agent now, editor extension / git activity later). Entering `analysis` / `in_progress` is the first activity signal; each signal grants or refreshes a bounded 5-minute lease. `lastHeartbeat` is therefore the lease start, not the captured end marker:
+   - `capturedEnd = min(observed stop/review/done, lastHeartbeat + SESSION_TTL_MS)`.
+   - Every positive whole-second duration is persisted; only a zero-second interval is unrepresentable by the current schema.
+   - Repeated `start_work` adopts and refreshes a fresh session without changing its ID or `startedAt`. After lease expiry, it finalizes the stale window once and opens a distinct window instead of bridging idle time.
+   - Bursty work within an active state expires and resumes as **multiple WorkLogs** — interval accounting falls out of existing primitives, with no new accumulation schema.
+   - Lifecycle mutations are generation-aware without a schema change: stale finalization and replacement share one serializable transaction, cleanup claims the observed `(session ID, lastHeartbeat)` before writing a WorkLog, and close paths target the observed session ID. Transition effects are serialized per issue so arrival order is preserved while different issues remain independent.
+
+   No activity beyond the lease pauses capture. Observable state exits cap the lease early, so review, done, and explicit stop never accrue beyond a known close.
 
 3. **The dev reconciles + tops up at close.** Because non-observable work exists, leaving active work (→ `review`, and required before `done`) surfaces the captured active time and **forces the dev to confirm or adjust**, with an explicit **"add manual hours"** field for what Kanon could not see. The reconciled total (observed-active + dev-attested-manual) becomes the canonical TimeEntry. Contextual and forced — not free-form anytime — so the observed part stays truthful while unobserved hours aren't lost.
 
@@ -32,7 +40,8 @@ Activity-gating removes the raw overcount that PM approval existed to correct, s
 
 ## Consequences
 - Time capture is organic: transition the ticket, work, and the active time is captured in any client — no `start_work` ritual.
-- Truthful by construction: only observed activity auto-accrues; the dev attests the rest at close; nothing is invented.
+- Capture is bounded and reconcilable: only activity leases auto-accrue, and the dev attests unobservable work at close.
+- Precision is deliberately bounded rather than silently lossy: a missing final signal can overcount by at most one TTL, while an observed stop/review/done caps capture immediately. This accepts a small bounded overcount instead of deleting the entire initial or sub-minute window.
 - No timezone/jornada infrastructure — the activity signal is the off-hours/idle filter.
 - The MCP heartbeat change (activity-driven) and the heartbeat→resume coupling are real work; the transition listener is independently shippable first.
 - Editor-activity extensions (roadmap) progressively shrink the manual top-up.

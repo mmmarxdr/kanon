@@ -1,5 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { InProcessEventBus } from "./in-process.js";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  EVENT_BUS_DELIVERY_TIMEOUT_MS,
+  InProcessEventBus,
+} from "./in-process.js";
 import type { DomainEventInput, DomainEvent } from "./types.js";
 
 function makeInput(overrides?: Partial<DomainEventInput>): DomainEventInput {
@@ -17,6 +20,10 @@ describe("InProcessEventBus", () => {
 
   beforeEach(() => {
     bus = new InProcessEventBus();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   // ── emit + subscribe ────────────────────────────────────────────────
@@ -243,6 +250,79 @@ describe("InProcessEventBus", () => {
     const [obj] = mockLogger.error.mock.calls[0]!;
     expect(obj).toMatchObject({ subscriber: "async-thrower" });
     expect(received).toHaveLength(1);
+  });
+
+  it("lets durable publishers await and observe an async subscriber rejection", async () => {
+    const mockLogger = { error: vi.fn() };
+    bus.setLogger(mockLogger);
+    const delivered: DomainEvent[] = [];
+    bus.subscribe(async () => {
+      throw new Error("durable delivery failed");
+    }, "durable-failure");
+    bus.subscribe((event) => delivered.push(event), "durable-collector");
+
+    await expect(bus.emitAndWait(makeInput())).rejects.toThrow(
+      "subscriber delivery failed",
+    );
+
+    expect(mockLogger.error).toHaveBeenCalledOnce();
+    expect(delivered).toHaveLength(1);
+  });
+
+  it("times out a stalled durable subscriber without blocking concurrent delivery", async () => {
+    vi.useFakeTimers();
+    bus = new InProcessEventBus({ deliveryTimeoutMs: 100 });
+    const mockLogger = { error: vi.fn() };
+    bus.setLogger(mockLogger);
+    let rejectLate!: (error: Error) => void;
+    const stalled = new Promise<void>((_resolve, reject) => {
+      rejectLate = reject;
+    });
+    const delivered: DomainEvent[] = [];
+    bus.subscribe(() => stalled, "stalled-subscriber");
+    bus.subscribe((event) => delivered.push(event), "concurrent-collector");
+
+    const rejection = bus.emitAndWait(makeInput()).catch((error) => error);
+    await vi.advanceTimersByTimeAsync(100);
+
+    const error = await rejection;
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error).toMatchObject({
+      message: "event-bus subscriber delivery failed",
+      errors: [
+        expect.objectContaining({
+          message: "event-bus subscriber delivery timed out after 100ms",
+        }),
+      ],
+    });
+    expect(delivered).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+
+    const lateError = new Error("late subscriber rejection");
+    rejectLate(lateError);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        err: lateError,
+        subscriber: "stalled-subscriber",
+      }),
+      "event-bus subscriber error",
+    );
+  });
+
+  it("keeps the default durable delivery deadline below lifecycle recovery", () => {
+    expect(EVENT_BUS_DELIVERY_TIMEOUT_MS).toBeLessThan(30_000);
+  });
+
+  it("clears the durable delivery deadline after subscribers settle", async () => {
+    vi.useFakeTimers();
+    bus = new InProcessEventBus({ deliveryTimeoutMs: 100 });
+    bus.subscribe(async () => Promise.resolve(), "settled-subscriber");
+
+    await bus.emitAndWait(makeInput());
+
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("workspace-filtered: thrower in workspace A does not block another ws-A subscriber", () => {
