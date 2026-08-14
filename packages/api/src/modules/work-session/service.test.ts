@@ -35,7 +35,12 @@ vi.mock("../../config/prisma.js", () => ({
     },
     // KAN-103: startWork closes open interruptions (resume); incident-start opens them.
     // KAN-103 PR3: findMany added for pre-close query before emit.
-    interruption: { updateMany: vi.fn(), create: vi.fn(), findMany: vi.fn() },
+    interruption: {
+      updateMany: vi.fn(),
+      create: vi.fn(),
+      findMany: vi.fn(),
+      findFirst: vi.fn(),
+    },
     activityLog: { create: vi.fn() },
     $transaction: vi.fn(),
     $queryRaw: vi.fn(),
@@ -168,6 +173,7 @@ function mockLockedIssue(
 const mockInterruptionFindManyGlobal = vi.mocked(prisma.interruption.findMany);
 const mockInterruptionUpdateManyGlobal = vi.mocked(prisma.interruption.updateMany);
 const mockInterruptionCreateGlobal = vi.mocked(prisma.interruption.create);
+const mockInterruptionFindFirstGlobal = vi.mocked(prisma.interruption.findFirst);
 
 describe("WorkSessionService", () => {
   beforeEach(() => {
@@ -175,6 +181,7 @@ describe("WorkSessionService", () => {
     // KAN-103 PR3: safe default — no open interruptions unless a test explicitly overrides.
     mockInterruptionFindManyGlobal.mockResolvedValue([]);
     mockInterruptionUpdateManyGlobal.mockResolvedValue({ count: 0 } as any);
+    mockInterruptionFindFirstGlobal.mockResolvedValue(null as any);
     // KAN-160: default — no other active worker on the issue unless a test sets one.
     mockSessionFindFirst.mockResolvedValue(null as any);
     mockSessionFindMany.mockResolvedValue([] as any);
@@ -764,6 +771,176 @@ describe("WorkSessionService", () => {
   // ── heartbeat ──────────────────────────────────────────────────────────
 
   describe("heartbeat", () => {
+    it("adopts a missing active session with authenticated identity and provenance", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-08-14T14:00:00.000Z"));
+      const adopted = {
+        ...fakeSession,
+        id: "session-adopted",
+        source: "claude-code",
+        startedAt: new Date("2026-08-14T14:00:00.000Z"),
+        lastHeartbeat: new Date("2026-08-14T14:00:00.000Z"),
+      };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(null);
+      mockSessionUpsert.mockResolvedValue(adopted);
+
+      const result = await heartbeat(
+        "KAN-42",
+        "member-1",
+        "user-1",
+        "claude-code",
+      );
+
+      expect(result).toEqual(adopted);
+      expect(mockSessionUpsert).toHaveBeenCalledWith({
+        where: { userId_issueId: { userId: "user-1", issueId: "issue-1" } },
+        create: expect.objectContaining({
+          memberId: "member-1",
+          userId: "user-1",
+          issueId: "issue-1",
+          source: "claude-code",
+          startedAt: new Date("2026-08-14T14:00:00.000Z"),
+          lastHeartbeat: new Date("2026-08-14T14:00:00.000Z"),
+        }),
+        update: expect.objectContaining({
+          lastHeartbeat: new Date("2026-08-14T14:00:00.000Z"),
+        }),
+      });
+    });
+
+    it("does not adopt a missing session when the locked issue is not active", async () => {
+      mockIssueFind.mockResolvedValue({ ...fakeIssue, state: "review" });
+      mockLockedIssue("review");
+      mockSessionFindUnique.mockResolvedValue(null);
+
+      const result = await heartbeat(
+        "KAN-42",
+        "member-1",
+        "user-1",
+        "codex",
+      );
+
+      expect(result).toBeNull();
+      expect(mockSessionUpsert).not.toHaveBeenCalled();
+      expect(mockSessionCreate).not.toHaveBeenCalled();
+    });
+
+    it("suppresses adoption when a foreign owner starts inside the issue-lock boundary", async () => {
+      vi.useFakeTimers();
+      const heartbeatAt = new Date("2026-08-14T14:00:00.000Z");
+      const foreignStartedAt = new Date("2026-08-14T14:00:00.500Z");
+      const issueLockedAt = new Date("2026-08-14T14:00:01.000Z");
+      vi.setSystemTime(heartbeatAt);
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(null);
+      mockSessionUpsert.mockResolvedValue({ ...fakeSession, id: "wrong-adoption" });
+      mockQueryRaw.mockImplementation(async (query: any, ...values: any[]) => {
+        const sql = Array.isArray(query) ? query.join(" ") : String(query);
+        if (sql.includes('SELECT "state"')) {
+          vi.setSystemTime(issueLockedAt);
+          return [{ state: "in_progress", assigneeId: "existing" }] as any;
+        }
+        const intervalEnd = values.flatMap((value) =>
+          Array.isArray(value?.values) ? value.values : [value],
+        ).find(
+          (value) =>
+            value instanceof Date &&
+            value.getTime() === issueLockedAt.getTime(),
+        );
+        return intervalEnd && foreignStartedAt < intervalEnd
+          ? ([{ username: "other-worker" }] as any)
+          : ([] as any);
+      });
+
+      const result = await heartbeat(
+        "KAN-42",
+        "member-1",
+        "user-1",
+        "codex",
+      );
+
+      expect(result).toBeNull();
+      expect(mockQueryRaw).toHaveBeenCalledTimes(2);
+      expect(mockSessionUpsert).not.toHaveBeenCalled();
+    });
+
+    it("returns CAPTURE_PAUSED without refreshing an interrupted member session", async () => {
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(fakeSession);
+      mockInterruptionFindFirstGlobal.mockResolvedValue({
+        id: "interruption-open",
+      } as any);
+      mockSessionUpsert.mockResolvedValue({ ...fakeSession });
+
+      await expect(
+        heartbeat("KAN-42", "member-1", "user-1", "codex"),
+      ).rejects.toMatchObject({ statusCode: 409, code: "CAPTURE_PAUSED" });
+      expect(mockInterruptionFindFirstGlobal).toHaveBeenCalledWith({
+        where: {
+          interruptedIssueId: "issue-1",
+          memberId: "member-1",
+          endedAt: null,
+        },
+        select: { id: true },
+      });
+      expect(mockSessionUpsert).not.toHaveBeenCalled();
+      expect(mockSessionCreate).not.toHaveBeenCalled();
+    });
+
+    it("does not let another member's interruption block adoption", async () => {
+      const adopted = { ...fakeSession, id: "session-adopted" };
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(null);
+      mockInterruptionFindFirstGlobal.mockImplementation(async (query: any) =>
+        query.where.memberId === "other-member"
+          ? ({ id: "other-member-interruption" } as any)
+          : null,
+      );
+      mockSessionUpsert.mockResolvedValue(adopted);
+
+      const result = await heartbeat(
+        "KAN-42",
+        "member-1",
+        "user-1",
+        "codex",
+      );
+
+      expect(result).toEqual(adopted);
+      expect(mockInterruptionFindFirstGlobal).toHaveBeenCalledWith({
+        where: {
+          interruptedIssueId: "issue-1",
+          memberId: "member-1",
+          endedAt: null,
+        },
+        select: { id: true },
+      });
+    });
+
+    it("does not adopt a missing incident or create displacement effects", async () => {
+      mockIssueFind.mockResolvedValue({
+        ...fakeIssue,
+        id: "incident-1",
+        key: "INC-1",
+        type: "incident",
+      });
+      mockSessionFindUnique.mockResolvedValue(null);
+
+      const result = await heartbeat(
+        "INC-1",
+        "member-1",
+        "user-1",
+        "codex",
+      );
+
+      expect(result).toBeNull();
+      expect(mockSessionUpsert).not.toHaveBeenCalled();
+      expect(mockSessionCreate).not.toHaveBeenCalled();
+      expect(mockSessionFindMany).not.toHaveBeenCalled();
+      expect(mockSessionDeleteMany).not.toHaveBeenCalled();
+      expect(mockInterruptionCreateGlobal).not.toHaveBeenCalled();
+    });
+
     it("never lets an incident heartbeat create displacement side effects", async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2026-08-11T12:05:00.000Z"));
@@ -797,7 +974,7 @@ describe("WorkSessionService", () => {
         },
       ] as any);
 
-      const result = await heartbeat("INC-1", "user-1");
+      const result = await heartbeat("INC-1", "member-1", "user-1", "codex");
 
       expect(result).toEqual(refreshed);
       expect(mockSessionFindMany).not.toHaveBeenCalled();
@@ -818,7 +995,12 @@ describe("WorkSessionService", () => {
         lastHeartbeat: startedAt,
       });
 
-      const result = await heartbeat("KAN-42", "user-1");
+      const result = await heartbeat(
+        "KAN-42",
+        "member-1",
+        "user-1",
+        "codex",
+      );
 
       expect(result).toBeNull();
       expect(mockSessionUpsert).not.toHaveBeenCalled();
@@ -850,12 +1032,21 @@ describe("WorkSessionService", () => {
           upsert: vi.fn().mockResolvedValue(replacement),
         },
         workLog: { create: vi.fn() },
-        interruption: { findMany: vi.fn(), updateMany: vi.fn() },
+        interruption: {
+          findFirst: vi.fn().mockResolvedValue(null),
+          findMany: vi.fn(),
+          updateMany: vi.fn(),
+        },
       };
       mockIssueFind.mockResolvedValue(fakeIssue);
       mockTransaction.mockImplementation(async (operation: any) => operation(tx));
 
-      const result = await heartbeat("KAN-42", "user-1");
+      const result = await heartbeat(
+        "KAN-42",
+        "member-1",
+        "user-1",
+        "codex",
+      );
 
       expect(result).toBeNull();
       expect(tx.workSession.upsert).not.toHaveBeenCalled();
@@ -897,7 +1088,12 @@ describe("WorkSessionService", () => {
 
       // The close handler has already snapshotted session A. Its identity-aware
       // stop will no-op after heartbeat claims A, so heartbeat must not leave B.
-      const heartbeatResult = await heartbeat("KAN-42", "user-1");
+      const heartbeatResult = await heartbeat(
+        "KAN-42",
+        "member-1",
+        "user-1",
+        "codex",
+      );
       const closeResult = await stopWork(
         "KAN-42",
         "user-1",
@@ -931,10 +1127,15 @@ describe("WorkSessionService", () => {
         startedAt: new Date("2026-08-11T12:10:00.000Z"),
         lastHeartbeat: new Date("2026-08-11T12:10:00.000Z"),
       };
+      let stateRead = 0;
       const tx = {
-        $queryRaw: vi.fn()
-          .mockResolvedValueOnce([{ state: "in_progress" }])
-          .mockResolvedValueOnce([{ state: "review" }]),
+        $queryRaw: vi.fn().mockImplementation(async (query: any) => {
+          const sql = Array.isArray(query) ? query.join(" ") : String(query);
+          if (sql.includes('SELECT "state"')) {
+            return [{ state: stateRead++ === 0 ? "in_progress" : "review" }];
+          }
+          return [];
+        }),
         workSession: {
           findUnique: vi.fn()
             .mockResolvedValueOnce(stale)
@@ -944,12 +1145,21 @@ describe("WorkSessionService", () => {
           upsert: vi.fn().mockResolvedValue(replacement),
         },
         workLog: { create: vi.fn() },
-        interruption: { findMany: vi.fn(), updateMany: vi.fn() },
+        interruption: {
+          findFirst: vi.fn().mockResolvedValue(null),
+          findMany: vi.fn(),
+          updateMany: vi.fn(),
+        },
       };
       mockIssueFind.mockResolvedValue(fakeIssue);
       mockTransaction.mockImplementation(async (operation: any) => operation(tx));
 
-      const result = await heartbeat("KAN-42", "user-1");
+      const result = await heartbeat(
+        "KAN-42",
+        "member-1",
+        "user-1",
+        "codex",
+      );
 
       expect(result).toBeNull();
       expect(tx.workSession.deleteMany).toHaveBeenCalledOnce();
@@ -983,6 +1193,7 @@ describe("WorkSessionService", () => {
         workLog: {
           create: vi.fn().mockResolvedValue({ id: "wl-heartbeat", durationS: 300 }),
         },
+        interruption: { findFirst: vi.fn().mockResolvedValue(null) },
       };
       mockIssueFind.mockResolvedValue(fakeIssue);
       mockSessionFindUnique.mockResolvedValue(stale);
@@ -991,7 +1202,12 @@ describe("WorkSessionService", () => {
         return operation(tx);
       });
 
-      const result = await heartbeat("KAN-42", "user-1");
+      const result = await heartbeat(
+        "KAN-42",
+        "member-1",
+        "user-1",
+        "codex",
+      );
 
       expect(result).toMatchObject({
         id: "session-heartbeat-window",
@@ -1042,7 +1258,9 @@ describe("WorkSessionService", () => {
       mockSessionFindUnique.mockResolvedValue(session);
       mockInterruptionFindManyGlobal.mockResolvedValue([interruption] as any);
 
-      expect(await heartbeat("KAN-42", "user-1")).toBeNull();
+      expect(
+        await heartbeat("KAN-42", "member-1", "user-1", "codex"),
+      ).toBeNull();
 
       expect(mockWorkLogCreate).not.toHaveBeenCalled();
       expect(mockEmitAndWait).not.toHaveBeenCalled();
@@ -1071,7 +1289,12 @@ describe("WorkSessionService", () => {
       const updatedSession = { ...fakeSession, lastHeartbeat: new Date() };
       mockSessionUpsert.mockResolvedValue(updatedSession);
 
-      const result = await heartbeat("KAN-42", "user-1");
+      const result = await heartbeat(
+        "KAN-42",
+        "member-1",
+        "user-1",
+        "codex",
+      );
 
       expect(result).toBe(updatedSession);
       expect(mockSessionUpsert).toHaveBeenCalledWith(
@@ -1081,19 +1304,12 @@ describe("WorkSessionService", () => {
       );
     });
 
-    it("returns null when no active session exists", async () => {
-      mockIssueFind.mockResolvedValue(fakeIssue);
-      mockSessionFindUnique.mockResolvedValue(null);
-
-      const result = await heartbeat("KAN-42", "user-1");
-
-      expect(result).toBeNull();
-    });
-
     it("throws 404 when issue not found", async () => {
       mockIssueFind.mockResolvedValue(null);
 
-      await expect(heartbeat("NOPE-1", "u-1")).rejects.toThrow("not found");
+      await expect(
+        heartbeat("NOPE-1", "member-1", "u-1", "codex"),
+      ).rejects.toThrow("not found");
     });
   });
 
