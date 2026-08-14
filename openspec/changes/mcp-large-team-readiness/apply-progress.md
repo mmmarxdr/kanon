@@ -46,3 +46,8 @@ Task 12.1: RED - Added observability/metrics/app/perf/MCP privacy tests for corr
 Task 12.2: GREEN - `observability.ts` + registry metrics in `metrics.ts`; `app.ts` genReqId/X-Kanon-Correlation-ID echo + TRIAGE_PINO_REDACT_PATHS; `triage-preview-v1` / `triage-proposal-list-v1` harnesses (full 1000-sample behind TRIAGE_PERF=1).
 Task 12.3: TRIANGULATE - Fixture gates for P95/output budgets; source-plan asserts for visibility-first + limit+1 + no content fetch; MCP correlation/deadline privacy fixtures. Focused API suites + full `@kanon/mcp test` green (518 passed). Full monorepo/e2e load remains operator TRIAGE_PERF gate.
 Task 12.4: REFACTOR - Rollout/rollback runbook in `docs/modules/mcp.mdx` and `agents/kanon.md` (schema → guard → preview → get/list → persist/dismiss → retention; 44-tool rollback; no destructive DB rollback without export/backfill). Branch: `feat/kan-193-observability-perf`.
+
+
+## 2026-08-13 runtime-proven AUD-015 follow-up
+
+TDD RED/GREEN: fixed persisted triage provenance to retain original ranked candidate order after retention filtering; canonical retained ID bookkeeping remains sorted. Replaced harness JSON-string equality with structural equality that ignores object key order while retaining array order. Focused proposal-write/live-gate tests, API typecheck/build, JS/shell syntax, and diff check passed. This records harness/runtime evidence only and does not alter qualifying task checkbox state.

@@ -39,7 +39,15 @@ describe("persistTriageProposal", () => {
         projectId: project.id,
         key: `${project.key}-2`,
         sequenceNum: 2,
-        title: "Login failure duplicate",
+        title: "Login failure",
+      },
+    });
+    await prisma.issue.create({
+      data: {
+        projectId: project.id,
+        key: `${project.key}-3`,
+        sequenceNum: 3,
+        title: "Login failure",
       },
     });
     const issueBefore = await prisma.issue.findUniqueOrThrow({ where: { id: target.id } });
@@ -81,6 +89,21 @@ describe("persistTriageProposal", () => {
     expect(proposal.content?.payload).toMatchObject({
       provenance: { sourceSnapshots: { target: { issueId: target.id } } },
     });
+    expect(preview.candidates.length).toBeGreaterThan(1);
+    expect(proposal.content?.provenance.preview.candidates.map((candidate: { rank: number }) => candidate.rank))
+      .toEqual(preview.candidates.map((candidate) => candidate.rank));
+
+    const partial = await persistTriageProposal({
+      ...input,
+      correlationId: randomUUID(),
+      body: { preview, previewSeal: preview.previewSeal, retainedItemIds: [preview.candidates[1]!.issueId, preview.candidates[0]!.issueId] },
+    });
+    const partialContent = await prisma.triageProposalContent.findUniqueOrThrow({ where: { proposalId: partial.id } });
+    const persistedCandidates = (partialContent.provenance as { preview: { candidates: Array<{ issueId: string; rank: number }> } }).preview.candidates;
+    expect(persistedCandidates.length).toBeGreaterThan(1);
+    expect(persistedCandidates.map((candidate) => candidate.rank)).toEqual(
+      preview.candidates.filter((candidate) => persistedCandidates.some((stored) => stored.issueId === candidate.issueId)).map((candidate) => candidate.rank),
+    );
     await expect(prisma.issue.findUniqueOrThrow({ where: { id: target.id } })).resolves.toEqual(issueBefore);
 
     await prisma.issue.update({ where: { id: target.id }, data: { priority: "low" } });
