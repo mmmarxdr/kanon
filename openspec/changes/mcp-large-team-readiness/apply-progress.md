@@ -51,3 +51,8 @@ Task 12.4: REFACTOR - Rollout/rollback runbook in `docs/modules/mcp.mdx` and `ag
 ## 2026-08-13 runtime-proven AUD-015 follow-up
 
 TDD RED/GREEN: fixed persisted triage provenance to retain original ranked candidate order after retention filtering; canonical retained ID bookkeeping remains sorted. Replaced harness JSON-string equality with structural equality that ignores object key order while retaining array order. Focused proposal-write/live-gate tests, API typecheck/build, JS/shell syntax, and diff check passed. This records harness/runtime evidence only and does not alter qualifying task checkbox state.
+
+## 2026-08-14 runtime-measured compact list follow-up
+
+RED: an isolated PostgreSQL 16 rerun returned 503 for a legitimate 50-row compact page and exposed stored-only `targetTitle` and `nonExecutable` fields in list rows.
+GREEN/REFACTOR: the same page returned 200 at 31,725 bytes after omitting only those projection extras; the oversized-page rejection stayed 503, all 11 focused proposal-list tests passed, and API TypeScript typecheck was clean. This is runtime evidence only and does not change the normative contract.

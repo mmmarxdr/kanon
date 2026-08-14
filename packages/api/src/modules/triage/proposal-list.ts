@@ -112,7 +112,7 @@ function effectiveState(
 }
 
 function compactSummary(summary: Prisma.JsonValue): Prisma.JsonValue {
-  if (!summary || typeof summary !== "object" || Array.isArray(summary)) return { nonExecutable: true };
+  if (!summary || typeof summary !== "object" || Array.isArray(summary)) return {};
   const value = summary as Prisma.JsonObject;
   const policy = value["policy"] && typeof value["policy"] === "object" && !Array.isArray(value["policy"])
     ? value["policy"] as Prisma.JsonObject
@@ -134,7 +134,6 @@ function compactSummary(summary: Prisma.JsonValue): Prisma.JsonValue {
       : undefined;
   return {
     targetIssueKey: boundedString(value["targetIssueKey"], 120),
-    targetTitle: boundedString(value["targetTitle"], 200),
     actionKinds: boundedStrings(value["actionKinds"], 10, 40),
     generatorSource: boundedString(value["generatorSource"], 32),
     ...(policy ? { policy: {
@@ -149,7 +148,6 @@ function compactSummary(summary: Prisma.JsonValue): Prisma.JsonValue {
     confidenceBands: boundedStrings(value["confidenceBands"], 3, 6),
     degraded: value["degraded"] === true,
     degradationCategories: boundedStrings(value["degradationCategories"], 8, 80),
-    nonExecutable: true,
   };
 }
 
