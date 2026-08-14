@@ -29,8 +29,8 @@ export interface AuditCensusPersistence {
 }
 
 export interface AuditCensusSource {
-  readPage(offset: number, limit: number, checkpoint: PollCheckpoint | null): Promise<RedmineAuditRead<{ readonly changes: readonly RedmineIssueChange[]; readonly nextCheckpoint: PollCheckpoint | null; readonly hasMore: boolean }>>;
-  readIssueDetail(issueId: string): Promise<RedmineAuditRead<DecodedRedmineIssue> | { readonly kind: "not_visible_in_scope" }>;
+  readPage(offset: number, limit: number, checkpoint: PollCheckpoint | null, signal?: AbortSignal): Promise<RedmineAuditRead<{ readonly changes: readonly RedmineIssueChange[]; readonly nextCheckpoint: PollCheckpoint | null; readonly hasMore: boolean }>>;
+  readIssueDetail(issueId: string, signal?: AbortSignal): Promise<RedmineAuditRead<DecodedRedmineIssue> | { readonly kind: "not_visible_in_scope" }>;
 }
 
 export type AuditCensusResult =
@@ -40,6 +40,8 @@ export type AuditCensusResult =
 export interface AuditCensusOptions {
   readonly pageSize: number;
   readonly maxPasses: number;
+  /** Cancels provider I/O through the audit source; cancellation never commits or finalizes evidence. */
+  readonly signal?: AbortSignal;
 }
 
 export type AuditTerminalIdentity =
@@ -163,6 +165,7 @@ export async function runRedmineAuditCensus(
 ): Promise<AuditCensusResult> {
   if (!Number.isSafeInteger(options.pageSize) || options.pageSize < 1) throw new RangeError("pageSize must be positive");
   if (!Number.isSafeInteger(options.maxPasses) || options.maxPasses < 2) throw new RangeError("maxPasses must be at least two");
+  if (options.signal?.aborted) return unknown("timeout");
 
   const resumedRun = await persistence.loadRun?.(lease);
   if (resumedRun === null) return unknown("scope_or_fence_changed");
@@ -177,22 +180,32 @@ export async function runRedmineAuditCensus(
     let pageCheckpoint: PollCheckpoint | null = null;
     let responseObservedAt: Date | null = null;
     do {
-      if (!(await persistence.isLeaseCurrent(lease))) return unknown("scope_or_fence_changed");
-      const page = await source.readPage(offset, options.pageSize, pageCheckpoint);
+      if (options.signal?.aborted) return unknown("timeout");
+      const pageLeaseCurrent = await persistence.isLeaseCurrent(lease);
+      if (options.signal?.aborted) return unknown("timeout");
+      if (!pageLeaseCurrent) return unknown("scope_or_fence_changed");
+      const page = await source.readPage(offset, options.pageSize, pageCheckpoint, options.signal);
+      if (options.signal?.aborted) return unknown("timeout");
       if (page.kind !== "accepted") return unknown(page.reasonCode);
       responseObservedAt ??= page.providerObservedAt;
       providerObservedAt ??= page.providerObservedAt;
       if (page.providerObservedAt.getTime() !== responseObservedAt.getTime()) return unknown("malformed_response");
       expectedTotal += page.value.changes.length;
       for (let itemIndex = 0; itemIndex < page.value.changes.length; itemIndex += 1) {
-        if (!(await persistence.isLeaseCurrent(lease))) return unknown("scope_or_fence_changed");
+        if (options.signal?.aborted) return unknown("timeout");
+        const detailLeaseCurrent = await persistence.isLeaseCurrent(lease);
+        if (options.signal?.aborted) return unknown("timeout");
+        if (!detailLeaseCurrent) return unknown("scope_or_fence_changed");
         const issue = page.value.changes[itemIndex]!;
-        const detail = await source.readIssueDetail(issue.identity.remoteId);
+        const detail = await source.readIssueDetail(issue.identity.remoteId, options.signal);
+        if (options.signal?.aborted) return unknown("timeout");
         if (detail.kind !== "accepted") return unknown(detail.kind === "unknown" ? detail.reasonCode : "detail_drift");
         if (detail.providerObservedAt.getTime() !== responseObservedAt.getTime()) return unknown("malformed_response");
         const observations = normalizedObservations(detail.value);
         const nextCheckpoint = checkpoint(pass, offset, itemIndex, expectedTotal, issue);
-        if (!(await persistence.commitIssue({ lease, providerObservedAt, observations, checkpoint: nextCheckpoint, replace: pass > 0 && passObservations.length === 0 }))) {
+        const committed = await persistence.commitIssue({ lease, providerObservedAt, observations, checkpoint: nextCheckpoint, replace: pass > 0 && passObservations.length === 0 });
+        if (options.signal?.aborted) return unknown("timeout");
+        if (!committed) {
           return unknown("scope_or_fence_changed");
         }
         passObservations.push(...observations);
@@ -206,12 +219,17 @@ export async function runRedmineAuditCensus(
 
     const currentPass = fingerprint(passObservations);
     if (previousPass === currentPass) {
-      if (passObservations.length === 0 && !(await persistence.commitIssue({ lease, providerObservedAt: providerObservedAt!, observations: [], checkpoint: finalCheckpoint, replace: true }))) {
-        return unknown("scope_or_fence_changed");
+      if (passObservations.length === 0) {
+        const committed = await persistence.commitIssue({ lease, providerObservedAt: providerObservedAt!, observations: [], checkpoint: finalCheckpoint, replace: true });
+        if (options.signal?.aborted) return unknown("timeout");
+        if (!committed) return unknown("scope_or_fence_changed");
       }
-      if (!(await persistence.isLeaseCurrent(lease)) || !(await persistence.finish({ lease, providerObservedAt: providerObservedAt! }))) {
-        return unknown("scope_or_fence_changed");
-      }
+      const finalLeaseCurrent = await persistence.isLeaseCurrent(lease);
+      if (options.signal?.aborted) return unknown("timeout");
+      if (!finalLeaseCurrent) return unknown("scope_or_fence_changed");
+      const finished = await persistence.finish({ lease, providerObservedAt: providerObservedAt! });
+      if (options.signal?.aborted) return unknown("timeout");
+      if (!finished) return unknown("scope_or_fence_changed");
       return { kind: "complete-current-visible", scopeFingerprint: lease.scopeFingerprint };
     }
     previousPass = currentPass;

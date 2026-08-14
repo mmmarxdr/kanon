@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   isCompleteCurrentVisibleCensus,
   runRedmineAuditCensus,
@@ -52,6 +52,87 @@ function persistence(options: { readonly current?: readonly boolean[]; readonly 
 }
 
 describe("runRedmineAuditCensus", () => {
+  it("does not start or finalize a census after its caller cancels", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const store = persistence();
+    const readPage = async () => {
+      throw new Error("must not read after cancellation");
+    };
+
+    await expect(runRedmineAuditCensus(
+      { readPage, readIssueDetail: async () => { throw new Error("not reached"); } },
+      store.result,
+      lease,
+      { maxPasses: 2, pageSize: 10, signal: controller.signal },
+    )).resolves.toEqual({ kind: "unknown", reasonCode: "timeout" });
+    expect(store.committed).toHaveLength(0);
+  });
+
+  it("does not commit or finalize when cancellation reaches an in-flight detail read", async () => {
+    const controller = new AbortController();
+    const store = persistence();
+    let receivedSignal: AbortSignal | undefined;
+    const pending = runRedmineAuditCensus({
+      async readPage() {
+        return { kind: "accepted" as const, providerObservedAt: changedAt, value: {
+          changes: [{ identity: { remoteId: "42" }, changedAt }], nextCheckpoint: null, hasMore: false,
+        } };
+      },
+      async readIssueDetail(_issueId, signal) {
+        receivedSignal = signal;
+        return new Promise((resolve) => signal?.addEventListener("abort", () => resolve({ kind: "unknown" as const, reasonCode: "timeout" as const }), { once: true }));
+      },
+    }, store.result, lease, { maxPasses: 2, pageSize: 10, signal: controller.signal });
+    await vi.waitFor(() => expect(receivedSignal).toBe(controller.signal));
+    controller.abort();
+
+    await expect(pending).resolves.toEqual({ kind: "unknown", reasonCode: "timeout" });
+    expect(store.committed).toHaveLength(0);
+  });
+
+  it("does not finalize an empty converged census when cancellation occurs during its final checkpoint persistence", async () => {
+    const controller = new AbortController();
+    let resolveCommit!: (value: boolean) => void;
+    const commitIssue = vi.fn(() => new Promise<boolean>((resolve) => { resolveCommit = resolve; }));
+    const finish = vi.fn().mockResolvedValue(true);
+    const store: AuditCensusPersistence = {
+      async isLeaseCurrent() { return true; },
+      commitIssue,
+      finish,
+    };
+    const pending = runRedmineAuditCensus(source([[], []]), store, lease, {
+      maxPasses: 2, pageSize: 10, signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(commitIssue).toHaveBeenCalledOnce());
+    controller.abort();
+    resolveCommit(true);
+
+    await expect(pending).resolves.toEqual({ kind: "unknown", reasonCode: "timeout" });
+    expect(finish).not.toHaveBeenCalled();
+  });
+
+  it("does not finalize when cancellation occurs during the final lease-current check", async () => {
+    const controller = new AbortController();
+    let currentCalls = 0;
+    let resolveCurrent!: (value: boolean) => void;
+    const isLeaseCurrent = vi.fn(() => {
+      currentCalls += 1;
+      return currentCalls === 3 ? new Promise<boolean>((resolve) => { resolveCurrent = resolve; }) : Promise.resolve(true);
+    });
+    const finish = vi.fn().mockResolvedValue(true);
+    const store: AuditCensusPersistence = { isLeaseCurrent, async commitIssue() { return true; }, finish };
+    const pending = runRedmineAuditCensus(source([[], []]), store, lease, {
+      maxPasses: 2, pageSize: 10, signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(isLeaseCurrent).toHaveBeenCalledTimes(3));
+    controller.abort();
+    resolveCurrent(true);
+
+    await expect(pending).resolves.toEqual({ kind: "unknown", reasonCode: "timeout" });
+    expect(finish).not.toHaveBeenCalled();
+  });
+
   it("commits each detail observation with its checkpoint and completes only after unchanged visible passes converge", async () => {
     const store = persistence();
     const result = await runRedmineAuditCensus(source([["42"], ["42"]]), store.result, lease, { maxPasses: 2, pageSize: 10 });
