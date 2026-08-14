@@ -142,7 +142,9 @@ async function openOrRefreshSessionWindow(input: {
   lockedIssueState?: IssueState;
   ownershipAlreadyChecked?: boolean;
   transactionClient?: Prisma.TransactionClient;
+  heartbeatAdoption?: boolean;
 }): Promise<SessionWindowResult> {
+  let heartbeatObservedGeneration = false;
   const mutate = async (
     tx: Prisma.TransactionClient,
   ): Promise<SessionWindowResult> => {
@@ -180,6 +182,28 @@ async function openOrRefreshSessionWindow(input: {
             transitionLifecycleId = lifecycle.id;
           }
 
+          if (
+            issueIsActive &&
+            input.heartbeatAdoption &&
+            input.createIdentity
+          ) {
+            const openInterruption = await tx.interruption.findFirst({
+              where: {
+                interruptedIssueId: input.issueId,
+                memberId: input.createIdentity.memberId,
+                endedAt: null,
+              },
+              select: { id: true },
+            });
+            if (openInterruption) {
+              throw new AppError(
+                409,
+                "CAPTURE_PAUSED",
+                `Capture for ${input.issueKey ?? "this issue"} is paused by an open interruption`,
+              );
+            }
+          }
+
           if (input.createIdentity && !input.ownershipAlreadyChecked) {
             // Once the issue row is locked, this timestamp closes the effective
             // unbounded interval: earlier owners are visible, while later starts
@@ -212,6 +236,16 @@ async function openOrRefreshSessionWindow(input: {
             },
           });
 
+          if (input.heartbeatAdoption) {
+            if (existing) {
+              heartbeatObservedGeneration = true;
+            } else if (heartbeatObservedGeneration) {
+              // A retry that loses the observed generation to an explicit stop
+              // must not reinterpret that disappearance as missing-session adoption.
+              fallbackIdentity = undefined;
+            }
+          }
+
           if (existing) {
             fallbackIdentity ??= {
               memberId: existing.memberId,
@@ -237,7 +271,10 @@ async function openOrRefreshSessionWindow(input: {
           // Historical transition evidence is an event-time marker, not a live
           // renewable lease. Only an explicit start may finalize that old
           // generation and open a distinct current generation.
-          if (existingIsHistorical && !input.createIdentity) {
+          if (
+            existingIsHistorical &&
+            (!input.createIdentity || input.heartbeatAdoption)
+          ) {
             return { session: null, finalized: null };
           }
 
@@ -1044,7 +1081,14 @@ export async function startWork(
  * Send a heartbeat for an active work session.
  * Returns the updated session or null if not found.
  */
-export async function heartbeat(issueKey: string, userId: string) {
+export async function heartbeat(
+  issueKey: string,
+  memberIdOrUserId: string,
+  userId?: string,
+  via: string | null = null,
+) {
+  // The legacy two-argument form remains refresh-only. Missing-session adoption
+  // requires the authenticated member and user identities forwarded by the route.
   const issue = await prisma.issue.findUnique({
     where: { key: issueKey },
     select: {
@@ -1058,11 +1102,28 @@ export async function heartbeat(issueKey: string, userId: string) {
     throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${issueKey}" not found`);
   }
 
+  const mayAdopt = issue.type !== "incident";
+  const authenticatedIdentity = userId
+    ? { memberId: memberIdOrUserId, userId, source: via ?? "mcp" }
+    : null;
+  const heartbeatUserId = authenticatedIdentity?.userId ?? memberIdOrUserId;
   const result = await openOrRefreshSessionWindow({
     issueId: issue.id,
-    userId,
+    userId: heartbeatUserId,
     now: new Date(),
+    ...(mayAdopt && authenticatedIdentity
+      ? {
+          createIdentity: authenticatedIdentity,
+          sourceOverride: authenticatedIdentity.source,
+          heartbeatAdoption: true,
+        }
+      : {}),
+    via,
     incidentIssueId: issue.type === "incident" ? issue.id : undefined,
+    issueKey,
+    onConflict: "skip",
+    // Request the current primitive's post-lock ownership interval boundary.
+    ownershipIntervalEnd: new Date(),
   });
 
   if (result.finalized) {
@@ -1070,7 +1131,7 @@ export async function heartbeat(issueKey: string, userId: string) {
       issueKey,
       issueId: issue.id,
       workspaceId: issue.project.workspaceId,
-      userId,
+      userId: heartbeatUserId,
       finalized: result.finalized,
     });
     if (result.session) {
@@ -1083,7 +1144,7 @@ export async function heartbeat(issueKey: string, userId: string) {
             issueKey,
             issueId: issue.id,
             memberId: result.session.memberId,
-            userId,
+            userId: heartbeatUserId,
             source: result.session.source,
             autoAssigned: false,
           },
