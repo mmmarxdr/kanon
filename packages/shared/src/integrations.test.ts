@@ -169,3 +169,14 @@ it("accepts only bounded owner-safe audit health", async () => {
     reasonCode: "provider response with secrets",
   }).success).toBe(false);
 });
+
+it("exports owner-safe audit health through the public shared contract", async () => {
+  const { integrationAuditHealthSchema } = await import("./index.js");
+  expect(integrationAuditHealthSchema.parse({
+    state: "unknown",
+    completedAt: null,
+    validUntil: null,
+    fresh: false,
+    reasonCode: null,
+  })).toMatchObject({ state: "unknown", fresh: false });
+});
