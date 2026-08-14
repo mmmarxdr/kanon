@@ -17,11 +17,11 @@ vi.mock("./use-project-members-queries", () => ({
   useRemoveProjectMemberMutation: vi.fn(),
 }));
 
-// Mock auth store — current user identified by id
+// Mock auth store — current user identified by the /api/auth/me contract
 vi.mock("@/stores/auth-store", () => ({
   useAuthStore: vi.fn(
-    (selector: (s: { user: { id: string; email: string } }) => unknown) =>
-      selector({ user: { id: "u-admin", email: "admin@example.com" } }),
+    (selector: (s: { user: { userId: string; email: string } }) => unknown) =>
+      selector({ user: { userId: "u-admin", email: "admin@example.com" } }),
   ),
 }));
 

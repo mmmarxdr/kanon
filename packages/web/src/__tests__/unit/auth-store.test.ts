@@ -27,7 +27,7 @@ describe("useAuthStore", () => {
   describe("setUser", () => {
     it("stores the user object and sets isAuthenticated", () => {
       const user: AuthUser = {
-        id: "user-1",
+        userId: "user-1",
         email: "alice@example.com",
         displayName: "Alice",
         avatarUrl: null,
@@ -48,7 +48,7 @@ describe("useAuthStore", () => {
   describe("clearUser", () => {
     it("clears user and sets isAuthenticated to false", () => {
       useAuthStore.getState().setUser({
-        id: "user-1",
+        userId: "user-1",
         email: "test@test.com",
         displayName: "Tester",
         avatarUrl: null,
@@ -78,7 +78,7 @@ describe("useAuthStore", () => {
       fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
 
       useAuthStore.getState().setUser({
-        id: "user-1",
+        userId: "user-1",
         email: "test@test.com",
         displayName: "Tester",
         avatarUrl: null,
@@ -103,7 +103,7 @@ describe("useAuthStore", () => {
       fetchMock.mockRejectedValueOnce(new Error("Network error"));
 
       useAuthStore.getState().setUser({
-        id: "user-1",
+        userId: "user-1",
         email: "test@test.com",
         displayName: "Tester",
         avatarUrl: null,
@@ -123,7 +123,7 @@ describe("useAuthStore", () => {
   describe("bootstrap", () => {
     it("populates user on successful /me response", async () => {
       const user: AuthUser = {
-        id: "user-1",
+        userId: "user-1",
         email: "test@test.com",
         displayName: "Tester",
         avatarUrl: null,
