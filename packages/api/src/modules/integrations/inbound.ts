@@ -114,7 +114,7 @@ export type BindingPollLease = {
   readonly credentialLastValidatedAt: Date | null;
 };
 
-type ClaimedBinding = BindingPollLease & {
+export type ClaimedBinding = BindingPollLease & {
   readonly actorMemberId: string;
 };
 
@@ -156,7 +156,7 @@ function log(
   }
 }
 
-async function claimBinding(
+export async function claimBindingPollLease(
   database: PrismaClient,
   now: Date,
   leaseMs: number,
@@ -235,6 +235,43 @@ async function claimBinding(
       actorMemberId: credential.memberId,
     };
   });
+}
+
+export async function renewBindingPollLease(
+  database: PrismaClient,
+  binding: BindingPollLease,
+  pollLeaseUntil: Date,
+): Promise<boolean> {
+  const result = await database.integrationProjectBinding.updateMany({
+    where: {
+      id: binding.id,
+      lifecycle: "active",
+      inboundEnabled: true,
+      bootstrapState: "ready",
+      lifecycleEpoch: binding.lifecycleEpoch,
+      pollLeaseToken: binding.pollLeaseToken,
+      pollFence: binding.pollFence,
+      connection: { lifecycle: "active" },
+    },
+    data: { pollLeaseUntil },
+  });
+  return result.count === 1;
+}
+
+export async function releaseBindingPollLease(
+  database: PrismaClient,
+  binding: BindingPollLease,
+  pollLeaseUntil: Date | null = null,
+): Promise<boolean> {
+  const result = await database.integrationProjectBinding.updateMany({
+    where: {
+      id: binding.id,
+      pollLeaseToken: binding.pollLeaseToken,
+      pollFence: binding.pollFence,
+    },
+    data: { pollLeaseToken: null, pollLeaseUntil },
+  });
+  return result.count === 1;
 }
 
 function applicationIdentity(bindingId: string, change: InboundIssueStatusChange): string {
@@ -2215,22 +2252,11 @@ async function pollBinding(
   let processedChanges = 0;
   let processedCursor = cursor;
   for (const change of page.changes) {
-    const active = await database.integrationProjectBinding.updateMany({
-      where: {
-        id: binding.id,
-        lifecycle: "active",
-        inboundEnabled: true,
-        bootstrapState: "ready",
-        lifecycleEpoch: binding.lifecycleEpoch,
-        pollLeaseToken: binding.pollLeaseToken,
-        pollFence: binding.pollFence,
-        connection: { lifecycle: "active" },
-      },
-      data: {
-        pollLeaseUntil: new Date(dependencies.now().getTime() + dependencies.leaseMs),
-      },
-    });
-    if (active.count !== 1) return;
+    if (!(await renewBindingPollLease(
+      database,
+      binding,
+      new Date(dependencies.now().getTime() + dependencies.leaseMs),
+    ))) return;
     let result;
     try {
       result = await applyChange(
@@ -2331,7 +2357,7 @@ export async function runInboundSyncCycle(
 
   for (let remaining = limit; remaining > 0 && !dependencies.shouldStop?.(); remaining -= 1) {
     const now = d.now();
-    const binding = await claimBinding(database, now, leaseMs, attemptedBindingIds);
+    const binding = await claimBindingPollLease(database, now, leaseMs, attemptedBindingIds);
     if (!binding) break;
     attemptedBindingIds.push(binding.id);
     try {
