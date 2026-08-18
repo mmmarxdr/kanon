@@ -8,6 +8,7 @@ export interface DurableAuditRun {
   readonly id: string;
   readonly checkpoint: AuditCheckpoint | null;
   readonly providerObservedAt: Date | null;
+  readonly observations: readonly AuditObservation[];
 }
 function hasCanonicalLeaseIdentity(lease: DurableAuditCensusLease): boolean {
   return lease.bindingId === lease.id && lease.leaseToken === lease.pollLeaseToken && lease.fence === lease.pollFence;
@@ -28,6 +29,12 @@ function checkpointValue(checkpoint: AuditCheckpoint) {
     expectedTotal: checkpoint.expectedTotal,
     lastIssueUpdatedAt: checkpoint.lastIssueUpdatedAt,
     lastIssueId: checkpoint.lastIssueId,
+    pageCheckpointUpdatedAt: checkpoint.pageCheckpoint?.updatedAt ?? null,
+    pageCheckpointRemoteId: checkpoint.pageCheckpoint?.remoteId ?? null,
+    pageCheckpointToken: checkpoint.pageCheckpoint?.pageToken ?? null,
+    checkpointVersion: 1,
+    previousPassFingerprint: checkpoint.previousPassFingerprint ?? null,
+    passComplete: checkpoint.passComplete ?? false,
   };
 }
 function boundedReason(reasonCode: string): string {
@@ -40,15 +47,16 @@ function boundedReason(reasonCode: string): string {
  * deliberately claims no additional mutex, so provider I/O and audit writes
  * share the existing binding fence.
  */
-export function createPrismaAuditCensusRepository(database: PrismaClient, options: { readonly terminalFreshnessMs: number }) {
+export function createPrismaAuditCensusRepository(database: PrismaClient, options: { readonly terminalFreshnessMs: number; readonly retentionDays: number }) {
   if (!Number.isSafeInteger(options.terminalFreshnessMs) || options.terminalFreshnessMs < 1) throw new RangeError("terminalFreshnessMs must be positive");
+  if (!Number.isSafeInteger(options.retentionDays) || options.retentionDays < 1) throw new RangeError("retentionDays must be positive");
   async function loadOrCreateRun(lease: DurableAuditCensusLease): Promise<DurableAuditRun | null> {
     if (!hasCanonicalLeaseIdentity(lease)) return null;
     return database.$transaction(async (transaction) => {
       if (!(await hasCurrentPollLease(transaction, lease))) return null;
       const existing = await transaction.integrationAuditRun.findFirst({
         where: { bindingId: lease.bindingId, scopeFingerprint: lease.scopeFingerprint, state: "partial" },
-        include: { checkpoint: true },
+        include: { checkpoint: true, observations: true },
         orderBy: { updatedAt: "desc" },
       });
       const run = existing ?? await transaction.integrationAuditRun.create({
@@ -58,7 +66,7 @@ export function createPrismaAuditCensusRepository(database: PrismaClient, option
           leaseToken: lease.leaseToken,
           fence: lease.fence,
         },
-        include: { checkpoint: true },
+        include: { checkpoint: true, observations: true },
       });
       if (existing && (existing.leaseToken !== lease.leaseToken || existing.fence !== lease.fence)) {
         await transaction.integrationAuditRun.update({
@@ -69,11 +77,35 @@ export function createPrismaAuditCensusRepository(database: PrismaClient, option
       return {
         id: run.id,
         providerObservedAt: run.providerObservedAt,
-        checkpoint: run.checkpoint ? {
-          ...checkpointValue(run.checkpoint),
-          lastIssueUpdatedAt: run.checkpoint.lastIssueUpdatedAt,
-          lastIssueId: run.checkpoint.lastIssueId,
-        } : null,
+        checkpoint: run.checkpoint ? (() => {
+          const isVersioned = run.checkpoint.checkpointVersion === 1;
+          return {
+            pass: run.checkpoint.pass,
+            offset: run.checkpoint.offset,
+            itemIndex: run.checkpoint.itemIndex,
+            expectedTotal: run.checkpoint.expectedTotal,
+            lastIssueUpdatedAt: run.checkpoint.lastIssueUpdatedAt,
+            lastIssueId: run.checkpoint.lastIssueId,
+            checkpointVersion: isVersioned ? 1 : undefined,
+            pageCheckpoint: isVersioned
+              ? run.checkpoint.pageCheckpointUpdatedAt && run.checkpoint.pageCheckpointRemoteId
+                ? {
+                    updatedAt: run.checkpoint.pageCheckpointUpdatedAt,
+                    remoteId: run.checkpoint.pageCheckpointRemoteId,
+                    pageToken: run.checkpoint.pageCheckpointToken,
+                  }
+                : null
+              : undefined,
+            previousPassFingerprint: isVersioned ? run.checkpoint.previousPassFingerprint ?? null : undefined,
+            passComplete: isVersioned ? run.checkpoint.passComplete ?? false : undefined,
+          };
+        })() : null,
+        observations: (run.observations ?? []).map((observation) => ({
+          identityType: observation.identityType as AuditObservation["identityType"],
+          remoteId: observation.remoteId,
+          parentRemoteId: observation.parentRemoteId || null,
+          sourceUpdatedAt: observation.sourceUpdatedAt,
+        })),
       };
     });
   }
@@ -116,6 +148,37 @@ export function createPrismaAuditCensusRepository(database: PrismaClient, option
       return true;
     });
   }
+  async function cleanupRetainedEvidence(transaction: Prisma.TransactionClient, bindingId: string, currentRunId: string, currentScopeFingerprint: string, now: Date): Promise<void> {
+    const expiredTerminalRuns: Prisma.IntegrationAuditRunWhereInput = {
+      OR: [
+        { state: { in: ["failed", "stale"] } },
+        { state: "complete", OR: [{ validUntil: null }, { validUntil: { lte: now } }] },
+      ],
+    };
+    await transaction.integrationAuditRun.deleteMany({
+      where: {
+        bindingId,
+        state: "partial",
+        scopeFingerprint: { not: currentScopeFingerprint },
+      },
+    });
+    await transaction.integrationAuditObservation.deleteMany({
+      where: {
+        observedAt: { lt: new Date(now.getTime() - options.retentionDays * 86_400_000) },
+        run: { bindingId, id: { not: currentRunId }, ...expiredTerminalRuns },
+      },
+    });
+    await transaction.integrationAuditRun.deleteMany({
+      where: {
+        bindingId,
+        id: { not: currentRunId },
+        state: { in: ["complete", "failed", "stale"] },
+        observations: { none: {} },
+        ...expiredTerminalRuns,
+      },
+    });
+  }
+
   async function finish(lease: DurableAuditCensusLease, providerObservedAt: Date): Promise<boolean> {
     if (!hasCanonicalLeaseIdentity(lease)) return false;
     return database.$transaction(async (transaction) => {
@@ -131,6 +194,7 @@ export function createPrismaAuditCensusRepository(database: PrismaClient, option
         where: { id: run.id },
         data: { state: "complete", reasonCode: null, completedAt: clock.now, validUntil: new Date(clock.now.getTime() + options.terminalFreshnessMs) },
       });
+      await cleanupRetainedEvidence(transaction, lease.bindingId, run.id, lease.scopeFingerprint, clock.now);
       await transaction.integrationProjectBinding.update({
         where: { id: lease.bindingId },
         data: { auditCompletedAt: clock.now },

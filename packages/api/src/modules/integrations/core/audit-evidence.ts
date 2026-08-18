@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { PollCheckpoint } from "./types.js";
 
 export const AUDIT_RUN_STATES = ["complete", "partial", "failed", "stale"] as const;
 export type AuditRunState = (typeof AUDIT_RUN_STATES)[number];
@@ -21,6 +22,12 @@ export interface AuditCheckpoint {
   readonly expectedTotal: number;
   readonly lastIssueUpdatedAt: Date | null;
   readonly lastIssueId: string | null;
+  /** Exact continuation used to decode the current page after a durable restart. */
+  /** Undefined represents an unversioned migrated legacy row. */
+  readonly checkpointVersion?: 1;
+  readonly pageCheckpoint?: PollCheckpoint | null;
+  readonly previousPassFingerprint?: string | null;
+  readonly passComplete?: boolean;
 }
 
 export interface AuditObservation {

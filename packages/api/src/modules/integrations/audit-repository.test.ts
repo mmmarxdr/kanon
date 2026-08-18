@@ -6,7 +6,7 @@ vi.mock("./inbound.js", () => ({ lockPollSnapshot }));
 import { createPrismaAuditCensusRepository, type DurableAuditCensusLease } from "./audit-repository.js";
 
 const observedAt = new Date("2026-08-13T12:00:00Z");
-const repositoryOptions = { terminalFreshnessMs: 300_000 };
+const repositoryOptions = { terminalFreshnessMs: 300_000, retentionDays: 30 };
 const lease: DurableAuditCensusLease = {
   id: "binding-1", bindingId: "binding-1", connectionId: "connection-1", projectId: "project-1", remoteProjectId: "42", lifecycleEpoch: 2,
   pollLeaseToken: "lease-1", pollFence: 7, leaseToken: "lease-1", fence: 7, scopeFingerprint: "scope-1",
@@ -20,7 +20,9 @@ function fakeDatabase(options: { stale?: boolean; existing?: Record<string, unkn
   const binding = { update: vi.fn().mockResolvedValue({}) };
   const runs = {
     findFirst: vi.fn().mockImplementation(async () => run),
-    create: vi.fn().mockImplementation(async ({ data }) => run = { id: "run-1", providerObservedAt: null, checkpoint: null, ...data }),
+    findMany: vi.fn(),
+    deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    create: vi.fn().mockImplementation(async ({ data }) => run = { id: "run-1", providerObservedAt: null, checkpoint: null, observations: [], ...data }),
     update: vi.fn().mockImplementation(async ({ data }) => run = { ...(run ?? {}), ...data }),
   };
   const transaction = { integrationAuditRun: runs, integrationAuditCheckpoint: checkpoint, integrationAuditObservation: observations, integrationProjectBinding: binding, $queryRaw: vi.fn().mockResolvedValue([{ now: observedAt }]) };
@@ -54,6 +56,22 @@ describe("Prisma audit census repository", () => {
     }));
   });
 
+  it("distinguishes migrated legacy checkpoints from versioned first-page checkpoints with null continuation", async () => {
+    const legacy = fakeDatabase({ existing: {
+      id: "legacy-run", providerObservedAt: observedAt,
+      checkpoint: { pass: 0, offset: 0, itemIndex: 0, expectedTotal: 1, lastIssueUpdatedAt: observedAt, lastIssueId: "42", pageCheckpointUpdatedAt: null, pageCheckpointRemoteId: null, pageCheckpointToken: null, checkpointVersion: null },
+    } });
+    const versioned = fakeDatabase({ existing: {
+      id: "versioned-run", providerObservedAt: observedAt,
+      checkpoint: { pass: 0, offset: 0, itemIndex: 0, expectedTotal: 1, lastIssueUpdatedAt: observedAt, lastIssueId: "42", pageCheckpointUpdatedAt: null, pageCheckpointRemoteId: null, pageCheckpointToken: null, checkpointVersion: 1 },
+    } });
+
+    await expect(createPrismaAuditCensusRepository(legacy.database as never, repositoryOptions).loadOrCreateRun(lease))
+      .resolves.toMatchObject({ checkpoint: { pageCheckpoint: undefined } });
+    await expect(createPrismaAuditCensusRepository(versioned.database as never, repositoryOptions).loadOrCreateRun(lease))
+      .resolves.toMatchObject({ checkpoint: { pageCheckpoint: null } });
+  });
+
   it("resumes a prior matching scope, finalizes behind the same fence, and refuses stale ownership", async () => {
     const existing = { id: "run-old", leaseToken: "expired", fence: 6, providerObservedAt: observedAt, checkpoint: { pass: 0, offset: 4, itemIndex: 1, expectedTotal: 6, lastIssueUpdatedAt: observedAt, lastIssueId: "43" } };
     const fake = fakeDatabase({ existing });
@@ -76,6 +94,44 @@ describe("Prisma audit census repository", () => {
     await expect(repository.commitIssue(lease, {
       providerObservedAt: observedAt, observations: [], checkpoint: { pass: 0, offset: 0, itemIndex: 0, expectedTotal: 0, lastIssueUpdatedAt: null, lastIssueId: null },
     })).resolves.toBe(false);
+  });
+
+  it("prunes expired evidence with bounded set-based deletes while preserving fresh and active runs", async () => {
+    const fake = fakeDatabase({ existing: {
+      id: "run-current", providerObservedAt: observedAt, scopeFingerprint: lease.scopeFingerprint,
+    } });
+    fake.runs.findMany.mockRejectedValue(new Error("audit history must not be materialized"));
+    const repository = createPrismaAuditCensusRepository(fake.database as never, repositoryOptions);
+
+    await expect(repository.finish(lease, observedAt)).resolves.toBe(true);
+
+    expect(fake.runs.findMany).not.toHaveBeenCalled();
+    expect(fake.observations.deleteMany).toHaveBeenCalledWith({ where: {
+      observedAt: { lt: new Date("2026-07-14T12:00:00Z") },
+      run: {
+        bindingId: lease.bindingId,
+        id: { not: "run-current" },
+        OR: [
+          { state: { in: ["failed", "stale"] } },
+          { state: "complete", OR: [{ validUntil: null }, { validUntil: { lte: observedAt } }] },
+        ],
+      },
+    } });
+    expect(fake.runs.deleteMany).toHaveBeenNthCalledWith(1, { where: {
+      bindingId: lease.bindingId,
+      state: "partial",
+      scopeFingerprint: { not: lease.scopeFingerprint },
+    } });
+    expect(fake.runs.deleteMany).toHaveBeenNthCalledWith(2, { where: {
+      bindingId: lease.bindingId,
+      id: { not: "run-current" },
+      state: { in: ["complete", "failed", "stale"] },
+      observations: { none: {} },
+      OR: [
+        { state: { in: ["failed", "stale"] } },
+        { state: "complete", OR: [{ validUntil: null }, { validUntil: { lte: observedAt } }] },
+      ],
+    } });
   });
 
   it("derives bounded terminal freshness from the fenced database completion clock", async () => {
@@ -138,4 +194,24 @@ describe("Prisma audit census repository", () => {
     const stale = fakeDatabase({ stale: true });
     await expect(createPrismaAuditCensusRepository(stale.database as never, repositoryOptions).readTerminalTrust(lease)).resolves.toBeNull();
   });
+
+  it("RET-001 removes an unreachable partial audit run after credential and scope rotation completes the current run", async () => {
+    const fake = fakeDatabase({
+      existing: { id: "run-current-scope", providerObservedAt: observedAt, scopeFingerprint: lease.scopeFingerprint },
+    });
+    const repository = createPrismaAuditCensusRepository(fake.database as never, repositoryOptions);
+
+    await expect(repository.finish(lease, observedAt)).resolves.toBe(true);
+
+    expect(fake.runs.deleteMany).toHaveBeenNthCalledWith(1, { where: {
+      bindingId: lease.bindingId,
+      state: "partial",
+      scopeFingerprint: { not: lease.scopeFingerprint },
+    } });
+    expect(fake.runs.deleteMany).not.toHaveBeenCalledWith({ where: expect.objectContaining({
+      state: "partial",
+      scopeFingerprint: lease.scopeFingerprint,
+    }) });
+  });
+
 });

@@ -36,6 +36,7 @@ const options = {
   pageSize: 100,
   maxPasses: 2,
   terminalFreshnessMs: 300_000,
+  retentionDays: 30,
 };
 
 function dependencies(overrides: Partial<AuditOperationsDependencies> = {}) {
