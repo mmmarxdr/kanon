@@ -96,7 +96,7 @@ describe("Prisma audit census repository", () => {
     })).resolves.toBe(false);
   });
 
-  it("prunes expired evidence with bounded set-based deletes while preserving fresh and active runs", async () => {
+  it("prunes historical complete bodies and expired evidence while preserving the current run", async () => {
     const fake = fakeDatabase({ existing: {
       id: "run-current", providerObservedAt: observedAt, scopeFingerprint: lease.scopeFingerprint,
     } });
@@ -106,7 +106,14 @@ describe("Prisma audit census repository", () => {
     await expect(repository.finish(lease, observedAt)).resolves.toBe(true);
 
     expect(fake.runs.findMany).not.toHaveBeenCalled();
-    expect(fake.observations.deleteMany).toHaveBeenCalledWith({ where: {
+    expect(fake.observations.deleteMany).toHaveBeenNthCalledWith(1, { where: {
+      run: {
+        bindingId: lease.bindingId,
+        id: { not: "run-current" },
+        state: "complete",
+      },
+    } });
+    expect(fake.observations.deleteMany).toHaveBeenNthCalledWith(2, { where: {
       observedAt: { lt: new Date("2026-07-14T12:00:00Z") },
       run: {
         bindingId: lease.bindingId,

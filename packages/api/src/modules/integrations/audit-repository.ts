@@ -171,6 +171,15 @@ export function createPrismaAuditCensusRepository(database: PrismaClient, option
     });
     await transaction.integrationAuditObservation.deleteMany({
       where: {
+        run: {
+          bindingId,
+          id: { not: currentRunId },
+          state: "complete",
+        },
+      },
+    });
+    await transaction.integrationAuditObservation.deleteMany({
+      where: {
         observedAt: { lt: new Date(now.getTime() - options.retentionDays * 86_400_000) },
         run: { bindingId, id: { not: currentRunId }, ...expiredTerminalRuns },
       },
