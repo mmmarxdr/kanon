@@ -123,25 +123,33 @@ test.describe("Team onboarding — happy path (K1)", () => {
   test("admin generates link; CLI pipeline succeeds; second consumption is rejected", async ({
     page,
   }) => {
+    test.setTimeout(60_000);
+
     // Step 1 — Log in via Web UI
     await login(page);
 
     // Step 2 — Navigate to settings
     await page.goto("/settings");
-    await page.waitForSelector("text=Members", { timeout: 10_000 });
+    const membersTab = page.getByRole("tab", { name: "Members", exact: true });
+    await expect(membersTab).toHaveAttribute("aria-selected", "true", { timeout: 10_000 });
+    const membersList = page.getByTestId("workspace-members-list");
+    await expect(membersList).toBeVisible({ timeout: 10_000 });
 
-    // Step 3 — Click "Onboard" on the first member row that has the button.
-    // The button data-testid is `onboarding-gen-btn-<memberId>`.
-    const onboardBtn = page
-      .locator('[data-testid^="onboarding-gen-btn-"]')
-      .first();
-    await expect(onboardBtn).toBeVisible({ timeout: 5_000 });
+    // Step 3 — Click "Onboard" for the seeded Dev User member.
+    const devUserRow = membersList.getByRole("row", { name: "Dev User", exact: true });
+    await expect(devUserRow).toBeVisible({ timeout: 10_000 });
+    const onboardBtn = devUserRow.locator('[data-testid^="onboarding-gen-btn-"]');
+    const onboardingResponse = page.waitForResponse((response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname.endsWith("/invites/onboarding"),
+    );
     await onboardBtn.click();
+    expect((await onboardingResponse).status()).toBe(201);
 
     // Step 4 — Modal opens; read the kanon:// URL
-    await expect(
-      page.locator('[data-testid="onboarding-link-modal"]'),
-    ).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByRole("dialog", { name: "Onboarding Link", exact: true })).toBeVisible({
+      timeout: 10_000,
+    });
 
     const urlEl = page.locator('[data-testid="onboarding-url"]');
     await expect(urlEl).toBeVisible({ timeout: 5_000 });

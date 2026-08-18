@@ -117,6 +117,13 @@ enum InboundApplicationState {
   skipped
 }
 
+enum IntegrationAuditRunState {
+  complete
+  partial
+  failed
+  stale
+}
+
 enum ConflictState {
   open
   resolved
@@ -1306,6 +1313,7 @@ model IntegrationProjectBinding {
   works             IntegrationSyncWork[]
   applications      IntegrationInboundApplication[]
   conflicts         IntegrationConflict[]
+  auditRuns         IntegrationAuditRun[]
 
   @@unique([connectionId, projectId])
   @@unique([connectionId, remoteProjectId])
@@ -1319,6 +1327,67 @@ model IntegrationProjectBinding {
 
 // Provider identity mapping is scoped to a project binding. Credentials remain
 // authentication material only; this model maps a Kanon member to a remote user.
+model IntegrationAuditRun {
+  id                 String                   @id @default(uuid()) @db.Uuid
+  scopeFingerprint   String                   @map("scope_fingerprint")
+  leaseToken         String                   @map("lease_token")
+  fence              Int
+  state              IntegrationAuditRunState @default(partial)
+  reasonCode         String?                  @map("reason_code")
+  providerObservedAt DateTime?                @map("provider_observed_at")
+  completedAt        DateTime?                @map("completed_at")
+  validUntil         DateTime?                @map("valid_until")
+  createdAt          DateTime                 @default(now()) @map("created_at")
+  updatedAt          DateTime                 @updatedAt @map("updated_at")
+
+  bindingId    String                    @map("binding_id") @db.Uuid
+  binding      IntegrationProjectBinding @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+  checkpoint   IntegrationAuditCheckpoint?
+  observations IntegrationAuditObservation[]
+
+  @@index([bindingId, state, completedAt])
+  @@index([bindingId, scopeFingerprint])
+  @@map("integration_audit_runs")
+}
+
+model IntegrationAuditCheckpoint {
+  id                 String              @id @default(uuid()) @db.Uuid
+  pass               Int
+  offset             Int
+  itemIndex          Int                 @map("item_index")
+  expectedTotal      Int                 @map("expected_total")
+  lastIssueUpdatedAt DateTime?           @map("last_issue_updated_at")
+  lastIssueId        String?             @map("last_issue_id")
+  pageCheckpointUpdatedAt DateTime?       @map("page_checkpoint_updated_at")
+  pageCheckpointRemoteId  String?         @map("page_checkpoint_remote_id")
+  pageCheckpointToken     String?         @map("page_checkpoint_token")
+  checkpointVersion        Int?            @map("checkpoint_version")
+  previousPassFingerprint  String?         @map("previous_pass_fingerprint")
+  passComplete             Boolean?        @map("pass_complete")
+  scopeFingerprint   String              @map("scope_fingerprint")
+  fence              Int
+  updatedAt          DateTime            @updatedAt @map("updated_at")
+  runId              String              @unique @map("run_id") @db.Uuid
+  run                IntegrationAuditRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@map("integration_audit_checkpoints")
+}
+
+model IntegrationAuditObservation {
+  id              String              @id @default(uuid()) @db.Uuid
+  identityType    String              @map("identity_type")
+  remoteId        String              @map("remote_id")
+  parentRemoteId  String              @default("") @map("parent_remote_id")
+  sourceUpdatedAt DateTime            @map("source_updated_at")
+  observedAt      DateTime            @default(now()) @map("observed_at")
+  runId           String              @map("run_id") @db.Uuid
+  run             IntegrationAuditRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, identityType, parentRemoteId, remoteId, sourceUpdatedAt])
+  @@index([runId, observedAt])
+  @@map("integration_audit_observations")
+}
+
 model IntegrationExternalIdentity {
   id                String   @id @default(uuid()) @db.Uuid
   remoteUserId      String   @map("remote_user_id")

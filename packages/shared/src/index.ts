@@ -48,8 +48,13 @@ export {
   integrationCredentialSchema,
   integrationDiscoverySchema,
   integrationConnectionSchema,
+  integrationAuditHealthSchema,
 } from "./integrations.js";
-export type { IntegrationConnection, IntegrationDiscovery } from "./integrations.js";
+export type {
+  IntegrationAuditHealth,
+  IntegrationConnection,
+  IntegrationDiscovery,
+} from "./integrations.js";
 
 export {
   issueScheduleSchema,

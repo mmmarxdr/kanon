@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   integrationConnectionSchema,
   integrationDiscoverySchema,
+  integrationAuditHealthSchema,
   type IssuePriority,
   type IssueState,
 } from "@kanon/shared";
@@ -19,6 +20,11 @@ export interface ConfigureRedmineProviderMapsInput {
 export interface BindRedmineProjectInput {
   projectId: string;
   remoteProjectId: string;
+}
+
+export function auditHealthRefetchInterval(validUntil: string | null | undefined, now = Date.now()) {
+  const expiry = Date.parse(validUntil ?? "");
+  return Number.isFinite(expiry) && expiry > now ? Math.max(expiry - now, 1_000) : false;
 }
 
 export function useRedmineConnectionQuery(workspaceId: string | undefined) {
@@ -50,6 +56,25 @@ export function useRedmineDiscoveryQuery(
       ),
     enabled: !!connectionId && enabled,
     staleTime: 30_000,
+  });
+}
+
+export function useRedmineAuditHealthQuery(
+  workspaceId: string,
+  connectionId: string,
+  bindingId: string | undefined,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: integrationKeys.auditHealth(workspaceId, connectionId, bindingId ?? ""),
+    queryFn: () =>
+      fetchApiValidated(
+        `/api/integrations/workspaces/${workspaceId}/connections/${connectionId}/bindings/${bindingId}/audit-health`,
+        integrationAuditHealthSchema,
+      ),
+    enabled: enabled && !!bindingId,
+    staleTime: 30_000,
+    refetchInterval: (query) => auditHealthRefetchInterval(query.state.data?.validUntil),
   });
 }
 
@@ -97,6 +122,9 @@ export function useReplaceRedmineServiceCredentialMutation(
       void queryClient.invalidateQueries({ queryKey: integrationKeys.connection(workspaceId) });
       void queryClient.invalidateQueries({
         queryKey: integrationKeys.discovery(workspaceId, connectionId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: integrationKeys.auditHealthForConnection(workspaceId, connectionId),
       });
     },
   });
