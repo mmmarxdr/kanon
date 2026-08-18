@@ -1,4 +1,4 @@
-import "@testing-library/jest-dom/vitest";
+import "@testing-library/jest-dom";
 import i18n from "@/i18n";
 
 // jsdom does not implement scrollIntoView — stub it globally so component
