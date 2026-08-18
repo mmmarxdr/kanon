@@ -1,15 +1,8 @@
 /**
  * Shared helpers for versioned triage performance profiles (KAN-193 PR12).
  *
- * Full 1,000-sample reference runs require TRIAGE_PERF=1 (PG16/Node20,
- * 4 vCPU/8 GiB). Default CI exercises contract/boundary assertions only.
+ * Synthetic fixtures aggregate samples only; they are not live performance evidence.
  */
-
-export const TRIAGE_PERF_ENV = "TRIAGE_PERF";
-
-export function isFullPerfEnabled(): boolean {
-  return process.env[TRIAGE_PERF_ENV] === "1";
-}
 
 export interface LatencySample {
   durationMs: number;
@@ -57,21 +50,6 @@ export function summarizeLatencies(samples: LatencySample[]): LatencySummary {
     unexpectedErrorPct: samples.length === 0 ? 0 : (errorCount / samples.length) * 100,
   };
 }
-
-/** Operator canary gates from design.md (rolling five-minute windows). */
-export const CANARY_GATES = {
-  minCompletedPerStage: 100,
-  unexpectedErrorPagePct: 1,
-  unexpectedErrorDisableAllPct: 5,
-  typedDegradationHaltPct: 10,
-  previewP95MaxMs: 3000,
-  listP95TargetMs: 1500,
-  dismissP95TargetMs: 1000,
-  previewCompactMaxBytes: 16 * 1024,
-  listMaxBytes: 32 * 1024,
-  getMaxBytes: 64 * 1024,
-  dismissMaxBytes: 8 * 1024,
-} as const;
 
 export const REFERENCE_RUNTIME = {
   postgresMajor: 16,

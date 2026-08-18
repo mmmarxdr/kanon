@@ -142,11 +142,10 @@ describe("KAN-193 preview and persistence routes", () => {
     });
     expect(stableFields(repeated.json())).toEqual(stableFields(response.json()));
     expect(response.json().correlationId).toBe(response.headers["x-kanon-correlation-id"]);
-    const searchRows = await app.triageMetrics.searchRows.get();
-    expect(searchRows.values).toEqual(expect.arrayContaining([
-      expect.objectContaining({ labels: { measure: "logical_scanned" } }),
-      expect.objectContaining({ labels: { measure: "returned" } }),
-    ]));
+    const metrics = await app.metricsRegistry.metrics();
+    expect(metrics).not.toMatch(
+      /kanon_triage_search_rows[^\n]+measure="(?:logical_scanned|returned)"/,
+    );
     await expect(prisma.issue.findMany({ orderBy: { key: "asc" } })).resolves.toEqual(before[0]);
     await expect(prisma.activityLog.count()).resolves.toBe(before[1]);
     await expect(prisma.triageProposal.count()).resolves.toBe(before[2]);

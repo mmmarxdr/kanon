@@ -112,7 +112,7 @@ function effectiveState(
 }
 
 function compactSummary(summary: Prisma.JsonValue): Prisma.JsonValue {
-  if (!summary || typeof summary !== "object" || Array.isArray(summary)) return { nonExecutable: true };
+  if (!summary || typeof summary !== "object" || Array.isArray(summary)) return {};
   const value = summary as Prisma.JsonObject;
   const policy = value["policy"] && typeof value["policy"] === "object" && !Array.isArray(value["policy"])
     ? value["policy"] as Prisma.JsonObject
@@ -134,7 +134,6 @@ function compactSummary(summary: Prisma.JsonValue): Prisma.JsonValue {
       : undefined;
   return {
     targetIssueKey: boundedString(value["targetIssueKey"], 120),
-    targetTitle: boundedString(value["targetTitle"], 200),
     actionKinds: boundedStrings(value["actionKinds"], 10, 40),
     generatorSource: boundedString(value["generatorSource"], 32),
     ...(policy ? { policy: {
@@ -149,7 +148,6 @@ function compactSummary(summary: Prisma.JsonValue): Prisma.JsonValue {
     confidenceBands: boundedStrings(value["confidenceBands"], 3, 6),
     degraded: value["degraded"] === true,
     degradationCategories: boundedStrings(value["degradationCategories"], 8, 80),
-    nonExecutable: true,
   };
 }
 
@@ -162,6 +160,81 @@ function isListTimeout(error: unknown): boolean {
   const message = [value.message, meta.message].filter((item) => typeof item === "string").join(" ");
   return value.code === "P2024" || (value.code === "P2028" && /timeout|expired/i.test(message)) ||
     meta.code === "57014" || /statement timeout|canceling statement|57014/i.test(message);
+}
+
+export function buildVisibleProposalsCte(params: {
+  projectId: string;
+  snapshotAt: Date;
+  targetPredicate: Prisma.Sql;
+  generatorPredicate: Prisma.Sql;
+  degradedPredicate: Prisma.Sql;
+}): Prisma.Sql {
+  const { projectId, snapshotAt, targetPredicate, generatorPredicate, degradedPredicate } = params;
+  return Prisma.sql`
+      visible AS (
+        SELECT tp.*,
+          COALESCE((
+            SELECT event.state::text
+            FROM triage_proposal_lifecycle_events event
+            WHERE event.proposal_id = tp.id AND event.created_at <= ${snapshotAt}
+            ORDER BY event.created_at DESC, event.id DESC
+            LIMIT 1
+          ), tp.lifecycle::text) AS snapshot_lifecycle,
+          (
+            SELECT child.id FROM triage_proposals child
+            WHERE child.supersedes_id = tp.id AND child.created_at <= ${snapshotAt}
+            ORDER BY child.created_at, child.id
+            LIMIT 1
+          ) AS successor_id
+        FROM triage_proposals tp
+        JOIN issues i ON i.id = tp.target_issue_id AND i.project_id = tp.project_id
+        WHERE tp.project_id = ${projectId}::uuid
+          AND tp.created_at <= ${snapshotAt}
+          ${targetPredicate}
+          ${generatorPredicate}
+          ${degradedPredicate}
+      )
+    `;
+}
+
+export function buildProposalListPageStatement(params: {
+  visibleCte: Prisma.Sql;
+  state: ListStateFilter;
+  snapshotAt: Date;
+  seekPredicate: Prisma.Sql;
+  limit: number;
+}): Prisma.Sql {
+  const { visibleCte, state, snapshotAt, seekPredicate, limit } = params;
+  return Prisma.sql`
+      WITH ${visibleCte}
+      SELECT e.id, e.snapshot_lifecycle AS "snapshotLifecycle",
+        e.successor_id IS NOT NULL AS "isSuperseded", e.successor_id AS "successorId"
+      FROM visible e
+      WHERE ${statePredicate(state, snapshotAt)} ${seekPredicate}
+      ORDER BY e.created_at DESC, e.id DESC
+      LIMIT ${limit + 1}
+    `;
+}
+
+/** The live gate imports this built API artifact: it cannot handcraft a companion query. */
+export function buildRepresentativeProposalListPlanStatement(
+  projectId: string,
+  snapshotAt: Date,
+  limit = 50,
+): Prisma.Sql {
+  return buildProposalListPageStatement({
+    visibleCte: buildVisibleProposalsCte({
+      projectId,
+      snapshotAt,
+      targetPredicate: Prisma.empty,
+      generatorPredicate: Prisma.empty,
+      degradedPredicate: Prisma.empty,
+    }),
+    state: "current",
+    snapshotAt,
+    seekPredicate: Prisma.empty,
+    limit,
+  });
 }
 
 export async function listTriageProposals(
@@ -255,31 +328,13 @@ export async function listTriageProposals(
     const degradedPredicate = query.degraded === undefined
       ? Prisma.empty
       : Prisma.sql`AND (tp.list_summary->>'degraded')::boolean = ${query.degraded}`;
-    const visibleCte = Prisma.sql`
-      visible AS (
-        SELECT tp.*,
-          COALESCE((
-            SELECT event.state::text
-            FROM triage_proposal_lifecycle_events event
-            WHERE event.proposal_id = tp.id AND event.created_at <= ${snapshotAt}
-            ORDER BY event.created_at DESC, event.id DESC
-            LIMIT 1
-          ), tp.lifecycle::text) AS snapshot_lifecycle,
-          (
-            SELECT child.id FROM triage_proposals child
-            WHERE child.supersedes_id = tp.id AND child.created_at <= ${snapshotAt}
-            ORDER BY child.created_at, child.id
-            LIMIT 1
-          ) AS successor_id
-        FROM triage_proposals tp
-        JOIN issues i ON i.id = tp.target_issue_id AND i.project_id = tp.project_id
-        WHERE tp.project_id = ${project.id}::uuid
-          AND tp.created_at <= ${snapshotAt}
-          ${targetPredicate}
-          ${generatorPredicate}
-          ${degradedPredicate}
-      )
-    `;
+    const visibleCte = buildVisibleProposalsCte({
+      projectId: project.id,
+      snapshotAt,
+      targetPredicate,
+      generatorPredicate,
+      degradedPredicate,
+    });
 
     const [source] = await tx.$queryRaw<[{ sourceFingerprint: string }]>(Prisma.sql`
       WITH ${visibleCte}
@@ -305,15 +360,7 @@ export async function listTriageProposals(
       snapshotLifecycle: string;
       isSuperseded: boolean;
       successorId: string | null;
-    }>>(Prisma.sql`
-      WITH ${visibleCte}
-      SELECT e.id, e.snapshot_lifecycle AS "snapshotLifecycle",
-        e.successor_id IS NOT NULL AS "isSuperseded", e.successor_id AS "successorId"
-      FROM visible e
-      WHERE ${statePredicate(state, snapshotAt)} ${seekPredicate}
-      ORDER BY e.created_at DESC, e.id DESC
-      LIMIT ${limit + 1}
-    `);
+    }>>(buildProposalListPageStatement({ visibleCte, state, snapshotAt, seekPredicate, limit }));
     const hasMore = pageIds.length > limit;
     const page = pageIds.slice(0, limit);
     const proposals = await tx.triageProposal.findMany({

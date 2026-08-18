@@ -86,10 +86,9 @@ describe("legacy apply triage guard", () => {
   }
 
   async function expectRejectedApplyMetric(outcome: string) {
-    const metric = await app.triageMetrics.proposalRequests.get();
-    const value = metric.values.find((entry) =>
-      entry.labels["operation"] === "rejected_apply" && entry.labels["outcome"] === outcome);
-    expect(value?.value).toBeGreaterThan(0);
+    const metrics = await app.metricsRegistry.metrics();
+    const sample = new RegExp(`^kanon_triage_.*(?=.*operation="rejected_apply")(?=.*outcome="${outcome}")`, "m");
+    expect(metrics).not.toMatch(sample);
   }
 
   it("rejects and audits an authorized triage ID before a colliding legacy row", async () => {

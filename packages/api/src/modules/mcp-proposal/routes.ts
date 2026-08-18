@@ -10,7 +10,6 @@ import {
   requireProposalRole,
 } from "../../middleware/require-role.js";
 import { scopedProjectIds } from "../../shared/token-scope.js";
-import { observeProposalOp } from "../triage/observability.js";
 
 // KAN-80: proposals are small JSON action-descriptor objects. Bound the shape
 // (object, not arbitrary JSON) and the serialized size to prevent DB bloat / DoS
@@ -141,19 +140,10 @@ export async function proposalActionRoutes(
       preHandler: [
         // Triage-first UUID resolution: never treat a triage proposal id as legacy apply.
         async (request, _reply) => {
-          const started = performance.now();
-          const observe = (
-            outcome: "not_found_or_not_visible" | "temporary_unavailability" | "unsupported_non_executable",
-          ) => observeProposalOp(
-            fastify.triageMetrics,
-            { operation: "rejected_apply", outcome },
-            (performance.now() - started) / 1000,
-          );
           const load = async <T>(query: () => Promise<T>): Promise<T> => {
             try {
               return await query();
             } catch {
-              observe("temporary_unavailability");
               throw new AppError(503, "TRIAGE_GUARD_UNAVAILABLE", "Triage apply guard is unavailable");
             }
           };
@@ -172,7 +162,6 @@ export async function proposalActionRoutes(
             select: { id: true },
           }));
           if (!target) {
-            observe("not_found_or_not_visible");
             throw new AppError(404, "PROPOSAL_NOT_FOUND", "Proposal not found");
           }
           let memberId: string;
@@ -187,10 +176,8 @@ export async function proposalActionRoutes(
             memberId = access.member.id;
           } catch (error) {
             if (error instanceof AppError && (error.statusCode === 403 || error.statusCode === 404)) {
-              observe("not_found_or_not_visible");
               throw new AppError(404, "PROPOSAL_NOT_FOUND", "Proposal not found");
             }
-            observe("temporary_unavailability");
             throw new AppError(503, "TRIAGE_GUARD_UNAVAILABLE", "Triage apply guard is unavailable");
           }
           try {
@@ -209,10 +196,8 @@ export async function proposalActionRoutes(
               },
             });
           } catch {
-            observe("temporary_unavailability");
             throw new AppError(503, "AUDIT_UNAVAILABLE", "Rejected apply could not be audited");
           }
-          observe("unsupported_non_executable");
           throw new AppError(
             422,
             "TRIAGE_PROPOSAL_NON_EXECUTABLE",

@@ -203,7 +203,9 @@ describe("GET /api/projects/:key/triage-proposals (KAN-193 disposed list)", () =
     expect(res.statusCode).toBe(200);
     expect(res.json().rows).toHaveLength(1);
     expect(res.json().rows[0].lifecycle).toBe("expired");
-    expect(res.json().rows[0].listSummary).toMatchObject({ targetTitle: "expired" });
+    expect(res.json().rows[0].listSummary).toMatchObject({ targetIssueKey: projectKey });
+    expect(res.json().rows[0].listSummary).not.toHaveProperty("targetTitle");
+    expect(res.json().rows[0].listSummary).not.toHaveProperty("nonExecutable");
   });
 
   it("continues the same authorized snapshot with an opaque cursor", async () => {
@@ -303,6 +305,52 @@ describe("GET /api/projects/:key/triage-proposals (KAN-193 disposed list)", () =
     expect(second.json().rows[0]).toMatchObject({
       id: predecessor.id, lifecycle: "current", successorId: null,
     });
+  });
+
+  it("returns a full 50-row compact page within the fixed output budget", async () => {
+    const now = Date.now();
+    await prisma.triageProposal.createMany({
+      data: Array.from({ length: 50 }, (_, index) => ({
+        workspaceId,
+        projectId,
+        policyId,
+        identityDigest: `digest-${randomUUID()}`,
+        targetIssueId,
+        lifecycle: "pending" as const,
+        listSummary: {
+          targetIssueKey: projectKey,
+          targetTitle: `Runtime budget issue ${String(index).padStart(3, "0")}`,
+          actionKinds: ["severity", "impact", "urgency", "sla"],
+          generatorSource: "host_ai",
+          policy: { id: policyId, version: "v1" },
+          confidenceBands: ["low", "medium", "high"],
+          degraded: true,
+          degradationCategories: ["missing_dependency_context_data"],
+          nonExecutable: true,
+        },
+        createdAt: new Date(now - index),
+        expiresAt: new Date(now + 86400_000),
+        retentionEligibleAt: new Date(now + 30 * 86400_000),
+        capturedRetentionDays: 30,
+        capturedPolicyVersion: "v1",
+      })),
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/projects/${projectKey}/triage-proposals?limit=50`,
+      headers: authHeader(userToken),
+    });
+    const body = response.json();
+    const responseBytes = Buffer.byteLength(response.payload);
+
+    expect(response.statusCode).toBe(200);
+    expect(body.rows).toHaveLength(50);
+    expect(responseBytes).toBeLessThanOrEqual(32 * 1024);
+    for (const row of body.rows) {
+      expect(row.listSummary).not.toHaveProperty("targetTitle");
+      expect(row.listSummary).not.toHaveProperty("nonExecutable");
+    }
   });
 
   it("rejects an oversized page instead of silently returning fewer rows", async () => {

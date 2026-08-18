@@ -341,33 +341,33 @@ Redaction is a read projection only and MUST NOT rewrite proposal content, lifec
 - THEN the result is the same permission-safe outcome as a missing proposal
 - AND no candidate or proposal content is disclosed
 
-### Requirement: Proposal audit and observability preserve privacy
+### Requirement: Proposal audit preserves privacy without dedicated telemetry
 
 Prepare/validate, creation, dedup return, source or supersession conflict, authorization failure, get, list page, dismissal, expiration, retention disposition, and rejected apply MUST carry a correlation or trace identity. Persisted proposal provenance MUST identify initiator/client, generator, policy identity/version, authorization policy version, model identity when used, source version/hash/snapshot and seal, effective scope, evidence/confidence, degradation, creation time, and trace identity. Lifecycle audit MUST identify actor, time, and reason.
 
-Operational metrics MUST measure prepare/validate and persistence latency, AI degradation, created-versus-deduplicated outcomes, source/supersession conflicts, get/list/dismiss/expiry/retention outcomes, returned-row counts, and rejected apply attempts using non-sensitive low-cardinality labels. Metrics and permission-denied responses MUST NOT expose query or body text, evidence, cursor, model, proposal, issue, project, workspace, or other domain identifiers, or hidden-resource cardinality; model identity MAY appear in controlled traces/audit only.
+The proposal contract MUST NOT require dedicated triage metrics, stage traces, or alerts. Existing platform logs and permission-denied responses MUST NOT expose query or body text, evidence, cursor, model, proposal, issue, project, workspace, other domain identifiers, or hidden-resource cardinality. Model identity MAY appear only in authorized persisted provenance.
 
 #### Scenario: Deduplicated retry is traceable
 
 - GIVEN a retry returns an existing proposal
-- WHEN telemetry and authorized audit are inspected
-- THEN the request trace identifies a deduplicated outcome and the proposal's creation provenance remains unchanged
-- AND metrics contain no proposal or issue identifier labels
+- WHEN the response and authorized audit are inspected
+- THEN the response identifies a deduplicated outcome and the proposal's creation provenance remains unchanged
+- AND existing platform logs add no proposal or issue identifier for triage diagnostics
 
 #### Scenario: Rejected apply is observable without mutation
 
 - GIVEN legacy apply rejects a triage proposal
-- WHEN authorized audit and metrics are inspected
+- WHEN authorized audit is inspected
 - THEN the attempt, actor/client, time, reason, and correlation identity are observable
 - AND proposal content and lifecycle are unchanged
 
-### Requirement: Rollout gates and dedicated-ledger recovery are objective
+### Requirement: Triage proposals remain disabled by default
 
-The triage flags MUST remain off until every required build, generation, test, security, concurrency, and performance check is green: 100% of required assertions must pass, not a pass-rate substitute. Canary exposure MUST be operator-approved and measured per stage in rolling five-minute windows with at least 100 completed requests. Unexpected stage errors above 1% MUST page the owner and disable that stage; typed degradation above 10% MUST page the owner and halt canary exposure for that stage.
+The triage flags MUST remain false by default. This change defines no dedicated triage telemetry gate, live canary, or production certification process, so it does not authorize enablement.
 
-Unexpected errors above 5% MUST page incident command and disable all triage flags. Any security or invariant violation MUST immediately disable all flags. Reference-load preview P95 MUST remain under three seconds as a separate gate. Threshold actions MUST only page or disable exposure; they MUST NOT mutate issues, proposal content, or audit history.
+The named performance profiles are synthetic regression fixtures only. They do not exercise a live PostgreSQL/API deployment and MUST NOT be treated as certification evidence.
 
-Rollback MUST be flag-off first while retaining ledger rows and audit. Recovery MUST be fix-forward through the dedicated triage ledger: repair forward, verify the retained rows/audit and all required checks, then re-enable only after a new operator-approved canary. No destructive down-migration, legacy-apply bypass, or audit erasure is allowed during recovery.
+Rollback MUST be flag-off first while retaining ledger rows and audit. Recovery MUST be fix-forward through the dedicated triage ledger: repair forward, verify the retained rows/audit and all required checks, and keep the flags off. No destructive down-migration, legacy-apply bypass, or audit erasure is allowed during recovery.
 
 ### Requirement: First-slice boundaries remain intact
 

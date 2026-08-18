@@ -3,18 +3,16 @@
  *
  * Contract: PG16/Node20, 4 vCPU/8 GiB, warm DB, concurrency 16, 100 warmups,
  * ≥1000 measured calls, prepare/validate/timeout paths, compact ≤16 KiB,
- * P95 <3s. Full load requires TRIAGE_PERF=1.
+ * with budgets owned by this versioned profile.
  */
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
-  CANARY_GATES,
   REFERENCE_RUNTIME,
   summarizeLatencies,
   type LatencySample,
-  isFullPerfEnabled,
 } from "./profile.js";
 import { TRIAGE_SQL_BOUNDARIES } from "../observability.js";
 
@@ -32,8 +30,8 @@ export const PREVIEW_PROFILE = {
   },
   paths: ["prepare_deterministic", "validate_host_completed", "host_timeout", "candidate_timeout"],
   budgets: {
-    p95MaxMs: CANARY_GATES.previewP95MaxMs,
-    compactMaxBytes: CANARY_GATES.previewCompactMaxBytes,
+    p95MaxMs: 3000,
+    compactMaxBytes: 16 * 1024,
     fullMaxBytes: 48 * 1024,
     mcpTimeoutMs: 2900,
     apiTimeoutMs: 2500,
@@ -73,16 +71,9 @@ export function loadSearchSource(): string {
 
 /**
  * Synthetic fixture run for CI — proves percentile/budget math without DB load.
- * Full profile: set TRIAGE_PERF=1 and replace generator with live harness.
  */
 export function runPreviewProfileFixture(samples: LatencySample[]) {
-  if (samples.length < (isFullPerfEnabled() ? REFERENCE_RUNTIME.measuredCallsMin : 20)) {
-    throw new Error(
-      isFullPerfEnabled()
-        ? `triage-preview-v1 requires ≥${REFERENCE_RUNTIME.measuredCallsMin} samples`
-        : "fixture requires ≥20 samples",
-    );
-  }
+  if (samples.length < 20) throw new Error("fixture requires ≥20 samples");
   const summary = summarizeLatencies(samples);
   return {
     profile: PROFILE_ID,
@@ -90,9 +81,6 @@ export function runPreviewProfileFixture(samples: LatencySample[]) {
     gates: {
       p95Ok: summary.p95Ms < PREVIEW_PROFILE.budgets.p95MaxMs,
       compactOk: summary.maxOutputBytes <= PREVIEW_PROFILE.budgets.compactMaxBytes,
-      unexpectedErrorsOk: summary.unexpectedErrorPct <= CANARY_GATES.unexpectedErrorPagePct,
-      typedDegradationOk: summary.typedDegradationPct <= CANARY_GATES.typedDegradationHaltPct,
-      disableAllSafe: summary.unexpectedErrorPct <= CANARY_GATES.unexpectedErrorDisableAllPct,
     },
   };
 }

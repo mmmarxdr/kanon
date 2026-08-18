@@ -169,17 +169,16 @@ Any MCP search or triage capability using candidate retrieval MUST call the boun
 - THEN the call remains valid with its established output semantics
 - AND it does not gain workspace-wide visibility by default
 
-### Requirement: Search observability without cardinality leakage
+### Requirement: Search diagnostics do not require dedicated telemetry
 
-The system MUST correlate API/MCP search, preview, host-AI/degradation, proposal persistence/deduplication, source-conflict, and lifecycle activity with a trace identity and record stage, latency, outcome, rows scanned/returned, completeness, degradation/error category, dedup result, and lifecycle transition. Expected source conflicts and dedup hits are outcomes, not errors. Metrics MUST use non-sensitive, low-cardinality labels and MUST NOT label observations with issue identifiers, search text, evidence text, project identifiers, or workspace identifiers. Caller-visible telemetry MUST NOT expose rows scanned, forbidden counts, or hidden-resource cardinality. Alerts MUST have named thresholds and action boundaries: they may page operators or disable feature flags, but MUST NOT mutate issues, proposal content, or audit history.
+The search contract MUST NOT require dedicated triage metrics, stage traces, or alerts. Existing platform request logging MAY carry a correlation identity, but it MUST use existing authorization and redaction controls and MUST NOT record search text, evidence text, or domain identifiers for triage-specific inspection. Caller-visible responses and diagnostics MUST NOT expose rows scanned, forbidden counts, or hidden-resource cardinality.
 
-#### Scenario: Operator can measure every triage stage
+#### Scenario: Search adds no dedicated triage telemetry
 
 - GIVEN an authorized preview or persistence request runs
-- WHEN operational telemetry is emitted
-- THEN search, preview, AI/degradation, persistence/deduplication, source-conflict, and lifecycle outcomes are correlated and measurable
-- AND alerts may page or disable flags but cannot mutate issues, proposals, or audit history
-- AND no search text or domain identifier is used as a metric label
+- WHEN the request is processed
+- THEN no dedicated triage metric, stage trace, or alert is required
+- AND existing request logs contain no search text, evidence text, or domain identifier added for triage telemetry
 
 #### Scenario: Caller cannot infer hidden cardinality
 

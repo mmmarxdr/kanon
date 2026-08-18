@@ -17,7 +17,6 @@ import {
   PersistTriageProposalBodySchema,
   persistTriageProposal,
 } from "./proposal-write.js";
-import { observePreview, observeProposalOp, triageOutcome } from "./observability.js";
 
 const PREVIEW_API_DEADLINE_MS = 2500;
 const PERSIST_API_DEADLINE_MS = 2500;
@@ -92,8 +91,6 @@ async function boundedAuthorization<T>(deadlineAt: number, run: (tx: Prisma.Tran
 }
 
 function requireVisibleTriageIssue(
-  appRaw: FastifyInstance,
-  operation: "preview" | "persist",
   deadlineMs: number,
   minimumRole?: MemberRole,
 ): preHandlerHookHandler {
@@ -105,74 +102,34 @@ function requireVisibleTriageIssue(
     const issueKey = (request.params as { key?: string }).key;
     if (!issueKey) throw new AppError(400, "ISSUE_KEY_REQUIRED", "Issue key is required");
 
-    try {
-      const result = await boundedAuthorization(started + deadlineMs, async (tx) => {
-        const issue = await tx.issue.findUnique({
-          where: { key: issueKey },
-          select: { id: true, project: { select: { id: true, workspaceId: true, archived: true } } },
-        });
-        if (!issue || issue.project.archived) {
-          throw new AppError(404, "NOT_FOUND_OR_NOT_VISIBLE", "Resource not found");
-        }
-        const access = await resolveVisibleProjectAccess(
-          tx, user.userId, user.allowedProjectIds, issue.project.id, issue.project.workspaceId, minimumRole,
-        );
-        return { issueId: issue.id, access };
+    const result = await boundedAuthorization(started + deadlineMs, async (tx) => {
+      const issue = await tx.issue.findUnique({
+        where: { key: issueKey },
+        select: { id: true, project: { select: { id: true, workspaceId: true, archived: true } } },
       });
-      request.issueId = result.issueId;
-      request.member = result.access.member;
-      request.projectRole = result.access.projectRole;
-    } catch (error) {
-      const duration = (performance.now() - started) / 1000;
-      if (operation === "preview") {
-        const phase = (request.body as { phase?: unknown } | undefined)?.phase === "validate" ? "validate" : "prepare";
-        observePreview(appRaw.triageMetrics, {
-          phase, outcome: triageOutcome(error), ai_contributed: "false",
-        }, duration, []);
-      } else {
-        observeProposalOp(appRaw.triageMetrics, {
-          operation: "persist", outcome: triageOutcome(error),
-        }, duration);
+      if (!issue || issue.project.archived) {
+        throw new AppError(404, "NOT_FOUND_OR_NOT_VISIBLE", "Resource not found");
       }
-      throw error;
-    }
+      const access = await resolveVisibleProjectAccess(
+        tx, user.userId, user.allowedProjectIds, issue.project.id, issue.project.workspaceId, minimumRole,
+      );
+      return { issueId: issue.id, access };
+    });
+    request.issueId = result.issueId;
+    request.member = result.access.member;
+    request.projectRole = result.access.projectRole;
   };
 }
 
 export async function triageProposalReadRoutes(appRaw: FastifyInstance) {
   const app = appRaw.withTypeProvider<ZodTypeProvider>();
 
-  async function observedProposal<T>(
-    operation: "persist" | "get" | "list" | "dismiss",
-    run: () => Promise<T>,
-    listRows?: (result: T) => { state_filter: "current" | "superseded" | "dismissed" | "expired" | "disposed" | "all"; count: number },
-    started = performance.now(),
-  ): Promise<T> {
-    try {
-      const result = await run();
-      observeProposalOp(
-        appRaw.triageMetrics,
-        { operation, outcome: "success" },
-        (performance.now() - started) / 1000,
-        listRows?.(result),
-      );
-      return result;
-    } catch (error) {
-      observeProposalOp(
-        appRaw.triageMetrics,
-        { operation, outcome: triageOutcome(error) },
-        (performance.now() - started) / 1000,
-      );
-      throw error;
-    }
-  }
-
   app.post(
     "/api/issues/:key/triage/preview",
     {
       preHandler: [
         requireCapability(env.TRIAGE_PREVIEW_ENABLED, "Triage preview is disabled"),
-        requireVisibleTriageIssue(appRaw, "preview", PREVIEW_API_DEADLINE_MS),
+        requireVisibleTriageIssue(PREVIEW_API_DEADLINE_MS),
       ],
       schema: {
         params: z.object({ key: z.string().min(1) }),
@@ -181,37 +138,15 @@ export async function triageProposalReadRoutes(appRaw: FastifyInstance) {
     },
     async (request, reply) => {
       const started = triageRequestStartedAt.get(request) ?? performance.now();
-      try {
-        const preview = await executePreview({
-          issueKey: request.params.key,
-          userId: request.member!.userId,
-          allowedProjectIds: request.user?.allowedProjectIds,
-          correlationId: request.id,
-          request: request.body,
-          deadlineAt: started + PREVIEW_API_DEADLINE_MS,
-          metrics: appRaw.triageMetrics,
-        });
-        observePreview(
-          appRaw.triageMetrics,
-          {
-            phase: request.body.phase,
-            outcome: preview.degradation.length > 0 ? "degraded_success" : "success",
-            ai_contributed: preview.recommendations.some((item) => item.source === "host_ai")
-              ? "true"
-              : "false",
-          },
-          (performance.now() - started) / 1000,
-          preview.degradation,
-        );
-        return reply.send(preview);
-      } catch (error) {
-        observePreview(
-          appRaw.triageMetrics,
-          { phase: request.body.phase, outcome: triageOutcome(error), ai_contributed: "false" },
-          (performance.now() - started) / 1000,
-        );
-        throw error;
-      }
+      const preview = await executePreview({
+        issueKey: request.params.key,
+        userId: request.member!.userId,
+        allowedProjectIds: request.user?.allowedProjectIds,
+        correlationId: request.id,
+        request: request.body,
+        deadlineAt: started + PREVIEW_API_DEADLINE_MS,
+      });
+      return reply.send(preview);
     },
   );
 
@@ -220,7 +155,7 @@ export async function triageProposalReadRoutes(appRaw: FastifyInstance) {
     {
       preHandler: [
         requireCapability(env.TRIAGE_PROPOSALS_ENABLED, "Triage proposal writes are disabled"),
-        requireVisibleTriageIssue(appRaw, "persist", PERSIST_API_DEADLINE_MS, "member"),
+        requireVisibleTriageIssue(PERSIST_API_DEADLINE_MS, "member"),
       ],
       schema: {
         params: z.object({ key: z.string().min(1) }),
@@ -229,16 +164,19 @@ export async function triageProposalReadRoutes(appRaw: FastifyInstance) {
     },
     async (request, reply) => {
       const started = triageRequestStartedAt.get(request) ?? performance.now();
-      const proposal = await observedProposal("persist", () => persistTriageProposal({
-        issueKey: request.params.key,
-        issueId: request.issueId!,
-        memberId: request.member!.id,
-        userId: request.member!.userId,
-        allowedProjectIds: request.user?.allowedProjectIds,
-        client: request.via ?? null,
-        correlationId: request.id,
-        body: request.body,
-      }, started + PERSIST_API_DEADLINE_MS), undefined, started);
+      const proposal = await persistTriageProposal(
+        {
+          issueKey: request.params.key,
+          issueId: request.issueId!,
+          memberId: request.member!.id,
+          userId: request.member!.userId,
+          allowedProjectIds: request.user?.allowedProjectIds,
+          client: request.via ?? null,
+          correlationId: request.id,
+          body: request.body,
+        },
+        started + PERSIST_API_DEADLINE_MS,
+      );
       return reply.status(proposal.outcome === "created" ? 201 : 200).send(proposal);
     },
   );
@@ -278,12 +216,12 @@ export async function triageProposalReadRoutes(appRaw: FastifyInstance) {
         return reply.status(401).send({ error: "Unauthorized" });
       }
       try {
-        const result = await observedProposal("get", () => getTriageProposal(
+        const result = await getTriageProposal(
           user.userId,
           request.params.id,
           user.allowedProjectIds,
           request.query.format,
-        ));
+        );
         return reply.status(result.statusCode).send(result.body);
       } catch (err) {
         if (err instanceof AppError) {
@@ -324,25 +262,20 @@ export async function triageProposalReadRoutes(appRaw: FastifyInstance) {
         return reply.status(401).send({ error: "Unauthorized" });
       }
       try {
-        const state = request.query.state ?? "current";
-        const result = await observedProposal(
-          "list",
-          () => listTriageProposals(
-            user.userId,
-            request.projectId!,
-            {
-              state: request.query.state,
-              limit: request.query.limit,
-              targetIssueKey: request.query.targetIssueKey,
-              targetIssueId: request.query.targetIssueId,
-              generatorSource: request.query.generatorSource,
-              degraded: request.query.degraded,
-              cursor: request.query.cursor,
-            },
-            user.allowedProjectIds,
-            request.id,
-          ),
-          (page) => ({ state_filter: state, count: page.returnedCount }),
+        const result = await listTriageProposals(
+          user.userId,
+          request.projectId!,
+          {
+            state: request.query.state,
+            limit: request.query.limit,
+            targetIssueKey: request.query.targetIssueKey,
+            targetIssueId: request.query.targetIssueId,
+            generatorSource: request.query.generatorSource,
+            degraded: request.query.degraded,
+            cursor: request.query.cursor,
+          },
+          user.allowedProjectIds,
+          request.id,
         );
         return reply.send(result);
       } catch (err) {
@@ -382,33 +315,31 @@ export async function triageProposalReadRoutes(appRaw: FastifyInstance) {
       }
 
       try {
-        const result = await observedProposal("dismiss", async () => {
-          const { member } = await boundedAuthorization(deadlineAt, async (tx) => {
-            const proposal = await tx.triageProposal.findUnique({
-              where: { id: request.params.id },
-              select: { projectId: true, workspaceId: true, targetIssueId: true },
-            });
-            if (!proposal) {
-              throw new AppError(404, "NOT_FOUND_OR_NOT_VISIBLE", "Proposal not found");
-            }
-            const target = await tx.issue.findFirst({
-              where: { id: proposal.targetIssueId, projectId: proposal.projectId },
-              select: { id: true },
-            });
-            if (!target) throw new AppError(404, "NOT_FOUND_OR_NOT_VISIBLE", "Proposal not found");
-            return resolveVisibleProjectAccess(
-              tx, user.userId, user.allowedProjectIds, proposal.projectId, proposal.workspaceId, "member",
-            );
+        const { member } = await boundedAuthorization(deadlineAt, async (tx) => {
+          const proposal = await tx.triageProposal.findUnique({
+            where: { id: request.params.id },
+            select: { projectId: true, workspaceId: true, targetIssueId: true },
           });
-          const { dismissTriageProposal } = await import("./lifecycle.js");
-          return dismissTriageProposal(
-            request.params.id,
-            member.id,
-            request.body.reason,
-            { correlationId: request.id, client: request.via ?? null },
-            deadlineAt,
+          if (!proposal) {
+            throw new AppError(404, "NOT_FOUND_OR_NOT_VISIBLE", "Proposal not found");
+          }
+          const target = await tx.issue.findFirst({
+            where: { id: proposal.targetIssueId, projectId: proposal.projectId },
+            select: { id: true },
+          });
+          if (!target) throw new AppError(404, "NOT_FOUND_OR_NOT_VISIBLE", "Proposal not found");
+          return resolveVisibleProjectAccess(
+            tx, user.userId, user.allowedProjectIds, proposal.projectId, proposal.workspaceId, "member",
           );
-        }, undefined, started);
+        });
+        const { dismissTriageProposal } = await import("./lifecycle.js");
+        const result = await dismissTriageProposal(
+          request.params.id,
+          member.id,
+          request.body.reason,
+          { correlationId: request.id, client: request.via ?? null },
+          deadlineAt,
+        );
         return reply.send({
           ok: true,
           status: result.proposal.lifecycle,

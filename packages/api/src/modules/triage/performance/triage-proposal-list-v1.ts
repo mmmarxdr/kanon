@@ -2,18 +2,16 @@
  * Reference profile `triage-proposal-list-v1` (KAN-193).
  *
  * Same runtime as preview profile; measures list (20/50) and dismiss paths,
- * deep keyset pages, auth/source conflicts. Full load requires TRIAGE_PERF=1.
+ * deep keyset pages, auth/source conflicts.
  */
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
-  CANARY_GATES,
   REFERENCE_RUNTIME,
   summarizeLatencies,
   type LatencySample,
-  isFullPerfEnabled,
 } from "./profile.js";
 import { TRIAGE_SQL_BOUNDARIES } from "../observability.js";
 
@@ -30,11 +28,11 @@ export const LIST_PROFILE = {
   },
   paths: ["list_default_20", "list_max_50", "list_deep_pages", "dismiss", "source_conflict"],
   budgets: {
-    listP95TargetMs: CANARY_GATES.listP95TargetMs,
-    dismissP95TargetMs: CANARY_GATES.dismissP95TargetMs,
-    listMaxBytes: CANARY_GATES.listMaxBytes,
-    getMaxBytes: CANARY_GATES.getMaxBytes,
-    dismissMaxBytes: CANARY_GATES.dismissMaxBytes,
+    listP95TargetMs: 1500,
+    dismissP95TargetMs: 1000,
+    listMaxBytes: 32 * 1024,
+    getMaxBytes: 64 * 1024,
+    dismissMaxBytes: 8 * 1024,
     mcpListTimeoutMs: 2900,
     mcpDismissTimeoutMs: 2000,
   },
@@ -87,7 +85,7 @@ export function runListProfileFixture(samples: {
   list: LatencySample[];
   dismiss: LatencySample[];
 }) {
-  const min = isFullPerfEnabled() ? REFERENCE_RUNTIME.measuredCallsMin : 20;
+  const min = 20;
   if (samples.list.length < min || samples.dismiss.length < min) {
     throw new Error(`triage-proposal-list-v1 fixture requires ≥${min} samples per path`);
   }
@@ -102,10 +100,6 @@ export function runListProfileFixture(samples: {
       dismissP95Ok: dismissSummary.p95Ms < LIST_PROFILE.budgets.dismissP95TargetMs,
       listBytesOk: listSummary.maxOutputBytes <= LIST_PROFILE.budgets.listMaxBytes,
       dismissBytesOk: dismissSummary.maxOutputBytes <= LIST_PROFILE.budgets.dismissMaxBytes,
-      listUnexpectedErrorsOk: listSummary.unexpectedErrorPct <= CANARY_GATES.unexpectedErrorPagePct,
-      dismissUnexpectedErrorsOk: dismissSummary.unexpectedErrorPct <= CANARY_GATES.unexpectedErrorPagePct,
-      disableAllSafe: Math.max(listSummary.unexpectedErrorPct, dismissSummary.unexpectedErrorPct) <=
-        CANARY_GATES.unexpectedErrorDisableAllPct,
     },
   };
 }

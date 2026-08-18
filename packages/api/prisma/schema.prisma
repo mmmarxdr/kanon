@@ -1583,5 +1583,6 @@ model TriageProposalLifecycleEvent {
   proposal          TriageProposal @relation(fields: [proposalId], references: [id], onDelete: Restrict)
   
   @@unique([proposalId, state])
+  @@index([proposalId, createdAt(sort: Desc), id(sort: Desc)])
   @@map("triage_proposal_lifecycle_events")
 }
