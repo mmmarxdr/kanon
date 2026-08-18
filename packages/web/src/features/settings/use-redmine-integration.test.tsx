@@ -138,6 +138,29 @@ describe("Redmine integration hooks", () => {
     });
   });
 
+  it("invalidates connection audit-health after replacing its service credential", async () => {
+    vi.mocked(fetchApi).mockResolvedValue({});
+    const { queryClient, wrapper } = createWrapper();
+    queryClient.setQueryData(
+      integrationKeys.auditHealth(WORKSPACE_ID, CONNECTION_ID, BINDING_ID),
+      { state: "complete" },
+    );
+    const replace = renderHook(
+      () => useReplaceRedmineServiceCredentialMutation(WORKSPACE_ID, CONNECTION_ID),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await replace.result.current.mutateAsync("replacement-key");
+    });
+
+    expect(
+      queryClient.getQueryState(
+        integrationKeys.auditHealth(WORKSPACE_ID, CONNECTION_ID, BINDING_ID),
+      )?.isInvalidated,
+    ).toBe(true);
+  });
+
   it("uses workspace-scoped bind and unbind paths", async () => {
     vi.mocked(fetchApi).mockResolvedValue({});
     const { wrapper } = createWrapper();
