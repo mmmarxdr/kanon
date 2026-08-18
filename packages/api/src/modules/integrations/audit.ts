@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { isCurrentTerminalAuditEvidence, type AuditCheckpoint, type AuditObservation, type AuditRunState, type TerminalAuditTrustRead } from "./core/audit-evidence.js";
 import type { PollCheckpoint } from "./core/types.js";
 import type { DecodedRedmineIssue, RedmineIssueChange } from "./providers/redmine/decoder.js";
@@ -36,6 +37,8 @@ export interface AuditCensusSource {
 export type AuditCensusResult =
   | { readonly kind: "complete-current-visible"; readonly scopeFingerprint: string }
   | { readonly kind: "unknown"; readonly reasonCode: RedmineAuditFailureCode | "scope_or_fence_changed" | "did_not_converge" };
+
+const MAX_AUDIT_OBSERVATIONS_PER_RUN = 100_000;
 
 export interface AuditCensusOptions {
   readonly pageSize: number;
@@ -153,11 +156,50 @@ function checkpoint(
   };
 }
 
+function observationFingerprint(observation: AuditObservation): string {
+  return [observation.identityType, observation.parentRemoteId ?? "", observation.remoteId, observation.sourceUpdatedAt.toISOString()].join("\0");
+}
+
+function digest(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
 function fingerprint(observations: readonly AuditObservation[]): string {
-  return observations
-    .map((observation) => [observation.identityType, observation.parentRemoteId ?? "", observation.remoteId, observation.sourceUpdatedAt.toISOString()].join("\0"))
-    .sort()
-    .join("\n");
+  return digest([...new Set(observations.map(observationFingerprint))].sort().join("\n"));
+}
+
+function normalizedFingerprint(value: string | null | undefined): string | null {
+  if (!value) return null;
+  return /^[a-f0-9]{64}$/.test(value) ? value : digest(value);
+}
+
+function resumableCheckpoint(checkpoint: AuditCheckpoint | null, observations: readonly AuditObservation[]): AuditCheckpoint | null {
+  if (checkpoint?.checkpointVersion !== 1 || checkpoint.passComplete || checkpoint.itemIndex < 0) return null;
+  if (checkpoint.offset > 0 && !checkpoint.pageCheckpoint?.pageToken) return null;
+  const issues = observations.filter((observation) => observation.identityType === "issue");
+  const committedIssueCount = checkpoint.offset + checkpoint.itemIndex + 1;
+  const last = issues.find((observation) => observation.remoteId === checkpoint.lastIssueId &&
+    observation.sourceUpdatedAt.getTime() === checkpoint.lastIssueUpdatedAt?.getTime());
+  return issues.length === committedIssueCount && last ? checkpoint : null;
+}
+
+function matchesResumedPrefix(
+  checkpoint: AuditCheckpoint,
+  changes: readonly RedmineIssueChange[],
+  observations: readonly AuditObservation[],
+): boolean {
+  if (checkpoint.expectedTotal !== checkpoint.offset + changes.length || changes.length <= checkpoint.itemIndex) return false;
+  const persistedPrefix = observations
+    .filter((observation) => observation.identityType === "issue")
+    .sort((left, right) => left.sourceUpdatedAt.getTime() - right.sourceUpdatedAt.getTime() || Number(left.remoteId) - Number(right.remoteId))
+    .slice(checkpoint.offset, checkpoint.offset + checkpoint.itemIndex + 1)
+    .map(observationFingerprint);
+  const replayedPrefix = changes.slice(0, checkpoint.itemIndex + 1);
+  const last = replayedPrefix.at(-1);
+  return replayedPrefix.length === persistedPrefix.length && replayedPrefix.every((issue, index) => observationFingerprint({
+    identityType: "issue", remoteId: issue.identity.remoteId, parentRemoteId: null, sourceUpdatedAt: issue.changedAt,
+  }) === persistedPrefix[index]) && last?.identity.remoteId === checkpoint.lastIssueId &&
+    last.changedAt.getTime() === checkpoint.lastIssueUpdatedAt?.getTime();
 }
 
 /**
@@ -179,14 +221,17 @@ export async function runRedmineAuditCensus(
   const resumedCheckpoint = resumedRun?.checkpoint ?? null;
   const versionedResume = resumedCheckpoint?.checkpointVersion === 1;
   const startingPass = versionedResume ? resumedCheckpoint.pass + (resumedCheckpoint.passComplete ? 1 : 0) : 0;
-  let previousPass: string | null = versionedResume ? resumedCheckpoint.previousPassFingerprint ?? null : null;
+  let previousPass: string | null = versionedResume ? normalizedFingerprint(resumedCheckpoint.previousPassFingerprint) : null;
+  const durableContinuation = resumableCheckpoint(resumedCheckpoint, resumedRun?.observations ?? []);
   let providerObservedAt: Date | null = resumedRun?.providerObservedAt ?? null;
   for (let pass = startingPass; pass < options.maxPasses; pass += 1) {
-    const passObservations: AuditObservation[] = [];
-    let offset = 0;
-    let expectedTotal = 0;
-    let finalCheckpoint = checkpoint(pass, offset, 0, 0, undefined, null, previousPass);
-    let pageCheckpoint: PollCheckpoint | null = null;
+    const continuing = durableContinuation?.pass === pass;
+    const passObservations: AuditObservation[] = continuing ? [...(resumedRun?.observations ?? [])] : [];
+    let offset = continuing ? durableContinuation.offset : 0;
+    let expectedTotal = offset;
+    let finalCheckpoint = continuing ? durableContinuation : checkpoint(pass, offset, 0, 0, undefined, null, previousPass);
+    let pageCheckpoint: PollCheckpoint | null = continuing && offset > 0 ? durableContinuation.pageCheckpoint ?? null : null;
+    let resumeItemIndex = continuing ? durableContinuation.itemIndex : -1;
     let responseObservedAt: Date | null = null;
     do {
       if (options.signal?.aborted) return unknown("timeout");
@@ -199,8 +244,22 @@ export async function runRedmineAuditCensus(
       responseObservedAt ??= page.providerObservedAt;
       providerObservedAt ??= page.providerObservedAt;
       if (page.providerObservedAt.getTime() !== responseObservedAt.getTime()) return unknown("malformed_response");
+      let firstItemIndex = 0;
+      if (resumeItemIndex >= 0) {
+        if (!matchesResumedPrefix(durableContinuation!, page.value.changes, passObservations)) {
+          passObservations.length = 0;
+          offset = 0;
+          expectedTotal = 0;
+          finalCheckpoint = checkpoint(pass, 0, 0, 0, undefined, null, previousPass);
+          pageCheckpoint = null;
+          resumeItemIndex = -1;
+          continue;
+        }
+        firstItemIndex = resumeItemIndex + 1;
+        resumeItemIndex = -1;
+      }
       expectedTotal += page.value.changes.length;
-      for (let itemIndex = 0; itemIndex < page.value.changes.length; itemIndex += 1) {
+      for (let itemIndex = firstItemIndex; itemIndex < page.value.changes.length; itemIndex += 1) {
         if (options.signal?.aborted) return unknown("timeout");
         const detailLeaseCurrent = await persistence.isLeaseCurrent(lease);
         if (options.signal?.aborted) return unknown("timeout");
@@ -211,6 +270,7 @@ export async function runRedmineAuditCensus(
         if (detail.kind !== "accepted") return unknown(detail.kind === "unknown" ? detail.reasonCode : "detail_drift");
         if (detail.providerObservedAt.getTime() !== responseObservedAt.getTime()) return unknown("malformed_response");
         const observations = normalizedObservations(detail.value);
+        if (passObservations.length + observations.length > MAX_AUDIT_OBSERVATIONS_PER_RUN) return unknown("malformed_response");
         const nextCheckpoint = checkpoint(pass, offset, itemIndex, expectedTotal, issue, pageCheckpoint, previousPass);
         const committed = await persistence.commitIssue({
           lease,

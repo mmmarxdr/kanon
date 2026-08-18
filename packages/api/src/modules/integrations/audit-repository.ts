@@ -162,6 +162,13 @@ export function createPrismaAuditCensusRepository(database: PrismaClient, option
         scopeFingerprint: { not: currentScopeFingerprint },
       },
     });
+    await transaction.integrationAuditRun.deleteMany({
+      where: {
+        bindingId,
+        id: { not: currentRunId },
+        state: { in: ["failed", "stale"] },
+      },
+    });
     await transaction.integrationAuditObservation.deleteMany({
       where: {
         observedAt: { lt: new Date(now.getTime() - options.retentionDays * 86_400_000) },
@@ -241,6 +248,9 @@ export function createPrismaAuditCensusRepository(database: PrismaClient, option
       });
       if (!run) return false;
       await transaction.integrationAuditRun.update({ where: { id: run.id }, data: { state: "failed", reasonCode: boundedReason(reasonCode) } });
+      const [clock] = await transaction.$queryRaw<Array<{ now: Date }>>(Prisma.sql`SELECT clock_timestamp() AS "now"`);
+      if (!clock) throw new Error("Database clock unavailable");
+      await cleanupRetainedEvidence(transaction, lease.bindingId, run.id, lease.scopeFingerprint, clock.now);
       return true;
     });
   }

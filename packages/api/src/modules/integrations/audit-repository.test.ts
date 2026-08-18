@@ -125,6 +125,11 @@ describe("Prisma audit census repository", () => {
     expect(fake.runs.deleteMany).toHaveBeenNthCalledWith(2, { where: {
       bindingId: lease.bindingId,
       id: { not: "run-current" },
+      state: { in: ["failed", "stale"] },
+    } });
+    expect(fake.runs.deleteMany).toHaveBeenNthCalledWith(3, { where: {
+      bindingId: lease.bindingId,
+      id: { not: "run-current" },
       state: { in: ["complete", "failed", "stale"] },
       observations: { none: {} },
       OR: [
@@ -157,6 +162,26 @@ describe("Prisma audit census repository", () => {
     const safe = fakeDatabase({ existing: { id: "run-2", providerObservedAt: null } });
     await expect(createPrismaAuditCensusRepository(safe.database as never, repositoryOptions).markFailed(lease, "timeout")).resolves.toBe(true);
     expect(safe.runs.update).toHaveBeenCalledWith(expect.objectContaining({ data: { state: "failed", reasonCode: "timeout" } }));
+  });
+
+  it("bounds repeated failed evidence with fenced set-based cleanup while retaining the current failure", async () => {
+    const fake = fakeDatabase({ existing: {
+      id: "run-current", providerObservedAt: observedAt, scopeFingerprint: lease.scopeFingerprint,
+    } });
+    fake.runs.findMany.mockRejectedValue(new Error("audit history must not be materialized"));
+    const repository = createPrismaAuditCensusRepository(fake.database as never, repositoryOptions);
+
+    await expect(repository.markFailed(lease, "provider_failure")).resolves.toBe(true);
+
+    expect(fake.runs.findMany).not.toHaveBeenCalled();
+    expect(fake.runs.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "run-current" }, data: { state: "failed", reasonCode: "provider_failure" },
+    }));
+    expect(fake.runs.deleteMany).toHaveBeenCalledWith({ where: {
+      bindingId: lease.bindingId,
+      id: { not: "run-current" },
+      state: { in: ["failed", "stale"] },
+    } });
   });
 
   it("rejects a structurally valid lease when its audit aliases target a different binding fence", async () => {
