@@ -155,6 +155,25 @@ describe("RedmineHttpClient", () => {
     await result;
   });
 
+  it("propagates a caller abort to the in-flight transport and never starts an already-aborted request", async () => {
+    const controller = new AbortController();
+    const transport = vi.fn((_url, options) => new Promise<never>((_, reject) => {
+      options.signal.addEventListener("abort", () => reject(new Error("transport aborted")), { once: true });
+    }));
+    const client = new RedmineHttpClient("https://redmine.example", "secret", { resolve: publicDns, transport });
+
+    const request = client.get("/projects.json", controller.signal);
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledOnce());
+    controller.abort();
+    await expect(request).rejects.toThrow("transport aborted");
+    expect(transport).toHaveBeenCalledOnce();
+
+    const alreadyAborted = new AbortController();
+    alreadyAborted.abort();
+    await expect(client.get("/projects.json", alreadyAborted.signal)).rejects.toThrow("aborted");
+    expect(transport).toHaveBeenCalledOnce();
+  });
+
   it("times out before sending credentials when DNS resolution hangs", async () => {
     vi.useFakeTimers();
     const transport = vi.fn();

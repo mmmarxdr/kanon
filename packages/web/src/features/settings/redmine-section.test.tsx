@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { IntegrationConnection } from "@kanon/shared";
 import { useProjectsQuery } from "@/hooks/use-projects-query";
 import {
@@ -9,6 +9,7 @@ import {
   useConnectRedmineCredentialMutation,
   useCreateRedmineConnectionMutation,
   useRedmineConnectionQuery,
+  useRedmineAuditHealthQuery,
   useRedmineDiscoveryQuery,
   useReplaceRedmineServiceCredentialMutation,
   useSetRedmineLifecycleMutation,
@@ -23,6 +24,7 @@ vi.mock("./use-redmine-integration", () => ({
   useConnectRedmineCredentialMutation: vi.fn(),
   useCreateRedmineConnectionMutation: vi.fn(),
   useRedmineConnectionQuery: vi.fn(),
+  useRedmineAuditHealthQuery: vi.fn(),
   useRedmineDiscoveryQuery: vi.fn(),
   useReplaceRedmineServiceCredentialMutation: vi.fn(),
   useSetRedmineLifecycleMutation: vi.fn(),
@@ -148,6 +150,11 @@ describe("RedmineSection", () => {
       error: null,
       refetch: vi.fn(),
     } as unknown as ReturnType<typeof useRedmineDiscoveryQuery>);
+    vi.mocked(useRedmineAuditHealthQuery).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useRedmineAuditHealthQuery>);
     vi.mocked(useProjectsQuery).mockReturnValue({
       data: [{ id: PROJECT_ID, key: "KAN", name: "Kanon", description: null }],
       isLoading: false,
@@ -165,6 +172,168 @@ describe("RedmineSection", () => {
 
     expect(screen.getByText(/workspace owner has not connected Redmine/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /test and create connection/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps audit health hidden from members", () => {
+    const binding = {
+      id: "99999999-9999-4999-8999-999999999999",
+      projectId: PROJECT_ID,
+      remoteProjectId: "remote-project",
+      readMap: {},
+      writeMap: {},
+      timeActivityId: null,
+      lifecycle: "active" as const,
+      lifecycleEpoch: 1,
+      commentCaptureEnabled: false,
+      commentDispatchEnabled: false,
+      releasePending: false,
+    };
+    vi.mocked(useRedmineConnectionQuery).mockReturnValue({
+      data: { ...healthyConnection, bindings: [binding] },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
+
+    render(
+      <RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="member" members={members} />,
+    );
+
+    expect(screen.queryByRole("region", { name: /audit health/i })).not.toBeInTheDocument();
+    expect(useRedmineAuditHealthQuery).not.toHaveBeenCalled();
+  });
+
+  it("shows every binding's fresh scoped evidence to an owner without provider details", () => {
+    const binding = {
+      id: "99999999-9999-4999-8999-999999999999",
+      projectId: PROJECT_ID,
+      remoteProjectId: "remote-project",
+      readMap: {},
+      writeMap: {},
+      timeActivityId: null,
+      lifecycle: "active" as const,
+      lifecycleEpoch: 1,
+      commentCaptureEnabled: false,
+      commentDispatchEnabled: false,
+      releasePending: false,
+    };
+    const secondBinding = { ...binding, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" };
+    vi.mocked(useRedmineConnectionQuery).mockReturnValue({
+      data: { ...healthyConnection, bindings: [binding, secondBinding] },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
+    vi.mocked(useRedmineAuditHealthQuery).mockReturnValue({
+      data: {
+        state: "complete",
+        completedAt: "2099-01-01T12:00:00.000Z",
+        validUntil: "2099-01-01T12:05:00.000Z",
+        fresh: true,
+        reasonCode: null,
+      },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useRedmineAuditHealthQuery>);
+
+    render(<RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />);
+
+    expect(screen.getByRole("region", { name: /audit health.*binding 1/i })).toHaveTextContent(
+      /current scoped audit evidence is fresh/i,
+    );
+    expect(screen.getByRole("region", { name: /audit health.*binding 2/i })).toHaveTextContent(
+      /current scoped audit evidence is fresh/i,
+    );
+    expect(useRedmineAuditHealthQuery).toHaveBeenCalledWith(
+      WORKSPACE_ID,
+      healthyConnection.id,
+      binding.id,
+      true,
+    );
+    expect(useRedmineAuditHealthQuery).toHaveBeenCalledWith(
+      WORKSPACE_ID,
+      healthyConnection.id,
+      secondBinding.id,
+      true,
+    );
+  });
+
+  it("fails closed for unknown audit health without exposing query errors", () => {
+    const binding = {
+      id: "99999999-9999-4999-8999-999999999999",
+      projectId: PROJECT_ID,
+      remoteProjectId: "remote-project",
+      readMap: {},
+      writeMap: {},
+      timeActivityId: null,
+      lifecycle: "active" as const,
+      lifecycleEpoch: 1,
+      commentCaptureEnabled: false,
+      commentDispatchEnabled: false,
+      releasePending: false,
+    };
+    vi.mocked(useRedmineConnectionQuery).mockReturnValue({
+      data: { ...healthyConnection, bindings: [binding] },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
+    vi.mocked(useRedmineAuditHealthQuery).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error("https://redmine.example.test/issues/42?key=secret"),
+    } as unknown as ReturnType<typeof useRedmineAuditHealthQuery>);
+
+    render(<RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />);
+
+    const health = screen.getByRole("region", { name: /audit health/i });
+    expect(health).toHaveTextContent(/audit evidence is unavailable/i);
+    expect(health).toHaveTextContent(/does not confirm deletion or global absence/i);
+    expect(health).not.toHaveTextContent("key=secret");
+  });
+
+  it("expires cached fresh evidence locally when refresh does not occur", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-14T12:04:00.000Z"));
+    const binding = {
+      id: "99999999-9999-4999-8999-999999999999",
+      projectId: PROJECT_ID,
+      remoteProjectId: "remote-project",
+      readMap: {},
+      writeMap: {},
+      timeActivityId: null,
+      lifecycle: "active" as const,
+      lifecycleEpoch: 1,
+      commentCaptureEnabled: false,
+      commentDispatchEnabled: false,
+      releasePending: false,
+    };
+    vi.mocked(useRedmineConnectionQuery).mockReturnValue({
+      data: { ...healthyConnection, bindings: [binding] },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
+    vi.mocked(useRedmineAuditHealthQuery).mockReturnValue({
+      data: {
+        state: "complete",
+        completedAt: "2026-08-14T12:00:00.000Z",
+        validUntil: "2026-08-14T12:05:00.000Z",
+        fresh: true,
+        reasonCode: null,
+      },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useRedmineAuditHealthQuery>);
+
+    try {
+      render(<RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />);
+      act(() => vi.advanceTimersByTime(60_000));
+
+      const health = screen.getByRole("region", { name: /audit health/i });
+      expect(health).toHaveTextContent(/audit evidence is stale/i);
+      expect(health).toHaveTextContent(/does not confirm deletion or global absence/i);
+      expect(health).not.toHaveTextContent(/current scoped audit evidence is fresh/i);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("lets an owner bootstrap the active workspace connection", () => {

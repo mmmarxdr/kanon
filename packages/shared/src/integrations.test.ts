@@ -151,3 +151,32 @@ describe("integrationConnectionSchema", () => {
     expect(result.success).toBe(false);
   });
 });
+
+it("accepts only bounded owner-safe audit health", async () => {
+  const { integrationAuditHealthSchema } = await import("./integrations.js");
+  expect(integrationAuditHealthSchema.parse({
+    state: "complete",
+    completedAt: "2026-08-13T12:00:00.000Z",
+    validUntil: "2026-08-13T12:05:00.000Z",
+    fresh: true,
+    reasonCode: null,
+  })).toMatchObject({ state: "complete", fresh: true });
+  expect(integrationAuditHealthSchema.safeParse({
+    state: "complete",
+    completedAt: null,
+    validUntil: null,
+    fresh: false,
+    reasonCode: "provider response with secrets",
+  }).success).toBe(false);
+});
+
+it("exports owner-safe audit health through the public shared contract", async () => {
+  const { integrationAuditHealthSchema } = await import("./index.js");
+  expect(integrationAuditHealthSchema.parse({
+    state: "unknown",
+    completedAt: null,
+    validUntil: null,
+    fresh: false,
+    reasonCode: null,
+  })).toMatchObject({ state: "unknown", fresh: false });
+});

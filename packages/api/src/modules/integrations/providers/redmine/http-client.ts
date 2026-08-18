@@ -242,12 +242,12 @@ export class RedmineHttpClient {
     this.sleep = options.sleep ?? defaultSleep;
   }
 
-  async get<T>(path: string): Promise<T> {
-    return (await this.getWithResponse<T>(path)).value;
+  async get<T>(path: string, signal?: AbortSignal): Promise<T> {
+    return (await this.getWithResponse<T>(path, signal)).value;
   }
 
-  getWithResponse<T>(path: string): Promise<RedmineHttpResponse<T>> {
-    return this.send<T>("GET", path, undefined, undefined, true);
+  getWithResponse<T>(path: string, signal?: AbortSignal): Promise<RedmineHttpResponse<T>> {
+    return this.send<T>("GET", path, undefined, undefined, true, signal);
   }
 
   post<T>(path: string, body: unknown): Promise<T> {
@@ -272,6 +272,7 @@ export class RedmineHttpClient {
     value?: unknown,
     limit?: number,
     includeMetadata?: false,
+    signal?: AbortSignal,
   ): Promise<T>;
   private send<T>(
     method: Dispatcher.HttpMethod,
@@ -279,6 +280,7 @@ export class RedmineHttpClient {
     value: unknown | undefined,
     limit: number | undefined,
     includeMetadata: true,
+    signal?: AbortSignal,
   ): Promise<RedmineHttpResponse<T>>;
   private async send<T>(
     method: Dispatcher.HttpMethod,
@@ -286,6 +288,7 @@ export class RedmineHttpClient {
     value?: unknown,
     limit?: number,
     includeMetadata = false,
+    signal?: AbortSignal,
   ): Promise<T | RedmineHttpResponse<T>> {
     const target = new URL(path.replace(/^\/+/, ""), this.baseUrl);
     if (target.origin !== this.baseUrl.origin) throw unsafe("request path changed origin");
@@ -299,9 +302,12 @@ export class RedmineHttpClient {
     const attempts = limit ?? (method === "POST" ? 1 : this.maxAttempts);
 
     for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (signal?.aborted) throw new Error("Redmine request aborted");
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
       timeout.unref?.();
+      const abort = () => controller.abort();
+      signal?.addEventListener("abort", abort, { once: true });
 
       let statusCode: number;
       let text: string;
@@ -335,6 +341,7 @@ export class RedmineHttpClient {
         text = await response.body.text();
       } finally {
         clearTimeout(timeout);
+        signal?.removeEventListener("abort", abort);
         await dispatcher?.destroy();
       }
 
