@@ -140,6 +140,10 @@ export const integrationKeys = {
     [...integrationKeys.all, "connection", workspaceId] as const,
   discovery: (workspaceId: string, connectionId: string) =>
     [...integrationKeys.all, "discovery", workspaceId, connectionId] as const,
+  auditHealthForConnection: (workspaceId: string, connectionId: string) =>
+    [...integrationKeys.all, "audit-health", workspaceId, connectionId] as const,
+  auditHealth: (workspaceId: string, connectionId: string, bindingId: string) =>
+    [...integrationKeys.auditHealthForConnection(workspaceId, connectionId), bindingId] as const,
 };
 
 export const scheduleKeys = {
