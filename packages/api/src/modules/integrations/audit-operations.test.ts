@@ -152,13 +152,22 @@ describe("audit lease operations", () => {
 
       await expect(pending).resolves.toEqual({ claimed: 1, completed: 0 });
       expect(setup.result.release).toHaveBeenCalledWith(expect.anything(), lease);
-      expect(setup.repository.markFailed).toHaveBeenCalledWith(
+      if (cause === "deadline") expect(setup.repository.markFailed).not.toHaveBeenCalled();
+      else expect(setup.repository.markFailed).toHaveBeenCalledWith(
         expect.objectContaining({ id: lease.id, pollLeaseToken: lease.pollLeaseToken, pollFence: lease.pollFence }),
-        cause === "deadline" ? "timeout" : "scope_or_fence_changed",
+        "scope_or_fence_changed",
       );
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("keeps the durable partial run resumable after a time-bounded census", async () => {
+    const setup = dependencies({ runCensus: vi.fn().mockResolvedValue({ kind: "unknown", reasonCode: "timeout" }) });
+
+    await expect(runAuditOperationsCycle({} as never, options, setup.result)).resolves.toEqual({ claimed: 1, completed: 0 });
+    expect(setup.repository.markFailed).not.toHaveBeenCalled();
+    expect(setup.repository.persistence).toHaveBeenCalledOnce();
   });
 
   it("constructs the production Redmine client with the endpoint allowlist", () => {

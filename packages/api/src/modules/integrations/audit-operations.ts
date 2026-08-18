@@ -139,7 +139,9 @@ export async function runAuditOperationsCycle(
         { pageSize: options.pageSize, maxPasses: options.maxPasses, signal: controller.signal },
       );
       if (result.kind === "complete-current-visible" && !controller.signal.aborted) completed += 1;
-      else await repository.markFailed(lease, fenceLost ? "scope_or_fence_changed" : result.kind === "unknown" ? result.reasonCode : "timeout");
+      else if (!(result.kind === "unknown" && result.reasonCode === "timeout" && !fenceLost)) {
+        await repository.markFailed(lease, fenceLost ? "scope_or_fence_changed" : result.kind === "unknown" ? result.reasonCode : "timeout");
+      }
     } catch {
       controller.abort();
       await repository.markFailed(lease, "provider_failure").catch(() => false);
