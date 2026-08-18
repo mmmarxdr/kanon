@@ -9,6 +9,7 @@ const inboundWorker = vi.hoisted(() => {
   return { run: Object.assign(vi.fn().mockResolvedValue(undefined), { stop }), stop };
 });
 const createInboundWorker = vi.hoisted(() => vi.fn(() => inboundWorker.run));
+const auditCycle = vi.hoisted(() => vi.fn().mockResolvedValue({ claimed: 0, completed: 0 }));
 const startupSnapshot = vi.hoisted(() =>
   vi.fn().mockResolvedValue({
     queued: 1,
@@ -23,10 +24,11 @@ vi.mock("./worker.js", () => ({
   readIntegrationWorkerStartupSnapshot: startupSnapshot,
 }));
 vi.mock("./inbound.js", () => ({ createInboundSyncCycle: createInboundWorker }));
+vi.mock("./audit-operations.js", () => ({ runAuditOperationsCycle: auditCycle }));
 process.env["COOKIE_SECRET"] =
   process.env["COOKIE_SECRET"] ?? "test-cookie-secret-at-least-32-chars-long";
 import { buildApp } from "../../app.js";
-import { startIntegrationScheduler } from "./scheduler.js";
+import { startAuditScheduler, startIntegrationScheduler } from "./scheduler.js";
 
 describe("integration scheduler", () => {
   afterEach(() => {
@@ -91,6 +93,37 @@ describe("integration scheduler", () => {
     await stop();
   });
 
+  it("aborts and drains an in-flight audit without overlap or rearming", async () => {
+    vi.useFakeTimers();
+    const run = vi.fn((signal: AbortSignal) => new Promise<void>((resolve) => {
+      signal.addEventListener("abort", resolve, { once: true });
+    }));
+    const stop = startAuditScheduler(run, vi.fn(), 100);
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(run).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(run).toHaveBeenCalledOnce();
+    await stop();
+    expect(run.mock.calls[0]![0].aborted).toBe(true);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("contains an audit failure and starts exactly one later scan", async () => {
+    vi.useFakeTimers();
+    const error = new Error("audit failed");
+    const run = vi.fn().mockRejectedValueOnce(error).mockResolvedValue(undefined);
+    const onError = vi.fn(() => { throw new Error("logger failed"); });
+    const stop = startAuditScheduler(run, onError, 100);
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(onError).toHaveBeenCalledWith(error);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(run).toHaveBeenCalledTimes(2);
+    await stop();
+  });
+
   it("starts on app ready and stops on app close", async () => {
     vi.useFakeTimers();
     const scan = vi.fn().mockResolvedValue([]);
@@ -105,6 +138,65 @@ describe("integration scheduler", () => {
     await vi.advanceTimersByTimeAsync(300_000);
     expect(scan).toHaveBeenCalledOnce();
     expect(inboundScan).toHaveBeenCalledOnce();
+  });
+
+  it("keeps audit runtime absent while the default-off gate is disabled", async () => {
+    vi.useFakeTimers();
+    const auditScan = vi.fn().mockResolvedValue(undefined);
+    const app = await buildApp({
+      integrationScan: vi.fn().mockResolvedValue(undefined),
+      inboundScan: vi.fn().mockResolvedValue(undefined),
+      auditScan,
+    });
+    await app.ready();
+
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(auditScan).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it("starts the configured production audit cycle only when enabled", async () => {
+    vi.useFakeTimers();
+    const app = await buildApp({
+      integrationScan: vi.fn().mockResolvedValue(undefined),
+      inboundScan: vi.fn().mockResolvedValue(undefined),
+      auditEnabled: true,
+    });
+    await app.ready();
+
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(auditCycle).toHaveBeenCalledOnce();
+    expect(auditCycle).toHaveBeenCalledWith(expect.anything(), {
+      maxBindings: 1,
+      leaseMs: 30_000,
+      timeoutMs: 30_000,
+      pageSize: 100,
+      maxPasses: 2,
+      terminalFreshnessMs: 300_000,
+      retentionDays: 30,
+      signal: expect.any(AbortSignal),
+    });
+    await app.close();
+  });
+
+  it("propagates app shutdown cancellation and waits for audit cleanup", async () => {
+    vi.useFakeTimers();
+    const auditScan = vi.fn((signal: AbortSignal) => new Promise<void>((resolve) => {
+      signal.addEventListener("abort", resolve, { once: true });
+    }));
+    const app = await buildApp({
+      integrationScan: vi.fn().mockResolvedValue(undefined),
+      inboundScan: vi.fn().mockResolvedValue(undefined),
+      auditEnabled: true,
+      auditScan,
+    });
+    await app.ready();
+    await vi.advanceTimersByTimeAsync(300_000);
+
+    await app.close();
+    expect(auditScan.mock.calls[0]![0].aborted).toBe(true);
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(auditScan).toHaveBeenCalledOnce();
   });
 
   it("activates one default worker closure and logs the startup snapshot", async () => {

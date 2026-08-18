@@ -128,6 +128,7 @@ export type RedmineCommentChange = RemoteChange<
 export interface DecodedRedmineIssue {
   readonly issue: RedmineIssueChange;
   readonly comments: readonly RedmineCommentChange[];
+  readonly journalIds: readonly string[];
 }
 
 export class RedminePaginationDriftError extends Error {
@@ -372,16 +373,23 @@ export function decodeRedmineIssueListPage(
 export function decodeRedmineIssueDetail(
   value: unknown,
   expectedProjectId: string,
+  expectedIssueId?: string,
 ): DecodedRedmineIssue {
   const parsed = issueDetailSchema.safeParse(value);
   if (!parsed.success) malformed();
   const issue = issueChange(parsed.data.issue, expectedProjectId);
-  if (issue.operation === "tombstone") return { issue, comments: [] };
+  if (expectedIssueId !== undefined && issue.identity.remoteId !== expectedIssueId) {
+    throw new Error("Redmine issue detail does not match requested issue");
+  }
+  const journalIds = parsed.data.issue.journals.map((journal) => journal.id);
+  if (new Set(journalIds).size !== journalIds.length) malformed();
+  if (issue.operation === "tombstone") return { issue, comments: [], journalIds };
 
   return {
     issue,
     comments: parsed.data.issue.journals
       .map((journal) => commentChange(journal, parsed.data.issue))
       .filter((change): change is RedmineCommentChange => change !== null),
+    journalIds,
   };
 }

@@ -2,8 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { RedmineHttpClient, RedmineHttpError } from "./http-client.js";
 
 const publicDns = async () => [{ address: "203.0.114.10", family: 4 } as const];
-const response = (statusCode: number, body = "") => ({
+const response = (statusCode: number, body = "", headers?: Record<string, string | string[]>) => ({
   statusCode,
+  headers,
   body: { text: vi.fn().mockResolvedValue(body) },
 });
 
@@ -29,6 +30,21 @@ describe("RedmineHttpClient", () => {
       bodyTimeout: 10_000,
     });
     expect(options.dispatcher).toBeDefined();
+  });
+
+  it("returns HTTP Date metadata separately from the decoded payload", async () => {
+    const transport = vi.fn().mockResolvedValue(response(200, '{"issues":[]}', {
+      date: "Tue, 04 Aug 2026 10:30:00 GMT",
+    }));
+    const client = new RedmineHttpClient("https://redmine.example", "secret", {
+      resolve: publicDns,
+      transport,
+    });
+
+    await expect(client.getWithResponse("/issues.json")).resolves.toEqual({
+      value: { issues: [] },
+      httpDate: "Tue, 04 Aug 2026 10:30:00 GMT",
+    });
   });
 
   it("serializes request bodies and does not retry non-idempotent creates", async () => {
@@ -137,6 +153,25 @@ describe("RedmineHttpClient", () => {
     const result = expect(client.get("/projects.json")).rejects.toThrow("aborted");
     await vi.advanceTimersByTimeAsync(25);
     await result;
+  });
+
+  it("propagates a caller abort to the in-flight transport and never starts an already-aborted request", async () => {
+    const controller = new AbortController();
+    const transport = vi.fn((_url, options) => new Promise<never>((_, reject) => {
+      options.signal.addEventListener("abort", () => reject(new Error("transport aborted")), { once: true });
+    }));
+    const client = new RedmineHttpClient("https://redmine.example", "secret", { resolve: publicDns, transport });
+
+    const request = client.get("/projects.json", controller.signal);
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledOnce());
+    controller.abort();
+    await expect(request).rejects.toThrow("transport aborted");
+    expect(transport).toHaveBeenCalledOnce();
+
+    const alreadyAborted = new AbortController();
+    alreadyAborted.abort();
+    await expect(client.get("/projects.json", alreadyAborted.signal)).rejects.toThrow("aborted");
+    expect(transport).toHaveBeenCalledOnce();
   });
 
   it("times out before sending credentials when DNS resolution hangs", async () => {
