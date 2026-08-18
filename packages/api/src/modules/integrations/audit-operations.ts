@@ -21,6 +21,7 @@ export interface AuditOperationsOptions {
   readonly pageSize: number;
   readonly maxPasses: number;
   readonly terminalFreshnessMs: number;
+  readonly retentionDays: number;
   readonly signal?: AbortSignal;
 }
 
@@ -33,7 +34,7 @@ export interface AuditOperationsDependencies {
   readonly renew?: typeof renewBindingPollLease;
   readonly release?: typeof releaseBindingPollLease;
   readonly createSource?: (lease: ClaimedBinding, apiKey: string) => RedmineAuditSource;
-  readonly createRepository?: (database: PrismaClient, terminalFreshnessMs: number) => AuditRepository;
+  readonly createRepository?: (database: PrismaClient, terminalFreshnessMs: number, retentionDays: number) => AuditRepository;
   readonly runCensus?: typeof runRedmineAuditCensus;
 }
 
@@ -73,6 +74,7 @@ function validateOptions(options: AuditOperationsOptions) {
     timeoutMs: options.timeoutMs,
     pageSize: options.pageSize,
     terminalFreshnessMs: options.terminalFreshnessMs,
+    retentionDays: options.retentionDays,
   })) {
     if (!Number.isSafeInteger(value) || value < 1) throw new RangeError(`${name} must be positive`);
   }
@@ -94,8 +96,8 @@ export async function runAuditOperationsCycle(
   const release = dependencies.release ?? releaseBindingPollLease;
   const decrypt = dependencies.decrypt ?? decryptCredential;
   const createSource = dependencies.createSource ?? createRedmineAuditSourceForLease;
-  const createRepository = dependencies.createRepository ?? ((db, freshness) =>
-    createPrismaAuditCensusRepository(db, { terminalFreshnessMs: freshness }));
+  const createRepository = dependencies.createRepository ?? ((db, freshness, retentionDays) =>
+    createPrismaAuditCensusRepository(db, { terminalFreshnessMs: freshness, retentionDays }));
   const runCensus = dependencies.runCensus ?? runRedmineAuditCensus;
   const attempted: string[] = [];
   let completed = 0;
@@ -128,7 +130,7 @@ export async function runAuditOperationsCycle(
         .finally(() => { renewing = undefined; });
     }, Math.max(1, Math.floor(options.leaseMs / 2)));
 
-    const repository = createRepository(database, options.terminalFreshnessMs);
+    const repository = createRepository(database, options.terminalFreshnessMs, options.retentionDays);
     try {
       const result = await runCensus(
         createSource(binding, decrypt(binding.encryptedKey)),
@@ -137,7 +139,9 @@ export async function runAuditOperationsCycle(
         { pageSize: options.pageSize, maxPasses: options.maxPasses, signal: controller.signal },
       );
       if (result.kind === "complete-current-visible" && !controller.signal.aborted) completed += 1;
-      else await repository.markFailed(lease, fenceLost ? "scope_or_fence_changed" : result.kind === "unknown" ? result.reasonCode : "timeout");
+      else if (!(result.kind === "unknown" && result.reasonCode === "timeout" && !fenceLost)) {
+        await repository.markFailed(lease, fenceLost ? "scope_or_fence_changed" : result.kind === "unknown" ? result.reasonCode : "timeout");
+      }
     } catch {
       controller.abort();
       await repository.markFailed(lease, "provider_failure").catch(() => false);
