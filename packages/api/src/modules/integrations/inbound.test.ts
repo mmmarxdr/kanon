@@ -773,6 +773,127 @@ describe("Redmine inbound sync", () => {
     ).resolves.toBe(0);
   });
 
+  it("redacts a legacy Redmine-imported comment whose remote author was not backfilled", async () => {
+    const { owner, binding, connection, issue } = await fixture();
+    const body = "Legacy imported private body";
+    const legacy = await prisma.comment.create({
+      data: {
+        issueId: issue.id,
+        body,
+        source: "system",
+        via: "redmine-inbound",
+        authorId: owner.id,
+      },
+    });
+    await prisma.externalRef.create({
+      data: {
+        connectionId: connection.id,
+        bindingId: binding.id,
+        entityType: "comment",
+        entityId: legacy.id,
+        externalId: "legacy-remote-author",
+        metadata: { remoteActorId: "5", provenance: "redmine-inbound" },
+      },
+    });
+    const privateAt = new Date("2026-08-01T10:05:00.000Z");
+    const setup = dependencies([change(privateAt, "review")]);
+    setup.loadIssueDetail.mockResolvedValue({
+      ...detailChange(privateAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+      }),
+      comments: [
+        {
+          identity: {
+            type: "comment",
+            remoteId: "legacy-remote-author",
+            remoteProjectId: "41",
+            parent: { type: "issue", remoteId: "100" },
+          },
+          operation: "tombstone",
+          changedAt: privateAt,
+          createdAt: privateAt,
+          sourceVersion: "sha256:legacy-private-v1",
+          fields: { reason: "private" },
+        },
+      ],
+    });
+
+    await runInboundSyncCycle(prisma, setup);
+
+    await expect(prisma.comment.findUniqueOrThrow({ where: { id: legacy.id } })).resolves.toMatchObject({
+      body: "[Redacted private Redmine comment]",
+      authorId: owner.id,
+      remoteAuthorId: null,
+    });
+  });
+
+  it("never imports a public journal after a private-first observation without an external ref", async () => {
+    const { binding, issue } = await fixture();
+    const privateAt = new Date("2026-08-01T10:05:00.000Z");
+    const privateSetup = dependencies([change(privateAt, "review")]);
+    privateSetup.loadIssueDetail.mockResolvedValue({
+      ...detailChange(privateAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+      }),
+      comments: [
+        {
+          identity: {
+            type: "comment",
+            remoteId: "private-first-no-ref",
+            remoteProjectId: "41",
+            parent: { type: "issue", remoteId: "100" },
+          },
+          operation: "tombstone",
+          changedAt: privateAt,
+          createdAt: privateAt,
+          sourceVersion: "sha256:private-first-v1",
+          fields: { reason: "private" },
+        },
+      ],
+    });
+    await runInboundSyncCycle(prisma, privateSetup);
+
+    const publicAt = new Date("2026-08-01T10:06:00.000Z");
+    const publicSetup = dependencies([change(publicAt, "review")]);
+    publicSetup.loadIssueDetail.mockResolvedValue({
+      ...detailChange(publicAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+      }),
+      comments: [
+        {
+          identity: {
+            type: "comment",
+            remoteId: "private-first-no-ref",
+            remoteProjectId: "41",
+            parent: { type: "issue", remoteId: "100" },
+          },
+          operation: "upsert",
+          changedAt: publicAt,
+          createdAt: privateAt,
+          sourceVersion: "sha256:later-public-v2",
+          actor: { remoteId: "5", displayName: "Remote author" },
+          fields: { body: "Must never be imported after privacy tombstone" },
+        },
+      ],
+    });
+    await runInboundSyncCycle(prisma, publicSetup);
+
+    await expect(prisma.comment.count({ where: { issueId: issue.id } })).resolves.toBe(0);
+    await expect(
+      prisma.integrationInboundApplication.findFirstOrThrow({
+        where: {
+          bindingId: binding.id,
+          remoteEntityType: "comment",
+          remoteId: "private-first-no-ref",
+          sourceVersion: "sha256:later-public-v2",
+        },
+      }),
+    ).resolves.toMatchObject({
+      state: "skipped",
+      outcome: { reason: "private-comment-tombstoned" },
+    });
+  });
+
   it("ignores a stale private journal after a newer public source version", async () => {
     const { binding, issue } = await fixture();
     const publicAt = new Date("2026-08-01T10:02:00.000Z");

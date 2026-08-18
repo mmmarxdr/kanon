@@ -78,6 +78,16 @@ export const integrationConnectionSchema = z.object({
       timeActivityId: z.string().nullable(),
     })
     .nullable(),
+  privacyRecovery: z
+    .array(
+      z.object({
+        projectId: z.string().uuid(),
+        remoteProjectId: z.string().min(1),
+        status: z.enum(["draining", "released"]),
+      }),
+    )
+    .nullable()
+    .default(null),
   bindings: z.array(
     z.object({
       id: z.string().uuid(),
