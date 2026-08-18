@@ -43,7 +43,7 @@ Task 11.4: REFACTOR - Consolidated count/ceiling constants without re-anchoring 
 # MCP large-team readiness PR12 Apply Progress
 
 Task 12.1: RED - Added privacy/app/performance-fixture/MCP regressions for correlation, redaction paths, absence of dedicated triage metrics, SQL boundaries (LIMIT 11/51), and named synthetic profiles.
-Task 12.2: GREEN - Kept standard request correlation/Pino redaction and left the existing registry free of dedicated triage metrics or stage traces. `triage-preview-v1` / `triage-proposal-list-v1` use generated synthetic fixtures; `TRIAGE_PERF=1` repeats them for 1,000 samples but does not run a live PostgreSQL/API workload.
+Task 12.2: GREEN - Kept standard request correlation/Pino redaction and left the existing registry free of dedicated triage metrics or stage traces. `triage-preview-v1` / `triage-proposal-list-v1` consume caller-provided synthetic samples with a fixed minimum of 20; no environment variable expands the sample count or enables a runner, and the fixtures do not run a live PostgreSQL/API workload.
 Task 12.3: TRIANGULATE - Synthetic fixture gates cover latency/output budgets; source-plan assertions cover visibility-first + limit+1 + no content fetch; MCP correlation/deadline privacy fixtures remain regression evidence only. Focused API suites + full `@kanon/mcp test` were green (518 passed); no live certification or canary gate is claimed.
 Task 12.4: REFACTOR - Rollout/rollback runbook in `docs/modules/mcp.mdx` keeps all triage flags off by default because this change provides no dedicated telemetry gate or live certification; 44-tool rollback and the ban on destructive DB rollback without export/backfill remain. Branch: `feat/kan-193-observability-perf`.
 

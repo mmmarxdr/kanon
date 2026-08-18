@@ -65,7 +65,7 @@ This change provides no dedicated triage telemetry, canary gate, or live certifi
 
 **Rollback** is flags-off / fix-forward: set `TRIAGE_PROPOSALS_ENABLED=false` first, then set `TRIAGE_DISMISS_ENABLED=false` and `TRIAGE_RETENTION_ENABLED=false` before disabling reads/preview as needed. Restart or recreate the API after changing these startup-parsed values; deployment automation must do this automatically. Verify representative requests for every disabled gate return `503 CAPABILITY_DISABLED`. Retain immutable rows, apply guard, tombstones, audit, and authorized recovery. Set `KANON_TRIAGE_TOOLS_ENABLED=false`, restart MCP, and verify discovery reports exactly the prior **44-tool** surface with no triage names. Only exact `true`/`false` values are accepted. Do **not** down-migrate enums/tables or delete audit rows in ordinary recovery. Destructive database rollback requires separate approval only after export/backfill and verification prove preserved history and compatibility.
 
-`triage-preview-v1` and `triage-proposal-list-v1` are synthetic regression profiles. `TRIAGE_PERF=1` repeats their generated fixtures for 1,000 samples; it does not exercise a live PostgreSQL/API workload and is not certification evidence.
+`triage-preview-v1` and `triage-proposal-list-v1` are synthetic regression profiles. They consume caller-provided samples with a fixed minimum of 20; no environment variable expands the sample count or enables a runner. They do not exercise a live PostgreSQL/API workload and are not certification evidence.
 
 <Warning>
 The MCP package must never bypass the API and access Prisma or PostgreSQL directly. Doing so would duplicate authorization and domain invariants.

@@ -639,7 +639,7 @@ Creation provenance and lifecycle events are the durable audit. Dedup requests p
 - one workspace, 20 projects, 5,000 issues each (100,000 total); caller authorized for 10 projects (50,000), target project 5,000;
 - title/key corpus includes exact, prefix, token-overlap, no-match, equal-rank, max labels, and descriptions at 2 KiB median/50 KiB maximum;
 - project and workspace scope, 10 returned candidates, compact maximum recommendation set;
-- repeated synthetic samples, including the 1,000-sample mode selected by `TRIAGE_PERF=1`;
+- caller-provided synthetic samples with a fixed minimum of 20; no environment variable expands the sample count or enables a runner;
 - deterministic `prepare`, host-completed `validate` with suggestions already supplied, reported host timeout, and candidate-query timeout cases.
 
 `triage-proposal-list-v1` is likewise synthetic. It generates one project with 25,000 triage proposals over 5,000 current/deleted/moved targets, all effective states, both disposition-discovery policies, all generator/degraded filters, duplicate creation timestamps, and deep keyset pages. It covers default 20 and maximum 50 rows, first/middle/final pages, changed authorization/source markers, and dismissal/retry/expiry cases.
