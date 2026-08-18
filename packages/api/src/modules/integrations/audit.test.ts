@@ -195,7 +195,7 @@ describe("runRedmineAuditCensus", () => {
     expect(store.committed[1]).toMatchObject({ observations: [{ identityType: "issue", remoteId: "42" }] });
   });
 
-  it("rebuilds a saved partial pass from zero and retains the original provider observation time", async () => {
+  it("resumes a validated saved partial pass and retains the original provider observation time", async () => {
     const committed: unknown[] = [];
     const resumedAt = new Date("2026-08-04T10:30:00Z");
     const laterAt = new Date("2026-08-04T10:31:00Z");
@@ -225,10 +225,11 @@ describe("runRedmineAuditCensus", () => {
 
     await expect(runRedmineAuditCensus(resumedSource, store, lease, { maxPasses: 2, pageSize: 10 }))
       .resolves.toEqual({ kind: "complete-current-visible", scopeFingerprint: "scope-1" });
-    expect(committed).toHaveLength(5);
-    expect(committed[0]).toMatchObject({ providerObservedAt: resumedAt, replace: true, checkpoint: { offset: 0, itemIndex: 0, lastIssueId: "42" } });
-    expect(committed[1]).toMatchObject({ providerObservedAt: resumedAt, checkpoint: { offset: 0, itemIndex: 1, lastIssueId: "43" } });
-    expect(committed[2]).toMatchObject({ providerObservedAt: resumedAt, checkpoint: { pass: 0, passComplete: true } });
+    expect(committed).toHaveLength(4);
+    expect(committed[0]).toMatchObject({ providerObservedAt: resumedAt, checkpoint: { offset: 0, itemIndex: 1, lastIssueId: "43" } });
+    expect(committed[0]).toMatchObject({ replace: false });
+    expect(committed[1]).toMatchObject({ providerObservedAt: resumedAt, checkpoint: { pass: 0, passComplete: true } });
+    expect(committed[2]).toMatchObject({ providerObservedAt: resumedAt, replace: true, checkpoint: { pass: 1, itemIndex: 0, lastIssueId: "42" } });
     expect(laterAt.getTime()).not.toBe(resumedAt.getTime());
   });
 
@@ -263,7 +264,7 @@ describe("runRedmineAuditCensus", () => {
     expect(offsets).toEqual([0, 0]);
   });
 
-  it("rebuilds a resumed page from zero rather than trusting its saved prefix", async () => {
+  it("validates a resumed page prefix before skipping its committed detail", async () => {
     const committed: string[] = [];
     const detailReads: string[] = [];
     const continuation = { updatedAt: changedAt, remoteId: "41", pageToken: "durable-token" };
@@ -303,8 +304,56 @@ describe("runRedmineAuditCensus", () => {
     await expect(runRedmineAuditCensus(resumedSource, store, lease, { maxPasses: 2, pageSize: 10 }))
       .resolves.toEqual({ kind: "complete-current-visible", scopeFingerprint: lease.scopeFingerprint });
     expect(pageRead).toBe(2);
-    expect(detailReads).toEqual(["42", "43", "42", "43"]);
-    expect(committed).toEqual(["42", "43", "42", "43"]);
+    expect(detailReads).toEqual(["43", "42", "43"]);
+    expect(committed).toEqual(["43", "42", "43"]);
+  });
+
+  it("continues a stable durable page after a deadline without replaying its committed prefix", async () => {
+    const continuation = { updatedAt: changedAt, remoteId: "41", pageToken: "offset-2-token" };
+    const pageCalls: Array<{ offset: number; checkpoint: unknown }> = [];
+    const detailReads: string[] = [];
+    const persistedIds = ["40", "41", "42"];
+    const store: AuditCensusPersistence = {
+      async loadRun() {
+        return {
+          checkpoint: {
+            pass: 0, offset: 2, itemIndex: 0, expectedTotal: 4, lastIssueUpdatedAt: changedAt, lastIssueId: "42",
+            checkpointVersion: 1, pageCheckpoint: continuation,
+          },
+          providerObservedAt: changedAt,
+          observations: persistedIds.map((remoteId) => ({ identityType: "issue" as const, remoteId, parentRemoteId: null, sourceUpdatedAt: changedAt })),
+        };
+      },
+      async isLeaseCurrent() { return true; },
+      async commitIssue() { return true; },
+      async finish() { return true; },
+    };
+    const resumedSource: AuditCensusSource = {
+      async readPage(offset, _limit, pageCheckpoint) {
+        pageCalls.push({ offset, checkpoint: pageCheckpoint });
+        const ids = offset === 0 ? ["40", "41"] : ["42", "43"];
+        return { kind: "accepted", providerObservedAt: changedAt, value: {
+          changes: ids.map((remoteId) => ({ identity: { remoteId }, changedAt })),
+          nextCheckpoint: offset === 0 ? continuation : null,
+          hasMore: offset === 0,
+        } };
+      },
+      async readIssueDetail(issueId) {
+        detailReads.push(issueId);
+        return { kind: "accepted", providerObservedAt: changedAt, value: {
+          issue: { identity: { remoteId: issueId }, changedAt }, comments: [], journalIds: [],
+        } };
+      },
+    };
+
+    await expect(runRedmineAuditCensus(resumedSource, store, lease, { maxPasses: 2, pageSize: 2 }))
+      .resolves.toEqual({ kind: "complete-current-visible", scopeFingerprint: lease.scopeFingerprint });
+    expect(pageCalls).toEqual([
+      { offset: 2, checkpoint: continuation },
+      { offset: 0, checkpoint: null },
+      { offset: 2, checkpoint: continuation },
+    ]);
+    expect(detailReads).toEqual(["43", "40", "41", "42", "43"]);
   });
 
   it.each([
@@ -354,6 +403,48 @@ describe("runRedmineAuditCensus", () => {
     await expect(runRedmineAuditCensus(resumedSource, store, lease, { maxPasses: 2, pageSize: 10 }))
       .resolves.toEqual({ kind: "unknown", reasonCode: "did_not_converge" });
     expect(committed[0]).toMatchObject({ replace: true, checkpoint: { pass: 1, offset: 0 } });
+    expect(finish).not.toHaveBeenCalled();
+  });
+
+  it("rejects a resumed page whose prefix substitutes an issue from an earlier page", async () => {
+    const ids = ["10", "20", "30", "40", "50"];
+    const continuation = { updatedAt: changedAt, remoteId: "20", pageToken: "offset-2-token" };
+    const previousPassFingerprint = ids.map((id) => ["issue", "", id, changedAt.toISOString()].join("\0")).join("\n");
+    const pageCalls: number[] = [];
+    const finish = vi.fn().mockResolvedValue(true);
+    const store: AuditCensusPersistence = {
+      async loadRun() {
+        return {
+          checkpoint: {
+            pass: 1, offset: 2, itemIndex: 2, expectedTotal: 5, lastIssueUpdatedAt: changedAt, lastIssueId: "50",
+            checkpointVersion: 1, pageCheckpoint: continuation, previousPassFingerprint,
+          },
+          providerObservedAt: changedAt,
+          observations: ids.map((remoteId) => ({ identityType: "issue" as const, remoteId, parentRemoteId: null, sourceUpdatedAt: changedAt })),
+        };
+      },
+      async isLeaseCurrent() { return true; },
+      async commitIssue() { return true; },
+      finish,
+    };
+    const resumedSource: AuditCensusSource = {
+      async readPage(offset) {
+        pageCalls.push(offset);
+        return { kind: "accepted", providerObservedAt: changedAt, value: {
+          changes: ["10", "40", "50"].map((remoteId) => ({ identity: { remoteId }, changedAt })),
+          nextCheckpoint: null, hasMore: false,
+        } };
+      },
+      async readIssueDetail(issueId) {
+        return { kind: "accepted", providerObservedAt: changedAt, value: {
+          issue: { identity: { remoteId: issueId }, changedAt }, comments: [], journalIds: [],
+        } };
+      },
+    };
+
+    await expect(runRedmineAuditCensus(resumedSource, store, lease, { maxPasses: 2, pageSize: 10 }))
+      .resolves.toEqual({ kind: "unknown", reasonCode: "did_not_converge" });
+    expect(pageCalls).toEqual([2, 0]);
     expect(finish).not.toHaveBeenCalled();
   });
 
@@ -416,12 +507,46 @@ describe("runRedmineAuditCensus", () => {
       .resolves.toEqual({ kind: "unknown", reasonCode: "pagination_drift" });
   });
 
+  it("fails closed before committing a detail that exceeds the per-run observation bound", async () => {
+    const store = persistence();
+    const oversized: AuditCensusSource = {
+      async readPage() {
+        return { kind: "accepted", providerObservedAt: changedAt, value: {
+          changes: [{ identity: { remoteId: "42" }, changedAt }], nextCheckpoint: null, hasMore: false,
+        } };
+      },
+      async readIssueDetail() {
+        return { kind: "accepted", providerObservedAt: changedAt, value: {
+          issue: { identity: { remoteId: "42" }, changedAt }, comments: [],
+          journalIds: Array.from({ length: 100_000 }, (_, index) => String(index + 1)),
+        } };
+      },
+    };
+
+    await expect(runRedmineAuditCensus(oversized, store.result, lease, { maxPasses: 2, pageSize: 1 }))
+      .resolves.toEqual({ kind: "unknown", reasonCode: "malformed_response" });
+    expect(store.committed).toHaveLength(0);
+  });
+
   it("does not let bounded non-convergence become complete", async () => {
     const store = persistence();
     const result = await runRedmineAuditCensus(source([["42", "43"], ["42"], ["42"]]), store.result, lease, { maxPasses: 3, pageSize: 10 });
 
     expect(result).toEqual({ kind: "complete-current-visible", scopeFingerprint: "scope-1" });
     expect(store.committed.at(-1)).toMatchObject({ replace: true, observations: [{ remoteId: "42" }] });
+  });
+
+  it("stores a fixed-size deterministic pass digest as the census grows", async () => {
+    const fingerprints: string[] = [];
+    for (const count of [1, 100]) {
+      const ids = Array.from({ length: count }, (_, index) => String(index + 1));
+      const store = persistence();
+      await runRedmineAuditCensus(source([ids, ids]), store.result, lease, { maxPasses: 2, pageSize: count });
+      const committed = store.committed.at(-1) as { checkpoint: { previousPassFingerprint: string } };
+      fingerprints.push(committed.checkpoint.previousPassFingerprint);
+    }
+    expect(fingerprints).toEqual([expect.stringMatching(/^[a-f0-9]{64}$/), expect.stringMatching(/^[a-f0-9]{64}$/)]);
+    expect(fingerprints[0]).not.toBe(fingerprints[1]);
   });
 
   it("persists an empty converged census before it completes", async () => {

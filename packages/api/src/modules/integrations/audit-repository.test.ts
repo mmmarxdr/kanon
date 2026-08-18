@@ -96,7 +96,7 @@ describe("Prisma audit census repository", () => {
     })).resolves.toBe(false);
   });
 
-  it("prunes expired evidence with bounded set-based deletes while preserving fresh and active runs", async () => {
+  it("prunes historical complete bodies and expired evidence while preserving the current run", async () => {
     const fake = fakeDatabase({ existing: {
       id: "run-current", providerObservedAt: observedAt, scopeFingerprint: lease.scopeFingerprint,
     } });
@@ -106,7 +106,14 @@ describe("Prisma audit census repository", () => {
     await expect(repository.finish(lease, observedAt)).resolves.toBe(true);
 
     expect(fake.runs.findMany).not.toHaveBeenCalled();
-    expect(fake.observations.deleteMany).toHaveBeenCalledWith({ where: {
+    expect(fake.observations.deleteMany).toHaveBeenNthCalledWith(1, { where: {
+      run: {
+        bindingId: lease.bindingId,
+        id: { not: "run-current" },
+        state: "complete",
+      },
+    } });
+    expect(fake.observations.deleteMany).toHaveBeenNthCalledWith(2, { where: {
       observedAt: { lt: new Date("2026-07-14T12:00:00Z") },
       run: {
         bindingId: lease.bindingId,
@@ -123,6 +130,11 @@ describe("Prisma audit census repository", () => {
       scopeFingerprint: { not: lease.scopeFingerprint },
     } });
     expect(fake.runs.deleteMany).toHaveBeenNthCalledWith(2, { where: {
+      bindingId: lease.bindingId,
+      id: { not: "run-current" },
+      state: { in: ["failed", "stale"] },
+    } });
+    expect(fake.runs.deleteMany).toHaveBeenNthCalledWith(3, { where: {
       bindingId: lease.bindingId,
       id: { not: "run-current" },
       state: { in: ["complete", "failed", "stale"] },
@@ -157,6 +169,26 @@ describe("Prisma audit census repository", () => {
     const safe = fakeDatabase({ existing: { id: "run-2", providerObservedAt: null } });
     await expect(createPrismaAuditCensusRepository(safe.database as never, repositoryOptions).markFailed(lease, "timeout")).resolves.toBe(true);
     expect(safe.runs.update).toHaveBeenCalledWith(expect.objectContaining({ data: { state: "failed", reasonCode: "timeout" } }));
+  });
+
+  it("bounds repeated failed evidence with fenced set-based cleanup while retaining the current failure", async () => {
+    const fake = fakeDatabase({ existing: {
+      id: "run-current", providerObservedAt: observedAt, scopeFingerprint: lease.scopeFingerprint,
+    } });
+    fake.runs.findMany.mockRejectedValue(new Error("audit history must not be materialized"));
+    const repository = createPrismaAuditCensusRepository(fake.database as never, repositoryOptions);
+
+    await expect(repository.markFailed(lease, "provider_failure")).resolves.toBe(true);
+
+    expect(fake.runs.findMany).not.toHaveBeenCalled();
+    expect(fake.runs.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "run-current" }, data: { state: "failed", reasonCode: "provider_failure" },
+    }));
+    expect(fake.runs.deleteMany).toHaveBeenCalledWith({ where: {
+      bindingId: lease.bindingId,
+      id: { not: "run-current" },
+      state: { in: ["failed", "stale"] },
+    } });
   });
 
   it("rejects a structurally valid lease when its audit aliases target a different binding fence", async () => {
