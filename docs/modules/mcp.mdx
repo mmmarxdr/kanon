@@ -29,7 +29,7 @@ The entry point validates `KANON_API_URL` and `KANON_API_KEY`, resolves the opti
 
 ## Issue triage (host-mediated)
 
-Enablement order: preview/search → get/list → persist/dismiss → retention.
+All triage capabilities are disabled by default. Their dependency order remains preview/search → get/list → persist/dismiss → retention.
 
 1. **`preview_issue_triage`** — read-only `prepare` (deterministic; `aiIntent=none` or `host_assisted`) then optional `validate` with host suggestions. No Sampling assumption; hosts without a model stop after prepare.
 2. **`persist_triage_proposal`** — explicit write of the exact returned preview + seal. Creates or deduplicates a typed proposal; never applies or mutates the Issue.
@@ -52,20 +52,20 @@ Every registered tool handler is wrapped so genuine tool use updates heartbeat a
 
 ## Rollout and rollback (operator)
 
-Enable capabilities only in this order:
+Deploy capabilities only in this dependency order; all new triage flags remain disabled by default:
 
 1. **Schema** — additive triage ledger/policy migration verified; no Issue shape change.
-2. **Apply guard / flags off** — triage-first legacy apply rejection + audit; all `TRIAGE_*_ENABLED` flags remain false until evidence passes.
-3. **Read-only preview/search canary** — enable preview after `triage-preview-v1` evidence (authorized CTE + `LIMIT 11`, compact ≤16 KiB, P95 &lt;3s, zero domain writes).
-4. **Get/list** — enable after `triage-proposal-list-v1` visibility-before-predicates, `LIMIT 51`, 32 KiB list / 64 KiB get, and list P95 target.
-5. **Persist/dismiss** — enable `TRIAGE_PROPOSALS_ENABLED` and `TRIAGE_DISMISS_ENABLED` only after exact-dedup, supersession, and concurrency evidence; dismiss &lt;1s / ≤8 KiB under profile.
-6. **Retention** — enable `TRIAGE_RETENTION_ENABLED` last; never shortens captured eligibility.
+2. **Apply guard / flags off** — triage-first legacy apply rejection + audit; keep every `TRIAGE_*_ENABLED` flag false.
+3. **Read-only preview/search** — keep preview disabled; `triage-preview-v1` is a synthetic regression fixture for the authorized CTE, `LIMIT 11`, compact ≤16 KiB, latency budget, and zero-domain-write boundaries.
+4. **Get/list** — keep reads disabled; `triage-proposal-list-v1` is a synthetic regression fixture for visibility-before-predicates, `LIMIT 51`, output budgets, and latency targets.
+5. **Persist/dismiss** — keep `TRIAGE_PROPOSALS_ENABLED` and `TRIAGE_DISMISS_ENABLED` false while retaining exact-dedup, supersession, concurrency, and output-budget regressions.
+6. **Retention** — keep `TRIAGE_RETENTION_ENABLED` false; never shorten captured eligibility.
 
-Canary gates (rolling five-minute windows, ≥100 completed requests/stage): unexpected stage errors &gt;1% page and disable that stage; typed degradation &gt;10% halt that stage; unexpected errors &gt;5% disable all triage flags. Any security/invariant violation stops all triage flags immediately. Alerts never mutate Issues, proposal bytes, or audit.
+This change provides no dedicated triage telemetry, canary gate, or live certification path, so it does not authorize feature enablement.
 
 **Rollback** is flags-off / fix-forward: set `TRIAGE_PROPOSALS_ENABLED=false` first, then set `TRIAGE_DISMISS_ENABLED=false` and `TRIAGE_RETENTION_ENABLED=false` before disabling reads/preview as needed. Restart or recreate the API after changing these startup-parsed values; deployment automation must do this automatically. Verify representative requests for every disabled gate return `503 CAPABILITY_DISABLED`. Retain immutable rows, apply guard, tombstones, audit, and authorized recovery. Set `KANON_TRIAGE_TOOLS_ENABLED=false`, restart MCP, and verify discovery reports exactly the prior **44-tool** surface with no triage names. Only exact `true`/`false` values are accepted. Do **not** down-migrate enums/tables or delete audit rows in ordinary recovery. Destructive database rollback requires separate approval only after export/backfill and verification prove preserved history and compatibility.
 
-Reference profiles (set `TRIAGE_PERF=1` for full 1,000-sample runs on PG16/Node20, 4 vCPU/8 GiB): `triage-preview-v1`, `triage-proposal-list-v1`.
+`triage-preview-v1` and `triage-proposal-list-v1` are synthetic regression profiles. `TRIAGE_PERF=1` repeats their generated fixtures for 1,000 samples; it does not exercise a live PostgreSQL/API workload and is not certification evidence.
 
 <Warning>
 The MCP package must never bypass the API and access Prisma or PostgreSQL directly. Doing so would duplicate authorization and domain invariants.

@@ -239,15 +239,15 @@ Preview MUST remain read-only and bounded and MUST NOT add autonomous apply or a
 
 ### Requirement: Latency and output are bounded
 
-Under the versioned reference-load profile for this change, end-to-end preview latency from accepted MCP call to complete MCP result MUST be less than 3 seconds at P95 for one target and up to 10 candidates. The profile MUST exercise the maximum-candidate path and document the corpus, concurrency, environment, scope, and whether host-AI input is present. Optional AI MUST NOT extend the deadline.
+The versioned synthetic regression fixture MUST use a P95 target below 3 seconds for one target and up to 10 candidates. It MUST exercise the maximum-candidate path and document its generated corpus, repeated-sample mode, scope, and whether host-AI input is present. This threshold catches fixture regressions only; it does not certify live PostgreSQL/API latency. Optional AI MUST NOT extend the deadline.
 
 The MCP preview MUST support `compact` and explicit `full` output tiers. `compact` MUST be the default, MUST contain all mandatory decision and provenance fields, MUST exclude full descriptions, and MUST serialize to no more than 16 KiB with 10 candidates. `full` MUST remain server-bounded and permission-filtered; it MAY add bounded validation and snapshot detail but MUST NOT make evidence, candidate count, description, identity, or authorization scope unbounded. If an output budget prevents inclusion, the system MUST omit the lowest-priority optional detail and report output degradation; it MUST NOT drop mandatory evidence from a returned supported item.
 
-#### Scenario: Reference preview meets P95 budget
+#### Scenario: Synthetic preview fixture meets its P95 regression budget
 
-- GIVEN the versioned reference-load profile
-- WHEN enough preview samples are measured to calculate P95
-- THEN P95 end-to-end latency is less than 3 seconds
+- GIVEN the versioned synthetic preview fixture
+- WHEN repeated fixture samples are measured to calculate P95
+- THEN fixture P95 is less than 3 seconds without claiming live certification
 - AND AI timeout samples return deterministic degradation inside the same budget
 
 #### Scenario: Compact maximum remains within budget
@@ -298,28 +298,27 @@ Every new MCP result or error MUST preserve contract version, provenance, semant
 - AND runtime, tests, instructions, fixtures, and documentation report exactly 49 total, 26 core, and 23 deferred
 - AND compensating description/instruction trims keep both fixed ceilings unchanged
 
-### Requirement: Preview observability preserves privacy
+### Requirement: Preview diagnostics preserve privacy without dedicated telemetry
 
-The system MUST correlate prepare/validate, bounded search, policy validation, host-AI/degradation, and MCP response under a trace or correlation identity. It MUST measure end-to-end and component latency, recommendation and candidate counts, rows scanned and returned by search, policy identity, model identity when present, authorization policy version, completeness, degradation, validation rejection class, and error category; model identity belongs only in controlled traces/audit, never metric labels.
+Prepare/validate and MCP responses MUST retain their existing request correlation identity. The response contract MUST expose typed completeness, degradation, validation rejection, and error outcomes without requiring dedicated triage metrics, counters, stage traces, or alerts.
 
-Metrics MUST use aggregate, low-cardinality labels and MUST NOT contain query or body text, evidence, cursor, model, user, issue, project, workspace, or other domain identifiers, nor forbidden-resource cardinality. Logs and traces MUST apply existing authorization and redaction controls. Operational telemetry MUST NOT create an ActivityLog or persisted triage decision.
+Existing platform logs MUST apply existing authorization and redaction controls and MUST NOT add query or body text, evidence, cursor, model, user, issue, project, workspace, other domain identifiers, or forbidden-resource cardinality for triage diagnostics. Standard request logging MUST NOT create an ActivityLog or persisted triage decision.
 
 #### Scenario: Degraded preview is observable
 
 - GIVEN host AI times out after deterministic policy completes
 - WHEN preview returns
-- THEN the trace correlates search, policy, AI timeout, and MCP response
-- AND latency and `ai_timed_out` degradation counters are recorded
-- AND no prompt, evidence text, or domain identifier appears as a metric label
+- THEN the response reports the typed `ai_timed_out` degradation outcome
+- AND no prompt, evidence text, or domain identifier is added to platform logs for triage diagnostics
 
-#### Scenario: Telemetry does not become a domain write
+#### Scenario: Request logging does not become a domain write
 
-- GIVEN preview emits access logs, traces, and aggregate metrics
+- GIVEN preview emits standard platform access logs
 - WHEN domain state is inspected
 - THEN no proposal, ActivityLog, lifecycle entry, or domain event was created
 
-### Requirement: Pre-enable, canary, and rollback gates are objective
+### Requirement: Preview remains disabled without an enablement gate
 
-The preview flag MUST remain off until every required build, generation, test, security, concurrency, and performance check is green: 100% of required assertions must pass, with no pass-rate substitute. Canary exposure MUST be operator-approved and measured in rolling five-minute windows with at least 100 completed requests per stage. Unexpected stage errors above 1% MUST page the owner and disable that stage; typed degradation above 10% MUST page the owner and halt canary exposure for that stage.
+`TRIAGE_PREVIEW_ENABLED` MUST remain false by default. This change defines no dedicated triage telemetry gate, live canary, or production certification process, so it does not authorize enablement.
 
-Unexpected errors above 5% MUST page incident command and disable all triage flags. Any security or invariant violation MUST immediately disable all flags. Performance remains a separate gate: reference-load P95 MUST remain under three seconds. Rollback is flag-off first, retains preview/proposal data, dedicated triage-ledger rows, and audit, and fixes forward; thresholds and alerts MUST NOT mutate issues, proposal content, or audit history.
+The named performance profiles are synthetic regression fixtures only. They do not exercise a live PostgreSQL/API deployment and MUST NOT be treated as certification evidence. Rollback remains flag-off first, retains preview/proposal data, dedicated triage-ledger rows, and audit, and fixes forward.

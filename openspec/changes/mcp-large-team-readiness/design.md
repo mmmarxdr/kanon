@@ -62,7 +62,7 @@ MCP host
 | Proposal service | Current target/candidate authorization before create, dedup return, get/list and every retained-candidate projection; canonical identity, immutable storage, redaction, lifecycle/retention | Update Issue, expose workspace queues, execute actions, emit Issue events |
 | PostgreSQL | Snapshot reads, row locks, unique identity, append-only audit, immutability constraints | Depend on process-local EventBus for correctness |
 
-Preview emits only normal Pino access/stage logs and Prometheus metrics. It creates no proposal, ActivityLog, AdminAuditLog, lifecycle event, notification, relation, or domain event. Proposal lifecycle truth is durable database state; the in-process EventBus is not used.
+Preview emits only normal Pino access logs. It adds no dedicated triage metrics or stage traces and creates no proposal, ActivityLog, AdminAuditLog, lifecycle event, notification, relation, or domain event. Proposal lifecycle truth is durable database state; the in-process EventBus is not used.
 
 ## Lasting decisions and alternatives
 
@@ -77,10 +77,10 @@ Preview emits only normal Pino access/stage logs and Prometheus metrics. It crea
 | Proposal review queue | Project-only visibility-first keyset pages, compact rows, snapshot-bound opaque cursor | Reuse legacy workspace proposal list: wrong type/auth/projection and exposes workspace cardinality. Offset pagination or full rows: unstable under writes and unnecessarily sensitive. |
 | Exact identity | Canonical JSON v1 + SHA-256 unique digest across all lifecycle states | Client idempotency key: does not prove semantic equality. Pending-only targetRef: ignores source, payload, generator, and terminal records. |
 | Authorization | Reuse API role hierarchy/token claims and triage-specific permission-safe resolvers | Duplicate role logic in MCP: drift and bypass risk. Workspace membership alone: leaks projects a viewer/member cannot access. |
-| Observability | Existing Fastify/Pino/prom-client registry plus durable proposal lifecycle rows | Domain EventBus lifecycle notifications: process-local and non-durable. IDs/search strings as labels: cardinality/privacy leak. |
+| Diagnostics | Existing Fastify request IDs and Pino access logging plus durable proposal lifecycle rows; no dedicated triage telemetry | Domain EventBus lifecycle notifications: process-local and non-durable. Dedicated triage metrics/traces: unnecessary operational surface and privacy risk. |
 | Shared contracts | API-local authoritative Zod v1 schemas; MCP-local wire schemas checked by contract fixtures | Put triage in `@kanon/shared`: MCP currently has no runtime dependency on it and is intentionally self-contained; copying another large schema would create drift. |
 | Retention/policy | Versioned workspace policy, optional project approval override, values captured per proposal | A global constant: not workspace configurable. Re-evaluate all old rows on policy update: could silently shorten history. |
-| Rollout | Additive schema, guard-first API, flags off, preview canary, persistence last | Ship tools and writes before the apply guard/migration: rollback could expose triage IDs to legacy apply. |
+| Rollout | Additive schema, guard-first API, all triage flags off by default; this change defines no enablement gate | Ship tools and writes before the apply guard/migration: rollback could expose triage IDs to legacy apply. |
 
 ### ADR recommendations
 
@@ -281,7 +281,7 @@ Ordering/normalization contract `issue-search.v1` is:
 8. issue key ascending;
 9. issue UUID ascending.
 
-The lexical score is returned only as reason classes, not a probability. Existing `issues(project_id,state)`, key uniqueness, project membership uniqueness, and project/workspace indexes narrow the query. No column, extension, or index is added to `issues` in this change. If the reference profile fails, rollout remains disabled; a separately approved Issue-index migration is required rather than weakening limits or completeness.
+The lexical score is returned only as reason classes, not a probability. Existing `issues(project_id,state)`, key uniqueness, project membership uniqueness, and project/workspace indexes narrow the query. No column, extension, or index is added to `issues` in this change. A synthetic-profile failure leaves rollout disabled; limits and completeness are not weakened.
 
 Search runs in a read-only `REPEATABLE READ` transaction with `SET LOCAL statement_timeout`. A private population fingerprint hashes an ordered stream of every authorized matching `{issueId, issueUpdatedAt, projectId, projectUpdatedAt}` tuple plus query/scope/projection/order versions and the authorized-project-set digest. Count/max timestamps alone were rejected because offsetting insert/delete or non-maximum-row changes could evade them. The fingerprint uses built-in `md5(coalesce(string_agg(issue_id || ':' || issue_updated_at_us || ':' || project_id || ':' || project_updated_at_us, ',' ORDER BY issue_id), 'empty'))` (no extension and no rows exposed to MCP). It is a change detector, not an authorization primitive; the cursor's separate authenticated encryption prevents substitution. The reference profile must prove its cost. It is never returned directly.
 
@@ -384,7 +384,7 @@ Indexes:
 - lifecycle `(proposal_id, occurred_at, id)` plus a partial unique terminal-transition event;
 - policy primary/unique scope indexes.
 
-Generator/degraded filters remain residual predicates after the project keyset index in v1 rather than multiplying indexes; the `triage-proposal-list-v1` profile must show bounded page/digest cost. Add a proposal-specific generator/degraded index only in this additive migration if that profile fails before enablement—never an Issue index.
+Generator/degraded filters remain residual predicates after the project keyset index in v1 rather than multiplying indexes; the synthetic `triage-proposal-list-v1` fixture regresses bounded page/digest cost. A fixture failure leaves the flags disabled and does not justify an Issue index.
 
 SQL checks enforce the fixed non-executable kind, `expires_at = created_at + interval '7 days'`, retention eligibility at/after expiry, terminal metadata consistency, and digest shape. A trigger rejects all content updates and proposal deletes. Content deletion is allowed only after the same transaction has inserted a `retention_disposed` event. A metadata trigger rejects changes to immutable columns.
 
@@ -619,49 +619,38 @@ sequenceDiagram
 | Repeat dismissal with changed reason | 200 `already_dismissed` with original audit | no new event/content change | Treat as idempotent success |
 | Dismiss at/after expiry or expiry wins lock | 200 `already_expired` | one expired event | Treat as terminal success; do not retry mutation |
 | Concurrent pre-expiry dismissals | all return same dismissed terminal audit | one dismissed event/original reason | Safe idempotent result |
-| Retention worker failure | unavailable operational log/metric | content retained, transaction rolled back | Next sweep retries |
+| Retention worker failure | unavailable response and standard operational log | content retained, transaction rolled back | Next sweep retries |
 | Disposed authorized read | 410 disposed tombstone, no content | audit retained | Use policy/time metadata |
 | Legacy apply on triage | 422 non-executable; or 503 if rejection audit cannot commit | rejection audit only on 422; no status/content/Issue mutation | Never retry as apply; use read/dismiss only |
-| Feature disabled | 503 capability disabled with safe guidance | none | Enable in rollout order |
+| Feature disabled | 503 capability disabled with safe guidance | none | Keep disabled; this change defines no enablement gate |
 
-## Observability
+## Diagnostics and audit
 
 Use Fastify request IDs as correlation IDs. `app.ts` accepts a valid `X-Kanon-Correlation-ID` UUID or creates one, includes it in Pino `reqId`, returns it as a header/body, and threads it through MCP. The MCP client gains per-request timeout/correlation options; existing calls retain their 10-second default.
 
-Extend the existing `plugins/metrics.ts` registry rather than using a second global prom-client registry. Proposed low-cardinality metrics:
+This design adds no dedicated triage metrics, counters, histograms, stage traces, or alerts. Existing platform access logs retain their current authorization and redaction controls and never explicitly log query text, prompt/output, evidence, cursor, model, user/member, proposal, issue, project, workspace, or other domain identifiers for triage diagnostics.
 
-- `kanon_triage_search_duration_seconds{scope,completeness,outcome}`;
-- `kanon_triage_search_rows{measure}` histograms for logical rows scanned/evaluated after authorization and rows returned (`measure=logical_scanned|returned`);
-- `kanon_triage_preview_duration_seconds{phase,outcome,ai_contributed}`;
-- `kanon_triage_degradation_total{reason}`;
-- `kanon_triage_proposal_requests_total{operation,outcome}` where bounded operations include persist/get/list/dismiss/expire/retain/rejected_apply;
-- `kanon_triage_proposal_duration_seconds{operation,outcome}`;
-- `kanon_triage_proposal_list_rows{state_filter}` histogram for returned authorized rows only.
-
-No label contains query text, prompt/output, evidence, user/member, proposal, issue, project, workspace, cursor, or model string. Model/provider/version, policy version, stage durations, validation rejection class, and rows evaluated are structured trace-log fields under the correlation ID, not metric labels; model identity fields are bounded and never accompanied by prompt/evidence text. Add Pino redaction paths for preview/suggestion bodies as defense in depth and never explicitly log those bodies.
-
-Creation provenance and lifecycle events are the durable audit. Dedup requests preserve original provenance and emit only request telemetry. List traces record page latency, returned rows, snapshot/cursor outcome and auth/source-conflict category without the cursor or counts beyond returned rows. Dismiss traces distinguish `dismissed|already_dismissed|already_expired|already_terminal`; the lifecycle row preserves the original reason. Rejected apply writes an append-only lifecycle audit but no domain event. Preview/list/get write no audit row.
+Creation provenance and lifecycle events are the durable audit. Dedup requests preserve original provenance. Dismiss responses distinguish `dismissed|already_dismissed|already_expired|already_terminal`, while the lifecycle row preserves the original reason. Rejected apply writes an append-only lifecycle audit but no domain event. Preview/list/get write no audit row.
 
 ## Performance contract
 
-Reference profile `triage-preview-v1` is versioned and checked before enablement:
+`triage-preview-v1` is a versioned synthetic regression fixture, not a live certification profile. Its generated corpus models:
 
-- PostgreSQL 16 and Node 20; API and database each limited to 4 vCPU/8 GiB; warm database; 1–5 ms API/MCP network;
 - one workspace, 20 projects, 5,000 issues each (100,000 total); caller authorized for 10 projects (50,000), target project 5,000;
 - title/key corpus includes exact, prefix, token-overlap, no-match, equal-rank, max labels, and descriptions at 2 KiB median/50 KiB maximum;
 - project and workspace scope, 10 returned candidates, compact maximum recommendation set;
-- concurrency 16, 100 warmups, at least 1,000 measured calls per path;
+- repeated synthetic samples, including the 1,000-sample mode selected by `TRIAGE_PERF=1`;
 - deterministic `prepare`, host-completed `validate` with suggestions already supplied, reported host timeout, and candidate-query timeout cases.
 
-Reference profile `triage-proposal-list-v1` uses the same runtime limits and adds one project with 25,000 triage proposals over 5,000 current/deleted/moved targets, all effective states, both disposition-discovery policies, all generator/degraded filters, duplicate creation timestamps, and deep keyset pages. It measures default 20 and maximum 50 rows, first/middle/final pages, changed authorization/source markers, and dismissal/retry/expiry races at concurrency 16 after 100 warmups with at least 1,000 measured calls per list/dismiss path.
+`triage-proposal-list-v1` is likewise synthetic. It generates one project with 25,000 triage proposals over 5,000 current/deleted/moved targets, all effective states, both disposition-discovery policies, all generator/degraded filters, duplicate creation timestamps, and deep keyset pages. It covers default 20 and maximum 50 rows, first/middle/final pages, changed authorization/source markers, and dismissal/retry/expiry cases.
 
-Every accepted new MCP call must have P95 below 3 seconds; list has an engineering target below 1.5 seconds and dismissal below 1 second under that profile. Host reasoning between preview calls is outside Kanon's request and cannot hold an API/MCP call open. Serialized outputs are capped at 32 KiB for a 50-row list page, 64 KiB for proposal get, and 8 KiB for dismissal; list has no full tier and whole rows are never truncated—budget failure is temporary unavailability, not a partial page.
+The fixture thresholds preserve design targets: accepted MCP calls target P95 below 3 seconds, list below 1.5 seconds, and dismissal below 1 second. They are regression signals only and do not prove production latency. Host reasoning between preview calls is outside Kanon's request and cannot hold an API/MCP call open. Serialized outputs are capped at 32 KiB for a 50-row list page, 64 KiB for proposal get, and 8 KiB for dismissal; list has no full tier and whole rows are never truncated—budget failure is temporary unavailability, not a partial page.
 
 Deadline allocation for `prepare` is a 2,900 ms MCP hard timeout around a 2,500 ms API timeout. Inside the API: target/auth 250 ms, search statement timeout 900 ms, policy/optional context 500 ms, shaping/hash/size 300 ms, API reserve 550 ms. MCP reserves the remaining 400 ms for request/response transport, parse/serialization, and cancellation. `validate` allocates its 2,500 ms API budget as 700 ms reauthorization/source fetch, 500 ms validation/conflict resolution, 300 ms shaping, and 1,000 ms reserve; the same outer 400 ms remains. Optional context/search is cancelled or degraded before the core deadline; target/source/policy failure is not degraded into a false preview.
 
 List uses a 2,900 ms MCP hard timeout around a 2,500 ms API budget: project authorization 250 ms, visibility/as-of filter plus source marker 1,200 ms, keyset page/projection 400 ms, serialization 200 ms, and 450 ms reserve. Dismiss uses a 2,000 ms MCP timeout around a 1,500 ms API budget with no retry after an unknown response beyond safe caller repetition.
 
-Evidence required before enablement: preview plans proving authorized CTE + server `LIMIT 11` and no MCP full-list call; list plans proving project/target visibility precedes predicates and `LIMIT 51`, keyset/index use, and no content-table fetch; P50/P95/P99 for both profiles; compact preview <=16 KiB and list <=32 KiB; timeout/source-conflict behavior; and operator-only scanned versus returned measurements. If either profile fails, relevant flags remain off; limits, authorization, projection, and fixed ceilings are not relaxed.
+The synthetic fixtures regress the authorized CTE + server `LIMIT 11`, no MCP full-list call, project/target visibility before predicates, `LIMIT 51`, keyset/index use, no content-table fetch, compact output limits, and timeout/source-conflict behavior. They do not provision or query a live PostgreSQL/API deployment, so their P50/P95/P99 values are not certification evidence. All triage flags remain disabled by default; limits, authorization, projection, and fixed ceilings are not relaxed.
 
 ## Strict-TDD verification strategy
 
@@ -677,8 +666,8 @@ Tests are written failing before each production slice and keep transaction boun
 | Legacy security | Triage-ledger-first resolution, invisible-target no-fallthrough, UUID collision, audited pre-legacy rejection, audit-failure fail-closed; no legacy/Issue/ActivityLog/domain mutation; existing legacy apply unchanged |
 | MCP contract | Exact five names/schemas/annotations; list requires one project/compact only; dismissal destructive+idempotent; REST paths, errors, fallback, output bytes, 49/26/23 counts, existing 44 regressions |
 | Migration | Legacy upgrade; policy backfill; identity and unique non-null predecessor plus list/lifecycle indexes; checks/triggers/FKs; no Issue change; flags-off retained-row recovery; generic index unchanged |
-| Performance | `triage-preview-v1` and `triage-proposal-list-v1`, max 10/50 paths, P95 <3s, list/dismiss targets, timeout/conflict and SQL-plan assertions |
-| Observability/privacy | Correlation continuity; list returned-row/snapshot and dismiss terminal outcomes; no high-cardinality labels/body/cursor logs; no preview/list/get audit writes; lifecycle audit completeness |
+| Performance regression | Synthetic `triage-preview-v1` and `triage-proposal-list-v1` fixtures, max 10/50 paths, latency targets, timeout/conflict and SQL-plan assertions; no live certification claim |
+| Diagnostics/privacy | Correlation continuity; typed list/dismiss outcomes; no dedicated triage telemetry or body/cursor/domain logging; no preview/list/get audit writes; lifecycle audit completeness |
 
 Negative zero-write tests snapshot counts/hashes for Issue, `McpProposal`, triage ledger, ActivityLog, AdminAuditLog, comments, notifications, work records, relations, lifecycle events, and captured EventBus emissions before repeated prepare/validate/degraded preview and proposal get/list calls. Dismiss tests permit only one terminal metadata update plus one lifecycle event.
 
@@ -697,7 +686,7 @@ Path verification outcome after the specification-revision audit: every existing
 | `packages/api/src/middleware/require-role.ts` | Add permission-safe triage target/proposal resolvers using existing `ROLE_HIERARCHY`/`enforceProjectAccess`; preserve other legacy gates |
 | `packages/api/src/modules/mcp-proposal/routes.ts` | Replace only apply's current `requireProposalRole` pre-handler with triage-first dual resolution, non-executable rejection/audit, then unchanged legacy branch |
 | `packages/api/src/modules/workspace/service.ts` | Create workspace default triage policy in existing workspace transaction |
-| `packages/api/src/plugins/metrics.ts` | Register/inject low-cardinality triage metrics in the existing registry |
+| `packages/api/src/plugins/metrics.ts` | Keep the existing registry free of dedicated triage metrics |
 | `packages/api/src/app.ts` | Correlation request ID, triage routes, feature flags, bounded DB housekeeping registration |
 | `packages/api/src/test/helpers.ts` | Cleanup/seed support for additive tables and policy defaults |
 | `packages/mcp/src/tools/triage.ts` | **NEW** five deferred tools, strict list/dismiss schemas, annotations and compact transforms |
@@ -723,23 +712,23 @@ This design forecasts multiple chained, independently gated PRs; a single implem
 5. **Persistence/get/lifecycle:** serializable dedup, supersession, expiry/retention, get route, concurrency tests.
 6. **Project review + dismissal:** visibility-first list query/cursor/index evidence, explicit terminal dismissal and race tests.
 7. **Legacy isolation + five MCP tools:** deploy apply guard before enabling writes; exact counts/budgets and compatibility tests.
-8. **Observability/performance/docs:** both reference profiles, registry metrics, canary instructions and verified 49-tool inventory.
+8. **Privacy/performance/docs:** both synthetic regression profiles, default-off rollout instructions and verified 49-tool inventory.
 
-Each slice keeps production and tests together, targets less than 800 changed review lines where practical, and cannot enable persistence until migration, source-conflict, concurrency, and legacy-apply tests are green.
+Each slice keeps production and tests together, targets less than 800 changed review lines where practical, and leaves persistence disabled after migration, source-conflict, concurrency, and legacy-apply regressions are green.
 
 ## Migration, rollout, and rollback
 
-Pre-enable and re-enable are objective: 100% of required build, generation, test, security, concurrency—including the distinct-payload successor race—and performance assertions must pass. Operator-approved canaries use rolling five-minute windows with at least 100 completed requests per stage: unexpected stage errors above 1% page and disable that stage; typed degradation above 10% pages and halts that stage; unexpected errors above 5% page incident command and disable all triage flags. Any security or invariant violation stops all triage flags immediately. Preview P95 under the reference load remains below three seconds as an independent gate; alerts only page or disable exposure and never mutate issues, proposal bytes, or audit.
+All triage flags remain disabled by default. This change defines no dedicated triage telemetry gate, live canary, or production certification process and therefore does not authorize enablement. The named performance profiles are synthetic regression fixtures only; their latency samples are not live PostgreSQL/API evidence.
 
 Deployment order:
 
 1. deploy additive schema/policy backfill and verify triggers/indexes; no routes use it;
 2. deploy API with triage apply guard and `TRIAGE_PREVIEW_ENABLED=false`, `TRIAGE_PROPOSALS_ENABLED=false`;
-3. deploy MCP 49-tool build with preview/proposal/review flags still disabled or internal-canary only;
-4. enable preview for canary instances; verify zero writes, P95, 16 KiB, authorization and degradation;
-5. enable get/project-list read paths after `triage-proposal-list-v1` visibility, cursor, 32 KiB and P95 evidence passes;
-6. enable persistence and dismissal only after dedup, terminal-idempotency, expiry-race, migration and legacy-guard tests pass;
-7. enable retention sweeps last and verify dry eligibility/disposed-list policy through operator-only telemetry.
+3. deploy MCP 49-tool build with preview/proposal/review flags disabled;
+4. keep preview/search disabled while retaining zero-write, output-budget, authorization, degradation, and synthetic-profile regressions;
+5. keep get/project-list disabled while retaining visibility, cursor, and output-budget regressions;
+6. keep persistence and dismissal disabled while retaining dedup, terminal-idempotency, expiry-race, migration, and legacy-guard regressions;
+7. keep retention sweeps disabled while retaining dry eligibility and disposed-list policy regressions.
 
 Rollback is flags-off and fix-forward: disable proposal creation first, then list/preview as needed, while retaining immutable rows, audit, guards, authorized recovery paths, tombstones, and additive tables; MCP may temporarily return to 44 tools. Do not down-migrate enums/tables or delete audit rows during ordinary recovery. Existing generic proposal routes/data, web behavior, Issue rows, and all old MCP tools continue operating. Destructive rollback requires separate approval only after export/backfill and verification prove preserved history and compatibility.
 
@@ -752,4 +741,4 @@ Rollback is flags-off and fix-forward: disable proposal creation first, then lis
 - [x] No Issue migration or domain mutation is introduced.
 - [x] Exact inventory is 49 tools with 23 deferred and unchanged fixed description/instruction ceilings.
 - [x] Proposal discovery is one-project, compact-only, visibility-first and snapshot-paginated; dismissal is explicit, terminal-idempotent and Issue-safe.
-- [x] Rollout is guard-first with 100%-green and immediate-stop gates; flags-off recovery retains ledger, audit, and the apply guard for fix-forward repair.
+- [x] Rollout is guard-first and default-off; recovery retains ledger, audit, and the apply guard for fix-forward repair.
