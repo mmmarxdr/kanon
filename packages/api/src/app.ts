@@ -264,6 +264,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     pageSize: env.INTEGRATION_AUDIT_PAGE_SIZE,
     maxPasses: env.INTEGRATION_AUDIT_MAX_PASSES,
     terminalFreshnessMs: env.INTEGRATION_AUDIT_FRESHNESS_MS,
+    retentionDays: env.INTEGRATION_AUDIT_RETENTION_DAYS,
     signal,
   }));
   const unsubscribeIntegrationSync = registerIntegrationSyncListener(
