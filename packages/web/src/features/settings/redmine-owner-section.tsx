@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   issuePrioritySchema,
@@ -13,9 +13,79 @@ import {
   useConfigureRedmineProviderMapsMutation,
   useCreateRedmineConnectionMutation,
   useRedmineDiscoveryQuery,
+  useRedmineAuditHealthQuery,
   useReplaceRedmineServiceCredentialMutation,
   useSetRedmineLifecycleMutation,
 } from "./use-redmine-integration";
+
+function AuditHealthCard({
+  workspaceId,
+  connectionId,
+  bindingId,
+  bindingNumber,
+}: {
+  workspaceId: string;
+  connectionId: string;
+  bindingId: string | undefined;
+  bindingNumber?: number;
+}) {
+  const { t } = useTranslation("settings");
+  const health = useRedmineAuditHealthQuery(workspaceId, connectionId, bindingId, true);
+  const [now, setNow] = useState(Date.now);
+  const validUntil = Date.parse(health.data?.validUntil ?? "");
+  const isCurrent =
+    health.data?.fresh === true &&
+    health.data.state === "complete" &&
+    Number.isFinite(validUntil) &&
+    validUntil > now;
+
+  useEffect(() => {
+    if (!Number.isFinite(validUntil) || validUntil <= now) return;
+    const timeout = window.setTimeout(
+      () => setNow(Date.now()),
+      Math.min(Math.max(validUntil - Date.now(), 0), 2_147_483_647),
+    );
+    return () => window.clearTimeout(timeout);
+  }, [now, validUntil]);
+
+  const title = bindingNumber
+    ? `${t("redmineAuditHealthTitle")} — ${t("redmineAuditBinding", { number: bindingNumber })}`
+    : t("redmineAuditHealthTitle");
+
+  return (
+    <section aria-label={title} className="rounded-lg border border-border p-4">
+      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+      {!bindingId ? (
+        <p className="mt-2 text-sm text-muted-foreground">{t("redmineAuditNoEvidence")}</p>
+      ) : health.isLoading ? (
+        <p className="mt-2 text-sm text-muted-foreground">{t("redmineAuditLoading")}</p>
+      ) : health.error || !health.data ? (
+        <p className="mt-2 text-sm text-muted-foreground">{t("redmineAuditUnknown")}</p>
+      ) : !isCurrent ? (
+        <div className="mt-2 space-y-1 text-sm text-muted-foreground">
+          <p>
+            {health.data.state === "stale" || validUntil <= now
+              ? t("redmineAuditStale")
+              : t("redmineAuditUnknown")}
+          </p>
+          {health.data.reasonCode && (
+            <p>{t("redmineAuditReason", { reason: health.data.reasonCode })}</p>
+          )}
+        </div>
+      ) : (
+        <div className="mt-2 space-y-1 text-sm text-muted-foreground">
+          <p>{t("redmineAuditFresh")}</p>
+          {health.data.completedAt && (
+            <p>{t("redmineAuditCompletedAt", { time: health.data.completedAt })}</p>
+          )}
+          {health.data.validUntil && (
+            <p>{t("redmineAuditFreshUntil", { time: health.data.validUntil })}</p>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
 
 const ISSUE_STATES = issueStateSchema.options;
 const ISSUE_PRIORITIES = issuePrioritySchema.options;
@@ -358,6 +428,19 @@ function ConnectedOwnerPanel({
         </div>
       </div>
       <div className="mt-4 space-y-4">
+        {connection.bindings.length ? (
+          connection.bindings.map((binding, index) => (
+            <AuditHealthCard
+              key={binding.id}
+              workspaceId={workspaceId}
+              connectionId={connection.id}
+              bindingId={binding.id}
+              bindingNumber={index + 1}
+            />
+          ))
+        ) : (
+          <AuditHealthCard workspaceId={workspaceId} connectionId={connection.id} bindingId={undefined} />
+        )}
         <form
           className="rounded-lg border border-border p-4"
           onSubmit={(event) => {

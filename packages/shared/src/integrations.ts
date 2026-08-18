@@ -104,3 +104,13 @@ export const integrationConnectionSchema = z.object({
 
 export type IntegrationConnection = z.infer<typeof integrationConnectionSchema>;
 export type IntegrationDiscovery = z.infer<typeof integrationDiscoverySchema>;
+
+/** Owner-safe audit state; it never carries provider content or enumeration detail. */
+export const integrationAuditHealthSchema = z.object({
+  state: z.enum(["complete", "partial", "failed", "stale", "unknown"]),
+  completedAt: z.string().nullable(),
+  validUntil: z.string().nullable(),
+  fresh: z.boolean(),
+  reasonCode: z.enum(["timeout", "unauthorized", "rate_limited", "malformed_response", "pagination_drift", "detail_drift", "provider_failure", "scope_or_fence_changed", "did_not_converge", "unknown"]).nullable(),
+});
+export type IntegrationAuditHealth = z.infer<typeof integrationAuditHealthSchema>;

@@ -23,6 +23,31 @@ const checkpoint: PollCheckpoint = {
 };
 
 describe("RedmineAuditSource", () => {
+  it("does not begin a census read after cancellation and labels it as timeout", async () => {
+    const getWithResponse = vi.fn();
+    const source = new RedmineAuditSource({ getWithResponse }, { remoteProjectId: "7" });
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(source.readPage(0, 1, null, controller.signal))
+      .resolves.toEqual({ kind: "unknown", reasonCode: "timeout" });
+    expect(getWithResponse).not.toHaveBeenCalled();
+  });
+
+  it("passes a mid-read cancellation to the HTTP client and returns timeout without decoding a response", async () => {
+    const controller = new AbortController();
+    const getWithResponse = vi.fn((_path: string, signal?: AbortSignal) => new Promise<never>((_, reject) => {
+      signal?.addEventListener("abort", () => reject(new Error("transport aborted")), { once: true });
+    }));
+    const source = new RedmineAuditSource({ getWithResponse }, { remoteProjectId: "7" });
+    const pending = source.readPage(0, 1, null, controller.signal);
+    await vi.waitFor(() => expect(getWithResponse).toHaveBeenCalledOnce());
+    controller.abort();
+
+    await expect(pending).resolves.toEqual({ kind: "unknown", reasonCode: "timeout" });
+    expect(getWithResponse.mock.calls[0]![1]).toBe(controller.signal);
+  });
+
   it("captures the first valid HTTP Date immutably while replaying equal timestamp tuples inclusively", async () => {
     const source = new RedmineAuditSource(client(
       { value: { issues: [issue], total_count: 1, offset: 0, limit: 1 }, httpDate: "Tue, 04 Aug 2026 10:30:00 GMT" },
@@ -79,6 +104,9 @@ describe("RedmineAuditSource", () => {
 
     const missingJournal = new RedmineAuditSource(client({ value: { issue: { ...issue, journals: [] } }, httpDate: "Tue, 04 Aug 2026 10:30:00 GMT" }), { remoteProjectId: "7" });
     await expect(missingJournal.readComment("42", "90")).resolves.toEqual({ kind: "not_visible_in_scope" });
+
+    const hiddenJournal = new RedmineAuditSource({ getWithResponse: async () => { throw new RedmineHttpError(403); } }, { remoteProjectId: "7" });
+    await expect(hiddenJournal.readComment("42", "90")).resolves.toEqual({ kind: "unknown", reasonCode: "unauthorized" });
   });
 });
 

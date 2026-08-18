@@ -7,6 +7,7 @@ import {
   buildAuditPersistencePlan,
   createAuditScopeFingerprint,
   shouldRetainAuditObservation,
+  isCurrentTerminalAuditEvidence,
   TERMINAL_AUDIT_EVIDENCE_STATES,
 } from "./audit-evidence.js";
 
@@ -67,5 +68,14 @@ describe("audit evidence contracts", () => {
     expect(sql).toContain('"scope_fingerprint"');
     expect(sql).toContain('"integration_audit_observations_run_id_identity_type_parent_remote_id_remote_id_source_updated_at_key"');
     expect(sql).toContain('"integration_audit_runs_binding_id_state_completed_at_idx"');
+  });
+
+  it("accepts only fresh complete evidence from the exact held scope", () => {
+    const now = new Date("2026-08-04T10:30:00Z");
+    const evidence = { state: "complete" as const, completedAt: now, validUntil: new Date("2026-08-04T10:31:00Z"), scopeFingerprint: "scope-1" };
+    expect(isCurrentTerminalAuditEvidence(evidence, "scope-1", now)).toBe(true);
+    expect(isCurrentTerminalAuditEvidence({ ...evidence, state: "stale" }, "scope-1", now)).toBe(false);
+    expect(isCurrentTerminalAuditEvidence({ ...evidence, validUntil: now }, "scope-1", now)).toBe(false);
+    expect(isCurrentTerminalAuditEvidence({ ...evidence, scopeFingerprint: "scope-2" }, "scope-1", now)).toBe(false);
   });
 });

@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { env } from "../../config/env.js";
 import { prisma } from "../../config/prisma.js";
 import { AppError } from "../../shared/types.js";
 import { INSTANCE_SETTINGS_ID } from "../../shared/constants.js";
 import { decrypt as decryptCredential, encrypt as encryptCredential } from "./core/crypto.js";
+import { createAuditScopeFingerprint } from "./core/audit-evidence.js";
 import {
   TIME_ENTRY_ACTIVITY_MAP_KEY,
   type DiscoveredPriority,
@@ -1485,6 +1487,30 @@ export async function clearCredential(
     where: { memberId_connectionId: { memberId: member.id, connectionId } },
   });
   return publicCredential(credential);
+}
+
+export function auditHealthForScope(current: { bindingId: string; connectionId: string; baseUrl: string; remoteProjectId: string; credentialId: string; encryptedKey: string }, run: { state: "complete" | "partial" | "failed" | "stale"; completedAt: Date | null; validUntil: Date | null; reasonCode: string | null; scopeFingerprint: string } | null, databaseNow: Date) {
+  const scopeFingerprint = createAuditScopeFingerprint({ bindingId: current.bindingId, connectionId: current.connectionId, normalizedBaseUrl: new URL(current.baseUrl).toString(), remoteProjectId: current.remoteProjectId, credentialId: current.credentialId, credentialFingerprint: createHash("sha256").update(current.encryptedKey).digest("hex") });
+  const fresh = run?.state === "complete" && run.scopeFingerprint === scopeFingerprint && run.validUntil !== null && run.validUntil > databaseNow;
+  return { state: fresh ? run.state : "unknown", completedAt: fresh ? run.completedAt?.toISOString() ?? null : null, validUntil: fresh ? run.validUntil?.toISOString() ?? null : null, fresh, reasonCode: fresh ? run.reasonCode : null };
+}
+
+export async function getBindingAuditHealth(connectionId: string, bindingId: string, userId: string, workspaceId?: string) {
+  try {
+    return await prisma.$transaction(async (transaction) => {
+      await lockConnection(transaction, connectionId);
+      const connection = await ownedConnection(transaction, connectionId, userId, workspaceId);
+      const binding = await transaction.integrationProjectBinding.findFirst({ where: { id: bindingId, connectionId: connection.id, releasedAt: null }, select: { id: true, remoteProjectId: true } });
+      if (!binding || !connection.serviceCredentialId) return { state: "unknown", completedAt: null, validUntil: null, fresh: false, reasonCode: null };
+      const credential = await transaction.memberIntegrationCredential.findFirst({ where: { id: connection.serviceCredentialId, connectionId: connection.id, lastAuthStatus: "valid", revokedAt: null }, select: { id: true, encryptedKey: true } });
+      if (!credential) return { state: "unknown", completedAt: null, validUntil: null, fresh: false, reasonCode: null };
+      const [clock] = await transaction.$queryRaw<Array<{ now: Date }>>(Prisma.sql`SELECT clock_timestamp() AS "now"`);
+      if (!clock) return { state: "unknown", completedAt: null, validUntil: null, fresh: false, reasonCode: null };
+      const scopeFingerprint = createAuditScopeFingerprint({ bindingId: binding.id, connectionId: connection.id, normalizedBaseUrl: new URL(connection.baseUrl).toString(), remoteProjectId: binding.remoteProjectId, credentialId: credential.id, credentialFingerprint: createHash("sha256").update(credential.encryptedKey).digest("hex") });
+      const run = await transaction.integrationAuditRun.findFirst({ where: { bindingId, scopeFingerprint }, orderBy: { updatedAt: "desc" }, select: { state: true, completedAt: true, validUntil: true, reasonCode: true, scopeFingerprint: true } });
+      return auditHealthForScope({ bindingId, connectionId: connection.id, baseUrl: connection.baseUrl, remoteProjectId: binding.remoteProjectId, credentialId: credential.id, encryptedKey: credential.encryptedKey }, run, clock.now);
+    });
+  } catch (error) { if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021") return { state: "unknown", completedAt: null, validUntil: null, fresh: false, reasonCode: null }; throw error; }
 }
 
 export async function getWorkspaceConnection(
