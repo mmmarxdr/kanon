@@ -1358,6 +1358,12 @@ model IntegrationAuditCheckpoint {
   expectedTotal      Int                 @map("expected_total")
   lastIssueUpdatedAt DateTime?           @map("last_issue_updated_at")
   lastIssueId        String?             @map("last_issue_id")
+  pageCheckpointUpdatedAt DateTime?       @map("page_checkpoint_updated_at")
+  pageCheckpointRemoteId  String?         @map("page_checkpoint_remote_id")
+  pageCheckpointToken     String?         @map("page_checkpoint_token")
+  checkpointVersion        Int?            @map("checkpoint_version")
+  previousPassFingerprint  String?         @map("previous_pass_fingerprint")
+  passComplete             Boolean?        @map("pass_complete")
   scopeFingerprint   String              @map("scope_fingerprint")
   fence              Int
   updatedAt          DateTime            @updatedAt @map("updated_at")

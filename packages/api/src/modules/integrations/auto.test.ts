@@ -173,6 +173,7 @@ describe("integration scheduler", () => {
       pageSize: 100,
       maxPasses: 2,
       terminalFreshnessMs: 300_000,
+      retentionDays: 30,
       signal: expect.any(AbortSignal),
     });
     await app.close();

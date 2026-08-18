@@ -187,6 +187,7 @@ export const envSchema = z.object({
   INTEGRATION_AUDIT_PAGE_SIZE: z.string().optional().default("100").transform(Number).pipe(z.number().int().min(1).max(100)),
   INTEGRATION_AUDIT_TIMEOUT_MS: z.string().optional().default("30000").transform(Number).pipe(z.number().int().min(1_000).max(120_000)),
   INTEGRATION_AUDIT_FRESHNESS_MS: z.string().optional().default("300000").transform(Number).pipe(z.number().int().min(60_000).max(3_600_000)),
+  INTEGRATION_AUDIT_RETENTION_DAYS: z.string().optional().default("30").transform(Number).pipe(z.number().int().min(1).max(3650)),
   INTEGRATION_AUDIT_MAX_BINDINGS: z.string().optional().default("1").transform(Number).pipe(z.number().int().min(1).max(10)),
   TRIAGE_SEARCH_ENABLED: z
     .enum(["true", "false"])
