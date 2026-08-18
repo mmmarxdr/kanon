@@ -14,8 +14,8 @@ import { prisma } from "../../config/prisma.js";
 // ── Helpers for S2 WorkLog tests ──────────────────────────────────────────
 
 /**
- * Backdate a work session's startedAt so the duration calculation
- * in stopWork produces a predictable durationS ≥ 60.
+ * Backdate a work session's startedAt so stopWork has a deterministic,
+ * positive whole-second duration.
  */
 async function backdateSession(sessionId: string, secondsAgo: number): Promise<void> {
   const startedAt = new Date(Date.now() - secondsAgo * 1000);
@@ -369,8 +369,8 @@ describe("Work Session Routes", () => {
 
   // ── S2: WorkLog capture ───────────────────────────────────────────────
   //
-  // KAN-26: stopWork ≥ 60s creates one WorkLog + deletes session atomically;
-  //          stopWork < 60s creates no WorkLog; list endpoints shape.
+  // stopWork persists every positive whole-second WorkLog and deletes the
+  // session atomically; list endpoints retain their existing shape.
 
   describe("S2 — WorkLog capture", () => {
     describe("DELETE /api/issues/:key/work-sessions — WorkLog creation", () => {
@@ -419,10 +419,10 @@ describe("Work Session Routes", () => {
         expect(logs[0]!.reason).toBe("stopped");
       });
 
-      it("< 60s session: NO WorkLog created; session still deleted", async () => {
+      it("positive sub-minute session: creates one WorkLog + session is gone", async () => {
         const { member, issue } = await seedIssueContext();
 
-        // Start a session (fresh — startedAt is now, so duration will be < 60s)
+        // Start a session, then backdate it by one whole second.
         const startRes = await app.inject({
           method: "POST",
           url: `/api/issues/${issue.key}/work-sessions`,
@@ -431,8 +431,8 @@ describe("Work Session Routes", () => {
         });
         expect(startRes.statusCode).toBe(201);
         const sessionId = startRes.json().session.id as string;
+        await backdateSession(sessionId, 1);
 
-        // Stop immediately (duration << 60s)
         const stopRes = await app.inject({
           method: "DELETE",
           url: `/api/issues/${issue.key}/work-sessions`,
@@ -443,7 +443,9 @@ describe("Work Session Routes", () => {
         const body = stopRes.json();
         expect(body.ok).toBe(true);
         expect(body.deleted).toBe(true);
-        expect(body.workLog).toBeNull();
+        expect(body.workLog).not.toBeNull();
+        expect(body.workLog.durationS).toBeGreaterThanOrEqual(1);
+        expect(body.workLog.durationS).toBeLessThan(60);
 
         // Session must be gone
         const session = await prisma.workSession.findUnique({
@@ -451,11 +453,12 @@ describe("Work Session Routes", () => {
         });
         expect(session).toBeNull();
 
-        // No WorkLog created
+        // Exactly one positive WorkLog is preserved.
         const logs = await prisma.workLog.findMany({
           where: { issueId: issue.id, memberId: member.id },
         });
-        expect(logs).toHaveLength(0);
+        expect(logs).toHaveLength(1);
+        expect(logs[0]!.durationS).toBeGreaterThanOrEqual(1);
       });
 
       it("stop with X-Kanon-Client header: WorkLog.via set correctly", async () => {

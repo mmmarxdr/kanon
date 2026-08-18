@@ -230,6 +230,7 @@ model User {
 
   members                  Member[]
   workSessions             WorkSession[]
+  workTransitionLifecycles WorkTransitionLifecycle[]
   createdInvites           WorkspaceInvite[]
   passwordResetTokens      PasswordResetToken[]
   refreshTokens            RefreshToken[]
@@ -394,6 +395,7 @@ model Issue {
   comments          Comment[]
   workSessions      WorkSession[]
   workLogs          WorkLog[]
+  workTransitionLifecycles WorkTransitionLifecycle[]
   mentions          Mention[]
   documents         IssueDocument[]
   notifications     Notification[]
@@ -646,6 +648,7 @@ model Member {
   documents                   IssueDocument[]
   workSessions                WorkSession[]
   workLogs                    WorkLog[]
+  workTransitionLifecycles    WorkTransitionLifecycle[]
   cycleScopeEvents            CycleScopeEvent[]  @relation("CycleScopeAuthor")
   adminAuditLogs              AdminAuditLog[]
   mentionsReceived            Mention[]          @relation("MentionedMember")
@@ -819,10 +822,60 @@ model WorkSession {
   memberId String @map("member_id") @db.Uuid
   member   Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 
+  /// Exact durable generation identity for transition-driven sessions.
+  transitionLifecycleId String?                  @unique @map("transition_lifecycle_id") @db.Uuid
+  transitionLifecycle   WorkTransitionLifecycle? @relation(fields: [transitionLifecycleId], references: [id], onDelete: SetNull)
+
   @@unique([userId, issueId])
   @@index([issueId, lastHeartbeat])
   @@index([memberId, lastHeartbeat])
   @@map("work_sessions")
+}
+
+/// Durable identity and pairing state for transition-driven work capture.
+///
+/// `startIdentity` is derived from issue + worker + event-time start + source;
+/// `closeIdentity` is derived from issue + event-time close + source. Those are
+/// the complete stable semantics available from production transition events —
+/// the in-process DomainEvent.id is intentionally excluded because it resets on
+/// restart. A fully identical tuple is therefore a replay; two observationally
+/// identical transitions in the same millisecond deliberately converge.
+model WorkTransitionLifecycle {
+  id String @id @default(uuid()) @db.Uuid
+
+  source        String
+  startIdentity String? @unique @map("start_identity")
+  closeIdentity String? @unique @map("close_identity")
+  startedAt     DateTime? @map("started_at")
+  endedAt       DateTime? @map("ended_at")
+
+  /// A completion writes the exact WorkLog and this reference in one
+  /// serializable transaction. The unique reference is the DB-backed
+  /// one-WorkLog-per-lifecycle invariant.
+  workLogId String?  @unique @map("work_log_id") @db.Uuid
+  workLog   WorkLog? @relation(fields: [workLogId], references: [id], onDelete: SetNull)
+  workSession WorkSession?
+
+  /// Durable effect/outbox state. A committed completion with no
+  /// `effectsEmittedAt` is replayable after a process dies before emission.
+  effectsClaimedAt DateTime? @map("effects_claimed_at")
+  effectClaimToken String?   @map("effect_claim_token") @db.Uuid
+  effectsEmittedAt DateTime? @map("effects_emitted_at")
+
+  issueId String @map("issue_id") @db.Uuid
+  issue   Issue  @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  userId  String? @map("user_id") @db.Uuid
+  user    User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  memberId String? @map("member_id") @db.Uuid
+  member   Member? @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([issueId, startedAt])
+  @@index([issueId, endedAt])
+  @@index([effectsEmittedAt, effectsClaimedAt], map: "work_transition_lifecycles_effects_pending_idx")
+  @@map("work_transition_lifecycles")
 }
 
 model WorkspaceInvite {
@@ -1031,6 +1084,7 @@ model WorkLog {
 
   // PPM timesheet back-relation (KAN-100 PR3)
   timeEntry TimeEntry?
+  transitionLifecycle WorkTransitionLifecycle?
 
   @@index([issueId, endedAt(sort: Desc)])  // GET /issues/:key/worklogs
   @@index([memberId, endedAt(sort: Desc)]) // GET /me/worklogs

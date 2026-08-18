@@ -61,7 +61,9 @@ export default async function workSessionRoutes(
     async (request, _reply) => {
       const session = await workSessionService.heartbeat(
         request.params.key,
+        request.member!.id,
         request.user.userId,
+        request.via,
       );
       if (!session) {
         throw new AppError(

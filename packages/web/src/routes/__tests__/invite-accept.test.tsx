@@ -45,7 +45,7 @@ vi.mock("@/stores/auth-store", () => ({
   useAuthStore: Object.assign(
     () => ({
       isAuthenticated: true,
-      user: { id: "u1", email: "alice@co.com", displayName: "Alice", avatarUrl: null },
+      user: { userId: "u1", email: "alice@co.com", displayName: "Alice", avatarUrl: null },
       setUser: vi.fn(),
       clearUser: vi.fn(),
     }),
