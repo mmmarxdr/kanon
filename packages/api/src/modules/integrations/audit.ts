@@ -12,7 +12,7 @@ export interface AuditCensusLease {
 
 export interface AuditCensusPersistence {
   /** Loads the partial run under the held lease so a restart can retain its checkpoint and observation time. */
-  loadRun?(lease: AuditCensusLease): Promise<{ readonly checkpoint: AuditCheckpoint | null; readonly providerObservedAt: Date | null } | null>;
+  loadRun?(lease: AuditCensusLease): Promise<{ readonly checkpoint: AuditCheckpoint | null; readonly providerObservedAt: Date | null; readonly observations: readonly AuditObservation[] } | null>;
   /** Must check the existing binding poll lease token/fence and exact claimed scope. */
   isLeaseCurrent(lease: AuditCensusLease): Promise<boolean>;
   /** Must atomically write observations and checkpoint behind that same poll fence. */
@@ -135,6 +135,9 @@ function checkpoint(
   itemIndex: number,
   expectedTotal: number,
   issue?: RedmineIssueChange,
+  pageCheckpoint: PollCheckpoint | null = null,
+  previousPassFingerprint: string | null = null,
+  passComplete = false,
 ): AuditCheckpoint {
   return {
     pass,
@@ -143,6 +146,10 @@ function checkpoint(
     expectedTotal,
     lastIssueUpdatedAt: issue?.changedAt ?? null,
     lastIssueId: issue?.identity.remoteId ?? null,
+    checkpointVersion: 1,
+    pageCheckpoint,
+    previousPassFingerprint,
+    passComplete,
   };
 }
 
@@ -169,14 +176,16 @@ export async function runRedmineAuditCensus(
 
   const resumedRun = await persistence.loadRun?.(lease);
   if (resumedRun === null) return unknown("scope_or_fence_changed");
-  const resumeOffset = resumedRun?.checkpoint?.offset ?? 0;
-  let previousPass: string | null = null;
+  const resumedCheckpoint = resumedRun?.checkpoint ?? null;
+  const versionedResume = resumedCheckpoint?.checkpointVersion === 1;
+  const startingPass = versionedResume ? resumedCheckpoint.pass + (resumedCheckpoint.passComplete ? 1 : 0) : 0;
+  let previousPass: string | null = versionedResume ? resumedCheckpoint.previousPassFingerprint ?? null : null;
   let providerObservedAt: Date | null = resumedRun?.providerObservedAt ?? null;
-  for (let pass = 0; pass < options.maxPasses; pass += 1) {
+  for (let pass = startingPass; pass < options.maxPasses; pass += 1) {
     const passObservations: AuditObservation[] = [];
-    let offset = pass === 0 ? resumeOffset : 0;
+    let offset = 0;
     let expectedTotal = 0;
-    let finalCheckpoint = checkpoint(pass, offset, 0, 0);
+    let finalCheckpoint = checkpoint(pass, offset, 0, 0, undefined, null, previousPass);
     let pageCheckpoint: PollCheckpoint | null = null;
     let responseObservedAt: Date | null = null;
     do {
@@ -202,8 +211,14 @@ export async function runRedmineAuditCensus(
         if (detail.kind !== "accepted") return unknown(detail.kind === "unknown" ? detail.reasonCode : "detail_drift");
         if (detail.providerObservedAt.getTime() !== responseObservedAt.getTime()) return unknown("malformed_response");
         const observations = normalizedObservations(detail.value);
-        const nextCheckpoint = checkpoint(pass, offset, itemIndex, expectedTotal, issue);
-        const committed = await persistence.commitIssue({ lease, providerObservedAt, observations, checkpoint: nextCheckpoint, replace: pass > 0 && passObservations.length === 0 });
+        const nextCheckpoint = checkpoint(pass, offset, itemIndex, expectedTotal, issue, pageCheckpoint, previousPass);
+        const committed = await persistence.commitIssue({
+          lease,
+          providerObservedAt,
+          observations,
+          checkpoint: nextCheckpoint,
+          replace: passObservations.length === 0 && (pass > 0 || resumedRun !== undefined),
+        });
         if (options.signal?.aborted) return unknown("timeout");
         if (!committed) {
           return unknown("scope_or_fence_changed");
@@ -232,6 +247,16 @@ export async function runRedmineAuditCensus(
       if (!finished) return unknown("scope_or_fence_changed");
       return { kind: "complete-current-visible", scopeFingerprint: lease.scopeFingerprint };
     }
+    const completedPassCheckpoint = { ...finalCheckpoint, checkpointVersion: 1 as const, pageCheckpoint: null, previousPassFingerprint: currentPass, passComplete: true };
+    const committed = await persistence.commitIssue({
+      lease,
+      providerObservedAt: providerObservedAt!,
+      observations: [],
+      checkpoint: completedPassCheckpoint,
+      replace: passObservations.length === 0 && (pass > 0 || resumedRun !== undefined),
+    });
+    if (options.signal?.aborted) return unknown("timeout");
+    if (!committed) return unknown("scope_or_fence_changed");
     previousPass = currentPass;
   }
   return unknown("did_not_converge");

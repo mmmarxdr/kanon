@@ -138,7 +138,7 @@ describe("runRedmineAuditCensus", () => {
     const result = await runRedmineAuditCensus(source([["42"], ["42"]]), store.result, lease, { maxPasses: 2, pageSize: 10 });
 
     expect(result).toEqual({ kind: "complete-current-visible", scopeFingerprint: "scope-1" });
-    expect(store.committed).toHaveLength(2);
+    expect(store.committed).toHaveLength(3);
     expect(store.committed[0]).toMatchObject({
       lease, checkpoint: { pass: 0, offset: 0, itemIndex: 0, expectedTotal: 1, lastIssueId: "42" },
       observations: [{ identityType: "issue", remoteId: "42" }],
@@ -151,7 +151,7 @@ describe("runRedmineAuditCensus", () => {
     const result = await runRedmineAuditCensus(source([["42", "43"], ["42", "43"]]), store.result, lease, { maxPasses: 2, pageSize: 10 });
 
     expect(result).toEqual({ kind: "complete-current-visible", scopeFingerprint: "scope-1" });
-    expect(store.committed).toHaveLength(4);
+    expect(store.committed).toHaveLength(5);
     expect(store.committed[0]).toMatchObject({
       observations: [{ identityType: "issue", remoteId: "42" }],
       checkpoint: { pass: 0, offset: 0, itemIndex: 0, expectedTotal: 2, lastIssueUpdatedAt: changedAt, lastIssueId: "42" },
@@ -170,7 +170,7 @@ describe("runRedmineAuditCensus", () => {
     await expect(runRedmineAuditCensus(source([["42", "43"], ["42", "43"]]), store.result, lease, { maxPasses: 2, pageSize: 10 }))
       .resolves.toEqual({ kind: "complete-current-visible", scopeFingerprint: "scope-1" });
 
-    expect(store.committed).toHaveLength(6);
+    expect(store.committed).toHaveLength(7);
     expect(store.committed[0]).toMatchObject({ checkpoint: { pass: 0, offset: 0, itemIndex: 0, lastIssueId: "42" } });
     expect(store.committed[1]).toMatchObject({ checkpoint: { pass: 0, offset: 0, itemIndex: 1, lastIssueId: "43" } });
     expect(store.committed[2]).toMatchObject({ checkpoint: { pass: 0, offset: 0, itemIndex: 0, lastIssueId: "42" } });
@@ -191,20 +191,21 @@ describe("runRedmineAuditCensus", () => {
     expect(result).toEqual({ kind: "unknown", reasonCode: "scope_or_fence_changed" });
     const replay = await runRedmineAuditCensus(source([["42"], ["42"]]), store.result, lease, { maxPasses: 2, pageSize: 10 });
     expect(replay).toEqual({ kind: "complete-current-visible", scopeFingerprint: "scope-1" });
-    expect(store.committed).toHaveLength(3);
+    expect(store.committed).toHaveLength(4);
     expect(store.committed[1]).toMatchObject({ observations: [{ identityType: "issue", remoteId: "42" }] });
   });
 
-  it("resumes inclusively from the saved checkpoint and retains the original provider observation time", async () => {
+  it("rebuilds a saved partial pass from zero and retains the original provider observation time", async () => {
     const committed: unknown[] = [];
     const resumedAt = new Date("2026-08-04T10:30:00Z");
     const laterAt = new Date("2026-08-04T10:31:00Z");
     const store: AuditCensusPersistence = {
       async loadRun() {
         return {
-          checkpoint: { pass: 0, offset: 0, itemIndex: 0, expectedTotal: 2, lastIssueUpdatedAt: changedAt, lastIssueId: "42" },
+          checkpoint: { pass: 0, offset: 0, itemIndex: 0, expectedTotal: 2, lastIssueUpdatedAt: changedAt, lastIssueId: "42", checkpointVersion: 1, pageCheckpoint: null },
           providerObservedAt: resumedAt,
-        };
+          observations: [{ identityType: "issue", remoteId: "42", parentRemoteId: null, sourceUpdatedAt: changedAt }],
+        } as never;
       },
       async isLeaseCurrent() { return true; },
       async commitIssue(input) { committed.push(input); return true; },
@@ -224,13 +225,14 @@ describe("runRedmineAuditCensus", () => {
 
     await expect(runRedmineAuditCensus(resumedSource, store, lease, { maxPasses: 2, pageSize: 10 }))
       .resolves.toEqual({ kind: "complete-current-visible", scopeFingerprint: "scope-1" });
-    expect(committed).toHaveLength(4);
-    expect(committed[0]).toMatchObject({ providerObservedAt: resumedAt, checkpoint: { offset: 0, itemIndex: 0, lastIssueId: "42" } });
+    expect(committed).toHaveLength(5);
+    expect(committed[0]).toMatchObject({ providerObservedAt: resumedAt, replace: true, checkpoint: { offset: 0, itemIndex: 0, lastIssueId: "42" } });
     expect(committed[1]).toMatchObject({ providerObservedAt: resumedAt, checkpoint: { offset: 0, itemIndex: 1, lastIssueId: "43" } });
+    expect(committed[2]).toMatchObject({ providerObservedAt: resumedAt, checkpoint: { pass: 0, passComplete: true } });
     expect(laterAt.getTime()).not.toBe(resumedAt.getTime());
   });
 
-  it("uses a saved nonzero offset only for the resumed partial pass before restarting convergence at zero", async () => {
+  it("restarts legacy checkpoints without a durable continuation from zero", async () => {
     const offsets: number[] = [];
     const store: AuditCensusPersistence = {
       async loadRun() {
@@ -257,8 +259,139 @@ describe("runRedmineAuditCensus", () => {
     };
 
     await expect(runRedmineAuditCensus(resumedSource, store, lease, { maxPasses: 2, pageSize: 10 }))
+      .resolves.toEqual({ kind: "complete-current-visible", scopeFingerprint: lease.scopeFingerprint });
+    expect(offsets).toEqual([0, 0]);
+  });
+
+  it("rebuilds a resumed page from zero rather than trusting its saved prefix", async () => {
+    const committed: string[] = [];
+    const detailReads: string[] = [];
+    const continuation = { updatedAt: changedAt, remoteId: "41", pageToken: "durable-token" };
+    let pageRead = 0;
+    const store: AuditCensusPersistence = {
+      async loadRun() {
+        return {
+          checkpoint: {
+            pass: 0, offset: 0, itemIndex: 0, expectedTotal: 2, lastIssueUpdatedAt: changedAt, lastIssueId: "42",
+            checkpointVersion: 1, pageCheckpoint: continuation,
+          } as never,
+          providerObservedAt: changedAt,
+          observations: [{ identityType: "issue", remoteId: "42", parentRemoteId: null, sourceUpdatedAt: changedAt }],
+        } as never;
+      },
+      async isLeaseCurrent() { return true; },
+      async commitIssue(input) {
+        committed.push(...input.observations.map((observation) => observation.remoteId));
+        return true;
+      },
+      async finish() { return true; },
+    };
+    const resumedSource: AuditCensusSource = {
+      async readPage(offset, _limit, pageCheckpoint) {
+        pageRead += 1;
+        expect({ offset, pageCheckpoint }).toEqual({ offset: 0, pageCheckpoint: null });
+        return { kind: "accepted", providerObservedAt: changedAt, value: {
+          changes: ["42", "43"].map((id) => ({ identity: { remoteId: id }, changedAt })), nextCheckpoint: null, hasMore: false,
+        } };
+      },
+      async readIssueDetail(issueId) {
+        detailReads.push(issueId);
+        return { kind: "accepted", providerObservedAt: changedAt, value: { issue: { identity: { remoteId: issueId }, changedAt }, comments: [], journalIds: [] } };
+      },
+    };
+
+    await expect(runRedmineAuditCensus(resumedSource, store, lease, { maxPasses: 2, pageSize: 10 }))
+      .resolves.toEqual({ kind: "complete-current-visible", scopeFingerprint: lease.scopeFingerprint });
+    expect(pageRead).toBe(2);
+    expect(detailReads).toEqual(["42", "43", "42", "43"]);
+    expect(committed).toEqual(["42", "43", "42", "43"]);
+  });
+
+  it.each([
+    { prefix: "changed", persistedIds: ["42"], itemIndex: 0, previousIds: ["42", "43"], replayIds: ["99", "43"], replayChangedAt: changedAt },
+    { prefix: "empty", persistedIds: ["42"], itemIndex: 0, previousIds: ["42"], replayIds: [], replayChangedAt: changedAt },
+    { prefix: "reordered", persistedIds: ["42", "43"], itemIndex: 1, previousIds: ["42", "43"], replayIds: ["43", "42"], replayChangedAt: new Date("2026-08-04T10:31:00Z") },
+  ])("fails closed when a resumed page has a $prefix skipped prefix", async ({ persistedIds, itemIndex, previousIds, replayIds, replayChangedAt }) => {
+    const continuation = { updatedAt: changedAt, remoteId: "41", pageToken: "durable-token" };
+    const previousPassFingerprint = previousIds
+      .map((id) => ["issue", "", id, changedAt.toISOString()].join("\0"))
+      .sort()
+      .join("\n");
+    const committed: unknown[] = [];
+    const finish = vi.fn().mockResolvedValue(true);
+    const store: AuditCensusPersistence = {
+      async loadRun() {
+        return {
+          checkpoint: {
+            pass: 1, offset: 0, itemIndex, expectedTotal: previousIds.length,
+            lastIssueUpdatedAt: changedAt, lastIssueId: persistedIds.at(-1)!,
+            checkpointVersion: 1, pageCheckpoint: continuation, previousPassFingerprint,
+          },
+          providerObservedAt: changedAt,
+          observations: persistedIds.map((remoteId) => ({ identityType: "issue" as const, remoteId, parentRemoteId: null, sourceUpdatedAt: changedAt })),
+        };
+      },
+      async isLeaseCurrent() { return true; },
+      async commitIssue(input) { committed.push(input); return true; },
+      finish,
+    };
+    const resumedSource: AuditCensusSource = {
+      async readPage(offset, _limit, pageCheckpoint) {
+        expect({ offset, pageCheckpoint }).toEqual({ offset: 0, pageCheckpoint: null });
+        return { kind: "accepted", providerObservedAt: replayChangedAt, value: {
+          changes: replayIds.map((remoteId) => ({ identity: { remoteId }, changedAt: replayChangedAt })),
+          nextCheckpoint: null,
+          hasMore: false,
+        } };
+      },
+      async readIssueDetail(issueId) {
+        return { kind: "accepted", providerObservedAt: replayChangedAt, value: {
+          issue: { identity: { remoteId: issueId }, changedAt: replayChangedAt }, comments: [], journalIds: [],
+        } };
+      },
+    };
+
+    await expect(runRedmineAuditCensus(resumedSource, store, lease, { maxPasses: 2, pageSize: 10 }))
       .resolves.toEqual({ kind: "unknown", reasonCode: "did_not_converge" });
-    expect(offsets).toEqual([1, 0]);
+    expect(committed[0]).toMatchObject({ replace: true, checkpoint: { pass: 1, offset: 0 } });
+    expect(finish).not.toHaveBeenCalled();
+  });
+
+  it("resumes the later durable pass with its prior-pass fingerprint inside the original pass budget", async () => {
+    const pageCalls: number[] = [];
+    const committed: unknown[] = [];
+    const previousPassFingerprint = ["issue", "", "42", changedAt.toISOString()].join("\0");
+    const store: AuditCensusPersistence = {
+      async loadRun() {
+        return {
+          checkpoint: {
+            pass: 1, offset: 0, itemIndex: -1, expectedTotal: 0, lastIssueUpdatedAt: null, lastIssueId: null,
+            checkpointVersion: 1, pageCheckpoint: null, previousPassFingerprint,
+          } as never,
+          providerObservedAt: changedAt,
+          observations: [],
+        } as never;
+      },
+      async isLeaseCurrent() { return true; },
+      async commitIssue(input) { committed.push(input); return true; },
+      async finish() { return true; },
+    };
+    const resumedSource: AuditCensusSource = {
+      async readPage(offset) {
+        pageCalls.push(offset);
+        return { kind: "accepted", providerObservedAt: changedAt, value: {
+          changes: [{ identity: { remoteId: "42" }, changedAt }], nextCheckpoint: null, hasMore: false,
+        } };
+      },
+      async readIssueDetail(issueId) {
+        return { kind: "accepted", providerObservedAt: changedAt, value: { issue: { identity: { remoteId: issueId }, changedAt }, comments: [], journalIds: [] } };
+      },
+    };
+
+    await expect(runRedmineAuditCensus(resumedSource, store, lease, { maxPasses: 2, pageSize: 10 }))
+      .resolves.toEqual({ kind: "complete-current-visible", scopeFingerprint: lease.scopeFingerprint });
+    expect(pageCalls).toEqual([0]);
+    expect(committed[0]).toMatchObject({ checkpoint: { pass: 1 } });
   });
 
   it("keeps timeout, detail failure, and incomplete pages non-complete", async () => {
@@ -295,8 +428,8 @@ describe("runRedmineAuditCensus", () => {
     const store = persistence();
     await expect(runRedmineAuditCensus(source([[], []]), store.result, lease, { maxPasses: 2, pageSize: 10 }))
       .resolves.toEqual({ kind: "complete-current-visible", scopeFingerprint: "scope-1" });
-    expect(store.committed).toHaveLength(1);
-    expect(store.committed[0]).toMatchObject({ replace: true, observations: [], checkpoint: { expectedTotal: 0, lastIssueId: null } });
+    expect(store.committed).toHaveLength(2);
+    expect(store.committed[1]).toMatchObject({ replace: true, observations: [], checkpoint: { expectedTotal: 0, lastIssueId: null } });
   });
 
   it("never treats partial, failed, stale, timeout, or scope-change outcomes as complete", async () => {
@@ -308,6 +441,55 @@ describe("runRedmineAuditCensus", () => {
     await expect(runRedmineAuditCensus(source([["42"]]), store.result, lease, { maxPasses: 2, pageSize: 10 }))
       .resolves.toEqual({ kind: "unknown", reasonCode: "scope_or_fence_changed" });
   });
+
+  it("RESUME-001 rebuilds a versioned later pass without trusting its saved offset or continuation", async () => {
+    const continuation = { updatedAt: changedAt, remoteId: "42", pageToken: "offset-5-token" };
+    const previousPassFingerprint = [
+      ["issue", "", "42", changedAt.toISOString()].join("\0"),
+      ["issue", "", "43", changedAt.toISOString()].join("\0"),
+    ].join("\n");
+    const committed: unknown[] = [];
+    const store: AuditCensusPersistence = {
+      async loadRun() {
+        return {
+          checkpoint: {
+            pass: 1, offset: 5, itemIndex: -1, expectedTotal: 6, lastIssueUpdatedAt: changedAt, lastIssueId: "42",
+            checkpointVersion: 1, pageCheckpoint: continuation, previousPassFingerprint,
+          },
+          providerObservedAt: changedAt,
+          observations: [{ identityType: "issue", remoteId: "42", parentRemoteId: null, sourceUpdatedAt: changedAt }],
+        } as never;
+      },
+      async isLeaseCurrent() { return true; },
+      async commitIssue(input) { committed.push(input); return true; },
+      async finish() { return true; },
+    };
+    const resumedSource: AuditCensusSource = {
+      async readPage(offset, _limit, pageCheckpoint) {
+        expect({ offset, pageCheckpoint }).toEqual({ offset: 0, pageCheckpoint: null });
+        return {
+          kind: "accepted" as const, providerObservedAt: changedAt,
+          value: {
+            changes: ["42", "43"].map((remoteId) => ({ identity: { remoteId }, changedAt })),
+            nextCheckpoint: null,
+            hasMore: false,
+          },
+        };
+      },
+      async readIssueDetail(issueId) {
+        return {
+          kind: "accepted" as const, providerObservedAt: changedAt,
+          value: { issue: { identity: { remoteId: issueId }, changedAt }, comments: [], journalIds: [] },
+        };
+      },
+    };
+
+    await expect(runRedmineAuditCensus(resumedSource, store, lease, { maxPasses: 2, pageSize: 5 }))
+      .resolves.toEqual({ kind: "complete-current-visible", scopeFingerprint: lease.scopeFingerprint });
+    expect(committed).toHaveLength(2);
+    expect(committed[0]).toMatchObject({ replace: true, checkpoint: { pass: 1, offset: 0, itemIndex: 0 } });
+  });
+
 });
 
 describe("verifyCurrentVisibleIdentity", () => {
