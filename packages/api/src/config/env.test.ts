@@ -299,3 +299,48 @@ describe("envSchema — REDMINE_ENDPOINT_ALLOWLIST", () => {
     }
   });
 });
+
+describe("envSchema — audit operations", () => {
+  const base = {
+    DATABASE_URL: "postgresql://user:pass@localhost:5432/kanon",
+    JWT_SECRET: "a".repeat(16),
+    JWT_REFRESH_SECRET: "b".repeat(16),
+  };
+
+  it("keeps polling audits disabled and uses bounded operational defaults", () => {
+    const audit = envSchema.parse(base);
+
+    expect(audit.INTEGRATION_AUDIT_ENABLED).toBe(false);
+    expect(audit.INTEGRATION_AUDIT_CADENCE_MS).toBe(300_000);
+    expect(audit.INTEGRATION_AUDIT_MAX_PASSES).toBe(2);
+    expect(audit.INTEGRATION_AUDIT_PAGE_SIZE).toBe(100);
+    expect(audit.INTEGRATION_AUDIT_TIMEOUT_MS).toBe(30_000);
+    expect(audit.INTEGRATION_AUDIT_FRESHNESS_MS).toBe(300_000);
+    expect(audit.INTEGRATION_AUDIT_RETENTION_DAYS).toBe(30);
+    expect(audit.INTEGRATION_AUDIT_MAX_BINDINGS).toBe(1);
+  });
+
+  it("accepts explicit audit enablement and rejects invalid gate values", () => {
+    expect(envSchema.parse({ ...base, INTEGRATION_AUDIT_ENABLED: "true" }).INTEGRATION_AUDIT_ENABLED)
+      .toBe(true);
+    expect(envSchema.safeParse({ ...base, INTEGRATION_AUDIT_ENABLED: "yes" }).success).toBe(false);
+  });
+
+  it("accepts configured safe audit limits and rejects unbounded values", () => {
+    const configured = envSchema.parse({
+      ...base,
+      INTEGRATION_AUDIT_CADENCE_MS: "60000",
+      INTEGRATION_AUDIT_MAX_PASSES: "3",
+      INTEGRATION_AUDIT_PAGE_SIZE: "50",
+      INTEGRATION_AUDIT_TIMEOUT_MS: "1000",
+      INTEGRATION_AUDIT_FRESHNESS_MS: "60000",
+      INTEGRATION_AUDIT_RETENTION_DAYS: "60",
+      INTEGRATION_AUDIT_MAX_BINDINGS: "2",
+    });
+    expect(configured.INTEGRATION_AUDIT_MAX_BINDINGS).toBe(2);
+    expect(configured.INTEGRATION_AUDIT_RETENTION_DAYS).toBe(60);
+
+    expect(envSchema.safeParse({ ...base, INTEGRATION_AUDIT_MAX_BINDINGS: "0" }).success).toBe(false);
+    expect(envSchema.safeParse({ ...base, INTEGRATION_AUDIT_PAGE_SIZE: "101" }).success).toBe(false);
+  });
+});
