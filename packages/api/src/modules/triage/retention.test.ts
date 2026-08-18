@@ -20,8 +20,6 @@ import {
   disconnectTestDb,
 } from "../../test/helpers.js";
 import { randomUUID } from "node:crypto";
-import client from "prom-client";
-import { registerTriageMetrics } from "./observability.js";
 
 /** Helper to create a policy with retention days */
 async function createPolicy(
@@ -473,22 +471,17 @@ describe("Triage Retention (KAN-193 PR9)", () => {
       expect(mockLogger.info).toHaveBeenCalledWith("Triage retention housekeeping stopped");
     });
 
-    it("emits correlated expiry metrics and stage traces", async () => {
+    it("correlates expiry failure logs", async () => {
       vi.useFakeTimers();
       const logger = { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() };
-      const metrics = registerTriageMetrics(new client.Registry());
-      const expiry = vi.fn().mockResolvedValue(0);
-      const stop = registerRetentionHousekeeping(logger, metrics, expiry);
+      const failure = new Error("failed");
+      const expiry = vi.fn().mockRejectedValue(failure);
+      const stop = registerRetentionHousekeeping(logger, expiry);
       try {
         await vi.advanceTimersByTimeAsync(60_000);
-        expect(expiry).toHaveBeenCalledOnce();
-        const requests = await metrics.proposalRequests.get();
-        expect(requests.values).toEqual(expect.arrayContaining([
-          expect.objectContaining({ labels: { operation: "expire", outcome: "success" } }),
-        ]));
-        expect(logger.info).toHaveBeenCalledWith(
-          expect.objectContaining({ correlationId: expect.any(String), operation: "expire", stage: "sweep" }),
-          "Triage expiry sweep completed",
+        expect(logger.error).toHaveBeenCalledWith(
+          { err: failure, correlationId: expect.any(String), operation: "expire", stage: "sweep" },
+          "Triage expiry sweep failed",
         );
       } finally {
         stop();
@@ -496,22 +489,25 @@ describe("Triage Retention (KAN-193 PR9)", () => {
       }
     });
 
-    it("correlates expiry failure logs", async () => {
+    it("correlates retention failure logs", async () => {
       vi.useFakeTimers();
+      vi.spyOn(Math, "random").mockReturnValue(0);
       const logger = { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() };
-      const expiry = vi.fn().mockRejectedValue(new Error("failed"));
-      const stop = registerRetentionHousekeeping(logger, undefined, expiry);
+      const failure = new Error("failed");
+      const expiry = vi.fn(() => new Promise<number>(() => undefined));
+      const retention = vi.fn().mockRejectedValue(failure);
+      const stop = registerRetentionHousekeeping(logger, expiry, retention);
       try {
-        await vi.advanceTimersByTimeAsync(60_000);
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
         expect(logger.error).toHaveBeenCalledWith(
-          expect.objectContaining({
-            correlationId: expect.any(String), operation: "expire", stage: "sweep",
-          }),
-          "Triage expiry sweep failed",
+          { err: failure, correlationId: expect.any(String), operation: "retain", stage: "sweep" },
+          "Triage retention sweep failed",
         );
       } finally {
         stop();
         vi.useRealTimers();
+        vi.restoreAllMocks();
       }
     });
   });

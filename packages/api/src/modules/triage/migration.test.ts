@@ -155,6 +155,31 @@ describe("Triage Proposal Migration Schema", () => {
     ]));
   });
 
+  it("has the lifecycle snapshot lookup index in lookup order", async () => {
+    const indexes = await prisma.$queryRaw<Array<{ indexname: string; columns: string[] }>>`
+      SELECT index_class.relname AS indexname,
+             array_agg(attribute.attname ORDER BY index_column.ordinality)::text[] AS columns
+      FROM pg_class AS table_class
+      JOIN pg_namespace AS namespace ON namespace.oid = table_class.relnamespace
+      JOIN pg_index AS index_metadata ON index_metadata.indrelid = table_class.oid
+      JOIN pg_class AS index_class ON index_class.oid = index_metadata.indexrelid
+      CROSS JOIN LATERAL unnest(index_metadata.indkey) WITH ORDINALITY
+        AS index_column(attribute_number, ordinality)
+      JOIN pg_attribute AS attribute
+        ON attribute.attrelid = table_class.oid
+       AND attribute.attnum = index_column.attribute_number
+      WHERE namespace.nspname = current_schema()
+        AND table_class.relname = 'triage_proposal_lifecycle_events'
+        AND index_class.relname = 'triage_proposal_lifecycle_events_proposal_id_created_at_id_idx'
+      GROUP BY index_class.relname
+    `;
+
+    expect(indexes).toEqual([{
+      indexname: "triage_proposal_lifecycle_events_proposal_id_created_at_id_idx",
+      columns: ["proposal_id", "created_at", "id"],
+    }]);
+  });
+
   it("rejects retention_days below the seven-day minimum", async () => {
     await expect(
       prisma.triagePolicy.create({

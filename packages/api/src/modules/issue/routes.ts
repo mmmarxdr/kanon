@@ -23,8 +23,7 @@ import {
   requireMember,
 } from "../../middleware/require-role.js";
 import * as issueService from "./service.js";
-import { SEARCH_LOGICAL_SCANNED, searchIssues } from "../triage/search.js";
-import { observeSearch, triageOutcome } from "../triage/observability.js";
+import { searchIssues } from "../triage/search.js";
 import { reconcileIssueTime } from "./reconcile.js";
 import { env } from "../../config/env.js";
 import { AppError } from "../../shared/types.js";
@@ -59,40 +58,15 @@ export default async function issueRoutes(
       },
     },
     async (request, reply) => {
-      const started = performance.now();
-      try {
-        const response = await searchIssues(
-          request.params.workspaceId,
-          request.member!.userId,
-          request.body,
-          request.user?.allowedProjectIds,
-          request.id,
-        );
-        observeSearch(
-          fastify.triageMetrics,
-          {
-            scope: response.effectiveScope.kind,
-            completeness: response.completeness,
-            outcome: response.degradation.length > 0 ? "degraded_success" : "success",
-          },
-          (performance.now() - started) / 1000,
-          { logicalScanned: response[SEARCH_LOGICAL_SCANNED] ?? null, returned: response.returnedCount },
-        );
-        return reply.status(200).send(response);
-      } catch (error) {
-        observeSearch(
-          fastify.triageMetrics,
-          {
-            scope: request.body.scope?.kind ?? "project",
-            completeness: "degraded",
-            outcome: triageOutcome(error),
-          },
-          (performance.now() - started) / 1000,
-          { logicalScanned: null, returned: 0 },
-        );
-        throw error;
-      }
-    }
+      const response = await searchIssues(
+        request.params.workspaceId,
+        request.member!.userId,
+        request.body,
+        request.user?.allowedProjectIds,
+        request.id,
+      );
+      return reply.status(200).send(response);
+    },
   );
 
   /**
