@@ -29,7 +29,9 @@ export interface RedmineAuditSourceOptions {
   readonly remoteProjectId: string;
 }
 
-type AuditClient = Pick<import("./http-client.js").RedmineHttpClient, "getWithResponse">;
+interface AuditClient {
+  getWithResponse<T>(path: string, signal?: AbortSignal): Promise<import("./http-client.js").RedmineHttpResponse<T>>;
+}
 
 function failureCode(error: unknown, detail = false): RedmineAuditFailureCode {
   if (error instanceof RedmineHttpError) {
@@ -87,7 +89,9 @@ export class RedmineAuditSource {
     offset: number,
     limit: number,
     checkpoint: PollCheckpoint | null,
+    signal?: AbortSignal,
   ): Promise<RedmineAuditRead<PollPage<RedmineIssueChange>>> {
+    if (signal?.aborted) return { kind: "unknown", reasonCode: "timeout" };
     const query = new URLSearchParams({
       project_id: this.options.remoteProjectId,
       sort: "updated_on:asc,id:asc",
@@ -97,7 +101,7 @@ export class RedmineAuditSource {
       limit: String(limit),
     });
     try {
-      const response = await this.client.getWithResponse<unknown>(`/issues.json?${query}`);
+      const response = await this.client.getWithResponse<unknown>(`/issues.json?${query}`, signal);
       const observedAt = this.observeDate(response);
       if (!observedAt) return { kind: "unknown", reasonCode: "malformed_response" };
       return {
@@ -106,12 +110,12 @@ export class RedmineAuditSource {
         value: decodeRedmineIssueListPage(response.value, this.options.remoteProjectId, offset, limit, checkpoint),
       };
     } catch (error) {
-      return { kind: "unknown", reasonCode: failureCode(error) };
+      return { kind: "unknown", reasonCode: signal?.aborted ? "timeout" : failureCode(error) };
     }
   }
 
-  async readIssueDetail(issueId: string): Promise<RedmineAuditRead<DecodedRedmineIssue> | { readonly kind: "not_visible_in_scope" }> {
-    return this.readDetail(issueId);
+  async readIssueDetail(issueId: string, signal?: AbortSignal): Promise<RedmineAuditRead<DecodedRedmineIssue> | { readonly kind: "not_visible_in_scope" }> {
+    return this.readDetail(issueId, signal);
   }
 
   async readIssue(issueId: string): Promise<RedmineAuditIdentityRead> {
@@ -129,9 +133,10 @@ export class RedmineAuditSource {
     return { kind: "visible", providerObservedAt: detail.providerObservedAt, issueId, journalId };
   }
 
-  private async readDetail(issueId: string): Promise<RedmineAuditRead<DecodedRedmineIssue> | { readonly kind: "not_visible_in_scope" }> {
+  private async readDetail(issueId: string, signal?: AbortSignal): Promise<RedmineAuditRead<DecodedRedmineIssue> | { readonly kind: "not_visible_in_scope" }> {
+    if (signal?.aborted) return { kind: "unknown", reasonCode: "timeout" };
     try {
-      const response = await this.client.getWithResponse<unknown>(`/issues/${issueId}.json?include=journals`);
+      const response = await this.client.getWithResponse<unknown>(`/issues/${issueId}.json?include=journals`, signal);
       const observedAt = this.observeDate(response);
       if (!observedAt) return { kind: "unknown", reasonCode: "malformed_response" };
       return {
@@ -141,7 +146,7 @@ export class RedmineAuditSource {
       };
     } catch (error) {
       if (error instanceof RedmineHttpError && error.statusCode === 404) return { kind: "not_visible_in_scope" };
-      return { kind: "unknown", reasonCode: failureCode(error, true) };
+      return { kind: "unknown", reasonCode: signal?.aborted ? "timeout" : failureCode(error, true) };
     }
   }
 
