@@ -10,6 +10,8 @@ import {
   reconcileTime,
   toFiniteHours,
 } from "./reconcile-api";
+import { workCaptureRegistry } from "@/lib/work-capture-lifecycle";
+import type { Issue } from "@/types/issue";
 
 interface GroupTransitionVars {
   groupKey: string;
@@ -41,7 +43,7 @@ function parseBlockedIssues(details: Record<string, unknown> | undefined): Block
 
 /** POST /api/issues/:key/transition { to_state } — per-issue retry after reconcile. */
 function transitionIssue(issueKey: string, toState: IssueState) {
-  return fetchApi<void>(`/api/issues/${encodeURIComponent(issueKey)}/transition`, {
+  return fetchApi<Issue>(`/api/issues/${encodeURIComponent(issueKey)}/transition`, {
     method: "POST",
     body: JSON.stringify({ to_state: toState }),
   });
@@ -81,13 +83,17 @@ export function useGroupTransitionMutation(projectKey: string) {
 
   const mutation = useMutation({
     mutationFn: ({ groupKey, toState }: GroupTransitionVars) =>
-      fetchApi<{ count: number; groupKey: string; state: string }>(
+      fetchApi<{ count: number; keys: string[]; groupKey: string; state: string }>(
         `/api/projects/${encodeURIComponent(projectKey)}/issues/groups/${encodeURIComponent(groupKey)}/transition`,
         {
           method: "PATCH",
           body: JSON.stringify({ to_state: toState }),
         },
       ),
+
+    onSuccess: (result) => {
+      workCaptureRegistry.recordBatchTransitionResult(result);
+    },
 
     onMutate: async ({ groupKey, toState }) => {
       // Cancel outgoing refetches
@@ -156,7 +162,8 @@ export function useGroupTransitionMutation(projectKey: string) {
       setIsSubmitting(true);
       try {
         await reconcileTime(issueKey, confirmedTotalHours);
-        await transitionIssue(issueKey, "done");
+        const transitioned = await transitionIssue(issueKey, "done");
+        workCaptureRegistry.recordTransitionResult(transitioned);
 
         setBlockedIssues((prev) =>
           (prev ?? []).filter((b) => b.key !== issueKey),

@@ -16,6 +16,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { issueKeys, cycleKeys } from "@/lib/query-keys";
 
+const recordTransitionResult = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/work-capture-lifecycle", () => ({
+  workCaptureRegistry: { recordTransitionResult },
+}));
+
 vi.mock("@/lib/api-client", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api-client")>(
     "@/lib/api-client",
@@ -53,6 +58,20 @@ const ISSUE_KEY = "TEST-1";
 describe("useTransitionMutation", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("claims the exact issue key returned by the backend, never the requested key", async () => {
+    const { fetchApi } = await import("@/lib/api-client");
+    vi.mocked(fetchApi).mockResolvedValue({ key: "TEST-RETURNED" });
+    const { wrapper } = createWrapper();
+    const { useTransitionMutation } = await import("./use-transition-mutation");
+    const { result } = renderHook(() => useTransitionMutation(PROJECT_KEY), { wrapper });
+
+    act(() => result.current.mutate({ issueKey: "TEST-REQUESTED", toState: "in_progress" }));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(recordTransitionResult).toHaveBeenCalledWith({ key: "TEST-RETURNED" });
+    expect(recordTransitionResult).not.toHaveBeenCalledWith({ key: "TEST-REQUESTED" });
   });
 
   it("success path: invalidates issueKeys.list(projectKey) on settled", async () => {

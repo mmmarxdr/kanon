@@ -3,10 +3,10 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import {
   IssueKeyParam,
   StartWorkSessionBody,
-  WorkCaptureCommandBody,
+  VersionedWorkCaptureCommandBody,
   WorkCaptureEffectResponse,
   WorkSessionHeartbeatBody,
-  type WorkCaptureCommandBody as WorkCaptureCommand,
+  type VersionedWorkCaptureCommandBody as VersionedWorkCaptureCommand,
   type WorkCaptureIntentSnapshot as CaptureIntentSnapshot,
   RecordInterruptionBody,
   MeWorkLogsQuery,
@@ -105,8 +105,8 @@ function invalidWorkCaptureCommand(): AppError {
   return new AppError(400, "VALIDATION_ERROR", "Invalid work-capture command");
 }
 
-function parseWorkCaptureCommand(body: unknown): WorkCaptureCommand {
-  const parsed = WorkCaptureCommandBody.safeParse(body);
+function parseWorkCaptureCommand(body: unknown): VersionedWorkCaptureCommand {
+  const parsed = VersionedWorkCaptureCommandBody.safeParse(body);
   if (!parsed.success) throw invalidWorkCaptureCommand();
   return parsed.data;
 }
@@ -136,12 +136,13 @@ async function deliveryStatusAfterAcceptance(input: {
 }
 
 async function requestDurableCaptureEffect(input: {
-  command: WorkCaptureCommand;
+  command: VersionedWorkCaptureCommand;
   kind: WorkCaptureEffectKind;
   operation: WorkCaptureOperation;
   userId: string;
   memberId: string;
   issueId: string;
+  ownerKind: "web" | "mcp" | "implicit";
   log: WorkCaptureRouteLogger;
 }) {
   const accepted = await beforeDurableAcceptance({
@@ -159,6 +160,12 @@ async function requestDurableCaptureEffect(input: {
         epoch: input.command.epoch,
         leaseGeneration: input.command.leaseGeneration,
         kind: input.kind,
+        ...(input.ownerKind === "implicit"
+          ? { ownerKind: "implicit" as const }
+          : {
+              ownerId: (input.command as VersionedWorkCaptureCommand & { ownerId: string }).ownerId,
+              ownerKind: input.ownerKind,
+            }),
       });
     },
   });
@@ -241,6 +248,8 @@ export default async function workSessionRoutes(fastify: FastifyInstance): Promi
       if (!parsed.success) throw invalidWorkCaptureCommand();
 
       if ("commandId" in parsed.data) {
+        const ownerScoped = "ownerId" in parsed.data;
+        if (request.via === "web" && !ownerScoped) throw invalidWorkCaptureCommand();
         const result = await requestDurableCaptureEffect({
           command: parsed.data,
           kind: "activity",
@@ -248,6 +257,7 @@ export default async function workSessionRoutes(fastify: FastifyInstance): Promi
           userId: request.user.userId,
           memberId: request.member!.id,
           issueId: request.issueId!,
+          ownerKind: ownerScoped ? (request.via === "web" ? "web" : "mcp") : "implicit",
           log: request.log,
         });
         return reply.status(result.statusCode).send(result.response);
@@ -281,7 +291,7 @@ export default async function workSessionRoutes(fastify: FastifyInstance): Promi
         preHandler: [requireIssueMember("key")],
         schema: {
           params: IssueKeyParam,
-          body: WorkCaptureCommandBody,
+          body: VersionedWorkCaptureCommandBody,
           response: {
             200: WorkCaptureEffectResponse,
             202: WorkCaptureEffectResponse,
@@ -290,6 +300,8 @@ export default async function workSessionRoutes(fastify: FastifyInstance): Promi
       },
       async (request, reply) => {
         const command = parseWorkCaptureCommand(request.body);
+        const ownerScoped = "ownerId" in command;
+        if (request.via === "web" && !ownerScoped) throw invalidWorkCaptureCommand();
         const result = await requestDurableCaptureEffect({
           command,
           kind,
@@ -297,6 +309,7 @@ export default async function workSessionRoutes(fastify: FastifyInstance): Promi
           userId: request.user.userId,
           memberId: request.member!.id,
           issueId: request.issueId!,
+          ownerKind: ownerScoped ? (request.via === "web" ? "web" : "mcp") : "implicit",
           log: request.log,
         });
         return reply.status(result.statusCode).send(result.response);

@@ -87,6 +87,22 @@ function requestFor(
   } as const;
 }
 
+function ownerRequestFor(
+  intent: { id: string; epoch: string; leaseGeneration: number },
+  kind: "activity" | "release" | "close",
+  ownerId: string,
+  ownerKind: "web" | "mcp" = "web",
+  commandId = randomUUID()
+) {
+  return {
+    ...requestFor(intent, kind, commandId),
+    ownerId,
+    ownerKind,
+  } as const;
+}
+
+const IMPLICIT_OWNER_ID = "00000000-0000-4000-8000-000000000001";
+
 function jsonWithoutBigInt(value: unknown): string {
   return JSON.stringify(value, (_key, candidate) =>
     typeof candidate === "bigint" ? candidate.toString() : candidate
@@ -1003,8 +1019,237 @@ describe("durable WorkCaptureIntent effects", () => {
         "work_session.ended",
         "work_session.started",
       ]);
+      expect(rows[2]?.payload).toMatchObject({
+        captureIntent: {
+          epoch: intent.epoch,
+          leaseGeneration: intent.leaseGeneration,
+        },
+      });
       expect(rows[0]?.acknowledgedAt).toEqual(expect.any(Date));
       expect(rows.slice(1).every((row) => row.acknowledgedAt === null)).toBe(true);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("uses DB time for two owners, keeps the session after release A, and closes once after release B", async () => {
+    const startedAt = new Date(Date.now() - 60_000);
+    const context = await seedContext({ state: "capturing", withSession: true, startedAt });
+    const ownerA = randomUUID();
+    const ownerB = randomUUID();
+    const unsubscribe = registerCaptureIntentListener(eventBus);
+    try {
+      const before = await prisma.$queryRaw<Array<{ now: Date }>>`SELECT CURRENT_TIMESTAMP AS now`;
+
+      const activityA = await requestWorkCaptureIntentEffect(
+        ownerRequestFor(context.intent, "activity", ownerA)
+      );
+      expect(await publishDomainEventByDeliveryKey(activityA.deliveryKey)).toBe(true);
+      await drainDomainEventOutbox();
+      const activityB = await requestWorkCaptureIntentEffect(
+        ownerRequestFor(context.intent, "activity", ownerB, "mcp")
+      );
+      expect(await publishDomainEventByDeliveryKey(activityB.deliveryKey)).toBe(true);
+      await drainDomainEventOutbox();
+      const after = await prisma.$queryRaw<Array<{ now: Date }>>`SELECT CURRENT_TIMESTAMP AS now`;
+      const owners = await prisma.workCaptureOwnerLease.findMany({
+        where: { intentId: context.intent.id },
+        orderBy: { ownerId: "asc" },
+      });
+      expect(owners).toHaveLength(2);
+      for (const owner of owners) {
+        expect(owner.lastSeenAt.getTime()).toBeGreaterThanOrEqual(before[0]!.now.getTime());
+        expect(owner.lastSeenAt.getTime()).toBeLessThanOrEqual(after[0]!.now.getTime());
+        expect(owner.expiresAt.getTime() - owner.lastSeenAt.getTime()).toBe(5 * 60_000);
+        expect(owner).toMatchObject({
+          epoch: context.intent.epoch,
+          leaseGeneration: context.intent.leaseGeneration,
+        });
+      }
+
+      const releaseA = await requestWorkCaptureIntentEffect(
+        ownerRequestFor(context.intent, "release", ownerA)
+      );
+      expect(await publishDomainEventByDeliveryKey(releaseA.deliveryKey)).toBe(true);
+      expect(await prisma.workSession.count({ where: { issueId: context.issue.id } })).toBe(1);
+      expect(
+        await prisma.workCaptureOwnerLease.findMany({ where: { intentId: context.intent.id } })
+      ).toMatchObject([{ ownerId: ownerB }]);
+
+      const current = await prisma.workCaptureIntent.findUniqueOrThrow({
+        where: { id: context.intent.id },
+      });
+      const releaseB = await requestWorkCaptureIntentEffect(
+        ownerRequestFor(current, "release", ownerB, "mcp")
+      );
+      expect(await publishDomainEventByDeliveryKey(releaseB.deliveryKey)).toBe(true);
+      expect(await prisma.workSession.count({ where: { issueId: context.issue.id } })).toBe(0);
+      expect(await prisma.workLog.count({ where: { issueId: context.issue.id } })).toBe(1);
+      expect(
+        await prisma.domainEventOutbox.count({
+          where: {
+            laneKey: releaseB.laneKey,
+            eventType: "work_session.ended",
+          },
+        })
+      ).toBe(1);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("rejects stale owner fences without mutation and authoritative close clears every owner", async () => {
+    const context = await seedContext({ state: "capturing", withSession: true });
+    const ownerA = randomUUID();
+    const ownerB = randomUUID();
+
+    await expect(
+      requestWorkCaptureIntentEffect({
+        ...ownerRequestFor(context.intent, "activity", ownerA),
+        leaseGeneration: context.intent.leaseGeneration + 1,
+      })
+    ).rejects.toMatchObject({ code: "CAPTURE_EFFECT_STALE_FENCE" });
+    expect(
+      await prisma.workCaptureOwnerLease.count({ where: { intentId: context.intent.id } })
+    ).toBe(0);
+
+    const unsubscribe = registerCaptureIntentListener(eventBus);
+    try {
+      const activityA = await requestWorkCaptureIntentEffect(
+        ownerRequestFor(context.intent, "activity", ownerA)
+      );
+      expect(await publishDomainEventByDeliveryKey(activityA.deliveryKey)).toBe(true);
+      await drainDomainEventOutbox();
+      const activityB = await requestWorkCaptureIntentEffect(
+        ownerRequestFor(context.intent, "activity", ownerB)
+      );
+      expect(await publishDomainEventByDeliveryKey(activityB.deliveryKey)).toBe(true);
+      await drainDomainEventOutbox();
+      const close = await requestWorkCaptureIntentEffect(requestFor(context.intent, "close"));
+      expect(await publishDomainEventByDeliveryKey(close.deliveryKey)).toBe(true);
+      expect(
+        await prisma.workCaptureOwnerLease.count({ where: { intentId: context.intent.id } })
+      ).toBe(0);
+      expect(
+        await prisma.workCaptureIntent.findUniqueOrThrow({ where: { id: context.intent.id } })
+      ).toMatchObject({ state: "closed" });
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("keeps an implicit legacy/manual anchor alive when the Web owner releases", async () => {
+    const context = await seedContext({ state: "capturing", withSession: true });
+    const webOwner = randomUUID();
+    const now = new Date();
+    await prisma.workCaptureOwnerLease.create({
+      data: {
+        intentId: context.intent.id,
+        ownerId: IMPLICIT_OWNER_ID,
+        epoch: context.intent.epoch,
+        leaseGeneration: context.intent.leaseGeneration,
+        ownerKind: "implicit",
+        firstSeenAt: now,
+        lastSeenAt: now,
+        expiresAt: new Date(now.getTime() + 5 * 60_000),
+      },
+    });
+    const unsubscribe = registerCaptureIntentListener(eventBus);
+    try {
+      const activity = await requestWorkCaptureIntentEffect(
+        ownerRequestFor(context.intent, "activity", webOwner)
+      );
+      expect(await publishDomainEventByDeliveryKey(activity.deliveryKey)).toBe(true);
+      await drainDomainEventOutbox();
+      const release = await requestWorkCaptureIntentEffect(
+        ownerRequestFor(context.intent, "release", webOwner)
+      );
+      expect(await publishDomainEventByDeliveryKey(release.deliveryKey)).toBe(true);
+      expect(await prisma.workSession.count({ where: { issueId: context.issue.id } })).toBe(1);
+      expect(
+        await prisma.workCaptureOwnerLease.findMany({ where: { intentId: context.intent.id } })
+      ).toMatchObject([{ ownerId: IMPLICIT_OWNER_ID, ownerKind: "implicit" }]);
+      expect(
+        await prisma.workCaptureIntent.findUniqueOrThrow({ where: { id: context.intent.id } })
+      ).toMatchObject({ state: "capturing", pendingEffectKind: null });
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("makes concurrent final-owner releases converge on one terminal session effect", async () => {
+    const context = await seedContext({
+      state: "capturing",
+      withSession: true,
+      startedAt: new Date(Date.now() - 60_000),
+    });
+    const ownerA = randomUUID();
+    const ownerB = randomUUID();
+    const unsubscribe = registerCaptureIntentListener(eventBus);
+    try {
+      const activityA = await requestWorkCaptureIntentEffect(
+        ownerRequestFor(context.intent, "activity", ownerA)
+      );
+      expect(await publishDomainEventByDeliveryKey(activityA.deliveryKey)).toBe(true);
+      await drainDomainEventOutbox();
+      const activityB = await requestWorkCaptureIntentEffect(
+        ownerRequestFor(context.intent, "activity", ownerB)
+      );
+      expect(await publishDomainEventByDeliveryKey(activityB.deliveryKey)).toBe(true);
+      await drainDomainEventOutbox();
+      const [releaseA, releaseB] = await Promise.all([
+        requestWorkCaptureIntentEffect(ownerRequestFor(context.intent, "release", ownerA)),
+        requestWorkCaptureIntentEffect(ownerRequestFor(context.intent, "release", ownerB)),
+      ]);
+      await Promise.all([
+        publishDomainEventByDeliveryKey(releaseA.deliveryKey),
+        publishDomainEventByDeliveryKey(releaseB.deliveryKey),
+      ]);
+      await drainDomainEventOutbox();
+      expect(await prisma.workSession.count({ where: { issueId: context.issue.id } })).toBe(0);
+      expect(await prisma.workLog.count({ where: { issueId: context.issue.id } })).toBe(1);
+      expect(
+        await prisma.domainEventOutbox.count({
+          where: {
+            laneKey: releaseA.laneKey,
+            eventType: "work_session.ended",
+          },
+        })
+      ).toBe(1);
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("ignores and prunes an expired owner before the last live owner releases", async () => {
+    const context = await seedContext({ state: "capturing", withSession: true });
+    const expiredOwner = randomUUID();
+    const liveOwner = randomUUID();
+    const unsubscribe = registerCaptureIntentListener(eventBus);
+    try {
+      const expiredActivity = await requestWorkCaptureIntentEffect(
+        ownerRequestFor(context.intent, "activity", expiredOwner)
+      );
+      expect(await publishDomainEventByDeliveryKey(expiredActivity.deliveryKey)).toBe(true);
+      await drainDomainEventOutbox();
+      const liveActivity = await requestWorkCaptureIntentEffect(
+        ownerRequestFor(context.intent, "activity", liveOwner)
+      );
+      expect(await publishDomainEventByDeliveryKey(liveActivity.deliveryKey)).toBe(true);
+      await drainDomainEventOutbox();
+      await prisma.workCaptureOwnerLease.update({
+        where: { intentId_ownerId: { intentId: context.intent.id, ownerId: expiredOwner } },
+        data: { expiresAt: new Date(0) },
+      });
+
+      const release = await requestWorkCaptureIntentEffect(
+        ownerRequestFor(context.intent, "release", liveOwner)
+      );
+      expect(await publishDomainEventByDeliveryKey(release.deliveryKey)).toBe(true);
+      expect(
+        await prisma.workCaptureOwnerLease.count({ where: { intentId: context.intent.id } })
+      ).toBe(0);
+      expect(await prisma.workSession.count({ where: { issueId: context.issue.id } })).toBe(0);
     } finally {
       unsubscribe();
     }

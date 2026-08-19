@@ -199,6 +199,7 @@ describe("IssuePage — single-scroll workspace (KAN-108)", () => {
 
   it("T1 — keeps Activity and its composer inside the one workspace document", async () => {
     await renderIssuePage();
+    expect(document.querySelector('[data-current-issue-key="KAN-1"]')).toBeInTheDocument();
     const workspace = screen.getByTestId("issue-detail-scroll");
     const activity = screen.getByRole("region", { name: "Activity" });
     expect(workspace).toContainElement(screen.getByRole("heading", { name: "Activity" }));

@@ -116,6 +116,7 @@ function ChildIssueRow({
       role="button"
       tabIndex={0}
       data-testid={`hierarchy-child-${node.key}`}
+      data-issue-key={node.key}
       style={rowStyle}
       onClick={() => onSelect?.(node.key)}
       onKeyDown={(e) => {

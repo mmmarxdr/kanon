@@ -266,6 +266,28 @@ describe("WorkSessionService", () => {
   // ── startWork ──────────────────────────────────────────────────────────
 
   describe("startWork", () => {
+    it("creates or renews the implicit manual anchor inside the reservation transaction", async () => {
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(null);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+
+      await startWork("KAN-42", "member-1", "user-1", "mcp");
+
+      const statements = mockQueryRaw.mock.calls.map(([query]: any[]) =>
+        Array.isArray(query) ? query.join(" ") : String(query)
+      );
+      expect(statements).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/INSERT INTO "work_capture_owner_leases"/),
+        ])
+      );
+      expect(
+        mockQueryRaw.mock.calls.some((call: any[]) =>
+          call.some((value) => value === "00000000-0000-4000-8000-000000000001")
+        )
+      ).toBe(true);
+    });
+
     it("does not auto-assign or transition when the issue-locked ownership check loses", async () => {
       mockIssueFind.mockResolvedValue({
         ...fakeIssue,
@@ -885,6 +907,23 @@ describe("WorkSessionService", () => {
   // ── heartbeat ──────────────────────────────────────────────────────────
 
   describe("heartbeat", () => {
+    it("renews the implicit compatibility anchor for a bodyless authenticated heartbeat", async () => {
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionFindUnique.mockResolvedValue(fakeSession);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+
+      await heartbeat("KAN-42", "member-1", "user-1", "codex");
+
+      const statements = mockQueryRaw.mock.calls.map(([query]: any[]) =>
+        Array.isArray(query) ? query.join(" ") : String(query)
+      );
+      expect(statements).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/INSERT INTO "work_capture_owner_leases"/),
+        ])
+      );
+    });
+
     it("adopts a missing active session with authenticated identity and provenance", async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2026-08-14T14:00:00.000Z"));
