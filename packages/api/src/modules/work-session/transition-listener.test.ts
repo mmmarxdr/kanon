@@ -11,7 +11,7 @@
  *   - Idempotency: closing when none open is a no-op
  *   - from-was-already-active: no new session opened (already open guard)
  *   - Actor-only attribution: startWork is called with actorMemberId
- *   - Failure in startWork / stopWork does NOT propagate (fire-and-forget)
+ *   - Failure in startWork / stopWork rejects durable delivery for retry
  *   - KAN-143 guard seam: events with cause="start_work" are skipped
  */
 
@@ -29,20 +29,17 @@ vi.mock("../../config/prisma.js", () => ({
 // ── Mock work-session service ──────────────────────────────────────────────
 vi.mock("./service.js", () => ({
   captureTransitionClose: vi.fn(),
-  drainTransitionLifecycleEffects: vi.fn(),
   startWork: vi.fn(),
   stopWork: vi.fn(),
   stageTransitionStart: vi.fn(),
   captureTransitionInterval: vi.fn(),
   SESSION_TTL_MS: 5 * 60 * 1000,
-  TRANSITION_EFFECT_RECOVERY_INTERVAL_MS: 30_000,
 }));
 
 import { prisma } from "../../config/prisma.js";
 import {
   captureTransitionClose,
   captureTransitionInterval,
-  drainTransitionLifecycleEffects,
   stageTransitionStart,
   startWork,
   stopWork,
@@ -60,9 +57,6 @@ const mockStopWork = vi.mocked(stopWork);
 const mockStageTransitionStart = vi.mocked(stageTransitionStart);
 const mockCaptureTransitionInterval = vi.mocked(captureTransitionInterval);
 const mockCaptureTransitionClose = vi.mocked(captureTransitionClose);
-const mockDrainTransitionLifecycleEffects = vi.mocked(
-  drainTransitionLifecycleEffects,
-);
 
 const activeListeners = new Set<() => void>();
 
@@ -79,8 +73,8 @@ function registerTransitionListener(
 }
 
 // ── Fake event bus ─────────────────────────────────────────────────────────
-function makeFakeBus(): { bus: IEventBus; emit: (e: DomainEvent) => void } {
-  let handler: ((e: DomainEvent) => void) | null = null;
+function makeFakeBus(): { bus: IEventBus; emit: (e: DomainEvent) => unknown } {
+  let handler: ((e: DomainEvent) => unknown) | null = null;
   const bus: IEventBus = {
     subscribe: vi.fn((h: (e: DomainEvent) => void) => {
       handler = h;
@@ -110,8 +104,8 @@ async function flushMicrotasks(): Promise<void> {
   for (let i = 0; i < 8; i++) await Promise.resolve();
 }
 
-// ── Helper: build an issue.transitioned event ──────────────────────────────
-function makeTransitionEvent(
+// ── Helpers: build public and durable transition events ────────────────────
+function makePublicTransitionEvent(
   from: string,
   to: string,
   overrides: Partial<{
@@ -139,6 +133,68 @@ function makeTransitionEvent(
       ...(overrides.cause !== undefined ? { cause: overrides.cause } : {}),
     },
   };
+}
+
+function makeTransitionEvent(
+  from: string,
+  to: string,
+  overrides: Partial<{
+    actorMemberId: string;
+    actorUserId: string;
+    cause: string;
+    issueKey: string;
+    issueId: string;
+  }> = {}
+): DomainEvent {
+  const observedAt = new Date().toISOString();
+  return {
+    id: 1,
+    type: "work_capture.transition_observed",
+    workspaceId: "ws-1",
+    actorId: overrides.actorMemberId ?? "member-1",
+    timestamp: observedAt,
+    payload: {
+      from,
+      to,
+      observedAt,
+      issueKey: overrides.issueKey ?? "KAN-42",
+      issueId: overrides.issueId ?? "issue-1",
+      projectId: "project-1",
+      projectKey: "KAN",
+      workspaceId: "ws-1",
+      actorMemberId: overrides.actorMemberId ?? "member-1",
+      actorUserId: overrides.actorUserId ?? "user-1",
+      ...(overrides.cause !== undefined ? { cause: overrides.cause } : {}),
+    },
+  };
+}
+
+function makeObservedTransitionEvent(
+  from: string,
+  to: string,
+  observedAt: string,
+  overrides: Partial<{
+    actorMemberId: string;
+    actorUserId: string;
+    cause: string;
+    issueKey: string;
+    issueId: string;
+  }> = {}
+): DomainEvent {
+  const event = makeTransitionEvent(from, to, overrides);
+  return {
+    ...event,
+    timestamp: "2099-01-01T00:00:00.000Z",
+    payload: {
+      ...event.payload,
+      observedAt,
+    },
+  };
+}
+
+function setObservedAt(event: DomainEvent, observedAt: string): void {
+  event.timestamp = observedAt;
+  event.payload.observedAt = observedAt;
 }
 
 // ── Default member stub ────────────────────────────────────────────────────
@@ -170,7 +226,6 @@ describe("registerTransitionListener", () => {
       lifecycle: null,
       workLog: null,
     } as any);
-    mockDrainTransitionLifecycleEffects.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -185,41 +240,76 @@ describe("registerTransitionListener", () => {
     expect(typeof unsubscribe).toBe("function");
   });
 
+  it("ignores public issue.transitioned events for work capture", async () => {
+    const { bus, emit } = makeFakeBus();
+    registerTransitionListener(bus);
+
+    emit(makePublicTransitionEvent("backlog", "analysis"));
+    await flushMicrotasks();
+
+    expect(mockStageTransitionStart).not.toHaveBeenCalled();
+    expect(mockStartWork).not.toHaveBeenCalled();
+  });
+
+  it("uses persisted observedAt instead of delivery timestamp", async () => {
+    const observedAt = "2026-08-18T13:20:00.000Z";
+    const { bus, emit } = makeFakeBus();
+    registerTransitionListener(bus);
+
+    emit(makeObservedTransitionEvent("backlog", "analysis", observedAt));
+
+    await vi.waitFor(() => expect(mockStageTransitionStart).toHaveBeenCalledOnce());
+    expect(mockStageTransitionStart).toHaveBeenCalledWith(
+      "KAN-42",
+      "user-1",
+      "member-1",
+      new Date(observedAt),
+      "transition-listener"
+    );
+  });
+
+  it("propagates listener failure so retry reuses the original observedAt", async () => {
+    const observedAt = "2026-08-18T13:21:00.000Z";
+    const event = makeObservedTransitionEvent("backlog", "analysis", observedAt);
+    mockStageTransitionStart
+      .mockRejectedValueOnce(new Error("lifecycle unavailable"))
+      .mockResolvedValueOnce({
+        session: null,
+        lifecycle: {
+          id: "lifecycle-retry",
+          completed: false,
+          startIdentity: "stable-start",
+        },
+      } as any);
+    const { bus, emit } = makeFakeBus();
+    registerTransitionListener(bus);
+
+    await expect(emit(event) as Promise<void>).rejects.toThrow("lifecycle unavailable");
+    await expect(emit(event) as Promise<void>).resolves.toBeUndefined();
+
+    expect(mockStageTransitionStart).toHaveBeenCalledTimes(2);
+    expect(mockStageTransitionStart.mock.calls.map((call) => call[3])).toEqual([
+      new Date(observedAt),
+      new Date(observedAt),
+    ]);
+  });
+
   it("subscribes to the event bus", () => {
     const { bus } = makeFakeBus();
     registerTransitionListener(bus);
     expect(bus.subscribe).toHaveBeenCalledOnce();
   });
 
-  it("drains durable lifecycle effects at startup and on the recovery interval", async () => {
-    let scheduledDrain: (() => void) | undefined;
-    const unref = vi.fn();
-    const interval = vi
-      .spyOn(globalThis, "setInterval")
-      .mockImplementation(((handler: () => void) => {
-        scheduledDrain = handler;
-        return { unref } as any;
-      }) as typeof setInterval);
-    const clear = vi.spyOn(globalThis, "clearInterval").mockImplementation(() => {});
+  it("does not own durable outbox recovery", () => {
+    const interval = vi.spyOn(globalThis, "setInterval");
     const { bus } = makeFakeBus();
 
     try {
       const unsubscribe = registerTransitionListener(bus);
-      await vi.waitFor(() =>
-        expect(mockDrainTransitionLifecycleEffects).toHaveBeenCalledTimes(1),
-      );
-      expect(unref).toHaveBeenCalledOnce();
-
-      scheduledDrain?.();
-      await vi.waitFor(() =>
-        expect(mockDrainTransitionLifecycleEffects).toHaveBeenCalledTimes(2),
-      );
-
+      expect(interval).not.toHaveBeenCalled();
       unsubscribe();
-      expect(clear).toHaveBeenCalledOnce();
     } finally {
       interval.mockRestore();
-      clear.mockRestore();
     }
   });
 
@@ -302,11 +392,11 @@ describe("registerTransitionListener", () => {
     // not the actor's ids — so any worker's session is closed, not just the actor's.
     expect(mockStopWork).toHaveBeenCalledWith(
       "KAN-42",
-      "user-1",   // session.userId from workSession.findMany
+      "user-1", // session.userId from workSession.findMany
       "member-1", // session.memberId from workSession.findMany
       null,
       expect.any(Date),
-      "session-1",
+      "session-1"
     );
   });
 
@@ -324,7 +414,7 @@ describe("registerTransitionListener", () => {
       const { bus, emit } = makeFakeBus();
       registerTransitionListener(bus);
       const event = makeTransitionEvent("analysis", targetState);
-      event.timestamp = "2026-08-11T12:02:03.000Z";
+      setObservedAt(event, "2026-08-11T12:02:03.000Z");
 
       emit(event);
 
@@ -335,9 +425,9 @@ describe("registerTransitionListener", () => {
         "member-1",
         null,
         new Date("2026-08-11T12:02:03.000Z"),
-        "session-1",
+        "session-1"
       );
-    },
+    }
   );
 
   // ─── Idempotency: close when none open is a no-op ──────────────────────
@@ -419,29 +509,28 @@ describe("registerTransitionListener", () => {
     );
   });
 
-  // ─── Fire-and-forget: failures do not propagate ────────────────────────
+  // ─── Durable delivery: failures propagate for retry ────────────────────
 
-  it("does not throw if startWork throws (fire-and-forget)", async () => {
+  it("rejects durable delivery if startWork throws", async () => {
     mockStartWork.mockRejectedValue(new Error("DB error"));
 
     const { bus, emit } = makeFakeBus();
     registerTransitionListener(bus);
 
-    // Should not reject
-    emit(makeTransitionEvent("backlog", "analysis"));
-    await new Promise((r) => setTimeout(r, 50));
-    // If we reached here, the error was swallowed — pass
+    await expect(emit(makeTransitionEvent("backlog", "analysis")) as Promise<void>).rejects.toThrow(
+      "DB error"
+    );
   });
 
-  it("does not throw if stopWork throws (fire-and-forget)", async () => {
+  it("rejects durable delivery if stopWork throws", async () => {
     mockStopWork.mockRejectedValue(new Error("DB error"));
 
     const { bus, emit } = makeFakeBus();
     registerTransitionListener(bus);
 
-    emit(makeTransitionEvent("in_progress", "review"));
-    await new Promise((r) => setTimeout(r, 50));
-    // If we reached here, the error was swallowed — pass
+    await expect(
+      emit(makeTransitionEvent("in_progress", "review")) as Promise<void>
+    ).rejects.toThrow("DB error");
   });
 
   // ─── BUG-4: close ALL sessions — not just actor's ─────────────────────
@@ -474,7 +563,7 @@ describe("registerTransitionListener", () => {
       "member-bob",
       null,
       expect.any(Date),
-      "session-bob",
+      "session-bob"
     );
   });
 
@@ -498,7 +587,7 @@ describe("registerTransitionListener", () => {
       "member-1",
       null,
       expect.any(Date),
-      "s-1",
+      "s-1"
     );
     expect(mockStopWork).toHaveBeenCalledWith(
       "KAN-42",
@@ -506,7 +595,7 @@ describe("registerTransitionListener", () => {
       "member-2",
       null,
       expect.any(Date),
-      "s-2",
+      "s-2"
     );
   });
 
@@ -562,11 +651,20 @@ describe("registerTransitionListener", () => {
 
     const eventWithoutActor: DomainEvent = {
       id: 3,
-      type: "issue.transitioned",
+      type: "work_capture.transition_observed",
       workspaceId: "ws-1",
       actorId: "member-1",
       timestamp: new Date().toISOString(),
-      payload: { from: "backlog", to: "in_progress", issueKey: "KAN-42", issueId: "issue-1", projectKey: "KAN" },
+      payload: {
+        from: "backlog",
+        to: "in_progress",
+        observedAt: new Date().toISOString(),
+        issueKey: "KAN-42",
+        issueId: "issue-1",
+        projectId: "project-1",
+        projectKey: "KAN",
+        workspaceId: "ws-1",
+      },
     };
     emit(eventWithoutActor);
     await new Promise((r) => setTimeout(r, 20));
@@ -590,7 +688,7 @@ describe("registerTransitionListener", () => {
     registerTransitionListener(bus);
 
     const reviewEvent = makeTransitionEvent("in_progress", "review");
-    reviewEvent.timestamp = "2026-08-11T12:00:00.000Z";
+    setObservedAt(reviewEvent, "2026-08-11T12:00:00.000Z");
     emit(reviewEvent);
 
     await vi.waitFor(() => expect(mockStopWork).toHaveBeenCalledOnce());
@@ -602,7 +700,7 @@ describe("registerTransitionListener", () => {
       "member-stale",
       null,
       new Date("2026-08-11T12:00:00.000Z"),
-      "session-stale",
+      "session-stale"
     );
   });
 
@@ -623,7 +721,7 @@ describe("registerTransitionListener", () => {
       "member-1",
       null,
       expect.any(Date),
-      "session-fresh",
+      "session-fresh"
     );
   });
 
@@ -662,16 +760,19 @@ describe("registerTransitionListener", () => {
     // Pre-enrichment event shape: no actorUserId
     const preEnrichEvent: DomainEvent = {
       id: 10,
-      type: "issue.transitioned",
+      type: "work_capture.transition_observed",
       workspaceId: "ws-1",
       actorId: "member-1",
       timestamp: new Date().toISOString(),
       payload: {
         from: "backlog",
         to: "in_progress",
+        observedAt: new Date().toISOString(),
         issueKey: "KAN-42",
         issueId: "issue-1",
+        projectId: "project-1",
         projectKey: "KAN",
+        workspaceId: "ws-1",
         actorMemberId: "member-1",
         // actorUserId intentionally absent (pre-enrichment rolling-deploy shape)
       },
@@ -721,7 +822,7 @@ describe("registerTransitionListener", () => {
       "member-1",
       null,
       expect.any(Date),
-      "session-open",
+      "session-open"
     );
   });
 
@@ -731,7 +832,7 @@ describe("registerTransitionListener", () => {
     const { bus, emit } = makeFakeBus();
     registerTransitionListener(bus);
     const closeEvent = makeTransitionEvent("analysis", "review");
-    closeEvent.timestamp = "2026-08-11T12:01:00.000Z";
+    setObservedAt(closeEvent, "2026-08-11T12:01:00.000Z");
 
     emit(closeEvent);
     await vi.waitFor(() => expect(mockCaptureTransitionClose).toHaveBeenCalledOnce());
@@ -742,7 +843,7 @@ describe("registerTransitionListener", () => {
     expect(mockCaptureTransitionClose).toHaveBeenCalledWith(
       "KAN-42",
       new Date(closeEvent.timestamp),
-      "transition-listener",
+      "transition-listener"
     );
   });
 
@@ -758,7 +859,7 @@ describe("registerTransitionListener", () => {
     const { bus, emit } = makeFakeBus();
     registerTransitionListener(bus);
     const activeEvent = makeTransitionEvent("backlog", "analysis");
-    activeEvent.timestamp = "2026-08-11T12:00:00.000Z";
+    setObservedAt(activeEvent, "2026-08-11T12:00:00.000Z");
 
     emit(activeEvent);
 
@@ -824,9 +925,9 @@ describe("registerTransitionListener", () => {
     const activeAt = "2026-08-11T12:00:00.000Z";
     const closedAt = "2026-08-11T12:02:00.000Z";
     const activeEvent = makeTransitionEvent("backlog", "analysis");
-    activeEvent.timestamp = activeAt;
+    setObservedAt(activeEvent, activeAt);
     const closeEvent = makeTransitionEvent("analysis", "review");
-    closeEvent.timestamp = closedAt;
+    setObservedAt(closeEvent, closedAt);
 
     emit(activeEvent);
     await vi.waitFor(() => expect(mockStartWork).toHaveBeenCalledOnce());
@@ -840,8 +941,8 @@ describe("registerTransitionListener", () => {
         "member-1",
         new Date(activeAt),
         new Date(closedAt),
-        "transition-listener",
-      ),
+        "transition-listener"
+      )
     );
     await vi.waitFor(() => expect(mockStopWork).toHaveBeenCalledOnce());
   });
@@ -874,9 +975,9 @@ describe("registerTransitionListener", () => {
     const activeAt = "2026-08-11T12:00:00.000Z";
     const closedAt = "2026-08-11T12:02:00.000Z";
     const activeEvent = makeTransitionEvent("backlog", "analysis");
-    activeEvent.timestamp = activeAt;
+    setObservedAt(activeEvent, activeAt);
     const closeEvent = makeTransitionEvent("analysis", "review");
-    closeEvent.timestamp = closedAt;
+    setObservedAt(closeEvent, closedAt);
 
     emit(activeEvent);
     await vi.waitFor(() => expect(mockIssueFindUnique).toHaveBeenCalledOnce());
@@ -892,7 +993,7 @@ describe("registerTransitionListener", () => {
       "member-1",
       new Date(activeAt),
       new Date(closedAt),
-      "transition-listener",
+      "transition-listener"
     );
     expect(mockStartWork).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(mockStopWork).toHaveBeenCalledOnce());
@@ -910,9 +1011,9 @@ describe("registerTransitionListener", () => {
     const activeAt = "2026-08-11T12:00:00.000Z";
     const closedAt = "2026-08-11T12:02:00.000Z";
     const activeEvent = makeTransitionEvent("backlog", "analysis");
-    activeEvent.timestamp = activeAt;
+    setObservedAt(activeEvent, activeAt);
     const closeEvent = makeTransitionEvent("analysis", "review");
-    closeEvent.timestamp = closedAt;
+    setObservedAt(closeEvent, closedAt);
 
     emit(activeEvent);
     emit(closeEvent);
@@ -924,7 +1025,7 @@ describe("registerTransitionListener", () => {
       "member-1",
       new Date(activeAt),
       new Date(closedAt),
-      "transition-listener",
+      "transition-listener"
     );
     expect(mockStageTransitionStart).toHaveBeenCalledOnce();
     expect(mockStopWork).not.toHaveBeenCalled();
@@ -943,9 +1044,9 @@ describe("registerTransitionListener", () => {
       actorMemberId: "member-a",
       actorUserId: "user-a",
     });
-    activeEvent.timestamp = "2026-08-11T12:00:00.000Z";
+    setObservedAt(activeEvent, "2026-08-11T12:00:00.000Z");
     const closeEvent = makeTransitionEvent("analysis", "review");
-    closeEvent.timestamp = "2026-08-11T12:02:00.000Z";
+    setObservedAt(closeEvent, "2026-08-11T12:02:00.000Z");
 
     emit(activeEvent);
     emit(closeEvent);

@@ -863,11 +863,9 @@ model WorkTransitionLifecycle {
   workLog   WorkLog? @relation(fields: [workLogId], references: [id], onDelete: SetNull)
   workSession WorkSession?
 
-  /// Durable effect/outbox state. A committed completion with no
-  /// `effectsEmittedAt` is replayable after a process dies before emission.
-  effectsClaimedAt DateTime? @map("effects_claimed_at")
-  effectClaimToken String?   @map("effect_claim_token") @db.Uuid
-  effectsEmittedAt DateTime? @map("effects_emitted_at")
+  /// Incremented when an authoritative close corrects an already-finalized
+  /// WorkLog. Each revision receives immutable outbox delivery keys.
+  effectRevision Int @default(0) @map("effect_revision")
 
   issueId String @map("issue_id") @db.Uuid
   issue   Issue  @relation(fields: [issueId], references: [id], onDelete: Cascade)
@@ -881,8 +879,37 @@ model WorkTransitionLifecycle {
 
   @@index([issueId, startedAt])
   @@index([issueId, endedAt])
-  @@index([effectsEmittedAt, effectsClaimedAt], map: "work_transition_lifecycles_effects_pending_idx")
   @@map("work_transition_lifecycles")
+}
+
+/// Generic durable internal domain-event delivery queue.
+///
+/// Delivery is at-least-once: a process may crash after subscriber delivery and
+/// before acknowledgement. `deliveryKey` is therefore stable and exposed on the
+/// emitted DomainEvent so subscribers can deduplicate durable side effects.
+model DomainEventOutbox {
+  id          String @id @default(uuid()) @db.Uuid
+  deliveryKey String @unique @map("delivery_key")
+  laneKey     String @map("lane_key")
+  position    BigInt @unique @default(autoincrement())
+
+  eventType   String @map("event_type")
+  workspaceId String @map("workspace_id") @db.Uuid
+  actorId     String @map("actor_id") @db.Uuid
+  payload     Json
+
+  availableAt    DateTime  @default(now()) @map("available_at")
+  claimedAt      DateTime? @map("claimed_at")
+  claimToken     String?   @map("claim_token") @db.Uuid
+  acknowledgedAt DateTime? @map("acknowledged_at")
+  attempts       Int       @default(0)
+  lastError      String?   @map("last_error")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@index([acknowledgedAt, availableAt, claimedAt], map: "domain_event_outbox_due_idx")
+  @@index([laneKey, position, acknowledgedAt], map: "domain_event_outbox_lane_head_idx")
+  @@map("domain_event_outbox")
 }
 
 model WorkspaceInvite {
