@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "../../config/prisma.js";
@@ -18,6 +18,7 @@ import {
   configureConnection,
   configureProviderMaps,
   createConnection,
+  getBindingAuditHealth,
   getConnection,
   getConnectionDiscovery,
   getWorkspaceConnection,
@@ -26,6 +27,7 @@ import {
   unbindProject,
   type ConnectionServiceDeps,
 } from "./service.js";
+import { createAuditScopeFingerprint } from "./core/audit-evidence.js";
 import { patchSettings } from "../instance/service.js";
 import { archiveProject } from "../project/service.js";
 import { runIntegrationWorkerCycle } from "./worker.js";
@@ -969,6 +971,146 @@ describe("integration connection lifecycle", () => {
         workspaceB.id,
       ),
     ).resolves.toMatchObject({ projectId: projectB.id, remoteProjectId: "remote-project" });
+  });
+
+  it("retires partial audit state and rejects prior-lifecycle trust after rebind", async () => {
+    const workspace = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const project = await seedTestProject(workspace.id);
+    const { connection } = await createConnection(
+      { workspaceId: workspace.id, apiKey: "key" },
+      owner.userId,
+      deps,
+    );
+    await configureProviderMaps(
+      connection.id,
+      { timeActivityId: "9", readMap, writeMap, priorityReadMap, priorityWriteMap },
+      owner.userId,
+      deps,
+      workspace.id,
+    );
+    const binding = await bindProject(
+      connection.id,
+      { projectId: project.id, remoteProjectId: "remote-project" },
+      owner.userId,
+      deps,
+      workspace.id,
+    );
+    await setConnectionLifecycle(connection.id, "active", owner.userId, deps, workspace.id);
+    const activeBinding = await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: {
+        pollLeaseToken: "audit-release-lease",
+        pollLeaseUntil: new Date("2999-01-01T00:00:00.000Z"),
+      },
+    });
+    const currentConnection = await prisma.integrationConnection.findUniqueOrThrow({
+      where: { id: connection.id },
+      select: { baseUrl: true, serviceCredentialId: true },
+    });
+    const credential = await prisma.memberIntegrationCredential.findUniqueOrThrow({
+      where: { id: currentConnection.serviceCredentialId! },
+      select: { id: true, encryptedKey: true },
+    });
+    const oldScopeFingerprint = createAuditScopeFingerprint({
+      bindingId: activeBinding.id,
+      connectionId: connection.id,
+      lifecycleEpoch: activeBinding.lifecycleEpoch,
+      normalizedBaseUrl: new URL(currentConnection.baseUrl).toString(),
+      remoteProjectId: activeBinding.remoteProjectId,
+      credentialId: credential.id,
+      credentialFingerprint: createHash("sha256").update(credential.encryptedKey).digest("hex"),
+    });
+    const partial = await prisma.integrationAuditRun.create({
+      data: {
+        bindingId: binding.id,
+        scopeFingerprint: oldScopeFingerprint,
+        leaseToken: "audit-release-lease",
+        fence: activeBinding.pollFence,
+        observations: {
+          create: {
+            identityType: "issue",
+            remoteId: "partial-issue",
+            sourceUpdatedAt: new Date("2026-08-18T10:00:00.000Z"),
+          },
+        },
+        checkpoint: {
+          create: {
+            pass: 1,
+            offset: 0,
+            itemIndex: 1,
+            expectedTotal: 1,
+            scopeFingerprint: oldScopeFingerprint,
+            fence: activeBinding.pollFence,
+          },
+        },
+      },
+      include: { observations: true, checkpoint: true },
+    });
+    const complete = await prisma.integrationAuditRun.create({
+      data: {
+        bindingId: binding.id,
+        scopeFingerprint: oldScopeFingerprint,
+        leaseToken: "completed-audit",
+        fence: activeBinding.pollFence,
+        state: "complete",
+        completedAt: new Date("2026-08-18T10:00:00.000Z"),
+        validUntil: new Date("2999-01-01T00:00:00.000Z"),
+        observations: {
+          create: {
+            identityType: "issue",
+            remoteId: "complete-issue",
+            sourceUpdatedAt: new Date("2026-08-18T10:00:00.000Z"),
+          },
+        },
+      },
+      include: { observations: true },
+    });
+
+    await expect(
+      getBindingAuditHealth(connection.id, binding.id, owner.userId, workspace.id),
+    ).resolves.toMatchObject({ state: "complete", fresh: true });
+    await expect(
+      unbindProject(connection.id, binding.id, owner.userId, workspace.id),
+    ).resolves.toMatchObject({ status: "released" });
+    await expect(prisma.integrationAuditRun.findUnique({ where: { id: partial.id } })).resolves.toBeNull();
+    await expect(
+      prisma.integrationAuditObservation.findUnique({ where: { id: partial.observations[0]!.id } }),
+    ).resolves.toBeNull();
+    await expect(
+      prisma.integrationAuditCheckpoint.findUnique({ where: { id: partial.checkpoint!.id } }),
+    ).resolves.toBeNull();
+    await expect(
+      prisma.integrationAuditRun.findUnique({ where: { id: complete.id } }),
+    ).resolves.toMatchObject({ state: "complete" });
+    await expect(
+      prisma.integrationAuditObservation.findUnique({ where: { id: complete.observations[0]!.id } }),
+    ).resolves.not.toBeNull();
+    await expect(
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+    ).resolves.toMatchObject({
+      pollLeaseToken: null,
+      pollFence: activeBinding.pollFence + 1,
+    });
+
+    const rebound = await bindProject(
+      connection.id,
+      { projectId: project.id, remoteProjectId: "remote-project" },
+      owner.userId,
+      deps,
+      workspace.id,
+    );
+    expect(rebound).toMatchObject({ id: binding.id });
+    expect(rebound.lifecycleEpoch).toBeGreaterThan(activeBinding.lifecycleEpoch);
+    await expect(
+      getBindingAuditHealth(connection.id, binding.id, owner.userId, workspace.id),
+    ).resolves.toEqual({
+      state: "unknown",
+      completedAt: null,
+      validUntil: null,
+      fresh: false,
+      reasonCode: null,
+    });
   });
 
   it("keeps a binding draining when private-comment uncertainty or privacy conflict remains", async () => {

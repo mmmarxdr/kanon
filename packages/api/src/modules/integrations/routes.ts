@@ -16,6 +16,7 @@ import {
   configureProviderMaps,
   connectCredential,
   createConnection,
+  getBindingAuditHealth,
   getConnection,
   getConnectionDiscovery,
   getWorkspaceConnection,
@@ -218,6 +219,12 @@ export default async function integrationRoutes(fastify: FastifyInstance): Promi
         request.params.wid,
         scopedProjectIds(request.user.allowedProjectIds),
       ),
+  );
+
+  app.get(
+    "/workspaces/:wid/connections/:id/bindings/:bindingId/audit-health",
+    { preHandler: [requireRole("wid", "owner"), requireUnscopedToken], schema: { params: ConnectionBindingId } },
+    async (request) => getBindingAuditHealth(request.params.id, request.params.bindingId, request.user.userId, request.params.wid),
   );
 
   app.post(
