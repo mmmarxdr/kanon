@@ -89,6 +89,7 @@ const healthyConnection: IntegrationConnection = {
   syncHealth: { status: "healthy", blockedWork: null },
   discoveredStatuses: null,
   providerMaps: null,
+  privacyRecovery: [],
   bindings: [],
   callerCredential: {
     connected: true,

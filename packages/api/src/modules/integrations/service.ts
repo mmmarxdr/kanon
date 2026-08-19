@@ -397,8 +397,17 @@ const releaseBlockingWorkWhere = {
   OR: [
     { state: { in: ["leased", "ambiguous"] } },
     unresolvedIssueDeleteWhere,
+    {
+      state: { in: ["dead", "ambiguous"] },
+      skippedReason: "private-comment-write-uncertain",
+    },
   ],
 } satisfies Prisma.IntegrationSyncWorkWhereInput;
+
+const openPrivacyConflictWhere = {
+  kind: "inbound-comment-privacy",
+  state: "open",
+} satisfies Prisma.IntegrationConflictWhereInput;
 
 async function assertNoUnresolvedIssueDeletes(
   database: Database,
@@ -890,6 +899,9 @@ export async function unbindProject(
         "Resume synchronization before disconnecting outstanding work",
       );
     }
+    await transaction.integrationAuditRun.deleteMany({
+      where: { bindingId: binding.id, state: "partial" },
+    });
     const releaseRequested = await transaction.integrationProjectBinding.update({
       where: { id: binding.id },
       data: {
@@ -912,7 +924,10 @@ export async function unbindProject(
     const unresolvedWork = await transaction.integrationSyncWork.count({
       where: { bindingId, ...releaseBlockingWorkWhere },
     });
-    if (unresolvedWork > 0) {
+    const openPrivacyConflicts = await transaction.integrationConflict.count({
+      where: { bindingId, ...openPrivacyConflictWhere },
+    });
+    if (unresolvedWork > 0 || openPrivacyConflicts > 0) {
       return { status: "draining" as const, binding: releaseRequested };
     }
 
@@ -1008,6 +1023,7 @@ export async function finalizeDrainedBindingReleases(
       releaseRequestedAt: { not: null },
       releasedAt: null,
       works: { none: releaseBlockingWorkWhere },
+      conflicts: { none: openPrivacyConflictWhere },
     },
     orderBy: { releaseRequestedAt: "asc" },
     take: limit,
@@ -1027,7 +1043,10 @@ export async function finalizeDrainedBindingReleases(
       const unresolved = await transaction.integrationSyncWork.count({
         where: { bindingId: current.id, ...releaseBlockingWorkWhere },
       });
-      if (unresolved > 0) return 0;
+      const openPrivacyConflicts = await transaction.integrationConflict.count({
+        where: { bindingId: current.id, ...openPrivacyConflictWhere },
+      });
+      if (unresolved > 0 || openPrivacyConflicts > 0) return 0;
       await transaction.integrationProjectBinding.update({
         where: { id: current.id },
         data: {
@@ -1049,6 +1068,179 @@ export async function finalizeDrainedBindingReleases(
     });
   }
   return released;
+}
+
+/** Workspace owner: explicitly acknowledges and clears retained privacy recovery evidence after release. */
+export async function resolveReleasedBindingPrivacy(
+  connectionId: string,
+  bindingId: string,
+  userId: string,
+  workspaceId?: string,
+  allowedProjectIds?: string[] | null,
+) {
+  return resolveBindingPrivacy(
+    connectionId,
+    { bindingId },
+    userId,
+    workspaceId,
+    allowedProjectIds,
+  );
+}
+
+/** Workspace owner: recovers privacy evidence using the local and remote project identity returned by connection discovery. */
+export async function resolveBindingPrivacyByProject(
+  connectionId: string,
+  input: { projectId: string; remoteProjectId: string },
+  userId: string,
+  workspaceId?: string,
+  allowedProjectIds?: string[] | null,
+) {
+  return resolveBindingPrivacy(connectionId, input, userId, workspaceId, allowedProjectIds);
+}
+
+async function resolveBindingPrivacy(
+  connectionId: string,
+  target: { bindingId: string } | { projectId: string; remoteProjectId: string },
+  userId: string,
+  workspaceId?: string,
+  allowedProjectIds?: string[] | null,
+) {
+  const recovery = await prisma.$transaction(async (transaction) => {
+    await lockConnection(transaction, connectionId);
+    const connection = await ownedConnection(transaction, connectionId, userId, workspaceId);
+    const binding = await transaction.integrationProjectBinding.findFirst({
+      where: {
+        connectionId,
+        ...("bindingId" in target
+          ? { id: target.bindingId }
+          : { projectId: target.projectId, remoteProjectId: target.remoteProjectId }),
+        OR: [
+          { releaseRequestedAt: { not: null }, releasedAt: null },
+          { releasedAt: { not: null } },
+        ],
+        project: {
+          workspaceId: connection.workspaceId,
+          ...(allowedProjectIds ? { id: { in: allowedProjectIds } } : {}),
+        },
+      },
+      select: { id: true, releasedAt: true, releaseRequestedAt: true },
+    });
+    if (!binding) {
+      throw new AppError(404, "INTEGRATION_BINDING_NOT_FOUND", "Privacy recovery binding not found");
+    }
+    const conflicts = await transaction.integrationConflict.findMany({
+      where: { bindingId: binding.id, ...openPrivacyConflictWhere },
+      select: { id: true, localEvidence: true },
+    });
+    const uncertainWork = await transaction.integrationSyncWork.count({
+      where: {
+        bindingId: binding.id,
+        state: { in: ["dead", "ambiguous"] },
+        skippedReason: "private-comment-write-uncertain",
+      },
+    });
+    if (conflicts.length === 0 && uncertainWork > 0) {
+      throw new AppError(
+        409,
+        "BINDING_PRIVACY_RECOVERY_CONFLICT_REQUIRED",
+        "An owner must retain a privacy conflict before acknowledging uncertain remote writes",
+      );
+    }
+    if (conflicts.length === 0) {
+      return {
+        bindingId: binding.id,
+        alreadyRecovered: binding.releasedAt !== null,
+        releaseRequested: binding.releaseRequestedAt !== null,
+        resolvedConflicts: 0,
+        supersededWork: 0,
+      };
+    }
+    const recoveredAt = new Date().toISOString();
+    for (const conflict of conflicts) {
+      const localEvidence =
+        conflict.localEvidence &&
+        typeof conflict.localEvidence === "object" &&
+        !Array.isArray(conflict.localEvidence)
+          ? conflict.localEvidence
+          : {};
+      await transaction.integrationConflict.update({
+        where: { id: conflict.id },
+        data: {
+          state: "resolved",
+          localEvidence: {
+            ...localEvidence,
+            privacyRecovery: { acknowledgedByUserId: userId, acknowledgedAt: recoveredAt },
+          },
+        },
+      });
+    }
+    const superseded = await transaction.integrationSyncWork.updateMany({
+      where: {
+        bindingId: binding.id,
+        state: { in: ["dead", "ambiguous"] },
+        skippedReason: "private-comment-write-uncertain",
+      },
+      data: {
+        state: "superseded",
+        leaseToken: null,
+        leaseUntil: null,
+        fence: { increment: 1 },
+      },
+    });
+    return {
+      bindingId: binding.id,
+      alreadyRecovered: false,
+      releaseRequested: binding.releaseRequestedAt !== null,
+      resolvedConflicts: conflicts.length,
+      supersededWork: superseded.count,
+    };
+  });
+  if (recovery.releaseRequested) {
+    await finalizeRecoveredBindingRelease(connectionId, recovery.bindingId);
+  }
+  const binding = await prisma.integrationProjectBinding.findUniqueOrThrow({
+    where: { id: recovery.bindingId },
+    select: { releasedAt: true },
+  });
+  return {
+    bindingId: recovery.bindingId,
+    status: recovery.alreadyRecovered ? ("already-recovered" as const) : binding.releasedAt ? ("released" as const) : ("draining" as const),
+    resolvedConflicts: recovery.resolvedConflicts,
+    supersededWork: recovery.supersededWork,
+  };
+}
+
+async function finalizeRecoveredBindingRelease(connectionId: string, bindingId: string) {
+  return prisma.$transaction(async (transaction) => {
+    await lockConnection(transaction, connectionId);
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "integration_project_bindings" WHERE "id" = ${bindingId}::uuid FOR UPDATE`,
+    );
+    const binding = await transaction.integrationProjectBinding.findFirst({
+      where: { id: bindingId, connectionId, releaseRequestedAt: { not: null }, releasedAt: null },
+      select: { id: true },
+    });
+    if (!binding) return false;
+    const [unresolvedWork, openPrivacyConflicts] = await Promise.all([
+      transaction.integrationSyncWork.count({ where: { bindingId, ...releaseBlockingWorkWhere } }),
+      transaction.integrationConflict.count({ where: { bindingId, ...openPrivacyConflictWhere } }),
+    ]);
+    if (unresolvedWork > 0 || openPrivacyConflicts > 0) return false;
+    await transaction.integrationProjectBinding.update({
+      where: { id: bindingId },
+      data: { lifecycle: "disabled", lifecycleEpoch: { increment: 1 }, releasedAt: new Date() },
+    });
+    const currentBindings = await transaction.integrationProjectBinding.count({
+      where: { connectionId, releasedAt: null },
+    });
+    if (currentBindings === 0) {
+      await transaction.integrationConnection.updateMany({
+        where: { id: connectionId, lifecycle: { not: "draft" } },
+        data: { lifecycle: "draft", lifecycleEpoch: { increment: 1 } },
+      });
+    }
+    return true;
+  });
 }
 
 /** Owner convenience retained for tests and API consumers. */
@@ -1489,8 +1681,8 @@ export async function clearCredential(
   return publicCredential(credential);
 }
 
-export function auditHealthForScope(current: { bindingId: string; connectionId: string; baseUrl: string; remoteProjectId: string; credentialId: string; encryptedKey: string }, run: { state: "complete" | "partial" | "failed" | "stale"; completedAt: Date | null; validUntil: Date | null; reasonCode: string | null; scopeFingerprint: string } | null, databaseNow: Date) {
-  const scopeFingerprint = createAuditScopeFingerprint({ bindingId: current.bindingId, connectionId: current.connectionId, normalizedBaseUrl: new URL(current.baseUrl).toString(), remoteProjectId: current.remoteProjectId, credentialId: current.credentialId, credentialFingerprint: createHash("sha256").update(current.encryptedKey).digest("hex") });
+export function auditHealthForScope(current: { bindingId: string; connectionId: string; lifecycleEpoch: number; baseUrl: string; remoteProjectId: string; credentialId: string; encryptedKey: string }, run: { state: "complete" | "partial" | "failed" | "stale"; completedAt: Date | null; validUntil: Date | null; reasonCode: string | null; scopeFingerprint: string } | null, databaseNow: Date) {
+  const scopeFingerprint = createAuditScopeFingerprint({ bindingId: current.bindingId, connectionId: current.connectionId, lifecycleEpoch: current.lifecycleEpoch, normalizedBaseUrl: new URL(current.baseUrl).toString(), remoteProjectId: current.remoteProjectId, credentialId: current.credentialId, credentialFingerprint: createHash("sha256").update(current.encryptedKey).digest("hex") });
   const fresh = run?.state === "complete" && run.scopeFingerprint === scopeFingerprint && run.validUntil !== null && run.validUntil > databaseNow;
   return { state: fresh ? run.state : "unknown", completedAt: fresh ? run.completedAt?.toISOString() ?? null : null, validUntil: fresh ? run.validUntil?.toISOString() ?? null : null, fresh, reasonCode: fresh ? run.reasonCode : null };
 }
@@ -1500,15 +1692,15 @@ export async function getBindingAuditHealth(connectionId: string, bindingId: str
     return await prisma.$transaction(async (transaction) => {
       await lockConnection(transaction, connectionId);
       const connection = await ownedConnection(transaction, connectionId, userId, workspaceId);
-      const binding = await transaction.integrationProjectBinding.findFirst({ where: { id: bindingId, connectionId: connection.id, releasedAt: null }, select: { id: true, remoteProjectId: true } });
+      const binding = await transaction.integrationProjectBinding.findFirst({ where: { id: bindingId, connectionId: connection.id, releasedAt: null }, select: { id: true, lifecycleEpoch: true, remoteProjectId: true } });
       if (!binding || !connection.serviceCredentialId) return { state: "unknown", completedAt: null, validUntil: null, fresh: false, reasonCode: null };
       const credential = await transaction.memberIntegrationCredential.findFirst({ where: { id: connection.serviceCredentialId, connectionId: connection.id, lastAuthStatus: "valid", revokedAt: null }, select: { id: true, encryptedKey: true } });
       if (!credential) return { state: "unknown", completedAt: null, validUntil: null, fresh: false, reasonCode: null };
       const [clock] = await transaction.$queryRaw<Array<{ now: Date }>>(Prisma.sql`SELECT clock_timestamp() AS "now"`);
       if (!clock) return { state: "unknown", completedAt: null, validUntil: null, fresh: false, reasonCode: null };
-      const scopeFingerprint = createAuditScopeFingerprint({ bindingId: binding.id, connectionId: connection.id, normalizedBaseUrl: new URL(connection.baseUrl).toString(), remoteProjectId: binding.remoteProjectId, credentialId: credential.id, credentialFingerprint: createHash("sha256").update(credential.encryptedKey).digest("hex") });
+      const scopeFingerprint = createAuditScopeFingerprint({ bindingId: binding.id, connectionId: connection.id, lifecycleEpoch: binding.lifecycleEpoch, normalizedBaseUrl: new URL(connection.baseUrl).toString(), remoteProjectId: binding.remoteProjectId, credentialId: credential.id, credentialFingerprint: createHash("sha256").update(credential.encryptedKey).digest("hex") });
       const run = await transaction.integrationAuditRun.findFirst({ where: { bindingId, scopeFingerprint }, orderBy: { updatedAt: "desc" }, select: { state: true, completedAt: true, validUntil: true, reasonCode: true, scopeFingerprint: true } });
-      return auditHealthForScope({ bindingId, connectionId: connection.id, baseUrl: connection.baseUrl, remoteProjectId: binding.remoteProjectId, credentialId: credential.id, encryptedKey: credential.encryptedKey }, run, clock.now);
+      return auditHealthForScope({ bindingId, connectionId: connection.id, lifecycleEpoch: binding.lifecycleEpoch, baseUrl: connection.baseUrl, remoteProjectId: binding.remoteProjectId, credentialId: credential.id, encryptedKey: credential.encryptedKey }, run, clock.now);
     });
   } catch (error) { if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021") return { state: "unknown", completedAt: null, validUntil: null, fresh: false, reasonCode: null }; throw error; }
 }
@@ -1550,6 +1742,7 @@ export async function getConnection(
   }
   const memberId = member.id;
   const operator = member.role === "owner" && !allowedProjectIds;
+  const privacyRecoveryVisible = member.role === "owner";
   const blockedWorkWhere = {
     binding: { connectionId, releasedAt: null },
     skippedReason: { in: ["credential_invalid", "private-comment-write-uncertain"] },
@@ -1571,6 +1764,7 @@ export async function getConnection(
     blockedWorkTotal,
     privacyUncertainTotal,
     blockedWork,
+    privacyRecovery,
   ] = await Promise.all([
       memberId
         ? prisma.memberIntegrationCredential.findUnique({
@@ -1631,6 +1825,37 @@ export async function getConnection(
               skippedReason: true,
               updatedAt: true,
             },
+          })
+        : Promise.resolve([]),
+      privacyRecoveryVisible
+        ? prisma.integrationProjectBinding.findMany({
+            where: {
+              connectionId,
+              ...(allowedProjectIds ? { projectId: { in: allowedProjectIds } } : {}),
+              AND: [
+                {
+                  OR: [
+                    { releaseRequestedAt: { not: null }, releasedAt: null },
+                    { releasedAt: { not: null } },
+                  ],
+                },
+                {
+                  OR: [
+                    {
+                      works: {
+                        some: {
+                          skippedReason: "private-comment-write-uncertain",
+                          state: { in: ["dead", "ambiguous"] },
+                        },
+                      },
+                    },
+                    { conflicts: { some: openPrivacyConflictWhere } },
+                  ],
+                },
+              ],
+            },
+            orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
+            select: { projectId: true, remoteProjectId: true, releasedAt: true },
           })
         : Promise.resolve([]),
     ]);
@@ -1708,6 +1933,13 @@ export async function getConnection(
             : null,
           timeActivityId: providerMaps.timeActivityId,
         }
+      : null,
+    privacyRecovery: privacyRecoveryVisible
+      ? privacyRecovery.map(({ projectId, remoteProjectId, releasedAt }) => ({
+          projectId,
+          remoteProjectId,
+          status: releasedAt ? ("released" as const) : ("draining" as const),
+        }))
       : null,
     bindings: bindings.map((binding) => ({
       id: binding.id,

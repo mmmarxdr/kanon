@@ -9,6 +9,7 @@ export type TerminalAuditEvidenceState = (typeof TERMINAL_AUDIT_EVIDENCE_STATES)
 export interface AuditScope {
   readonly bindingId: string;
   readonly connectionId: string;
+  readonly lifecycleEpoch: number;
   readonly normalizedBaseUrl: string;
   readonly remoteProjectId: string;
   readonly credentialId: string;
@@ -65,7 +66,7 @@ export function isCurrentTerminalAuditEvidence(
 
 export function createAuditScopeFingerprint(scope: AuditScope): string {
   return createHash("sha256")
-    .update(JSON.stringify([scope.bindingId, scope.connectionId, scope.normalizedBaseUrl, scope.remoteProjectId, scope.credentialId, scope.credentialFingerprint]))
+    .update(JSON.stringify([scope.bindingId, scope.connectionId, scope.lifecycleEpoch, scope.normalizedBaseUrl, scope.remoteProjectId, scope.credentialId, scope.credentialFingerprint]))
     .digest("hex");
 }
 

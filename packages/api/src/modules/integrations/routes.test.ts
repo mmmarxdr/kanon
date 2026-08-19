@@ -281,13 +281,14 @@ describe("integration audit health route", () => {
 
 
 describe("audit health scope", () => {
-  const current = { bindingId: "binding", connectionId: "connection", baseUrl: "https://redmine.test", remoteProjectId: "42", credentialId: "credential", encryptedKey: "cipher" };
+  const current = { bindingId: "binding", connectionId: "connection", lifecycleEpoch: 7, baseUrl: "https://redmine.test", remoteProjectId: "42", credentialId: "credential", encryptedKey: "cipher" };
   const run = { state: "complete" as const, completedAt: new Date("2026-08-13T12:00:00Z"), validUntil: new Date("2026-08-13T12:05:00Z"), reasonCode: null };
   it("returns complete only for the exact current scope and database-fresh evidence", () => {
-    const exactScope = createAuditScopeFingerprint({ bindingId: current.bindingId, connectionId: current.connectionId, normalizedBaseUrl: new URL(current.baseUrl).toString(), remoteProjectId: current.remoteProjectId, credentialId: current.credentialId, credentialFingerprint: createHash("sha256").update(current.encryptedKey).digest("hex") });
+    const exactScope = createAuditScopeFingerprint({ bindingId: current.bindingId, connectionId: current.connectionId, lifecycleEpoch: current.lifecycleEpoch, normalizedBaseUrl: new URL(current.baseUrl).toString(), remoteProjectId: current.remoteProjectId, credentialId: current.credentialId, credentialFingerprint: createHash("sha256").update(current.encryptedKey).digest("hex") });
     const valid = auditHealthForScope(current, { ...run, scopeFingerprint: exactScope }, new Date("2026-08-13T12:04:59Z"));
     expect(valid).toMatchObject({ state: "complete", fresh: true });
     expect(auditHealthForScope({ ...current, remoteProjectId: "43" }, { ...run, scopeFingerprint: exactScope }, new Date("2026-08-13T12:04:59Z"))).toEqual({ state: "unknown", completedAt: null, validUntil: null, fresh: false, reasonCode: null });
+    expect(auditHealthForScope({ ...current, lifecycleEpoch: 8 }, { ...run, scopeFingerprint: exactScope }, new Date("2026-08-13T12:04:59Z"))).toEqual({ state: "unknown", completedAt: null, validUntil: null, fresh: false, reasonCode: null });
     expect(auditHealthForScope(current, { ...run, scopeFingerprint: exactScope }, new Date("2026-08-13T12:05:00Z"))).toEqual({ state: "unknown", completedAt: null, validUntil: null, fresh: false, reasonCode: null });
   });
 

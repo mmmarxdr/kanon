@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "../../config/prisma.js";
@@ -6,6 +7,7 @@ import {
   cleanDatabase,
   createTestApp,
   disconnectTestDb,
+  generateTestToken,
   seedInstanceAdminUser,
   seedTestMemberWithRole,
   seedTestProject,
@@ -16,17 +18,21 @@ import {
   configureConnection,
   configureProviderMaps,
   createConnection,
+  getBindingAuditHealth,
   getConnection,
   getConnectionDiscovery,
   getWorkspaceConnection,
+  resolveReleasedBindingPrivacy,
   setConnectionLifecycle,
   unbindProject,
   type ConnectionServiceDeps,
 } from "./service.js";
+import { createAuditScopeFingerprint } from "./core/audit-evidence.js";
 import { patchSettings } from "../instance/service.js";
 import { archiveProject } from "../project/service.js";
 import { runIntegrationWorkerCycle } from "./worker.js";
 import { resolveIssueCaptureContext } from "./issue-tx.js";
+import * as integrationService from "./service.js";
 
 const remote = {
   whoAmI: vi.fn(async () => ({ id: "remote-owner", displayName: "Owner", login: "owner" })),
@@ -965,5 +971,557 @@ describe("integration connection lifecycle", () => {
         workspaceB.id,
       ),
     ).resolves.toMatchObject({ projectId: projectB.id, remoteProjectId: "remote-project" });
+  });
+
+  it("retires partial audit state and rejects prior-lifecycle trust after rebind", async () => {
+    const workspace = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const project = await seedTestProject(workspace.id);
+    const { connection } = await createConnection(
+      { workspaceId: workspace.id, apiKey: "key" },
+      owner.userId,
+      deps,
+    );
+    await configureProviderMaps(
+      connection.id,
+      { timeActivityId: "9", readMap, writeMap, priorityReadMap, priorityWriteMap },
+      owner.userId,
+      deps,
+      workspace.id,
+    );
+    const binding = await bindProject(
+      connection.id,
+      { projectId: project.id, remoteProjectId: "remote-project" },
+      owner.userId,
+      deps,
+      workspace.id,
+    );
+    await setConnectionLifecycle(connection.id, "active", owner.userId, deps, workspace.id);
+    const activeBinding = await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: {
+        pollLeaseToken: "audit-release-lease",
+        pollLeaseUntil: new Date("2999-01-01T00:00:00.000Z"),
+      },
+    });
+    const currentConnection = await prisma.integrationConnection.findUniqueOrThrow({
+      where: { id: connection.id },
+      select: { baseUrl: true, serviceCredentialId: true },
+    });
+    const credential = await prisma.memberIntegrationCredential.findUniqueOrThrow({
+      where: { id: currentConnection.serviceCredentialId! },
+      select: { id: true, encryptedKey: true },
+    });
+    const oldScopeFingerprint = createAuditScopeFingerprint({
+      bindingId: activeBinding.id,
+      connectionId: connection.id,
+      lifecycleEpoch: activeBinding.lifecycleEpoch,
+      normalizedBaseUrl: new URL(currentConnection.baseUrl).toString(),
+      remoteProjectId: activeBinding.remoteProjectId,
+      credentialId: credential.id,
+      credentialFingerprint: createHash("sha256").update(credential.encryptedKey).digest("hex"),
+    });
+    const partial = await prisma.integrationAuditRun.create({
+      data: {
+        bindingId: binding.id,
+        scopeFingerprint: oldScopeFingerprint,
+        leaseToken: "audit-release-lease",
+        fence: activeBinding.pollFence,
+        observations: {
+          create: {
+            identityType: "issue",
+            remoteId: "partial-issue",
+            sourceUpdatedAt: new Date("2026-08-18T10:00:00.000Z"),
+          },
+        },
+        checkpoint: {
+          create: {
+            pass: 1,
+            offset: 0,
+            itemIndex: 1,
+            expectedTotal: 1,
+            scopeFingerprint: oldScopeFingerprint,
+            fence: activeBinding.pollFence,
+          },
+        },
+      },
+      include: { observations: true, checkpoint: true },
+    });
+    const complete = await prisma.integrationAuditRun.create({
+      data: {
+        bindingId: binding.id,
+        scopeFingerprint: oldScopeFingerprint,
+        leaseToken: "completed-audit",
+        fence: activeBinding.pollFence,
+        state: "complete",
+        completedAt: new Date("2026-08-18T10:00:00.000Z"),
+        validUntil: new Date("2999-01-01T00:00:00.000Z"),
+        observations: {
+          create: {
+            identityType: "issue",
+            remoteId: "complete-issue",
+            sourceUpdatedAt: new Date("2026-08-18T10:00:00.000Z"),
+          },
+        },
+      },
+      include: { observations: true },
+    });
+
+    await expect(
+      getBindingAuditHealth(connection.id, binding.id, owner.userId, workspace.id),
+    ).resolves.toMatchObject({ state: "complete", fresh: true });
+    await expect(
+      unbindProject(connection.id, binding.id, owner.userId, workspace.id),
+    ).resolves.toMatchObject({ status: "released" });
+    await expect(prisma.integrationAuditRun.findUnique({ where: { id: partial.id } })).resolves.toBeNull();
+    await expect(
+      prisma.integrationAuditObservation.findUnique({ where: { id: partial.observations[0]!.id } }),
+    ).resolves.toBeNull();
+    await expect(
+      prisma.integrationAuditCheckpoint.findUnique({ where: { id: partial.checkpoint!.id } }),
+    ).resolves.toBeNull();
+    await expect(
+      prisma.integrationAuditRun.findUnique({ where: { id: complete.id } }),
+    ).resolves.toMatchObject({ state: "complete" });
+    await expect(
+      prisma.integrationAuditObservation.findUnique({ where: { id: complete.observations[0]!.id } }),
+    ).resolves.not.toBeNull();
+    await expect(
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+    ).resolves.toMatchObject({
+      pollLeaseToken: null,
+      pollFence: activeBinding.pollFence + 1,
+    });
+
+    const rebound = await bindProject(
+      connection.id,
+      { projectId: project.id, remoteProjectId: "remote-project" },
+      owner.userId,
+      deps,
+      workspace.id,
+    );
+    expect(rebound).toMatchObject({ id: binding.id });
+    expect(rebound.lifecycleEpoch).toBeGreaterThan(activeBinding.lifecycleEpoch);
+    await expect(
+      getBindingAuditHealth(connection.id, binding.id, owner.userId, workspace.id),
+    ).resolves.toEqual({
+      state: "unknown",
+      completedAt: null,
+      validUntil: null,
+      fresh: false,
+      reasonCode: null,
+    });
+  });
+
+  it("keeps a binding draining when private-comment uncertainty or privacy conflict remains", async () => {
+    const workspace = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const project = await seedTestProject(workspace.id);
+    const { connection } = await createConnection({ workspaceId: workspace.id, apiKey: "key" }, owner.userId, deps);
+    await configureProviderMaps(
+      connection.id,
+      { timeActivityId: "9", readMap, writeMap, priorityReadMap, priorityWriteMap },
+      owner.userId,
+      deps,
+      workspace.id,
+    );
+    const binding = await bindProject(
+      connection.id,
+      { projectId: project.id, remoteProjectId: "remote-project" },
+      owner.userId,
+      deps,
+      workspace.id,
+    );
+    await setConnectionLifecycle(connection.id, "active", owner.userId, deps, workspace.id);
+    const application = await prisma.integrationInboundApplication.create({
+      data: {
+        bindingId: binding.id,
+        remoteEntityType: "comment",
+        remoteParentType: "issue",
+        remoteParentId: "100",
+        remoteId: "private-release",
+        remoteUpdatedAt: new Date("2026-08-01T10:05:00.000Z"),
+        sourceVersion: "sha256:private-release-v1",
+        applicationKey: "private-release-application",
+        correlationId: "private-release-application",
+        state: "conflict",
+      },
+    });
+    const work = await prisma.integrationSyncWork.create({
+      data: {
+        bindingId: binding.id,
+        entityType: "comment",
+        entityId: randomUUID(),
+        direction: "outbound",
+        operation: "create",
+        dedupeKey: "private-release-work",
+        laneKey: "private-release",
+        actorKey: "remote:5",
+        actorKind: "remote",
+        payload: { redacted: true },
+        correlationId: "private-release-work",
+        state: "dead",
+        skippedReason: "private-comment-write-uncertain",
+        epoch: binding.lifecycleEpoch,
+      },
+    });
+    await prisma.integrationConflict.create({
+      data: {
+        bindingId: binding.id,
+        applicationId: application.id,
+        workId: work.id,
+        kind: "inbound-comment-privacy",
+        localEvidence: { outboundWriteUncertain: true },
+        remoteEvidence: { reason: "private" },
+      },
+    });
+
+    await expect(unbindProject(connection.id, binding.id, owner.userId, workspace.id)).resolves.toMatchObject({
+      status: "draining",
+    });
+  });
+
+  it("finalizes a draining release after an owner explicitly acknowledges privacy uncertainty", async () => {
+    const workspace = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const project = await seedTestProject(workspace.id);
+    const { connection } = await createConnection({ workspaceId: workspace.id, apiKey: "key" }, owner.userId, deps);
+    await configureProviderMaps(
+      connection.id,
+      { timeActivityId: "9", readMap, writeMap, priorityReadMap, priorityWriteMap },
+      owner.userId,
+      deps,
+      workspace.id,
+    );
+    const binding = await bindProject(
+      connection.id,
+      { projectId: project.id, remoteProjectId: "remote-project" },
+      owner.userId,
+      deps,
+      workspace.id,
+    );
+    await setConnectionLifecycle(connection.id, "active", owner.userId, deps, workspace.id);
+    const application = await prisma.integrationInboundApplication.create({
+      data: {
+        bindingId: binding.id,
+        remoteEntityType: "comment",
+        remoteParentType: "issue",
+        remoteParentId: "100",
+        remoteId: "draining-private",
+        remoteUpdatedAt: new Date("2026-08-01T10:05:00.000Z"),
+        sourceVersion: "sha256:draining-private-v1",
+        applicationKey: "draining-private-application",
+        correlationId: "draining-private-application",
+        state: "conflict",
+      },
+    });
+    const work = await prisma.integrationSyncWork.create({
+      data: {
+        bindingId: binding.id,
+        entityType: "comment",
+        entityId: randomUUID(),
+        direction: "outbound",
+        operation: "create",
+        dedupeKey: "draining-private-work",
+        laneKey: "draining-private",
+        actorKey: "remote:5",
+        actorKind: "remote",
+        payload: { redacted: true },
+        correlationId: "draining-private-work",
+        state: "dead",
+        skippedReason: "private-comment-write-uncertain",
+        epoch: binding.lifecycleEpoch,
+      },
+    });
+    const conflict = await prisma.integrationConflict.create({
+      data: {
+        bindingId: binding.id,
+        applicationId: application.id,
+        workId: work.id,
+        kind: "inbound-comment-privacy",
+        localEvidence: { outboundWriteUncertain: true },
+        remoteEvidence: { reason: "private" },
+      },
+    });
+
+    await expect(unbindProject(connection.id, binding.id, owner.userId, workspace.id)).resolves.toMatchObject({
+      status: "draining",
+    });
+    await expect(
+      resolveReleasedBindingPrivacy(connection.id, binding.id, owner.userId, workspace.id),
+    ).resolves.toMatchObject({ status: "released", bindingId: binding.id });
+    await expect(prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })).resolves.toMatchObject({
+      lifecycle: "disabled",
+      releasedAt: expect.any(Date),
+    });
+    await expect(prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } })).resolves.toMatchObject({
+      state: "resolved",
+      localEvidence: expect.objectContaining({
+        privacyRecovery: expect.objectContaining({ acknowledgedByUserId: owner.userId }),
+      }),
+    });
+    await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({
+      state: "superseded",
+      skippedReason: "private-comment-write-uncertain",
+    });
+    await expect(
+      bindProject(
+        connection.id,
+        { projectId: project.id, remoteProjectId: "remote-project" },
+        owner.userId,
+        deps,
+        workspace.id,
+      ),
+    ).resolves.toMatchObject({ id: binding.id, releasedAt: null });
+  });
+
+  it("lets a fresh owner recover a released privacy block by project identity without a hidden binding id", async () => {
+    const workspace = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const member = await seedTestMemberWithRole(workspace.id, "member");
+    const [project, otherProject] = await Promise.all([
+      seedTestProject(workspace.id),
+      seedTestProject(workspace.id),
+    ]);
+    const { connection } = await createConnection({ workspaceId: workspace.id, apiKey: "key" }, owner.userId, deps);
+    await configureProviderMaps(
+      connection.id,
+      { timeActivityId: "9", readMap, writeMap, priorityReadMap, priorityWriteMap },
+      owner.userId,
+      deps,
+      workspace.id,
+    );
+    const binding = await bindProject(
+      connection.id,
+      { projectId: project.id, remoteProjectId: "remote-project" },
+      owner.userId,
+      deps,
+      workspace.id,
+    );
+    const application = await prisma.integrationInboundApplication.create({
+      data: {
+        bindingId: binding.id,
+        remoteEntityType: "comment",
+        remoteParentType: "issue",
+        remoteParentId: "100",
+        remoteId: "released-discovery-private",
+        remoteUpdatedAt: new Date("2026-08-01T10:05:00.000Z"),
+        sourceVersion: "sha256:released-discovery-private-v1",
+        applicationKey: "released-discovery-private-application",
+        correlationId: "released-discovery-private-application",
+        state: "conflict",
+      },
+    });
+    const work = await prisma.integrationSyncWork.create({
+      data: {
+        bindingId: binding.id,
+        entityType: "comment",
+        entityId: randomUUID(),
+        direction: "outbound",
+        operation: "create",
+        dedupeKey: "released-discovery-private-work",
+        laneKey: "released-discovery-private",
+        actorKey: "remote:5",
+        actorKind: "remote",
+        payload: { redacted: true },
+        correlationId: "released-discovery-private-work",
+        state: "dead",
+        skippedReason: "private-comment-write-uncertain",
+        epoch: binding.lifecycleEpoch,
+      },
+    });
+    const conflict = await prisma.integrationConflict.create({
+      data: {
+        bindingId: binding.id,
+        applicationId: application.id,
+        workId: work.id,
+        kind: "inbound-comment-privacy",
+        localEvidence: { outboundWriteUncertain: true },
+        remoteEvidence: { reason: "private" },
+      },
+    });
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: { lifecycle: "disabled", releasedAt: new Date("2026-08-01T10:06:00.000Z") },
+    });
+
+    const discovery = await app.inject({
+      method: "GET",
+      url: `/api/integrations/workspaces/${workspace.id}/connections/${connection.id}`,
+      headers: { authorization: `Bearer ${owner.token}` },
+    });
+    expect(discovery.statusCode).toBe(200);
+    expect(discovery.json()).toMatchObject({
+      privacyRecovery: [{ projectId: project.id, remoteProjectId: "remote-project", status: "released" }],
+    });
+    expect(discovery.body).not.toContain(binding.id);
+
+    const recoveryUrl = `/api/integrations/workspaces/${workspace.id}/connections/${connection.id}/privacy-recovery`;
+    const payload = { projectId: project.id, remoteProjectId: "remote-project" };
+    const forbidden = await app.inject({
+      method: "POST",
+      url: recoveryUrl,
+      headers: { authorization: `Bearer ${member.token}` },
+      payload,
+    });
+    const scopedOther = generateTestToken({
+      userId: owner.userId,
+      email: owner.email,
+      allowedProjectIds: [otherProject.id],
+    });
+    const scoped = await app.inject({
+      method: "POST",
+      url: recoveryUrl,
+      headers: { authorization: `Bearer ${scopedOther}` },
+      payload,
+    });
+    expect(forbidden.statusCode).toBe(403);
+    expect(scoped.statusCode).toBe(404);
+    await expect(prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } })).resolves.toMatchObject({
+      state: "open",
+    });
+
+    const recovered = await app.inject({
+      method: "POST",
+      url: recoveryUrl,
+      headers: { authorization: `Bearer ${owner.token}` },
+      payload,
+    });
+    const replay = await app.inject({
+      method: "POST",
+      url: recoveryUrl,
+      headers: { authorization: `Bearer ${owner.token}` },
+      payload,
+    });
+    expect(recovered.statusCode).toBe(200);
+    expect(recovered.json()).toMatchObject({ status: "released", bindingId: binding.id });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toMatchObject({ status: "already-recovered", bindingId: binding.id });
+    await expect(prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } })).resolves.toMatchObject({
+      state: "resolved",
+      localEvidence: expect.objectContaining({
+        privacyRecovery: expect.objectContaining({ acknowledgedByUserId: owner.userId }),
+      }),
+    });
+    await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({
+      state: "superseded",
+      skippedReason: "private-comment-write-uncertain",
+    });
+    await expect(
+      bindProject(
+        connection.id,
+        { projectId: project.id, remoteProjectId: "remote-project" },
+        owner.userId,
+        deps,
+        workspace.id,
+      ),
+    ).resolves.toMatchObject({ id: binding.id, releasedAt: null });
+  });
+
+  it("lets an owner explicitly recover a legacy released privacy block before reconnecting", async () => {
+    const workspace = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const project = await seedTestProject(workspace.id);
+    const { connection } = await createConnection({ workspaceId: workspace.id, apiKey: "key" }, owner.userId, deps);
+    await configureProviderMaps(
+      connection.id,
+      { timeActivityId: "9", readMap, writeMap, priorityReadMap, priorityWriteMap },
+      owner.userId,
+      deps,
+      workspace.id,
+    );
+    const binding = await bindProject(
+      connection.id,
+      { projectId: project.id, remoteProjectId: "remote-project" },
+      owner.userId,
+      deps,
+      workspace.id,
+    );
+    await setConnectionLifecycle(connection.id, "active", owner.userId, deps, workspace.id);
+    const application = await prisma.integrationInboundApplication.create({
+      data: {
+        bindingId: binding.id,
+        remoteEntityType: "comment",
+        remoteParentType: "issue",
+        remoteParentId: "100",
+        remoteId: "released-private",
+        remoteUpdatedAt: new Date("2026-08-01T10:05:00.000Z"),
+        sourceVersion: "sha256:released-private-v1",
+        applicationKey: "released-private-application",
+        correlationId: "released-private-application",
+        state: "conflict",
+      },
+    });
+    const work = await prisma.integrationSyncWork.create({
+      data: {
+        bindingId: binding.id,
+        entityType: "comment",
+        entityId: randomUUID(),
+        direction: "outbound",
+        operation: "create",
+        dedupeKey: "released-private-work",
+        laneKey: "released-private",
+        actorKey: "remote:5",
+        actorKind: "remote",
+        payload: { redacted: true },
+        correlationId: "released-private-work",
+        state: "dead",
+        skippedReason: "private-comment-write-uncertain",
+        epoch: binding.lifecycleEpoch,
+      },
+    });
+    const conflict = await prisma.integrationConflict.create({
+      data: {
+        bindingId: binding.id,
+        applicationId: application.id,
+        workId: work.id,
+        kind: "inbound-comment-privacy",
+        localEvidence: { outboundWriteUncertain: true },
+        remoteEvidence: { reason: "private" },
+      },
+    });
+
+    await prisma.integrationProjectBinding.update({
+      where: { id: binding.id },
+      data: { lifecycle: "disabled", releasedAt: new Date("2026-08-01T10:06:00.000Z") },
+    });
+    await expect(getConnection(connection.id, owner.userId, workspace.id)).resolves.toMatchObject({
+      bindings: [],
+      syncHealth: { blockedWork: { total: 0, items: [] } },
+    });
+    await expect(
+      bindProject(
+        connection.id,
+        { projectId: project.id, remoteProjectId: "remote-project" },
+        owner.userId,
+        deps,
+        workspace.id,
+      ),
+    ).rejects.toMatchObject({ code: "BINDING_HISTORY_UNRESOLVED" });
+
+    const recover = (
+      integrationService as unknown as {
+        resolveReleasedBindingPrivacy?: (...args: unknown[]) => Promise<unknown>;
+      }
+    ).resolveReleasedBindingPrivacy;
+    expect(recover).toBeTypeOf("function");
+    await recover!(connection.id, binding.id, owner.userId, workspace.id);
+
+    await expect(prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } })).resolves.toMatchObject({
+      state: "resolved",
+    });
+    await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({
+      state: "superseded",
+      skippedReason: "private-comment-write-uncertain",
+    });
+    await expect(
+      bindProject(
+        connection.id,
+        { projectId: project.id, remoteProjectId: "remote-project" },
+        owner.userId,
+        deps,
+        workspace.id,
+      ),
+    ).resolves.toMatchObject({ id: binding.id, releasedAt: null });
   });
 });

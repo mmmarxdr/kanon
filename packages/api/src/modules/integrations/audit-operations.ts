@@ -53,6 +53,7 @@ function durableLease(binding: ClaimedBinding): DurableAuditCensusLease {
   const scopeFingerprint = createAuditScopeFingerprint({
     bindingId: binding.id,
     connectionId: binding.connectionId,
+    lifecycleEpoch: binding.lifecycleEpoch,
     normalizedBaseUrl: new URL(binding.baseUrl).toString(),
     remoteProjectId: binding.remoteProjectId,
     credentialId: binding.credentialId,

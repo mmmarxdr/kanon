@@ -132,6 +132,28 @@ describe("integrationConnectionSchema", () => {
     });
   });
 
+  it("parses owner-visible privacy recovery descriptors without exposing a binding id", () => {
+    const result = integrationConnectionSchema.parse({
+      ...connection,
+      privacyRecovery: [
+        {
+          projectId: "44444444-4444-4444-8444-444444444444",
+          remoteProjectId: "5",
+          status: "released",
+        },
+      ],
+    });
+
+    expect(result.privacyRecovery).toEqual([
+      {
+        projectId: "44444444-4444-4444-8444-444444444444",
+        remoteProjectId: "5",
+        status: "released",
+      },
+    ]);
+    expect(JSON.stringify(result.privacyRecovery)).not.toContain("33333333-3333-4333-8333-333333333333");
+  });
+
   it("rejects more than 20 auth-blocked work details", () => {
     const item = connection.syncHealth.blockedWork.items[0];
     const result = integrationConnectionSchema.safeParse({

@@ -19,6 +19,7 @@ const migrationPath = join(
 const scope = {
   bindingId: "binding-1",
   connectionId: "connection-1",
+  lifecycleEpoch: 2,
   normalizedBaseUrl: "https://redmine.example",
   remoteProjectId: "42",
   credentialId: "credential-1",
@@ -29,6 +30,9 @@ describe("audit evidence contracts", () => {
   it("creates deterministic scope fingerprints and explicit non-absence terminal states", () => {
     expect(createAuditScopeFingerprint(scope)).toBe(createAuditScopeFingerprint({ ...scope }));
     expect(createAuditScopeFingerprint({ ...scope, remoteProjectId: "43" })).not.toBe(
+      createAuditScopeFingerprint(scope),
+    );
+    expect(createAuditScopeFingerprint({ ...scope, lifecycleEpoch: 3 })).not.toBe(
       createAuditScopeFingerprint(scope),
     );
     expect(AUDIT_RUN_STATES).toEqual(["complete", "partial", "failed", "stale"]);

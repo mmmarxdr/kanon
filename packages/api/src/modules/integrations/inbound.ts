@@ -58,6 +58,7 @@ const DEFAULT_LEASE_MS = 120_000;
 const FAILED_POLL_DELAY_MS = 60_000;
 const MAX_DETAIL_READS = 10;
 const RETRY_LEASE_MS = 120_000;
+const REDMINE_INBOUND_COMMENT_VIA = "redmine-inbound";
 
 export interface InboundSyncLogger {
   info(context: unknown, message: string): void;
@@ -597,7 +598,7 @@ async function persistInboundCommentsTx(
 
       const comment = await transaction.comment.findFirst({
         where: { id: existing.entityId, issueId },
-        select: { id: true, body: true, source: true, authorId: true, remoteAuthorId: true },
+        select: { id: true, body: true, source: true, via: true, authorId: true, remoteAuthorId: true },
       });
       if (!comment || existing.bindingId !== binding.id) {
         await transaction.integrationConflict.create({
@@ -633,7 +634,10 @@ async function persistInboundCommentsTx(
         existing.metadata && typeof existing.metadata === "object" && !Array.isArray(existing.metadata)
           ? existing.metadata
           : {};
-      if (comment.remoteAuthorId === null) {
+      const redmineInboundComment =
+        comment.remoteAuthorId !== null ||
+        (comment.source === "system" && comment.via === REDMINE_INBOUND_COMMENT_VIA);
+      if (!redmineInboundComment) {
         await transaction.externalRef.update({
           where: { id: existing.id },
           data: {
@@ -791,6 +795,38 @@ async function persistInboundCommentsTx(
     }
 
     if (existing) continue;
+
+    const privateTombstone = await transaction.integrationInboundApplication.findFirst({
+      where: {
+        bindingId: binding.id,
+        remoteEntityType: "comment",
+        remoteParentType: "issue",
+        remoteParentId: remoteIssueId,
+        remoteId: change.identity.remoteId,
+        state: "skipped",
+        outcome: { path: ["reason"], equals: "private-comment" },
+      },
+      select: { id: true },
+    });
+    if (privateTombstone) {
+      await transaction.integrationInboundApplication.createMany({
+        data: {
+          bindingId: binding.id,
+          remoteEntityType: "comment",
+          remoteParentType: "issue",
+          remoteParentId: remoteIssueId,
+          remoteId: change.identity.remoteId,
+          remoteUpdatedAt: change.changedAt,
+          sourceVersion: change.sourceVersion,
+          applicationKey: correlationId,
+          correlationId,
+          state: "skipped",
+          outcome: { reason: "private-comment-tombstoned" },
+        },
+        skipDuplicates: true,
+      });
+      continue;
+    }
 
     const marker = parseCommentMarker(change.fields.body);
     if (marker) {

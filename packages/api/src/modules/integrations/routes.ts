@@ -21,6 +21,8 @@ import {
   getConnectionDiscovery,
   getWorkspaceConnection,
   replaceServiceCredential,
+  resolveBindingPrivacyByProject,
+  resolveReleasedBindingPrivacy,
   setBindingCommentRollout,
   setConnectionLifecycle,
   unbindProject,
@@ -63,6 +65,10 @@ const SetCommentRollout = z
     message: "Comment capture must be enabled before dispatch",
     path: ["commentDispatchEnabled"],
   });
+const RecoverPrivacy = z.object({
+  projectId: z.string().uuid(),
+  remoteProjectId: z.string().min(1),
+});
 const ConnectCredential = z.object({
   apiKey: z.string().min(1).max(4096),
 });
@@ -219,6 +225,38 @@ export default async function integrationRoutes(fastify: FastifyInstance): Promi
     "/workspaces/:wid/connections/:id/bindings/:bindingId/audit-health",
     { preHandler: [requireRole("wid", "owner"), requireUnscopedToken], schema: { params: ConnectionBindingId } },
     async (request) => getBindingAuditHealth(request.params.id, request.params.bindingId, request.user.userId, request.params.wid),
+  );
+
+  app.post(
+    "/workspaces/:wid/connections/:id/privacy-recovery",
+    {
+      preHandler: [requireRole("wid", "owner")],
+      schema: { params: ConnectionId, body: RecoverPrivacy },
+    },
+    async (request) =>
+      resolveBindingPrivacyByProject(
+        request.params.id,
+        request.body,
+        request.user.userId,
+        request.params.wid,
+        scopedProjectIds(request.user.allowedProjectIds),
+      ),
+  );
+
+  app.post(
+    "/workspaces/:wid/connections/:id/bindings/:bindingId/privacy-recovery",
+    {
+      preHandler: [requireRole("wid", "owner")],
+      schema: { params: ConnectionBindingId },
+    },
+    async (request) =>
+      resolveReleasedBindingPrivacy(
+        request.params.id,
+        request.params.bindingId,
+        request.user.userId,
+        request.params.wid,
+        scopedProjectIds(request.user.allowedProjectIds),
+      ),
   );
 
   app.post(
