@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { KanonClient } from "../kanon-client.js";
 import { errorResult, dataResult } from "../errors.js";
-import { startAutoHeartbeat, stopAutoHeartbeat } from "../heartbeat.js";
+import { closeTrackedCapture, startAutoHeartbeat } from "../heartbeat.js";
 
 // ─── Input Schemas ─────────────────────────────────────────────────────────
 
@@ -30,20 +30,23 @@ export function registerWorkSessionTools(server: McpServer, client: KanonClient)
     async ({ issue_key }) => {
       try {
         const result = await client.startWork(issue_key, "mcp");
-
-        // Start auto-heartbeat for this issue
-        startAutoHeartbeat(issue_key, client);
-
-        const session = (result.session ?? {}) as Record<string, unknown>;
+        const session = result.session as Record<string, unknown> | null;
+        const sessionId = typeof session?.["id"] === "string" ? session["id"] : null;
+        if (!sessionId) {
+          return errorResult(
+            new Error(`Capture did not start for ${issue_key}: the API returned no work session.`)
+          );
+        }
+        startAutoHeartbeat(issue_key, client, result.captureIntent);
         return dataResult({
           ok: true,
-          sessionId: session["id"] ?? null,
+          sessionId,
           action: "started" as const,
         });
       } catch (err) {
         return errorResult(err);
       }
-    },
+    }
   );
 
   server.tool(
@@ -52,10 +55,17 @@ export function registerWorkSessionTools(server: McpServer, client: KanonClient)
     StopWorkInput.shape,
     async ({ issue_key }) => {
       try {
-        // Stop auto-heartbeat first
-        stopAutoHeartbeat(issue_key);
-
-        const result = await client.stopWork(issue_key);
+        const result = await closeTrackedCapture(issue_key, client);
+        if ("deliveryStatus" in result) {
+          return dataResult({
+            ok: true,
+            issueKey: issue_key,
+            action: "close_requested" as const,
+            commandId: result.commandId,
+            deliveryStatus: result.deliveryStatus,
+            captureIntent: result.captureIntent,
+          });
+        }
         // S2 / KAN-26: include logged + durationSeconds when WorkLog captured
         const ack: Record<string, unknown> = {
           ok: true,
@@ -70,7 +80,7 @@ export function registerWorkSessionTools(server: McpServer, client: KanonClient)
       } catch (err) {
         return errorResult(err);
       }
-    },
+    }
   );
 
   server.tool(
@@ -94,7 +104,7 @@ export function registerWorkSessionTools(server: McpServer, client: KanonClient)
       } catch (err) {
         return errorResult(err);
       }
-    },
+    }
   );
 }
 

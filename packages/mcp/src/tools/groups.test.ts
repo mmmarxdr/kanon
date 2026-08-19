@@ -8,6 +8,16 @@ import { registerGroupTools } from "./groups.js";
 import { KanonApiError } from "../kanon-client.js";
 import type { KanonClient } from "../kanon-client.js";
 
+vi.mock("../heartbeat.js", () => ({
+  adoptCaptureByHeartbeat: vi.fn(),
+  forgetTrackedCapture: vi.fn(),
+  withIssueCaptureOperations: vi.fn(
+    async (_keys: readonly string[], operation: () => Promise<unknown>) => operation()
+  ),
+}));
+
+import * as heartbeatMod from "../heartbeat.js";
+
 // ─── Harness ────────────────────────────────────────────────────────────────
 
 type ToolHandler = (input: Record<string, unknown>) => Promise<{
@@ -24,7 +34,7 @@ interface RegisteredTool {
 
 function captureTools(
   register: (server: McpServer, client: KanonClient) => void,
-  client: KanonClient,
+  client: KanonClient
 ): Map<string, RegisteredTool> {
   const tools = new Map<string, RegisteredTool>();
   const fakeServer = {
@@ -77,7 +87,7 @@ describe("transition_issues — keys-mode XOR validation (D9)", () => {
     expect(mockClient.batchTransitionByKeys).toHaveBeenCalledWith(
       "KAN",
       ["KAN-1", "KAN-2"],
-      "done",
+      "done"
     );
     expect(mockClient.batchTransition).not.toHaveBeenCalled();
   });
@@ -165,14 +175,16 @@ describe("transition_issues — format tier", () => {
 describe("transition_issues — RECONCILIATION_REQUIRED regression pin (KAN-188)", () => {
   it("surfaces a RECONCILIATION_REQUIRED 409 via errorResult without crashing or reporting success", async () => {
     const mockClient = {
-      batchTransition: vi.fn().mockRejectedValue(
-        new KanonApiError(
-          409,
-          "RECONCILIATION_REQUIRED",
-          "Unconfirmed captured time must be reconciled",
-          { blockedIssues: [{ issueKey: "KAN-1", totalHours: 5 }] },
+      batchTransition: vi
+        .fn()
+        .mockRejectedValue(
+          new KanonApiError(
+            409,
+            "RECONCILIATION_REQUIRED",
+            "Unconfirmed captured time must be reconciled",
+            { blockedIssues: [{ issueKey: "KAN-1", totalHours: 5 }] }
+          )
         ),
-      ),
     };
     const tools = captureTools(registerGroupTools, mockClient as unknown as KanonClient);
     const tool = tools.get("transition_issues");
@@ -188,5 +200,84 @@ describe("transition_issues — RECONCILIATION_REQUIRED regression pin (KAN-188)
     const parsed = JSON.parse(result.content[0]!.text);
     expect(parsed.code).toBe("RECONCILIATION_REQUIRED");
     expect(parsed).not.toHaveProperty("ok", true);
+  });
+});
+
+describe("KAN-243 transition_issues exact-key capture policy", () => {
+  beforeEach(() => {
+    vi.mocked(heartbeatMod.adoptCaptureByHeartbeat).mockReset().mockResolvedValue(undefined);
+    vi.mocked(heartbeatMod.forgetTrackedCapture).mockReset();
+    vi.mocked(heartbeatMod.withIssueCaptureOperations).mockClear();
+  });
+
+  it("group mode does not pre-list and adopts only exact keys returned by the API", async () => {
+    const client = {
+      listIssues: vi.fn(),
+      batchTransition: vi.fn().mockResolvedValue({
+        count: 1,
+        keys: ["KAN-2"],
+        groupKey: "group-a",
+        state: "in_progress",
+      }),
+    };
+    const tool = captureTools(registerGroupTools, client as unknown as KanonClient).get(
+      "transition_issues"
+    )!;
+
+    const result = await tool.handler({
+      projectKey: "KAN",
+      groupKey: "group-a",
+      state: "in_progress",
+    });
+
+    expect(client.listIssues).not.toHaveBeenCalled();
+    expect(heartbeatMod.withIssueCaptureOperations).toHaveBeenCalledWith(
+      ["KAN-2"],
+      expect.any(Function)
+    );
+    expect(heartbeatMod.adoptCaptureByHeartbeat).toHaveBeenCalledWith("KAN-2", client);
+    expect(JSON.parse(result.content[0]!.text)).toEqual({
+      ok: true,
+      count: 1,
+      keys: ["KAN-2"],
+    });
+  });
+
+  it("dedupes and sorts explicit keys before acquiring their operation queues", async () => {
+    const client = {
+      batchTransitionByKeys: vi.fn().mockResolvedValue({ count: 2, keys: ["KAN-2", "KAN-1"] }),
+    };
+    const tool = captureTools(registerGroupTools, client as unknown as KanonClient).get(
+      "transition_issues"
+    )!;
+
+    await tool.handler({
+      projectKey: "KAN",
+      keys: ["KAN-2", "KAN-1", "KAN-2"],
+      state: "done",
+    });
+
+    expect(heartbeatMod.withIssueCaptureOperations).toHaveBeenCalledWith(
+      ["KAN-1", "KAN-2"],
+      expect.any(Function)
+    );
+    expect(heartbeatMod.forgetTrackedCapture).toHaveBeenCalledTimes(2);
+  });
+
+  it("full format retains exact transitioned keys", async () => {
+    const response = { count: 1, keys: ["KAN-3"], groupKey: "group-a", state: "done" };
+    const client = { batchTransition: vi.fn().mockResolvedValue(response) };
+    const tool = captureTools(registerGroupTools, client as unknown as KanonClient).get(
+      "transition_issues"
+    )!;
+
+    const result = await tool.handler({
+      projectKey: "KAN",
+      groupKey: "group-a",
+      state: "done",
+      format: "full",
+    });
+
+    expect(JSON.parse(result.content[0]!.text)).toEqual(response);
   });
 });

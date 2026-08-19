@@ -17,6 +17,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { KanonClient } from "../kanon-client.js";
 import { errorResult, dataResult } from "../errors.js";
+import { startAutoHeartbeat } from "../heartbeat.js";
 
 // ─── Deferred tool names ──────────────────────────────────────────────────────
 
@@ -38,7 +39,12 @@ const ReportIncidentInput = z.object({
   title: z.string().min(1).max(200).describe("Issue title: [Area] imperative verb phrase"),
   description: z.string().optional().describe("Optional incident description"),
   groupKey: z.string().optional().describe("Optional group key (call list_groups first)"),
-  via: z.string().optional().describe("Work-session source identifier (default: 'mcp'); applies to the session, not the issue record"),
+  via: z
+    .string()
+    .optional()
+    .describe(
+      "Work-session source identifier (default: 'mcp'); applies to the session, not the issue record"
+    ),
 });
 
 const ProposeEstimateInput = z.object({
@@ -78,23 +84,31 @@ export function registerCaptureTools(server: McpServer, client: KanonClient): vo
       // so the incident issue isn't silently orphaned.
       try {
         const sessionResult = await client.startWork(issue.key, via ?? "mcp");
-        const session = (sessionResult.session ?? {}) as Record<string, unknown>;
+        const session = sessionResult.session as Record<string, unknown> | null;
+        const sessionId = typeof session?.["id"] === "string" ? session["id"] : null;
+        if (!sessionId) {
+          return errorResult(
+            new Error(
+              `Incident issue ${issue.key} was created, but capture did not start because the API returned no work session.`
+            )
+          );
+        }
+        startAutoHeartbeat(issue.key, client, sessionResult.captureIntent);
         return dataResult({
           ok: true,
           issueKey: issue.key,
-          sessionId: session["id"] ?? null,
+          sessionId,
         });
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : String(err);
+        const message = err instanceof Error ? err.message : String(err);
         return errorResult(
           new Error(
             `Incident issue ${issue.key} was created but starting the work session failed: ${message}. ` +
-            `Use start_work with issue_key: "${issue.key}" to start tracking manually.`,
-          ),
+              `Use start_work with issue_key: "${issue.key}" to start tracking manually.`
+          )
         );
       }
-    },
+    }
   );
 
   // ── propose_estimate — DEFERRED ────────────────────────────────────
@@ -124,7 +138,7 @@ export function registerCaptureTools(server: McpServer, client: KanonClient): vo
       } catch (err) {
         return errorResult(err);
       }
-    },
+    }
   );
 
   // ── apply_proposal — DEFERRED ─────────────────────────────────────
@@ -140,6 +154,6 @@ export function registerCaptureTools(server: McpServer, client: KanonClient): vo
       } catch (err) {
         return errorResult(err);
       }
-    },
+    }
   );
 }
