@@ -15,6 +15,13 @@ vi.mock("../../config/prisma.js", () => ({
       delete: vi.fn(),
       deleteMany: vi.fn(),
     },
+    workCaptureIntent: {
+      create: vi.fn(),
+      findUnique: vi.fn(),
+      findMany: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+    },
     workLog: {
       create: vi.fn(),
       findUnique: vi.fn(),
@@ -120,6 +127,11 @@ const mockSessionUpdate = vi.mocked(prisma.workSession.update);
 const mockSessionUpdateMany = vi.mocked(prisma.workSession.updateMany);
 const mockSessionDelete = vi.mocked(prisma.workSession.delete);
 const mockSessionDeleteMany = vi.mocked(prisma.workSession.deleteMany);
+const mockCaptureIntentCreate = vi.mocked(prisma.workCaptureIntent.create);
+const mockCaptureIntentFindUnique = vi.mocked(prisma.workCaptureIntent.findUnique);
+const mockCaptureIntentFindMany = vi.mocked(prisma.workCaptureIntent.findMany);
+const mockCaptureIntentUpdate = vi.mocked(prisma.workCaptureIntent.update);
+const mockCaptureIntentUpdateMany = vi.mocked(prisma.workCaptureIntent.updateMany);
 const mockTransaction = vi.mocked(prisma.$transaction);
 const mockQueryRaw = vi.mocked(prisma.$queryRaw);
 const mockWorkLogCreate = vi.mocked(prisma.workLog.create);
@@ -174,6 +186,7 @@ function mockLockedIssue(
   mockQueryRaw.mockImplementation(async (query: any) => {
     const sql = Array.isArray(query) ? query.join(" ") : String(query);
     if (sql.includes("pg_advisory_xact_lock")) return [] as any;
+    if (sql.includes("clock_timestamp()")) return [{ now: new Date() }] as any;
     if (sql.includes('SELECT "state"')) {
       return [{ state, assigneeId }] as any;
     }
@@ -199,6 +212,26 @@ describe("WorkSessionService", () => {
     mockSessionUpdateMany.mockResolvedValue({ count: 1 } as any);
     mockSessionDeleteMany.mockResolvedValue({ count: 1 } as any);
     mockSessionCreate.mockResolvedValue(fakeSession);
+    mockCaptureIntentFindUnique.mockResolvedValue(null as any);
+    mockCaptureIntentFindMany.mockResolvedValue([] as any);
+    mockCaptureIntentCreate.mockResolvedValue({
+      id: "intent-1",
+      epoch: "epoch-1",
+      state: "capturing",
+      leaseGeneration: 1,
+      userId: "user-1",
+      issueId: "issue-1",
+      memberId: "member-1",
+      source: "mcp",
+      closedAt: null,
+    } as any);
+    mockCaptureIntentUpdate.mockResolvedValue({
+      id: "intent-1",
+      epoch: "epoch-1",
+      state: "capturing",
+      leaseGeneration: 1,
+    } as any);
+    mockCaptureIntentUpdateMany.mockResolvedValue({ count: 1 } as any);
     mockWorkLogCreate.mockResolvedValue({ id: "wl-default" } as any);
     mockWorkLogFindUnique.mockResolvedValue(null as any);
     mockWorkLogFindFirst.mockResolvedValue(null as any);
@@ -321,6 +354,41 @@ describe("WorkSessionService", () => {
       expect(result.session).toEqual(fakeSession);
       expect(result.warnings).toHaveLength(0);
       expect(mockSessionUpsert).toHaveBeenCalledOnce();
+    });
+
+    it("retries a Prisma raw-query P2010 carrying PostgreSQL serialization SQLSTATE 40001", async () => {
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      mockSessionUpsert.mockResolvedValue(fakeSession);
+      const serializationFailure = Object.assign(new Error("Raw query failed"), {
+        code: "P2010",
+        meta: {
+          code: "40001",
+          message:
+            "ERROR: could not serialize access due to read/write dependencies among transactions",
+        },
+      });
+      mockTransaction
+        .mockRejectedValueOnce(serializationFailure)
+        .mockImplementationOnce(async (operation: any) => operation(prisma));
+
+      const result = await startWork("KAN-42", "member-1", "user-1", "transition-listener");
+
+      expect(result.session).toEqual(fakeSession);
+      expect(mockTransaction).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not retry an arbitrary Prisma raw-query P2010", async () => {
+      mockIssueFind.mockResolvedValue(fakeIssue);
+      const rawQueryFailure = Object.assign(new Error("Raw query failed"), {
+        code: "P2010",
+        meta: { code: "23505", message: "duplicate key value violates unique constraint" },
+      });
+      mockTransaction.mockRejectedValueOnce(rawQueryFailure);
+
+      await expect(startWork("KAN-42", "member-1", "user-1", "transition-listener")).rejects.toBe(
+        rawQueryFailure
+      );
+      expect(mockTransaction).toHaveBeenCalledOnce();
     });
 
     it("upserts when user already has a session on the issue", async () => {
@@ -516,9 +584,8 @@ describe("WorkSessionService", () => {
         lastHeartbeat: new Date("2026-08-11T12:00:00.000Z"),
       };
       const tx = {
-        $queryRaw: vi
-          .fn()
-          .mockResolvedValue([{ state: "in_progress", assigneeId: "existing" }]),
+        $queryRaw: vi.fn().mockResolvedValue([{ state: "in_progress", assigneeId: "existing" }]),
+        workCaptureIntent: prisma.workCaptureIntent,
         workSession: {
           findUnique: vi.fn().mockResolvedValueOnce(stale).mockResolvedValueOnce(null),
           deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -568,18 +635,16 @@ describe("WorkSessionService", () => {
         lastHeartbeat: new Date("2026-08-11T12:10:00.000Z"),
       };
       const tx = {
-        $queryRaw: vi
-          .fn()
-          .mockResolvedValue([{ state: "in_progress", assigneeId: "existing" }]),
+        $queryRaw: vi.fn().mockResolvedValue([{ state: "in_progress", assigneeId: "existing" }]),
+        workCaptureIntent: prisma.workCaptureIntent,
         workSession: {
-          findUnique: vi.fn()
-            .mockResolvedValueOnce(stale)
-            .mockResolvedValueOnce(newer),
+          findUnique: vi.fn().mockResolvedValueOnce(stale).mockResolvedValueOnce(newer),
           deleteMany: vi.fn().mockResolvedValueOnce({ count: 0 }),
           create: vi.fn(),
           upsert: vi.fn().mockResolvedValue(adopted),
         },
         workLog: { create: vi.fn() },
+        interruption: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn() },
       };
       mockIssueFind.mockResolvedValue(fakeIssue);
       mockSessionFindUnique.mockResolvedValue(stale);
@@ -1114,6 +1179,7 @@ describe("WorkSessionService", () => {
       };
       const tx = {
         $queryRaw: vi.fn().mockResolvedValue([{ state: "in_progress" }]),
+        workCaptureIntent: prisma.workCaptureIntent,
         workSession: {
           findUnique: vi.fn().mockResolvedValueOnce(stale).mockResolvedValueOnce(null),
           deleteMany: vi.fn().mockResolvedValueOnce({ count: 0 }),
@@ -1163,6 +1229,7 @@ describe("WorkSessionService", () => {
           create: vi.fn().mockResolvedValue({ id: "wl-close-race", durationS: 300 }),
         },
         interruption: { findMany: vi.fn(), updateMany: vi.fn() },
+        workCaptureIntent: prisma.workCaptureIntent,
       };
       mockIssueFind
         .mockResolvedValueOnce(fakeIssue)
@@ -1215,10 +1282,9 @@ describe("WorkSessionService", () => {
           }
           return [];
         }),
+        workCaptureIntent: prisma.workCaptureIntent,
         workSession: {
-          findUnique: vi.fn()
-            .mockResolvedValueOnce(stale)
-            .mockResolvedValueOnce(null),
+          findUnique: vi.fn().mockResolvedValueOnce(stale).mockResolvedValueOnce(null),
           deleteMany: vi.fn().mockResolvedValueOnce({ count: 0 }),
           create: vi.fn(),
           upsert: vi.fn().mockResolvedValue(replacement),
@@ -1258,6 +1324,7 @@ describe("WorkSessionService", () => {
       };
       const tx = {
         $queryRaw: vi.fn().mockResolvedValue([{ state: "in_progress" }]),
+        workCaptureIntent: prisma.workCaptureIntent,
         workSession: {
           findUnique: vi.fn().mockResolvedValueOnce(stale).mockResolvedValueOnce(null),
           deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -1734,9 +1801,7 @@ describe("WorkSessionService", () => {
         memberId: "member-1",
         userId: "user-1",
         workLogId: "wl-stop-durable",
-        effectsClaimedAt: null,
-        effectClaimToken: null,
-        effectsEmittedAt: null,
+        effectRevision: 0,
         createdAt: startedAt,
         updatedAt: startedAt,
         workLog: {
@@ -2399,6 +2464,7 @@ describe("WorkSessionService", () => {
         },
         workLog: { create: vi.fn() },
         interruption: { findMany: vi.fn(), updateMany: vi.fn() },
+        workCaptureIntent: { updateMany: vi.fn() },
       };
       mockSessionFindMany.mockResolvedValue([staleSnapshot] as any);
       mockTransaction.mockImplementation(async (operation: any) => {
@@ -2413,9 +2479,10 @@ describe("WorkSessionService", () => {
         where: { id: "s-renewed", lastHeartbeat: staleHeartbeat },
       });
       expect(tx.workLog.create).not.toHaveBeenCalled();
+      expect(tx.workCaptureIntent.updateMany).not.toHaveBeenCalled();
       expect(mockSessionDelete).not.toHaveBeenCalled();
       expect(mockEmit).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: "work_session.ended" }),
+        expect.objectContaining({ type: "work_session.ended" })
       );
     });
 

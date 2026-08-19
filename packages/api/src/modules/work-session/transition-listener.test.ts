@@ -22,6 +22,7 @@ vi.mock("../../config/prisma.js", () => ({
   prisma: {
     member: { findUnique: vi.fn() },
     workSession: { findUnique: vi.fn(), findMany: vi.fn() },
+    workCaptureIntent: { findMany: vi.fn() },
     issue: { findUnique: vi.fn() },
   },
 }));
@@ -52,6 +53,7 @@ import type { DomainEvent } from "../../services/event-bus/types.js";
 const mockMemberFindUnique = vi.mocked(prisma.member.findUnique);
 const mockIssueFindUnique = vi.mocked(prisma.issue.findUnique);
 const mockWorkSessionFindMany = vi.mocked(prisma.workSession.findMany);
+const mockWorkCaptureIntentFindMany = vi.mocked(prisma.workCaptureIntent.findMany);
 const mockStartWork = vi.mocked(startWork);
 const mockStopWork = vi.mocked(stopWork);
 const mockStageTransitionStart = vi.mocked(stageTransitionStart);
@@ -209,6 +211,7 @@ describe("registerTransitionListener", () => {
     mockWorkSessionFindMany.mockResolvedValue([
       { id: "session-1", userId: "user-1", memberId: "member-1" },
     ] as any);
+    mockWorkCaptureIntentFindMany.mockResolvedValue([] as any);
     mockStartWork.mockResolvedValue({ session: {}, warnings: [], autoAssigned: false } as any);
     mockStopWork.mockResolvedValue({ ok: true, deleted: true, workLog: null } as any);
     mockStageTransitionStart.mockResolvedValue({
@@ -531,6 +534,68 @@ describe("registerTransitionListener", () => {
     await expect(
       emit(makeTransitionEvent("in_progress", "review")) as Promise<void>
     ).rejects.toThrow("DB error");
+  });
+
+  it("closes a no-session durable intent with fencing and propagates failure for retry", async () => {
+    mockWorkSessionFindMany.mockResolvedValue([] as any);
+    mockWorkCaptureIntentFindMany.mockResolvedValue([
+      {
+        userId: "user-1",
+        memberId: "member-1",
+        epoch: "epoch-1",
+        leaseGeneration: 3,
+      },
+    ] as any);
+    mockStopWork.mockRejectedValueOnce(new Error("intent close unavailable"));
+    const event = makeTransitionEvent("in_progress", "review");
+    const { bus, emit } = makeFakeBus();
+    registerTransitionListener(bus);
+
+    await expect(emit(event) as Promise<void>).rejects.toThrow("intent close unavailable");
+    expect(mockStopWork).toHaveBeenCalledWith(
+      "KAN-42",
+      "user-1",
+      "member-1",
+      null,
+      expect.any(Date),
+      undefined,
+      { epoch: "epoch-1", leaseGeneration: 3 }
+    );
+
+    mockStopWork.mockResolvedValueOnce({ ok: true, deleted: false, workLog: null } as any);
+    await expect(emit(event) as Promise<void>).resolves.toBeUndefined();
+    expect(mockStopWork).toHaveBeenCalledTimes(2);
+  });
+
+  it("deduplicates a live session and durable intent by user while preserving the intent fence", async () => {
+    mockWorkSessionFindMany.mockResolvedValue([
+      { id: "session-1", userId: "user-1", memberId: "member-1" },
+    ] as any);
+    mockWorkCaptureIntentFindMany.mockResolvedValue([
+      {
+        userId: "user-1",
+        memberId: "member-1",
+        epoch: "epoch-1",
+        leaseGeneration: 4,
+      },
+    ] as any);
+    const { bus, emit } = makeFakeBus();
+    registerTransitionListener(bus);
+
+    await expect(
+      emit(makeTransitionEvent("in_progress", "review")) as Promise<void>
+    ).resolves.toBeUndefined();
+
+    expect(mockStopWork).toHaveBeenCalledOnce();
+    expect(mockStopWork).toHaveBeenCalledWith(
+      "KAN-42",
+      "user-1",
+      "member-1",
+      null,
+      expect.any(Date),
+      "session-1",
+      { epoch: "epoch-1", leaseGeneration: 4 }
+    );
   });
 
   // ─── BUG-4: close ALL sessions — not just actor's ─────────────────────

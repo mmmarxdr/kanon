@@ -189,11 +189,35 @@ enum NotificationKind {
   assignment
   subscribed_activity
   cycle_closed
+  work_capture_failure
 }
 
 enum WorkLogReason {
   stopped
   expired
+}
+
+enum WorkCaptureState {
+  adopted
+  capturing
+  paused
+  closing
+  closed
+}
+
+enum WorkCaptureEffectKind {
+  activity
+  release
+  close
+}
+
+enum WorkCaptureFailureStage {
+  effect_apply
+}
+
+enum WorkCaptureFailureResolution {
+  succeeded
+  superseded
 }
 
 enum RefreshSource {
@@ -237,6 +261,7 @@ model User {
 
   members                  Member[]
   workSessions             WorkSession[]
+  workCaptureIntents       WorkCaptureIntent[]
   workTransitionLifecycles WorkTransitionLifecycle[]
   createdInvites           WorkspaceInvite[]
   passwordResetTokens      PasswordResetToken[]
@@ -401,6 +426,7 @@ model Issue {
   activityLogs      ActivityLog[]
   comments          Comment[]
   workSessions      WorkSession[]
+  workCaptureIntents WorkCaptureIntent[]
   workLogs          WorkLog[]
   workTransitionLifecycles WorkTransitionLifecycle[]
   mentions          Mention[]
@@ -654,6 +680,7 @@ model Member {
   comments                    Comment[]
   documents                   IssueDocument[]
   workSessions                WorkSession[]
+  workCaptureIntents          WorkCaptureIntent[]
   workLogs                    WorkLog[]
   workTransitionLifecycles    WorkTransitionLifecycle[]
   cycleScopeEvents            CycleScopeEvent[]  @relation("CycleScopeAuthor")
@@ -837,6 +864,53 @@ model WorkSession {
   @@index([issueId, lastHeartbeat])
   @@index([memberId, lastHeartbeat])
   @@map("work_sessions")
+}
+
+/// Durable capture ownership state. WorkSession remains the ephemeral live
+/// lease while this aggregate survives lease cleanup and lifecycle restarts.
+model WorkCaptureIntent {
+  id                     String                 @id @default(uuid()) @db.Uuid
+  epoch                  String                 @unique @default(uuid()) @db.Uuid
+  state                  WorkCaptureState       @default(adopted)
+  leaseGeneration        Int                    @default(1) @map("lease_generation")
+  source                 String                 @default("mcp")
+  closedAt               DateTime?              @map("closed_at")
+  pendingEffectKind      WorkCaptureEffectKind? @map("pending_effect_kind")
+  pendingEffectAt        DateTime?              @map("pending_effect_at")
+  pendingEffectCommandId String?                 @map("pending_effect_command_id") @db.Uuid
+  effectRevision         Int                    @default(0) @map("effect_revision")
+  failureEpisodeId       String?                @unique @map("failure_episode_id") @db.Uuid
+  failureCommandId       String?                @map("failure_command_id") @db.Uuid
+  failureEpoch           String?                @map("failure_epoch") @db.Uuid
+  failureLeaseGeneration Int?                   @map("failure_lease_generation")
+  failureEffectRevision  Int?                   @map("failure_effect_revision")
+  failureEffectKind      WorkCaptureEffectKind? @map("failure_effect_kind")
+  failureEffectAt        DateTime?              @map("failure_effect_at")
+  failureStage           WorkCaptureFailureStage? @map("failure_stage")
+  failureCode            String?                @map("failure_code")
+  failureCount           Int                    @default(0) @map("failure_count")
+  failureFirstAt         DateTime?              @map("failure_first_at")
+  failureLastAt          DateTime?              @map("failure_last_at")
+  failureResolvedAt      DateTime?              @map("failure_resolved_at")
+  failureResolution      WorkCaptureFailureResolution? @map("failure_resolution")
+
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  issueId String @map("issue_id") @db.Uuid
+  issue   Issue  @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  memberId String @map("member_id") @db.Uuid
+  member   Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, issueId])
+  @@index([issueId, state])
+  @@index([issueId, failureResolvedAt])
+  @@index([memberId, state, updatedAt])
+  @@map("work_capture_intents")
 }
 
 /// Durable identity and pairing state for transition-driven work capture.
@@ -1224,6 +1298,7 @@ model Notification {
   mention     Mention?         @relation(fields: [mentionId], references: [id], onDelete: SetNull) // D2
   commentId   String?          @map("comment_id") @db.Uuid
   comment     Comment?         @relation(fields: [commentId], references: [id], onDelete: SetNull)
+  workCaptureFailureEpisodeId String? @unique @map("work_capture_failure_episode_id") @db.Uuid
   payload     Json?            // {issueKey,issueTitle,context,...} kind-specific
   read        Boolean          @default(false)
   via         String?

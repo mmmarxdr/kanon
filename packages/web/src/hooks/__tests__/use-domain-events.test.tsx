@@ -18,7 +18,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { issueKeys, cycleKeys, projectKeys } from "@/lib/query-keys";
+import { issueKeys, cycleKeys, notificationKeys, projectKeys } from "@/lib/query-keys";
 
 // ─── FakeEventSource ────────────────────────────────────────────────────────
 
@@ -101,28 +101,34 @@ describe("useDomainEvents — KAN-88 Slice 1: scoped invalidation", () => {
 
     act(() => {
       FakeEventSource.lastInstance!.dispatch("issue.transitioned", {
-        payload: { issueKey: "PROJ-1", issueId: "id-1", projectKey: PROJECT_KEY, from: "todo", to: "in_progress" },
+        payload: {
+          issueKey: "PROJ-1",
+          issueId: "id-1",
+          projectKey: PROJECT_KEY,
+          from: "todo",
+          to: "in_progress",
+        },
       });
     });
 
     // Must invalidate the scoped list key
     expect(invalidateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: issueKeys.list(PROJECT_KEY) }),
+      expect.objectContaining({ queryKey: issueKeys.list(PROJECT_KEY) })
     );
     // Must invalidate the scoped groups key
     expect(invalidateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: issueKeys.groups(PROJECT_KEY) }),
+      expect.objectContaining({ queryKey: issueKeys.groups(PROJECT_KEY) })
     );
     // Must NOT nuke the entire issue cache
     expect(invalidateSpy).not.toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: issueKeys.all }),
+      expect.objectContaining({ queryKey: issueKeys.all })
     );
     // Must NOT invalidate detail/documents/context keys
     expect(invalidateSpy).not.toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: issueKeys.details() }),
+      expect.objectContaining({ queryKey: issueKeys.details() })
     );
     expect(invalidateSpy).not.toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: issueKeys.backlogs() }),
+      expect.objectContaining({ queryKey: issueKeys.backlogs() })
     );
   });
 
@@ -142,11 +148,11 @@ describe("useDomainEvents — KAN-88 Slice 1: scoped invalidation", () => {
 
     // Falls back to lists prefix (still excludes detail/documents/context)
     expect(invalidateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: issueKeys.lists() }),
+      expect.objectContaining({ queryKey: issueKeys.lists() })
     );
     // Must NOT nuke the entire issue cache
     expect(invalidateSpy).not.toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: issueKeys.all }),
+      expect.objectContaining({ queryKey: issueKeys.all })
     );
   });
 
@@ -161,15 +167,20 @@ describe("useDomainEvents — KAN-88 Slice 1: scoped invalidation", () => {
 
     act(() => {
       FakeEventSource.lastInstance!.dispatch("issue.updated", {
-        payload: { issueKey: "PROJ-2", issueId: "id-2", projectKey: PROJECT_KEY, fields: ["title"] },
+        payload: {
+          issueKey: "PROJ-2",
+          issueId: "id-2",
+          projectKey: PROJECT_KEY,
+          fields: ["title"],
+        },
       });
     });
 
     expect(invalidateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: issueKeys.list(PROJECT_KEY) }),
+      expect.objectContaining({ queryKey: issueKeys.list(PROJECT_KEY) })
     );
     expect(invalidateSpy).not.toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: issueKeys.all }),
+      expect.objectContaining({ queryKey: issueKeys.all })
     );
   });
 
@@ -188,7 +199,7 @@ describe("useDomainEvents — KAN-88 Slice 1: scoped invalidation", () => {
 
     expect(queryClient.getQueryData(issueKeys.detail("PROJ-9"))).toBeUndefined();
     expect(invalidateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: issueKeys.list(PROJECT_KEY) }),
+      expect.objectContaining({ queryKey: issueKeys.list(PROJECT_KEY) })
     );
   });
 
@@ -203,15 +214,20 @@ describe("useDomainEvents — KAN-88 Slice 1: scoped invalidation", () => {
 
     act(() => {
       FakeEventSource.lastInstance!.dispatch("issue.created", {
-        payload: { issueKey: "PROJ-3", issueId: "id-3", projectKey: PROJECT_KEY, title: "New issue" },
+        payload: {
+          issueKey: "PROJ-3",
+          issueId: "id-3",
+          projectKey: PROJECT_KEY,
+          title: "New issue",
+        },
       });
     });
 
     expect(invalidateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: issueKeys.list(PROJECT_KEY) }),
+      expect.objectContaining({ queryKey: issueKeys.list(PROJECT_KEY) })
     );
     expect(invalidateSpy).not.toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: issueKeys.all }),
+      expect.objectContaining({ queryKey: issueKeys.all })
     );
   });
 
@@ -226,15 +242,21 @@ describe("useDomainEvents — KAN-88 Slice 1: scoped invalidation", () => {
 
     act(() => {
       FakeEventSource.lastInstance!.dispatch("issue.assigned", {
-        payload: { issueKey: "PROJ-4", issueId: "id-4", projectKey: PROJECT_KEY, from: null, to: "member-1" },
+        payload: {
+          issueKey: "PROJ-4",
+          issueId: "id-4",
+          projectKey: PROJECT_KEY,
+          from: null,
+          to: "member-1",
+        },
       });
     });
 
     expect(invalidateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: issueKeys.list(PROJECT_KEY) }),
+      expect.objectContaining({ queryKey: issueKeys.list(PROJECT_KEY) })
     );
     expect(invalidateSpy).not.toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: issueKeys.all }),
+      expect.objectContaining({ queryKey: issueKeys.all })
     );
   });
 
@@ -251,13 +273,19 @@ describe("useDomainEvents — KAN-88 Slice 1: scoped invalidation", () => {
 
     act(() => {
       FakeEventSource.lastInstance!.dispatch("issue.transitioned", {
-        payload: { issueKey: "PROJ-1", issueId: "id-1", projectKey: PROJECT_KEY, from: "todo", to: "in_progress" },
+        payload: {
+          issueKey: "PROJ-1",
+          issueId: "id-1",
+          projectKey: PROJECT_KEY,
+          from: "todo",
+          to: "in_progress",
+        },
       });
     });
 
     // cycleKeys.all must NOT be invalidated — no active cycle observer
     expect(invalidateSpy).not.toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: cycleKeys.all }),
+      expect.objectContaining({ queryKey: cycleKeys.all })
     );
   });
 
@@ -281,20 +309,30 @@ describe("useDomainEvents — KAN-88 Slice 1: scoped invalidation", () => {
       () => {
         useDomainEvents(WORKSPACE_ID);
         // Mounting useQuery with staleTime=Infinity prevents any background fetch
-        useQuery({ queryKey: cycleKeys.all, queryFn: () => Promise.resolve([]), staleTime: Infinity });
+        useQuery({
+          queryKey: cycleKeys.all,
+          queryFn: () => Promise.resolve([]),
+          staleTime: Infinity,
+        });
       },
-      { wrapper },
+      { wrapper }
     );
 
     act(() => {
       FakeEventSource.lastInstance!.dispatch("issue.transitioned", {
-        payload: { issueKey: "PROJ-1", issueId: "id-1", projectKey: PROJECT_KEY, from: "todo", to: "in_progress" },
+        payload: {
+          issueKey: "PROJ-1",
+          issueId: "id-1",
+          projectKey: PROJECT_KEY,
+          from: "todo",
+          to: "in_progress",
+        },
       });
     });
 
     // cycleKeys.all MUST be invalidated — active cycle observer present
     expect(invalidateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: cycleKeys.all }),
+      expect.objectContaining({ queryKey: cycleKeys.all })
     );
   });
 
@@ -315,11 +353,11 @@ describe("useDomainEvents — KAN-88 Slice 1: scoped invalidation", () => {
 
     // Must NOT nuke the entire issue cache
     expect(invalidateSpy).not.toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: issueKeys.all }),
+      expect.objectContaining({ queryKey: issueKeys.all })
     );
     // Must NOT unconditionally invalidate cycles
     expect(invalidateSpy).not.toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: cycleKeys.all }),
+      expect.objectContaining({ queryKey: cycleKeys.all })
     );
   });
 
@@ -340,7 +378,7 @@ describe("useDomainEvents — KAN-88 Slice 1: scoped invalidation", () => {
     });
 
     expect(invalidateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: cycleKeys.all }),
+      expect.objectContaining({ queryKey: cycleKeys.all })
     );
   });
 
@@ -358,11 +396,30 @@ describe("useDomainEvents — KAN-88 Slice 1: scoped invalidation", () => {
     });
 
     expect(invalidateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: projectKeys.all }),
+      expect.objectContaining({ queryKey: projectKeys.all })
     );
     expect(invalidateSpy).not.toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: cycleKeys.all }),
+      expect.objectContaining({ queryKey: cycleKeys.all })
     );
+  });
+
+  it("notification.created invalidates only the exact workspace notification list", async () => {
+    const { queryClient, wrapper } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { useDomainEvents } = await import("../use-domain-events");
+    renderHook(() => useDomainEvents(WORKSPACE_ID), { wrapper });
+
+    act(() => {
+      FakeEventSource.lastInstance!.dispatch("notification.created", { payload: {} });
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: notificationKeys.list(WORKSPACE_ID),
+    });
+    expect(invalidateSpy).not.toHaveBeenCalledWith({
+      queryKey: notificationKeys.list("another-workspace"),
+    });
   });
 
   // ── Negative: member.added ────────────────────────────────────────────────
@@ -379,7 +436,7 @@ describe("useDomainEvents — KAN-88 Slice 1: scoped invalidation", () => {
     });
 
     expect(invalidateSpy).not.toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: cycleKeys.all }),
+      expect.objectContaining({ queryKey: cycleKeys.all })
     );
   });
 
@@ -409,7 +466,7 @@ describe("useDomainEvents — KAN-88 Slice 1: scoped invalidation", () => {
         typeof call[0] === "object" &&
         "queryKey" in call[0] &&
         JSON.stringify((call[0] as { queryKey: unknown }).queryKey) ===
-          JSON.stringify(cycleKeys.all),
+          JSON.stringify(cycleKeys.all)
     );
     expect(cycleCalls).toHaveLength(1);
   });
@@ -446,7 +503,7 @@ describe("useDomainEvents — KAN-88 Slice 1: scoped invalidation", () => {
       });
     });
     expect(invalidateSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: cycleKeys.all }),
+      expect.objectContaining({ queryKey: cycleKeys.all })
     );
   });
 });

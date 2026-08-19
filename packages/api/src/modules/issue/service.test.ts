@@ -1132,7 +1132,7 @@ describe("durable work-capture transition observations", () => {
 
     await expect(
       transitionGroup(PROJECT.id, "group-a", "in_progress", "member-1")
-    ).resolves.toMatchObject({ count: 1 });
+    ).resolves.toMatchObject({ count: 1, keys: ["TEST-1"] });
     expect(mockEnqueueDomainEventTx).toHaveBeenCalledOnce();
     expect(mockEnqueueDomainEventTx).toHaveBeenCalledWith(
       expect.anything(),

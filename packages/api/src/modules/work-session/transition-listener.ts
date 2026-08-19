@@ -71,7 +71,7 @@ function isCloseState(state: string): boolean {
  */
 export function registerTransitionListener(
   bus: IEventBus,
-  logger: TransitionListenerLogger = console,
+  logger: TransitionListenerLogger = console
 ): () => void {
   // Active flag guards the race where handleEvent awaits a DB lookup and
   // tries to act after unsubscribe() has already been called.
@@ -79,18 +79,14 @@ export function registerTransitionListener(
   const issueQueues = new Map<string, Promise<void>>();
   const pendingTransitions = new Map<string, DomainEvent[]>();
 
-  function queuedCloseBoundary(
-    queueKey: string,
-    currentEvent: DomainEvent,
-  ): Date | null {
+  function queuedCloseBoundary(queueKey: string, currentEvent: DomainEvent): Date | null {
     const pending = pendingTransitions.get(queueKey) ?? [];
     const currentIndex = pending.indexOf(currentEvent);
     if (currentIndex < 0) return null;
 
     for (const candidate of pending.slice(currentIndex + 1)) {
       if (candidate.type !== "work_capture.transition_observed") continue;
-      const payload =
-        candidate.payload as unknown as WorkCaptureTransitionObservedPayload;
+      const payload = candidate.payload as unknown as WorkCaptureTransitionObservedPayload;
       const toIsActive = isActiveWork(payload.to);
       const fromIsActive = isActiveWork(payload.from);
       if (isCloseState(payload.to) || (fromIsActive && !toIsActive)) {
@@ -150,7 +146,7 @@ export function registerTransitionListener(
         userId,
         actorMemberId,
         activeSignalAt,
-        "transition-listener",
+        "transition-listener"
       );
       if (!active || staged.lifecycle.completed) return;
 
@@ -168,7 +164,7 @@ export function registerTransitionListener(
           actorMemberId,
           activeSignalAt,
           queuedCloseAt,
-          "transition-listener",
+          "transition-listener"
         );
         return;
       }
@@ -184,21 +180,12 @@ export function registerTransitionListener(
       // autoAssign:false — a state transition must not assign the actor (KAN-156).
       // onConflict:skip — KAN-160: if another member already works the issue, do
       // NOT open a second session and do NOT throw (the transition must succeed).
-      await startWork(
-        issueKey,
-        actorMemberId,
-        userId,
-        "transition-listener",
-        null,
-        undefined,
-        {
-          autoAssign: false,
-          onConflict: "skip",
-          transitionObservedAt: activeSignalAt,
-          transitionLifecycleIdentity:
-            staged.lifecycle.startIdentity ?? undefined,
-        },
-      );
+      await startWork(issueKey, actorMemberId, userId, "transition-listener", null, undefined, {
+        autoAssign: false,
+        onConflict: "skip",
+        transitionObservedAt: activeSignalAt,
+        transitionLifecycleIdentity: staged.lifecycle.startIdentity ?? undefined,
+      });
 
       // A close can arrive while startWork is awaiting its locked transaction.
       // Re-check the ordered queue before deciding the active signal is unbounded.
@@ -210,7 +197,7 @@ export function registerTransitionListener(
           actorMemberId,
           activeSignalAt,
           closeAfterOpen,
-          "transition-listener",
+          "transition-listener"
         );
         return;
       }
@@ -233,34 +220,46 @@ export function registerTransitionListener(
 
       if (!active) return; // re-check after await
 
-      await captureTransitionClose(
-        issueKey,
-        new Date(p.observedAt),
-        "transition-listener",
-      );
+      await captureTransitionClose(issueKey, new Date(p.observedAt), "transition-listener");
 
       if (!active) return; // re-check after durable close capture
 
-      const openSessions = await prisma.workSession.findMany({
-        // Close every remaining window, including an expired lease that cleanup
-        // has not finalized yet. stopWork applies the same lease cap for both.
-        where: { issueId: issueRow.id },
-        select: { id: true, userId: true, memberId: true },
-      });
+      const [openSessions, openIntents] = await Promise.all([
+        prisma.workSession.findMany({
+          // Close every remaining window, including an expired lease that cleanup
+          // has not finalized yet. stopWork applies the same lease cap for both.
+          where: { issueId: issueRow.id },
+          select: { id: true, userId: true, memberId: true },
+        }),
+        prisma.workCaptureIntent.findMany({
+          where: { issueId: issueRow.id, state: { not: "closed" } },
+          select: {
+            userId: true,
+            memberId: true,
+            epoch: true,
+            leaseGeneration: true,
+          },
+        }),
+      ]);
 
       if (!active) return; // re-check after await
 
       const observedAt = new Date(p.observedAt);
+      const sessionsByUser = new Map(openSessions.map((session) => [session.userId, session]));
+      const durableUsers = new Set<string>();
+      for (const intent of openIntents) {
+        durableUsers.add(intent.userId);
+        const session = sessionsByUser.get(intent.userId);
+        if (!active) break;
+        await stopWork(issueKey, intent.userId, intent.memberId, null, observedAt, session?.id, {
+          epoch: intent.epoch,
+          leaseGeneration: intent.leaseGeneration,
+        });
+      }
       for (const session of openSessions) {
         if (!active) break;
-        await stopWork(
-          issueKey,
-          session.userId,
-          session.memberId,
-          null,
-          observedAt,
-          session.id,
-        );
+        if (durableUsers.has(session.userId)) continue;
+        await stopWork(issueKey, session.userId, session.memberId, null, observedAt, session.id);
       }
       return;
     }
@@ -272,8 +271,7 @@ export function registerTransitionListener(
   const unsubscribeBus = bus.subscribe((event) => {
     if (event.type !== "work_capture.transition_observed") return;
 
-    const payload =
-      event.payload as unknown as WorkCaptureTransitionObservedPayload;
+    const payload = event.payload as unknown as WorkCaptureTransitionObservedPayload;
     const queueKey = payload.issueId || payload.issueKey;
     const pending = pendingTransitions.get(queueKey) ?? [];
     pending.push(event);
@@ -285,7 +283,7 @@ export function registerTransitionListener(
       .catch((err: unknown) => {
         logger.error(
           { err, eventType: event.type, eventId: event.id },
-          "transition-listener event handler failed",
+          "transition-listener event handler failed"
         );
         throw err;
       })

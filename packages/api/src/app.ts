@@ -50,6 +50,7 @@ import { createEmailProvider } from "./services/email/index.js";
 import type { EmailProvider } from "./services/email/types.js";
 import { registerForecastListener } from "./modules/forecast/index.js";
 import { registerTransitionListener } from "./modules/work-session/transition-listener.js";
+import { registerCaptureIntentListener } from "./modules/work-session/capture-intent-listener.js";
 import {
   startAuditScheduler,
   startIntegrationScheduler,
@@ -228,6 +229,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   // based on the issue state machine (KAN-156 Slice 1). Fire-and-forget —
   // a session failure MUST NEVER break the transition emitter.
   const unsubscribeTransitionListener = registerTransitionListener(eventBus, app.log);
+  const unsubscribeCaptureIntentListener = registerCaptureIntentListener(eventBus);
 
   // Listeners must exist before the durable queue starts replaying. Recovery is
   // app-owned so every durable domain-event producer shares one startup and
@@ -243,6 +245,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
       // Keep subscribers registered until every in-flight durable delivery has
       // settled; otherwise shutdown could acknowledge an event to zero listeners.
       outboxRecovery = undefined;
+      unsubscribeCaptureIntentListener();
       unsubscribeTransitionListener();
       unsubscribeForecast();
       unsubscribeNotifications();

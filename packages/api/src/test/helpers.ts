@@ -168,6 +168,7 @@ async function deleteTriageLedgerIfPresent(): Promise<void> {
 export async function cleanDatabase(): Promise<void> {
   await prisma.domainEventOutbox.deleteMany();
   await prisma.projectMember.deleteMany();
+  await prisma.workCaptureIntent.deleteMany();
   await prisma.workSession.deleteMany();
   await prisma.notification.deleteMany();
   await prisma.issueSubscription.deleteMany();

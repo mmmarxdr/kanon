@@ -1,5 +1,9 @@
 import { z } from "zod";
 import {
+  workCaptureCommandSchema,
+  workCaptureEffectResponseSchema,
+  workCaptureIntentSnapshotSchema,
+  workCaptureHydrationPageSchema,
   workLogItemSchema,
   workLogListResponseSchema,
 } from "@kanon/shared";
@@ -18,6 +22,32 @@ export const StartWorkSessionBody = z.object({
   source: z.string().max(50).default("mcp"),
 });
 export type StartWorkSessionBody = z.infer<typeof StartWorkSessionBody>;
+
+/** Full public command for one durable WorkCaptureIntent effect. */
+export const WorkCaptureCommandBody = workCaptureCommandSchema;
+export type WorkCaptureCommandBody = z.infer<typeof WorkCaptureCommandBody>;
+
+/** Heartbeat remains body-optional; a full command opts into durable activity. */
+export const WorkSessionHeartbeatBody = z.union([z.object({}).strict(), workCaptureCommandSchema]);
+export type WorkSessionHeartbeatBody = z.infer<typeof WorkSessionHeartbeatBody>;
+
+export const WorkCaptureIntentSnapshot = workCaptureIntentSnapshotSchema;
+export type WorkCaptureIntentSnapshot = z.infer<typeof WorkCaptureIntentSnapshot>;
+
+export const WorkCaptureEffectResponse = workCaptureEffectResponseSchema;
+export type WorkCaptureEffectResponse = z.infer<typeof WorkCaptureEffectResponse>;
+
+export const WorkCaptureHydrationQuery = z
+  .object({
+    workspaceId: z.string().uuid(),
+    cursor: z.string().uuid().optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(100),
+  })
+  .strict();
+export type WorkCaptureHydrationQuery = z.infer<typeof WorkCaptureHydrationQuery>;
+
+export const WorkCaptureHydrationPage = workCaptureHydrationPageSchema;
+export type WorkCaptureHydrationPage = z.infer<typeof WorkCaptureHydrationPage>;
 
 /**
  * KAN-103 — manually record an Interruption (no active session required).
