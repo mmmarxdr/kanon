@@ -10,9 +10,62 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  DATABASE_URL: postgresql://kanon:kanon@localhost:5432/kanon_e2e?schema=public
+  JWT_SECRET: ci-test-jwt-secret
+  JWT_REFRESH_SECRET: ci-test-jwt-refresh-secret
+  NODE_ENV: test
+  PORT: "3001"
+  SKIP_DND: "true"
+
 jobs:
-  test:
-    name: Test
+  quality:
+    name: Quality and typechecks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @kanon/api db:generate
+
+      - name: Build shared workspace packages
+        run: pnpm --filter @kanon/shared build
+
+      - name: Lint (ESLint — advisory, warnings only)
+        run: pnpm lint
+
+      - name: Format check (Prettier)
+        run: pnpm format:check
+
+      - name: TypeScript check (API)
+        run: pnpm --filter @kanon/api exec tsc --noEmit
+
+      - name: TypeScript check (Web)
+        run: pnpm --filter @kanon/web typecheck
+
+      - name: TypeScript check (E2E)
+        run: cd packages/e2e && npx tsc --noEmit
+
+      - name: TypeScript check (MCP)
+        run: pnpm --filter @kanon/mcp exec tsc --noEmit
+
+  api_coverage:
+    name: API coverage
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -30,14 +83,6 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-
-    env:
-      DATABASE_URL: postgresql://kanon:kanon@localhost:5432/kanon_e2e?schema=public
-      JWT_SECRET: ci-test-jwt-secret
-      JWT_REFRESH_SECRET: ci-test-jwt-refresh-secret
-      NODE_ENV: test
-      PORT: "3001"
-      SKIP_DND: "true"
 
     steps:
       - name: Checkout
@@ -69,29 +114,56 @@ jobs:
       - name: Build shared workspace packages
         run: pnpm --filter @kanon/shared build
 
-      - name: Lint (ESLint — advisory, warnings only)
-        run: pnpm lint
-
-      - name: Format check (Prettier)
-        run: pnpm format:check
-
-      - name: TypeScript check (API)
-        run: pnpm --filter @kanon/api exec tsc --noEmit
-
-      - name: TypeScript check (Web)
-        run: pnpm --filter @kanon/web typecheck
-
-      - name: TypeScript check (E2E)
-        run: cd packages/e2e && npx tsc --noEmit
-
-      - name: TypeScript check (MCP)
-        run: pnpm --filter @kanon/mcp exec tsc --noEmit
-
       - name: Run API tests (Vitest) + coverage gate
         run: pnpm --filter @kanon/api test:coverage
 
+  web_tests:
+    name: Web tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared workspace packages
+        run: pnpm --filter @kanon/shared build
+
       - name: Run Web tests (Vitest)
         run: pnpm --filter @kanon/web test
+
+  package_tests:
+    name: Package tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Run MCP tests (Vitest)
         run: pnpm --filter @kanon/mcp test
@@ -99,11 +171,58 @@ jobs:
       - name: Run shared tests (Vitest)
         run: pnpm --filter @kanon/shared test
 
-      - name: Run setup tests (Vitest)
-        run: pnpm --filter @kanon-pm/setup test
-
       - name: Run CLI tests (Vitest)
         run: pnpm --filter @kanon/cli test
+
+  e2e:
+    name: E2E tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: kanon
+          POSTGRES_PASSWORD: kanon
+          POSTGRES_DB: kanon_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kanon"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @kanon/api db:generate
+
+      - name: Run database migrations
+        run: pnpm --filter @kanon/api exec prisma migrate deploy
+
+      - name: Seed database
+        run: pnpm --filter @kanon/api db:seed
+        env:
+          PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION: "true"
+
+      - name: Build shared workspace packages
+        run: pnpm --filter @kanon/shared build
 
       - name: Install Playwright browsers
         run: pnpm --filter @kanon/e2e exec playwright install chromium --with-deps
@@ -117,12 +236,6 @@ jobs:
           API_PORT: "3001"
           WEB_PORT: "5174"
           DATABASE_URL: postgresql://kanon:kanon@localhost:5432/kanon_e2e?schema=public
-
-      - name: Verify setup package assets
-        run: pnpm --filter @kanon-pm/setup build && bash packages/setup/scripts/verify-assets.sh
-
-      - name: Smoke test install.sh (fixture sha256 verify + idempotency)
-        run: bash packages/setup/scripts/smoke-install.sh
 
       - name: Upload Playwright report
         if: failure()
@@ -139,3 +252,64 @@ jobs:
           name: playwright-traces
           path: packages/e2e/test-results/
           retention-days: 14
+
+  setup_smoke:
+    name: Setup package smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run setup tests (Vitest)
+        run: pnpm --filter @kanon-pm/setup test
+
+      - name: Verify setup package assets
+        run: pnpm --filter @kanon-pm/setup build && bash packages/setup/scripts/verify-assets.sh
+
+      - name: Smoke test install.sh (fixture sha256 verify + idempotency)
+        run: bash packages/setup/scripts/smoke-install.sh
+
+  test:
+    name: Test
+    if: ${{ always() }}
+    needs:
+      - quality
+      - api_coverage
+      - web_tests
+      - package_tests
+      - e2e
+      - setup_smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Assert all required CI lanes succeeded
+        if: ${{ always() }}
+        env:
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          API_COVERAGE_RESULT: ${{ needs.api_coverage.result }}
+          WEB_TESTS_RESULT: ${{ needs.web_tests.result }}
+          PACKAGE_TESTS_RESULT: ${{ needs.package_tests.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+          SETUP_SMOKE_RESULT: ${{ needs.setup_smoke.result }}
+        run: |
+          test "$QUALITY_RESULT" = "success"
+          test "$API_COVERAGE_RESULT" = "success"
+          test "$WEB_TESTS_RESULT" = "success"
+          test "$PACKAGE_TESTS_RESULT" = "success"
+          test "$E2E_RESULT" = "success"
+          test "$SETUP_SMOKE_RESULT" = "success"
