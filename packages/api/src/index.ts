@@ -3,6 +3,7 @@ import path from "node:path";
 import { env } from "./config/env.js";
 import { buildApp } from "./app.js";
 import { disconnectPrisma } from "./config/prisma.js";
+import { privacyAuthority } from "./modules/integrations/privacy-hold/privacy-authority.js";
 
 const DEV_INFO_DIR = path.resolve(process.cwd(), ".dev-info");
 const DEV_INFO_FILE = path.join(DEV_INFO_DIR, "api.json");
@@ -35,6 +36,8 @@ function removeDevInfo(): void {
 }
 
 async function main(): Promise<void> {
+  // Fail closed before listening if the runtime/authority ACL catalog drifted.
+  await privacyAuthority.assertCatalog();
   const app = await buildApp();
 
   // Graceful shutdown

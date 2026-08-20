@@ -104,6 +104,20 @@ export async function verifyCurrentVisibleIdentity(
     : { kind: "unknown" };
 }
 
+/**
+ * Module-level admission check for an absence candidate.  It deliberately
+ * returns only a boolean: raw provider failures and identity details cannot
+ * escape this boundary or be mistaken for containment authority.
+ */
+export async function verifyTerminalAbsenceProof(
+  source: AuditTerminalSource,
+  persistence: AuditTerminalPersistence,
+  lease: AuditCensusLease,
+  identity: AuditTerminalIdentity,
+): Promise<boolean> {
+  return (await verifyCurrentVisibleIdentity(source, persistence, lease, identity)).kind === "not_visible_in_scope";
+}
+
 /** Production seam: one held Redmine source, durable lease, and repository trust reader. */
 export function createHeldTerminalTrustVerifier(input: {
   readonly source: RedmineAuditSource;

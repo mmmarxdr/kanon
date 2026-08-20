@@ -4,6 +4,7 @@ import { z } from "zod";
 import { requireMember, requireRole } from "../../middleware/require-role.js";
 import { scopedProjectIds } from "../../shared/token-scope.js";
 import { AppError } from "../../shared/types.js";
+import { recoverHeldIssue } from "./privacy-hold/recovery-service.js";
 import {
   activateRedmineIssueImport,
   previewRedmineIssueImport,
@@ -241,6 +242,27 @@ export default async function integrationRoutes(fastify: FastifyInstance): Promi
         request.params.wid,
         scopedProjectIds(request.user.allowedProjectIds),
       ),
+  );
+
+  app.post(
+    "/workspaces/:wid/connections/:id/bindings/:bindingId/issues/:issueKey/privacy-recovery",
+    {
+      preHandler: [requireRole("wid", "owner"), requireUnscopedToken],
+      schema: { params: ConnectionBindingId.extend({ issueKey: z.string().min(1) }) },
+    },
+    async (request, reply) => {
+      if (request.body !== undefined && request.body !== null) throw new AppError(400, "INVALID_REQUEST", "Request body is not allowed");
+      const result = await recoverHeldIssue({
+        principal: request.user,
+        member: request.member!,
+        workspaceId: request.params.wid,
+        connectionId: request.params.id,
+        bindingId: request.params.bindingId,
+        issueKey: request.params.issueKey,
+        idempotencyKey: request.headers["idempotency-key"],
+      });
+      return reply.status(result.status === "released" ? 200 : 409).send(result);
+    },
   );
 
   app.post(

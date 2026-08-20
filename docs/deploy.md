@@ -140,3 +140,12 @@ Returns `200 OK` when the API is ready and connected to the database.
 **Database connection issues:** Ensure `DATABASE_URL` password matches `POSTGRES_PASSWORD`.
 
 **CORS errors:** Verify `CORS_ORIGIN` matches your exact domain (including `https://`).
+
+## Privacy authority migration and restore
+
+The API uses `DATABASE_URL` as the least-privilege runtime login. Set
+`POSTGRES_OWNER_DATABASE_URL` only for the one-shot migration command and set
+`PRIVACY_OPERATOR_DATABASE_URL` to the isolated operator login. Production has
+no fallback credentials. For restore, provision the roles first, restore with
+`pg_dump --no-owner --no-acl`, run the owner migrator/ACL catalog repair, then
+start the API runtime.

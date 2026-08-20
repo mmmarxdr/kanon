@@ -56,11 +56,24 @@ function dependencies(overrides: Partial<AuditOperationsDependencies> = {}) {
       kind: "complete-current-visible",
       scopeFingerprint: "scope",
     }),
+    orchestratePrivacy: vi.fn().mockResolvedValue({ attempted: 0, contained: 0 }),
   };
   return { repository, result: { ...defaults, ...overrides } };
 }
 
 describe("audit lease operations", () => {
+  it("orchestrates committed privacy candidates after a complete census and before lease release", async () => {
+    const order: string[] = [];
+    const setup = dependencies({
+      runCensus: vi.fn(async () => { order.push("census"); return { kind: "complete-current-visible", scopeFingerprint: "scope" }; }),
+      orchestratePrivacy: vi.fn(async () => { order.push("privacy"); return { attempted: 0, contained: 0 }; }),
+      release: vi.fn(async () => { order.push("release"); return true; }),
+    } as Partial<AuditOperationsDependencies>);
+
+    await expect(runAuditOperationsCycle({} as never, options, setup.result)).resolves.toEqual({ claimed: 1, completed: 1 });
+    expect(order).toEqual(["census", "privacy", "release"]);
+  });
+
   it("renews and releases only the exact held token and fence", async () => {
     const updateMany = vi.fn().mockResolvedValue({ count: 1 });
     const database = { integrationProjectBinding: { updateMany } } as never;

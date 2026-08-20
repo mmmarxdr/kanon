@@ -52,6 +52,7 @@ import { parseCommentMarker } from "./providers/redmine/comment-marker.js";
 import { RedmineHttpClient } from "./providers/redmine/http-client.js";
 import { RedminePollingInboundSource } from "./providers/redmine/inbound-source.js";
 import { ownedConnection, serviceCredential } from "./service.js";
+import { privacyAuthority } from "./privacy-hold/privacy-authority.js";
 
 const DEFAULT_LIMIT = 10;
 const DEFAULT_LEASE_MS = 120_000;
@@ -1027,6 +1028,14 @@ async function convergeLinkedIssue(
     ...change,
     changedAt: detail.changedAt,
   });
+
+  // Decoder tombstones are authenticated full Redmine detail, unlike a poll
+  // omission/404. Resolve the bound local issue before entering the ordinary
+  // runtime transaction; failures remain fail-closed and reveal no evidence.
+  if (detail.operation === "tombstone" && "reason" in detail.fields && detail.fields.reason === "private") {
+    const heldRef = await database.externalRef.findUnique({ where: { connectionId_entityType_externalId: { connectionId: binding.connectionId, entityType: "issue", externalId: change.entityId } } });
+    if (heldRef?.bindingId === binding.id) await privacyAuthority.containAuthenticatedPrivateTombstone({ issueId: heldRef.entityId, bindingId: binding.id });
+  }
 
   const outcome = await database.$transaction(async (transaction) => {
     const active = await lockPollSnapshot(transaction, binding);

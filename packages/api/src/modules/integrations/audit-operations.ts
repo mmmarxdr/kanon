@@ -13,6 +13,8 @@ import {
 } from "./inbound.js";
 import { RedmineAuditSource } from "./providers/redmine/audit-source.js";
 import { RedmineHttpClient } from "./providers/redmine/http-client.js";
+import { privacyAuthority } from "./privacy-hold/privacy-authority.js";
+import { orchestrateCommittedAuditPrivacy } from "./privacy-hold/audit-orchestrator.js";
 
 export interface AuditOperationsOptions {
   readonly maxBindings: number;
@@ -36,6 +38,7 @@ export interface AuditOperationsDependencies {
   readonly createSource?: (lease: ClaimedBinding, apiKey: string) => RedmineAuditSource;
   readonly createRepository?: (database: PrismaClient, terminalFreshnessMs: number, retentionDays: number) => AuditRepository;
   readonly runCensus?: typeof runRedmineAuditCensus;
+  readonly orchestratePrivacy?: typeof orchestrateCommittedAuditPrivacy;
 }
 
 export function createRedmineAuditSourceForLease(
@@ -100,6 +103,8 @@ export async function runAuditOperationsCycle(
   const createRepository = dependencies.createRepository ?? ((db, freshness, retentionDays) =>
     createPrismaAuditCensusRepository(db, { terminalFreshnessMs: freshness, retentionDays }));
   const runCensus = dependencies.runCensus ?? runRedmineAuditCensus;
+  const orchestratePrivacy = dependencies.orchestratePrivacy ?? ((input: Parameters<typeof orchestrateCommittedAuditPrivacy>[0]) =>
+    orchestrateCommittedAuditPrivacy(input));
   const attempted: string[] = [];
   let completed = 0;
 
@@ -133,13 +138,23 @@ export async function runAuditOperationsCycle(
 
     const repository = createRepository(database, options.terminalFreshnessMs, options.retentionDays);
     try {
+      const source = createSource(binding, decrypt(binding.encryptedKey));
       const result = await runCensus(
-        createSource(binding, decrypt(binding.encryptedKey)),
+        source,
         repository.persistence(lease),
         lease,
         { pageSize: options.pageSize, maxPasses: options.maxPasses, signal: controller.signal },
       );
-      if (result.kind === "complete-current-visible" && !controller.signal.aborted) completed += 1;
+      if (result.kind === "complete-current-visible" && !controller.signal.aborted) {
+        await orchestratePrivacy({
+          source,
+          repository,
+          lease,
+          candidates: () => privacyAuthority.loadCommittedAuditCandidates(lease),
+          contain: privacyAuthority.contain,
+        });
+        completed += 1;
+      }
       else if (!(result.kind === "unknown" && result.reasonCode === "timeout" && !fenceLost)) {
         await repository.markFailed(lease, fenceLost ? "scope_or_fence_changed" : result.kind === "unknown" ? result.reasonCode : "timeout");
       }

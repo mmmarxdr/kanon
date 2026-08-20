@@ -26,6 +26,8 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env.production}
+      POSTGRES_OWNER_DATABASE_URL: ${POSTGRES_OWNER_DATABASE_URL:?Set POSTGRES_OWNER_DATABASE_URL in .env.production}
+      PRIVACY_OPERATOR_DATABASE_URL: ${PRIVACY_OPERATOR_DATABASE_URL:?Set PRIVACY_OPERATOR_DATABASE_URL in .env.production}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env.production}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in .env.production}
       PORT: "3000"

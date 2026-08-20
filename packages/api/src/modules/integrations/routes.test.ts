@@ -21,6 +21,7 @@ vi.mock("./inbound.js", async (importOriginal) => ({
   retryRedmineIssueImport: vi.fn(),
 }));
 
+
 const retry = vi.mocked(retryRedmineIssueImport);
 
 describe("integration retry route", () => {
@@ -315,4 +316,42 @@ describe("audit health scope", () => {
 
     await expect(health).resolves.toEqual({ state: "unknown", completedAt: null, validUntil: null, fresh: false, reasonCode: null });
   });
+});
+
+describe("held issue privacy recovery route", () => {
+  let app: FastifyInstance;
+  beforeAll(async () => { app = await createTestApp(); });
+  beforeEach(async () => { await cleanDatabase(); });
+  afterAll(async () => { await app.close(); await disconnectTestDb(); });
+
+  async function routeFixture() {
+    const workspace = await seedTestWorkspace();
+    const owner = await seedTestMemberWithRole(workspace.id, "owner");
+    const project = await seedTestProject(workspace.id);
+    const connection = await prisma.integrationConnection.create({ data: { workspaceId: workspace.id, provider: "redmine", baseUrl: "https://redmine.test" } });
+    const binding = await prisma.integrationProjectBinding.create({ data: { connectionId: connection.id, projectId: project.id, remoteProjectId: "42", readMap: {}, writeMap: {}, lifecycle: "active" } });
+    const issue = await prisma.issue.create({ data: { projectId: project.id, key: `REC-${randomUUID()}`, sequenceNum: 1, title: "held" } });
+    return { owner, workspace, connection, binding, issue };
+  }
+
+  it("rejects body and invalid idempotency input before recovery", async () => {
+    const fixture = await routeFixture();
+    const url = `/api/integrations/workspaces/${fixture.workspace.id}/connections/${fixture.connection.id}/bindings/${fixture.binding.id}/issues/${fixture.issue.key}/privacy-recovery`;
+    const headers = { authorization: `Bearer ${fixture.owner.token}`, "idempotency-key": "a".repeat(16) };
+    expect((await app.inject({ method: "POST", url, headers, payload: {} })).statusCode).toBe(400);
+    expect((await app.inject({ method: "POST", url, headers: { ...headers, "idempotency-key": "short" } })).statusCode).toBe(400);
+  });
+
+  it("returns an indistinguishable secret-free 404 for a never-held issue", async () => {
+    const fixture = await routeFixture();
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/integrations/workspaces/${fixture.workspace.id}/connections/${fixture.connection.id}/bindings/${fixture.binding.id}/issues/${fixture.issue.key}/privacy-recovery`,
+      headers: { authorization: `Bearer ${fixture.owner.token}`, "idempotency-key": "a".repeat(16) },
+    });
+    expect(response.statusCode).toBe(404);
+    expect(response.body).not.toContain(fixture.issue.id);
+    expect(response.body).not.toContain(fixture.connection.id);
+  });
+
 });
