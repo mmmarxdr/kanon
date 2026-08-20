@@ -271,6 +271,14 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      - name: Isolate setup home
+        shell: bash
+        run: |
+          setup_home="$(mktemp -d "$RUNNER_TEMP/kanon-setup-home.XXXXXX")"
+          mkdir -p "$setup_home/.config"
+          printf 'HOME=%s\nXDG_CONFIG_HOME=%s\n' \
+            "$setup_home" "$setup_home/.config" >> "$GITHUB_ENV"
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 

@@ -121,26 +121,27 @@ Playwright starts the API and Web servers itself; do not override its configured
 
 ### Setup package smoke
 
-Never run this lane against the developer's real home. Isolate it first:
+Never run this lane against the developer's real home. Isolate it before the
+frozen install so every setup-lane command observes the same clean environment:
 
 ```bash
-setup_home="$(mktemp -d)"
+setup_home="$(mktemp -d "${TMPDIR:-/tmp}/kanon-setup-home.XXXXXX")"
 trap 'rm -rf "$setup_home"' EXIT
 export HOME="$setup_home"
 export XDG_CONFIG_HOME="$setup_home/.config"
 mkdir -p "$XDG_CONFIG_HOME"
 
+pnpm install --frozen-lockfile
 pnpm --filter @kanon-pm/setup test
 pnpm --filter @kanon-pm/setup build
 bash packages/setup/scripts/verify-assets.sh
 bash packages/setup/scripts/smoke-install.sh
 ```
 
-Known pre-existing defect: `src/index.test.ts` imports the CLI entrypoint,
-whose module-level `program.parse()` can detect no tools under an empty home,
-call `process.exit(1)`, and terminate Vitest with `ERR_IPC_CHANNEL_CLOSED`.
-Treat that result as a lane `FAIL`; never retry with the real home, continue
-past it, or downgrade it to infrastructure-blocked to manufacture a pass.
+The setup entrypoint must remain import-safe: importing `src/index.ts` must not
+parse or dispatch commands or terminate the process. Direct CLI execution must
+still parse commands normally. Treat either regression as a lane `FAIL`; never
+retry with the real home or downgrade it to infrastructure-blocked.
 
 If local privilege policy blocks Playwright OS dependency installation, run
 `pnpm --filter @kanon/e2e exec playwright install chromium`, execute the full
