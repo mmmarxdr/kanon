@@ -344,3 +344,22 @@ describe("envSchema — audit operations", () => {
     expect(envSchema.safeParse({ ...base, INTEGRATION_AUDIT_PAGE_SIZE: "101" }).success).toBe(false);
   });
 });
+
+describe("envSchema — privacy quarantine keyring", () => {
+  const base = {
+    DATABASE_URL: "postgresql://user:pass@localhost:5432/kanon",
+    JWT_SECRET: "a".repeat(16),
+    JWT_REFRESH_SECRET: "b".repeat(16),
+  };
+
+  it("accepts a current AES-256 key and retained historical key", () => {
+    const current = Buffer.alloc(32, 1).toString("base64");
+    const old = Buffer.alloc(32, 2).toString("base64");
+    expect(envSchema.parse({ ...base, PRIVACY_QUARANTINE_KEYRING: JSON.stringify({ currentKeyId: "v2", keys: { v1: old, v2: current } }) }).PRIVACY_QUARANTINE_KEYRING)
+      .toEqual({ currentKeyId: "v2", keys: { v1: old, v2: current } });
+  });
+
+  it("rejects a keyring whose current key is absent or invalid", () => {
+    expect(envSchema.safeParse({ ...base, PRIVACY_QUARANTINE_KEYRING: JSON.stringify({ currentKeyId: "v2", keys: { v1: "not-a-key" } }) }).success).toBe(false);
+  });
+});

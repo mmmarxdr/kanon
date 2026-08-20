@@ -108,3 +108,61 @@ export function decrypt(serialized: string, key: Buffer = loadEncryptionKey()): 
   decipher.setAuthTag(authTag);
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
 }
+
+export type PrivacyQuarantineAad = { readonly issueId: string; readonly bindingId: string; readonly generation: number };
+export type PrivacyQuarantineKeyring = { readonly currentKeyId: string; readonly keys: Readonly<Record<string, Buffer>> };
+const PRIVACY_PREFIX = "pq.gcm.v1";
+
+/** Secret-free boundary for missing, malformed, wrong, or tampered quarantine data. */
+export class QuarantineUnavailableError extends Error {
+  constructor() { super("quarantine_unavailable"); this.name = "QuarantineUnavailableError"; }
+}
+
+export function parsePrivacyQuarantineKeyring(input: { currentKeyId: string; keys: Record<string, string> }): PrivacyQuarantineKeyring {
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(input.currentKeyId)) throw new QuarantineUnavailableError();
+  try {
+    const keys = Object.fromEntries(Object.entries(input.keys).map(([id, key]) => {
+      if (!/^[A-Za-z0-9._-]{1,64}$/.test(id)) throw new Error("invalid key id");
+      return [id, decodeKey(key)];
+    }));
+    if (!keys[input.currentKeyId]) throw new Error("missing current key");
+    return { currentKeyId: input.currentKeyId, keys };
+  } catch { throw new QuarantineUnavailableError(); }
+}
+
+export function loadPrivacyQuarantineKeyring(): PrivacyQuarantineKeyring {
+  if (!env.PRIVACY_QUARANTINE_KEYRING) throw new QuarantineUnavailableError();
+  return parsePrivacyQuarantineKeyring(env.PRIVACY_QUARANTINE_KEYRING);
+}
+
+function isCanonicalBase64(value: string): boolean {
+  return Buffer.from(value, "base64").toString("base64") === value;
+}
+
+function quarantineAad(aad: PrivacyQuarantineAad, snapshotSchema: number): Buffer {
+  if (!Number.isSafeInteger(aad.generation) || aad.generation < 0 || !Number.isSafeInteger(snapshotSchema) || snapshotSchema < 1) throw new QuarantineUnavailableError();
+  return Buffer.from(JSON.stringify(["privacy_quarantine", aad.issueId, aad.bindingId, aad.generation, snapshotSchema]));
+}
+
+export function encryptPrivacyQuarantine(plaintext: string, aad: PrivacyQuarantineAad, keyring = loadPrivacyQuarantineKeyring(), snapshotSchema = 1): string {
+  try {
+    const iv = randomBytes(IV_BYTES);
+    const cipher = createCipheriv(ALGORITHM, keyring.keys[keyring.currentKeyId]!, iv, { authTagLength: AUTH_TAG_BYTES });
+    cipher.setAAD(quarantineAad(aad, snapshotSchema));
+    const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+    return [PRIVACY_PREFIX, keyring.currentKeyId, snapshotSchema, iv.toString("base64"), ciphertext.toString("base64"), cipher.getAuthTag().toString("base64")].join(":");
+  } catch { throw new QuarantineUnavailableError(); }
+}
+
+export function decryptPrivacyQuarantine(envelope: string, aad: PrivacyQuarantineAad, keyring = loadPrivacyQuarantineKeyring()): string {
+  try {
+    const [prefix, keyId, schemaText, ivB64, ciphertextB64, tagB64, ...extra] = envelope.split(":");
+    const snapshotSchema = Number(schemaText);
+    const key = !extra.length && prefix === PRIVACY_PREFIX && keyId ? keyring.keys[keyId] : undefined;
+    const iv = Buffer.from(ivB64 ?? "", "base64"), tag = Buffer.from(tagB64 ?? "", "base64");
+    if (!key || String(snapshotSchema) !== schemaText || !isCanonicalBase64(ivB64 ?? "") || !isCanonicalBase64(ciphertextB64 ?? "") || !isCanonicalBase64(tagB64 ?? "") || iv.length !== IV_BYTES || tag.length !== AUTH_TAG_BYTES) throw new Error("unavailable");
+    const decipher = createDecipheriv(ALGORITHM, key, iv, { authTagLength: AUTH_TAG_BYTES });
+    decipher.setAAD(quarantineAad(aad, snapshotSchema)); decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(Buffer.from(ciphertextB64 ?? "", "base64")), decipher.final()]).toString("utf8");
+  } catch { throw new QuarantineUnavailableError(); }
+}

@@ -14,6 +14,7 @@ import { promisify } from "node:util";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { prisma } from "../src/config/prisma.js";
+import { createTemporaryMigrationDatabase } from "./migration-test-helpers.js";
 
 const { datamodel } = Prisma.dmmf;
 const execFileAsync = promisify(execFile);
@@ -205,16 +206,15 @@ async function runWorkUpgradePath() {
     process.env["DATABASE_URL"] ?? "postgresql://kanon:kanon@127.0.0.1:5433/kanon_e2e"
   );
   const schemaName = `work_upgrade_${randomUUID().replaceAll("-", "")}`;
-  const adminDatabaseUrl = new URL(baseDatabaseUrl);
-  adminDatabaseUrl.searchParams.set("schema", "public");
-  const isolatedDatabaseUrl = new URL(baseDatabaseUrl);
-  isolatedDatabaseUrl.searchParams.set("schema", schemaName);
-  const admin = new PrismaClient({ datasourceUrl: adminDatabaseUrl.toString() });
+  const temporaryDatabase = await createTemporaryMigrationDatabase(
+    baseDatabaseUrl.toString(),
+    schemaName
+  );
+  const isolatedDatabaseUrl = new URL(temporaryDatabase.databaseUrl);
   let database: PrismaClient | undefined;
   let temporaryDirectory: string | undefined;
 
   try {
-    await admin.$executeRawUnsafe(`CREATE SCHEMA ${quoteIdentifier(schemaName)}`);
 
     const migrationNames = await listMigrationNames();
     const lifecycleMigrationIndex = migrationNames.indexOf(lifecycleMigrationName);
@@ -324,10 +324,7 @@ async function runWorkUpgradePath() {
     if (database) {
       await database.$disconnect().catch(() => undefined);
     }
-    await admin
-      .$executeRawUnsafe(`DROP SCHEMA IF EXISTS ${quoteIdentifier(schemaName)} CASCADE`)
-      .catch(() => undefined);
-    await admin.$disconnect().catch(() => undefined);
+    await temporaryDatabase.cleanup();
     if (temporaryDirectory) {
       await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => undefined);
     }

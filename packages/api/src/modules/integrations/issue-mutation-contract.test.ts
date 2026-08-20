@@ -15,6 +15,8 @@ const baseIssue = {
   ),
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
   updatedAt: new Date("2026-01-02T00:00:00.000Z"),
+  privacyHeldAt: null,
+  privacyHoldGeneration: 0,
 } as IssueMutationRow;
 const changedFields = (): IssueCaptureFields => ({
   title: "Changed title",
@@ -60,6 +62,12 @@ describe("canonicalizeIssueMutationDraft", () => {
       estimate: 3,
       updatedAt: "2026-01-02T00:00:00.000Z",
     });
+    const heldAt = new Date("2026-08-20T13:00:00.000Z");
+    expect(
+      canonicalizeIssueMutationDraft(
+        draft(issue({ privacyHeldAt: heldAt, privacyHoldGeneration: 7 }))
+      )
+    ).toMatchObject({ result: { privacyHeldAt: heldAt, privacyHoldGeneration: 7 } });
     expect(
       [result.payload, result.payload.fields, result.payload.issue].every(Object.isFrozen)
     ).toBe(true);

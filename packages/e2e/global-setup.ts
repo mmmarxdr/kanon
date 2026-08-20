@@ -28,6 +28,12 @@ export default async function globalSetup(): Promise<void> {
     PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION: "yes",
   };
 
+  execSync("npx prisma db execute --stdin --schema prisma/schema.prisma", {
+    cwd: API_PKG_DIR,
+    env: prismaEnv,
+    input: 'DROP SCHEMA IF EXISTS "privacy_quarantine" CASCADE;',
+    stdio: "pipe",
+  });
   console.log("[e2e] Running prisma migrate reset --force...");
   execSync("npx prisma migrate reset --force --skip-generate", {
     cwd: API_PKG_DIR,
