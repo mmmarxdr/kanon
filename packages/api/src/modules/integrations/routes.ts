@@ -1,6 +1,19 @@
+import {
+  redmineReconciliationActivationProgressSchema,
+  redmineReconciliationDecisionResultSchema,
+  redmineReconciliationDecisionSchema,
+  redmineReconciliationMaterializeResultSchema,
+  redmineReconciliationMaterializeTargetSchema,
+  redmineReconciliationPreviewProgressSchema,
+  redmineReconciliationPreviewRequestSchema,
+  redmineReconciliationRecommendationPageSchema,
+  redmineReconciliationRecommendationQuerySchema,
+} from "@kanon/shared";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
+import { env } from "../../config/env.js";
+import { prisma } from "../../config/prisma.js";
 import { requireMember, requireRole } from "../../middleware/require-role.js";
 import { scopedProjectIds } from "../../shared/token-scope.js";
 import { AppError } from "../../shared/types.js";
@@ -9,6 +22,16 @@ import {
   previewRedmineIssueImport,
 } from "./redmine-import.js";
 import { retryRedmineIssueImport } from "./inbound.js";
+import { decrypt } from "./core/crypto.js";
+import { priorityReadKey } from "./issue-convergence.js";
+import { decodeRedmineIssueDetail } from "./providers/redmine/decoder.js";
+import { RedmineHttpClient } from "./providers/redmine/http-client.js";
+import {
+  decideRedmineReconciliationRecommendations,
+  listRedmineReconciliationRecommendations,
+  materializeRedmineReconciliationRecommendations,
+  type RedmineReconciliationRemoteDetail,
+} from "./redmine-reconciliation.js";
 import {
   bindProject,
   clearCredential,
@@ -20,17 +43,21 @@ import {
   getConnection,
   getConnectionDiscovery,
   getWorkspaceConnection,
+  ownedConnection,
   replaceServiceCredential,
   resolveBindingPrivacyByProject,
   resolveReleasedBindingPrivacy,
   setBindingCommentRollout,
   setConnectionLifecycle,
+  serviceCredential,
   unbindProject,
 } from "./service.js";
 
 const WorkspaceId = z.object({ wid: z.string().uuid() });
 const ConnectionId = WorkspaceId.extend({ id: z.string().uuid() });
 const ConnectionBindingId = ConnectionId.extend({ bindingId: z.string().uuid() });
+const ReconciliationIssueId = ConnectionBindingId.extend({ remoteIssueId: z.string().regex(/^\d+$/).max(64) });
+const ReconciliationPreviewEvidence = z.object({ version: z.literal(2), complete: z.literal(true), mode: z.literal("full"), previewIdentity: z.string().uuid(), scopeFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/), candidates: z.array(z.object({ remoteId: z.string().regex(/^\d+$/), sourceVersion: z.string().regex(/^sha256:[a-f0-9]{64}$/) })) }).passthrough();
 const InboundApplicationId = ConnectionBindingId.extend({ applicationId: z.string().uuid() });
 const CreateConnection = z.object({
   apiKey: z.string().min(1).max(4096),
@@ -80,7 +107,45 @@ async function requireUnscopedToken(request: FastifyRequest) {
   }
 }
 
-export default async function integrationRoutes(fastify: FastifyInstance): Promise<void> {
+type ReconciliationRouteScope = Readonly<{ connectionId: string; bindingId: string; userId: string; workspaceId: string; allowedProjectIds: string[] | null }>;
+export interface IntegrationRouteOptions {
+  readonly loadRedmineReconciliationIssue?: (input: ReconciliationRouteScope & { readonly remoteIssueId: string }) => Promise<RedmineReconciliationRemoteDetail>;
+}
+export async function loadRedmineReconciliationIssue(input: ReconciliationRouteScope & { readonly remoteIssueId: string }): Promise<RedmineReconciliationRemoteDetail> {
+  const connection = await ownedConnection(prisma, input.connectionId, input.userId, input.workspaceId);
+  if (connection.provider !== "redmine" || !["draft", "paused"].includes(connection.lifecycle)) throw new AppError(409, "REDMINE_RECONCILIATION_LIFECYCLE", "Reconciliation requires a draft or paused Redmine connection");
+  const binding = await prisma.integrationProjectBinding.findFirst({
+    where: { id: input.bindingId, connectionId: input.connectionId, lifecycle: { in: ["draft", "paused"] }, bootstrapState: "previewed", releaseRequestedAt: null, releasedAt: null, project: { archived: false }, ...(input.allowedProjectIds?.length ? { projectId: { in: input.allowedProjectIds } } : {}) },
+    include: { connection: true },
+  });
+  if (!binding) throw new AppError(404, "INTEGRATION_BINDING_NOT_FOUND", "Integration project binding not found");
+  const preview = ReconciliationPreviewEvidence.safeParse(binding.bootstrapPageToken);
+  if (!preview.success || !preview.data.candidates.some(({ remoteId }) => remoteId === input.remoteIssueId)) throw new AppError(409, "REDMINE_RECONCILIATION_UNLISTED", "The Redmine issue is not in this preview");
+  const credential = await serviceCredential(prisma, connection);
+  let apiKey: string;
+  try { apiKey = decrypt(credential.encryptedKey); } catch { throw new AppError(409, "INTEGRATION_NOT_READY", "A valid service credential is required"); }
+  let issue: ReturnType<typeof decodeRedmineIssueDetail>["issue"];
+  try {
+    const client = new RedmineHttpClient(connection.baseUrl, apiKey, { endpointAllowlist: env.REDMINE_ENDPOINT_ALLOWLIST });
+    issue = decodeRedmineIssueDetail(await client.get<unknown>(`/issues/${encodeURIComponent(input.remoteIssueId)}.json?include=journals`), binding.remoteProjectId, input.remoteIssueId).issue;
+  } catch { throw new AppError(502, "REDMINE_CONNECTION_FAILED", "Redmine reconciliation failed while reading the remote issue"); }
+  const common = { remoteIssueId: issue.identity.remoteId, remoteProjectId: issue.identity.remoteProjectId, sourceVersion: issue.sourceVersion, previewIdentity: preview.data.previewIdentity, scopeFingerprint: preview.data.scopeFingerprint };
+  if (issue.operation !== "upsert" || !("statusId" in issue.fields)) return { ...common, visible: false, title: null };
+  const readMap = binding.readMap && typeof binding.readMap === "object" && !Array.isArray(binding.readMap) ? binding.readMap as Record<string, unknown> : {};
+  const identity = issue.fields.assignee ? await prisma.integrationExternalIdentity.findFirst({ where: { bindingId: binding.id, remoteUserId: issue.fields.assignee.remoteId, member: { workspaceId: connection.workspaceId } }, select: { memberId: true } }) : null;
+  return { ...common, visible: true, title: issue.fields.title, description: issue.fields.description, createdAt: issue.createdAt, changedAt: issue.changedAt, completedAt: issue.closedAt ?? null, mappedAssigneeId: issue.fields.assignee ? identity?.memberId : null, mappedState: typeof readMap[issue.fields.statusId] === "string" ? readMap[issue.fields.statusId] as string : null, mappedPriority: typeof readMap[priorityReadKey(issue.fields.priorityId)] === "string" ? readMap[priorityReadKey(issue.fields.priorityId)] as string : null, startDate: issue.fields.startDate, dueDate: issue.fields.dueDate, progress: issue.fields.progress };
+}
+function reconciliationDependencies(options: IntegrationRouteOptions, scope: ReconciliationRouteScope) {
+  return {
+    workspaceId: scope.workspaceId,
+    allowedProjectIds: scope.allowedProjectIds,
+    loadRemoteIssue: (remoteIssueId: string) => {
+      return (options.loadRedmineReconciliationIssue ?? loadRedmineReconciliationIssue)({ ...scope, remoteIssueId });
+    },
+  };
+}
+
+export default async function integrationRoutes(fastify: FastifyInstance, options: IntegrationRouteOptions = {}): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
   app.post(
@@ -266,13 +331,14 @@ export default async function integrationRoutes(fastify: FastifyInstance): Promi
       schema: { params: ConnectionBindingId },
     },
     async (request) => {
+      const previewRequest = redmineReconciliationPreviewRequestSchema.optional().parse(request.body);
       await getConnection(
         request.params.id,
         request.user.userId,
         request.params.wid,
         scopedProjectIds(request.user.allowedProjectIds),
       );
-      return previewRedmineIssueImport(
+      const result = await previewRedmineIssueImport(
         request.params.id,
         request.params.bindingId,
         request.user.userId,
@@ -280,7 +346,39 @@ export default async function integrationRoutes(fastify: FastifyInstance): Promi
           workspaceId: request.params.wid,
           allowedProjectIds: scopedProjectIds(request.user.allowedProjectIds),
         },
+        previewRequest?.mode,
       );
+      return previewRequest ? redmineReconciliationPreviewProgressSchema.parse(result) : result;
+    },
+  );
+
+  app.post(
+    "/workspaces/:wid/connections/:id/bindings/:bindingId/reconciliation/recommendations/materialize",
+    { preHandler: [requireRole("wid", "owner")], schema: { params: ConnectionBindingId, body: redmineReconciliationMaterializeTargetSchema, response: { 200: redmineReconciliationMaterializeResultSchema } } },
+    async (request) => {
+      const scope = { connectionId: request.params.id, bindingId: request.params.bindingId, userId: request.user.userId, workspaceId: request.params.wid, allowedProjectIds: scopedProjectIds(request.user.allowedProjectIds) };
+      return materializeRedmineReconciliationRecommendations({ connectionId: scope.connectionId, bindingId: scope.bindingId, userId: scope.userId, remoteIssueId: request.body.remoteIssueId }, reconciliationDependencies(options, scope));
+    },
+  );
+
+  app.get(
+    "/workspaces/:wid/connections/:id/bindings/:bindingId/reconciliation/recommendations",
+    { preHandler: [requireRole("wid", "owner")], schema: { params: ConnectionBindingId, querystring: redmineReconciliationRecommendationQuerySchema, response: { 200: redmineReconciliationRecommendationPageSchema } } },
+    async (request) => {
+      const page = await listRedmineReconciliationRecommendations(
+        { connectionId: request.params.id, bindingId: request.params.bindingId, userId: request.user.userId },
+        { workspaceId: request.params.wid, allowedProjectIds: scopedProjectIds(request.user.allowedProjectIds), ...request.query },
+      );
+      return { ...page, items: page.items.map((item) => ({ ...item, decidedAt: item.decidedAt?.toISOString() ?? null, createdAt: item.createdAt.toISOString(), updatedAt: item.updatedAt.toISOString() })) };
+    },
+  );
+
+  app.post(
+    "/workspaces/:wid/connections/:id/bindings/:bindingId/reconciliation/issues/:remoteIssueId/decision",
+    { preHandler: [requireRole("wid", "owner")], schema: { params: ReconciliationIssueId, body: redmineReconciliationDecisionSchema, response: { 200: redmineReconciliationDecisionResultSchema } } },
+    async (request) => {
+      const scope = { connectionId: request.params.id, bindingId: request.params.bindingId, userId: request.user.userId, workspaceId: request.params.wid, allowedProjectIds: scopedProjectIds(request.user.allowedProjectIds) };
+      return decideRedmineReconciliationRecommendations({ connectionId: scope.connectionId, bindingId: scope.bindingId, userId: scope.userId, remoteIssueId: request.params.remoteIssueId }, request.body, reconciliationDependencies(options, scope));
     },
   );
 
@@ -288,7 +386,7 @@ export default async function integrationRoutes(fastify: FastifyInstance): Promi
     "/workspaces/:wid/connections/:id/bindings/:bindingId/inbound/activate",
     {
       preHandler: [requireRole("wid", "owner")],
-      schema: { params: ConnectionBindingId },
+      schema: { params: ConnectionBindingId, response: { 200: redmineReconciliationActivationProgressSchema } },
     },
     async (request) => {
       await getConnection(

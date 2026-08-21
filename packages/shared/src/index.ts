@@ -65,6 +65,17 @@ export {
   integrationDiscoverySchema,
   integrationConnectionSchema,
   integrationAuditHealthSchema,
+  redmineReconciliationActivationProgressSchema,
+  redmineReconciliationDecisionResultSchema,
+  redmineReconciliationDecisionSchema,
+  redmineReconciliationFactorEvidenceSchema,
+  redmineReconciliationMaterializeResultSchema,
+  redmineReconciliationMaterializeTargetSchema,
+  redmineReconciliationPreviewModeSchema,
+  redmineReconciliationPreviewProgressSchema,
+  redmineReconciliationPreviewRequestSchema,
+  redmineReconciliationRecommendationPageSchema,
+  redmineReconciliationRecommendationQuerySchema,
 } from "./integrations.js";
 export type {
   IntegrationAuditHealth,
