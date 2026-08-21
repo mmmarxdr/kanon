@@ -49,6 +49,8 @@ export interface CaptureJournalEntry {
   record: CaptureJournalRecord;
 }
 
+type ReadTextFile = (path: string, encoding: BufferEncoding) => Promise<string>;
+
 export function captureScopeHash(apiUrl: string, principalId: string, workspaceId: string): string {
   const canonicalApiUrl = apiUrl.replace(/\/+$/, "");
   return createHash("sha256")
@@ -80,11 +82,19 @@ async function syncDirectory(directory: string): Promise<void> {
 export class CaptureJournal {
   readonly directory: string;
   private readonly admissionThresholdPerScope: number;
+  private readonly readFile: ReadTextFile;
 
-  constructor(options: { directory?: string; admissionThresholdPerScope?: number } = {}) {
+  constructor(
+    options: {
+      directory?: string;
+      admissionThresholdPerScope?: number;
+      readFile?: ReadTextFile;
+    } = {}
+  ) {
     this.directory = options.directory ?? resolveCaptureJournalDirectory();
     this.admissionThresholdPerScope =
       options.admissionThresholdPerScope ?? CAPTURE_SIGNAL_ADMISSION_THRESHOLD_PER_SCOPE;
+    this.readFile = options.readFile ?? ((path, encoding) => readFile(path, encoding));
   }
 
   private async ensureDirectory(): Promise<void> {
@@ -129,8 +139,9 @@ export class CaptureJournal {
     const entries: CaptureJournalEntry[] = [];
     for (const fileName of names) {
       const path = join(this.directory, fileName);
+      const bytes = await this.readFile(path, "utf8");
       try {
-        const parsed = captureJournalRecordSchema.parse(JSON.parse(await readFile(path, "utf8")));
+        const parsed = captureJournalRecordSchema.parse(JSON.parse(bytes));
         if (parsed.scopeHash === scopeHash) entries.push({ fileName, path, record: parsed });
       } catch (error) {
         await this.quarantine(fileName, error);

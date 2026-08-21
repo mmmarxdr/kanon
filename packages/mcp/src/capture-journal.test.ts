@@ -185,6 +185,25 @@ describe("immutable capture journal", () => {
     expect(await readdir(join(directory, "quarantine"))).toHaveLength(2);
   });
 
+  it("propagates transient read failures without moving a valid signal", async () => {
+    const directory = await temporaryDirectory();
+    const writer = new CaptureJournal({ directory });
+    const signal = await writer.append(record());
+    const originalBytes = await readFile(signal.path, "utf8");
+    const readError = Object.assign(new Error("injected read failure"), { code: "EIO" });
+    const reader = new CaptureJournal({
+      directory,
+      readFile: vi.fn().mockRejectedValue(readError),
+    });
+
+    await expect(reader.scan("a".repeat(64))).rejects.toBe(readError);
+    expect(await readFile(signal.path, "utf8")).toBe(originalBytes);
+    expect(await readdir(directory)).toContain(signal.fileName);
+    await expect(readdir(join(directory, "quarantine"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("treats concurrent corrupt-source ENOENT as already quarantined", async () => {
     const directory = await temporaryDirectory();
     const journal = new CaptureJournal({ directory });

@@ -120,12 +120,19 @@ async function main(): Promise<void> {
     process.env["KANON_WORKSPACE_ID"] ??
     (kanonBinding && !("invalid" in kanonBinding) ? kanonBinding.workspaceId : undefined);
   if (workspaceId) {
-    await recoverWorkCaptures({
-      client,
-      apiUrl: KANON_API_URL!,
-      apiKey: KANON_API_KEY!,
-      workspaceId,
-    });
+    try {
+      await recoverWorkCaptures({
+        client,
+        apiUrl: KANON_API_URL!,
+        apiKey: KANON_API_KEY!,
+        workspaceId,
+      });
+    } catch (error) {
+      console.error(
+        "[capture-recovery] Startup recovery failed; capture recovery is degraded",
+        error
+      );
+    }
   } else {
     console.error("[capture-recovery] Workspace unavailable; capture hydration is disabled");
   }
