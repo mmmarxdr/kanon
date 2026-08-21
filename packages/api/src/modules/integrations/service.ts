@@ -1299,6 +1299,18 @@ async function assertActivationReady(
       releasedAt: null,
     },
   });
+  if (
+    bindings.length === 0 ||
+    bindings.some(
+      (binding) => binding.bootstrapState !== "ready" || !binding.inboundEnabled,
+    )
+  ) {
+    throw new AppError(
+      409,
+      "INTEGRATION_BOOTSTRAP_REQUIRED",
+      "Complete inbound bootstrap for every project binding before activation",
+    );
+  }
   const credential = await serviceCredential(database, connection);
   if (
     credential.lastAuthStatus !== "valid" ||
