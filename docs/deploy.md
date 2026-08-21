@@ -105,7 +105,7 @@ git pull
 docker compose -f docker-compose.production.yml --env-file .env.production up -d --build
 ```
 
-The API container runs `prisma migrate deploy` on startup, so database migrations apply automatically.
+The terminating `kanon-migrate` service provisions the distinct runtime and privacy-operator logins, then runs `prisma migrate deploy` with the owner URL. The API starts only after that service succeeds and never receives the owner URL.
 
 ## Backup
 
@@ -137,6 +137,6 @@ Returns `200 OK` when the API is ready and connected to the database.
 
 **API logs:** `docker compose -f docker-compose.production.yml logs -f kanon-api`
 
-**Database connection issues:** Ensure `DATABASE_URL` password matches `POSTGRES_PASSWORD`.
+**Database connection issues:** Set three distinct URLs: the owner URL for `kanon-migrate`, plus runtime and privacy-operator URLs with distinct login names. The API receives only the latter two.
 
 **CORS errors:** Verify `CORS_ORIGIN` matches your exact domain (including `https://`).

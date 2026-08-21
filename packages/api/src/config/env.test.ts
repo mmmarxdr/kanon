@@ -363,3 +363,30 @@ describe("envSchema — privacy quarantine keyring", () => {
     expect(envSchema.safeParse({ ...base, PRIVACY_QUARANTINE_KEYRING: JSON.stringify({ currentKeyId: "v2", keys: { v1: "not-a-key" } }) }).success).toBe(false);
   });
 });
+
+describe("envSchema — production database principals", () => {
+  it("requires a separate privacy operator URL in production", () => {
+    const result = envSchemaWithProductionChecks.safeParse({
+      ...base,
+      COOKIE_SECRET: "c".repeat(32),
+      METRICS_TOKEN: "metrics-token",
+      DATABASE_URL: "postgresql://kanon_runtime:runtime-password@db:5432/kanon",
+      POSTGRES_OWNER_DATABASE_URL: "postgresql://owner:owner-password@db:5432/kanon",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues.map((issue) => issue.path.join("."))).toContain("PRIVACY_OPERATOR_DATABASE_URL");
+  });
+
+  it("rejects an operator URL that reuses the runtime login", () => {
+    const result = envSchemaWithProductionChecks.safeParse({
+      ...base,
+      COOKIE_SECRET: "c".repeat(32),
+      METRICS_TOKEN: "metrics-token",
+      DATABASE_URL: "postgresql://kanon_runtime:runtime-password@db:5432/kanon",
+      POSTGRES_OWNER_DATABASE_URL: "postgresql://owner:owner-password@db:5432/kanon",
+      PRIVACY_OPERATOR_DATABASE_URL: "postgresql://kanon_runtime:operator-password@db:5432/kanon",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues.map((issue) => issue.message)).toContain("Database principal URLs must use distinct login names");
+  });
+});

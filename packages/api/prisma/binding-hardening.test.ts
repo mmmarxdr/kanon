@@ -494,9 +494,11 @@ describe("ExternalRef binding hardening", () => {
   });
 
   it("keeps the generated migration focused and data-preserving", async () => {
-    const [sql, dockerfile] = await Promise.all([
+    const [sql, dockerfile, compose, migrator] = await Promise.all([
       readFile(migrationPath, "utf8"),
       readFile(join(apiDirectory, "Dockerfile"), "utf8"),
+      readFile(join(apiDirectory, "..", "..", "docker-compose.production.yml"), "utf8"),
+      readFile(join(apiDirectory, "src", "scripts", "one-shot-migrator.ts"), "utf8"),
     ]);
 
     expect(sql).toContain('ALTER TABLE "external_refs" ALTER COLUMN "binding_id" SET NOT NULL');
@@ -507,11 +509,14 @@ describe("ExternalRef binding hardening", () => {
     );
     expect(sql).not.toContain('"milestones"');
     expect(sql).not.toContain('"time_entries"');
-    const proofIndex = dockerfile.indexOf("dist/modules/integrations/backfill.js");
-    const deployIndex = dockerfile.indexOf("prisma migrate deploy");
-    expect(proofIndex).toBeGreaterThanOrEqual(0);
-    expect(deployIndex).toBeGreaterThanOrEqual(0);
-    expect(proofIndex).toBeLessThan(deployIndex);
+    expect(compose).toContain('command: ["node", "dist/scripts/one-shot-migrator.js"]');
+    expect(compose).toMatch(/kanon-api:[\s\S]*kanon-migrate:[\s\S]*service_completed_successfully/);
+    expect(dockerfile).toContain('CMD ["node", "dist/index.js"]');
+    expect(dockerfile).not.toMatch(/(?:backfill|prisma migrate deploy)/);
+    const migrateIndex = migrator.indexOf("await dependencies.migrate(");
+    const proofIndex = migrator.indexOf("await dependencies.proveBindings(");
+    expect(migrateIndex).toBeGreaterThanOrEqual(0);
+    expect(proofIndex).toBeGreaterThan(migrateIndex);
   });
 
   it("upgrades valid references without changing their data", { timeout: 120_000 }, async () => {
