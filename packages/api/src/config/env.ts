@@ -358,10 +358,6 @@ export const envSchemaWithProductionChecks = envSchema.superRefine((data, ctx) =
     });
   }
 
-  if (!data.PRIVACY_QUARANTINE_KEYRING) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["PRIVACY_QUARANTINE_KEYRING"], message: "PRIVACY_QUARANTINE_KEYRING is required in production" });
-  }
-
   // ADR-0012: integration credential encryption key. Required in production and
   // must decode to exactly 32 bytes (AES-256). Validated here so a misconfigured
   // key fails fast at boot rather than at first encrypt/decrypt.
