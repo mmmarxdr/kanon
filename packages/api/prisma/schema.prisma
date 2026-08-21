@@ -406,7 +406,7 @@ model Issue {
   /// Considered STALE if any WorkLog or TimeEntry for the issue was created after this timestamp.
   timeConfirmedAt  DateTime?  @map("time_confirmed_at")
   privacyHeldAt DateTime? @map("privacy_held_at")
-  privacyHoldGeneration Int @default(0) @map("privacy_hold_generation")
+  privacyHoldGeneration Int @default(dbgenerated()) @map("privacy_hold_generation")
   createdAt        DateTime   @default(now()) @map("created_at")
   updatedAt        DateTime   @updatedAt @map("updated_at")
 

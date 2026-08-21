@@ -149,6 +149,7 @@ describe("WorkCaptureIntent migration", () => {
               projectId: project.id,
               sequenceNum: index + 1,
             },
+            select: { id: true },
           })
         )
       );
