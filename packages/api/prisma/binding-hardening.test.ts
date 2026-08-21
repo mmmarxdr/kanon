@@ -515,8 +515,8 @@ describe("ExternalRef binding hardening", () => {
     expect(dockerfile).not.toMatch(/(?:backfill|prisma migrate deploy)/);
     const migrateIndex = migrator.indexOf("await dependencies.migrate(");
     const proofIndex = migrator.indexOf("await dependencies.proveBindings(");
-    expect(migrateIndex).toBeGreaterThanOrEqual(0);
-    expect(proofIndex).toBeGreaterThan(migrateIndex);
+    expect(proofIndex).toBeGreaterThanOrEqual(0);
+    expect(migrateIndex).toBeGreaterThan(proofIndex);
   });
 
   it("upgrades valid references without changing their data", { timeout: 120_000 }, async () => {

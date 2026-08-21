@@ -46,7 +46,7 @@ describe("one-shot migrator packaging", () => {
     expect(statement).toContain(verifier);
     expect(statement).not.toContain(plaintext);
   });
-  it("runs the external-reference proof after principal provisioning and Prisma migration", async () => {
+  it("runs the external-reference proof after principal provisioning and before Prisma migration", async () => {
     const calls: string[] = [];
     await main({
       POSTGRES_OWNER_DATABASE_URL: "postgresql://owner:owner-password@db:5432/kanon",
@@ -57,18 +57,20 @@ describe("one-shot migrator packaging", () => {
       migrate: async () => { calls.push("migrate"); },
       proveBindings: async () => { calls.push("proof"); },
     });
-    expect(calls).toEqual(["provision", "migrate", "proof"]);
+    expect(calls).toEqual(["provision", "proof", "migrate"]);
   });
   it("fails closed when the external-reference proof fails", async () => {
+    const calls: string[] = [];
     await expect(main({
       POSTGRES_OWNER_DATABASE_URL: "postgresql://owner:owner-password@db:5432/kanon",
       DATABASE_URL: "postgresql://kanon_runtime:runtime-password@db:5432/kanon",
       PRIVACY_OPERATOR_DATABASE_URL: "postgresql://kanon_privacy_operator:operator-password@db:5432/kanon",
     }, {
-      provision: async () => undefined,
-      migrate: async () => undefined,
-      proveBindings: async () => { throw new Error("external reference proof failed"); },
+      provision: async () => { calls.push("provision"); },
+      migrate: async () => { calls.push("migrate"); },
+      proveBindings: async () => { calls.push("proof"); throw new Error("external reference proof failed"); },
     })).rejects.toThrow("external reference proof failed");
+    expect(calls).toEqual(["provision", "proof"]);
   });
   it("rejects reused principal logins", () => {
     expect(() => parseDatabasePrincipalUrls({

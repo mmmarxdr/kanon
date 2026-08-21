@@ -102,8 +102,8 @@ export async function main(source = process.env, dependencies: MigratorDependenc
 }): Promise<void> {
   const principals = parseDatabasePrincipalUrls(source);
   await dependencies.provision(principals);
-  await dependencies.migrate(principals.owner.toString());
   await dependencies.proveBindings(principals.owner.toString());
+  await dependencies.migrate(principals.owner.toString());
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch(() => {
