@@ -82,4 +82,6 @@ LEFT JOIN LATERAL (
     AND interruption."member_id" = session."member_id"
     AND interruption."ended_at" IS NULL
   LIMIT 1
-) interruption ON TRUE;
+) interruption ON TRUE
+WHERE session."last_heartbeat" > CURRENT_TIMESTAMP - INTERVAL '5 minutes'
+  AND session."source" NOT LIKE 'historical-transition:%';

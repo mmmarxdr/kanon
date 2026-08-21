@@ -15,6 +15,7 @@ const prismaDirectory = fileURLToPath(new URL("../../../prisma/", import.meta.ur
 const apiDirectory = dirname(prismaDirectory);
 const migrationsDirectory = join(prismaDirectory, "migrations");
 const migrationName = "20260818140000_work_capture_intents";
+const ownerLeaseMigrationName = "20260819150000_work_capture_owner_leases";
 const migrationUrl = new URL(
   "../../../prisma/migrations/20260818140000_work_capture_intents/migration.sql",
   import.meta.url
@@ -70,10 +71,14 @@ describe("WorkCaptureIntent migration", () => {
     expect(sql).toContain("ELSE 'capturing'::\"WorkCaptureState\"");
     expect(sql).toContain('session."started_at"');
     expect(sql).toContain('GREATEST(session."last_heartbeat", session."started_at")');
+    expect(sql).toContain(
+      'session."last_heartbeat" > CURRENT_TIMESTAMP - INTERVAL \'5 minutes\''
+    );
+    expect(sql).toContain('session."source" NOT LIKE \'historical-transition:%\'');
     expect(sql).not.toContain('FROM "work_logs"');
   });
 
-  it("backfills live leases without inferring intents from WorkLogs or interruption-only rows", async () => {
+  it("backfills only live non-historical leases and grants implicit ownership only to them", async () => {
     const baseUrl = new URL(process.env["DATABASE_URL"]!);
     const schemaName = `kan243_intent_upgrade_${randomUUID().replaceAll("-", "")}`;
     const adminUrl = new URL(baseUrl);
@@ -118,27 +123,37 @@ describe("WorkCaptureIntent migration", () => {
       const project = await database.project.create({
         data: { key: "INTENT", name: "Intent", workspaceId: workspace.id },
       });
-      const [capturingIssue, pausedIssue, workLogOnlyIssue, interruptionOnlyIssue, incident] =
-        await Promise.all(
-          [
-            ["INTENT-1", "Capturing", "task"],
-            ["INTENT-2", "Paused", "task"],
-            ["INTENT-3", "WorkLog only", "task"],
-            ["INTENT-4", "Interruption only", "task"],
-            ["INTENT-5", "Incident", "incident"],
-          ].map(([key, title, type], index) =>
-            database.issue.create({
-              data: {
-                key: key!,
-                title: title!,
-                type: type as "task" | "incident",
-                projectId: project.id,
-                sequenceNum: index + 1,
-              },
-            })
-          )
-        );
-      const capturingStartedAt = new Date("2026-08-18T12:00:00.000Z");
+      const [
+        capturingIssue,
+        pausedIssue,
+        expiredIssue,
+        historicalIssue,
+        workLogOnlyIssue,
+        interruptionOnlyIssue,
+        incident,
+      ] = await Promise.all(
+        [
+          ["INTENT-1", "Capturing", "task"],
+          ["INTENT-2", "Paused", "task"],
+          ["INTENT-3", "Expired", "task"],
+          ["INTENT-4", "Historical", "task"],
+          ["INTENT-5", "WorkLog only", "task"],
+          ["INTENT-6", "Interruption only", "task"],
+          ["INTENT-7", "Incident", "incident"],
+        ].map(([key, title, type], index) =>
+          database.issue.create({
+            data: {
+              key: key!,
+              title: title!,
+              type: type as "task" | "incident",
+              projectId: project.id,
+              sequenceNum: index + 1,
+            },
+          })
+        )
+      );
+      const observedAt = new Date();
+      const capturingStartedAt = new Date(observedAt.getTime() - 30_000);
       await database.workSession.create({
         data: {
           userId: user.id,
@@ -146,11 +161,11 @@ describe("WorkCaptureIntent migration", () => {
           issueId: capturingIssue!.id,
           source: "codex",
           startedAt: capturingStartedAt,
-          lastHeartbeat: new Date("2026-08-18T11:59:00.000Z"),
+          lastHeartbeat: new Date(observedAt.getTime() - 60_000),
         },
       });
-      const pausedStartedAt = new Date("2026-08-18T13:00:00.000Z");
-      const pausedHeartbeat = new Date("2026-08-18T14:00:00.000Z");
+      const pausedStartedAt = new Date(observedAt.getTime() - 120_000);
+      const pausedHeartbeat = new Date(observedAt.getTime() - 10_000);
       await database.workSession.create({
         data: {
           userId: user.id,
@@ -159,6 +174,26 @@ describe("WorkCaptureIntent migration", () => {
           source: "web",
           startedAt: pausedStartedAt,
           lastHeartbeat: pausedHeartbeat,
+        },
+      });
+      await database.workSession.create({
+        data: {
+          userId: user.id,
+          memberId: member.id,
+          issueId: expiredIssue!.id,
+          source: "mcp",
+          startedAt: new Date(observedAt.getTime() - 10 * 60_000),
+          lastHeartbeat: new Date(observedAt.getTime() - 6 * 60_000),
+        },
+      });
+      await database.workSession.create({
+        data: {
+          userId: user.id,
+          memberId: member.id,
+          issueId: historicalIssue!.id,
+          source: "historical-transition:transition-listener",
+          startedAt: new Date(observedAt.getTime() - 60_000),
+          lastHeartbeat: observedAt,
         },
       });
       await database.interruption.create({
@@ -228,6 +263,38 @@ describe("WorkCaptureIntent migration", () => {
         createdAt: pausedStartedAt,
         updatedAt: pausedHeartbeat,
       });
+
+      const ownerLeaseIndex = migrationNames.indexOf(ownerLeaseMigrationName);
+      expect(ownerLeaseIndex).toBeGreaterThan(targetIndex);
+      for (const name of migrationNames.slice(targetIndex + 1, ownerLeaseIndex + 1)) {
+        await cp(join(migrationsDirectory, name), join(temporaryMigrations, name), {
+          recursive: true,
+        });
+      }
+      await deployMigrations(temporaryDirectory, isolatedUrl.toString());
+
+      const owners = await database.$queryRawUnsafe<
+        Array<{ issueId: string; ownerId: string; ownerKind: string }>
+      >(`
+        SELECT intent."issue_id" AS "issueId",
+               owner."owner_id" AS "ownerId",
+               owner."owner_kind"::text AS "ownerKind"
+        FROM "work_capture_owner_leases" owner
+        JOIN "work_capture_intents" intent ON intent."id" = owner."intent_id"
+        ORDER BY intent."issue_id"
+      `);
+      expect(owners).toHaveLength(2);
+      expect(owners.map((owner) => owner.issueId).sort()).toEqual(
+        [capturingIssue!.id, pausedIssue!.id].sort()
+      );
+      expect(owners).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            ownerId: "00000000-0000-4000-8000-000000000001",
+            ownerKind: "implicit",
+          }),
+        ])
+      );
     } finally {
       await database.$disconnect();
       await admin.$executeRawUnsafe(`DROP SCHEMA IF EXISTS ${quoteIdentifier(schemaName)} CASCADE`);
