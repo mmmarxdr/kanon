@@ -32,8 +32,49 @@ export const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const MIN_WORKLOG_DURATION_S = 1;
 const SESSION_MUTATION_RETRIES = 3;
 const HISTORICAL_TRANSITION_SOURCE_PREFIX = "historical-transition:";
+const IMPLICIT_CAPTURE_OWNER_ID = "00000000-0000-4000-8000-000000000001";
 
 class RetrySessionMutation extends Error {}
+
+async function renewImplicitCaptureOwnerTx(
+  tx: Prisma.TransactionClient,
+  intent: { id: string; epoch: string; leaseGeneration: number }
+): Promise<void> {
+  await tx.$queryRaw`
+    INSERT INTO "work_capture_owner_leases" (
+      "intent_id", "owner_id", "epoch", "lease_generation", "owner_kind",
+      "first_seen_at", "last_seen_at", "expires_at"
+    ) VALUES (
+      ${intent.id}::uuid,
+      ${IMPLICIT_CAPTURE_OWNER_ID}::uuid,
+      ${intent.epoch}::uuid,
+      ${intent.leaseGeneration},
+      'implicit'::"WorkCaptureOwnerKind",
+      CURRENT_TIMESTAMP,
+      CURRENT_TIMESTAMP,
+      CURRENT_TIMESTAMP + INTERVAL '5 minutes'
+    )
+    ON CONFLICT ("intent_id", "owner_id") DO UPDATE SET
+      "epoch" = EXCLUDED."epoch",
+      "lease_generation" = EXCLUDED."lease_generation",
+      "owner_kind" = EXCLUDED."owner_kind",
+      "last_seen_at" = CURRENT_TIMESTAMP,
+      "expires_at" = CURRENT_TIMESTAMP + INTERVAL '5 minutes'
+    RETURNING "id"
+  `;
+}
+
+async function clearCaptureOwnersTx(
+  tx: Prisma.TransactionClient,
+  intent: { id: string } | null
+): Promise<void> {
+  if (!intent) return;
+  await tx.$queryRaw`
+    DELETE FROM "work_capture_owner_leases"
+    WHERE "intent_id" = ${intent.id}::uuid
+    RETURNING "id"
+  `;
+}
 
 function isHistoricalTransitionSession(session: { source: string }): boolean {
   return session.source.startsWith(HISTORICAL_TRANSITION_SOURCE_PREFIX);
@@ -65,6 +106,7 @@ type FinalizedWindow = {
   endedAt: Date;
   durationS: number;
   reason: "expired" | "stopped";
+  captureIntent?: WorkCaptureIntentFence;
   closedInterruptions: ClosedInterruption[];
 };
 
@@ -82,10 +124,11 @@ type SessionWindowResult = {
   resumedInterruptions?: ClosedInterruption[];
 };
 
-type WorkSessionStartedEventContext = {
+export type WorkSessionStartedEventContext = {
   issueKey: string;
   workspaceId: string;
   autoAssigned: boolean;
+  captureIntent?: WorkCaptureIntentFence;
 };
 
 function workSessionStartedDeliveryKey(sessionId: string): string {
@@ -96,7 +139,7 @@ export function workSessionLaneKey(issueId: string, userId: string): string {
   return `work-session:${issueId}:${userId}`;
 }
 
-async function enqueueWorkSessionStartedTx(
+export async function enqueueWorkSessionStartedTx(
   tx: Prisma.TransactionClient,
   session: WorkSession,
   context: WorkSessionStartedEventContext
@@ -116,6 +159,7 @@ async function enqueueWorkSessionStartedTx(
         userId: session.userId,
         source: session.source,
         autoAssigned: context.autoAssigned,
+        ...(context.captureIntent ? { captureIntent: context.captureIntent } : {}),
       },
     },
   });
@@ -205,6 +249,7 @@ async function openOrRefreshSessionWindow(input: {
   explicitStart?: boolean;
   startEvent?: WorkSessionStartedEventContext;
   deferCaptureIntentMaterialization?: boolean;
+  endedCaptureIntent?: WorkCaptureIntentFence;
 }): Promise<SessionWindowResult> {
   let heartbeatObservedGeneration = false;
   const mutate = async (tx: Prisma.TransactionClient): Promise<SessionWindowResult> => {
@@ -338,7 +383,7 @@ async function openOrRefreshSessionWindow(input: {
     const mustFinalize = existing && (!issueIsActive || captured!.expired || existingIsHistorical);
 
     if (issueIsActive && fallbackIdentity && !input.deferCaptureIntentMaterialization) {
-      await materializeCaptureIntentTx(tx, {
+      const materializedIntent = await materializeCaptureIntentTx(tx, {
         userId: input.userId,
         issueId: input.issueId,
         identity: {
@@ -348,6 +393,9 @@ async function openOrRefreshSessionWindow(input: {
         existingSession: Boolean(existing && !mustFinalize),
         explicitStart: input.explicitStart === true,
       });
+      if (materializedIntent && (input.explicitStart || input.heartbeatAdoption)) {
+        await renewImplicitCaptureOwnerTx(tx, materializedIntent);
+      }
     }
 
     const finish = async (
@@ -562,6 +610,7 @@ async function openOrRefreshSessionWindow(input: {
 
     const { endedAt, durationS, expired } = captured!;
     const reason = expired ? "expired" : "stopped";
+    const captureIntent = reason === "expired" ? input.endedCaptureIntent : undefined;
     const claimed = await tx.workSession.deleteMany({
       where: { id: existing.id, lastHeartbeat: existing.lastHeartbeat },
     });
@@ -619,7 +668,7 @@ async function openOrRefreshSessionWindow(input: {
     }
 
     if (finalizedTransitionLifecycleId && workLog) {
-      await enqueueTransitionLifecycleEffectsTx(tx, finalizedTransitionLifecycleId);
+      await enqueueTransitionLifecycleEffectsTx(tx, finalizedTransitionLifecycleId, captureIntent);
     }
 
     const finalized: FinalizedWindow = {
@@ -629,15 +678,17 @@ async function openOrRefreshSessionWindow(input: {
       endedAt,
       durationS,
       reason,
+      captureIntent,
       closedInterruptions,
     };
 
     if (!issueIsActive) {
-      await closeCaptureIntentTx(tx, {
+      const closedIntent = await closeCaptureIntentTx(tx, {
         userId: input.userId,
         issueId: input.issueId,
         closedAt: input.now,
       });
+      await clearCaptureOwnersTx(tx, closedIntent);
       return finish(null, finalized);
     }
 
@@ -698,8 +749,9 @@ export async function applyWorkCaptureIntentActivityTx(
     memberId: string;
     source: string;
     observedAt: Date;
+    captureIntent: WorkCaptureIntentFence;
   }
-): Promise<{ applied: false } | { applied: true; opensLease: boolean }> {
+): Promise<{ applied: false } | { applied: true; opensLease: boolean; session: WorkSession }> {
   const existingSession = await tx.workSession.findUnique({
     where: { userId_issueId: { userId: input.userId, issueId: input.issueId } },
   });
@@ -718,6 +770,7 @@ export async function applyWorkCaptureIntentActivityTx(
     onConflict: "skip",
     explicitStart: false,
     deferCaptureIntentMaterialization: true,
+    endedCaptureIntent: input.captureIntent,
   });
   if (result.finalized && !result.finalized.transitionLifecycleId) {
     await enqueueWorkCaptureCommandTerminalEffectsTx(tx, {
@@ -731,20 +784,15 @@ export async function applyWorkCaptureIntentActivityTx(
       workLog: result.finalized.workLog,
       durationS: result.finalized.durationS,
       reason: result.finalized.reason,
+      captureIntent: result.finalized.captureIntent,
       closedInterruptions: result.finalized.closedInterruptions,
-    });
-  }
-  if (result.session) {
-    await enqueueWorkSessionStartedTx(tx, result.session, {
-      issueKey: input.issueKey,
-      workspaceId: input.workspaceId,
-      autoAssigned: false,
     });
   }
   if (!result.session) return { applied: false };
   return {
     applied: true,
     opensLease: !existingSession || result.finalized !== null,
+    session: result.session,
   };
 }
 
@@ -894,6 +942,7 @@ async function emitFinalizedWindow(input: {
         workLogId: finalized.workLog?.id ?? null,
         durationS: finalized.durationS,
         reason: finalized.reason,
+        ...(finalized.captureIntent ? { captureIntent: finalized.captureIntent } : {}),
       },
     });
   } catch {
@@ -1345,7 +1394,6 @@ export async function heartbeat(
       ? {
           createIdentity: authenticatedIdentity,
           sourceOverride: authenticatedIdentity.source,
-          heartbeatAdoption: true,
           startEvent: {
             issueKey,
             workspaceId: issue.project.workspaceId,
@@ -1353,6 +1401,7 @@ export async function heartbeat(
           },
         }
       : {}),
+    heartbeatAdoption: Boolean(authenticatedIdentity),
     via,
     incidentIssueId: issue.type === "incident" ? issue.id : undefined,
     issueKey,
@@ -1448,6 +1497,7 @@ async function enqueueWorkCaptureCommandTerminalEffectsTx(
     workLog: { id: string; durationS: number } | null;
     durationS: number;
     reason: "expired" | "stopped";
+    captureIntent?: WorkCaptureIntentFence;
     closedInterruptions: ClosedInterruption[];
   }
 ): Promise<void> {
@@ -1483,6 +1533,7 @@ async function enqueueWorkCaptureCommandTerminalEffectsTx(
         workLogId: input.workLog?.id ?? null,
         durationS: input.durationS,
         reason: input.reason,
+        ...(input.captureIntent ? { captureIntent: input.captureIntent } : {}),
       },
     },
   });
@@ -1508,7 +1559,8 @@ async function enqueueWorkCaptureCommandTerminalEffectsTx(
 /** Persist a lifecycle revision's immutable effects in the caller transaction. */
 async function enqueueTransitionLifecycleEffectsTx(
   tx: Prisma.TransactionClient,
-  lifecycleId: string
+  lifecycleId: string,
+  captureIntent?: WorkCaptureIntentFence
 ): Promise<void> {
   const lifecycle = await tx.workTransitionLifecycle.findUnique({
     where: { id: lifecycleId },
@@ -1562,6 +1614,7 @@ async function enqueueTransitionLifecycleEffectsTx(
         workLogId: lifecycle.workLog.id,
         durationS: lifecycle.workLog.durationS,
         reason: lifecycle.workLog.reason,
+        ...(captureIntent ? { captureIntent } : {}),
       },
     },
   });
@@ -1738,11 +1791,12 @@ async function completeTransitionLifecycle(
         where: { id: session.id, lastHeartbeat: session.lastHeartbeat },
       });
       if (claimed.count !== 1) throw new RetrySessionMutation();
-      await closeCaptureIntentTx(tx, {
+      const closedIntent = await closeCaptureIntentTx(tx, {
         userId: row.userId,
         issueId: row.issueId,
         closedAt: row.endedAt,
       });
+      await clearCaptureOwnersTx(tx, closedIntent);
     }
 
     const interruptions = await tx.interruption.findMany({
@@ -2160,6 +2214,7 @@ export async function stopWork(
               expected: expectedIntent,
             });
             if (!closedIntent) return null;
+            await clearCaptureOwnersTx(tx, closedIntent);
             return {
               existing: null,
               workLog: null,
@@ -2239,12 +2294,13 @@ export async function stopWork(
             await enqueueTransitionLifecycleEffectsTx(tx, transitionLifecycleId);
           }
 
-          await closeCaptureIntentTx(tx, {
+          const closedIntent = await closeCaptureIntentTx(tx, {
             userId,
             issueId: issue.id,
             closedAt: observedAt,
             expected: expectedIntent,
           });
+          await clearCaptureOwnersTx(tx, closedIntent);
 
           return {
             existing,
@@ -2663,21 +2719,26 @@ export async function cleanupExpired(logger?: {
             });
           }
 
-          if (transitionLifecycleId && workLog) {
-            await enqueueTransitionLifecycleEffectsTx(tx, transitionLifecycleId);
-          }
-
-          await finalizeExpiredCaptureIntentTx(tx, {
+          const captureIntent = await finalizeExpiredCaptureIntentTx(tx, {
             userId: s.userId,
             issueId: s.issueId,
             issueIsActive: lockedIssue.state === "analysis" || lockedIssue.state === "in_progress",
             closedAt: endedAt,
           });
 
+          if (transitionLifecycleId && workLog) {
+            await enqueueTransitionLifecycleEffectsTx(
+              tx,
+              transitionLifecycleId,
+              captureIntent ?? undefined
+            );
+          }
+
           return {
             claimed: true as const,
             workLog,
             transitionLifecycleId,
+            captureIntent,
             closedInterruptions,
           };
         },
@@ -2737,6 +2798,7 @@ export async function cleanupExpired(logger?: {
               memberId: s.memberId,
               userId: s.userId,
               reason: "expired",
+              ...(outcome.captureIntent ? { captureIntent: outcome.captureIntent } : {}),
             },
           });
         } catch {

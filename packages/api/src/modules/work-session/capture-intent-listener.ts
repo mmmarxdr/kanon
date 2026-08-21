@@ -6,7 +6,11 @@ import type {
   DomainEvent,
   WorkCaptureIntentEffectRequestedPayload,
 } from "../../services/event-bus/types.js";
-import { applyWorkCaptureIntentActivityTx, applyWorkCaptureIntentTerminalTx } from "./service.js";
+import {
+  applyWorkCaptureIntentActivityTx,
+  applyWorkCaptureIntentTerminalTx,
+  enqueueWorkSessionStartedTx,
+} from "./service.js";
 import {
   isCurrentWorkCaptureEffect,
   recordWorkCaptureFailure,
@@ -14,6 +18,7 @@ import {
   supersedeWorkCaptureFailuresTx,
   workCaptureRetryableError,
 } from "./capture-intent-failure.js";
+import { IMPLICIT_CAPTURE_OWNER_ID } from "./capture-intent-effect.js";
 
 const APPLY_RETRIES = 3;
 
@@ -53,11 +58,53 @@ async function applyTx(
   const intent = await tx.workCaptureIntent.findUnique({ where: { id: payload.intentId } });
   if (!intent || !isCurrentWorkCaptureEffect(intent, payload)) return;
 
+  await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT "id"
+    FROM "work_capture_owner_leases"
+    WHERE "intent_id" = ${intent.id}::uuid
+    ORDER BY "owner_id" ASC
+    FOR UPDATE
+  `;
+  const databaseClock = await tx.$queryRaw<Array<{ now: Date }>>`
+    SELECT CURRENT_TIMESTAMP AS "now"
+  `;
+  const databaseNow = databaseClock[0]?.now;
+  if (!databaseNow) throw new Error("Database did not return owner-lease time");
+  await tx.workCaptureOwnerLease.deleteMany({
+    where: { intentId: intent.id, expiresAt: { lte: databaseNow } },
+  });
+
   const observedAt = new Date(payload.observedAt);
   if (Number.isNaN(observedAt.getTime())) return;
 
   if (payload.kind === "activity") {
     if (["paused", "closing", "closed"].includes(intent.state)) return;
+    const ownerId =
+      typeof payload["ownerId"] === "string" ? payload["ownerId"] : IMPLICIT_CAPTURE_OWNER_ID;
+    const owner = await tx.workCaptureOwnerLease.findFirst({
+      where: {
+        intentId: intent.id,
+        ownerId,
+        epoch: intent.epoch,
+        leaseGeneration: payload.leaseGeneration,
+        expiresAt: { gt: databaseNow },
+      },
+    });
+    if (!owner) {
+      await supersedeWorkCaptureFailuresTx(tx, {
+        id: intent.id,
+        failureEpisodeId: intent.failureEpisodeId,
+      });
+      await tx.workCaptureIntent.update({
+        where: { id: intent.id },
+        data: {
+          pendingEffectKind: null,
+          pendingEffectAt: null,
+          pendingEffectCommandId: null,
+        },
+      });
+      return;
+    }
     const outcome = await applyWorkCaptureIntentActivityTx(tx, {
       commandId: payload.commandId,
       issueId: issue.id,
@@ -69,6 +116,10 @@ async function applyTx(
       memberId: intent.memberId,
       source: intent.source,
       observedAt,
+      captureIntent: {
+        epoch: intent.epoch,
+        leaseGeneration: payload.leaseGeneration,
+      },
     });
     if (outcome.applied) {
       await resolveMatchingWorkCaptureFailureTx(tx, intent, payload);
@@ -78,7 +129,7 @@ async function applyTx(
         failureEpisodeId: intent.failureEpisodeId,
       });
     }
-    await tx.workCaptureIntent.update({
+    const updatedIntent = await tx.workCaptureIntent.update({
       where: { id: intent.id },
       data: {
         ...(outcome.applied
@@ -95,7 +146,55 @@ async function applyTx(
         pendingEffectCommandId: null,
       },
     });
+    if (outcome.applied) {
+      await enqueueWorkSessionStartedTx(tx, outcome.session, {
+        issueKey: issue.key,
+        workspaceId: issue.workspaceId,
+        autoAssigned: false,
+        captureIntent: {
+          epoch: updatedIntent.epoch,
+          leaseGeneration: updatedIntent.leaseGeneration,
+        },
+      });
+    }
+    if (outcome.applied && outcome.opensLease) {
+      await tx.workCaptureOwnerLease.updateMany({
+        where: {
+          intentId: intent.id,
+          ownerId,
+          epoch: intent.epoch,
+          leaseGeneration: payload.leaseGeneration,
+          expiresAt: { gt: databaseNow },
+        },
+        data: { leaseGeneration: payload.leaseGeneration + 1 },
+      });
+    }
     return;
+  }
+
+  if (payload.kind === "release") {
+    const liveOwners = await tx.workCaptureOwnerLease.count({
+      where: {
+        intentId: intent.id,
+        epoch: intent.epoch,
+        leaseGeneration: intent.leaseGeneration,
+        expiresAt: { gt: databaseNow },
+      },
+    });
+    if (liveOwners > 0) {
+      await resolveMatchingWorkCaptureFailureTx(tx, intent, payload);
+      await tx.workCaptureIntent.update({
+        where: { id: intent.id },
+        data: {
+          pendingEffectKind: null,
+          pendingEffectAt: null,
+          pendingEffectCommandId: null,
+        },
+      });
+      return;
+    }
+  } else {
+    await tx.workCaptureOwnerLease.deleteMany({ where: { intentId: intent.id } });
   }
 
   await resolveMatchingWorkCaptureFailureTx(tx, intent, payload);

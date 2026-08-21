@@ -36,6 +36,10 @@ const command = {
   epoch: "22222222-2222-4222-8222-222222222222",
   leaseGeneration: 2,
 } as const;
+const ownerCommand = {
+  ...command,
+  ownerId: "33333333-3333-4333-8333-333333333333",
+} as const;
 const intent = {
   id: "intent-internal",
   epoch: command.epoch,
@@ -257,11 +261,54 @@ describe("work-capture public adapter", () => {
       epoch: command.epoch,
       leaseGeneration: command.leaseGeneration,
       kind: "activity",
+      ownerKind: "implicit",
     });
     expect(publishDomainEventByDeliveryKey).toHaveBeenCalledOnce();
     expect(result).toMatchObject({
       status: 200,
       body: { ok: true, commandId: command.commandId, deliveryStatus: "acknowledged" },
+    });
+  });
+
+  it("maps an owner-scoped Web heartbeat without weakening the required owner contract", async () => {
+    const handlers = await registeredHandlers();
+    const handler = handlers.get("POST /issues/:key/work-sessions/heartbeat");
+    if (!handler) throw new Error("heartbeat route not registered");
+
+    await invoke(handler, { ...request(ownerCommand), via: "web" });
+
+    expect(requestWorkCaptureIntentEffect).toHaveBeenCalledWith({
+      commandId: ownerCommand.commandId,
+      intentId: intent.id,
+      epoch: ownerCommand.epoch,
+      leaseGeneration: ownerCommand.leaseGeneration,
+      kind: "activity",
+      ownerId: ownerCommand.ownerId,
+      ownerKind: "web",
+    });
+
+    await expect(
+      invoke(handler, {
+        ...request({ ...command, ownerId: undefined }),
+        via: "web",
+      })
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it("keeps the strict legacy command on its implicit compatibility anchor", async () => {
+    const handlers = await registeredHandlers();
+    const handler = handlers.get("POST /issues/:key/work-sessions/heartbeat");
+    if (!handler) throw new Error("heartbeat route not registered");
+
+    await invoke(handler, request(command));
+
+    expect(requestWorkCaptureIntentEffect).toHaveBeenCalledWith({
+      commandId: command.commandId,
+      intentId: intent.id,
+      epoch: command.epoch,
+      leaseGeneration: command.leaseGeneration,
+      kind: "activity",
+      ownerKind: "implicit",
     });
   });
 

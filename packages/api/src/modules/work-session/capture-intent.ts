@@ -216,7 +216,7 @@ export async function finalizeExpiredCaptureIntentTx(
     issueIsActive: boolean;
     closedAt: Date;
   }
-): Promise<void> {
+): Promise<WorkCaptureIntentFence | null> {
   const currentWhere: Prisma.WorkCaptureIntentWhereInput = {
     userId: input.userId,
     issueId: input.issueId,
@@ -241,6 +241,14 @@ export async function finalizeExpiredCaptureIntentTx(
           pendingEffectCommandId: null,
         },
   });
+  if (!input.issueIsActive) return null;
+  const current = await tx.workCaptureIntent.findUnique({
+    where: { userId_issueId: { userId: input.userId, issueId: input.issueId } },
+    select: { epoch: true, leaseGeneration: true, state: true },
+  });
+  return current?.state === "adopted"
+    ? { epoch: current.epoch, leaseGeneration: current.leaseGeneration }
+    : null;
 }
 
 export async function rebaseCaptureIntentTx(

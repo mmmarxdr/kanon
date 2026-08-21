@@ -10,6 +10,7 @@ import { useCommandPalette } from "@/hooks/use-command-palette";
 import { useCommandPaletteStore } from "@/stores/command-palette-store";
 import { useDomainEvents } from "@/hooks/use-domain-events";
 import { useActiveWorkspaceId } from "@/hooks/use-workspace-query";
+import { useLocalCaptureActivity } from "@/hooks/use-local-capture-activity";
 
 function AuthenticatedErrorFallback() {
   return (
@@ -69,13 +70,19 @@ export const authenticatedRoute = createRoute({
   component: AuthenticatedLayout,
 });
 
-function AuthenticatedLayout() {
+export function AuthenticatedLayout() {
   const { isOpen, close } = useCommandPalette();
   const requestCreateIssue = useCommandPaletteStore((s) => s.requestCreateIssue);
   const isLoading = useAuthStore((s) => s.isLoading);
+  const principalId = useAuthStore((s) => s.user?.userId);
   const activeWorkspaceId = useActiveWorkspaceId();
 
   useDomainEvents(activeWorkspaceId);
+  useLocalCaptureActivity(
+    principalId && activeWorkspaceId
+      ? { principalId, workspaceId: activeWorkspaceId }
+      : null,
+  );
 
   if (isLoading) {
     return (

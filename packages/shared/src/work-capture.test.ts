@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   workCaptureCommandSchema,
+  workCaptureOwnerCommandSchema,
+  workCaptureOwnerKindSchema,
   workCaptureDeliveryStatusSchema,
   workCaptureEffectResponseSchema,
   workCaptureFenceSchema,
@@ -15,6 +17,10 @@ const command = {
   commandId: "11111111-1111-4111-8111-111111111111",
   epoch: "22222222-2222-4222-8222-222222222222",
   leaseGeneration: 2,
+} as const;
+const ownerCommand = {
+  ...command,
+  ownerId: "66666666-6666-4666-8666-666666666666",
 } as const;
 
 describe("versioned work-capture contracts", () => {
@@ -55,6 +61,16 @@ describe("versioned work-capture contracts", () => {
     expect(workCaptureCommandSchema.safeParse({ ...command, unexpected: true }).success).toBe(
       false
     );
+  });
+
+  it("keeps the owner-scoped v2 command distinct from the legacy v1 command", () => {
+    expect(workCaptureOwnerCommandSchema.parse(ownerCommand)).toEqual(ownerCommand);
+    expect(workCaptureOwnerCommandSchema.safeParse(command).success).toBe(false);
+    expect(
+      workCaptureOwnerCommandSchema.safeParse({ ...ownerCommand, ownerId: undefined }).success
+    ).toBe(false);
+    expect(workCaptureCommandSchema.safeParse(ownerCommand).success).toBe(false);
+    expect(workCaptureOwnerKindSchema.options).toEqual(["web", "mcp", "implicit"]);
   });
 
   it("keeps snapshots strict and limited to the public fence and state", () => {

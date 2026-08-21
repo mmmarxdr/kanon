@@ -20,6 +20,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { issueKeys, cycleKeys, notificationKeys, projectKeys } from "@/lib/query-keys";
 
+const reconcileCaptureEvent = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/work-capture-lifecycle", () => ({
+  workCaptureRegistry: { reconcileDomainEvent: reconcileCaptureEvent },
+}));
+
 // ─── FakeEventSource ────────────────────────────────────────────────────────
 
 class FakeEventSource {
@@ -83,6 +88,7 @@ describe("useDomainEvents — KAN-88 Slice 1: scoped invalidation", () => {
   beforeEach(() => {
     FakeEventSource.lastInstance = null;
     vi.stubGlobal("EventSource", FakeEventSource);
+    reconcileCaptureEvent.mockReset();
   });
 
   afterEach(() => {
@@ -91,6 +97,33 @@ describe("useDomainEvents — KAN-88 Slice 1: scoped invalidation", () => {
   });
 
   // ── KAN-88-S1-A: issue.transitioned scoped invalidation ───────────────────
+
+  it("forwards only parseable work-session frames to owner lifecycle reconciliation", async () => {
+    const { wrapper } = createWrapper();
+    const { useDomainEvents } = await import("../use-domain-events");
+    renderHook(() => useDomainEvents(WORKSPACE_ID), { wrapper });
+
+    const frame = {
+      type: "work_session.started",
+      workspaceId: WORKSPACE_ID,
+      payload: { issueKey: "PROJ-1", userId: "user-1" },
+    };
+    act(() => {
+      FakeEventSource.lastInstance!.dispatch("work_session.started", frame);
+      FakeEventSource.lastInstance!.dispatch("work_capture.intent_effect_requested", {
+        type: "work_capture.intent_effect_requested",
+        workspaceId: WORKSPACE_ID,
+        payload: { issueKey: "PROJ-1", userId: "user-1" },
+      });
+      FakeEventSource.lastInstance!.dispatch("work_session.ended", "malformed");
+    });
+
+    expect(reconcileCaptureEvent).toHaveBeenCalledWith(frame);
+    expect(reconcileCaptureEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "work_capture.intent_effect_requested" }),
+    );
+    expect(reconcileCaptureEvent).toHaveBeenCalledTimes(2);
+  });
 
   it("KAN-88-S1-A: issue.transitioned with projectKey → invalidates issueKeys.list(projectKey) and issueKeys.groups(projectKey), NOT issueKeys.all", async () => {
     const { queryClient, wrapper } = createWrapper();

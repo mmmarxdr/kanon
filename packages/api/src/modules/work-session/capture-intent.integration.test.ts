@@ -1,5 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "../../config/prisma.js";
+import { eventBus } from "../../services/event-bus/index.js";
+import type { DomainEvent } from "../../services/event-bus/types.js";
 import {
   cleanDatabase,
   disconnectTestDb,
@@ -333,16 +335,35 @@ describe("durable WorkCaptureIntent coupling", () => {
       });
     }
 
-    expect(await cleanupExpired()).toBe(3);
-    expect(
-      await prisma.workCaptureIntent.findFirstOrThrow({ where: { issueId: activeIssue.id } })
-    ).toMatchObject({ state: "adopted", closedAt: null });
+    const observed: DomainEvent[] = [];
+    const unsubscribe = eventBus.subscribe((event) => observed.push(event));
+    try {
+      expect(await cleanupExpired()).toBe(3);
+    } finally {
+      unsubscribe();
+    }
+    const activeIntent = await prisma.workCaptureIntent.findFirstOrThrow({
+      where: { issueId: activeIssue.id },
+    });
+    expect(activeIntent).toMatchObject({ state: "adopted", closedAt: null });
     expect(
       await prisma.workCaptureIntent.findFirstOrThrow({ where: { issueId: pausedIssue.id } })
     ).toMatchObject({ state: "paused", closedAt: null });
     expect(
       await prisma.workCaptureIntent.findFirstOrThrow({ where: { issueId: closedIssue.id } })
     ).toMatchObject({ state: "closed", closedAt: expect.any(Date) });
+    const ended = observed.filter((event) => event.type === "work_session.ended");
+    expect(
+      ended.find((event) => event.payload["issueId"] === activeIssue.id)?.payload
+    ).toMatchObject({
+      captureIntent: {
+        epoch: activeIntent.epoch,
+        leaseGeneration: activeIntent.leaseGeneration,
+      },
+    });
+    expect(
+      ended.find((event) => event.payload["issueId"] === closedIssue.id)?.payload
+    ).not.toHaveProperty("captureIntent");
   });
 
   it("closes intent when an exact lifecycle deletes a sub-second session without a WorkLog", async () => {

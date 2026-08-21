@@ -1,4 +1,8 @@
-import { Prisma, type WorkCaptureEffectKind } from "@prisma/client";
+import {
+  Prisma,
+  type WorkCaptureEffectKind,
+  type WorkCaptureOwnerKind,
+} from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { enqueueDomainEventTx } from "../../services/event-bus/outbox.js";
 import type { WorkCaptureIntentEffectRequestedPayload } from "../../services/event-bus/types.js";
@@ -7,6 +11,18 @@ import { workSessionLaneKey } from "./service.js";
 import { supersedeWorkCaptureFailuresTx } from "./capture-intent-failure.js";
 
 const REQUEST_RETRIES = 3;
+const OWNER_LEASE_MS = 5 * 60 * 1000;
+export const IMPLICIT_CAPTURE_OWNER_ID = "00000000-0000-4000-8000-000000000001";
+
+function isSerializableConflict(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: string; meta?: { code?: string }; message?: string };
+  return (
+    candidate.code === "P2034" ||
+    (candidate.code === "P2010" && candidate.meta?.code === "40001") ||
+    candidate.message?.includes("40001") === true
+  );
+}
 
 export interface RequestWorkCaptureIntentEffectInput {
   commandId: string;
@@ -14,6 +30,8 @@ export interface RequestWorkCaptureIntentEffectInput {
   epoch: string;
   leaseGeneration: number;
   kind: WorkCaptureEffectKind;
+  ownerId?: string;
+  ownerKind?: WorkCaptureOwnerKind;
 }
 
 export interface RequestedWorkCaptureIntentEffect {
@@ -53,8 +71,69 @@ function matchesCommand(
     payload.intentId === input.intentId &&
     payload.epoch === input.epoch &&
     payload.leaseGeneration === input.leaseGeneration &&
-    payload.kind === input.kind
+    payload.kind === input.kind &&
+    (typeof payload["ownerId"] === "string" ? payload["ownerId"] : null) ===
+      (input.ownerId ?? null) &&
+    (payload["ownerKind"] === "web" || payload["ownerKind"] === "mcp"
+      ? payload["ownerKind"]
+      : "implicit") === (input.ownerKind ?? "implicit")
   );
+}
+
+async function lockAndApplyOwnerCommand(
+  tx: Prisma.TransactionClient,
+  input: RequestWorkCaptureIntentEffectInput,
+  acceptedAt: Date
+): Promise<void> {
+  await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT "id"
+    FROM "work_capture_owner_leases"
+    WHERE "intent_id" = ${input.intentId}::uuid
+    ORDER BY "owner_id" ASC
+    FOR UPDATE
+  `;
+  await tx.workCaptureOwnerLease.deleteMany({
+    where: { intentId: input.intentId, expiresAt: { lte: acceptedAt } },
+  });
+
+  if (input.kind === "close") {
+    await tx.workCaptureOwnerLease.deleteMany({ where: { intentId: input.intentId } });
+    return;
+  }
+
+  const ownerId = input.ownerId ?? IMPLICIT_CAPTURE_OWNER_ID;
+  if (input.kind === "release") {
+    await tx.workCaptureOwnerLease.deleteMany({
+      where: {
+        intentId: input.intentId,
+        ownerId,
+        epoch: input.epoch,
+        leaseGeneration: input.leaseGeneration,
+      },
+    });
+    return;
+  }
+
+  await tx.workCaptureOwnerLease.upsert({
+    where: { intentId_ownerId: { intentId: input.intentId, ownerId } },
+    create: {
+      intentId: input.intentId,
+      ownerId,
+      epoch: input.epoch,
+      leaseGeneration: input.leaseGeneration,
+      ownerKind: input.ownerKind ?? "implicit",
+      firstSeenAt: acceptedAt,
+      lastSeenAt: acceptedAt,
+      expiresAt: new Date(acceptedAt.getTime() + OWNER_LEASE_MS),
+    },
+    update: {
+      epoch: input.epoch,
+      leaseGeneration: input.leaseGeneration,
+      ownerKind: input.ownerKind ?? "implicit",
+      lastSeenAt: acceptedAt,
+      expiresAt: new Date(acceptedAt.getTime() + OWNER_LEASE_MS),
+    },
+  });
 }
 
 function resultFromPayload(
@@ -191,6 +270,8 @@ async function requestTx(
     await supersedeWorkCaptureFailuresTx(tx, { id: intent.id });
   }
 
+  await lockAndApplyOwnerCommand(tx, input, acceptedAt);
+
   const updated = samePendingCommand
     ? intent
     : await tx.workCaptureIntent.update({
@@ -211,6 +292,8 @@ async function requestTx(
     leaseGeneration: input.leaseGeneration,
     effectRevision: updated.effectRevision,
     kind: input.kind,
+    ownerId: input.ownerId ?? null,
+    ownerKind: input.ownerKind ?? "implicit",
     observedAt,
     issueKey: intent.issue.key,
     issueId: intent.issue.id,
@@ -240,12 +323,7 @@ export async function requestWorkCaptureIntentEffect(
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       });
     } catch (error) {
-      if (
-        error &&
-        typeof error === "object" &&
-        (error as { code?: string }).code === "P2034" &&
-        attempt + 1 < REQUEST_RETRIES
-      ) {
+      if (isSerializableConflict(error) && attempt + 1 < REQUEST_RETRIES) {
         continue;
       }
       throw error;
