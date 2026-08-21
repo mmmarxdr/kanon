@@ -14,6 +14,7 @@
 // KAN-40: spy on the real eventBus singleton's emit method so route-emit tests can
 // assert call count/args without disrupting subscribe() wiring (which registerNotificationService
 // and app.ts rely on for DB-level integration tests in this same file).
+import { randomUUID } from "node:crypto";
 import { vi, describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { eventBus } from "../../../services/event-bus/index.js";
 
@@ -485,6 +486,76 @@ describe("Notification routes — S3 / KAN-27", () => {
       expect(body.notifications[0].recipientId).toBe(member.id);
     });
 
+    it("returns a safe work-capture failure only to its owner and hides the episode key", async () => {
+      const ws = await seedTestWorkspace();
+      const owner = await seedTestMember(ws.id, { username: "capture-owner" });
+      const other = await seedTestMember(ws.id, { username: "capture-other" });
+      const otherWorkspace = await seedTestWorkspace();
+      const outsider = await seedTestMember(otherWorkspace.id, { username: "capture-outsider" });
+      const project = await seedTestProject(ws.id);
+      const issue = await seedIssue(project.id, "capture-failure");
+      const rawMarker = "KAN243_RAW_CAPTURE_EFFECT_MARKER";
+
+      await prisma.notification.create({
+        data: {
+          kind: "work_capture_failure" as never,
+          workspaceId: ws.id,
+          recipientId: owner.id,
+          actorId: null,
+          issueId: issue.id,
+          workCaptureFailureEpisodeId: randomUUID(),
+          via: "codex",
+          payload: {
+            issueKey: issue.key,
+            stage: "effect_apply",
+            code: "WORK_CAPTURE_RETRYABLE",
+            message: "Work capture was delayed. Kanon retries automatically.",
+            details: { retryable: true, effectKind: "close" },
+          },
+        } as never,
+      });
+
+      const ownerResponse = await app.inject({
+        method: "GET",
+        url: `/api/workspaces/${ws.id}/notifications`,
+        headers: { authorization: `Bearer ${owner.token}` },
+      });
+      expect(ownerResponse.statusCode).toBe(200);
+      expect(ownerResponse.json().notifications).toEqual([
+        expect.objectContaining({
+          kind: "work_capture_failure",
+          recipientId: owner.id,
+          actorId: null,
+          issueId: issue.id,
+          via: "codex",
+          payload: {
+            issueKey: issue.key,
+            stage: "effect_apply",
+            code: "WORK_CAPTURE_RETRYABLE",
+            message: "Work capture was delayed. Kanon retries automatically.",
+            details: { retryable: true, effectKind: "close" },
+          },
+        }),
+      ]);
+      expect(JSON.stringify(ownerResponse.json())).not.toContain("workCaptureFailureEpisodeId");
+      expect(JSON.stringify(ownerResponse.json())).not.toContain(rawMarker);
+
+      const otherResponse = await app.inject({
+        method: "GET",
+        url: `/api/workspaces/${ws.id}/notifications`,
+        headers: { authorization: `Bearer ${other.token}` },
+      });
+      expect(otherResponse.statusCode).toBe(200);
+      expect(otherResponse.json().notifications).toEqual([]);
+
+      const outsiderResponse = await app.inject({
+        method: "GET",
+        url: `/api/workspaces/${ws.id}/notifications`,
+        headers: { authorization: `Bearer ${outsider.token}` },
+      });
+      expect(outsiderResponse.statusCode).toBe(403);
+    });
+
     // Fix 2 — invalid limit query param must return 400, not 500
     it("?limit=abc returns 400 (NaN guard)", async () => {
       const ws = await seedTestWorkspace();
@@ -640,7 +711,7 @@ describe("KAN-40 — notification.marked_read emitted at route sites", () => {
     expect(res.statusCode).toBe(200);
 
     const markedReadEmits = emitSpy.mock.calls.filter(
-      (c) => (c[0] as any).type === "notification.marked_read",
+      (c) => (c[0] as any).type === "notification.marked_read"
     );
     expect(markedReadEmits).toHaveLength(1);
     expect((markedReadEmits[0]![0] as any).workspaceId).toBe(ws.id);
@@ -682,7 +753,7 @@ describe("KAN-40 — notification.marked_read emitted at route sites", () => {
     });
 
     const emitCalls = emitSpy.mock.calls.filter(
-      (c) => (c[0] as any).type === "notification.marked_read",
+      (c) => (c[0] as any).type === "notification.marked_read"
     );
     expect(emitCalls.length).toBeGreaterThanOrEqual(1);
     const payload = (emitCalls[0]![0] as any).payload;
@@ -712,9 +783,30 @@ describe("KAN-40 — notification.marked_read emitted at route sites", () => {
     // Seed 3 unread notifications
     await prisma.notification.createMany({
       data: [
-        { kind: "assignment", workspaceId: ws.id, recipientId: recipient.id, actorId: actor.id, issueId: issue.id, read: false },
-        { kind: "assignment", workspaceId: ws.id, recipientId: recipient.id, actorId: actor.id, issueId: issue.id, read: false },
-        { kind: "assignment", workspaceId: ws.id, recipientId: recipient.id, actorId: actor.id, issueId: issue.id, read: false },
+        {
+          kind: "assignment",
+          workspaceId: ws.id,
+          recipientId: recipient.id,
+          actorId: actor.id,
+          issueId: issue.id,
+          read: false,
+        },
+        {
+          kind: "assignment",
+          workspaceId: ws.id,
+          recipientId: recipient.id,
+          actorId: actor.id,
+          issueId: issue.id,
+          read: false,
+        },
+        {
+          kind: "assignment",
+          workspaceId: ws.id,
+          recipientId: recipient.id,
+          actorId: actor.id,
+          issueId: issue.id,
+          read: false,
+        },
       ],
     });
 
@@ -727,7 +819,7 @@ describe("KAN-40 — notification.marked_read emitted at route sites", () => {
     expect(res.statusCode).toBe(200);
 
     const markedReadEmits = emitSpy.mock.calls.filter(
-      (c) => (c[0] as any).type === "notification.marked_read",
+      (c) => (c[0] as any).type === "notification.marked_read"
     );
     // Exactly ONE event after the transaction — NOT one per row
     expect(markedReadEmits).toHaveLength(1);
@@ -748,7 +840,7 @@ describe("KAN-40 — notification.marked_read emitted at route sites", () => {
     expect(res.json().updated).toBe(0);
 
     const markedReadEmits = emitSpy.mock.calls.filter(
-      (c) => (c[0] as any).type === "notification.marked_read",
+      (c) => (c[0] as any).type === "notification.marked_read"
     );
     expect(markedReadEmits).toHaveLength(0);
   });
@@ -794,7 +886,7 @@ describe("KAN-40 — notification.marked_read emitted at route sites", () => {
 
     // Must NOT emit when already read
     const markedReadEmits = emitSpy.mock.calls.filter(
-      (c) => (c[0] as any).type === "notification.marked_read",
+      (c) => (c[0] as any).type === "notification.marked_read"
     );
     expect(markedReadEmits).toHaveLength(0);
   });
@@ -828,7 +920,9 @@ describe("KAN-40 — notification.marked_read emitted at route sites", () => {
     });
 
     // Force eventBus.emit to throw
-    emitSpy.mockImplementation(() => { throw new Error("bus failure"); });
+    emitSpy.mockImplementation(() => {
+      throw new Error("bus failure");
+    });
 
     const res = await app.inject({
       method: "PATCH",

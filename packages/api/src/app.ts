@@ -39,6 +39,10 @@ import adminUsersRoutes from "./modules/admin-users/routes.js";
 import { triageProposalReadRoutes } from "./modules/triage/routes.js";
 import { bootstrapSetupToken } from "./modules/instance/service.js";
 import { eventBus } from "./services/event-bus/index.js";
+import {
+  startDomainEventOutboxRecovery,
+  type DomainEventOutboxRecovery,
+} from "./services/event-bus/outbox.js";
 import { cleanupExpired } from "./modules/work-session/service.js";
 import { registerRetentionHousekeeping } from "./modules/triage/retention.js";
 import { registerNotificationService } from "./services/notification/index.js";
@@ -46,6 +50,7 @@ import { createEmailProvider } from "./services/email/index.js";
 import type { EmailProvider } from "./services/email/types.js";
 import { registerForecastListener } from "./modules/forecast/index.js";
 import { registerTransitionListener } from "./modules/work-session/transition-listener.js";
+import { registerCaptureIntentListener } from "./modules/work-session/capture-intent-listener.js";
 import {
   startAuditScheduler,
   startIntegrationScheduler,
@@ -210,9 +215,6 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     logger: app.log,
     emailProvider: opts.emailProvider ?? createEmailProvider(),
   });
-  app.addHook("onClose", async () => {
-    unsubscribeNotifications();
-  });
 
   // ─── ForecastListener ─────────────────────────────────────────────────
   // Subscribe to forecast-relevant domain events at startup; unsubscribe on
@@ -221,24 +223,43 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   // single full-project rebuild. Fire-and-forget — a forecast failure must
   // never break the emitting mutation (KAN-102).
   const unsubscribeForecast = registerForecastListener(eventBus, app.log);
-  app.addHook("onClose", async () => {
-    unsubscribeForecast();
-  });
 
   // ─── WorkSession Transition Listener ─────────────────────────────────
   // Subscribes to issue.transitioned events and opens/closes WorkSessions
   // based on the issue state machine (KAN-156 Slice 1). Fire-and-forget —
   // a session failure MUST NEVER break the transition emitter.
   const unsubscribeTransitionListener = registerTransitionListener(eventBus, app.log);
+  const unsubscribeCaptureIntentListener = registerCaptureIntentListener(eventBus);
+
+  // Listeners must exist before the durable queue starts replaying. Recovery is
+  // app-owned so every durable domain-event producer shares one startup and
+  // periodic non-overlapping drain, independent of any individual listener.
+  let outboxRecovery: DomainEventOutboxRecovery | undefined;
+  app.addHook("onReady", async () => {
+    outboxRecovery = startDomainEventOutboxRecovery({ logger: app.log });
+  });
   app.addHook("onClose", async () => {
-    unsubscribeTransitionListener();
+    try {
+      if (outboxRecovery) await outboxRecovery.stop();
+    } finally {
+      // Keep subscribers registered until every in-flight durable delivery has
+      // settled; otherwise shutdown could acknowledge an event to zero listeners.
+      outboxRecovery = undefined;
+      unsubscribeCaptureIntentListener();
+      unsubscribeTransitionListener();
+      unsubscribeForecast();
+      unsubscribeNotifications();
+    }
   });
 
   const injectedScan = opts.integrationScan;
   let injectedRunning: Promise<unknown> | undefined;
   const integrationWorker = injectedScan
     ? undefined
-    : createIntegrationWorkerCycle(prisma, { logger: app.log, commentDispatchEnabled: env.INTEGRATION_COMMENT_DISPATCH_ENABLED });
+    : createIntegrationWorkerCycle(prisma, {
+        logger: app.log,
+        commentDispatchEnabled: env.INTEGRATION_COMMENT_DISPATCH_ENABLED,
+      });
   const integrationScan = injectedScan
     ? () => {
         if (injectedRunning) return injectedRunning;
@@ -279,7 +300,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
     try {
       app.log.info(
         await readIntegrationWorkerStartupSnapshot(prisma),
-        "Integration worker startup snapshot",
+        "Integration worker startup snapshot"
       );
     } catch (err) {
       app.log.error({ err }, "Integration worker startup snapshot failed");

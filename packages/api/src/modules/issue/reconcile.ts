@@ -43,10 +43,33 @@ type ConfirmedEntry = {
   adjustsId: string | null;
 };
 
+type CaptureEvidenceDatabase = Pick<Prisma.TransactionClient, "$queryRaw">;
+
+async function assertCaptureComplete(
+  issueId: string,
+  database: CaptureEvidenceDatabase
+): Promise<void> {
+  const [evidence] = await database.$queryRaw<Array<{ incomplete: boolean }>>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM "work_capture_intents"
+      WHERE "issue_id" = ${issueId}::uuid
+        AND ("state" <> 'closed' OR "pending_effect_kind" IS NOT NULL)
+    ) AS "incomplete"
+  `;
+  if (!evidence?.incomplete) return;
+
+  throw new AppError(
+    409,
+    "CAPTURE_INCOMPLETE",
+    "Work capture must finish before time can be reconciled."
+  );
+}
+
 async function captureConfirmedTimeTx(
   tx: Prisma.TransactionClient,
   projectId: string,
-  entries: readonly ConfirmedEntry[],
+  entries: readonly ConfirmedEntry[]
 ): Promise<void> {
   const binding = await tx.integrationProjectBinding.findFirst({
     where: {
@@ -71,7 +94,7 @@ async function captureConfirmedTimeTx(
     throw new AppError(
       409,
       "INTEGRATION_TIME_ACTIVITY_REQUIRED",
-      "The Redmine binding must configure a time-entry activity before time can be confirmed.",
+      "The Redmine binding must configure a time-entry activity before time can be confirmed."
     );
   }
 
@@ -83,7 +106,11 @@ async function captureConfirmedTimeTx(
     const seen = new Set<string>();
     while (root.adjustsId) {
       if (seen.has(root.id)) {
-        throw new AppError(409, "INTEGRATION_TIME_ADJUSTMENT_INVALID", "Time adjustment cycle detected.");
+        throw new AppError(
+          409,
+          "INTEGRATION_TIME_ADJUSTMENT_INVALID",
+          "Time adjustment cycle detected."
+        );
       }
       seen.add(root.id);
       const adjusted = byId.get(root.adjustsId);
@@ -91,7 +118,7 @@ async function captureConfirmedTimeTx(
         throw new AppError(
           409,
           "INTEGRATION_TIME_ADJUSTMENT_INVALID",
-          "A confirmed time adjustment points outside this issue.",
+          "A confirmed time adjustment points outside this issue."
         );
       }
       root = adjusted;
@@ -111,7 +138,9 @@ async function captureConfirmedTimeTx(
     },
     select: { id: true, memberId: true },
   });
-  const credentialByMember = new Map(credentials.map((credential) => [credential.memberId, credential.id]));
+  const credentialByMember = new Map(
+    credentials.map((credential) => [credential.memberId, credential.id])
+  );
 
   for (const root of roots) {
     if (!root.issueId) continue;
@@ -121,19 +150,19 @@ async function captureConfirmedTimeTx(
         409,
         "INTEGRATION_CREDENTIAL_REQUIRED",
         `The member who owns time entry ${root.id} must connect their Redmine credential.`,
-        { memberId: root.memberId, timeEntryId: root.id },
+        { memberId: root.memberId, timeEntryId: root.id }
       );
     }
     const component = groups.get(root.id)!.sort((left, right) => left.id.localeCompare(right.id));
     const targetHours = component.reduce(
       (sum, entry) => sum.plus(entry.hours),
-      new Prisma.Decimal(0),
+      new Prisma.Decimal(0)
     );
     if (targetHours.lessThan(0)) {
       throw new AppError(
         409,
         "INTEGRATION_TIME_TOTAL_INVALID",
-        `Time entry ${root.id} has a negative confirmed total that Redmine cannot represent.`,
+        `Time entry ${root.id} has a negative confirmed total that Redmine cannot represent.`
       );
     }
     const entryIds = component.map(({ id }) => id);
@@ -172,21 +201,37 @@ async function captureConfirmedTimeTx(
 export async function checkReconciliation(
   issueId: string,
   timeConfirmedAt: Date | null,
-  database: Pick<Prisma.TransactionClient, "workLog" | "timeEntry"> = prisma,
+  database: Pick<Prisma.TransactionClient, "$queryRaw" | "workLog" | "timeEntry"> = prisma
 ): Promise<{
   needed: boolean;
   workLogs: any[];
   timeEntries: any[];
   totalHours: number;
 }> {
+  await assertCaptureComplete(issueId, database);
+
   const [workLogs, timeEntries] = await Promise.all([
     database.workLog.findMany({
       where: { issueId },
-      select: { id: true, durationS: true, startedAt: true, endedAt: true, createdAt: true, memberId: true },
+      select: {
+        id: true,
+        durationS: true,
+        startedAt: true,
+        endedAt: true,
+        createdAt: true,
+        memberId: true,
+      },
     }),
     database.timeEntry.findMany({
       where: { issueId },
-      select: { id: true, hours: true, status: true, sourceWorkLogId: true, createdAt: true, memberId: true },
+      select: {
+        id: true,
+        hours: true,
+        status: true,
+        sourceWorkLogId: true,
+        createdAt: true,
+        memberId: true,
+      },
     }),
   ]);
 
@@ -207,32 +252,22 @@ export async function checkReconciliation(
     const staleEntry = timeEntries.some((te) => te.createdAt >= timeConfirmedAt);
     if (!staleWorkLog && !staleEntry) {
       // Fix 7: compute the real total even in the confirmed/non-stale branch.
-      const linkedWorkLogIds = new Set(
-        timeEntries.map((te) => te.sourceWorkLogId).filter(Boolean),
-      );
+      const linkedWorkLogIds = new Set(timeEntries.map((te) => te.sourceWorkLogId).filter(Boolean));
       const unlinkedWorkLogHours = workLogs
         .filter((wl) => !linkedWorkLogIds.has(wl.id))
         .reduce((sum, wl) => sum + wl.durationS / 3600, 0);
-      const entryHours = timeEntries.reduce(
-        (sum, te) => sum + parseFloat(te.hours.toString()),
-        0,
-      );
+      const entryHours = timeEntries.reduce((sum, te) => sum + parseFloat(te.hours.toString()), 0);
       const totalHours = Math.round((unlinkedWorkLogHours + entryHours) * 100) / 100;
       return { needed: false, workLogs, timeEntries, totalHours };
     }
   }
 
   // Compute total hours from TimeEntries (authoritative) + unlinked WorkLogs
-  const linkedWorkLogIds = new Set(
-    timeEntries.map((te) => te.sourceWorkLogId).filter(Boolean),
-  );
+  const linkedWorkLogIds = new Set(timeEntries.map((te) => te.sourceWorkLogId).filter(Boolean));
   const unlinkedWorkLogHours = workLogs
     .filter((wl) => !linkedWorkLogIds.has(wl.id))
     .reduce((sum, wl) => sum + wl.durationS / 3600, 0);
-  const entryHours = timeEntries.reduce(
-    (sum, te) => sum + parseFloat(te.hours.toString()),
-    0,
-  );
+  const entryHours = timeEntries.reduce((sum, te) => sum + parseFloat(te.hours.toString()), 0);
   const totalHours = Math.round((unlinkedWorkLogHours + entryHours) * 100) / 100;
 
   return { needed: true, workLogs, timeEntries, totalHours };
@@ -254,7 +289,7 @@ export async function reconcileIssueTime(
   issueId: string,
   memberId: string,
   opts?: ReconcileOpts,
-  transaction?: Prisma.TransactionClient,
+  transaction?: Prisma.TransactionClient
 ): Promise<ReconcileSummary> {
   const database = transaction ?? prisma;
   const issue = await database.issue.findUnique({
@@ -274,17 +309,18 @@ export async function reconcileIssueTime(
   // whenever confirmedTotalHours is present, so the additive top-up branch
   // (via: "reconcile-manual") can never fire alongside the override.
   const hasOverride = opts?.confirmedTotalHours !== undefined;
-  const addHoursDecimal = opts?.addHours !== undefined && !hasOverride
-    ? new Prisma.Decimal(opts.addHours)
-    : new Prisma.Decimal(0);
+  const addHoursDecimal =
+    opts?.addHours !== undefined && !hasOverride
+      ? new Prisma.Decimal(opts.addHours)
+      : new Prisma.Decimal(0);
   const shouldAddHours = addHoursDecimal.greaterThan(0);
-  const confirmedTotalDecimal = hasOverride
-    ? new Prisma.Decimal(opts!.confirmedTotalHours!)
-    : null;
+  const confirmedTotalDecimal = hasOverride ? new Prisma.Decimal(opts!.confirmedTotalHours!) : null;
 
   // Fix 3: wrap all writes in a single transaction so they are all-or-nothing.
   const reconcile = async (tx: Prisma.TransactionClient) => {
     await tx.$queryRaw`SELECT "id" FROM "issues" WHERE "id" = ${issueId}::uuid FOR UPDATE`;
+    await tx.$queryRaw`SELECT "id" FROM "work_capture_intents" WHERE "issue_id" = ${issueId}::uuid ORDER BY "id" FOR UPDATE`;
+    await assertCaptureComplete(issueId, tx);
 
     // Step 1: find WorkLogs with no linked TimeEntry → promote to approved TimeEntry
     const unpromoted = await tx.workLog.findMany({
@@ -345,7 +381,7 @@ export async function reconcileIssueTime(
       const approvedEntries = entriesSoFar.filter((entry) => entry.status === "approved");
       const currentTotal = approvedEntries.reduce(
         (sum, e) => sum.plus(e.hours),
-        new Prisma.Decimal(0),
+        new Prisma.Decimal(0)
       );
       const delta = confirmedTotalDecimal.minus(currentTotal);
 
@@ -391,7 +427,7 @@ export async function reconcileIssueTime(
 
         let remaining = delta.abs();
         for (const component of [...components.values()].sort(
-          (left, right) => right.latestAt.getTime() - left.latestAt.getTime(),
+          (left, right) => right.latestAt.getTime() - left.latestAt.getTime()
         )) {
           if (!component.hours.greaterThan(0) || !remaining.greaterThan(0)) continue;
           const reduction = Prisma.Decimal.min(component.hours, remaining);
@@ -415,7 +451,7 @@ export async function reconcileIssueTime(
           throw new AppError(
             409,
             "RECONCILE_NO_ANCHOR",
-            "Cannot apply a downward time correction: no approved time entry exists to anchor the adjustment to.",
+            "Cannot apply a downward time correction: no approved time entry exists to anchor the adjustment to."
           );
         }
       }
@@ -474,7 +510,7 @@ export async function reconcileIssueTime(
     // deliberate single-user confirm action.
     const latestMs = entries.reduce(
       (max, e) => Math.max(max, e.createdAt.getTime()),
-      now.getTime(),
+      now.getTime()
     );
     const confirmedAt = new Date(latestMs + 1);
 
@@ -489,10 +525,7 @@ export async function reconcileIssueTime(
     ? await reconcile(transaction)
     : await prisma.$transaction(reconcile);
 
-  const totalHours = finalEntries.reduce(
-    (sum, te) => sum + parseFloat(te.hours.toString()),
-    0,
-  );
+  const totalHours = finalEntries.reduce((sum, te) => sum + parseFloat(te.hours.toString()), 0);
 
   return {
     entries: finalEntries.map((te) => ({

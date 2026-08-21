@@ -8,6 +8,8 @@ export type DomainEventType =
   | "issue.created"
   | "issue.updated"
   | "issue.transitioned"
+  | "work_capture.transition_observed"
+  | "work_capture.intent_effect_requested"
   | "issue.assigned"
   | "issue.deleted"
   | "project.created"
@@ -63,9 +65,7 @@ export type DomainEventType =
   | "ppm.forecast.updated";
 
 /**
- * Payload shape for the `issue.transitioned` event.
- * KAN-156: enriched with actor identity so the work-session transition listener
- * can open/close sessions without an extra member lookup in the common path.
+ * Payload shape for the public `issue.transitioned` projection event.
  */
 export interface IssueTransitionedPayload {
   issueKey: string;
@@ -84,14 +84,44 @@ export interface IssueTransitionedPayload {
    */
   actorUserId: string | null;
   /**
-   * Optional cause tag for circular-guard detection.
-   * When set to "start_work", the work-session listener skips this event
-   * to avoid the KAN-143 feedback loop (start_work → auto-advance → re-open session).
-   * The cause IS wired: startWork → transitionIssue already threads cause="start_work"
-   * through the payload; the guard here is defense-in-depth against any future
-   * path that calls transitionIssue without setting cause.
+   * Optional cause tag retained for public projection consumers.
    */
   cause?: string;
+}
+
+/**
+ * Durable internal observation consumed only by work-capture lifecycle logic.
+ * Public `issue.transitioned` remains a projection/notification event.
+ */
+export interface WorkCaptureTransitionObservedPayload {
+  issueKey: string;
+  issueId: string;
+  projectId: string;
+  projectKey: string;
+  workspaceId: string;
+  from: string;
+  to: string;
+  actorMemberId: string;
+  actorUserId: string;
+  /** Database timestamp captured in the issue mutation transaction. */
+  observedAt: string;
+  cause?: string;
+}
+
+/** Durable internal command for one revision of a WorkCaptureIntent effect. */
+export interface WorkCaptureIntentEffectRequestedPayload extends Record<string, unknown> {
+  commandId: string;
+  intentId: string;
+  epoch: string;
+  leaseGeneration: number;
+  effectRevision: number;
+  kind: "activity" | "release" | "close";
+  observedAt: string;
+  issueKey: string;
+  issueId: string;
+  userId: string;
+  memberId: string;
+  source: string;
 }
 
 /**
@@ -111,6 +141,8 @@ export interface DomainEvent<T = Record<string, unknown>> {
   actorId: string;
   /** Event-specific data */
   payload: T;
+  /** Stable semantic key for at-least-once durable outbox delivery. */
+  deliveryKey?: string;
   /** ISO-8601 timestamp when the event was created */
   timestamp: string;
   /** Normalized X-Kanon-Client value that originated the mutation (S1 / KAN-30).
@@ -119,8 +151,8 @@ export interface DomainEvent<T = Record<string, unknown>> {
 }
 
 /**
- * Input to `IEventBus.emit()` — the caller provides everything
- * except `id` and `timestamp`, which the bus assigns.
+ * Input to EventBus delivery — the caller provides everything except `id` and
+ * `timestamp`, which the bus assigns. Durable callers may add `deliveryKey`.
  */
 export type DomainEventInput<T = Record<string, unknown>> = Omit<
   DomainEvent<T>,

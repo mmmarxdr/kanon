@@ -5,10 +5,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // reconciliation gate is bypassed by the most common board gesture (last child → done).
 
 vi.mock("./reconcile.js", () => ({ checkReconciliation: vi.fn() }));
-vi.mock("../activity/service.js", () => ({ createActivityLog: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("../activity/service.js", () => ({
+  createActivityLog: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { checkAndAdvanceParent } from "./auto-transition.js";
 import { checkReconciliation } from "./reconcile.js";
+import { createActivityLog } from "../activity/service.js";
+import { AppError } from "../../shared/types.js";
 
 function makePrisma() {
   return {
@@ -55,7 +59,46 @@ describe("checkAndAdvanceParent — reconciliation gate on auto-done (KAN-157 BU
     await checkAndAdvanceParent(prisma as any, { parentId: "parent-1" } as any, "member-1");
 
     expect(prisma.issue.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ state: "done" }) }),
+      expect.objectContaining({ data: expect.objectContaining({ state: "done" }) })
     );
+  });
+
+  it("soft-skips CAPTURE_INCOMPLETE without writing the parent", async () => {
+    vi.mocked(checkReconciliation).mockRejectedValue(
+      new AppError(
+        409,
+        "CAPTURE_INCOMPLETE",
+        "Work capture must finish before time can be reconciled."
+      )
+    );
+    const prisma = makePrisma();
+
+    await expect(
+      checkAndAdvanceParent(prisma as any, { parentId: "parent-1" } as any, "member-1")
+    ).resolves.toBeUndefined();
+
+    expect(prisma.issue.update).not.toHaveBeenCalled();
+    expect(createActivityLog).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      kind: "a non-AppError with the matching code",
+      error: Object.assign(new Error("spoofed capture error"), { code: "CAPTURE_INCOMPLETE" }),
+    },
+    {
+      kind: "an AppError with a different code",
+      error: new AppError(503, "RECONCILIATION_READ_FAILED", "Reconciliation read failed."),
+    },
+  ])("rethrows $kind", async ({ error }) => {
+    vi.mocked(checkReconciliation).mockRejectedValue(error);
+    const prisma = makePrisma();
+
+    await expect(
+      checkAndAdvanceParent(prisma as any, { parentId: "parent-1" } as any, "member-1")
+    ).rejects.toBe(error);
+
+    expect(prisma.issue.update).not.toHaveBeenCalled();
+    expect(createActivityLog).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,6 @@
 import type { Issue, PrismaClient } from "@prisma/client";
 import { createActivityLog } from "../activity/service.js";
+import { AppError } from "../../shared/types.js";
 import { checkReconciliation } from "./reconcile.js";
 
 // ---------------------------------------------------------------------------
@@ -52,7 +53,7 @@ export const COLUMN_DEFAULT_STATES: readonly string[] = [
 export async function checkAndAdvanceParent(
   prisma: PrismaClient,
   childIssue: Pick<Issue, "parentId">,
-  memberId: string,
+  memberId: string
 ): Promise<void> {
   if (!childIssue.parentId) return;
 
@@ -75,7 +76,7 @@ export async function checkAndAdvanceParent(
 
   // Find the minimum column index among all children
   const minChildColumn = Math.min(
-    ...parent.children.map((c) => STATE_TO_COLUMN_INDEX[c.state] ?? 0),
+    ...parent.children.map((c) => STATE_TO_COLUMN_INDEX[c.state] ?? 0)
   );
 
   // Only advance forward
@@ -88,7 +89,13 @@ export async function checkAndAdvanceParent(
   // reconciliation gate. If the parent has unconfirmed captured time, skip
   // the advance entirely — leave it at 'review' so the human must reconcile.
   if (targetState === "done") {
-    const rec = await checkReconciliation(parent.id, parent.timeConfirmedAt ?? null);
+    let rec;
+    try {
+      rec = await checkReconciliation(parent.id, parent.timeConfirmedAt ?? null);
+    } catch (error) {
+      if (error instanceof AppError && error.code === "CAPTURE_INCOMPLETE") return;
+      throw error;
+    }
     if (rec.needed) {
       // Do not auto-advance; human must reconcile time before closing.
       return;

@@ -195,11 +195,41 @@ enum NotificationKind {
   assignment
   subscribed_activity
   cycle_closed
+  work_capture_failure
 }
 
 enum WorkLogReason {
   stopped
   expired
+}
+
+enum WorkCaptureState {
+  adopted
+  capturing
+  paused
+  closing
+  closed
+}
+
+enum WorkCaptureEffectKind {
+  activity
+  release
+  close
+}
+
+enum WorkCaptureOwnerKind {
+  web
+  mcp
+  implicit
+}
+
+enum WorkCaptureFailureStage {
+  effect_apply
+}
+
+enum WorkCaptureFailureResolution {
+  succeeded
+  superseded
 }
 
 enum RefreshSource {
@@ -243,6 +273,7 @@ model User {
 
   members                  Member[]
   workSessions             WorkSession[]
+  workCaptureIntents       WorkCaptureIntent[]
   workTransitionLifecycles WorkTransitionLifecycle[]
   createdInvites           WorkspaceInvite[]
   passwordResetTokens      PasswordResetToken[]
@@ -409,6 +440,7 @@ model Issue {
   activityLogs      ActivityLog[]
   comments          Comment[]
   workSessions      WorkSession[]
+  workCaptureIntents WorkCaptureIntent[]
   workLogs          WorkLog[]
   workTransitionLifecycles WorkTransitionLifecycle[]
   mentions          Mention[]
@@ -662,6 +694,7 @@ model Member {
   comments                    Comment[]
   documents                   IssueDocument[]
   workSessions                WorkSession[]
+  workCaptureIntents          WorkCaptureIntent[]
   workLogs                    WorkLog[]
   workTransitionLifecycles    WorkTransitionLifecycle[]
   cycleScopeEvents            CycleScopeEvent[]  @relation("CycleScopeAuthor")
@@ -847,6 +880,73 @@ model WorkSession {
   @@map("work_sessions")
 }
 
+/// Durable capture ownership state. WorkSession remains the ephemeral live
+/// lease while this aggregate survives lease cleanup and lifecycle restarts.
+model WorkCaptureIntent {
+  id                     String                 @id @default(uuid()) @db.Uuid
+  epoch                  String                 @unique @default(uuid()) @db.Uuid
+  state                  WorkCaptureState       @default(adopted)
+  leaseGeneration        Int                    @default(1) @map("lease_generation")
+  source                 String                 @default("mcp")
+  closedAt               DateTime?              @map("closed_at")
+  pendingEffectKind      WorkCaptureEffectKind? @map("pending_effect_kind")
+  pendingEffectAt        DateTime?              @map("pending_effect_at")
+  pendingEffectCommandId String?                 @map("pending_effect_command_id") @db.Uuid
+  effectRevision         Int                    @default(0) @map("effect_revision")
+  failureEpisodeId       String?                @unique @map("failure_episode_id") @db.Uuid
+  failureCommandId       String?                @map("failure_command_id") @db.Uuid
+  failureEpoch           String?                @map("failure_epoch") @db.Uuid
+  failureLeaseGeneration Int?                   @map("failure_lease_generation")
+  failureEffectRevision  Int?                   @map("failure_effect_revision")
+  failureEffectKind      WorkCaptureEffectKind? @map("failure_effect_kind")
+  failureEffectAt        DateTime?              @map("failure_effect_at")
+  failureStage           WorkCaptureFailureStage? @map("failure_stage")
+  failureCode            String?                @map("failure_code")
+  failureCount           Int                    @default(0) @map("failure_count")
+  failureFirstAt         DateTime?              @map("failure_first_at")
+  failureLastAt          DateTime?              @map("failure_last_at")
+  failureResolvedAt      DateTime?              @map("failure_resolved_at")
+  failureResolution      WorkCaptureFailureResolution? @map("failure_resolution")
+
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  issueId String @map("issue_id") @db.Uuid
+  issue   Issue  @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  memberId String @map("member_id") @db.Uuid
+  member   Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  ownerLeases WorkCaptureOwnerLease[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, issueId])
+  @@index([issueId, state])
+  @@index([issueId, failureResolvedAt])
+  @@index([memberId, state, updatedAt])
+  @@map("work_capture_intents")
+}
+
+/// Independent client ownership of one singleton capture intent. Expiry is
+/// always derived from PostgreSQL time; clients never submit timestamps.
+model WorkCaptureOwnerLease {
+  id              String               @id @default(uuid()) @db.Uuid
+  intentId        String               @map("intent_id") @db.Uuid
+  intent          WorkCaptureIntent    @relation(fields: [intentId], references: [id], onDelete: Cascade)
+  ownerId         String               @map("owner_id") @db.Uuid
+  epoch           String               @db.Uuid
+  leaseGeneration Int                  @map("lease_generation")
+  ownerKind       WorkCaptureOwnerKind @map("owner_kind")
+  firstSeenAt     DateTime             @default(now()) @map("first_seen_at")
+  lastSeenAt      DateTime             @default(now()) @map("last_seen_at")
+  expiresAt       DateTime             @map("expires_at")
+
+  @@unique([intentId, ownerId], map: "work_capture_owner_intent_owner_key")
+  @@index([intentId, epoch, leaseGeneration, expiresAt], map: "work_capture_owner_fence_expiry_idx")
+  @@map("work_capture_owner_leases")
+}
+
 /// Durable identity and pairing state for transition-driven work capture.
 ///
 /// `startIdentity` is derived from issue + worker + event-time start + source;
@@ -871,11 +971,9 @@ model WorkTransitionLifecycle {
   workLog   WorkLog? @relation(fields: [workLogId], references: [id], onDelete: SetNull)
   workSession WorkSession?
 
-  /// Durable effect/outbox state. A committed completion with no
-  /// `effectsEmittedAt` is replayable after a process dies before emission.
-  effectsClaimedAt DateTime? @map("effects_claimed_at")
-  effectClaimToken String?   @map("effect_claim_token") @db.Uuid
-  effectsEmittedAt DateTime? @map("effects_emitted_at")
+  /// Incremented when an authoritative close corrects an already-finalized
+  /// WorkLog. Each revision receives immutable outbox delivery keys.
+  effectRevision Int @default(0) @map("effect_revision")
 
   issueId String @map("issue_id") @db.Uuid
   issue   Issue  @relation(fields: [issueId], references: [id], onDelete: Cascade)
@@ -889,8 +987,37 @@ model WorkTransitionLifecycle {
 
   @@index([issueId, startedAt])
   @@index([issueId, endedAt])
-  @@index([effectsEmittedAt, effectsClaimedAt], map: "work_transition_lifecycles_effects_pending_idx")
   @@map("work_transition_lifecycles")
+}
+
+/// Generic durable internal domain-event delivery queue.
+///
+/// Delivery is at-least-once: a process may crash after subscriber delivery and
+/// before acknowledgement. `deliveryKey` is therefore stable and exposed on the
+/// emitted DomainEvent so subscribers can deduplicate durable side effects.
+model DomainEventOutbox {
+  id          String @id @default(uuid()) @db.Uuid
+  deliveryKey String @unique @map("delivery_key")
+  laneKey     String @map("lane_key")
+  position    BigInt @unique @default(autoincrement())
+
+  eventType   String @map("event_type")
+  workspaceId String @map("workspace_id") @db.Uuid
+  actorId     String @map("actor_id") @db.Uuid
+  payload     Json
+
+  availableAt    DateTime  @default(now()) @map("available_at")
+  claimedAt      DateTime? @map("claimed_at")
+  claimToken     String?   @map("claim_token") @db.Uuid
+  acknowledgedAt DateTime? @map("acknowledged_at")
+  attempts       Int       @default(0)
+  lastError      String?   @map("last_error")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@index([acknowledgedAt, availableAt, claimedAt], map: "domain_event_outbox_due_idx")
+  @@index([laneKey, position, acknowledgedAt], map: "domain_event_outbox_lane_head_idx")
+  @@map("domain_event_outbox")
 }
 
 model WorkspaceInvite {
@@ -1205,6 +1332,7 @@ model Notification {
   mention     Mention?         @relation(fields: [mentionId], references: [id], onDelete: SetNull) // D2
   commentId   String?          @map("comment_id") @db.Uuid
   comment     Comment?         @relation(fields: [commentId], references: [id], onDelete: SetNull)
+  workCaptureFailureEpisodeId String? @unique @map("work_capture_failure_episode_id") @db.Uuid
   payload     Json?            // {issueKey,issueTitle,context,...} kind-specific
   read        Boolean          @default(false)
   via         String?

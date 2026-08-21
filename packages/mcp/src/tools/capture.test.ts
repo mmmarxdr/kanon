@@ -12,6 +12,12 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerCaptureTools, CAPTURE_DEFERRED_TOOLS } from "./capture.js";
 import type { KanonClient } from "../kanon-client.js";
 
+vi.mock("../heartbeat.js", () => ({
+  startAutoHeartbeat: vi.fn(),
+}));
+
+import * as heartbeatMod from "../heartbeat.js";
+
 // ─── Harness ────────────────────────────────────────────────────────────────
 
 type ToolHandler = (input: Record<string, unknown>) => Promise<{
@@ -28,7 +34,7 @@ interface RegisteredTool {
 
 function captureTools(
   register: (server: McpServer, client: KanonClient) => void,
-  client: KanonClient,
+  client: KanonClient
 ): Map<string, RegisteredTool> {
   const tools = new Map<string, RegisteredTool>();
   const fakeServer = {
@@ -55,6 +61,7 @@ const fakeSession = {
   session: { id: "ws-uuid-1", issueKey: "KAN-99", startedAt: "2026-06-22T10:00:00Z" },
   warnings: [],
   autoAssigned: true,
+  captureIntent: null,
 };
 
 const fakeProposal = {
@@ -103,6 +110,7 @@ describe("report_incident", () => {
   let tool: RegisteredTool;
 
   beforeEach(() => {
+    vi.mocked(heartbeatMod.startAutoHeartbeat).mockReset();
     mockClient = {
       createIssue: vi.fn().mockResolvedValue(fakeIssue),
       startWork: vi.fn().mockResolvedValue(fakeSession),
@@ -154,13 +162,20 @@ describe("report_incident", () => {
     expect(parsed).toHaveProperty("ok", true);
   });
 
-  it("sessionId falls back to null when the session has no id", async () => {
-    mockClient.startWork = vi.fn().mockResolvedValue({ session: {}, warnings: [] });
+  it("treats a session without an id as a capture failure", async () => {
+    mockClient.startWork = vi.fn().mockResolvedValue({
+      session: {},
+      warnings: [],
+      autoAssigned: false,
+      captureIntent: null,
+    });
 
     const result = await tool.handler({ projectKey: "KAN", title: "[Ops] DB down" });
 
     const parsed = JSON.parse(result.content[0]!.text);
-    expect(parsed.sessionId).toBeNull();
+    expect(result.isError).toBe(true);
+    expect(parsed.error).toMatch(/no work session/i);
+    expect(heartbeatMod.startAutoHeartbeat).not.toHaveBeenCalled();
   });
 
   it("passes optional description to createIssue", async () => {
@@ -225,6 +240,38 @@ describe("report_incident", () => {
     expect(result.isError).toBe(true);
     expect(mockClient.startWork).not.toHaveBeenCalled();
   });
+
+  it("registers only the created incident with its returned capture snapshot", async () => {
+    const captureIntent = {
+      epoch: "550e8400-e29b-41d4-a716-446655440000",
+      leaseGeneration: 1,
+      state: "capturing" as const,
+    };
+    mockClient.startWork.mockResolvedValueOnce({ ...fakeSession, captureIntent });
+
+    await tool.handler({ projectKey: "KAN", title: "[Ops] DB down" });
+
+    expect(heartbeatMod.startAutoHeartbeat).toHaveBeenCalledTimes(1);
+    expect(heartbeatMod.startAutoHeartbeat).toHaveBeenCalledWith(
+      "KAN-99",
+      mockClient,
+      captureIntent
+    );
+  });
+
+  it("treats a null session as an incident capture failure and does not register it", async () => {
+    mockClient.startWork.mockResolvedValueOnce({
+      session: null,
+      warnings: [],
+      autoAssigned: false,
+      captureIntent: null,
+    });
+
+    const result = await tool.handler({ projectKey: "KAN", title: "[Ops] DB down" });
+
+    expect(result.isError).toBe(true);
+    expect(heartbeatMod.startAutoHeartbeat).not.toHaveBeenCalled();
+  });
 });
 
 // ─── propose_estimate ──────────────────────────────────────────────────
@@ -266,7 +313,10 @@ describe("propose_estimate", () => {
     });
 
     expect(mockClient.createProposal).toHaveBeenCalledOnce();
-    const [wsId, body] = mockClient.createProposal.mock.calls[0] as [string, Record<string, unknown>];
+    const [wsId, body] = mockClient.createProposal.mock.calls[0] as [
+      string,
+      Record<string, unknown>,
+    ];
     expect(wsId).toBe("ws-uuid-1");
     expect(body).toHaveProperty("kind", "generic");
     expect(body).toHaveProperty("payload");
@@ -347,9 +397,11 @@ describe("apply_proposal", () => {
 
   it("error path: 409 already applied → surfaces as errorResult", async () => {
     const { KanonApiError } = await import("../kanon-client.js");
-    mockClient.applyProposal = vi.fn().mockRejectedValue(
-      new KanonApiError(409, "PROPOSAL_NOT_PENDING", "Proposal already applied"),
-    );
+    mockClient.applyProposal = vi
+      .fn()
+      .mockRejectedValue(
+        new KanonApiError(409, "PROPOSAL_NOT_PENDING", "Proposal already applied")
+      );
 
     const result = await tool.handler({ proposalId: "prop-uuid-1" });
 
@@ -360,9 +412,9 @@ describe("apply_proposal", () => {
 
   it("error path: 404 not found → surfaces as errorResult", async () => {
     const { KanonApiError } = await import("../kanon-client.js");
-    mockClient.applyProposal = vi.fn().mockRejectedValue(
-      new KanonApiError(404, "PROPOSAL_NOT_FOUND", "Proposal not found"),
-    );
+    mockClient.applyProposal = vi
+      .fn()
+      .mockRejectedValue(new KanonApiError(404, "PROPOSAL_NOT_FOUND", "Proposal not found"));
 
     const result = await tool.handler({ proposalId: "prop-uuid-1" });
 
