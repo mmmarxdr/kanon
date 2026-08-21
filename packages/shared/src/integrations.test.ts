@@ -4,6 +4,7 @@ import {
   redmineReconciliationActivationProgressSchema,
   redmineReconciliationDecisionSchema,
   redmineReconciliationFactorEvidenceSchema,
+  redmineReconciliationMaterializeResultSchema,
   redmineReconciliationMaterializeTargetSchema,
   redmineReconciliationPreviewProgressSchema,
   redmineReconciliationPreviewRequestSchema,
@@ -224,11 +225,23 @@ describe("Redmine reconciliation contracts", () => {
     expect(redmineReconciliationDecisionSchema.parse({ kind: "manual-link", candidateIssueId: "11111111-1111-4111-8111-111111111111", localFingerprint: hash, remoteFingerprint: hash })).toMatchObject({ kind: "manual-link" });
     expect(redmineReconciliationPreviewProgressSchema.parse({ previewIdentity: "22222222-2222-4222-8222-222222222222", mode: "future_only", cutoff: new Date("2026-08-21T12:00:00.000Z"), checkpoint: null, complete: true, scannedCount: 3, remainingCount: 0, eligibleUnlinkedCount: 0, excludedPrivateCount: 1, linkedCount: 2, mappingGaps: { statusIds: [], priorityIds: [], assigneeRemoteUserIds: [] } })).toMatchObject({ complete: true, mode: "future_only" });
     expect(redmineReconciliationActivationProgressSchema.parse({ importedCount: 1, issueKeys: ["KAN-1"], replayed: false, complete: false, processedCount: 10, remainingCount: 1 })).toMatchObject({ complete: false, remainingCount: 1 });
+    expect(redmineReconciliationMaterializeTargetSchema.parse({ remoteIssueId: "42", candidateIssueId: "11111111-1111-4111-8111-111111111111" })).toMatchObject({ candidateIssueId: "11111111-1111-4111-8111-111111111111" });
+  });
+
+  it("accepts only strict content-safe hydrated materialization results", () => {
+    const recommendation = { id: "11111111-1111-4111-8111-111111111111", score: 100, factorEvidence: evidence, decisionState: "pending", decisionKind: null, decidedById: null, decidedAt: null, acceptedRefId: null, localIssue: { id: "22222222-2222-4222-8222-222222222222", key: "KAN-1", title: "Local title" } };
+    const result = { remote: { id: "42", title: "Remote title", sourceVersion: hash }, recommendations: [recommendation], manualCandidate: { score: 100, factorEvidence: evidence, localIssue: recommendation.localIssue } };
+    expect(redmineReconciliationMaterializeResultSchema.parse(result)).toEqual(result);
+    expect(redmineReconciliationMaterializeResultSchema.safeParse({ ...result, remote: { ...result.remote, description: "secret" } }).success).toBe(false);
+    expect(redmineReconciliationMaterializeResultSchema.safeParse({ ...result, recommendations: [{ ...recommendation, description: "secret" }] }).success).toBe(false);
+    expect(redmineReconciliationMaterializeResultSchema.safeParse({ ...result, recommendations: Array(4).fill(recommendation) }).success).toBe(false);
+    expect(redmineReconciliationMaterializeResultSchema.safeParse({ ...result, providerMetadata: {} }).success).toBe(false);
   });
 
   it("rejects malformed, unbounded, or content-bearing reconciliation data", () => {
     expect(redmineReconciliationPreviewRequestSchema.safeParse({ mode: "all" }).success).toBe(false);
     expect(redmineReconciliationMaterializeTargetSchema.safeParse({ remoteIssueId: "issue-42" }).success).toBe(false);
+    expect(redmineReconciliationMaterializeTargetSchema.safeParse({ remoteIssueId: "42", candidateIssueId: "bad" }).success).toBe(false);
     expect(redmineReconciliationRecommendationQuerySchema.safeParse({ limit: 51 }).success).toBe(false);
     expect(redmineReconciliationRecommendationQuerySchema.safeParse({ cursor: "x".repeat(513) }).success).toBe(false);
     expect(redmineReconciliationDecisionSchema.safeParse({ kind: "manual-link", candidateIssueId: "11111111-1111-4111-8111-111111111111", localFingerprint: "bad", remoteFingerprint: hash }).success).toBe(false);

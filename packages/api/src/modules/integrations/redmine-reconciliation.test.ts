@@ -91,8 +91,8 @@ async function fixture() {
     dueDate: null,
     progress: 0,
   };
-  const run = (overrides: Partial<RedmineReconciliationRemoteDetail> = {}) =>
-    materializeRedmineReconciliationRecommendations(request, {
+  const run = (overrides: Partial<RedmineReconciliationRemoteDetail> = {}, candidateIssueId?: string) =>
+    materializeRedmineReconciliationRecommendations({ ...request, candidateIssueId }, {
       loadRemoteIssue: async () => ({ ...remote, ...overrides }),
     });
   const decide = (decision: Parameters<typeof decideRedmineReconciliationRecommendations>[1], overrides: Partial<RedmineReconciliationRemoteDetail> = {}) =>
@@ -110,7 +110,14 @@ describe("Redmine reconciliation recommendations", () => {
   afterAll(async () => Promise.all([disconnectTestDb(), concurrentPrisma.$disconnect()]));
   it("materializes the top three replay-safely while retaining decisions and cleaning obsolete pending rows", async () => {
     const { owner, connection, binding, issues, run } = await fixture();
-    await expect(run()).resolves.toMatchObject({ recommendationCount: 3 });
+    const hydrated = await run();
+    expect(hydrated).toMatchObject({
+      remote: { id: "42", title: "Alpha sync issue", sourceVersion: SOURCE },
+      manualCandidate: null,
+    });
+    expect(hydrated.recommendations[0]).toMatchObject({ localIssue: { id: issues[0]!.id, key: issues[0]!.key, title: issues[0]!.title } });
+    expect(hydrated.recommendations).toHaveLength(3);
+    expect(JSON.stringify(hydrated)).not.toContain("shared body");
     const initial = await prisma.integrationReconciliationRecommendation.findMany({
       where: { bindingId: binding.id },
       orderBy: [{ score: "desc" }, { id: "desc" }],
@@ -123,9 +130,10 @@ describe("Redmine reconciliation recommendations", () => {
       where: { id: initial[0]!.id },
       data: { decisionState: "rejected", decisionKind: "owner-review", decidedById: owner.id, decidedAt: createdAt },
     });
-    await run();
+    const replay = await run();
     await expect(prisma.integrationReconciliationRecommendation.count({ where: { bindingId: binding.id } })).resolves.toBe(3);
     await expect(prisma.integrationReconciliationRecommendation.findUniqueOrThrow({ where: { id: decided.id } })).resolves.toMatchObject({ decisionState: "rejected", decisionKind: "owner-review" });
+    expect(replay.recommendations.find(({ id }) => id === decided.id)).toMatchObject({ decisionState: "rejected", decisionKind: "owner-review", decidedById: owner.id, decidedAt: createdAt });
     await prisma.issue.update({ where: { id: decided.candidateIssueId }, data: { title: "Alpha sync issue updated" } });
     await run();
     await expect(prisma.integrationReconciliationRecommendation.count({ where: { id: decided.id } })).resolves.toBe(1);
@@ -158,6 +166,23 @@ describe("Redmine reconciliation recommendations", () => {
       await holder;
     }
     await expect(stale).rejects.toMatchObject({ code: "REDMINE_RECONCILIATION_SCOPE_STALE" });
+  });
+  it("hydrates an unpersisted manual candidate and rejects foreign or current-connection-linked issues", async () => {
+    const context = await fixture();
+    const otherConnection = await prisma.integrationConnection.create({ data: { provider: "jira", baseUrl: "https://jira.test", workspaceId: context.workspace.id, lifecycle: "paused" } });
+    const otherBinding = await prisma.integrationProjectBinding.create({ data: { connectionId: otherConnection.id, projectId: context.project.id, remoteProjectId: "jira-7", readMap: {}, writeMap: {}, lifecycle: "paused" } });
+    await prisma.externalRef.create({ data: { connectionId: otherConnection.id, bindingId: otherBinding.id, entityType: "issue", entityId: context.issues[3]!.id, externalId: "jira-999" } });
+    const hydrated = await context.run({}, context.issues[3]!.id);
+    expect(hydrated.manualCandidate).toMatchObject({ localIssue: { id: context.issues[3]!.id, key: context.issues[3]!.key, title: "unrelated" }, factorEvidence: { localFingerprint: expect.stringMatching(/^sha256:/), remoteFingerprint: expect.stringMatching(/^sha256:/) } });
+    expect(hydrated.recommendations).toHaveLength(3);
+    await expect(prisma.integrationReconciliationRecommendation.count({ where: { bindingId: context.binding.id } })).resolves.toBe(3);
+    await expect(prisma.integrationReconciliationRecommendation.count({ where: { bindingId: context.binding.id, candidateIssueId: context.issues[3]!.id } })).resolves.toBe(0);
+
+    const foreignProject = await seedTestProject(context.workspace.id);
+    const foreign = await prisma.issue.create({ data: { projectId: foreignProject.id, key: `${foreignProject.key}-1`, sequenceNum: 1, title: "Foreign" } });
+    await expect(context.run({}, foreign.id)).rejects.toMatchObject({ code: "REDMINE_RECONCILIATION_CANDIDATE_INVALID" });
+    await prisma.externalRef.create({ data: { connectionId: context.connection.id, bindingId: context.binding.id, entityType: "issue", entityId: context.issues[3]!.id, externalId: "999" } });
+    await expect(context.run({}, context.issues[3]!.id)).rejects.toMatchObject({ code: "REDMINE_RECONCILIATION_CANDIDATE_LINKED" });
   });
   it("rejects invalid preview, source, project, scope, visibility, listing, and existing links before writes", async () => {
     const context = await fixture();

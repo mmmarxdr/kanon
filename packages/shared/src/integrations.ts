@@ -132,7 +132,7 @@ const reconciliationCount = z.number().int().nonnegative();
 export const redmineReconciliationPreviewModeSchema = z.enum(["full", "future_only"]);
 export const redmineReconciliationPreviewRequestSchema = z.object({ mode: redmineReconciliationPreviewModeSchema }).strict();
 export const redmineReconciliationMaterializeTargetSchema = z
-  .object({ remoteIssueId: reconciliationRemoteId })
+  .object({ remoteIssueId: reconciliationRemoteId, candidateIssueId: reconciliationUuid.optional() })
   .strict();
 export const redmineReconciliationRecommendationQuerySchema = z
   .object({
@@ -212,7 +212,22 @@ export const redmineReconciliationDecisionSchema = z.discriminatedUnion("kind", 
   z.object({ kind: z.literal("accept"), recommendationId: reconciliationUuid }).strict(),
   z.object({ kind: z.literal("manual-link"), candidateIssueId: reconciliationUuid, localFingerprint: reconciliationHash, remoteFingerprint: reconciliationHash }).strict(),
 ]);
-export const redmineReconciliationMaterializeResultSchema = z.object({ remoteIssueId: reconciliationRemoteId, recommendationCount: z.number().int().min(0).max(3) }).strict();
+const hydratedLocalIssueSchema = z.object({ id: reconciliationUuid, key: z.string(), title: z.string() }).strict();
+const scoredLocalIssueShape = { score: z.number().int().min(0).max(100), factorEvidence: redmineReconciliationFactorEvidenceSchema, localIssue: hydratedLocalIssueSchema };
+const hydratedRecommendationSchema = z.object({
+  id: reconciliationUuid,
+  ...scoredLocalIssueShape,
+  decisionState: z.enum(["pending", "accepted", "rejected"]),
+  decisionKind: z.string().max(64).nullable(),
+  decidedById: reconciliationUuid.nullable(),
+  decidedAt: z.string().datetime().nullable(),
+  acceptedRefId: reconciliationUuid.nullable(),
+}).strict();
+export const redmineReconciliationMaterializeResultSchema = z.object({
+  remote: z.object({ id: reconciliationRemoteId, title: z.string().nullable(), sourceVersion: reconciliationHash }).strict(),
+  recommendations: z.array(hydratedRecommendationSchema).max(3),
+  manualCandidate: z.object(scoredLocalIssueShape).strict().nullable(),
+}).strict();
 export const redmineReconciliationDecisionResultSchema = z.union([
   z.object({ remoteIssueId: reconciliationRemoteId, recommendationId: reconciliationUuid.optional(), rejectedCount: reconciliationCount, replayed: z.boolean() }).strict(),
   z.object({ remoteIssueId: reconciliationRemoteId, candidateIssueId: reconciliationUuid, recommendationId: reconciliationUuid, refId: reconciliationUuid, replayed: z.boolean() }).strict(),

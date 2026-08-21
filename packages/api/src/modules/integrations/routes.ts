@@ -357,7 +357,8 @@ export default async function integrationRoutes(fastify: FastifyInstance, option
     { preHandler: [requireRole("wid", "owner")], schema: { params: ConnectionBindingId, body: redmineReconciliationMaterializeTargetSchema, response: { 200: redmineReconciliationMaterializeResultSchema } } },
     async (request) => {
       const scope = { connectionId: request.params.id, bindingId: request.params.bindingId, userId: request.user.userId, workspaceId: request.params.wid, allowedProjectIds: scopedProjectIds(request.user.allowedProjectIds) };
-      return materializeRedmineReconciliationRecommendations({ connectionId: scope.connectionId, bindingId: scope.bindingId, userId: scope.userId, remoteIssueId: request.body.remoteIssueId }, reconciliationDependencies(options, scope));
+      const result = await materializeRedmineReconciliationRecommendations({ connectionId: scope.connectionId, bindingId: scope.bindingId, userId: scope.userId, remoteIssueId: request.body.remoteIssueId, candidateIssueId: request.body.candidateIssueId }, reconciliationDependencies(options, scope));
+      return { ...result, recommendations: result.recommendations.map((item) => ({ ...item, decidedAt: item.decidedAt?.toISOString() ?? null })) };
     },
   );
 

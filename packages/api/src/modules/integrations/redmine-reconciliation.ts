@@ -26,6 +26,7 @@ const Cursor = z.object({ score: z.number().int(), id: z.string().uuid() }).stri
 const MAX_PAGE = 50;
 type Database = Prisma.TransactionClient;
 export type RedmineReconciliationRequest = Readonly<{ connectionId: string; bindingId: string; userId: string; remoteIssueId: string }>;
+export type RedmineReconciliationMaterializeRequest = RedmineReconciliationRequest & Readonly<{ candidateIssueId?: string }>;
 export interface RedmineReconciliationRemoteDetail {
   readonly remoteIssueId: string;
   readonly remoteProjectId: string;
@@ -100,7 +101,7 @@ function validateRemote(scope: Awaited<ReturnType<typeof bindingScope>>, request
     throw new AppError(409, "REDMINE_RECONCILIATION_SCOPE_STALE", "The reconciliation scope changed");
   }
 }
-export async function materializeRedmineReconciliationRecommendations(request: RedmineReconciliationRequest, dependencies: RedmineReconciliationDependencies) {
+export async function materializeRedmineReconciliationRecommendations(request: RedmineReconciliationMaterializeRequest, dependencies: RedmineReconciliationDependencies) {
   await bindingScope(prisma, request, dependencies);
   const detail = await dependencies.loadRemoteIssue(request.remoteIssueId);
   return prisma.$transaction(async (transaction) => {
@@ -124,19 +125,29 @@ export async function materializeRedmineReconciliationRecommendations(request: R
         })
       : [];
     const linkedIds = new Set(linkedLocals.map(({ entityId }) => entityId));
+    const remote = {
+      id: detail.remoteIssueId, projectId: scope.binding.projectId, title: detail.title,
+      description: detail.description, createdAt: detail.createdAt,
+      mappedAssigneeId: detail.mappedAssigneeId, mappedState: detail.mappedState,
+    };
+    const manualIssue = request.candidateIssueId
+      ? issues.find(({ id }) => id === request.candidateIssueId)
+      : undefined;
+    if (request.candidateIssueId && !manualIssue) {
+      throw new AppError(409, "REDMINE_RECONCILIATION_CANDIDATE_INVALID", "The Kanon issue is not in the bound project");
+    }
+    if (manualIssue && linkedIds.has(manualIssue.id)) {
+      throw new AppError(409, "REDMINE_RECONCILIATION_CANDIDATE_LINKED", "The Kanon issue is already linked to this connection");
+    }
     const ranked = rankRedmineReconciliationCandidates(
-      {
-        id: detail.remoteIssueId,
-        projectId: scope.binding.projectId,
-        title: detail.title,
-        description: detail.description,
-        createdAt: detail.createdAt,
-        mappedAssigneeId: detail.mappedAssigneeId,
-        mappedState: detail.mappedState,
-      },
+      remote,
       issues.filter(({ id }) => !linkedIds.has(id)),
     );
+    const manualScore = manualIssue
+      ? rankRedmineReconciliationCandidates(remote, [manualIssue])[0]
+      : undefined;
     ranked.forEach(({ evidence }) => assertRedmineReconciliationFactorEvidence(evidence));
+    if (manualScore) assertRedmineReconciliationFactorEvidence(manualScore.evidence);
     const snapshots = ranked.map(({ candidateIssueId, evidence }) => ({
       remoteSourceVersion: detail.sourceVersion,
       candidateIssueId,
@@ -166,7 +177,32 @@ export async function materializeRedmineReconciliationRecommendations(request: R
       })),
       skipDuplicates: true,
     });
-    return { remoteIssueId: detail.remoteIssueId, recommendationCount: ranked.length };
+    const current = snapshots.length
+      ? await transaction.integrationReconciliationRecommendation.findMany({
+          where: {
+            bindingId: scope.binding.id,
+            remoteIssueId: detail.remoteIssueId,
+            remoteSourceVersion: detail.sourceVersion,
+            scoringVersion: REDMINE_RECONCILIATION_SCORER_VERSION,
+            OR: snapshots.map(({ candidateIssueId, localFingerprint, remoteFingerprint }) => ({ candidateIssueId, localFingerprint, remoteFingerprint })),
+          },
+          include: { candidateIssue: { select: { id: true, key: true, title: true } } },
+        })
+      : [];
+    const byCandidate = new Map(current.map((row) => [row.candidateIssueId, row]));
+    const recommendations = ranked.map(({ candidateIssueId }) => {
+      const row = byCandidate.get(candidateIssueId);
+      if (!row) throw new AppError(409, "REDMINE_RECONCILIATION_WRITE_CONFLICT", "The recommendation snapshot changed while materializing");
+      try { assertRedmineReconciliationFactorEvidence(row.factorEvidence); } catch { throw new AppError(500, "REDMINE_RECONCILIATION_EVIDENCE_INVALID", "Invalid recommendation evidence"); }
+      return { id: row.id, score: row.score, factorEvidence: row.factorEvidence, decisionState: row.decisionState, decisionKind: row.decisionKind, decidedById: row.decidedById, decidedAt: row.decidedAt, acceptedRefId: row.acceptedRefId, localIssue: row.candidateIssue };
+    });
+    return {
+      remote: { id: detail.remoteIssueId, title: detail.title, sourceVersion: detail.sourceVersion },
+      recommendations,
+      manualCandidate: manualIssue && manualScore
+        ? { score: manualScore.score, factorEvidence: manualScore.evidence, localIssue: { id: manualIssue.id, key: manualIssue.key, title: manualIssue.title } }
+        : null,
+    };
   });
 }
 function decodeCursor(value?: string) {
