@@ -16,9 +16,7 @@ export interface BusLogger {
   error(obj: unknown, msg?: string): void;
 }
 
-type DeliveryResult =
-  | { ok: true }
-  | { ok: false; error: unknown };
+type DeliveryResult = { ok: true } | { ok: false; error: unknown };
 
 const DELIVERED: DeliveryResult = { ok: true };
 
@@ -27,7 +25,7 @@ const DELIVERED: DeliveryResult = { ok: true };
  *
  * - Assigns monotonic sequence IDs to each event.
  * - Maintains a circular replay buffer for SSE reconnection.
- * - All emissions are synchronous and fire-and-forget.
+ * - `emit()` is synchronous/fire-and-forget; `emitAndWait()` observes handlers.
  * - Per-subscriber isolation: a throwing or rejecting handler is caught and
  *   logged individually, so later subscribers always receive the event.
  */
@@ -49,8 +47,7 @@ export class InProcessEventBus implements IEventBus {
   private readonly deliveryTimeoutMs: number;
 
   constructor(options: { deliveryTimeoutMs?: number } = {}) {
-    this.deliveryTimeoutMs =
-      options.deliveryTimeoutMs ?? EVENT_BUS_DELIVERY_TIMEOUT_MS;
+    this.deliveryTimeoutMs = options.deliveryTimeoutMs ?? EVENT_BUS_DELIVERY_TIMEOUT_MS;
     // Allow many SSE clients without warnings
     this.emitter.setMaxListeners(0);
   }
@@ -84,7 +81,7 @@ export class InProcessEventBus implements IEventBus {
     } catch (err) {
       this.logger.error(
         { err, eventType: event.type, eventId: event.id },
-        "event-bus unhandled emit error",
+        "event-bus unhandled emit error"
       );
     }
   }
@@ -102,25 +99,20 @@ export class InProcessEventBus implements IEventBus {
       (event: DomainEvent) => DeliveryResult | Promise<DeliveryResult>
     >;
     const results = await Promise.all(
-      listeners.map((listener) =>
-        this.waitForDelivery(listener(event)),
-      ),
+      listeners.map((listener) => this.waitForDelivery(listener(event)))
     );
     const failures = results.filter(
-      (result): result is Extract<DeliveryResult, { ok: false }> => !result.ok,
+      (result): result is Extract<DeliveryResult, { ok: false }> => !result.ok
     );
     if (failures.length > 0) {
       throw new AggregateError(
         failures.map((failure) => failure.error),
-        "event-bus subscriber delivery failed",
+        "event-bus subscriber delivery failed"
       );
     }
   }
 
-  subscribe(
-    handler: (event: DomainEvent) => void,
-    name?: string,
-  ): () => void {
+  subscribe(handler: (event: DomainEvent) => void, name?: string): () => void {
     const subscriberName = name || handler.name || "anonymous";
     const safeHandler = this.wrapHandler(handler, subscriberName);
     this.emitter.on("domain_event", safeHandler);
@@ -132,7 +124,7 @@ export class InProcessEventBus implements IEventBus {
   subscribeToWorkspace(
     workspaceId: string,
     handler: (event: DomainEvent) => void,
-    name?: string,
+    name?: string
   ): () => void {
     const subscriberName = name || handler.name || "anonymous";
     const safeHandler = this.wrapHandler(handler, subscriberName);
@@ -141,9 +133,7 @@ export class InProcessEventBus implements IEventBus {
     // exact registered reference. The filter comparison is inside its own
     // guard: a malformed event (unsafe cast at an emit site) must not abort
     // the emitter loop for later listeners.
-    const filtered = (
-      event: DomainEvent,
-    ): DeliveryResult | Promise<DeliveryResult> => {
+    const filtered = (event: DomainEvent): DeliveryResult | Promise<DeliveryResult> => {
       try {
         if (event.workspaceId !== workspaceId) return DELIVERED;
       } catch (err) {
@@ -169,7 +159,7 @@ export class InProcessEventBus implements IEventBus {
   // ─── Private helpers ────────────────────────────────────────────────────
 
   private waitForDelivery(
-    delivery: DeliveryResult | Promise<DeliveryResult>,
+    delivery: DeliveryResult | Promise<DeliveryResult>
   ): Promise<DeliveryResult> {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<DeliveryResult>((resolve) => {
@@ -177,7 +167,7 @@ export class InProcessEventBus implements IEventBus {
         resolve({
           ok: false,
           error: new Error(
-            `event-bus subscriber delivery timed out after ${this.deliveryTimeoutMs}ms`,
+            `event-bus subscriber delivery timed out after ${this.deliveryTimeoutMs}ms`
           ),
         });
       }, this.deliveryTimeoutMs);
@@ -212,7 +202,7 @@ export class InProcessEventBus implements IEventBus {
    */
   private wrapHandler(
     handler: (event: DomainEvent) => void,
-    name: string,
+    name: string
   ): (event: DomainEvent) => DeliveryResult | Promise<DeliveryResult> {
     return (event: DomainEvent): DeliveryResult | Promise<DeliveryResult> => {
       try {
@@ -220,16 +210,13 @@ export class InProcessEventBus implements IEventBus {
         // Thenable check (not instanceof Promise): a subscriber returning a
         // PrismaPromise or other custom thenable must also have its rejection
         // caught. Promise.resolve() normalizes any thenable to a real Promise.
-        if (
-          result != null &&
-          typeof (result as { then?: unknown }).then === "function"
-        ) {
+        if (result != null && typeof (result as { then?: unknown }).then === "function") {
           return Promise.resolve(result).then(
             () => DELIVERED,
             (err: unknown) => {
               this.logSubscriberError(name, event, err);
               return { ok: false, error: err };
-            },
+            }
           );
         }
         return DELIVERED;
@@ -243,11 +230,7 @@ export class InProcessEventBus implements IEventBus {
   /**
    * Log a subscriber error with structured context and increment the error counter.
    */
-  private logSubscriberError(
-    subscriber: string,
-    event: DomainEvent,
-    err: unknown,
-  ): void {
+  private logSubscriberError(subscriber: string, event: DomainEvent, err: unknown): void {
     this.subscriberErrorCount++;
     this.logger.error(
       {
@@ -257,7 +240,7 @@ export class InProcessEventBus implements IEventBus {
         eventId: event.id,
         workspaceId: event.workspaceId,
       },
-      "event-bus subscriber error",
+      "event-bus subscriber error"
     );
   }
 }

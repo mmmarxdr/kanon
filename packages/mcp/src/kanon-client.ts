@@ -1,7 +1,22 @@
 // ─── Kanon REST API Client ───────────────────────────────────────────────────
 // Copied from packages/cli/src/kanon-client.ts with additional methods for MCP.
 
+import { z } from "zod";
+import {
+  workCaptureEffectResponseSchema,
+  workCaptureIntentSnapshotSchema,
+  workCaptureHydrationPageSchema,
+  type WorkCaptureCommand,
+  type WorkCaptureOwnerCommand,
+  type WorkCaptureEffectResponse,
+  type WorkCaptureHydrationPage,
+} from "./work-capture.js";
+
 const DEFAULT_TIMEOUT_MS = 10_000;
+
+export interface CaptureCommandFallbackOptions {
+  beforeLegacyFallback?: (command: WorkCaptureCommand) => Promise<void>;
+}
 
 /**
  * Result shape returned by DELETE /api/cycles/:id.
@@ -56,7 +71,7 @@ export class KanonApiError extends Error {
       correlationId?: string;
       apiContractVersion?: string;
       provenance?: Record<string, unknown>;
-    },
+    }
   ) {
     super(message);
     this.name = "KanonApiError";
@@ -79,7 +94,9 @@ export class McpAuthError extends Error {
   public readonly code: string;
 
   constructor({ code, message }: { code: string; message?: string }) {
-    super(message ?? "Refresh token expired or revoked — re-run onboarding to obtain new credentials.");
+    super(
+      message ?? "Refresh token expired or revoked — re-run onboarding to obtain new credentials."
+    );
     this.name = "McpAuthError";
     this.code = code;
   }
@@ -250,8 +267,32 @@ export interface GroupSummary {
  * Batch transition result shape.
  */
 export interface BatchTransitionResult {
-  transitioned: number;
+  count: number;
+  keys: string[];
+  groupKey: string;
+  state: string;
 }
+
+const startWorkResponseSchema = z
+  .object({
+    session: z.unknown().nullable(),
+    warnings: z.array(z.string()),
+    autoAssigned: z.boolean(),
+    captureIntent: workCaptureIntentSnapshotSchema.nullable().optional(),
+  })
+  .strict()
+  .transform((response) => ({ ...response, captureIntent: response.captureIntent ?? null }));
+
+const legacyHeartbeatResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    captureIntent: workCaptureIntentSnapshotSchema.nullable().optional(),
+  })
+  .strict()
+  .transform((response) => ({ ...response, captureIntent: response.captureIntent ?? null }));
+
+export type StartWorkResponse = z.infer<typeof startWorkResponseSchema>;
+export type LegacyHeartbeatResponse = z.infer<typeof legacyHeartbeatResponseSchema>;
 
 /**
  * Active worker info returned by the work session endpoints.
@@ -310,10 +351,7 @@ export class KanonClient {
    * Route: GET /api/workspaces/:wid/projects
    */
   async listProjects(workspaceId: string): Promise<KanonProject[]> {
-    return this.request<KanonProject[]>(
-      "GET",
-      `/api/workspaces/${workspaceId}/projects`,
-    );
+    return this.request<KanonProject[]>("GET", `/api/workspaces/${workspaceId}/projects`);
   }
 
   // ─── Workspaces ─────────────────────────────────────────────────────────
@@ -332,23 +370,16 @@ export class KanonClient {
    */
   async createProject(
     workspaceId: string,
-    body: { key: string; name: string; description?: string },
+    body: { key: string; name: string; description?: string }
   ): Promise<KanonProject> {
-    return this.request<KanonProject>(
-      "POST",
-      `/api/workspaces/${workspaceId}/projects`,
-      body,
-    );
+    return this.request<KanonProject>("POST", `/api/workspaces/${workspaceId}/projects`, body);
   }
 
   /**
    * Update a project by key.
    * Route: PATCH /api/projects/:key
    */
-  async updateProject(
-    key: string,
-    body: Record<string, unknown>,
-  ): Promise<KanonProject> {
+  async updateProject(key: string, body: Record<string, unknown>): Promise<KanonProject> {
     return this.request<KanonProject>("PATCH", `/api/projects/${key}`, body);
   }
 
@@ -368,13 +399,9 @@ export class KanonClient {
    */
   async createIssue(
     projectKey: string,
-    body: CreateIssueInput | Record<string, unknown>,
+    body: CreateIssueInput | Record<string, unknown>
   ): Promise<KanonIssue> {
-    return this.request<KanonIssue>(
-      "POST",
-      `/api/projects/${projectKey}/issues`,
-      body,
-    );
+    return this.request<KanonIssue>("POST", `/api/projects/${projectKey}/issues`, body);
   }
 
   /**
@@ -383,7 +410,7 @@ export class KanonClient {
    */
   async listIssues(
     projectKey: string,
-    filters?: Record<string, string> & { keys?: string[] },
+    filters?: Record<string, string> & { keys?: string[] }
   ): Promise<KanonIssue[]> {
     let path = `/api/projects/${projectKey}/issues`;
     const { keys, ...rest } = filters ?? {};
@@ -400,16 +427,13 @@ export class KanonClient {
    * Update an issue by key.
    * Route: PATCH /api/issues/:key
    */
-  async updateIssue(
-    issueKey: string,
-    body: Record<string, unknown>,
-  ): Promise<KanonIssue> {
+  async updateIssue(issueKey: string, body: Record<string, unknown>): Promise<KanonIssue> {
     return this.request<KanonIssue>("PATCH", `/api/issues/${issueKey}`, body);
   }
 
   async updateIssueSchedule(
     issueKey: string,
-    body: { startDate?: string; dueDate?: string; progress?: number },
+    body: { startDate?: string; dueDate?: string; progress?: number }
   ): Promise<unknown> {
     return this.request<unknown>("PUT", `/api/issues/${issueKey}/schedule`, body);
   }
@@ -418,15 +442,10 @@ export class KanonClient {
    * Transition an issue to a new state.
    * Route: POST /api/issues/:key/transition
    */
-  async transitionIssue(
-    issueKey: string,
-    toState: string,
-  ): Promise<KanonIssue> {
-    return this.request<KanonIssue>(
-      "POST",
-      `/api/issues/${issueKey}/transition`,
-      { to_state: toState },
-    );
+  async transitionIssue(issueKey: string, toState: string): Promise<KanonIssue> {
+    return this.request<KanonIssue>("POST", `/api/issues/${issueKey}/transition`, {
+      to_state: toState,
+    });
   }
 
   /**
@@ -438,13 +457,9 @@ export class KanonClient {
    */
   async reconcileTime(
     issueKey: string,
-    opts: { addHours?: string; confirmedTotalHours?: string },
+    opts: { addHours?: string; confirmedTotalHours?: string }
   ): Promise<unknown> {
-    return this.request<unknown>(
-      "POST",
-      `/api/issues/${issueKey}/reconcile-time`,
-      opts,
-    );
+    return this.request<unknown>("POST", `/api/issues/${issueKey}/reconcile-time`, opts);
   }
 
   // ─── Groups ─────────────────────────────────────────────────────────────
@@ -454,10 +469,7 @@ export class KanonClient {
    * Route: GET /api/projects/:key/issues/groups
    */
   async listIssueGroups(projectKey: string): Promise<GroupSummary[]> {
-    return this.request<GroupSummary[]>(
-      "GET",
-      `/api/projects/${projectKey}/issues/groups`,
-    );
+    return this.request<GroupSummary[]>("GET", `/api/projects/${projectKey}/issues/groups`);
   }
 
   /**
@@ -467,12 +479,12 @@ export class KanonClient {
   async batchTransition(
     projectKey: string,
     groupKey: string,
-    toState: string,
+    toState: string
   ): Promise<BatchTransitionResult> {
     return this.request<BatchTransitionResult>(
       "PATCH",
       `/api/projects/${projectKey}/issues/groups/${encodeURIComponent(groupKey)}/transition`,
-      { to_state: toState },
+      { to_state: toState }
     );
   }
 
@@ -483,12 +495,12 @@ export class KanonClient {
   async batchTransitionByKeys(
     projectKey: string,
     keys: string[],
-    toState: string,
+    toState: string
   ): Promise<{ count: number; keys: string[] }> {
     return this.request<{ count: number; keys: string[] }>(
       "POST",
       `/api/projects/${projectKey}/issues/batch-transition`,
-      { keys, to_state: toState },
+      { keys, to_state: toState }
     );
   }
 
@@ -500,7 +512,7 @@ export class KanonClient {
    */
   async listRoadmap(
     projectKey: string,
-    filters?: Record<string, string>,
+    filters?: Record<string, string>
   ): Promise<KanonRoadmapItem[]> {
     let path = `/api/projects/${projectKey}/roadmap`;
     if (filters && Object.keys(filters).length > 0) {
@@ -516,13 +528,9 @@ export class KanonClient {
    */
   async createRoadmapItem(
     projectKey: string,
-    body: Record<string, unknown>,
+    body: Record<string, unknown>
   ): Promise<KanonRoadmapItem> {
-    return this.request<KanonRoadmapItem>(
-      "POST",
-      `/api/projects/${projectKey}/roadmap`,
-      body,
-    );
+    return this.request<KanonRoadmapItem>("POST", `/api/projects/${projectKey}/roadmap`, body);
   }
 
   /**
@@ -532,12 +540,12 @@ export class KanonClient {
   async updateRoadmapItem(
     projectKey: string,
     itemId: string,
-    body: Record<string, unknown>,
+    body: Record<string, unknown>
   ): Promise<KanonRoadmapItem> {
     return this.request<KanonRoadmapItem>(
       "PATCH",
       `/api/projects/${projectKey}/roadmap/${itemId}`,
-      body,
+      body
     );
   }
 
@@ -545,14 +553,8 @@ export class KanonClient {
    * Delete a roadmap item.
    * Route: DELETE /api/projects/:key/roadmap/:id
    */
-  async deleteRoadmapItem(
-    projectKey: string,
-    itemId: string,
-  ): Promise<void> {
-    await this.request<void>(
-      "DELETE",
-      `/api/projects/${projectKey}/roadmap/${itemId}`,
-    );
+  async deleteRoadmapItem(projectKey: string, itemId: string): Promise<void> {
+    await this.request<void>("DELETE", `/api/projects/${projectKey}/roadmap/${itemId}`);
   }
 
   /**
@@ -562,12 +564,12 @@ export class KanonClient {
   async promoteRoadmapItem(
     projectKey: string,
     itemId: string,
-    body?: Record<string, unknown>,
+    body?: Record<string, unknown>
   ): Promise<KanonIssue> {
     return this.request<KanonIssue>(
       "POST",
       `/api/projects/${projectKey}/roadmap/${itemId}/promote`,
-      body ?? {},
+      body ?? {}
     );
   }
 
@@ -580,12 +582,12 @@ export class KanonClient {
   async addDependency(
     projectKey: string,
     sourceItemId: string,
-    body: Record<string, unknown>,
+    body: Record<string, unknown>
   ): Promise<unknown> {
     return this.request<unknown>(
       "POST",
       `/api/projects/${projectKey}/roadmap/${sourceItemId}/dependencies`,
-      body,
+      body
     );
   }
 
@@ -596,11 +598,11 @@ export class KanonClient {
   async removeDependency(
     projectKey: string,
     sourceItemId: string,
-    dependencyId: string,
+    dependencyId: string
   ): Promise<void> {
     await this.request<void>(
       "DELETE",
-      `/api/projects/${projectKey}/roadmap/${sourceItemId}/dependencies/${dependencyId}`,
+      `/api/projects/${projectKey}/roadmap/${sourceItemId}/dependencies/${dependencyId}`
     );
   }
 
@@ -613,13 +615,9 @@ export class KanonClient {
   async createComment(
     issueKey: string,
     body: string,
-    source: string = "engram_sync",
+    source: string = "engram_sync"
   ): Promise<KanonComment> {
-    return this.request<KanonComment>(
-      "POST",
-      `/api/issues/${issueKey}/comments`,
-      { body, source },
-    );
+    return this.request<KanonComment>("POST", `/api/issues/${issueKey}/comments`, { body, source });
   }
 
   // ─── Documents ──────────────────────────────────────────────────────────────
@@ -630,13 +628,9 @@ export class KanonClient {
    */
   async createDocument(
     issueKey: string,
-    body: { kind: string; title: string; body: string },
+    body: { kind: string; title: string; body: string }
   ): Promise<KanonDocument> {
-    return this.request<KanonDocument>(
-      "POST",
-      `/api/issues/${issueKey}/documents`,
-      body,
-    );
+    return this.request<KanonDocument>("POST", `/api/issues/${issueKey}/documents`, body);
   }
 
   /**
@@ -644,10 +638,7 @@ export class KanonClient {
    * Route: GET /api/issues/:key/documents
    */
   async listDocuments(issueKey: string): Promise<KanonDocument[]> {
-    return this.request<KanonDocument[]>(
-      "GET",
-      `/api/issues/${issueKey}/documents`,
-    );
+    return this.request<KanonDocument[]>("GET", `/api/issues/${issueKey}/documents`);
   }
 
   /**
@@ -655,10 +646,7 @@ export class KanonClient {
    * Route: GET /api/documents/:id
    */
   async getDocument(documentId: string): Promise<KanonDocument> {
-    return this.request<KanonDocument>(
-      "GET",
-      `/api/documents/${documentId}`,
-    );
+    return this.request<KanonDocument>("GET", `/api/documents/${documentId}`);
   }
 
   // ─── Cycles ─────────────────────────────────────────────────────────────
@@ -668,10 +656,7 @@ export class KanonClient {
    * Route: GET /api/projects/:key/cycles
    */
   async listCycles(projectKey: string): Promise<KanonCycle[]> {
-    return this.request<KanonCycle[]>(
-      "GET",
-      `/api/projects/${projectKey}/cycles`,
-    );
+    return this.request<KanonCycle[]>("GET", `/api/projects/${projectKey}/cycles`);
   }
 
   /**
@@ -680,7 +665,7 @@ export class KanonClient {
    */
   async getCycle(
     cycleId: string,
-    options?: { includeAllScopeEvents?: boolean },
+    options?: { includeAllScopeEvents?: boolean }
   ): Promise<KanonCycleDetail> {
     let path = `/api/cycles/${cycleId}`;
     if (options?.includeAllScopeEvents) {
@@ -702,13 +687,9 @@ export class KanonClient {
       endDate: string;
       state?: "upcoming" | "active" | "done";
       attachIssueKeys?: string[];
-    },
+    }
   ): Promise<KanonCycle> {
-    return this.request<KanonCycle>(
-      "POST",
-      `/api/projects/${projectKey}/cycles`,
-      body,
-    );
+    return this.request<KanonCycle>("POST", `/api/projects/${projectKey}/cycles`, body);
   }
 
   /**
@@ -717,13 +698,9 @@ export class KanonClient {
    */
   async attachIssuesToCycle(
     cycleId: string,
-    body: { add?: string[]; remove?: string[]; reason?: string },
+    body: { add?: string[]; remove?: string[]; reason?: string }
   ): Promise<KanonCycleDetail> {
-    return this.request<KanonCycleDetail>(
-      "POST",
-      `/api/cycles/${cycleId}/issues`,
-      body,
-    );
+    return this.request<KanonCycleDetail>("POST", `/api/cycles/${cycleId}/issues`, body);
   }
 
   /**
@@ -731,11 +708,7 @@ export class KanonClient {
    * Route: POST /api/cycles/:id/close
    */
   async closeCycle(cycleId: string): Promise<KanonCycle> {
-    return this.request<KanonCycle>(
-      "POST",
-      `/api/cycles/${cycleId}/close`,
-      {},
-    );
+    return this.request<KanonCycle>("POST", `/api/cycles/${cycleId}/close`, {});
   }
 
   /**
@@ -746,13 +719,12 @@ export class KanonClient {
    */
   async deleteCycle(
     cycleId: string,
-    opts: { force?: boolean; reason?: string },
+    opts: { force?: boolean; reason?: string }
   ): Promise<KanonCycleDeleteResult> {
-    return this.request<KanonCycleDeleteResult>(
-      "DELETE",
-      `/api/cycles/${cycleId}`,
-      { force: opts.force ?? false, reason: opts.reason },
-    );
+    return this.request<KanonCycleDeleteResult>("DELETE", `/api/cycles/${cycleId}`, {
+      force: opts.force ?? false,
+      reason: opts.reason,
+    });
   }
 
   // ─── Activity Logging ───────────────────────────────────────────────────
@@ -764,7 +736,7 @@ export class KanonClient {
   async logActivity(
     issueKey: string,
     action: string,
-    details?: Record<string, unknown>,
+    details?: Record<string, unknown>
   ): Promise<void> {
     const body: Record<string, unknown> = { action };
     if (details !== undefined) {
@@ -779,15 +751,11 @@ export class KanonClient {
    * Start a work session on an issue.
    * Route: POST /api/issues/:key/work-sessions
    */
-  async startWork(
-    issueKey: string,
-    source: string = "mcp",
-  ): Promise<{ session: unknown; warnings: string[]; autoAssigned: boolean }> {
-    return this.request<{ session: unknown; warnings: string[]; autoAssigned: boolean }>(
-      "POST",
-      `/api/issues/${issueKey}/work-sessions`,
-      { source },
-    );
+  async startWork(issueKey: string, source: string = "mcp"): Promise<StartWorkResponse> {
+    const response = await this.request<unknown>("POST", `/api/issues/${issueKey}/work-sessions`, {
+      source,
+    });
+    return startWorkResponseSchema.parse(response);
   }
 
   /**
@@ -805,21 +773,104 @@ export class KanonClient {
       ok: boolean;
       deleted: boolean;
       workLog: { id: string; durationS: number } | null;
-    }>(
-      "DELETE",
-      `/api/issues/${issueKey}/work-sessions`,
-    );
+    }>("DELETE", `/api/issues/${issueKey}/work-sessions`);
   }
 
   /**
    * Send a heartbeat for an active work session.
    * Route: POST /api/issues/:key/work-sessions/heartbeat
    */
-  async heartbeat(issueKey: string): Promise<{ ok: boolean }> {
-    return this.request<{ ok: boolean }>(
-      "POST",
+  async heartbeat(issueKey: string): Promise<LegacyHeartbeatResponse>;
+  async heartbeat(
+    issueKey: string,
+    command: WorkCaptureCommand,
+    options?: CaptureCommandFallbackOptions
+  ): Promise<WorkCaptureEffectResponse>;
+  async heartbeat(
+    issueKey: string,
+    command: WorkCaptureOwnerCommand,
+    options?: CaptureCommandFallbackOptions
+  ): Promise<WorkCaptureEffectResponse>;
+  async heartbeat(
+    issueKey: string,
+    command?: WorkCaptureCommand | WorkCaptureOwnerCommand,
+    options?: CaptureCommandFallbackOptions
+  ): Promise<LegacyHeartbeatResponse | WorkCaptureEffectResponse> {
+    if (!command) {
+      const response = await this.request<unknown>(
+        "POST",
+        `/api/issues/${issueKey}/work-sessions/heartbeat`
+      );
+      return legacyHeartbeatResponseSchema.parse(response);
+    }
+    return this.requestVersionedCaptureCommand(
       `/api/issues/${issueKey}/work-sessions/heartbeat`,
+      command,
+      options
     );
+  }
+
+  async releaseWork(
+    issueKey: string,
+    command: WorkCaptureCommand | WorkCaptureOwnerCommand,
+    options?: CaptureCommandFallbackOptions
+  ): Promise<WorkCaptureEffectResponse> {
+    return this.requestVersionedCaptureCommand(
+      `/api/issues/${issueKey}/work-captures/release`,
+      command,
+      options
+    );
+  }
+
+  async closeWork(
+    issueKey: string,
+    command: WorkCaptureCommand | WorkCaptureOwnerCommand,
+    options?: CaptureCommandFallbackOptions
+  ): Promise<WorkCaptureEffectResponse> {
+    return this.requestVersionedCaptureCommand(
+      `/api/issues/${issueKey}/work-captures/close`,
+      command,
+      options
+    );
+  }
+
+  private async requestVersionedCaptureCommand(
+    path: string,
+    command: WorkCaptureCommand | WorkCaptureOwnerCommand,
+    options?: CaptureCommandFallbackOptions
+  ): Promise<WorkCaptureEffectResponse> {
+    try {
+      const response = await this.request<unknown>("POST", path, command);
+      return workCaptureEffectResponseSchema.parse(response);
+    } catch (error) {
+      if (
+        !("ownerId" in command) ||
+        !(error instanceof KanonApiError) ||
+        error.statusCode !== 400 ||
+        error.code !== "VALIDATION_ERROR"
+      ) {
+        throw error;
+      }
+      const { ownerId: _ownerId, ...legacyCommand } = command;
+      await options?.beforeLegacyFallback?.(legacyCommand);
+      const response = await this.request<unknown>("POST", path, legacyCommand);
+      return workCaptureEffectResponseSchema.parse(response);
+    }
+  }
+
+  async listWorkCaptures(
+    workspaceId: string,
+    cursor?: string,
+    limit: number = 100
+  ): Promise<WorkCaptureHydrationPage> {
+    const params = new URLSearchParams({ workspaceId });
+    if (cursor) params.set("cursor", cursor);
+    params.set("limit", String(limit));
+    const response = await this.request<unknown>(
+      "GET",
+      `/api/me/work-captures?${params.toString()}`
+    );
+    return workCaptureHydrationPageSchema.parse(response);
   }
 
   /**
@@ -827,10 +878,7 @@ export class KanonClient {
    * Route: GET /api/issues/:key/work-sessions
    */
   async listActiveSessions(issueKey: string): Promise<ActiveWorkerInfo[]> {
-    return this.request<ActiveWorkerInfo[]>(
-      "GET",
-      `/api/issues/${issueKey}/work-sessions`,
-    );
+    return this.request<ActiveWorkerInfo[]>("GET", `/api/issues/${issueKey}/work-sessions`);
   }
 
   // ─── Members ────────────────────────────────────────────────────────────
@@ -856,7 +904,7 @@ export class KanonClient {
     workspaceId: string,
     from?: string,
     to?: string,
-    limit?: number,
+    limit?: number
   ): Promise<unknown> {
     const params = new URLSearchParams({ workspaceId });
     if (from !== undefined) params.set("from", from);
@@ -869,10 +917,7 @@ export class KanonClient {
    * Promote a WorkLog to a draft TimeEntry (idempotent).
    * Route: POST /api/worklogs/:id/promote
    */
-  async promoteWorklog(
-    worklogId: string,
-    body: Record<string, unknown>,
-  ): Promise<unknown> {
+  async promoteWorklog(worklogId: string, body: Record<string, unknown>): Promise<unknown> {
     return this.request<unknown>("POST", `/api/worklogs/${worklogId}/promote`, body);
   }
 
@@ -880,10 +925,7 @@ export class KanonClient {
    * Partial-update a draft or submitted TimeEntry (owner-only, service guard).
    * Route: PATCH /api/time-entries/:id
    */
-  async updateTimeEntry(
-    timeEntryId: string,
-    body: Record<string, unknown>,
-  ): Promise<unknown> {
+  async updateTimeEntry(timeEntryId: string, body: Record<string, unknown>): Promise<unknown> {
     return this.request<unknown>("PATCH", `/api/time-entries/${timeEntryId}`, body);
   }
 
@@ -907,10 +949,7 @@ export class KanonClient {
    * Reject a submitted TimeEntry — PM gate enforced API-side.
    * Route: POST /api/time-entries/:id/reject
    */
-  async rejectTimeEntry(
-    timeEntryId: string,
-    body: Record<string, unknown>,
-  ): Promise<unknown> {
+  async rejectTimeEntry(timeEntryId: string, body: Record<string, unknown>): Promise<unknown> {
     return this.request<unknown>("POST", `/api/time-entries/${timeEntryId}/reject`, body);
   }
 
@@ -918,10 +957,7 @@ export class KanonClient {
    * Create an adjustment TimeEntry for an approved entry (owner-only, service guard).
    * Route: POST /api/time-entries/:id/adjust
    */
-  async adjustTimeEntry(
-    timeEntryId: string,
-    body: Record<string, unknown>,
-  ): Promise<unknown> {
+  async adjustTimeEntry(timeEntryId: string, body: Record<string, unknown>): Promise<unknown> {
     return this.request<unknown>("POST", `/api/time-entries/${timeEntryId}/adjust`, body);
   }
 
@@ -931,15 +967,8 @@ export class KanonClient {
    * Create an MCP proposal in a workspace.
    * Route: POST /api/workspaces/:id/proposals
    */
-  async createProposal(
-    workspaceId: string,
-    body: Record<string, unknown>,
-  ): Promise<unknown> {
-    return this.request<unknown>(
-      "POST",
-      `/api/workspaces/${workspaceId}/proposals`,
-      body,
-    );
+  async createProposal(workspaceId: string, body: Record<string, unknown>): Promise<unknown> {
+    return this.request<unknown>("POST", `/api/workspaces/${workspaceId}/proposals`, body);
   }
 
   /**
@@ -947,10 +976,7 @@ export class KanonClient {
    * Route: POST /api/proposals/:id/apply
    */
   async applyProposal(proposalId: string): Promise<unknown> {
-    return this.request<unknown>(
-      "POST",
-      `/api/proposals/${proposalId}/apply`,
-    );
+    return this.request<unknown>("POST", `/api/proposals/${proposalId}/apply`);
   }
 
   // ─── Issue triage (KAN-193) ─────────────────────────────────────────────
@@ -962,13 +988,13 @@ export class KanonClient {
   async previewIssueTriage(
     issueKey: string,
     body: Record<string, unknown>,
-    options?: KanonRequestOptions,
+    options?: KanonRequestOptions
   ): Promise<unknown> {
     return this.request<unknown>(
       "POST",
       `/api/issues/${encodeURIComponent(issueKey)}/triage/preview`,
       body,
-      options,
+      options
     );
   }
 
@@ -979,13 +1005,13 @@ export class KanonClient {
   async persistTriageProposal(
     issueKey: string,
     body: Record<string, unknown>,
-    options?: KanonRequestOptions,
+    options?: KanonRequestOptions
   ): Promise<unknown> {
     return this.request<unknown>(
       "POST",
       `/api/issues/${encodeURIComponent(issueKey)}/triage-proposals`,
       body,
-      options,
+      options
     );
   }
 
@@ -996,14 +1022,14 @@ export class KanonClient {
   async getTriageProposal(
     proposalId: string,
     format: "compact" | "full" = "compact",
-    options?: KanonRequestOptions,
+    options?: KanonRequestOptions
   ): Promise<unknown> {
     const params = new URLSearchParams({ format });
     return this.request<unknown>(
       "GET",
       `/api/triage-proposals/${encodeURIComponent(proposalId)}?${params.toString()}`,
       undefined,
-      options,
+      options
     );
   }
 
@@ -1021,7 +1047,7 @@ export class KanonClient {
       limit?: number;
       cursor?: string;
     } = {},
-    options?: KanonRequestOptions,
+    options?: KanonRequestOptions
   ): Promise<unknown> {
     const params = new URLSearchParams();
     if (filters.state !== undefined) params.set("state", filters.state);
@@ -1046,13 +1072,13 @@ export class KanonClient {
   async dismissTriageProposal(
     proposalId: string,
     body: { reason: string },
-    options?: KanonRequestOptions,
+    options?: KanonRequestOptions
   ): Promise<unknown> {
     return this.request<unknown>(
       "POST",
       `/api/triage-proposals/${encodeURIComponent(proposalId)}/dismiss`,
       body,
-      options,
+      options
     );
   }
 
@@ -1080,7 +1106,7 @@ export class KanonClient {
     method: string,
     path: string,
     body?: unknown,
-    options?: KanonRequestOptions,
+    options?: KanonRequestOptions
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
     const timeoutMs = options?.timeoutMs ?? this.timeoutMs;
@@ -1117,7 +1143,7 @@ export class KanonClient {
       throw new KanonApiError(
         0,
         "CONNECTION_ERROR",
-        `Failed to connect to Kanon API at ${url}: ${err instanceof Error ? err.message : String(err)}`,
+        `Failed to connect to Kanon API at ${url}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
 
@@ -1180,23 +1206,20 @@ export class KanonClient {
     method: string,
     path: string,
     body?: unknown,
-    options?: KanonRequestOptions,
+    options?: KanonRequestOptions
   ): Promise<T> {
     try {
       return await this.doRequest<T>(method, path, body, options);
     } catch (err) {
-      if (
-        err instanceof KanonApiError &&
-        err.statusCode === 401 &&
-        this.refreshToken
-      ) {
+      if (err instanceof KanonApiError && err.statusCode === 401 && this.refreshToken) {
         try {
           await this.refreshAccessToken();
         } catch {
           // Exchange failed — translate to boundary error
           throw new McpAuthError({
             code: "REFRESH_FAILED",
-            message: "Refresh token expired or revoked — re-run onboarding to obtain new credentials.",
+            message:
+              "Refresh token expired or revoked — re-run onboarding to obtain new credentials.",
           });
         }
         // Retry once using doRequest (never loops — doRequest never retries)
@@ -1208,7 +1231,8 @@ export class KanonClient {
           if (retryErr instanceof KanonApiError && retryErr.statusCode === 401) {
             throw new McpAuthError({
               code: "REFRESH_FAILED",
-              message: "Refresh token expired or revoked — re-run onboarding to obtain new credentials.",
+              message:
+                "Refresh token expired or revoked — re-run onboarding to obtain new credentials.",
             });
           }
           throw retryErr;
@@ -1257,7 +1281,7 @@ export class KanonClient {
       throw new KanonApiError(
         res.status,
         "REFRESH_EXCHANGE_FAILED",
-        `Token refresh failed (HTTP ${res.status}); re-run setup login`,
+        `Token refresh failed (HTTP ${res.status}); re-run setup login`
       );
     }
     const data = (await res.json()) as { accessToken: string; expiresIn: number };

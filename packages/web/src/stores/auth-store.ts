@@ -40,12 +40,21 @@ export const useAuthStore = create<AuthState>((set, get) => ({
    */
   bootstrap: async () => {
     try {
+      const previousPrincipalId = get().user?.userId;
       set({ isLoading: true });
       const response = await fetch("/api/auth/me", {
         credentials: "include",
       });
       if (response.ok) {
         const user = (await response.json()) as AuthUser;
+        if (previousPrincipalId && previousPrincipalId !== user.userId) {
+          try {
+            const { workCaptureLifecycle } = await import("@/lib/work-capture-lifecycle");
+            await workCaptureLifecycle.deactivateCurrent("scope-switch");
+          } catch {
+            // The server lease remains the crash/offline convergence fallback.
+          }
+        }
         set({ user, isAuthenticated: true, isLoading: false });
       } else {
         set({ user: null, isAuthenticated: false, isLoading: false });
@@ -59,6 +68,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
    * Logout: call POST /api/auth/logout to clear cookies, then clear local state.
    */
   logout: async () => {
+    try {
+      const { workCaptureLifecycle } = await import("@/lib/work-capture-lifecycle");
+      await workCaptureLifecycle.deactivateCurrent("logout");
+    } catch {
+      // Release is persisted before transport when possible; lease expiry is fallback.
+    }
     try {
       await fetch("/api/auth/logout", {
         method: "POST",

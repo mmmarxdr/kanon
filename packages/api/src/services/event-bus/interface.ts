@@ -14,6 +14,9 @@ export interface IEventBus {
    */
   emit(event: DomainEventInput): void;
 
+  /** Deliver a durable event and reject if any current subscriber fails. */
+  emitAndWait(event: DomainEventInput): Promise<void>;
+
   /**
    * Subscribe to ALL domain events.
    * Returns an unsubscribe function.
@@ -34,7 +37,7 @@ export interface IEventBus {
   subscribeToWorkspace(
     workspaceId: string,
     handler: (event: DomainEvent) => void,
-    name?: string,
+    name?: string
   ): () => void;
 
   /**

@@ -105,6 +105,7 @@ export const IssueCard = memo(function IssueCard({
       {...attributes}
       {...listeners}
       data-testid={`issue-card-${issue.key}`}
+      data-issue-key={issue.key}
       onClick={handleClick}
       onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-2)")}
       onMouseLeave={(e) => (e.currentTarget.style.background = "var(--panel)")}

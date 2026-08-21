@@ -166,7 +166,9 @@ async function deleteTriageLedgerIfPresent(): Promise<void> {
  * nullifies the singleton ownerUserId so claim tests are hermetic.
  */
 export async function cleanDatabase(): Promise<void> {
+  await prisma.domainEventOutbox.deleteMany();
   await prisma.projectMember.deleteMany();
+  await prisma.workCaptureIntent.deleteMany();
   await prisma.workSession.deleteMany();
   await prisma.notification.deleteMany();
   await prisma.issueSubscription.deleteMany();
@@ -273,7 +275,7 @@ export async function seedTestMemberWithRole(
     username?: string;
     isInstanceAdmin?: boolean;
     projectAccess?: "workspace" | "assigned";
-  },
+  }
 ): Promise<{ id: string; email: string; token: string; userId: string }> {
   const bcrypt = await import("bcryptjs");
   const hash = await bcrypt.hash("password123", 4);
