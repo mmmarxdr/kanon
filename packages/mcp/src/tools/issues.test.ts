@@ -10,6 +10,13 @@ import { registerIssueTools } from "./issues.js";
 import { KanonApiError } from "../kanon-client.js";
 import type { KanonClient, KanonIssue } from "../kanon-client.js";
 
+vi.mock("../heartbeat.js", () => ({
+  adoptCaptureByHeartbeat: vi.fn(),
+  forgetTrackedCapture: vi.fn(),
+}));
+
+import * as heartbeatMod from "../heartbeat.js";
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 type ToolHandler = (input: Record<string, unknown>) => Promise<{
@@ -24,7 +31,10 @@ interface RegisteredTool {
   handler: ToolHandler;
 }
 
-function captureTools(register: (server: McpServer, client: KanonClient) => void, client: KanonClient): Map<string, RegisteredTool> {
+function captureTools(
+  register: (server: McpServer, client: KanonClient) => void,
+  client: KanonClient
+): Map<string, RegisteredTool> {
   const tools = new Map<string, RegisteredTool>();
   const fakeServer = {
     tool: (name: string, description: string, shape: unknown, handler: ToolHandler) => {
@@ -312,6 +322,63 @@ describe("transition_issue — format tier", () => {
   });
 });
 
+describe("KAN-243 transition_issue capture policy", () => {
+  beforeEach(() => {
+    vi.mocked(heartbeatMod.adoptCaptureByHeartbeat).mockReset().mockResolvedValue(undefined);
+    vi.mocked(heartbeatMod.forgetTrackedCapture).mockReset();
+  });
+
+  it("adopts only the transitioned issue when it enters an active state", async () => {
+    const client = {
+      transitionIssue: vi
+        .fn()
+        .mockResolvedValue(makeFullIssue({ key: "KAN-2", state: "analysis" })),
+    };
+    const tool = captureTools(registerIssueTools, client as unknown as KanonClient).get(
+      "transition_issue"
+    )!;
+
+    await tool.handler({ issueKey: "KAN-2", state: "analysis" });
+
+    expect(heartbeatMod.adoptCaptureByHeartbeat).toHaveBeenCalledWith("KAN-2", client);
+    expect(heartbeatMod.forgetTrackedCapture).not.toHaveBeenCalled();
+  });
+
+  it("forgets only the transitioned issue when it enters a non-active state", async () => {
+    const client = {
+      transitionIssue: vi.fn().mockResolvedValue(makeFullIssue({ key: "KAN-2", state: "done" })),
+    };
+    const tool = captureTools(registerIssueTools, client as unknown as KanonClient).get(
+      "transition_issue"
+    )!;
+
+    await tool.handler({ issueKey: "KAN-2", state: "done" });
+
+    expect(heartbeatMod.forgetTrackedCapture).toHaveBeenCalledWith("KAN-2");
+    expect(heartbeatMod.adoptCaptureByHeartbeat).not.toHaveBeenCalled();
+  });
+
+  it("does not turn post-commit capture adoption failure into a transition error", async () => {
+    vi.mocked(heartbeatMod.adoptCaptureByHeartbeat).mockRejectedValueOnce(
+      new Error("capture unavailable")
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const client = {
+      transitionIssue: vi
+        .fn()
+        .mockResolvedValue(makeFullIssue({ key: "KAN-2", state: "in_progress" })),
+    };
+    const tool = captureTools(registerIssueTools, client as unknown as KanonClient).get(
+      "transition_issue"
+    )!;
+
+    const result = await tool.handler({ issueKey: "KAN-2", state: "in_progress" });
+
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(result.content[0]!.text)).toMatchObject({ ok: true, key: "KAN-2" });
+  });
+});
+
 // ─── D3: list_issues — keys[] filter ───────────────────────────────────
 
 describe("list_issues — keys[] filter (D3)", () => {
@@ -343,7 +410,7 @@ describe("list_issues — keys[] filter (D3)", () => {
     });
     expect(mockClient.listIssues).toHaveBeenCalledWith(
       "KAN",
-      expect.objectContaining({ keys: ["KAN-1", "KAN-2"] }),
+      expect.objectContaining({ keys: ["KAN-1", "KAN-2"] })
     );
   });
 });
@@ -356,9 +423,11 @@ describe("list_issues — keys[] filter (D3)", () => {
 describe("create_issue — surfaces 403 as FORBIDDEN", () => {
   it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
     const mockClient = {
-      createIssue: vi.fn().mockRejectedValue(
-        new KanonApiError(403, "FORBIDDEN", "You are not assigned to this project"),
-      ),
+      createIssue: vi
+        .fn()
+        .mockRejectedValue(
+          new KanonApiError(403, "FORBIDDEN", "You are not assigned to this project")
+        ),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
     const handler = tools.get("create_issue")!.handler;
@@ -374,9 +443,11 @@ describe("create_issue — surfaces 403 as FORBIDDEN", () => {
 describe("update_issue — surfaces 403 as FORBIDDEN", () => {
   it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
     const mockClient = {
-      updateIssue: vi.fn().mockRejectedValue(
-        new KanonApiError(403, "FORBIDDEN", "You are not assigned to this project"),
-      ),
+      updateIssue: vi
+        .fn()
+        .mockRejectedValue(
+          new KanonApiError(403, "FORBIDDEN", "You are not assigned to this project")
+        ),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
     const handler = tools.get("update_issue")!.handler;
@@ -392,9 +463,11 @@ describe("update_issue — surfaces 403 as FORBIDDEN", () => {
 describe("transition_issue — surfaces 403 as FORBIDDEN", () => {
   it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
     const mockClient = {
-      transitionIssue: vi.fn().mockRejectedValue(
-        new KanonApiError(403, "FORBIDDEN", "You are not assigned to this project"),
-      ),
+      transitionIssue: vi
+        .fn()
+        .mockRejectedValue(
+          new KanonApiError(403, "FORBIDDEN", "You are not assigned to this project")
+        ),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
     const handler = tools.get("transition_issue")!.handler;
@@ -410,9 +483,11 @@ describe("transition_issue — surfaces 403 as FORBIDDEN", () => {
 describe("list_issues — surfaces 403 as FORBIDDEN", () => {
   it("returns isError:true with code FORBIDDEN when API rejects with 403", async () => {
     const mockClient = {
-      listIssues: vi.fn().mockRejectedValue(
-        new KanonApiError(403, "FORBIDDEN", "You are not assigned to this project"),
-      ),
+      listIssues: vi
+        .fn()
+        .mockRejectedValue(
+          new KanonApiError(403, "FORBIDDEN", "You are not assigned to this project")
+        ),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
     const handler = tools.get("list_issues")!.handler;
@@ -430,14 +505,16 @@ describe("list_issues — surfaces 403 as FORBIDDEN", () => {
 describe("transition_issue — RECONCILIATION_REQUIRED surfacing (KAN-188)", () => {
   it("surfaces the reported hours and reconcile guidance instead of a hard failure", async () => {
     const mockClient = {
-      transitionIssue: vi.fn().mockRejectedValue(
-        new KanonApiError(
-          409,
-          "RECONCILIATION_REQUIRED",
-          "Unconfirmed captured time must be reconciled",
-          { totalHours: 5, issueKey: "ENG-1" },
+      transitionIssue: vi
+        .fn()
+        .mockRejectedValue(
+          new KanonApiError(
+            409,
+            "RECONCILIATION_REQUIRED",
+            "Unconfirmed captured time must be reconciled",
+            { totalHours: 5, issueKey: "ENG-1" }
+          )
         ),
-      ),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
     const handler = tools.get("transition_issue")!.handler;
@@ -458,9 +535,9 @@ describe("transition_issue — RECONCILIATION_REQUIRED surfacing (KAN-188)", () 
     // to done (the server only emits this 409 for that transition), but the tool
     // must not silently swallow it as a generic error for other states either.
     const mockClient = {
-      transitionIssue: vi.fn().mockRejectedValue(
-        new KanonApiError(403, "FORBIDDEN", "Not a project member"),
-      ),
+      transitionIssue: vi
+        .fn()
+        .mockRejectedValue(new KanonApiError(403, "FORBIDDEN", "Not a project member")),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
     const handler = tools.get("transition_issue")!.handler;
@@ -487,14 +564,16 @@ describe("transition_issue — RECONCILIATION_REQUIRED surfacing (KAN-188)", () 
 
   it("surfaces the specific message with the numeric total when details.totalHours is present", async () => {
     const mockClient = {
-      transitionIssue: vi.fn().mockRejectedValue(
-        new KanonApiError(
-          409,
-          "RECONCILIATION_REQUIRED",
-          "Unconfirmed captured time must be reconciled",
-          { totalHours: 5, issueKey: "ENG-1" },
+      transitionIssue: vi
+        .fn()
+        .mockRejectedValue(
+          new KanonApiError(
+            409,
+            "RECONCILIATION_REQUIRED",
+            "Unconfirmed captured time must be reconciled",
+            { totalHours: 5, issueKey: "ENG-1" }
+          )
         ),
-      ),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
     const handler = tools.get("transition_issue")!.handler;
@@ -509,9 +588,15 @@ describe("transition_issue — RECONCILIATION_REQUIRED surfacing (KAN-188)", () 
 
   it("falls back to a generic message with no interpolated hours when details is undefined", async () => {
     const mockClient = {
-      transitionIssue: vi.fn().mockRejectedValue(
-        new KanonApiError(409, "RECONCILIATION_REQUIRED", "Unconfirmed captured time must be reconciled"),
-      ),
+      transitionIssue: vi
+        .fn()
+        .mockRejectedValue(
+          new KanonApiError(
+            409,
+            "RECONCILIATION_REQUIRED",
+            "Unconfirmed captured time must be reconciled"
+          )
+        ),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
     const handler = tools.get("transition_issue")!.handler;
@@ -527,14 +612,16 @@ describe("transition_issue — RECONCILIATION_REQUIRED surfacing (KAN-188)", () 
 
   it("falls back to a generic message with no interpolated hours when totalHours is missing or non-numeric", async () => {
     const mockClient = {
-      transitionIssue: vi.fn().mockRejectedValue(
-        new KanonApiError(
-          409,
-          "RECONCILIATION_REQUIRED",
-          "Unconfirmed captured time must be reconciled",
-          { issueKey: "ENG-1" },
+      transitionIssue: vi
+        .fn()
+        .mockRejectedValue(
+          new KanonApiError(
+            409,
+            "RECONCILIATION_REQUIRED",
+            "Unconfirmed captured time must be reconciled",
+            { issueKey: "ENG-1" }
+          )
         ),
-      ),
     };
     const tools = captureTools(registerIssueTools, mockClient as unknown as KanonClient);
     const handler = tools.get("transition_issue")!.handler;
@@ -550,7 +637,10 @@ describe("transition_issue — RECONCILIATION_REQUIRED surfacing (KAN-188)", () 
 // ─── KAN-188: reconcile_time tool ──────────────────────────────────────
 
 describe("reconcile_time", () => {
-  let mockClient: { reconcileTime: ReturnType<typeof vi.fn>; transitionIssue: ReturnType<typeof vi.fn> };
+  let mockClient: {
+    reconcileTime: ReturnType<typeof vi.fn>;
+    transitionIssue: ReturnType<typeof vi.fn>;
+  };
   let reconcileTool: RegisteredTool;
 
   beforeEach(() => {
@@ -592,7 +682,7 @@ describe("reconcile_time", () => {
 
   it("surfaces 403 as FORBIDDEN like other write tools", async () => {
     mockClient.reconcileTime.mockRejectedValue(
-      new KanonApiError(403, "FORBIDDEN", "Not a project member"),
+      new KanonApiError(403, "FORBIDDEN", "Not a project member")
     );
 
     const result = await reconcileTool.handler({ issueKey: "ENG-1", confirmedTotalHours: "5" });
@@ -608,14 +698,17 @@ describe("reconcile_time", () => {
 describe("KAN-188 regression: 409 → reconcile_time → retry transition_issue", () => {
   it("reconcile-then-retry succeeds after the initial transition is blocked", async () => {
     const mockClient = {
-      transitionIssue: vi.fn().mockRejectedValueOnce(
-        new KanonApiError(
-          409,
-          "RECONCILIATION_REQUIRED",
-          "Unconfirmed captured time must be reconciled",
-          { totalHours: 5, issueKey: "ENG-1" },
-        ),
-      ).mockResolvedValueOnce(makeFullIssue({ key: "ENG-1", state: "done" })),
+      transitionIssue: vi
+        .fn()
+        .mockRejectedValueOnce(
+          new KanonApiError(
+            409,
+            "RECONCILIATION_REQUIRED",
+            "Unconfirmed captured time must be reconciled",
+            { totalHours: 5, issueKey: "ENG-1" }
+          )
+        )
+        .mockResolvedValueOnce(makeFullIssue({ key: "ENG-1", state: "done" })),
       reconcileTime: vi.fn().mockResolvedValue({
         issueKey: "ENG-1",
         confirmedTotalHours: "5.00",
@@ -655,7 +748,7 @@ describe("KAN-188 regression: 409 → reconcile_time → retry transition_issue"
 function captureToolsWithBinding(
   register: (server: McpServer, client: KanonClient, binding: KanonBinding | null) => void,
   client: KanonClient,
-  binding: KanonBinding | null,
+  binding: KanonBinding | null
 ): Map<string, RegisteredTool> {
   const tools = new Map<string, RegisteredTool>();
   const fakeServer = {
@@ -678,7 +771,11 @@ describe("list_issues — .kanon binding fallback", () => {
 
   it("uses binding.projectKey when no explicit projectKey is passed", async () => {
     const mockClient = { listIssues: vi.fn().mockResolvedValue([]) };
-    const tools = captureToolsWithBinding(registerIssueTools, mockClient as unknown as KanonClient, binding);
+    const tools = captureToolsWithBinding(
+      registerIssueTools,
+      mockClient as unknown as KanonClient,
+      binding
+    );
     const handler = tools.get("list_issues")!.handler;
 
     const result = await handler({});
@@ -689,7 +786,11 @@ describe("list_issues — .kanon binding fallback", () => {
 
   it("explicit projectKey overrides binding", async () => {
     const mockClient = { listIssues: vi.fn().mockResolvedValue([]) };
-    const tools = captureToolsWithBinding(registerIssueTools, mockClient as unknown as KanonClient, binding);
+    const tools = captureToolsWithBinding(
+      registerIssueTools,
+      mockClient as unknown as KanonClient,
+      binding
+    );
     const handler = tools.get("list_issues")!.handler;
 
     await handler({ projectKey: "EXPLICIT" });
@@ -699,7 +800,11 @@ describe("list_issues — .kanon binding fallback", () => {
 
   it("returns isError when no projectKey and no binding", async () => {
     const mockClient = { listIssues: vi.fn().mockResolvedValue([]) };
-    const tools = captureToolsWithBinding(registerIssueTools, mockClient as unknown as KanonClient, null);
+    const tools = captureToolsWithBinding(
+      registerIssueTools,
+      mockClient as unknown as KanonClient,
+      null
+    );
     const handler = tools.get("list_issues")!.handler;
 
     const result = await handler({});

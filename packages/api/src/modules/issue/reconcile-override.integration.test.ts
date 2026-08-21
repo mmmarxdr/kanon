@@ -57,12 +57,60 @@ describe("KAN-188 reconcile-time confirmedTotalHours override — integration (r
     await cleanDatabase();
   });
 
+  it("rejects direct reconciliation while durable capture is active without writing time", async () => {
+    const ws = await seedTestWorkspace();
+    const member = await seedTestMemberWithRole(ws.id, "pm");
+    const project = await seedTestProject(ws.id, "RCOD");
+    await seedTestProjectMember(member.userId, project.id, "pm");
+    const issue = await seedIssueInReview(project.id, "capture-incomplete");
+    await prisma.workCaptureIntent.create({
+      data: {
+        userId: member.userId,
+        memberId: member.id,
+        issueId: issue.id,
+        state: "capturing",
+        source: "web",
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/issues/${issue.key}/reconcile-time`,
+      headers: { authorization: `Bearer ${member.token}` },
+      payload: {},
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      error: "CAPTURE_INCOMPLETE",
+      code: "CAPTURE_INCOMPLETE",
+      message: "Work capture must finish before time can be reconciled.",
+    });
+    expect(await prisma.timeEntry.count({ where: { issueId: issue.id } })).toBe(0);
+    expect(
+      await prisma.issue.findUnique({
+        where: { id: issue.id },
+        select: { timeConfirmedAt: true },
+      })
+    ).toEqual({ timeConfirmedAt: null });
+  });
+
   it("corrects hours DOWNWARD end-to-end: no CHECK violation, exact confirmed total, and →done succeeds after reconcile", async () => {
     const ws = await seedTestWorkspace();
     const member = await seedTestMemberWithRole(ws.id, "pm");
     const project = await seedTestProject(ws.id, "RCOA");
     await seedTestProjectMember(member.userId, project.id, "pm");
     const issue = await seedIssueInReview(project.id, "down1");
+    await prisma.workCaptureIntent.create({
+      data: {
+        userId: member.userId,
+        memberId: member.id,
+        issueId: issue.id,
+        state: "closed",
+        closedAt: new Date("2026-08-19T11:00:00.000Z"),
+        source: "web",
+      },
+    });
 
     // Seed an existing APPROVED TimeEntry totalling 6h.
     await prisma.timeEntry.create({

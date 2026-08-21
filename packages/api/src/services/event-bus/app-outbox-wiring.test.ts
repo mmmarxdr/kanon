@@ -25,4 +25,20 @@ describe("application domain-event outbox lifecycle", () => {
     expect(recoveryStop).toBeLessThan(forecastUnsubscribe);
     expect(recoveryStop).toBeLessThan(notificationUnsubscribe);
   });
+
+  it("keeps the capture-intent command listener registered through recovery shutdown", async () => {
+    const appSource = await readFile(
+      fileURLToPath(new URL("../../app.ts", import.meta.url)),
+      "utf8"
+    );
+
+    const listenerRegistration = appSource.indexOf("registerCaptureIntentListener(");
+    const recoveryStart = appSource.indexOf("startDomainEventOutboxRecovery(");
+    const recoveryStop = appSource.indexOf("outboxRecovery.stop()");
+    const listenerUnsubscribe = appSource.indexOf("unsubscribeCaptureIntentListener();");
+
+    expect(listenerRegistration).toBeGreaterThan(-1);
+    expect(listenerRegistration).toBeLessThan(recoveryStart);
+    expect(recoveryStop).toBeLessThan(listenerUnsubscribe);
+  });
 });

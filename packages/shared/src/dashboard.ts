@@ -11,6 +11,7 @@
  */
 
 import { z } from "zod";
+import { workCaptureFailureNotificationPayloadSchema } from "./work-capture.js";
 
 // ─── ActiveCycleKPIs ────────────────────────────────────────────────────────
 
@@ -23,14 +24,14 @@ export const activeCycleKPIsSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
   projectName: z.string(),
-  startDate: z.string(),                            // ISO date "YYYY-MM-DD"
-  endDate: z.string(),                              // ISO date "YYYY-MM-DD"
+  startDate: z.string(), // ISO date "YYYY-MM-DD"
+  endDate: z.string(), // ISO date "YYYY-MM-DD"
   completed: z.number().int().min(0),
   scope: z.number().int().min(0),
-  donePct: z.number().int().min(0).max(100),        // round(completed/scope*100), 0 if scope=0
+  donePct: z.number().int().min(0).max(100), // round(completed/scope*100), 0 if scope=0
   velocity: z.number().int().min(0),
-  avgLeadDays: z.number().nullable(),               // null = no eligible issues
-  burnup: z.array(z.number()),                      // cumulative completions per day
+  avgLeadDays: z.number().nullable(), // null = no eligible issues
+  burnup: z.array(z.number()), // cumulative completions per day
 });
 
 export type ActiveCycleKPIs = z.infer<typeof activeCycleKPIsSchema>;
@@ -46,10 +47,10 @@ export const mentionDashboardItemSchema = z.object({
   id: z.string().uuid(),
   issueKey: z.string(),
   issueTitle: z.string(),
-  commentId: z.string().uuid().nullable(),          // null for description mentions
+  commentId: z.string().uuid().nullable(), // null for description mentions
   mentionedByUsername: z.string(),
-  context: z.string(),                              // verbatim snippet containing the @mention
-  createdAt: z.string(),                            // ISO datetime
+  context: z.string(), // verbatim snippet containing the @mention
+  createdAt: z.string(), // ISO datetime
 });
 
 export type MentionDashboardItem = z.infer<typeof mentionDashboardItemSchema>;
@@ -73,17 +74,36 @@ export type MentionDashboardItem = z.infer<typeof mentionDashboardItemSchema>;
  * A notification entry shown in the Inbox Notifications section.
  * Added in S3 / KAN-27 (notifications core).
  */
-export const notificationDashboardItemSchema = z.object({
-  id: z.string().uuid(),
-  kind: z.enum(["mention", "assignment", "subscribed_activity", "cycle_closed"]),
-  issueId: z.string().uuid().nullable(),
-  actorId: z.string().uuid().nullable(),
-  mentionId: z.string().uuid().nullable(),
-  payload: z.record(z.unknown()).nullable(),
-  read: z.boolean(),
-  via: z.string().nullable(),
-  createdAt: z.string(),           // ISO datetime
-});
+export const notificationDashboardItemSchema = z
+  .object({
+    id: z.string().uuid(),
+    kind: z.enum([
+      "mention",
+      "assignment",
+      "subscribed_activity",
+      "cycle_closed",
+      "work_capture_failure",
+    ]),
+    issueId: z.string().uuid().nullable(),
+    actorId: z.string().uuid().nullable(),
+    mentionId: z.string().uuid().nullable(),
+    payload: z.record(z.unknown()).nullable(),
+    read: z.boolean(),
+    via: z.string().nullable(),
+    createdAt: z.string(), // ISO datetime
+  })
+  .superRefine((value, context) => {
+    if (
+      value.kind === "work_capture_failure" &&
+      !workCaptureFailureNotificationPayloadSchema.safeParse(value.payload).success
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["payload"],
+        message: "Invalid work-capture failure payload",
+      });
+    }
+  });
 
 export type NotificationDashboardItem = z.infer<typeof notificationDashboardItemSchema>;
 

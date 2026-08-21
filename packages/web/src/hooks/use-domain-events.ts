@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { activityKeys, commentKeys, issueKeys, projectKeys, workspaceKeys, cycleKeys, notificationKeys, scheduleTimelineKeys } from "@/lib/query-keys";
+import { workCaptureRegistry } from "@/lib/work-capture-lifecycle";
 
 /**
  * Connects to the workspace-scoped SSE endpoint for domain events
@@ -141,6 +142,21 @@ export function useDomainEvents(workspaceId: string | undefined): void {
     es.addEventListener("work_session.started", handleWorkSessionEvent);
     es.addEventListener("work_session.ended", handleWorkSessionEvent);
 
+    const handleCaptureLifecycleEvent = (event: MessageEvent) => {
+      try {
+        const frame: unknown = JSON.parse(event.data as string);
+        if (typeof frame === "object" && frame !== null && !Array.isArray(frame)) {
+          workCaptureRegistry.reconcileDomainEvent(frame);
+        }
+      } catch {
+        // Malformed and prior-scope frames cannot mutate the owner registry.
+      }
+    };
+
+    es.addEventListener("work_session.started", handleCaptureLifecycleEvent);
+    es.addEventListener("work_session.ended", handleCaptureLifecycleEvent);
+    es.addEventListener("work_capture.intent_effect_requested", handleCaptureLifecycleEvent);
+
     // ── Notification events ───────────────────────────────────────────
     // Forward-compatible: the API does not yet emit these events, but
     // when it does, the cache will be invalidated automatically.
@@ -169,6 +185,9 @@ export function useDomainEvents(workspaceId: string | undefined): void {
 
     // ── Cleanup ───────────────────────────────────────────────────────
     return () => {
+      es.removeEventListener("work_session.started", handleCaptureLifecycleEvent);
+      es.removeEventListener("work_session.ended", handleCaptureLifecycleEvent);
+      es.removeEventListener("work_capture.intent_effect_requested", handleCaptureLifecycleEvent);
       es.removeEventListener("ppm.forecast.updated", handleForecastEvent);
       es.close();
       eventSourceRef.current = null;

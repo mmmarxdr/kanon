@@ -102,6 +102,15 @@ describe("durable work-transition lifecycle", () => {
             source: "codex",
           },
         });
+        await tx.workCaptureIntent.create({
+          data: {
+            issueId: issue.id,
+            userId: member.userId,
+            memberId: member.id,
+            source: "codex",
+            state: "capturing",
+          },
+        });
         attemptedDeliveryKey = `work-session.started:v1:${session.id}`;
         await enqueueDomainEventTx(tx, {
           deliveryKey: attemptedDeliveryKey,
@@ -118,6 +127,7 @@ describe("durable work-transition lifecycle", () => {
     ).rejects.toThrow("forced transaction rollback");
 
     expect(await prisma.workSession.count({ where: { issueId: issue.id } })).toBe(0);
+    expect(await prisma.workCaptureIntent.count({ where: { issueId: issue.id } })).toBe(0);
     expect(
       await prisma.domainEventOutbox.count({
         where: { deliveryKey: attemptedDeliveryKey },
@@ -623,6 +633,15 @@ describe("durable work-transition lifecycle", () => {
         transitionLifecycleId: staged.lifecycle.id,
       },
     });
+    const intent = await prisma.workCaptureIntent.create({
+      data: {
+        issueId: issue.id,
+        userId: member.userId,
+        memberId: member.id,
+        source: "transition-listener",
+        state: "capturing",
+      },
+    });
 
     await captureTransitionClose(issue.key, closedAt);
 
@@ -634,6 +653,14 @@ describe("durable work-transition lifecycle", () => {
     expect(await prisma.workLog.findMany({ where: { issueId: issue.id } })).toMatchObject([
       { startedAt, endedAt: closedAt, durationS: 240 },
     ]);
+    expect(
+      await prisma.workCaptureIntent.findUniqueOrThrow({ where: { id: intent.id } })
+    ).toMatchObject({
+      state: "capturing",
+      epoch: intent.epoch,
+      leaseGeneration: 2,
+      closedAt: null,
+    });
   });
 
   it("keeps later explicit work adjacent to an older lifecycle interval", async () => {

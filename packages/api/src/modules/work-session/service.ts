@@ -16,6 +16,14 @@ import {
   resolveIssueCaptureContext,
 } from "../integrations/issue-tx.js";
 import type { StartWorkIssueMutationEffects } from "../issue/service.js";
+import {
+  closeCaptureIntentTx,
+  finalizeExpiredCaptureIntentTx,
+  materializeCaptureIntentTx,
+  pauseCaptureIntentTx,
+  rebaseCaptureIntentTx,
+  type WorkCaptureIntentFence,
+} from "./capture-intent.js";
 
 /** Sessions with lastHeartbeat older than this are considered expired. */
 export const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -24,8 +32,49 @@ export const SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const MIN_WORKLOG_DURATION_S = 1;
 const SESSION_MUTATION_RETRIES = 3;
 const HISTORICAL_TRANSITION_SOURCE_PREFIX = "historical-transition:";
+const IMPLICIT_CAPTURE_OWNER_ID = "00000000-0000-4000-8000-000000000001";
 
 class RetrySessionMutation extends Error {}
+
+async function renewImplicitCaptureOwnerTx(
+  tx: Prisma.TransactionClient,
+  intent: { id: string; epoch: string; leaseGeneration: number }
+): Promise<void> {
+  await tx.$queryRaw`
+    INSERT INTO "work_capture_owner_leases" (
+      "intent_id", "owner_id", "epoch", "lease_generation", "owner_kind",
+      "first_seen_at", "last_seen_at", "expires_at"
+    ) VALUES (
+      ${intent.id}::uuid,
+      ${IMPLICIT_CAPTURE_OWNER_ID}::uuid,
+      ${intent.epoch}::uuid,
+      ${intent.leaseGeneration},
+      'implicit'::"WorkCaptureOwnerKind",
+      CURRENT_TIMESTAMP,
+      CURRENT_TIMESTAMP,
+      CURRENT_TIMESTAMP + INTERVAL '5 minutes'
+    )
+    ON CONFLICT ("intent_id", "owner_id") DO UPDATE SET
+      "epoch" = EXCLUDED."epoch",
+      "lease_generation" = EXCLUDED."lease_generation",
+      "owner_kind" = EXCLUDED."owner_kind",
+      "last_seen_at" = CURRENT_TIMESTAMP,
+      "expires_at" = CURRENT_TIMESTAMP + INTERVAL '5 minutes'
+    RETURNING "id"
+  `;
+}
+
+async function clearCaptureOwnersTx(
+  tx: Prisma.TransactionClient,
+  intent: { id: string } | null
+): Promise<void> {
+  if (!intent) return;
+  await tx.$queryRaw`
+    DELETE FROM "work_capture_owner_leases"
+    WHERE "intent_id" = ${intent.id}::uuid
+    RETURNING "id"
+  `;
+}
 
 function isHistoricalTransitionSession(session: { source: string }): boolean {
   return session.source.startsWith(HISTORICAL_TRANSITION_SOURCE_PREFIX);
@@ -57,6 +106,7 @@ type FinalizedWindow = {
   endedAt: Date;
   durationS: number;
   reason: "expired" | "stopped";
+  captureIntent?: WorkCaptureIntentFence;
   closedInterruptions: ClosedInterruption[];
 };
 
@@ -71,12 +121,14 @@ type SessionWindowResult = {
     interruptedIssueId: string;
     memberId: string;
   }>;
+  resumedInterruptions?: ClosedInterruption[];
 };
 
-type WorkSessionStartedEventContext = {
+export type WorkSessionStartedEventContext = {
   issueKey: string;
   workspaceId: string;
   autoAssigned: boolean;
+  captureIntent?: WorkCaptureIntentFence;
 };
 
 function workSessionStartedDeliveryKey(sessionId: string): string {
@@ -87,7 +139,7 @@ export function workSessionLaneKey(issueId: string, userId: string): string {
   return `work-session:${issueId}:${userId}`;
 }
 
-async function enqueueWorkSessionStartedTx(
+export async function enqueueWorkSessionStartedTx(
   tx: Prisma.TransactionClient,
   session: WorkSession,
   context: WorkSessionStartedEventContext
@@ -107,6 +159,7 @@ async function enqueueWorkSessionStartedTx(
         userId: session.userId,
         source: session.source,
         autoAssigned: context.autoAssigned,
+        ...(context.captureIntent ? { captureIntent: context.captureIntent } : {}),
       },
     },
   });
@@ -116,15 +169,26 @@ async function enqueueWorkSessionStartedTx(
 function isRetryableSessionMutation(err: unknown): boolean {
   if (err instanceof RetrySessionMutation) return true;
   if (!err || typeof err !== "object") return false;
-  return ["P2002", "P2034"].includes((err as { code?: string }).code ?? "");
+  return (
+    ["P2002", "P2034"].includes((err as { code?: string }).code ?? "") ||
+    isPostgresSerializationFailure(err)
+  );
+}
+
+function isPostgresSerializationFailure(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const candidate = err as { code?: unknown; meta?: unknown };
+  if (candidate.code !== "P2010" || !candidate.meta || typeof candidate.meta !== "object") {
+    return false;
+  }
+  return (candidate.meta as { code?: unknown }).code === "40001";
 }
 
 function isRetryableTransactionConflict(err: unknown): boolean {
   if (err instanceof RetrySessionMutation) return true;
   return (
-    !!err &&
-    typeof err === "object" &&
-    (err as { code?: string }).code === "P2034"
+    (!!err && typeof err === "object" && (err as { code?: string }).code === "P2034") ||
+    isPostgresSerializationFailure(err)
   );
 }
 
@@ -184,424 +248,468 @@ async function openOrRefreshSessionWindow(input: {
   heartbeatAdoption?: boolean;
   explicitStart?: boolean;
   startEvent?: WorkSessionStartedEventContext;
+  deferCaptureIntentMaterialization?: boolean;
+  endedCaptureIntent?: WorkCaptureIntentFence;
 }): Promise<SessionWindowResult> {
   let heartbeatObservedGeneration = false;
-  const mutate = async (
-    tx: Prisma.TransactionClient,
-  ): Promise<SessionWindowResult> => {
-          let fallbackIdentity = input.createIdentity;
-          // Serialize the lifecycle decision with issue-state transitions. A
-          // transition updates this same row, so either heartbeat owns the lock
-          // first (and the later close observes its result) or heartbeat waits
-          // and observes the closed state. A plain Serializable read is not
-          // sufficient because the close listener runs after the state commit.
-          const lockedIssues = input.lockedIssueState
-            ? [{ state: input.lockedIssueState }]
-            : await tx.$queryRaw<Array<{ state: string }>>`
+  const mutate = async (tx: Prisma.TransactionClient): Promise<SessionWindowResult> => {
+    let fallbackIdentity = input.createIdentity;
+    // Serialize the lifecycle decision with issue-state transitions. A
+    // transition updates this same row, so either heartbeat owns the lock
+    // first (and the later close observes its result) or heartbeat waits
+    // and observes the closed state. A plain Serializable read is not
+    // sufficient because the close listener runs after the state commit.
+    const lockedIssues = input.lockedIssueState
+      ? [{ state: input.lockedIssueState }]
+      : await tx.$queryRaw<Array<{ state: string }>>`
                 SELECT "state"::text AS "state"
                 FROM "issues"
                 WHERE "id" = ${input.issueId}::uuid
                 FOR UPDATE
               `;
-          const issueIsActive =
-            lockedIssues[0]?.state === "analysis" ||
-            lockedIssues[0]?.state === "in_progress";
+    const issueIsActive =
+      lockedIssues[0]?.state === "analysis" || lockedIssues[0]?.state === "in_progress";
 
-          let transitionLifecycleId: string | undefined;
-          if (input.requiredOpenLifecycleIdentity) {
-            const lifecycle = await tx.workTransitionLifecycle.findUnique({
-              where: { startIdentity: input.requiredOpenLifecycleIdentity },
-              select: { id: true, closeIdentity: true, workLogId: true },
-            });
-            // The start signal is persisted before startWork. If its durable
-            // row has already paired with a close (possibly in another
-            // process), opening a WorkSession would resurrect a completed
-            // generation.
-            if (!lifecycle || lifecycle.closeIdentity || lifecycle.workLogId) {
-              return { session: null, finalized: null };
-            }
-            transitionLifecycleId = lifecycle.id;
-          }
+    let transitionLifecycleId: string | undefined;
+    if (input.requiredOpenLifecycleIdentity) {
+      const lifecycle = await tx.workTransitionLifecycle.findUnique({
+        where: { startIdentity: input.requiredOpenLifecycleIdentity },
+        select: { id: true, closeIdentity: true, workLogId: true },
+      });
+      // The start signal is persisted before startWork. If its durable
+      // row has already paired with a close (possibly in another
+      // process), opening a WorkSession would resurrect a completed
+      // generation.
+      if (!lifecycle || lifecycle.closeIdentity || lifecycle.workLogId) {
+        return { session: null, finalized: null };
+      }
+      transitionLifecycleId = lifecycle.id;
+    }
 
-          if (
-            issueIsActive &&
-            input.heartbeatAdoption &&
-            input.createIdentity
-          ) {
-            const openInterruption = await tx.interruption.findFirst({
-              where: {
-                interruptedIssueId: input.issueId,
-                memberId: input.createIdentity.memberId,
-                endedAt: null,
-              },
-              select: { id: true },
-            });
-            if (openInterruption) {
-              throw new AppError(
-                409,
-                "CAPTURE_PAUSED",
-                `Capture for ${input.issueKey ?? "this issue"} is paused by an open interruption`,
-              );
-            }
-          }
+    if (issueIsActive && input.heartbeatAdoption && input.createIdentity) {
+      const openInterruption = await tx.interruption.findFirst({
+        where: {
+          interruptedIssueId: input.issueId,
+          memberId: input.createIdentity.memberId,
+          endedAt: null,
+        },
+        select: { id: true },
+      });
+      if (openInterruption) {
+        throw new AppError(
+          409,
+          "CAPTURE_PAUSED",
+          `Capture for ${input.issueKey ?? "this issue"} is paused by an open interruption`
+        );
+      }
+    }
 
-          if (input.createIdentity && !input.ownershipAlreadyChecked) {
-            // Once the issue row is locked, this timestamp closes the effective
-            // unbounded interval: earlier owners are visible, while later starts
-            // must wait and will observe this session before they can commit.
-            const ownershipIntervalEnd = input.ownershipIntervalEnd
-              ? new Date()
-              : undefined;
-            const foreignOwner = await findForeignOwnerAtBoundary(
-              tx,
-              input.issueId,
-              input.userId,
-              input.now,
-              ownershipIntervalEnd,
-            );
-            if (foreignOwner) {
-              if (input.onConflict === "skip") {
-                return { session: null, finalized: null };
-              }
-              throw new AppError(
-                409,
-                "ISSUE_BUSY",
-                `${foreignOwner.username} is already working on ${input.issueKey ?? "this issue"}. They must stop (or their session must expire) before you can start — this is a hand-off.`,
-              );
-            }
-          }
+    if (input.createIdentity && !input.ownershipAlreadyChecked) {
+      // Once the issue row is locked, this timestamp closes the effective
+      // unbounded interval: earlier owners are visible, while later starts
+      // must wait and will observe this session before they can commit.
+      const ownershipIntervalEnd = input.ownershipIntervalEnd ? new Date() : undefined;
+      const foreignOwner = await findForeignOwnerAtBoundary(
+        tx,
+        input.issueId,
+        input.userId,
+        input.now,
+        ownershipIntervalEnd
+      );
+      if (foreignOwner) {
+        if (input.onConflict === "skip") {
+          return { session: null, finalized: null };
+        }
+        throw new AppError(
+          409,
+          "ISSUE_BUSY",
+          `${foreignOwner.username} is already working on ${input.issueKey ?? "this issue"}. They must stop (or their session must expire) before you can start — this is a hand-off.`
+        );
+      }
+    }
 
-          const existing = await tx.workSession.findUnique({
+    const existing = await tx.workSession.findUnique({
+      where: {
+        userId_issueId: { userId: input.userId, issueId: input.issueId },
+      },
+    });
+
+    if (input.heartbeatAdoption) {
+      if (existing) {
+        heartbeatObservedGeneration = true;
+      } else if (heartbeatObservedGeneration) {
+        // A retry that loses the observed generation to an explicit stop
+        // must not reinterpret that disappearance as missing-session adoption.
+        fallbackIdentity = undefined;
+      }
+    }
+
+    if (existing) {
+      fallbackIdentity ??= {
+        memberId: existing.memberId,
+        source: existing.source,
+      };
+    }
+
+    // A delayed transition start has no durable generation identity of its
+    // own. If another same-user generation already began later, refreshing
+    // or backdating it would bridge an unknown close/rework boundary.
+    if (
+      existing &&
+      input.authoritativeStartedAt &&
+      existing.startedAt.getTime() > input.authoritativeStartedAt.getTime()
+    ) {
+      return { session: null, finalized: null };
+    }
+
+    const existingIsHistorical = !!existing && isHistoricalTransitionSession(existing);
+
+    // Historical transition evidence is an event-time marker, not a live
+    // renewable lease. Only an explicit start may finalize that old
+    // generation and open a distinct current generation.
+    if (existingIsHistorical && (!input.createIdentity || input.heartbeatAdoption)) {
+      return { session: null, finalized: null };
+    }
+
+    if (!issueIsActive && !existing) {
+      return { session: null, finalized: null };
+    }
+
+    if (!issueIsActive && existing && input.now.getTime() < existing.lastHeartbeat.getTime()) {
+      return { session: null, finalized: null };
+    }
+
+    const captured = existing ? captureThroughLease(existing, input.now) : null;
+    const mustFinalize = existing && (!issueIsActive || captured!.expired || existingIsHistorical);
+
+    if (issueIsActive && fallbackIdentity && !input.deferCaptureIntentMaterialization) {
+      const materializedIntent = await materializeCaptureIntentTx(tx, {
+        userId: input.userId,
+        issueId: input.issueId,
+        identity: {
+          memberId: fallbackIdentity.memberId,
+          source: input.sourceOverride ?? fallbackIdentity.source,
+        },
+        existingSession: Boolean(existing && !mustFinalize),
+        explicitStart: input.explicitStart === true,
+      });
+      if (materializedIntent && (input.explicitStart || input.heartbeatAdoption)) {
+        await renewImplicitCaptureOwnerTx(tx, materializedIntent);
+      }
+    }
+
+    const finish = async (
+      session: WorkSession | null,
+      finalized: FinalizedWindow | null
+    ): Promise<SessionWindowResult> => {
+      if (!session) return { session, finalized };
+
+      let resumedInterruptions: ClosedInterruption[] = [];
+      if (input.explicitStart) {
+        resumedInterruptions = await tx.interruption.findMany({
+          where: {
+            interruptedIssueId: input.issueId,
+            memberId: session.memberId,
+            endedAt: null,
+          },
+          select: {
+            id: true,
+            incidentIssueId: true,
+            interruptedIssueId: true,
+            memberId: true,
+          },
+        });
+        if (resumedInterruptions.length > 0) {
+          await tx.interruption.updateMany({
             where: {
-              userId_issueId: { userId: input.userId, issueId: input.issueId },
+              interruptedIssueId: input.issueId,
+              memberId: session.memberId,
+              endedAt: null,
             },
+            data: { endedAt: input.now },
           });
+        }
+      }
 
-          if (input.heartbeatAdoption) {
-            if (existing) {
-              heartbeatObservedGeneration = true;
-            } else if (heartbeatObservedGeneration) {
-              // A retry that loses the observed generation to an explicit stop
-              // must not reinterpret that disappearance as missing-session adoption.
-              fallbackIdentity = undefined;
-            }
-          }
+      if (!input.incidentIssueId || !input.displaceSiblings) {
+        return { session, finalized, resumedInterruptions };
+      }
 
-          if (existing) {
-            fallbackIdentity ??= {
-              memberId: existing.memberId,
-              source: existing.source,
-            };
-          }
+      const displacedRows = await tx.workSession.findMany({
+        where: {
+          userId: input.userId,
+          memberId: session.memberId,
+          issueId: { not: input.issueId },
+          lastHeartbeat: {
+            gt: new Date(input.now.getTime() - SESSION_TTL_MS),
+          },
+          startedAt: { lte: input.now },
+          NOT: {
+            source: { startsWith: HISTORICAL_TRANSITION_SOURCE_PREFIX },
+          },
+        },
+        include: { issue: { select: { key: true, type: true } } },
+      });
+      const displaced: FinalizedWindow[] = [];
+      const openedInterruptions: NonNullable<SessionWindowResult["openedInterruptions"]> = [];
 
-          // A delayed transition start has no durable generation identity of its
-          // own. If another same-user generation already began later, refreshing
-          // or backdating it would bridge an unknown close/rework boundary.
-          if (
-            existing &&
-            input.authoritativeStartedAt &&
-            existing.startedAt.getTime() >
-              input.authoritativeStartedAt.getTime()
-          ) {
-            return { session: null, finalized: null };
-          }
+      for (const row of displacedRows) {
+        if (isHistoricalTransitionSession(row)) continue;
 
-          const existingIsHistorical =
-            !!existing && isHistoricalTransitionSession(existing);
+        // A later generation belongs to later work even if a stale or
+        // mocked query result violates the predicate above.
+        if (row.startedAt.getTime() > input.now.getTime()) continue;
 
-          // Historical transition evidence is an event-time marker, not a live
-          // renewable lease. Only an explicit start may finalize that old
-          // generation and open a distinct current generation.
-          if (
-            existingIsHistorical &&
-            (!input.createIdentity || input.heartbeatAdoption)
-          ) {
-            return { session: null, finalized: null };
-          }
+        const capturedDisplacement = captureThroughLease(row, input.now);
+        const claimed = await tx.workSession.deleteMany({
+          where: { id: row.id, lastHeartbeat: row.lastHeartbeat },
+        });
+        if (claimed.count !== 1) throw new RetrySessionMutation();
 
-          if (!issueIsActive && !existing) {
-            return { session: null, finalized: null };
-          }
-
-          if (
-            !issueIsActive &&
-            existing &&
-            input.now.getTime() < existing.lastHeartbeat.getTime()
-          ) {
-            return { session: null, finalized: null };
-          }
-
-          const captured = existing ? captureThroughLease(existing, input.now) : null;
-          const mustFinalize =
-            existing && (!issueIsActive || captured!.expired || existingIsHistorical);
-
-          const finish = async (
-            session: WorkSession | null,
-            finalized: FinalizedWindow | null,
-          ): Promise<SessionWindowResult> => {
-            if (!session || !input.incidentIssueId || !input.displaceSiblings) {
-              return { session, finalized };
-            }
-
-            const displacedRows = await tx.workSession.findMany({
-              where: {
-                userId: input.userId,
-                memberId: session.memberId,
-                issueId: { not: input.issueId },
-                lastHeartbeat: {
-                  gt: new Date(input.now.getTime() - SESSION_TTL_MS),
-                },
-                startedAt: { lte: input.now },
-                NOT: {
-                  source: { startsWith: HISTORICAL_TRANSITION_SOURCE_PREFIX },
-                },
-              },
-              include: { issue: { select: { key: true, type: true } } },
-            });
-            const displaced: FinalizedWindow[] = [];
-            const openedInterruptions: NonNullable<
-              SessionWindowResult["openedInterruptions"]
-            > = [];
-
-            for (const row of displacedRows) {
-              if (isHistoricalTransitionSession(row)) continue;
-
-              // A later generation belongs to later work even if a stale or
-              // mocked query result violates the predicate above.
-              if (row.startedAt.getTime() > input.now.getTime()) continue;
-
-              const capturedDisplacement = captureThroughLease(row, input.now);
-              const claimed = await tx.workSession.deleteMany({
-                where: { id: row.id, lastHeartbeat: row.lastHeartbeat },
-              });
-              if (claimed.count !== 1) throw new RetrySessionMutation();
-
-              let workLog: { id: string; durationS: number } | null = null;
-              const displacedTransitionLifecycleId = row.transitionLifecycleId;
-              if (capturedDisplacement.durationS >= MIN_WORKLOG_DURATION_S) {
-                const created = await tx.workLog.create({
-                  data: {
-                    startedAt: row.startedAt,
-                    endedAt: capturedDisplacement.endedAt,
-                    durationS: capturedDisplacement.durationS,
-                    reason: "stopped",
-                    via: input.via ?? normalizeVia(row.source),
-                    issueId: row.issueId,
-                    memberId: row.memberId,
-                  },
-                });
-                workLog = { id: created.id, durationS: capturedDisplacement.durationS };
-                if (displacedTransitionLifecycleId) {
-                  const linked = await tx.workTransitionLifecycle.updateMany({
-                    where: {
-                      id: displacedTransitionLifecycleId,
-                      workLogId: null,
-                    },
-                    data: { workLogId: created.id },
-                  });
-                  if (linked.count !== 1) throw new RetrySessionMutation();
-                }
-              }
-
-              let closedInterruptions: ClosedInterruption[] = [];
-              if (row.issue.type === "incident") {
-                closedInterruptions = await tx.interruption.findMany({
-                  where: {
-                    incidentIssueId: row.issueId,
-                    memberId: row.memberId,
-                    endedAt: null,
-                    startedAt: { lte: input.now },
-                  },
-                  select: {
-                    id: true,
-                    incidentIssueId: true,
-                    interruptedIssueId: true,
-                    memberId: true,
-                  },
-                });
-                await tx.interruption.updateMany({
-                  where: {
-                    incidentIssueId: row.issueId,
-                    memberId: row.memberId,
-                    endedAt: null,
-                    startedAt: { lte: input.now },
-                  },
-                  data: { endedAt: input.now },
-                });
-              }
-
-              if (displacedTransitionLifecycleId && workLog) {
-                await enqueueTransitionLifecycleEffectsTx(tx, displacedTransitionLifecycleId);
-              }
-
-              const interruption = await tx.interruption.create({
-                data: {
-                  incidentIssueId: input.incidentIssueId,
-                  interruptedIssueId: row.issueId,
-                  memberId: row.memberId,
-                  via: "session_switch",
-                  startedAt: input.now,
-                },
-              });
-              displaced.push({
-                session: row,
-                workLog,
-                transitionLifecycleId: displacedTransitionLifecycleId,
-                endedAt: capturedDisplacement.endedAt,
-                durationS: capturedDisplacement.durationS,
-                reason: "stopped",
-                closedInterruptions,
-              });
-              openedInterruptions.push({
-                id: interruption.id,
-                incidentIssueId: input.incidentIssueId,
-                interruptedIssueId: row.issueId,
-                memberId: row.memberId,
-              });
-            }
-
-            return { session, finalized, displaced, openedInterruptions };
-          };
-
-          if (!mustFinalize) {
-            if (!existing && !fallbackIdentity) {
-              return { session: null, finalized: null };
-            }
-
-            const identity = fallbackIdentity!;
-            const heartbeatAt =
-              existing && existing.lastHeartbeat.getTime() > input.now.getTime()
-                ? existing.lastHeartbeat
-                : input.now;
-            const startedAt =
-              existing &&
-              input.authoritativeStartedAt &&
-              existing.startedAt.getTime() > input.authoritativeStartedAt.getTime()
-                ? input.authoritativeStartedAt
-                : undefined;
-            const session = await tx.workSession.upsert({
-              where: {
-                userId_issueId: { userId: input.userId, issueId: input.issueId },
-              },
-              create: {
-                userId: input.userId,
-                issueId: input.issueId,
-                memberId: identity.memberId,
-                source: input.sourceOverride ?? identity.source,
-                startedAt: input.now,
-                lastHeartbeat: input.now,
-                ...(transitionLifecycleId ? { transitionLifecycleId } : {}),
-              },
-              update: {
-                ...(startedAt ? { startedAt } : {}),
-                lastHeartbeat: heartbeatAt,
-                ...(input.sourceOverride ? { source: input.sourceOverride } : {}),
-                ...(transitionLifecycleId ? { transitionLifecycleId } : {}),
-              },
-            });
-            const result = await finish(session, null);
-            if (!input.startEvent) return result;
-            return {
-              ...result,
-              startDeliveryKey: await enqueueWorkSessionStartedTx(tx, session, input.startEvent),
-            };
-          }
-
-          const { endedAt, durationS, expired } = captured!;
-          const reason = expired ? "expired" : "stopped";
-          const claimed = await tx.workSession.deleteMany({
-            where: { id: existing.id, lastHeartbeat: existing.lastHeartbeat },
-          });
-          if (claimed.count !== 1) throw new RetrySessionMutation();
-
-          let workLog: { id: string; durationS: number } | null = null;
-          const finalizedTransitionLifecycleId = existing.transitionLifecycleId;
-          if (durationS >= MIN_WORKLOG_DURATION_S) {
-            const created = await tx.workLog.create({
-              data: {
-                startedAt: existing.startedAt,
-                endedAt,
-                durationS,
-                reason,
-                via: input.via ?? normalizeVia(existing.source),
-                issueId: existing.issueId,
-                memberId: existing.memberId,
-              },
-            });
-            workLog = { id: created.id, durationS };
-            if (finalizedTransitionLifecycleId) {
-              const linked = await tx.workTransitionLifecycle.updateMany({
-                where: { id: finalizedTransitionLifecycleId, workLogId: null },
-                data: { workLogId: created.id },
-              });
-              if (linked.count !== 1) throw new RetrySessionMutation();
-            }
-          }
-
-          let closedInterruptions: ClosedInterruption[] = [];
-          if (input.incidentIssueId) {
-            closedInterruptions = await tx.interruption.findMany({
-              where: {
-                incidentIssueId: input.incidentIssueId,
-                memberId: existing.memberId,
-                endedAt: null,
-                startedAt: { lte: endedAt },
-              },
-              select: {
-                id: true,
-                incidentIssueId: true,
-                interruptedIssueId: true,
-                memberId: true,
-              },
-            });
-            await tx.interruption.updateMany({
-              where: {
-                incidentIssueId: input.incidentIssueId,
-                memberId: existing.memberId,
-                endedAt: null,
-                startedAt: { lte: endedAt },
-              },
-              data: { endedAt },
-            });
-          }
-
-          if (finalizedTransitionLifecycleId && workLog) {
-            await enqueueTransitionLifecycleEffectsTx(tx, finalizedTransitionLifecycleId);
-          }
-
-          const finalized: FinalizedWindow = {
-            session: existing,
-            workLog,
-            transitionLifecycleId: finalizedTransitionLifecycleId,
-            endedAt,
-            durationS,
-            reason,
-            closedInterruptions,
-          };
-
-          if (!issueIsActive) {
-            return finish(null, finalized);
-          }
-
-          const identity = input.createIdentity ?? fallbackIdentity!;
-          const session = await tx.workSession.create({
+        let workLog: { id: string; durationS: number } | null = null;
+        const displacedTransitionLifecycleId = row.transitionLifecycleId;
+        if (capturedDisplacement.durationS >= MIN_WORKLOG_DURATION_S) {
+          const created = await tx.workLog.create({
             data: {
-              userId: input.userId,
-              issueId: input.issueId,
-              memberId: identity.memberId,
-              source: input.sourceOverride ?? identity.source,
-              startedAt: input.now,
-              lastHeartbeat: input.now,
-              ...(transitionLifecycleId ? { transitionLifecycleId } : {}),
+              startedAt: row.startedAt,
+              endedAt: capturedDisplacement.endedAt,
+              durationS: capturedDisplacement.durationS,
+              reason: "stopped",
+              via: input.via ?? normalizeVia(row.source),
+              issueId: row.issueId,
+              memberId: row.memberId,
             },
           });
+          workLog = { id: created.id, durationS: capturedDisplacement.durationS };
+          if (displacedTransitionLifecycleId) {
+            const linked = await tx.workTransitionLifecycle.updateMany({
+              where: {
+                id: displacedTransitionLifecycleId,
+                workLogId: null,
+              },
+              data: { workLogId: created.id },
+            });
+            if (linked.count !== 1) throw new RetrySessionMutation();
+          }
+        }
 
-          const result = await finish(session, finalized);
-          if (!input.startEvent) return result;
-          return {
-            ...result,
-            startDeliveryKey: await enqueueWorkSessionStartedTx(tx, session, input.startEvent),
-          };
+        let closedInterruptions: ClosedInterruption[] = [];
+        if (row.issue.type === "incident") {
+          closedInterruptions = await tx.interruption.findMany({
+            where: {
+              incidentIssueId: row.issueId,
+              memberId: row.memberId,
+              endedAt: null,
+              startedAt: { lte: input.now },
+            },
+            select: {
+              id: true,
+              incidentIssueId: true,
+              interruptedIssueId: true,
+              memberId: true,
+            },
+          });
+          await tx.interruption.updateMany({
+            where: {
+              incidentIssueId: row.issueId,
+              memberId: row.memberId,
+              endedAt: null,
+              startedAt: { lte: input.now },
+            },
+            data: { endedAt: input.now },
+          });
+        }
+
+        if (displacedTransitionLifecycleId && workLog) {
+          await enqueueTransitionLifecycleEffectsTx(tx, displacedTransitionLifecycleId);
+        }
+
+        const interruption = await tx.interruption.create({
+          data: {
+            incidentIssueId: input.incidentIssueId,
+            interruptedIssueId: row.issueId,
+            memberId: row.memberId,
+            via: "session_switch",
+            startedAt: input.now,
+          },
+        });
+        await pauseCaptureIntentTx(tx, {
+          userId: row.userId,
+          issueId: row.issueId,
+          memberId: row.memberId,
+        });
+        displaced.push({
+          session: row,
+          workLog,
+          transitionLifecycleId: displacedTransitionLifecycleId,
+          endedAt: capturedDisplacement.endedAt,
+          durationS: capturedDisplacement.durationS,
+          reason: "stopped",
+          closedInterruptions,
+        });
+        openedInterruptions.push({
+          id: interruption.id,
+          incidentIssueId: input.incidentIssueId,
+          interruptedIssueId: row.issueId,
+          memberId: row.memberId,
+        });
+      }
+
+      return {
+        session,
+        finalized,
+        displaced,
+        openedInterruptions,
+        resumedInterruptions,
+      };
+    };
+
+    if (!mustFinalize) {
+      if (!existing && !fallbackIdentity) {
+        return { session: null, finalized: null };
+      }
+
+      const identity = fallbackIdentity!;
+      const heartbeatAt =
+        existing && existing.lastHeartbeat.getTime() > input.now.getTime()
+          ? existing.lastHeartbeat
+          : input.now;
+      const startedAt =
+        existing &&
+        input.authoritativeStartedAt &&
+        existing.startedAt.getTime() > input.authoritativeStartedAt.getTime()
+          ? input.authoritativeStartedAt
+          : undefined;
+      const session = await tx.workSession.upsert({
+        where: {
+          userId_issueId: { userId: input.userId, issueId: input.issueId },
+        },
+        create: {
+          userId: input.userId,
+          issueId: input.issueId,
+          memberId: identity.memberId,
+          source: input.sourceOverride ?? identity.source,
+          startedAt: input.now,
+          lastHeartbeat: input.now,
+          ...(transitionLifecycleId ? { transitionLifecycleId } : {}),
+        },
+        update: {
+          ...(startedAt ? { startedAt } : {}),
+          lastHeartbeat: heartbeatAt,
+          ...(input.sourceOverride ? { source: input.sourceOverride } : {}),
+          ...(transitionLifecycleId ? { transitionLifecycleId } : {}),
+        },
+      });
+      const result = await finish(session, null);
+      if (!input.startEvent) return result;
+      return {
+        ...result,
+        startDeliveryKey: await enqueueWorkSessionStartedTx(tx, session, input.startEvent),
+      };
+    }
+
+    const { endedAt, durationS, expired } = captured!;
+    const reason = expired ? "expired" : "stopped";
+    const captureIntent = reason === "expired" ? input.endedCaptureIntent : undefined;
+    const claimed = await tx.workSession.deleteMany({
+      where: { id: existing.id, lastHeartbeat: existing.lastHeartbeat },
+    });
+    if (claimed.count !== 1) throw new RetrySessionMutation();
+
+    let workLog: { id: string; durationS: number } | null = null;
+    const finalizedTransitionLifecycleId = existing.transitionLifecycleId;
+    if (durationS >= MIN_WORKLOG_DURATION_S) {
+      const created = await tx.workLog.create({
+        data: {
+          startedAt: existing.startedAt,
+          endedAt,
+          durationS,
+          reason,
+          via: input.via ?? normalizeVia(existing.source),
+          issueId: existing.issueId,
+          memberId: existing.memberId,
+        },
+      });
+      workLog = { id: created.id, durationS };
+      if (finalizedTransitionLifecycleId) {
+        const linked = await tx.workTransitionLifecycle.updateMany({
+          where: { id: finalizedTransitionLifecycleId, workLogId: null },
+          data: { workLogId: created.id },
+        });
+        if (linked.count !== 1) throw new RetrySessionMutation();
+      }
+    }
+
+    let closedInterruptions: ClosedInterruption[] = [];
+    if (input.incidentIssueId) {
+      closedInterruptions = await tx.interruption.findMany({
+        where: {
+          incidentIssueId: input.incidentIssueId,
+          memberId: existing.memberId,
+          endedAt: null,
+          startedAt: { lte: endedAt },
+        },
+        select: {
+          id: true,
+          incidentIssueId: true,
+          interruptedIssueId: true,
+          memberId: true,
+        },
+      });
+      await tx.interruption.updateMany({
+        where: {
+          incidentIssueId: input.incidentIssueId,
+          memberId: existing.memberId,
+          endedAt: null,
+          startedAt: { lte: endedAt },
+        },
+        data: { endedAt },
+      });
+    }
+
+    if (finalizedTransitionLifecycleId && workLog) {
+      await enqueueTransitionLifecycleEffectsTx(tx, finalizedTransitionLifecycleId, captureIntent);
+    }
+
+    const finalized: FinalizedWindow = {
+      session: existing,
+      workLog,
+      transitionLifecycleId: finalizedTransitionLifecycleId,
+      endedAt,
+      durationS,
+      reason,
+      captureIntent,
+      closedInterruptions,
+    };
+
+    if (!issueIsActive) {
+      const closedIntent = await closeCaptureIntentTx(tx, {
+        userId: input.userId,
+        issueId: input.issueId,
+        closedAt: input.now,
+      });
+      await clearCaptureOwnersTx(tx, closedIntent);
+      return finish(null, finalized);
+    }
+
+    const identity = input.createIdentity ?? fallbackIdentity!;
+    const session = await tx.workSession.create({
+      data: {
+        userId: input.userId,
+        issueId: input.issueId,
+        memberId: identity.memberId,
+        source: input.sourceOverride ?? identity.source,
+        startedAt: input.now,
+        lastHeartbeat: input.now,
+        ...(transitionLifecycleId ? { transitionLifecycleId } : {}),
+      },
+    });
+    const result = await finish(session, finalized);
+    if (!input.startEvent) return result;
+    return {
+      ...result,
+      startDeliveryKey: await enqueueWorkSessionStartedTx(tx, session, input.startEvent),
+    };
   };
 
   if (input.transactionClient) {
@@ -625,6 +733,167 @@ async function openOrRefreshSessionWindow(input: {
   }
 
   throw new AppError(409, "SESSION_CONFLICT", "Work session changed concurrently");
+}
+
+/** Transaction-level activity primitive used by durable intent-effect delivery. */
+export async function applyWorkCaptureIntentActivityTx(
+  tx: Prisma.TransactionClient,
+  input: {
+    commandId: string;
+    issueId: string;
+    issueKey: string;
+    issueState: IssueState;
+    issueType: string;
+    workspaceId: string;
+    userId: string;
+    memberId: string;
+    source: string;
+    observedAt: Date;
+    captureIntent: WorkCaptureIntentFence;
+  }
+): Promise<{ applied: false } | { applied: true; opensLease: boolean; session: WorkSession }> {
+  const existingSession = await tx.workSession.findUnique({
+    where: { userId_issueId: { userId: input.userId, issueId: input.issueId } },
+  });
+  const result = await openOrRefreshSessionWindow({
+    issueId: input.issueId,
+    issueKey: input.issueKey,
+    userId: input.userId,
+    now: input.observedAt,
+    authoritativeStartedAt: input.observedAt,
+    createIdentity: { memberId: input.memberId, source: input.source },
+    sourceOverride: input.source,
+    incidentIssueId: input.issueType === "incident" ? input.issueId : undefined,
+    displaceSiblings: input.issueType === "incident",
+    lockedIssueState: input.issueState,
+    transactionClient: tx,
+    onConflict: "skip",
+    explicitStart: false,
+    deferCaptureIntentMaterialization: true,
+    endedCaptureIntent: input.captureIntent,
+  });
+  if (result.finalized && !result.finalized.transitionLifecycleId) {
+    await enqueueWorkCaptureCommandTerminalEffectsTx(tx, {
+      commandId: input.commandId,
+      laneKey: workSessionLaneKey(input.issueId, input.userId),
+      issueKey: input.issueKey,
+      issueId: input.issueId,
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+      memberId: result.finalized.session.memberId,
+      workLog: result.finalized.workLog,
+      durationS: result.finalized.durationS,
+      reason: result.finalized.reason,
+      captureIntent: result.finalized.captureIntent,
+      closedInterruptions: result.finalized.closedInterruptions,
+    });
+  }
+  if (!result.session) return { applied: false };
+  return {
+    applied: true,
+    opensLease: !existingSession || result.finalized !== null,
+    session: result.session,
+  };
+}
+
+/**
+ * Transaction-level terminal primitive for durable intent effects. The caller
+ * owns the issue/intent locks and clears or advances the pending intent tuple.
+ */
+export async function applyWorkCaptureIntentTerminalTx(
+  tx: Prisma.TransactionClient,
+  input: {
+    commandId: string;
+    kind: "release" | "close";
+    issueId: string;
+    issueKey: string;
+    issueType: string;
+    workspaceId: string;
+    userId: string;
+    memberId: string;
+    source: string;
+    observedAt: Date;
+  }
+): Promise<void> {
+  const existing = await tx.workSession.findUnique({
+    where: { userId_issueId: { userId: input.userId, issueId: input.issueId } },
+  });
+  if (!existing) return;
+
+  const { endedAt, durationS, expired } = captureThroughLease(existing, input.observedAt);
+  const reason = expired ? "expired" : "stopped";
+  const claimed = await tx.workSession.deleteMany({
+    where: { id: existing.id, lastHeartbeat: existing.lastHeartbeat },
+  });
+  if (claimed.count !== 1) throw new RetrySessionMutation();
+
+  let workLog: { id: string; durationS: number } | null = null;
+  if (durationS >= MIN_WORKLOG_DURATION_S) {
+    const created = await tx.workLog.create({
+      data: {
+        startedAt: existing.startedAt,
+        endedAt,
+        durationS,
+        reason,
+        via: normalizeVia(input.source),
+        issueId: input.issueId,
+        memberId: input.memberId,
+      },
+    });
+    workLog = { id: created.id, durationS };
+    if (existing.transitionLifecycleId) {
+      const linked = await tx.workTransitionLifecycle.updateMany({
+        where: { id: existing.transitionLifecycleId, workLogId: null },
+        data: { workLogId: created.id },
+      });
+      if (linked.count !== 1) throw new RetrySessionMutation();
+    }
+  }
+
+  let closedInterruptions: ClosedInterruption[] = [];
+  if (input.issueType === "incident") {
+    closedInterruptions = await tx.interruption.findMany({
+      where: {
+        incidentIssueId: input.issueId,
+        memberId: input.memberId,
+        endedAt: null,
+        startedAt: { lte: endedAt },
+      },
+      select: {
+        id: true,
+        incidentIssueId: true,
+        interruptedIssueId: true,
+        memberId: true,
+      },
+    });
+    await tx.interruption.updateMany({
+      where: {
+        incidentIssueId: input.issueId,
+        memberId: input.memberId,
+        endedAt: null,
+        startedAt: { lte: endedAt },
+      },
+      data: { endedAt },
+    });
+  }
+
+  if (existing.transitionLifecycleId && workLog) {
+    await enqueueTransitionLifecycleEffectsTx(tx, existing.transitionLifecycleId);
+    return;
+  }
+  await enqueueWorkCaptureCommandTerminalEffectsTx(tx, {
+    commandId: input.commandId,
+    laneKey: workSessionLaneKey(input.issueId, input.userId),
+    issueKey: input.issueKey,
+    issueId: input.issueId,
+    workspaceId: input.workspaceId,
+    userId: input.userId,
+    memberId: input.memberId,
+    workLog,
+    durationS,
+    reason,
+    closedInterruptions,
+  });
 }
 
 async function emitFinalizedWindow(input: {
@@ -673,6 +942,7 @@ async function emitFinalizedWindow(input: {
         workLogId: finalized.workLog?.id ?? null,
         durationS: finalized.durationS,
         reason: finalized.reason,
+        ...(finalized.captureIntent ? { captureIntent: finalized.captureIntent } : {}),
       },
     });
   } catch {
@@ -1053,18 +1323,9 @@ export async function startWork(
     await publishDomainEventByDeliveryKey(windowResult.startDeliveryKey);
   }
 
-  // KAN-103: resume — (re)starting work on a previously-interrupted issue closes
-  // its still-open Interruption edge(s).
-  const openInterruptions = await prisma.interruption.findMany({
-    where: { interruptedIssueId: issue.id, memberId, endedAt: null },
-    select: { id: true, incidentIssueId: true, interruptedIssueId: true, memberId: true },
-  });
-  await prisma.interruption.updateMany({
-    where: { interruptedIssueId: issue.id, memberId, endedAt: null },
-    data: { endedAt: now },
-  });
-  // KAN-103 PR3: emit interruption.closed per closed row so forecast rebuilds.
-  for (const row of openInterruptions) {
+  // Interruption closure committed with the session and capture intent above;
+  // these are post-commit projections only.
+  for (const row of windowResult.resumedInterruptions ?? []) {
     try {
       eventBus.emit({
         type: "interruption.closed",
@@ -1133,7 +1394,6 @@ export async function heartbeat(
       ? {
           createIdentity: authenticatedIdentity,
           sourceOverride: authenticatedIdentity.source,
-          heartbeatAdoption: true,
           startEvent: {
             issueKey,
             workspaceId: issue.project.workspaceId,
@@ -1141,6 +1401,7 @@ export async function heartbeat(
           },
         }
       : {}),
+    heartbeatAdoption: Boolean(authenticatedIdentity),
     via,
     incidentIssueId: issue.type === "incident" ? issue.id : undefined,
     issueKey,
@@ -1203,8 +1464,7 @@ function transitionCloseIdentity(input: {
   ]);
 }
 
-type TransitionLifecycleRow =
-  Prisma.WorkTransitionLifecycleGetPayload<Record<string, never>>;
+type TransitionLifecycleRow = Prisma.WorkTransitionLifecycleGetPayload<Record<string, never>>;
 
 function lifecycleResult(row: TransitionLifecycleRow) {
   return {
@@ -1224,10 +1484,83 @@ function transitionLifecycleEffectDeliveryKey(
   return `work-transition-lifecycle:v1:${lifecycleId}:revision:${revision}:${effect}`;
 }
 
+async function enqueueWorkCaptureCommandTerminalEffectsTx(
+  tx: Prisma.TransactionClient,
+  input: {
+    commandId: string;
+    laneKey: string;
+    issueKey: string;
+    issueId: string;
+    workspaceId: string;
+    userId: string;
+    memberId: string;
+    workLog: { id: string; durationS: number } | null;
+    durationS: number;
+    reason: "expired" | "stopped";
+    captureIntent?: WorkCaptureIntentFence;
+    closedInterruptions: ClosedInterruption[];
+  }
+): Promise<void> {
+  const key = (effect: string) => `work-capture.intent-effect:v1:${input.commandId}:${effect}`;
+  if (input.workLog) {
+    await enqueueDomainEventTx(tx, {
+      deliveryKey: key("worklog.created"),
+      laneKey: input.laneKey,
+      event: {
+        type: "worklog.created",
+        workspaceId: input.workspaceId,
+        actorId: input.memberId,
+        payload: {
+          workLogId: input.workLog.id,
+          issueId: input.issueId,
+          workspaceId: input.workspaceId,
+        },
+      },
+    });
+  }
+  await enqueueDomainEventTx(tx, {
+    deliveryKey: key("work_session.ended"),
+    laneKey: input.laneKey,
+    event: {
+      type: "work_session.ended",
+      workspaceId: input.workspaceId,
+      actorId: input.memberId,
+      payload: {
+        issueKey: input.issueKey,
+        issueId: input.issueId,
+        memberId: input.memberId,
+        userId: input.userId,
+        workLogId: input.workLog?.id ?? null,
+        durationS: input.durationS,
+        reason: input.reason,
+        ...(input.captureIntent ? { captureIntent: input.captureIntent } : {}),
+      },
+    },
+  });
+  for (const interruption of input.closedInterruptions) {
+    await enqueueDomainEventTx(tx, {
+      deliveryKey: key(`interruption.closed:${interruption.id}`),
+      laneKey: input.laneKey,
+      event: {
+        type: "interruption.closed",
+        workspaceId: input.workspaceId,
+        actorId: interruption.memberId,
+        payload: {
+          interruptionId: interruption.id,
+          incidentIssueId: interruption.incidentIssueId,
+          interruptedIssueId: interruption.interruptedIssueId,
+          memberId: interruption.memberId,
+        },
+      },
+    });
+  }
+}
+
 /** Persist a lifecycle revision's immutable effects in the caller transaction. */
 async function enqueueTransitionLifecycleEffectsTx(
   tx: Prisma.TransactionClient,
-  lifecycleId: string
+  lifecycleId: string,
+  captureIntent?: WorkCaptureIntentFence
 ): Promise<void> {
   const lifecycle = await tx.workTransitionLifecycle.findUnique({
     where: { id: lifecycleId },
@@ -1281,6 +1614,7 @@ async function enqueueTransitionLifecycleEffectsTx(
         workLogId: lifecycle.workLog.id,
         durationS: lifecycle.workLog.durationS,
         reason: lifecycle.workLog.reason,
+        ...(captureIntent ? { captureIntent } : {}),
       },
     },
   });
@@ -1319,7 +1653,7 @@ async function enqueueTransitionLifecycleEffectsTx(
 
 async function completeTransitionLifecycle(
   tx: Prisma.TransactionClient,
-  row: TransitionLifecycleRow,
+  row: TransitionLifecycleRow
 ): Promise<TransitionLifecycleRow> {
   if (
     !row.startIdentity ||
@@ -1445,6 +1779,10 @@ async function completeTransitionLifecycle(
         },
       });
       if (rebased.count !== 1) throw new RetrySessionMutation();
+      await rebaseCaptureIntentTx(tx, {
+        userId: row.userId,
+        issueId: row.issueId,
+      });
     } else {
       const captured = captureThroughLease(session, row.endedAt);
       endedAt = captured.endedAt;
@@ -1453,6 +1791,12 @@ async function completeTransitionLifecycle(
         where: { id: session.id, lastHeartbeat: session.lastHeartbeat },
       });
       if (claimed.count !== 1) throw new RetrySessionMutation();
+      const closedIntent = await closeCaptureIntentTx(tx, {
+        userId: row.userId,
+        issueId: row.issueId,
+        closedAt: row.endedAt,
+      });
+      await clearCaptureOwnersTx(tx, closedIntent);
     }
 
     const interruptions = await tx.interruption.findMany({
@@ -1813,6 +2157,7 @@ export async function stopWork(
   via: string | null = null,
   observedAt: Date = new Date(),
   expectedSessionId?: string,
+  expectedIntent?: WorkCaptureIntentFence
 ) {
   const issue = await prisma.issue.findUnique({
     where: { key: issueKey },
@@ -1842,6 +2187,17 @@ export async function stopWork(
             WHERE "id" = ${issue.id}::uuid
             FOR UPDATE
           `;
+          const currentIntent = await tx.workCaptureIntent.findUnique({
+            where: { userId_issueId: { userId, issueId: issue.id } },
+          });
+          if (
+            expectedIntent &&
+            (!currentIntent ||
+              currentIntent.epoch !== expectedIntent.epoch ||
+              currentIntent.leaseGeneration !== expectedIntent.leaseGeneration)
+          ) {
+            return null;
+          }
           const existing = expectedSessionId
             ? await tx.workSession.findUnique({ where: { id: expectedSessionId } })
             : await tx.workSession.findUnique({
@@ -1850,15 +2206,29 @@ export async function stopWork(
                 },
               });
           if (!existing || existing.userId !== userId || existing.issueId !== issue.id) {
-            return null;
+            if (expectedSessionId && !expectedIntent) return null;
+            const closedIntent = await closeCaptureIntentTx(tx, {
+              userId,
+              issueId: issue.id,
+              closedAt: observedAt,
+              expected: expectedIntent,
+            });
+            if (!closedIntent) return null;
+            await clearCaptureOwnersTx(tx, closedIntent);
+            return {
+              existing: null,
+              workLog: null,
+              transitionLifecycleId: null,
+              endedAt: observedAt,
+              durationS: 0,
+              reason: "stopped" as const,
+              closedInterruptions: [] as ClosedInterruption[],
+            };
           }
 
           // An ordered close older than the latest activity belongs to an older
           // lifecycle. It must not truncate or delete the refreshed generation.
-          if (
-            expectedSessionId &&
-            observedAt.getTime() < existing.lastHeartbeat.getTime()
-          ) {
+          if (expectedSessionId && observedAt.getTime() < existing.lastHeartbeat.getTime()) {
             return null;
           }
 
@@ -1890,7 +2260,6 @@ export async function stopWork(
                 data: { workLogId: created.id },
               });
               if (linked.count !== 1) throw new RetrySessionMutation();
-              await enqueueTransitionLifecycleEffectsTx(tx, transitionLifecycleId);
             }
           }
 
@@ -1920,6 +2289,18 @@ export async function stopWork(
               data: { endedAt },
             });
           }
+
+          if (transitionLifecycleId && workLog) {
+            await enqueueTransitionLifecycleEffectsTx(tx, transitionLifecycleId);
+          }
+
+          const closedIntent = await closeCaptureIntentTx(tx, {
+            userId,
+            issueId: issue.id,
+            closedAt: observedAt,
+            expected: expectedIntent,
+          });
+          await clearCaptureOwnersTx(tx, closedIntent);
 
           return {
             existing,
@@ -2035,21 +2416,39 @@ export async function stopActiveWorkSessions(issueKey: string) {
     throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${issueKey}" not found`);
   }
 
-  const sessions = await prisma.workSession.findMany({
-    where: { issueId: issue.id },
-    select: { id: true, userId: true, memberId: true },
-  });
+  const [sessions, intents] = await Promise.all([
+    prisma.workSession.findMany({
+      where: { issueId: issue.id },
+      select: { id: true, userId: true, memberId: true },
+    }),
+    prisma.workCaptureIntent.findMany({
+      where: { issueId: issue.id, state: { not: "closed" } },
+      select: {
+        userId: true,
+        memberId: true,
+        epoch: true,
+        leaseGeneration: true,
+      },
+    }),
+  ]);
+  const observedAt = new Date();
   const stopped = [];
-  for (const session of sessions) {
+  const sessionsByUser = new Map(sessions.map((session) => [session.userId, session]));
+  const durableUsers = new Set<string>();
+  for (const intent of intents) {
+    durableUsers.add(intent.userId);
+    const session = sessionsByUser.get(intent.userId);
     stopped.push(
-      await stopWork(
-        issueKey,
-        session.userId,
-        session.memberId,
-        null,
-        new Date(),
-        session.id,
-      ),
+      await stopWork(issueKey, intent.userId, intent.memberId, null, observedAt, session?.id, {
+        epoch: intent.epoch,
+        leaseGeneration: intent.leaseGeneration,
+      })
+    );
+  }
+  for (const session of sessions) {
+    if (durableUsers.has(session.userId)) continue;
+    stopped.push(
+      await stopWork(issueKey, session.userId, session.memberId, null, observedAt, session.id)
     );
   }
   return stopped;
@@ -2087,13 +2486,20 @@ export async function recordInterruption(
   if (!interrupted || interrupted.project.workspaceId !== incident.project.workspaceId) {
     throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${interruptedIssueKey}" not found`);
   }
-  const interruption = await prisma.interruption.create({
-    data: {
-      incidentIssueId: incident.id,
-      interruptedIssueId: interrupted.id,
+  const interruption = await prisma.$transaction(async (tx) => {
+    const created = await tx.interruption.create({
+      data: {
+        incidentIssueId: incident.id,
+        interruptedIssueId: interrupted.id,
+        memberId,
+        via,
+      },
+    });
+    await pauseCaptureIntentTx(tx, {
+      issueId: interrupted.id,
       memberId,
-      via,
-    },
+    });
+    return created;
   });
   // KAN-103 PR3: emit interruption.opened so forecast rebuilds for the interrupted issue.
   try {
@@ -2283,7 +2689,6 @@ export async function cleanupExpired(logger?: {
                 data: { workLogId: created.id },
               });
               if (linked.count !== 1) throw new RetrySessionMutation();
-              await enqueueTransitionLifecycleEffectsTx(tx, transitionLifecycleId);
             }
           }
 
@@ -2314,10 +2719,26 @@ export async function cleanupExpired(logger?: {
             });
           }
 
+          const captureIntent = await finalizeExpiredCaptureIntentTx(tx, {
+            userId: s.userId,
+            issueId: s.issueId,
+            issueIsActive: lockedIssue.state === "analysis" || lockedIssue.state === "in_progress",
+            closedAt: endedAt,
+          });
+
+          if (transitionLifecycleId && workLog) {
+            await enqueueTransitionLifecycleEffectsTx(
+              tx,
+              transitionLifecycleId,
+              captureIntent ?? undefined
+            );
+          }
+
           return {
             claimed: true as const,
             workLog,
             transitionLifecycleId,
+            captureIntent,
             closedInterruptions,
           };
         },
@@ -2377,6 +2798,7 @@ export async function cleanupExpired(logger?: {
               memberId: s.memberId,
               userId: s.userId,
               reason: "expired",
+              ...(outcome.captureIntent ? { captureIntent: outcome.captureIntent } : {}),
             },
           });
         } catch {

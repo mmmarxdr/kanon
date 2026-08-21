@@ -9,6 +9,7 @@ export type DomainEventType =
   | "issue.updated"
   | "issue.transitioned"
   | "work_capture.transition_observed"
+  | "work_capture.intent_effect_requested"
   | "issue.assigned"
   | "issue.deleted"
   | "project.created"
@@ -105,6 +106,22 @@ export interface WorkCaptureTransitionObservedPayload {
   /** Database timestamp captured in the issue mutation transaction. */
   observedAt: string;
   cause?: string;
+}
+
+/** Durable internal command for one revision of a WorkCaptureIntent effect. */
+export interface WorkCaptureIntentEffectRequestedPayload extends Record<string, unknown> {
+  commandId: string;
+  intentId: string;
+  epoch: string;
+  leaseGeneration: number;
+  effectRevision: number;
+  kind: "activity" | "release" | "close";
+  observedAt: string;
+  issueKey: string;
+  issueId: string;
+  userId: string;
+  memberId: string;
+  source: string;
 }
 
 /**

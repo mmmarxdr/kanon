@@ -103,13 +103,15 @@ async function transitionIssuesWithCapture(
   memberId: string,
   issues: readonly TransitionObservationIssue[],
   targetState: IssueState,
-  activityDetails: Readonly<Record<string, string>>
+  activityDetails: Readonly<Record<string, string>>,
+  beforeWrite?: (transaction: Prisma.TransactionClient) => Promise<void>
 ): Promise<{ count: number; issueIds: string[]; laneKeys: string[] }> {
   const capture = await resolveIssueCaptureContext(project.id, memberId);
   const occurrenceIds = new Map(issues.map((issue) => [issue.id, randomUUID()] as const));
 
   return prisma.$transaction(async (transaction) => {
     if (capture) await lockIssueCaptureBindingTx(transaction, capture.bindingId);
+    await beforeWrite?.(transaction);
     const transitioned: TransitionObservationIssue[] = [];
     const laneKeys: string[] = [];
     let observationContext: { actorUserId: string; observedAt: Date } | undefined;
@@ -180,6 +182,78 @@ async function transitionIssuesWithCapture(
       laneKeys,
     };
   });
+}
+
+type ReconciliationTransitionIssue = TransitionObservationIssue & {
+  timeConfirmedAt: Date | null;
+};
+
+async function recheckTransitionReconciliationBeforeWrite(
+  transaction: Prisma.TransactionClient,
+  issues: readonly ReconciliationTransitionIssue[]
+): Promise<Array<{ key: string; totalHours: number }>> {
+  const orderedIssues = [...issues].sort((left, right) =>
+    left.id < right.id ? -1 : left.id > right.id ? 1 : 0
+  );
+  if (orderedIssues.length === 0) return [];
+
+  const issueIds = Prisma.join(orderedIssues.map(({ id }) => Prisma.sql`${id}::uuid`));
+  const lockedIssues = await transaction.$queryRaw<
+    Array<{ id: string; state: IssueState; timeConfirmedAt: Date | null }>
+  >(Prisma.sql`
+    SELECT "id", "state", "time_confirmed_at" AS "timeConfirmedAt"
+    FROM "issues"
+    WHERE "id" IN (${issueIds})
+    ORDER BY "id"
+    FOR UPDATE
+  `);
+
+  await transaction.$queryRaw(
+    Prisma.sql`
+      SELECT "id"
+      FROM "work_capture_intents"
+      WHERE "issue_id" IN (${issueIds})
+      ORDER BY "issue_id", "id"
+      FOR UPDATE
+    `
+  );
+
+  const lockedById = new Map(lockedIssues.map((issue) => [issue.id, issue] as const));
+  const blockedIssues: Array<{ key: string; totalHours: number }> = [];
+  for (const issue of orderedIssues) {
+    const locked = lockedById.get(issue.id);
+    if (!locked || locked.state !== issue.state) continue;
+    const reconciliation = await checkReconciliation(issue.id, locked.timeConfirmedAt, transaction);
+    if (reconciliation.needed) {
+      blockedIssues.push({ key: issue.key, totalHours: reconciliation.totalHours });
+    }
+  }
+  return blockedIssues;
+}
+
+function assertGroupReconciliationComplete(
+  groupKey: string,
+  blockedIssues: Array<{ key: string; totalHours: number }>
+): void {
+  if (blockedIssues.length === 0) return;
+  throw new AppError(
+    409,
+    "RECONCILIATION_REQUIRED",
+    `${blockedIssues.length} issue(s) in group "${groupKey}" have unconfirmed captured time: ${blockedIssues.map((issue) => issue.key).join(", ")}`,
+    { groupKey, blockedIssues }
+  );
+}
+
+function assertBatchReconciliationComplete(
+  blockedIssues: Array<{ key: string; totalHours: number }>
+): void {
+  if (blockedIssues.length === 0) return;
+  throw new AppError(
+    409,
+    "RECONCILIATION_REQUIRED",
+    `${blockedIssues.length} issue(s) have unconfirmed captured time and cannot be moved to done: ${blockedIssues.map((issue) => issue.key).join(", ")}`,
+    { blockedIssues }
+  );
 }
 
 export type StartWorkIssueMutationEffects = {
@@ -1123,7 +1197,7 @@ export async function transitionGroup(
   const issuesToTransition = issues.filter((i) => i.state !== targetState);
 
   if (issuesToTransition.length === 0) {
-    return { count: 0, groupKey, state: targetState };
+    return { count: 0, keys: [] as string[], groupKey, state: targetState };
   }
 
   // Validate each transition (some may be same-state, which we already filtered)
@@ -1149,14 +1223,7 @@ export async function transitionGroup(
         blockedIssues.push({ key: issue.key, totalHours: rec.totalHours });
       }
     }
-    if (blockedIssues.length > 0) {
-      throw new AppError(
-        409,
-        "RECONCILIATION_REQUIRED",
-        `${blockedIssues.length} issue(s) in group "${groupKey}" have unconfirmed captured time: ${blockedIssues.map((i) => i.key).join(", ")}`,
-        { groupKey, blockedIssues },
-      );
-    }
+    assertGroupReconciliationComplete(groupKey, blockedIssues);
   }
 
   const result = await transitionIssuesWithCapture(
@@ -1164,14 +1231,23 @@ export async function transitionGroup(
     memberId,
     issuesToTransition,
     targetState,
-    { groupKey }
+    { groupKey },
+    targetState === "done"
+      ? async (transaction) => {
+          const blockedIssues = await recheckTransitionReconciliationBeforeWrite(
+            transaction,
+            issuesToTransition
+          );
+          assertGroupReconciliationComplete(groupKey, blockedIssues);
+        }
+      : undefined
   );
   await publishTransitionObservationLanes(result.laneKeys);
-  if (result.count === 0) return { count: 0, groupKey, state: targetState };
+  if (result.count === 0) {
+    return { count: 0, keys: [] as string[], groupKey, state: targetState };
+  }
   const transitionedIds = new Set(result.issueIds);
-  const transitionedIssues = issuesToTransition.filter(({ id }) =>
-    transitionedIds.has(id),
-  );
+  const transitionedIssues = issuesToTransition.filter(({ id }) => transitionedIds.has(id));
 
   // Auto-advance parents for any issues that had parent relationships
   const issuesWithParents = transitionedIssues.filter((i) => i.parentId);
@@ -1229,12 +1305,17 @@ export async function transitionGroup(
       // Never let event emission break the mutation; isolate per-issue failures.
       console.error(
         { groupKey, issueKey: issue.key, err },
-        "transitionGroup: per-issue event emission failed",
+        "transitionGroup: per-issue event emission failed"
       );
     }
   }
 
-  return { count: result.count, groupKey, state: targetState };
+  return {
+    count: result.count,
+    keys: transitionedIssues.map(({ key }) => key),
+    groupKey,
+    state: targetState,
+  };
 }
 
 /**
@@ -1326,14 +1407,7 @@ export async function batchTransitionByKeys(
         blockedIssues.push({ key: issue.key, totalHours: rec.totalHours });
       }
     }
-    if (blockedIssues.length > 0) {
-      throw new AppError(
-        409,
-        "RECONCILIATION_REQUIRED",
-        `${blockedIssues.length} issue(s) have unconfirmed captured time and cannot be moved to done: ${blockedIssues.map((i) => i.key).join(", ")}`,
-        { blockedIssues },
-      );
-    }
+    assertBatchReconciliationComplete(blockedIssues);
   }
 
   const result = await transitionIssuesWithCapture(
@@ -1341,22 +1415,27 @@ export async function batchTransitionByKeys(
     memberId,
     issuesToTransition,
     targetState,
-    { mode: "keys" }
+    { mode: "keys" },
+    targetState === "done"
+      ? async (transaction) => {
+          const blockedIssues = await recheckTransitionReconciliationBeforeWrite(
+            transaction,
+            issuesToTransition
+          );
+          assertBatchReconciliationComplete(blockedIssues);
+        }
+      : undefined
   );
   await publishTransitionObservationLanes(result.laneKeys);
   if (result.count === 0) {
     return { count: 0, keys: [], state: targetState };
   }
   const transitionedIds = new Set(result.issueIds);
-  const transitionedIssues = issuesToTransition.filter(({ id }) =>
-    transitionedIds.has(id),
-  );
+  const transitionedIssues = issuesToTransition.filter(({ id }) => transitionedIds.has(id));
 
   // Auto-advance parents + sync roadmap items (mirrors transitionGroup).
   const issuesWithParents = transitionedIssues.filter((i) => i.parentId);
-  const uniqueParentIds = [
-    ...new Set(issuesWithParents.map((i) => i.parentId!)),
-  ];
+  const uniqueParentIds = [...new Set(issuesWithParents.map((i) => i.parentId!))];
   for (const _parentId of uniqueParentIds) {
     const rep = issuesWithParents.find((i) => i.parentId === _parentId)!;
     await checkAndAdvanceParent(prisma, { parentId: rep.parentId }, memberId);

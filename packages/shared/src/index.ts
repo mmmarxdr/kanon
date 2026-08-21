@@ -2,11 +2,7 @@ export { canonicalizeApiUrl } from "./canonical-url.js";
 export { parseKanonConfig, findKanonConfig, writeKanonConfig } from "./kanon-binding.js";
 export type { KanonBinding, KanonBindingFs } from "./kanon-binding.js";
 
-export {
-  SUPPORTED_LOCALES,
-  DEFAULT_LOCALE,
-  isSupportedLocale,
-} from "./locales.js";
+export { SUPPORTED_LOCALES, DEFAULT_LOCALE, isSupportedLocale } from "./locales.js";
 export type { SupportedLocale } from "./locales.js";
 
 export {
@@ -22,11 +18,31 @@ export type {
   DashboardData,
 } from "./dashboard.js";
 
-export {
-  workLogItemSchema,
-  workLogListResponseSchema,
-} from "./work-session.js";
+export { workLogItemSchema, workLogListResponseSchema } from "./work-session.js";
 export type { WorkLogItem, WorkLogListResponse } from "./work-session.js";
+
+export {
+  workCaptureStateSchema,
+  workCaptureFenceSchema,
+  workCaptureCommandSchema,
+  workCaptureIntentSnapshotSchema,
+  workCaptureDeliveryStatusSchema,
+  workCaptureFailureNotificationPayloadSchema,
+  workCaptureEffectResponseSchema,
+  workCaptureHydrationIntentSchema,
+  workCaptureHydrationPageSchema,
+} from "./work-capture.js";
+export type {
+  WorkCaptureState,
+  WorkCaptureFence,
+  WorkCaptureCommand,
+  WorkCaptureIntentSnapshot,
+  WorkCaptureDeliveryStatus,
+  WorkCaptureFailureNotificationPayload,
+  WorkCaptureEffectResponse,
+  WorkCaptureHydrationIntent,
+  WorkCaptureHydrationPage,
+} from "./work-capture.js";
 
 export { subscriptionStatusSchema } from "./issue-subscription.js";
 export type { SubscriptionStatus } from "./issue-subscription.js";
@@ -56,10 +72,7 @@ export type {
   IntegrationDiscovery,
 } from "./integrations.js";
 
-export {
-  issueScheduleSchema,
-  estimateRevisionSchema,
-} from "./schedule.js";
+export { issueScheduleSchema, estimateRevisionSchema } from "./schedule.js";
 export type { IssueSchedule, EstimateRevision } from "./schedule.js";
 
 export {
@@ -75,10 +88,7 @@ export type {
   ScheduleTimelineQuery,
 } from "./schedule-timeline.js";
 
-export {
-  timeEntryStatusSchema,
-  timeEntrySchema,
-} from "./timesheet.js";
+export { timeEntryStatusSchema, timeEntrySchema } from "./timesheet.js";
 export type { TimeEntryStatus, TimeEntry } from "./timesheet.js";
 
 export type {
