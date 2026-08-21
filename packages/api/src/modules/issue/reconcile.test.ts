@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Prisma } from "@prisma/client";
 
 /**
@@ -25,9 +25,16 @@ vi.mock("../../config/prisma.js", () => {
   const member = { findUnique: vi.fn() };
   const project = { findUnique: vi.fn() };
   const activityLog = { create: vi.fn(), createMany: vi.fn() };
-  const prisma: any = { issue, workLog, timeEntry, member, project, activityLog };
+  const prisma: any = {
+    issue,
+    workLog,
+    timeEntry,
+    member,
+    project,
+    activityLog,
+  };
   prisma.integrationProjectBinding = { findFirst: vi.fn() };
-  prisma.$queryRaw = vi.fn();
+  prisma.$queryRaw = vi.fn().mockResolvedValue([]);
   prisma.$transaction = vi.fn((fn: (tx: any) => Promise<any>) => fn(prisma));
   return { prisma };
 });
@@ -40,8 +47,22 @@ vi.mock("../activity/service.js", () => ({
   createActivityLog: vi.fn(),
 }));
 
+vi.mock("../integrations/outbox.js", () => ({
+  captureIntegrationWorkTx: vi.fn(),
+}));
+
 vi.mock("./auto-transition.js", () => ({
   checkAndAdvanceParent: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("./transition-observation.js", () => ({
+  enqueueTransitionObservationTx: vi.fn().mockResolvedValue("issue:issue-uuid-1"),
+  publishTransitionObservationLanes: vi.fn().mockResolvedValue(undefined),
+  resolveTransitionObservationContext: vi.fn().mockResolvedValue({
+    actorUserId: "user-uuid-1",
+    observedAt: new Date("2026-08-19T12:00:00.000Z"),
+  }),
+  transitionObservationLane: vi.fn((issueId: string) => `issue:${issueId}`),
 }));
 
 vi.mock("../roadmap/roadmap-sync.js", () => ({
@@ -73,8 +94,10 @@ vi.mock("../mentions/service.js", () => ({
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { prisma } from "../../config/prisma.js";
-import { transitionIssue, batchTransitionByKeys } from "./service.js";
-import { reconcileIssueTime } from "./reconcile.js";
+import { captureIntegrationWorkTx } from "../integrations/outbox.js";
+import { transitionIssue, transitionGroup, batchTransitionByKeys } from "./service.js";
+import { checkReconciliation, reconcileIssueTime } from "./reconcile.js";
+import { enqueueTransitionObservationTx } from "./transition-observation.js";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -128,7 +151,193 @@ function makeTimeEntry(overrides?: Record<string, unknown>) {
   } as any;
 }
 
+function rawQueryText(call: readonly unknown[]): string {
+  const query = call[0] as readonly string[] | { strings?: readonly string[] };
+  const strings = Array.isArray(query)
+    ? query
+    : ((query as { strings?: readonly string[] }).strings ?? []);
+  return strings.join("?");
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────
+
+describe("KAN-243 reconciliation capture completeness", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("blocks the confirmed zero-time fast path while durable capture is unresolved", async () => {
+    vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([{ incomplete: true }]);
+    vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([]);
+
+    await expect(
+      checkReconciliation(ISSUE_ID, new Date("2026-08-19T12:00:00.000Z"))
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: "CAPTURE_INCOMPLETE",
+      details: undefined,
+    });
+
+    expect(prisma.workLog.findMany).not.toHaveBeenCalled();
+    expect(prisma.timeEntry.findMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { state: "adopted", pendingEffectKind: null },
+    { state: "capturing", pendingEffectKind: null },
+    { state: "paused", pendingEffectKind: null },
+    { state: "closing", pendingEffectKind: "close" },
+    { state: "closed", pendingEffectKind: "release" },
+  ])(
+    "rejects direct reconciliation for $state capture with pending effect $pendingEffectKind before any writes",
+    async (evidence) => {
+      vi.mocked(prisma.issue.findUnique).mockResolvedValue(makeIssue());
+      vi.mocked(prisma.$queryRaw)
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          {
+            incomplete: evidence.state !== "closed" || evidence.pendingEffectKind !== null,
+          },
+        ]);
+
+      await expect(reconcileIssueTime(ISSUE_ID, MEMBER_ID)).rejects.toMatchObject({
+        statusCode: 409,
+        code: "CAPTURE_INCOMPLETE",
+        details: undefined,
+      });
+
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(3);
+      const lockQueries = vi
+        .mocked(prisma.$queryRaw)
+        .mock.calls.map((call) => (call[0] as readonly string[]).join("?"));
+      expect(lockQueries[0]).toContain('FROM "issues"');
+      expect(lockQueries[1]).toContain('FROM "work_capture_intents"');
+      expect(lockQueries[2]).toContain("\"state\" <> 'closed'");
+      expect(lockQueries[2]).toContain('"pending_effect_kind" IS NOT NULL');
+      expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.$queryRaw.mock.invocationCallOrder[1]!
+      );
+      expect(prisma.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
+        prisma.$queryRaw.mock.invocationCallOrder[2]!
+      );
+
+      expect(prisma.workLog.findMany).not.toHaveBeenCalled();
+      expect(prisma.timeEntry.findMany).not.toHaveBeenCalled();
+      expect(prisma.timeEntry.create).not.toHaveBeenCalled();
+      expect(prisma.timeEntry.updateMany).not.toHaveBeenCalled();
+      expect(prisma.integrationProjectBinding.findFirst).not.toHaveBeenCalled();
+      expect(captureIntegrationWorkTx).not.toHaveBeenCalled();
+      expect(prisma.issue.update).not.toHaveBeenCalled();
+    }
+  );
+
+  it("allows a closed intent with no pending effect to reconcile normally", async () => {
+    vi.mocked(prisma.issue.findUnique).mockResolvedValue(makeIssue());
+    vi.mocked(prisma.$queryRaw)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ incomplete: false }]);
+    vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.timeEntry.updateMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.issue.update).mockResolvedValue(
+      makeIssue({ timeConfirmedAt: new Date() }) as any
+    );
+
+    await expect(reconcileIssueTime(ISSUE_ID, MEMBER_ID)).resolves.toMatchObject({
+      confirmedAt: expect.any(Date),
+      totalHours: 0,
+    });
+
+    expect(prisma.issue.update).toHaveBeenCalledOnce();
+  });
+});
+
+describe("KAN-243 group and key-batch reconciliation transaction recheck", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.mocked(prisma.$queryRaw).mockReset().mockResolvedValue([]);
+  });
+
+  it.each([
+    {
+      operation: "group transition",
+      run: () => transitionGroup(PROJECT_ID, "group-1", "done", MEMBER_ID),
+    },
+    {
+      operation: "key batch transition",
+      run: () =>
+        batchTransitionByKeys(PROJECT_ID, { to_state: "done", keys: [ISSUE_KEY] }, MEMBER_ID),
+    },
+  ])("blocks an interleaved capture before the $operation writes", async ({ run }) => {
+    const confirmedAt = new Date("2026-08-19T12:00:00.000Z");
+    const issue = makeIssue({ timeConfirmedAt: confirmedAt });
+    let evidenceChecks = 0;
+
+    vi.mocked(prisma.project.findUnique).mockResolvedValue({
+      id: PROJECT_ID,
+      key: "TEST",
+      workspaceId: "ws-1",
+    } as any);
+    vi.mocked(prisma.issue.findMany).mockResolvedValue([issue]);
+    vi.mocked(prisma.issue.updateMany).mockResolvedValue({ count: 1 });
+    vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.$queryRaw).mockImplementation(((...args: unknown[]) => {
+      const query = rawQueryText(args);
+      if (query.includes('FROM "issues"') && query.includes("FOR UPDATE")) {
+        return Promise.resolve([
+          {
+            id: ISSUE_ID,
+            state: "review",
+            timeConfirmedAt: confirmedAt,
+          },
+        ]);
+      }
+      if (query.includes('FROM "work_capture_intents"') && query.includes("FOR UPDATE")) {
+        return Promise.resolve([]);
+      }
+      if (query.includes("pending_effect_kind")) {
+        return Promise.resolve([{ incomplete: evidenceChecks++ > 0 }]);
+      }
+      return Promise.resolve([]);
+    }) as any);
+
+    await expect(run()).rejects.toMatchObject({
+      statusCode: 409,
+      code: "CAPTURE_INCOMPLETE",
+      details: undefined,
+    });
+
+    const queries = vi.mocked(prisma.$queryRaw).mock.calls.map(rawQueryText);
+    const issueLockIndex = queries.findIndex(
+      (query) => query.includes('FROM "issues"') && query.includes("FOR UPDATE")
+    );
+    const intentLockIndex = queries.findIndex(
+      (query) => query.includes('FROM "work_capture_intents"') && query.includes("FOR UPDATE")
+    );
+    const evidenceIndex = queries.findIndex(
+      (query, index) => index > intentLockIndex && query.includes("pending_effect_kind")
+    );
+
+    expect(issueLockIndex).toBeGreaterThanOrEqual(0);
+    expect(intentLockIndex).toBeGreaterThan(issueLockIndex);
+    expect(evidenceIndex).toBeGreaterThan(intentLockIndex);
+    expect(queries[issueLockIndex]).toContain('ORDER BY "id"');
+    expect(queries[intentLockIndex]).toContain('ORDER BY "issue_id", "id"');
+
+    expect(prisma.issue.updateMany).not.toHaveBeenCalled();
+    expect(prisma.issue.update).not.toHaveBeenCalled();
+    expect(enqueueTransitionObservationTx).not.toHaveBeenCalled();
+    expect(prisma.activityLog.createMany).not.toHaveBeenCalled();
+    expect(prisma.activityLog.create).not.toHaveBeenCalled();
+  });
+});
 
 describe("KAN-157 reconciliation gate — transitionIssue →done", () => {
   beforeEach(() => {
@@ -137,24 +346,18 @@ describe("KAN-157 reconciliation gate — transitionIssue →done", () => {
 
   // ── (a) RECONCILIATION_REQUIRED when unconfirmed WorkLog exists ──────────
   it("(a) throws RECONCILIATION_REQUIRED when issue has WorkLog and timeConfirmedAt is null", async () => {
-    vi.mocked(prisma.issue.findUnique).mockResolvedValue(
-      makeIssue({ timeConfirmedAt: null }),
-    );
+    vi.mocked(prisma.issue.findUnique).mockResolvedValue(makeIssue({ timeConfirmedAt: null }));
     vi.mocked(prisma.workLog.findMany).mockResolvedValue([makeWorkLog()]);
     vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([]);
 
-    await expect(
-      transitionIssue(ISSUE_KEY, "done", MEMBER_ID),
-    ).rejects.toMatchObject({
+    await expect(transitionIssue(ISSUE_KEY, "done", MEMBER_ID)).rejects.toMatchObject({
       code: "RECONCILIATION_REQUIRED",
       statusCode: 409,
     });
   });
 
   it("(a) RECONCILIATION_REQUIRED payload carries workLogs, timeEntries, totalHours", async () => {
-    vi.mocked(prisma.issue.findUnique).mockResolvedValue(
-      makeIssue({ timeConfirmedAt: null }),
-    );
+    vi.mocked(prisma.issue.findUnique).mockResolvedValue(makeIssue({ timeConfirmedAt: null }));
     vi.mocked(prisma.workLog.findMany).mockResolvedValue([makeWorkLog()]);
     vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([makeTimeEntry()]);
 
@@ -181,9 +384,7 @@ describe("KAN-157 reconciliation gate — transitionIssue →done", () => {
   // and web client surfaces depend on to display captured hours without a
   // second round-trip.
   it("(KAN-188) RECONCILIATION_REQUIRED details.totalHours reflects the real captured hours, and details.issueKey matches the transitioned issue", async () => {
-    vi.mocked(prisma.issue.findUnique).mockResolvedValue(
-      makeIssue({ timeConfirmedAt: null }),
-    );
+    vi.mocked(prisma.issue.findUnique).mockResolvedValue(makeIssue({ timeConfirmedAt: null }));
     vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
     vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([
       makeTimeEntry({ hours: "5", sourceWorkLogId: null }),
@@ -204,27 +405,21 @@ describe("KAN-157 reconciliation gate — transitionIssue →done", () => {
   });
 
   it("(a) throws RECONCILIATION_REQUIRED when TimeEntry exists and timeConfirmedAt is null (no WorkLog)", async () => {
-    vi.mocked(prisma.issue.findUnique).mockResolvedValue(
-      makeIssue({ timeConfirmedAt: null }),
-    );
+    vi.mocked(prisma.issue.findUnique).mockResolvedValue(makeIssue({ timeConfirmedAt: null }));
     vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
     vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([makeTimeEntry()]);
 
-    await expect(
-      transitionIssue(ISSUE_KEY, "done", MEMBER_ID),
-    ).rejects.toMatchObject({ code: "RECONCILIATION_REQUIRED" });
+    await expect(transitionIssue(ISSUE_KEY, "done", MEMBER_ID)).rejects.toMatchObject({
+      code: "RECONCILIATION_REQUIRED",
+    });
   });
 
   // ── (e) Zero captured time still requires explicit confirmation ─────────
   it("(e) blocks →done until zero captured time is explicitly confirmed", async () => {
-    vi.mocked(prisma.issue.findUnique).mockResolvedValue(
-      makeIssue({ timeConfirmedAt: null }),
-    );
+    vi.mocked(prisma.issue.findUnique).mockResolvedValue(makeIssue({ timeConfirmedAt: null }));
     vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
     vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([]);
-    await expect(
-      transitionIssue(ISSUE_KEY, "done", MEMBER_ID),
-    ).rejects.toMatchObject({
+    await expect(transitionIssue(ISSUE_KEY, "done", MEMBER_ID)).rejects.toMatchObject({
       code: "RECONCILIATION_REQUIRED",
       details: { totalHours: 0 },
     });
@@ -238,14 +433,14 @@ describe("KAN-157 reconciliation gate — transitionIssue →done", () => {
     });
 
     vi.mocked(prisma.issue.findUnique).mockResolvedValue(
-      makeIssue({ timeConfirmedAt: confirmedAt }),
+      makeIssue({ timeConfirmedAt: confirmedAt })
     );
     vi.mocked(prisma.workLog.findMany).mockResolvedValue([laterWorkLog]);
     vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([]);
 
-    await expect(
-      transitionIssue(ISSUE_KEY, "done", MEMBER_ID),
-    ).rejects.toMatchObject({ code: "RECONCILIATION_REQUIRED" });
+    await expect(transitionIssue(ISSUE_KEY, "done", MEMBER_ID)).rejects.toMatchObject({
+      code: "RECONCILIATION_REQUIRED",
+    });
   });
 
   it("(c) allows →done when timeConfirmedAt is set and no WorkLog/TimeEntry created after it", async () => {
@@ -255,24 +450,25 @@ describe("KAN-157 reconciliation gate — transitionIssue →done", () => {
     });
 
     vi.mocked(prisma.issue.findUnique).mockResolvedValue(
-      makeIssue({ timeConfirmedAt: confirmedAt }),
+      makeIssue({ timeConfirmedAt: confirmedAt })
     );
     vi.mocked(prisma.workLog.findMany).mockResolvedValue([olderWorkLog]);
     vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([]);
     vi.mocked(prisma.issue.update).mockResolvedValue({ ...makeIssue(), state: "done" } as any);
     vi.mocked(prisma.member.findUnique).mockResolvedValue(null);
 
-    await expect(
-      transitionIssue(ISSUE_KEY, "done", MEMBER_ID),
-    ).resolves.toBeDefined();
+    await expect(transitionIssue(ISSUE_KEY, "done", MEMBER_ID)).resolves.toBeDefined();
 
     expect(prisma.$transaction).toHaveBeenCalledOnce();
-    expect(prisma.$queryRaw).toHaveBeenCalledOnce();
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
     expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
-      prisma.workLog.findMany.mock.invocationCallOrder[0]!,
+      prisma.$queryRaw.mock.invocationCallOrder[1]!
+    );
+    expect(prisma.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
+      prisma.workLog.findMany.mock.invocationCallOrder[0]!
     );
     expect(prisma.workLog.findMany.mock.invocationCallOrder[0]).toBeLessThan(
-      prisma.issue.update.mock.invocationCallOrder[0]!,
+      prisma.issue.update.mock.invocationCallOrder[0]!
     );
   });
 });
@@ -293,11 +489,11 @@ describe("KAN-157 reconcileIssueTime()", () => {
     vi.mocked(prisma.workLog.findMany).mockResolvedValue([unpromoted]);
     vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([draftEntry]);
     vi.mocked(prisma.timeEntry.create).mockResolvedValue(
-      makeTimeEntry({ id: "te-new", sourceWorkLogId: unpromoted.id, status: "approved" }),
+      makeTimeEntry({ id: "te-new", sourceWorkLogId: unpromoted.id, status: "approved" })
     );
     vi.mocked(prisma.timeEntry.updateMany).mockResolvedValue({ count: 1 });
     vi.mocked(prisma.issue.update).mockResolvedValue(
-      makeIssue({ timeConfirmedAt: new Date() }) as any,
+      makeIssue({ timeConfirmedAt: new Date() }) as any
     );
 
     const result = await reconcileIssueTime(ISSUE_ID, MEMBER_ID);
@@ -313,7 +509,7 @@ describe("KAN-157 reconcileIssueTime()", () => {
       expect.objectContaining({
         where: { id: ISSUE_ID },
         data: expect.objectContaining({ timeConfirmedAt: expect.any(Date) }),
-      }),
+      })
     );
 
     // draft/submitted entries must be approved
@@ -327,7 +523,7 @@ describe("KAN-157 reconcileIssueTime()", () => {
           status: "approved",
           approvedById: MEMBER_ID,
         }),
-      }),
+      })
     );
   });
 
@@ -343,10 +539,10 @@ describe("KAN-157 reconcileIssueTime()", () => {
         sourceWorkLogId: null,
         status: "approved",
         hours: "2",
-      }),
+      })
     );
     vi.mocked(prisma.issue.update).mockResolvedValue(
-      makeIssue({ timeConfirmedAt: new Date() }) as any,
+      makeIssue({ timeConfirmedAt: new Date() }) as any
     );
 
     await reconcileIssueTime(ISSUE_ID, MEMBER_ID, { addHours: "2" });
@@ -361,7 +557,7 @@ describe("KAN-157 reconcileIssueTime()", () => {
           sourceWorkLogId: null,
           approvedById: MEMBER_ID,
         }),
-      }),
+      })
     );
   });
 
@@ -371,7 +567,7 @@ describe("KAN-157 reconcileIssueTime()", () => {
     vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([]);
     vi.mocked(prisma.timeEntry.updateMany).mockResolvedValue({ count: 0 });
     vi.mocked(prisma.issue.update).mockResolvedValue(
-      makeIssue({ timeConfirmedAt: new Date() }) as any,
+      makeIssue({ timeConfirmedAt: new Date() }) as any
     );
 
     await reconcileIssueTime(ISSUE_ID, MEMBER_ID, { addHours: "0" });
@@ -391,7 +587,9 @@ describe("KAN-157 reconcileIssueTime()", () => {
 // ── FIX 4: equal-timestamp staleness ─────────────────────────────────────────
 
 describe("KAN-157 equal-timestamp staleness (fix 4)", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it("createdAt === timeConfirmedAt → needed: true (same-ms is stale)", async () => {
     const { checkReconciliation } = await import("./reconcile.js");
@@ -408,17 +606,26 @@ describe("KAN-157 equal-timestamp staleness (fix 4)", () => {
 // ── FIX 2: cross-member approval scoping ─────────────────────────────────────
 
 describe("KAN-157 cross-member approval scoping (fix 2)", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it("member A reconciling does NOT approve member B's draft entries", async () => {
     const MEMBER_B = "member-uuid-2";
-    const memberBEntry = makeTimeEntry({ id: "te-b", memberId: MEMBER_B, sourceWorkLogId: null, status: "draft" });
+    const memberBEntry = makeTimeEntry({
+      id: "te-b",
+      memberId: MEMBER_B,
+      sourceWorkLogId: null,
+      status: "draft",
+    });
 
     vi.mocked(prisma.issue.findUnique).mockResolvedValue(makeIssue());
     vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
     vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([memberBEntry]);
     vi.mocked(prisma.timeEntry.updateMany).mockResolvedValue({ count: 0 });
-    vi.mocked(prisma.issue.update).mockResolvedValue(makeIssue({ timeConfirmedAt: new Date() }) as any);
+    vi.mocked(prisma.issue.update).mockResolvedValue(
+      makeIssue({ timeConfirmedAt: new Date() }) as any
+    );
 
     await reconcileIssueTime(ISSUE_ID, MEMBER_ID);
 
@@ -428,7 +635,7 @@ describe("KAN-157 cross-member approval scoping (fix 2)", () => {
         where: expect.objectContaining({
           memberId: MEMBER_ID,
         }),
-      }),
+      })
     );
   });
 });
@@ -436,14 +643,18 @@ describe("KAN-157 cross-member approval scoping (fix 2)", () => {
 // ── FIX 3: atomicity — $transaction must be called ───────────────────────────
 
 describe("KAN-157 atomicity — reconcileIssueTime uses $transaction (fix 3)", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it("reconcileIssueTime wraps all writes in prisma.$transaction", async () => {
     vi.mocked(prisma.issue.findUnique).mockResolvedValue(makeIssue());
     vi.mocked(prisma.workLog.findMany).mockResolvedValue([]);
     vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([]);
     vi.mocked(prisma.timeEntry.updateMany).mockResolvedValue({ count: 0 });
-    vi.mocked(prisma.issue.update).mockResolvedValue(makeIssue({ timeConfirmedAt: new Date() }) as any);
+    vi.mocked(prisma.issue.update).mockResolvedValue(
+      makeIssue({ timeConfirmedAt: new Date() }) as any
+    );
 
     await reconcileIssueTime(ISSUE_ID, MEMBER_ID);
 
@@ -454,7 +665,9 @@ describe("KAN-157 atomicity — reconcileIssueTime uses $transaction (fix 3)", (
 // ── FIX 5: addHours bounds validation ────────────────────────────────────────
 
 describe("KAN-157 addHours bounds validation (fix 5)", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it("rejects absurd addHours value '999999999' at schema level", async () => {
     const { ReconcileTimeBody } = await import("./schema.js");
@@ -472,7 +685,9 @@ describe("KAN-157 addHours bounds validation (fix 5)", () => {
 // ── FIX 7: totalHours in non-stale already-confirmed branch ──────────────────
 
 describe("KAN-157 checkReconciliation totalHours in confirmed/non-stale branch (fix 7)", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it("returns real totalHours (not 0) when entries exist and are all confirmed", async () => {
     const { checkReconciliation } = await import("./reconcile.js");
@@ -490,7 +705,9 @@ describe("KAN-157 checkReconciliation totalHours in confirmed/non-stale branch (
 // ── FIX 1: parent auto-advance gate bypass ────────────────────────────────────
 
 describe("KAN-157 parent auto-advance does not bypass reconciliation gate (fix 1)", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it("parent with unconfirmed captured time is NOT auto-advanced to done when last child completes", async () => {
     const { checkAndAdvanceParent } = await import("./auto-transition.js");
@@ -499,7 +716,7 @@ describe("KAN-157 parent auto-advance does not bypass reconciliation gate (fix 1
     const parentWithTime = {
       id: "parent-id",
       state: "review",
-      timeConfirmedAt: null,  // unconfirmed time
+      timeConfirmedAt: null, // unconfirmed time
       children: [{ id: "child-1", state: "done" }],
     };
 
@@ -528,7 +745,9 @@ describe("KAN-157 parent auto-advance does not bypass reconciliation gate (fix 1
 // ── KAN-165: single reconcile clears the gate (no second no-op call) ─────────
 
 describe("KAN-165 single reconcile stamps timeConfirmedAt after its own entries", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it("stamps timeConfirmedAt STRICTLY after the newest entry created in the same reconcile", async () => {
     // Simulate the live race: the promoted/manual entries get their createdAt
@@ -587,9 +806,7 @@ describe("KAN-165 single reconcile stamps timeConfirmedAt after its own entries"
     // Now the →done gate re-checks with the freshly stamped confirmedAt. The
     // promoted worklog now has its linked entry; checkReconciliation sees the
     // approved entry (createdAt = dbCreatedAt) plus the (linked) worklog.
-    vi.mocked(prisma.workLog.findMany).mockResolvedValue([
-      makeWorkLog({ createdAt: dbCreatedAt }),
-    ]);
+    vi.mocked(prisma.workLog.findMany).mockResolvedValue([makeWorkLog({ createdAt: dbCreatedAt })]);
     vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([promotedEntry]);
 
     const check = await checkReconciliation(ISSUE_ID, confirmedAt);
@@ -634,7 +851,7 @@ describe("KAN-188 reconcileIssueTime() confirmedTotalHours override", () => {
     vi.mocked(prisma.timeEntry.updateMany).mockResolvedValue({ count: 0 });
     vi.mocked(prisma.timeEntry.create).mockResolvedValue(overrideEntry);
     vi.mocked(prisma.issue.update).mockResolvedValue(
-      makeIssue({ timeConfirmedAt: new Date() }) as any,
+      makeIssue({ timeConfirmedAt: new Date() }) as any
     );
 
     const result = await reconcileIssueTime(ISSUE_ID, MEMBER_ID, {
@@ -652,7 +869,7 @@ describe("KAN-188 reconcileIssueTime() confirmedTotalHours override", () => {
           via: "reconcile-override",
           adjustsId: expect.any(String),
         }),
-      }),
+      })
     );
     const createCall = vi.mocked(prisma.timeEntry.create).mock.calls[0]![0];
     expect(new Prisma.Decimal(createCall.data.hours).toNumber()).toBe(-2);
@@ -687,7 +904,7 @@ describe("KAN-188 reconcileIssueTime() confirmedTotalHours override", () => {
     vi.mocked(prisma.timeEntry.updateMany).mockResolvedValue({ count: 0 });
     vi.mocked(prisma.timeEntry.create).mockResolvedValue(overrideEntry);
     vi.mocked(prisma.issue.update).mockResolvedValue(
-      makeIssue({ timeConfirmedAt: new Date() }) as any,
+      makeIssue({ timeConfirmedAt: new Date() }) as any
     );
 
     const result = await reconcileIssueTime(ISSUE_ID, MEMBER_ID, {
@@ -701,7 +918,7 @@ describe("KAN-188 reconcileIssueTime() confirmedTotalHours override", () => {
           status: "approved",
           via: "reconcile-override",
         }),
-      }),
+      })
     );
     const createCall = vi.mocked(prisma.timeEntry.create).mock.calls[0]![0];
     expect(new Prisma.Decimal(createCall.data.hours).toNumber()).toBe(3);
@@ -723,7 +940,7 @@ describe("KAN-188 reconcileIssueTime() confirmedTotalHours override", () => {
     vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([existingApproved]);
     vi.mocked(prisma.timeEntry.updateMany).mockResolvedValue({ count: 0 });
     vi.mocked(prisma.issue.update).mockResolvedValue(
-      makeIssue({ timeConfirmedAt: new Date() }) as any,
+      makeIssue({ timeConfirmedAt: new Date() }) as any
     );
 
     const result = await reconcileIssueTime(ISSUE_ID, MEMBER_ID, {
@@ -735,7 +952,7 @@ describe("KAN-188 reconcileIssueTime() confirmedTotalHours override", () => {
       expect.objectContaining({
         where: { id: ISSUE_ID },
         data: expect.objectContaining({ timeConfirmedAt: expect.any(Date) }),
-      }),
+      })
     );
     expect(result.totalHours).toBe(3);
   });
@@ -778,7 +995,7 @@ describe("KAN-188 reconcileIssueTime() confirmedTotalHours override", () => {
     vi.mocked(prisma.timeEntry.updateMany).mockResolvedValue({ count: 0 });
     vi.mocked(prisma.timeEntry.create).mockResolvedValue(overrideEntry);
     vi.mocked(prisma.issue.update).mockResolvedValue(
-      makeIssue({ timeConfirmedAt: new Date() }) as any,
+      makeIssue({ timeConfirmedAt: new Date() }) as any
     );
 
     // Only approved time is confirmed: currentTotal = 6; override to 4 → delta = -2.
@@ -830,10 +1047,10 @@ describe("KAN-188 reconcileIssueTime() confirmedTotalHours override", () => {
         hours: "-2",
         via: "reconcile-override",
         adjustsId: "te-existing",
-      }),
+      })
     );
     vi.mocked(prisma.issue.update).mockResolvedValue(
-      makeIssue({ timeConfirmedAt: new Date() }) as any,
+      makeIssue({ timeConfirmedAt: new Date() }) as any
     );
 
     // Both opts passed directly to the service function (bypassing the Zod
@@ -846,9 +1063,7 @@ describe("KAN-188 reconcileIssueTime() confirmedTotalHours override", () => {
     } as any);
 
     const createCalls = vi.mocked(prisma.timeEntry.create).mock.calls;
-    const manualTopUpCall = createCalls.find(
-      (call) => call[0]?.data?.via === "reconcile-manual",
-    );
+    const manualTopUpCall = createCalls.find((call) => call[0]?.data?.via === "reconcile-manual");
     expect(manualTopUpCall).toBeUndefined();
   });
 });
@@ -892,7 +1107,10 @@ describe("KAN-157 batchTransitionByKeys →done with unconfirmed issues", () => 
     // cleanIssue: no time data → auto-pass
     // dirtyIssue: has a WorkLog → RECONCILIATION_REQUIRED
     vi.mocked(prisma.workLog.findMany).mockImplementation(({ where }: any) => {
-      if (where?.issueId === ISSUE_ID || (where?.issueId?.in && where.issueId.in.includes(ISSUE_ID))) {
+      if (
+        where?.issueId === ISSUE_ID ||
+        (where?.issueId?.in && where.issueId.in.includes(ISSUE_ID))
+      ) {
         return Promise.resolve([makeWorkLog()]);
       }
       return Promise.resolve([]);
@@ -901,7 +1119,11 @@ describe("KAN-157 batchTransitionByKeys →done with unconfirmed issues", () => 
     vi.mocked(prisma.timeEntry.findMany).mockResolvedValue([]);
 
     await expect(
-      batchTransitionByKeys(PROJECT_ID, { to_state: "done", keys: ["TEST-2", ISSUE_KEY] }, MEMBER_ID),
+      batchTransitionByKeys(
+        PROJECT_ID,
+        { to_state: "done", keys: ["TEST-2", ISSUE_KEY] },
+        MEMBER_ID
+      )
     ).rejects.toMatchObject({
       code: "RECONCILIATION_REQUIRED",
       statusCode: 409,
@@ -936,19 +1158,13 @@ describe("KAN-157 batchTransitionByKeys →done with unconfirmed issues", () => 
 
     let caughtError: any;
     try {
-      await batchTransitionByKeys(
-        PROJECT_ID,
-        { to_state: "done", keys: [ISSUE_KEY] },
-        MEMBER_ID,
-      );
+      await batchTransitionByKeys(PROJECT_ID, { to_state: "done", keys: [ISSUE_KEY] }, MEMBER_ID);
     } catch (err) {
       caughtError = err;
     }
 
     expect(caughtError).toBeDefined();
     expect(caughtError.code).toBe("RECONCILIATION_REQUIRED");
-    expect(caughtError.details.blockedIssues).toEqual([
-      { key: ISSUE_KEY, totalHours: 7 },
-    ]);
+    expect(caughtError.details.blockedIssues).toEqual([{ key: ISSUE_KEY, totalHours: 7 }]);
   });
 });

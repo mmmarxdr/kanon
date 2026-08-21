@@ -26,6 +26,11 @@ vi.mock("../../services/event-bus/index.js", () => ({
   },
 }));
 
+vi.mock("../../services/event-bus/outbox.js", () => ({
+  enqueueDomainEventTx: vi.fn(),
+  publishDomainEventLane: vi.fn(),
+}));
+
 vi.mock("./auto-transition.js", () => ({
   checkAndAdvanceParent: vi.fn().mockResolvedValue(undefined),
 }));
@@ -92,6 +97,7 @@ vi.mock("../../config/prisma.js", () => ({
 
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
+import { enqueueDomainEventTx, publishDomainEventLane } from "../../services/event-bus/outbox.js";
 import { getStatus as getSubscriptionStatus } from "../issue-subscription/service.js";
 import {
   getIssue,
@@ -104,6 +110,31 @@ import {
 } from "./service.js";
 
 const mockIssueFindUnique = vi.mocked(prisma.issue.findUnique);
+const mockEnqueueDomainEventTx = vi.mocked(enqueueDomainEventTx);
+const mockPublishDomainEventLane = vi.mocked(publishDomainEventLane);
+const defaultObservedAt = new Date("2026-08-18T13:15:00.000Z");
+
+function transitionObservationTxFields() {
+  return {
+    member: {
+      findUnique: vi.fn().mockResolvedValue({ userId: "user-1" }),
+    },
+    $queryRaw: vi.fn().mockResolvedValue([{ observedAt: defaultObservedAt }]),
+  };
+}
+
+beforeEach(() => {
+  vi.mocked(prisma.member.findUnique).mockResolvedValue({
+    id: "member-1",
+    userId: "user-1",
+  } as any);
+  vi.mocked(prisma.$queryRaw).mockResolvedValue([{ observedAt: defaultObservedAt }] as any);
+  mockEnqueueDomainEventTx.mockResolvedValue({
+    id: "outbox-default",
+    deliveryKey: "work-capture-transition:v1:default",
+  });
+  mockPublishDomainEventLane.mockResolvedValue(1);
+});
 
 // Base minimal Prisma issue shape that getIssue spreads
 function makeIssueRow(overrides?: Record<string, unknown>) {
@@ -145,7 +176,7 @@ describe("getIssue()", () => {
   it("queries Prisma with cycle: { select: { id, name } } in the include block", async () => {
     const cyclePayload = { id: "cycle-uuid-1", name: "Sprint Q2" };
     mockIssueFindUnique.mockResolvedValue(
-      makeIssueRow({ cycleId: "cycle-uuid-1", cycle: cyclePayload }) as any,
+      makeIssueRow({ cycleId: "cycle-uuid-1", cycle: cyclePayload }) as any
     );
 
     await getIssue("TEST-1");
@@ -161,7 +192,7 @@ describe("getIssue()", () => {
   it("returns cycle: { id, name } when the issue has a cycleId", async () => {
     const cyclePayload = { id: "cycle-uuid-1", name: "Sprint Q2" };
     mockIssueFindUnique.mockResolvedValue(
-      makeIssueRow({ cycleId: "cycle-uuid-1", cycle: cyclePayload }) as any,
+      makeIssueRow({ cycleId: "cycle-uuid-1", cycle: cyclePayload }) as any
     );
 
     const result = await getIssue("TEST-1");
@@ -171,9 +202,7 @@ describe("getIssue()", () => {
   });
 
   it("returns cycle: null when issue has no cycleId", async () => {
-    mockIssueFindUnique.mockResolvedValue(
-      makeIssueRow({ cycleId: null, cycle: null }) as any,
-    );
+    mockIssueFindUnique.mockResolvedValue(makeIssueRow({ cycleId: null, cycle: null }) as any);
 
     const result = await getIssue("TEST-1");
 
@@ -262,7 +291,7 @@ describe("createIssue() — cycleId integration", () => {
     await createIssue(
       PROJECT.id,
       { title: "x", labels: [], cycleId: CYCLE_A.id } as any,
-      "member-1",
+      "member-1"
     );
 
     expect(prisma.cycleScopeEvent.create).toHaveBeenCalledOnce();
@@ -284,8 +313,8 @@ describe("createIssue() — cycleId integration", () => {
       createIssue(
         PROJECT.id,
         { title: "x", labels: [], cycleId: CYCLE_OTHER.id } as any,
-        "member-1",
-      ),
+        "member-1"
+      )
     ).rejects.toMatchObject({
       statusCode: 400,
       code: "CROSS_PROJECT_CYCLE",
@@ -336,7 +365,7 @@ describe("updateIssue() — cycleId scope events", () => {
 
   it("TEST 4: null → cycleId='B' records 1 add event for B", async () => {
     vi.mocked(prisma.issue.findUnique).mockResolvedValue(
-      makeUpdateIssueRow({ cycleId: null }) as any,
+      makeUpdateIssueRow({ cycleId: null }) as any
     );
     vi.mocked(prisma.cycle.findUnique).mockResolvedValue(CYCLE_B as any);
 
@@ -354,7 +383,7 @@ describe("updateIssue() — cycleId scope events", () => {
 
   it("TEST 5: 'A' → 'B' records remove(A) and add(B)", async () => {
     vi.mocked(prisma.issue.findUnique).mockResolvedValue(
-      makeUpdateIssueRow({ cycleId: CYCLE_A.id }) as any,
+      makeUpdateIssueRow({ cycleId: CYCLE_A.id }) as any
     );
     vi.mocked(prisma.cycle.findUnique).mockImplementation((args: any) => {
       if (args?.where?.id === CYCLE_A.id) return Promise.resolve(CYCLE_A as any);
@@ -384,7 +413,7 @@ describe("updateIssue() — cycleId scope events", () => {
 
   it("TEST 6: 'A' → null records 1 remove event for A", async () => {
     vi.mocked(prisma.issue.findUnique).mockResolvedValue(
-      makeUpdateIssueRow({ cycleId: CYCLE_A.id }) as any,
+      makeUpdateIssueRow({ cycleId: CYCLE_A.id }) as any
     );
     vi.mocked(prisma.cycle.findUnique).mockResolvedValue(CYCLE_A as any);
 
@@ -402,7 +431,7 @@ describe("updateIssue() — cycleId scope events", () => {
 
   it("TEST 7: cycleId not in payload → no scope event", async () => {
     vi.mocked(prisma.issue.findUnique).mockResolvedValue(
-      makeUpdateIssueRow({ cycleId: CYCLE_A.id }) as any,
+      makeUpdateIssueRow({ cycleId: CYCLE_A.id }) as any
     );
 
     await updateIssue("TEST-1", { title: "renamed" } as any, "member-1");
@@ -412,12 +441,12 @@ describe("updateIssue() — cycleId scope events", () => {
 
   it("TEST 8: cross-project new cycleId throws CROSS_PROJECT_CYCLE before update", async () => {
     vi.mocked(prisma.issue.findUnique).mockResolvedValue(
-      makeUpdateIssueRow({ cycleId: null }) as any,
+      makeUpdateIssueRow({ cycleId: null }) as any
     );
     vi.mocked(prisma.cycle.findUnique).mockResolvedValue(CYCLE_OTHER as any);
 
     await expect(
-      updateIssue("TEST-1", { cycleId: CYCLE_OTHER.id } as any, "member-1"),
+      updateIssue("TEST-1", { cycleId: CYCLE_OTHER.id } as any, "member-1")
     ).rejects.toMatchObject({
       statusCode: 400,
       code: "CROSS_PROJECT_CYCLE",
@@ -489,6 +518,7 @@ describe("batchTransitionByKeys()", () => {
     vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
       if (typeof cb === "function") {
         return cb({
+          ...transitionObservationTxFields(),
           issue: {
             updateMany: vi.fn().mockResolvedValue({ count: 2 }),
           },
@@ -512,14 +542,28 @@ describe("batchTransitionByKeys()", () => {
   it("B7.1 — transitions all matched issues in one transaction", async () => {
     setupTxBatch();
     vi.mocked(prisma.issue.findMany).mockResolvedValue([
-      { id: "i1", key: "TEST-1", state: "todo", projectId: PROJECT.id, parentId: null, roadmapItemId: null },
-      { id: "i2", key: "TEST-2", state: "todo", projectId: PROJECT.id, parentId: null, roadmapItemId: null },
+      {
+        id: "i1",
+        key: "TEST-1",
+        state: "todo",
+        projectId: PROJECT.id,
+        parentId: null,
+        roadmapItemId: null,
+      },
+      {
+        id: "i2",
+        key: "TEST-2",
+        state: "todo",
+        projectId: PROJECT.id,
+        parentId: null,
+        roadmapItemId: null,
+      },
     ] as any);
 
     const res = await batchTransitionByKeys(
       PROJECT.id,
       { keys: ["TEST-1", "TEST-2"], to_state: "in_progress" } as any,
-      "member-1",
+      "member-1"
     );
 
     expect(prisma.$transaction).toHaveBeenCalledOnce();
@@ -529,16 +573,30 @@ describe("batchTransitionByKeys()", () => {
 
   it("B7.2 — cross-project key throws CROSS_PROJECT_ISSUE 400 with no tx", async () => {
     vi.mocked(prisma.issue.findMany).mockResolvedValue([
-      { id: "i1", key: "TEST-1", state: "todo", projectId: PROJECT.id, parentId: null, roadmapItemId: null },
-      { id: "i9", key: "OTHER-9", state: "todo", projectId: "project-OTHER", parentId: null, roadmapItemId: null },
+      {
+        id: "i1",
+        key: "TEST-1",
+        state: "todo",
+        projectId: PROJECT.id,
+        parentId: null,
+        roadmapItemId: null,
+      },
+      {
+        id: "i9",
+        key: "OTHER-9",
+        state: "todo",
+        projectId: "project-OTHER",
+        parentId: null,
+        roadmapItemId: null,
+      },
     ] as any);
 
     await expect(
       batchTransitionByKeys(
         PROJECT.id,
         { keys: ["TEST-1", "OTHER-9"], to_state: "in_progress" } as any,
-        "member-1",
-      ),
+        "member-1"
+      )
     ).rejects.toMatchObject({
       statusCode: 400,
       code: "CROSS_PROJECT_ISSUE",
@@ -549,7 +607,14 @@ describe("batchTransitionByKeys()", () => {
 
   it("B7.3 — missing key throws CROSS_PROJECT_ISSUE 400 (atomic — no partial update)", async () => {
     vi.mocked(prisma.issue.findMany).mockResolvedValue([
-      { id: "i1", key: "TEST-1", state: "todo", projectId: PROJECT.id, parentId: null, roadmapItemId: null },
+      {
+        id: "i1",
+        key: "TEST-1",
+        state: "todo",
+        projectId: PROJECT.id,
+        parentId: null,
+        roadmapItemId: null,
+      },
       // TEST-999 missing from result
     ] as any);
 
@@ -557,8 +622,8 @@ describe("batchTransitionByKeys()", () => {
       batchTransitionByKeys(
         PROJECT.id,
         { keys: ["TEST-1", "TEST-999"], to_state: "in_progress" } as any,
-        "member-1",
-      ),
+        "member-1"
+      )
     ).rejects.toMatchObject({
       statusCode: 400,
       code: "CROSS_PROJECT_ISSUE",
@@ -576,21 +641,37 @@ describe("batchTransitionByKeys()", () => {
     emitSpy.mockClear();
 
     vi.mocked(prisma.issue.findMany).mockResolvedValue([
-      { id: "i1", key: "TEST-1", state: "todo", projectId: PROJECT.id, parentId: null, roadmapItemId: null },
-      { id: "i2", key: "TEST-2", state: "todo", projectId: PROJECT.id, parentId: null, roadmapItemId: null },
+      {
+        id: "i1",
+        key: "TEST-1",
+        state: "todo",
+        projectId: PROJECT.id,
+        parentId: null,
+        roadmapItemId: null,
+      },
+      {
+        id: "i2",
+        key: "TEST-2",
+        state: "todo",
+        projectId: PROJECT.id,
+        parentId: null,
+        roadmapItemId: null,
+      },
     ] as any);
 
     await batchTransitionByKeys(
       PROJECT.id,
       { keys: ["TEST-1", "TEST-2"], to_state: "in_progress" } as any,
-      "member-1",
+      "member-1"
     );
 
     // Should have emitted per-issue events (with _skipSubscribedActivity=true) PLUS one batch event
     const emittedTypes = emitSpy.mock.calls.map((c: any) => c[0].type);
     expect(emittedTypes).toContain("issue.batch_transitioned");
 
-    const batchEvent = emitSpy.mock.calls.find((c: any) => c[0].type === "issue.batch_transitioned");
+    const batchEvent = emitSpy.mock.calls.find(
+      (c: any) => c[0].type === "issue.batch_transitioned"
+    );
     expect(batchEvent).toBeDefined();
     const payload = batchEvent![0].payload as any;
     // Payload now carries issues:[{id,key}] instead of issueIds (KAN-28 issueKey fix)
@@ -599,7 +680,9 @@ describe("batchTransitionByKeys()", () => {
     expect(sortedIds).toEqual(["i1", "i2"]);
 
     // Per-issue events must carry _skipSubscribedActivity=true
-    const perIssueEvents = emitSpy.mock.calls.filter((c: any) => c[0].type === "issue.transitioned");
+    const perIssueEvents = emitSpy.mock.calls.filter(
+      (c: any) => c[0].type === "issue.transitioned"
+    );
     for (const call of perIssueEvents) {
       expect((call[0] as any).payload._skipSubscribedActivity).toBe(true);
     }
@@ -614,17 +697,33 @@ describe("batchTransitionByKeys()", () => {
     emitSpy.mockClear();
 
     vi.mocked(prisma.issue.findMany).mockResolvedValue([
-      { id: "i1", key: "TEST-1", state: "todo", projectId: PROJECT.id, parentId: null, roadmapItemId: null },
-      { id: "i2", key: "TEST-2", state: "todo", projectId: PROJECT.id, parentId: null, roadmapItemId: null },
+      {
+        id: "i1",
+        key: "TEST-1",
+        state: "todo",
+        projectId: PROJECT.id,
+        parentId: null,
+        roadmapItemId: null,
+      },
+      {
+        id: "i2",
+        key: "TEST-2",
+        state: "todo",
+        projectId: PROJECT.id,
+        parentId: null,
+        roadmapItemId: null,
+      },
     ] as any);
 
     await batchTransitionByKeys(
       PROJECT.id,
       { keys: ["TEST-1", "TEST-2"], to_state: "in_progress" } as any,
-      "member-1",
+      "member-1"
     );
 
-    const batchEvent = emitSpy.mock.calls.find((c: any) => c[0].type === "issue.batch_transitioned");
+    const batchEvent = emitSpy.mock.calls.find(
+      (c: any) => c[0].type === "issue.batch_transitioned"
+    );
     expect(batchEvent).toBeDefined();
     const issues = (batchEvent![0].payload as any).issues as Array<{ id: string; key: string }>;
 
@@ -647,13 +746,20 @@ describe("batchTransitionByKeys()", () => {
     // possible (forward + backward both allowed), the no-op path is the
     // observable contract: we return count=0 without opening a tx.
     vi.mocked(prisma.issue.findMany).mockResolvedValue([
-      { id: "i1", key: "TEST-1", state: "done", projectId: PROJECT.id, parentId: null, roadmapItemId: null },
+      {
+        id: "i1",
+        key: "TEST-1",
+        state: "done",
+        projectId: PROJECT.id,
+        parentId: null,
+        roadmapItemId: null,
+      },
     ] as any);
 
     const res = await batchTransitionByKeys(
       "TEST",
       { keys: ["TEST-1"], to_state: "done" } as any,
-      "member-1",
+      "member-1"
     );
 
     expect(res).toEqual({ count: 0, keys: [], state: "done" });
@@ -746,14 +852,29 @@ describe("KAN-35 — transitionGroup: completedAt stamping via updateMany", () =
 
   it("C2.1 — updateMany data includes completedAt=Date when transitioning to done", async () => {
     vi.mocked(prisma.issue.findMany).mockResolvedValue([
-      { id: "i1", key: "TEST-1", state: "in_progress", timeConfirmedAt: new Date("2026-08-05T00:00:00Z"), parentId: null, roadmapItemId: null },
-      { id: "i2", key: "TEST-2", state: "in_progress", timeConfirmedAt: new Date("2026-08-05T00:00:00Z"), parentId: null, roadmapItemId: null },
+      {
+        id: "i1",
+        key: "TEST-1",
+        state: "in_progress",
+        timeConfirmedAt: new Date("2026-08-05T00:00:00Z"),
+        parentId: null,
+        roadmapItemId: null,
+      },
+      {
+        id: "i2",
+        key: "TEST-2",
+        state: "in_progress",
+        timeConfirmedAt: new Date("2026-08-05T00:00:00Z"),
+        parentId: null,
+        roadmapItemId: null,
+      },
     ] as any);
 
     let capturedUpdateManyData: any;
     vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
       if (typeof cb === "function") {
         const tx = {
+          ...transitionObservationTxFields(),
           issue: {
             updateMany: vi.fn().mockImplementation(async ({ data }: any) => {
               capturedUpdateManyData = data;
@@ -781,6 +902,7 @@ describe("KAN-35 — transitionGroup: completedAt stamping via updateMany", () =
     vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
       if (typeof cb === "function") {
         const tx = {
+          ...transitionObservationTxFields(),
           issue: {
             updateMany: vi.fn().mockImplementation(async ({ data }: any) => {
               capturedUpdateManyData = data;
@@ -810,13 +932,22 @@ describe("KAN-35 — batchTransitionByKeys: completedAt stamping via updateMany"
 
   it("C3.1 — updateMany data includes completedAt=Date when transitioning to done", async () => {
     vi.mocked(prisma.issue.findMany).mockResolvedValue([
-      { id: "i1", key: "TEST-1", state: "in_progress", timeConfirmedAt: new Date("2026-08-05T00:00:00Z"), projectId: PROJECT.id, parentId: null, roadmapItemId: null },
+      {
+        id: "i1",
+        key: "TEST-1",
+        state: "in_progress",
+        timeConfirmedAt: new Date("2026-08-05T00:00:00Z"),
+        projectId: PROJECT.id,
+        parentId: null,
+        roadmapItemId: null,
+      },
     ] as any);
 
     let capturedUpdateManyData: any;
     vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
       if (typeof cb === "function") {
         const tx = {
+          ...transitionObservationTxFields(),
           issue: {
             updateMany: vi.fn().mockImplementation(async ({ data }: any) => {
               capturedUpdateManyData = data;
@@ -829,7 +960,11 @@ describe("KAN-35 — batchTransitionByKeys: completedAt stamping via updateMany"
       }
     });
 
-    await batchTransitionByKeys(PROJECT.id, { keys: ["TEST-1"], to_state: "done" } as any, "member-1");
+    await batchTransitionByKeys(
+      PROJECT.id,
+      { keys: ["TEST-1"], to_state: "done" } as any,
+      "member-1"
+    );
 
     expect(capturedUpdateManyData.completedAt).toBeInstanceOf(Date);
     expect(capturedUpdateManyData.completedAt).not.toBeNull();
@@ -837,13 +972,21 @@ describe("KAN-35 — batchTransitionByKeys: completedAt stamping via updateMany"
 
   it("C3.2 — updateMany data includes completedAt=null when transitioning to non-done", async () => {
     vi.mocked(prisma.issue.findMany).mockResolvedValue([
-      { id: "i1", key: "TEST-1", state: "done", projectId: PROJECT.id, parentId: null, roadmapItemId: null },
+      {
+        id: "i1",
+        key: "TEST-1",
+        state: "done",
+        projectId: PROJECT.id,
+        parentId: null,
+        roadmapItemId: null,
+      },
     ] as any);
 
     let capturedUpdateManyData: any;
     vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
       if (typeof cb === "function") {
         const tx = {
+          ...transitionObservationTxFields(),
           issue: {
             updateMany: vi.fn().mockImplementation(async ({ data }: any) => {
               capturedUpdateManyData = data;
@@ -856,8 +999,184 @@ describe("KAN-35 — batchTransitionByKeys: completedAt stamping via updateMany"
       }
     });
 
-    await batchTransitionByKeys(PROJECT.id, { keys: ["TEST-1"], to_state: "in_progress" } as any, "member-1");
+    await batchTransitionByKeys(
+      PROJECT.id,
+      { keys: ["TEST-1"], to_state: "in_progress" } as any,
+      "member-1"
+    );
 
     expect(capturedUpdateManyData.completedAt).toBeNull();
+  });
+});
+
+describe("durable work-capture transition observations", () => {
+  const observedAt = new Date("2026-08-18T13:15:00.000Z");
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.integrationProjectBinding.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.project.findUnique).mockResolvedValue(PROJECT as any);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "member-1",
+      userId: "user-1",
+    } as any);
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([{ observedAt }] as any);
+    mockEnqueueDomainEventTx.mockResolvedValue({
+      id: "outbox-1",
+      deliveryKey: "work-capture-transition:v1:occurrence-1",
+    });
+    mockPublishDomainEventLane.mockResolvedValue(1);
+  });
+
+  it("rolls the transition transaction back when observation enqueue fails", async () => {
+    const issue = {
+      ...makeIssueRow({
+        state: "backlog",
+        projectId: PROJECT.id,
+        project: PROJECT,
+      }),
+      project: PROJECT,
+    };
+    mockIssueFindUnique.mockResolvedValue(issue as any);
+    vi.mocked(prisma.issue.update).mockResolvedValue({
+      ...issue,
+      state: "analysis",
+    } as any);
+    vi.mocked(prisma.$transaction).mockImplementation(async (callback: any) => callback(prisma));
+    mockEnqueueDomainEventTx.mockRejectedValueOnce(new Error("outbox insert failed"));
+
+    await expect(transitionIssue("TEST-1", "analysis", "member-1")).rejects.toThrow(
+      "outbox insert failed"
+    );
+
+    expect(prisma.issue.update).toHaveBeenCalledOnce();
+    expect(mockEnqueueDomainEventTx).toHaveBeenCalledOnce();
+    expect(mockPublishDomainEventLane).not.toHaveBeenCalled();
+  });
+
+  it("keeps a committed transition successful when immediate delivery fails", async () => {
+    const issue = {
+      ...makeIssueRow({
+        state: "backlog",
+        projectId: PROJECT.id,
+        project: PROJECT,
+      }),
+      project: PROJECT,
+    };
+    mockIssueFindUnique.mockResolvedValue(issue as any);
+    vi.mocked(prisma.issue.update).mockResolvedValue({
+      ...issue,
+      state: "analysis",
+    } as any);
+    vi.mocked(prisma.$transaction).mockImplementation(async (callback: any) => callback(prisma));
+    mockPublishDomainEventLane.mockRejectedValueOnce(new Error("subscriber unavailable"));
+
+    await expect(transitionIssue("TEST-1", "analysis", "member-1")).resolves.toMatchObject({
+      state: "analysis",
+    });
+
+    expect(mockEnqueueDomainEventTx).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({
+        deliveryKey: expect.stringMatching(/^work-capture-transition:v1:/),
+        laneKey: "work-capture-transition:issue-1",
+        event: expect.objectContaining({
+          type: "work_capture.transition_observed",
+          workspaceId: PROJECT.workspaceId,
+          actorId: "member-1",
+          payload: expect.objectContaining({
+            issueId: "issue-1",
+            projectId: PROJECT.id,
+            workspaceId: PROJECT.workspaceId,
+            from: "backlog",
+            to: "analysis",
+            actorMemberId: "member-1",
+            actorUserId: "user-1",
+            observedAt: observedAt.toISOString(),
+          }),
+        }),
+      })
+    );
+    expect(mockPublishDomainEventLane).toHaveBeenCalledWith("work-capture-transition:issue-1");
+  });
+
+  it("group enqueue skips same-state issues and batch enqueue skips concurrent no-ops", async () => {
+    vi.mocked(prisma.issue.findMany).mockResolvedValueOnce([
+      {
+        id: "i1",
+        key: "TEST-1",
+        state: "todo",
+        parentId: null,
+        roadmapItemId: null,
+      },
+      {
+        id: "i2",
+        key: "TEST-2",
+        state: "in_progress",
+        parentId: null,
+        roadmapItemId: null,
+      },
+    ] as any);
+    vi.mocked(prisma.$transaction).mockImplementationOnce(async (callback: any) =>
+      callback({
+        issue: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+        member: {
+          findUnique: vi.fn().mockResolvedValue({ userId: "user-1" }),
+        },
+        activityLog: {
+          createMany: vi.fn().mockResolvedValue({ count: 1 }),
+        },
+        $queryRaw: vi.fn().mockResolvedValue([{ observedAt }]),
+      })
+    );
+
+    await expect(
+      transitionGroup(PROJECT.id, "group-a", "in_progress", "member-1")
+    ).resolves.toMatchObject({ count: 1, keys: ["TEST-1"] });
+    expect(mockEnqueueDomainEventTx).toHaveBeenCalledOnce();
+    expect(mockEnqueueDomainEventTx).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        laneKey: "work-capture-transition:i1",
+        event: expect.objectContaining({
+          payload: expect.objectContaining({ issueId: "i1", from: "todo" }),
+        }),
+      })
+    );
+
+    mockEnqueueDomainEventTx.mockClear();
+    mockPublishDomainEventLane.mockClear();
+    vi.mocked(prisma.issue.findMany).mockResolvedValueOnce([
+      {
+        id: "i3",
+        key: "TEST-3",
+        state: "todo",
+        projectId: PROJECT.id,
+        parentId: null,
+        roadmapItemId: null,
+      },
+    ] as any);
+    vi.mocked(prisma.$transaction).mockImplementationOnce(async (callback: any) =>
+      callback({
+        issue: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
+        member: {
+          findUnique: vi.fn().mockResolvedValue({ userId: "user-1" }),
+        },
+        activityLog: {
+          createMany: vi.fn().mockResolvedValue({ count: 0 }),
+        },
+        $queryRaw: vi.fn().mockResolvedValue([{ observedAt }]),
+      })
+    );
+
+    await expect(
+      batchTransitionByKeys(
+        PROJECT.id,
+        { keys: ["TEST-3"], to_state: "in_progress" } as any,
+        "member-1"
+      )
+    ).resolves.toEqual({ count: 0, keys: [], state: "in_progress" });
+    expect(mockEnqueueDomainEventTx).not.toHaveBeenCalled();
+    expect(mockPublishDomainEventLane).not.toHaveBeenCalled();
   });
 });

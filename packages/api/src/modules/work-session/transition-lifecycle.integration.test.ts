@@ -9,19 +9,20 @@ import {
 } from "../../test/helpers.js";
 import { prisma } from "../../config/prisma.js";
 import { eventBus } from "../../services/event-bus/index.js";
+import { drainDomainEventOutbox, enqueueDomainEventTx } from "../../services/event-bus/outbox.js";
 import type { DomainEvent } from "../../services/event-bus/types.js";
 import {
   captureTransitionClose,
   captureTransitionInterval,
-  drainTransitionLifecycleEffects,
   heartbeat,
   stageTransitionStart,
+  startWork,
   stopWork,
 } from "./service.js";
 
 async function seedContext(
   issueState: "analysis" | "review" = "review",
-  issueType: "task" | "incident" = "task",
+  issueType: "task" | "incident" = "task"
 ) {
   const workspace = await seedTestWorkspace();
   const member = await seedTestMemberWithRole(workspace.id, "member");
@@ -49,6 +50,145 @@ describe("durable work-transition lifecycle", () => {
     await disconnectTestDb();
   });
 
+  it("retains one pending start row after failure and acknowledges the same key on heartbeat retry", async () => {
+    const { member, issue } = await seedContext("analysis");
+    const unsubscribeFailure = eventBus.subscribe(async (event) => {
+      if (event.type === "work_session.started") {
+        throw new Error("started subscriber unavailable");
+      }
+    });
+
+    await expect(heartbeat(issue.key, member.id, member.userId, "codex")).rejects.toThrow(
+      "subscriber delivery failed"
+    );
+    unsubscribeFailure();
+
+    const session = await prisma.workSession.findFirstOrThrow({
+      where: { issueId: issue.id, userId: member.userId },
+    });
+    const deliveryKey = `work-session.started:v1:${session.id}`;
+    expect(
+      await prisma.domainEventOutbox.findMany({
+        where: { deliveryKey },
+        select: { deliveryKey: true, acknowledgedAt: true },
+      })
+    ).toEqual([{ deliveryKey, acknowledgedAt: null }]);
+
+    await prisma.domainEventOutbox.updateMany({
+      where: { deliveryKey },
+      data: { availableAt: new Date(0) },
+    });
+    await heartbeat(issue.key, member.id, member.userId, "codex");
+
+    expect(
+      await prisma.domainEventOutbox.findMany({
+        where: { deliveryKey },
+        select: { deliveryKey: true, acknowledgedAt: true },
+      })
+    ).toEqual([{ deliveryKey, acknowledgedAt: expect.any(Date) }]);
+  });
+
+  it("rolls back a session and its start row together", async () => {
+    const { member, issue, workspace } = await seedContext("analysis");
+    let attemptedDeliveryKey = "";
+
+    await expect(
+      prisma.$transaction(async (tx) => {
+        const session = await tx.workSession.create({
+          data: {
+            issueId: issue.id,
+            userId: member.userId,
+            memberId: member.id,
+            source: "codex",
+          },
+        });
+        await tx.workCaptureIntent.create({
+          data: {
+            issueId: issue.id,
+            userId: member.userId,
+            memberId: member.id,
+            source: "codex",
+            state: "capturing",
+          },
+        });
+        attemptedDeliveryKey = `work-session.started:v1:${session.id}`;
+        await enqueueDomainEventTx(tx, {
+          deliveryKey: attemptedDeliveryKey,
+          laneKey: `work-session:${issue.id}:${member.userId}`,
+          event: {
+            type: "work_session.started",
+            workspaceId: workspace.id,
+            actorId: member.id,
+            payload: { issueId: issue.id },
+          },
+        });
+        throw new Error("forced transaction rollback");
+      })
+    ).rejects.toThrow("forced transaction rollback");
+
+    expect(await prisma.workSession.count({ where: { issueId: issue.id } })).toBe(0);
+    expect(await prisma.workCaptureIntent.count({ where: { issueId: issue.id } })).toBe(0);
+    expect(
+      await prisma.domainEventOutbox.count({
+        where: { deliveryKey: attemptedDeliveryKey },
+      })
+    ).toBe(0);
+  });
+
+  it("keeps an existing pending start ahead of lifecycle close effects", async () => {
+    const { member, issue } = await seedContext("analysis");
+    const unsubscribeFailure = eventBus.subscribe(async (event) => {
+      if (event.type === "work_session.started") {
+        throw new Error("started subscriber unavailable");
+      }
+    });
+
+    await expect(heartbeat(issue.key, member.id, member.userId, "codex")).rejects.toThrow(
+      "subscriber delivery failed"
+    );
+    unsubscribeFailure();
+
+    const session = await prisma.workSession.findFirstOrThrow({
+      where: { issueId: issue.id, userId: member.userId },
+    });
+    await prisma.domainEventOutbox.update({
+      where: { deliveryKey: `work-session.started:v1:${session.id}` },
+      data: { availableAt: new Date("2999-01-01T00:00:00.000Z") },
+    });
+
+    const startedAt = new Date();
+    const staged = await stageTransitionStart(issue.key, member.userId, member.id, startedAt);
+    await startWork(issue.key, member.id, member.userId, "transition-listener", null, undefined, {
+      autoAssign: false,
+      transitionObservedAt: startedAt,
+      transitionLifecycleIdentity: staged.lifecycle.startIdentity!,
+    });
+    await stopWork(
+      issue.key,
+      member.userId,
+      member.id,
+      null,
+      new Date(startedAt.getTime() + 60_000),
+      session.id
+    );
+
+    const rows = await prisma.domainEventOutbox.findMany({
+      where: {
+        eventType: {
+          in: ["work_session.started", "worklog.created", "work_session.ended"],
+        },
+      },
+      orderBy: { position: "asc" },
+      select: { eventType: true, laneKey: true, acknowledgedAt: true },
+    });
+    const laneKey = `work-session:${issue.id}:${member.userId}`;
+    expect(rows).toEqual([
+      { eventType: "work_session.started", laneKey, acknowledgedAt: null },
+      { eventType: "worklog.created", laneKey, acknowledgedAt: null },
+      { eventType: "work_session.ended", laneKey, acknowledgedAt: null },
+    ]);
+  });
+
   it("pairs a close persisted before its delayed start into one exact interval and one event pair", async () => {
     const { member, issue } = await seedContext("review");
     const startedAt = new Date("2026-08-11T10:00:00.000Z");
@@ -60,12 +200,7 @@ describe("durable work-transition lifecycle", () => {
       const closed = await captureTransitionClose(issue.key, endedAt);
       expect(closed.workLog).toBeNull();
 
-      const start = await stageTransitionStart(
-        issue.key,
-        member.userId,
-        member.id,
-        startedAt,
-      );
+      const start = await stageTransitionStart(issue.key, member.userId, member.id, startedAt);
       expect(start.lifecycle.completed).toBe(true);
 
       const lifecycle = await prisma.workTransitionLifecycle.findMany({
@@ -102,16 +237,11 @@ describe("durable work-transition lifecycle", () => {
       });
 
       await captureTransitionClose(issue.key, endedAt);
-      await stageTransitionStart(
-        issue.key,
-        member.userId,
-        member.id,
-        startedAt,
-      );
+      await stageTransitionStart(issue.key, member.userId, member.id, startedAt);
       expect(
         await prisma.workTransitionLifecycle.count({
           where: { issueId: issue.id },
-        }),
+        })
       ).toBe(1);
       expect(await prisma.workLog.count({ where: { issueId: issue.id } })).toBe(1);
       expect(observed).toHaveLength(2);
@@ -129,13 +259,7 @@ describe("durable work-transition lifecycle", () => {
     const unsubscribe = eventBus.subscribe((event) => observed.push(event));
 
     try {
-      await captureTransitionInterval(
-        issue.key,
-        member.userId,
-        member.id,
-        startedAt,
-        endedAt,
-      );
+      await captureTransitionInterval(issue.key, member.userId, member.id, startedAt, endedAt);
       const beforeReplay = {
         lifecycles: await prisma.workTransitionLifecycle.count({
           where: { issueId: issue.id },
@@ -145,12 +269,7 @@ describe("durable work-transition lifecycle", () => {
         events: observed.length,
       };
 
-      await stageTransitionStart(
-        issue.key,
-        member.userId,
-        member.id,
-        startedAt,
-      );
+      await stageTransitionStart(issue.key, member.userId, member.id, startedAt);
 
       expect({
         lifecycles: await prisma.workTransitionLifecycle.count({
@@ -191,26 +310,14 @@ describe("durable work-transition lifecycle", () => {
     const endedAt = new Date("2026-08-11T12:02:00.000Z");
 
     await Promise.all([
-      captureTransitionInterval(
-        issue.key,
-        member.userId,
-        member.id,
-        startedAt,
-        endedAt,
-      ),
-      captureTransitionInterval(
-        issue.key,
-        member.userId,
-        member.id,
-        startedAt,
-        endedAt,
-      ),
+      captureTransitionInterval(issue.key, member.userId, member.id, startedAt, endedAt),
+      captureTransitionInterval(issue.key, member.userId, member.id, startedAt, endedAt),
     ]);
 
     expect(
       await prisma.workTransitionLifecycle.count({
         where: { issueId: issue.id },
-      }),
+      })
     ).toBe(1);
     expect(await prisma.workLog.count({ where: { issueId: issue.id } })).toBe(1);
   });
@@ -220,12 +327,7 @@ describe("durable work-transition lifecycle", () => {
     const startedAt = new Date("2026-08-11T12:00:00.000Z");
     const stoppedAt = new Date("2026-08-11T12:03:00.000Z");
     const closedAt = new Date("2026-08-11T12:04:00.000Z");
-    const staged = await stageTransitionStart(
-      issue.key,
-      member.userId,
-      member.id,
-      startedAt,
-    );
+    const staged = await stageTransitionStart(issue.key, member.userId, member.id, startedAt);
     await prisma.workLog.create({
       data: {
         issueId: issue.id,
@@ -255,7 +357,7 @@ describe("durable work-transition lifecycle", () => {
       member.id,
       null,
       stoppedAt,
-      session.id,
+      session.id
     );
     const closed = await captureTransitionClose(issue.key, closedAt);
 
@@ -265,11 +367,11 @@ describe("durable work-transition lifecycle", () => {
     expect(
       await prisma.workTransitionLifecycle.findFirst({
         where: { issueId: issue.id },
-        select: { workLogId: true, effectsEmittedAt: true },
-      }),
+        select: { workLogId: true, effectRevision: true },
+      })
     ).toMatchObject({
       workLogId: stopped.workLog?.id,
-      effectsEmittedAt: expect.any(Date),
+      effectRevision: 0,
     });
   });
 
@@ -278,12 +380,7 @@ describe("durable work-transition lifecycle", () => {
     const startedAt = new Date("2026-08-11T12:00:00.000Z");
     const closedAt = new Date("2026-08-11T12:02:00.000Z");
     const heartbeatAt = new Date("2026-08-11T12:04:00.000Z");
-    const staged = await stageTransitionStart(
-      issue.key,
-      member.userId,
-      member.id,
-      startedAt,
-    );
+    const staged = await stageTransitionStart(issue.key, member.userId, member.id, startedAt);
     await prisma.workSession.create({
       data: {
         issueId: issue.id,
@@ -319,7 +416,7 @@ describe("durable work-transition lifecycle", () => {
         startedAt,
         endedAt: closedAt,
         workLogId: workLogs[0]!.id,
-        effectsEmittedAt: expect.any(Date),
+        effectRevision: 1,
       });
       expect(workLogs[0]).toMatchObject({
         startedAt,
@@ -330,7 +427,7 @@ describe("durable work-transition lifecycle", () => {
       expect(
         observed
           .filter((event) => event.type === "work_session.ended")
-          .map((event) => event.payload),
+          .map((event) => event.payload)
       ).toEqual([
         expect.objectContaining({
           workLogId: workLogs[0]!.id,
@@ -346,11 +443,9 @@ describe("durable work-transition lifecycle", () => {
       expect(
         await prisma.workTransitionLifecycle.count({
           where: { issueId: issue.id },
-        }),
+        })
       ).toBe(1);
-      expect(await prisma.workLog.count({ where: { issueId: issue.id } })).toBe(
-        1,
-      );
+      expect(await prisma.workLog.count({ where: { issueId: issue.id } })).toBe(1);
       expect(observed).toHaveLength(4);
     } finally {
       vi.useRealTimers();
@@ -359,10 +454,7 @@ describe("durable work-transition lifecycle", () => {
   });
 
   it("atomically finalizes an incident lease and its interruption at the observed boundary", async () => {
-    const { workspace, member, project, issue } = await seedContext(
-      "analysis",
-      "incident",
-    );
+    const { workspace, member, project, issue } = await seedContext("analysis", "incident");
     const interruptedIssue = await prisma.issue.create({
       data: {
         key: `${project.key}-2`,
@@ -375,12 +467,7 @@ describe("durable work-transition lifecycle", () => {
     });
     const startedAt = new Date("2026-08-11T13:00:00.000Z");
     const closedAt = new Date("2026-08-11T13:02:00.000Z");
-    const staged = await stageTransitionStart(
-      issue.key,
-      member.userId,
-      member.id,
-      startedAt,
-    );
+    const staged = await stageTransitionStart(issue.key, member.userId, member.id, startedAt);
     await prisma.workSession.create({
       data: {
         issueId: issue.id,
@@ -407,11 +494,9 @@ describe("durable work-transition lifecycle", () => {
     try {
       await captureTransitionClose(issue.key, closedAt);
 
+      expect(await prisma.workSession.count({ where: { issueId: issue.id } })).toBe(0);
       expect(
-        await prisma.workSession.count({ where: { issueId: issue.id } }),
-      ).toBe(0);
-      expect(
-        await prisma.interruption.findUnique({ where: { id: interruption.id } }),
+        await prisma.interruption.findUnique({ where: { id: interruption.id } })
       ).toMatchObject({ endedAt: closedAt });
       expect(observed.map((event) => event.type)).toEqual([
         "worklog.created",
@@ -424,17 +509,119 @@ describe("durable work-transition lifecycle", () => {
     }
   });
 
+  it("persists lifecycle effects when an incident displaces a transition-owned session", async () => {
+    const { member, project, issue } = await seedContext("analysis");
+    const incident = await prisma.issue.create({
+      data: {
+        key: `${project.key}-2`,
+        title: "Displacing incident",
+        type: "incident",
+        state: "analysis",
+        projectId: project.id,
+        sequenceNum: 2,
+      },
+    });
+    const startedAt = new Date("2026-08-11T13:00:00.000Z");
+    const displacedAt = new Date("2026-08-11T13:02:00.000Z");
+    const staged = await stageTransitionStart(issue.key, member.userId, member.id, startedAt);
+    await prisma.workSession.create({
+      data: {
+        issueId: issue.id,
+        userId: member.userId,
+        memberId: member.id,
+        source: "transition-listener",
+        startedAt,
+        lastHeartbeat: displacedAt,
+        transitionLifecycleId: staged.lifecycle.id,
+      },
+    });
+
+    await startWork(incident.key, member.id, member.userId, "mcp", null, undefined, {
+      autoAssign: false,
+      transitionObservedAt: displacedAt,
+    });
+
+    expect(
+      await prisma.domainEventOutbox.findMany({
+        where: { laneKey: `work-session:${issue.id}:${member.userId}` },
+        orderBy: { position: "asc" },
+        select: { eventType: true },
+      })
+    ).toEqual([{ eventType: "worklog.created" }, { eventType: "work_session.ended" }]);
+    expect(
+      await prisma.interruption.findFirst({
+        where: {
+          incidentIssueId: incident.id,
+          interruptedIssueId: issue.id,
+          memberId: member.id,
+          endedAt: null,
+        },
+      })
+    ).not.toBeNull();
+  });
+
+  it("enqueues an incident lifecycle close only after its interruption is closed", async () => {
+    const { member, project, issue } = await seedContext("analysis", "incident");
+    const interruptedIssue = await prisma.issue.create({
+      data: {
+        key: `${project.key}-2`,
+        title: "Interrupted task",
+        type: "task",
+        state: "analysis",
+        projectId: project.id,
+        sequenceNum: 2,
+      },
+    });
+    const startedAt = new Date("2026-08-11T14:00:00.000Z");
+    const heartbeatAt = new Date("2026-08-11T14:01:00.000Z");
+    const restartedAt = new Date("2026-08-11T14:10:00.000Z");
+    const staged = await stageTransitionStart(issue.key, member.userId, member.id, startedAt);
+    await prisma.workSession.create({
+      data: {
+        issueId: issue.id,
+        userId: member.userId,
+        memberId: member.id,
+        source: "transition-listener",
+        startedAt,
+        lastHeartbeat: heartbeatAt,
+        transitionLifecycleId: staged.lifecycle.id,
+      },
+    });
+    await prisma.interruption.create({
+      data: {
+        incidentIssueId: issue.id,
+        interruptedIssueId: interruptedIssue.id,
+        memberId: member.id,
+        via: "session_switch",
+        startedAt,
+      },
+    });
+
+    await startWork(issue.key, member.id, member.userId, "mcp", null, undefined, {
+      autoAssign: false,
+      transitionObservedAt: restartedAt,
+    });
+
+    expect(
+      await prisma.domainEventOutbox.findMany({
+        where: { laneKey: `work-session:${issue.id}:${member.userId}` },
+        orderBy: { position: "asc" },
+        select: { eventType: true },
+      })
+    ).toEqual([
+      { eventType: "worklog.created" },
+      { eventType: "work_session.ended" },
+      { eventType: "interruption.closed" },
+      { eventType: "work_session.started" },
+    ]);
+  });
+
   it("preserves a refreshed later generation while finalizing the older close", async () => {
     const { member, issue } = await seedContext("analysis");
     const startedAt = new Date("2026-08-11T14:00:00.000Z");
     const closedAt = new Date("2026-08-11T14:04:00.000Z");
     const refreshedAt = new Date("2026-08-11T14:05:00.000Z");
-    const staged = await stageTransitionStart(
-      issue.key,
-      member.userId,
-      member.id,
-      startedAt,
-    );
+    const staged = await stageTransitionStart(issue.key, member.userId, member.id, startedAt);
     const session = await prisma.workSession.create({
       data: {
         issueId: issue.id,
@@ -444,6 +631,15 @@ describe("durable work-transition lifecycle", () => {
         startedAt,
         lastHeartbeat: refreshedAt,
         transitionLifecycleId: staged.lifecycle.id,
+      },
+    });
+    const intent = await prisma.workCaptureIntent.create({
+      data: {
+        issueId: issue.id,
+        userId: member.userId,
+        memberId: member.id,
+        source: "transition-listener",
+        state: "capturing",
       },
     });
 
@@ -457,6 +653,14 @@ describe("durable work-transition lifecycle", () => {
     expect(await prisma.workLog.findMany({ where: { issueId: issue.id } })).toMatchObject([
       { startedAt, endedAt: closedAt, durationS: 240 },
     ]);
+    expect(
+      await prisma.workCaptureIntent.findUniqueOrThrow({ where: { id: intent.id } })
+    ).toMatchObject({
+      state: "capturing",
+      epoch: intent.epoch,
+      leaseGeneration: 2,
+      closedAt: null,
+    });
   });
 
   it("keeps later explicit work adjacent to an older lifecycle interval", async () => {
@@ -464,12 +668,7 @@ describe("durable work-transition lifecycle", () => {
     const lifecycleStartedAt = new Date("2026-08-11T14:00:00.000Z");
     const explicitStartedAt = new Date("2026-08-11T14:02:00.000Z");
     const stoppedAt = new Date("2026-08-11T14:05:00.000Z");
-    await stageTransitionStart(
-      issue.key,
-      member.userId,
-      member.id,
-      lifecycleStartedAt,
-    );
+    await stageTransitionStart(issue.key, member.userId, member.id, lifecycleStartedAt);
     const explicitSession = await prisma.workSession.create({
       data: {
         issueId: issue.id,
@@ -485,20 +684,13 @@ describe("durable work-transition lifecycle", () => {
     expect(
       await prisma.workSession.findUnique({
         where: { id: explicitSession.id },
-      }),
+      })
     ).toMatchObject({
       id: explicitSession.id,
       startedAt: explicitStartedAt,
     });
 
-    await stopWork(
-      issue.key,
-      member.userId,
-      member.id,
-      null,
-      stoppedAt,
-      explicitSession.id,
-    );
+    await stopWork(issue.key, member.userId, member.id, null, stoppedAt, explicitSession.id);
 
     const workLogs = await prisma.workLog.findMany({
       where: { issueId: issue.id },
@@ -524,12 +716,7 @@ describe("durable work-transition lifecycle", () => {
     const lifecycleStartedAt = new Date("2026-08-11T15:00:00.000Z");
     const explicitStartedAt = new Date("2026-08-11T15:02:00.000Z");
     const stoppedAt = new Date("2026-08-11T15:05:00.000Z");
-    await stageTransitionStart(
-      issue.key,
-      member.userId,
-      member.id,
-      lifecycleStartedAt,
-    );
+    await stageTransitionStart(issue.key, member.userId, member.id, lifecycleStartedAt);
     const explicitSession = await prisma.workSession.create({
       data: {
         issueId: issue.id,
@@ -541,14 +728,7 @@ describe("durable work-transition lifecycle", () => {
       },
     });
 
-    await stopWork(
-      issue.key,
-      member.userId,
-      member.id,
-      null,
-      stoppedAt,
-      explicitSession.id,
-    );
+    await stopWork(issue.key, member.userId, member.id, null, stoppedAt, explicitSession.id);
     await captureTransitionClose(issue.key, stoppedAt);
 
     const workLogs = await prisma.workLog.findMany({
@@ -567,9 +747,7 @@ describe("durable work-transition lifecycle", () => {
         durationS: 180,
       },
     ]);
-    expect(workLogs[0]!.endedAt.getTime()).toBeLessThanOrEqual(
-      workLogs[1]!.startedAt.getTime(),
-    );
+    expect(workLogs[0]!.endedAt.getTime()).toBeLessThanOrEqual(workLogs[1]!.startedAt.getTime());
     expect(workLogs.reduce((total, row) => total + row.durationS, 0)).toBe(300);
   });
 
@@ -577,12 +755,7 @@ describe("durable work-transition lifecycle", () => {
     const { member, issue } = await seedContext("analysis");
     const startedAt = new Date("2026-08-11T15:00:00.000Z");
     const endedAt = new Date("2026-08-11T15:01:00.000Z");
-    const staged = await stageTransitionStart(
-      issue.key,
-      member.userId,
-      member.id,
-      startedAt,
-    );
+    const staged = await stageTransitionStart(issue.key, member.userId, member.id, startedAt);
     const session = await prisma.workSession.create({
       data: {
         issueId: issue.id,
@@ -597,45 +770,40 @@ describe("durable work-transition lifecycle", () => {
     const unsubscribeFailure = eventBus.subscribe(async () => {
       throw new Error("subscriber unavailable");
     });
-    const stopped = await stopWork(
-      issue.key,
-      member.userId,
-      member.id,
-      null,
-      endedAt,
-      session.id,
-    );
+    const stopped = await stopWork(issue.key, member.userId, member.id, null, endedAt, session.id);
     unsubscribeFailure();
     const lifecycle = await prisma.workTransitionLifecycle.findUniqueOrThrow({
       where: { id: staged.lifecycle.id },
     });
     expect(lifecycle).toMatchObject({
       workLogId: stopped.workLog?.id,
-      effectsClaimedAt: null,
-      effectClaimToken: null,
-      effectsEmittedAt: null,
+      effectRevision: 0,
+    });
+    const laneKey = `work-session:${issue.id}:${member.userId}`;
+    expect(
+      await prisma.domainEventOutbox.count({
+        where: { laneKey, acknowledgedAt: null },
+      })
+    ).toBe(2);
+    await prisma.domainEventOutbox.updateMany({
+      where: { laneKey, acknowledgedAt: null },
+      data: { availableAt: new Date(0) },
     });
     const observed: DomainEvent[] = [];
     const unsubscribe = eventBus.subscribe((event) => observed.push(event));
 
     try {
-      await drainTransitionLifecycleEffects([
-        lifecycle.id,
-      ]);
+      await drainDomainEventOutbox();
 
       expect(observed.map((event) => event.type)).toEqual([
         "worklog.created",
         "work_session.ended",
       ]);
       expect(
-        await prisma.workTransitionLifecycle.findUnique({
-          where: { id: lifecycle.id },
-        }),
-      ).toMatchObject({
-        effectsEmittedAt: expect.any(Date),
-        effectsClaimedAt: null,
-        effectClaimToken: null,
-      });
+        await prisma.domainEventOutbox.count({
+          where: { laneKey, acknowledgedAt: null },
+        })
+      ).toBe(0);
     } finally {
       unsubscribe();
     }
@@ -664,7 +832,7 @@ describe("durable work-transition lifecycle", () => {
       member.userId,
       member.id,
       startedAt,
-      endedAt,
+      endedAt
     );
     expect(blocked.workLog).toBeNull();
     expect(await prisma.workLog.count({ where: { issueId: issue.id } })).toBe(1);
@@ -672,15 +840,8 @@ describe("durable work-transition lifecycle", () => {
 
   it("allows adjacent half-open foreign ownership at the interval boundary", async () => {
     const boundary = await seedContext("review");
-    const boundaryForeign = await seedTestMemberWithRole(
-      boundary.workspace.id,
-      "member",
-    );
-    await seedTestProjectMember(
-      boundaryForeign.userId,
-      boundary.project.id,
-      "member",
-    );
+    const boundaryForeign = await seedTestMemberWithRole(boundary.workspace.id, "member");
+    await seedTestProjectMember(boundaryForeign.userId, boundary.project.id, "member");
     const startedAt = new Date("2026-08-11T15:00:00.000Z");
     const endedAt = new Date("2026-08-11T15:02:00.000Z");
     await prisma.workLog.create({
@@ -700,7 +861,7 @@ describe("durable work-transition lifecycle", () => {
       boundary.member.userId,
       boundary.member.id,
       startedAt,
-      endedAt,
+      endedAt
     );
     expect(allowed.workLog).not.toBeNull();
     const intervals = await prisma.workLog.findMany({
@@ -717,7 +878,7 @@ describe("durable work-transition lifecycle", () => {
     const startedAt = new Date("2026-08-11T13:00:00.000Z");
     const endedAt = new Date("2026-08-11T13:02:00.000Z");
     await prisma.$executeRawUnsafe(
-      "DROP TRIGGER IF EXISTS kan243_reject_lifecycle_completion ON work_transition_lifecycles",
+      "DROP TRIGGER IF EXISTS kan243_reject_lifecycle_completion ON work_transition_lifecycles"
     );
     await prisma.$executeRawUnsafe(`
       CREATE OR REPLACE FUNCTION kan243_reject_lifecycle_completion() RETURNS trigger AS $$
@@ -737,26 +898,20 @@ describe("durable work-transition lifecycle", () => {
 
     try {
       await expect(
-        captureTransitionInterval(
-          issue.key,
-          member.userId,
-          member.id,
-          startedAt,
-          endedAt,
-        ),
+        captureTransitionInterval(issue.key, member.userId, member.id, startedAt, endedAt)
       ).rejects.toThrow("KAN243 forced lifecycle completion rollback");
       expect(await prisma.workLog.count({ where: { issueId: issue.id } })).toBe(0);
       expect(
         await prisma.workTransitionLifecycle.count({
           where: { issueId: issue.id },
-        }),
+        })
       ).toBe(0);
     } finally {
       await prisma.$executeRawUnsafe(
-        "DROP TRIGGER IF EXISTS kan243_reject_lifecycle_completion ON work_transition_lifecycles",
+        "DROP TRIGGER IF EXISTS kan243_reject_lifecycle_completion ON work_transition_lifecycles"
       );
       await prisma.$executeRawUnsafe(
-        "DROP FUNCTION IF EXISTS kan243_reject_lifecycle_completion()",
+        "DROP FUNCTION IF EXISTS kan243_reject_lifecycle_completion()"
       );
     }
   });

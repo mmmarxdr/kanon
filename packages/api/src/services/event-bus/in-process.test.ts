@@ -1,8 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import {
-  EVENT_BUS_DELIVERY_TIMEOUT_MS,
-  InProcessEventBus,
-} from "./in-process.js";
+import { EVENT_BUS_DELIVERY_TIMEOUT_MS, InProcessEventBus } from "./in-process.js";
 import type { DomainEventInput, DomainEvent } from "./types.js";
 
 function makeInput(overrides?: Partial<DomainEventInput>): DomainEventInput {
@@ -121,6 +118,15 @@ describe("InProcessEventBus", () => {
     expect(new Date(received[0]!.timestamp).toISOString()).toBe(received[0]!.timestamp);
   });
 
+  it("preserves a durable semantic delivery key for subscriber deduplication", async () => {
+    const received: DomainEvent[] = [];
+    bus.subscribe((event) => received.push(event));
+
+    await bus.emitAndWait(makeInput({ deliveryKey: "work-session.started:v1:session-1" }));
+
+    expect(received[0]?.deliveryKey).toBe("work-session.started:v1:session-1");
+  });
+
   // ── replay buffer ────────────────────────────────────────────────────
 
   it("getEventsSince returns events after a given ID", () => {
@@ -211,12 +217,9 @@ describe("InProcessEventBus", () => {
     const mockLogger = { error: vi.fn() };
     bus.setLogger(mockLogger);
 
-    bus.subscribe(
-      () => {
-        throw new Error("boom");
-      },
-      "test-subscriber",
-    );
+    bus.subscribe(() => {
+      throw new Error("boom");
+    }, "test-subscriber");
 
     bus.emit(makeInput());
 
@@ -261,9 +264,7 @@ describe("InProcessEventBus", () => {
     }, "durable-failure");
     bus.subscribe((event) => delivered.push(event), "durable-collector");
 
-    await expect(bus.emitAndWait(makeInput())).rejects.toThrow(
-      "subscriber delivery failed",
-    );
+    await expect(bus.emitAndWait(makeInput())).rejects.toThrow("subscriber delivery failed");
 
     expect(mockLogger.error).toHaveBeenCalledOnce();
     expect(delivered).toHaveLength(1);
@@ -307,7 +308,7 @@ describe("InProcessEventBus", () => {
         err: lateError,
         subscriber: "stalled-subscriber",
       }),
-      "event-bus subscriber error",
+      "event-bus subscriber error"
     );
   });
 
@@ -333,7 +334,7 @@ describe("InProcessEventBus", () => {
       () => {
         throw new Error("ws thrower");
       },
-      "ws-thrower",
+      "ws-thrower"
     );
     bus.subscribeToWorkspace("ws-1", (e) => received.push(e), "ws-collector");
     bus.subscribeToWorkspace("ws-2", (e) => received.push(e), "ws-b-collector");
@@ -373,11 +374,7 @@ describe("InProcessEventBus", () => {
 
   it("subscribeToWorkspace unsubscribe with name still works", () => {
     const received: DomainEvent[] = [];
-    const unsub = bus.subscribeToWorkspace(
-      "ws-1",
-      (e) => received.push(e),
-      "named-ws-sub",
-    );
+    const unsub = bus.subscribeToWorkspace("ws-1", (e) => received.push(e), "named-ws-sub");
 
     bus.emit(makeInput({ workspaceId: "ws-1" }));
     expect(received).toHaveLength(1);

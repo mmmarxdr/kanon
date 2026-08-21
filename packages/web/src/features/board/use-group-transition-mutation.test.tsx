@@ -13,6 +13,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { issueKeys, cycleKeys } from "@/lib/query-keys";
 
+const recordBatchTransitionResult = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/work-capture-lifecycle", () => ({
+  workCaptureRegistry: { recordBatchTransitionResult },
+}));
+
 vi.mock("@/lib/api-client", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api-client")>(
     "@/lib/api-client",
@@ -50,6 +55,25 @@ const GROUP_KEY = "todo";
 describe("useGroupTransitionMutation", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("claims exactly the backend returned keys without inferring group membership", async () => {
+    const { fetchApi } = await import("@/lib/api-client");
+    const returned = {
+      count: 2,
+      keys: ["TEST-2", "TEST-9"],
+      groupKey: GROUP_KEY,
+      state: "in_progress",
+    };
+    vi.mocked(fetchApi).mockResolvedValue(returned);
+    const { wrapper } = createWrapper();
+    const { useGroupTransitionMutation } = await import("./use-group-transition-mutation");
+    const { result } = renderHook(() => useGroupTransitionMutation(PROJECT_KEY), { wrapper });
+
+    act(() => result.current.mutate({ groupKey: GROUP_KEY, toState: "in_progress" }));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(recordBatchTransitionResult).toHaveBeenCalledWith(returned);
   });
 
   it("invalidates issueKeys.groups(projectKey) on success", async () => {

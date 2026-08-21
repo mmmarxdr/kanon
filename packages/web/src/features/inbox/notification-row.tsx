@@ -1,12 +1,16 @@
 import { useTranslation } from "react-i18next";
 import { Icon } from "@/components/ui/icons";
-import type { NotificationDashboardItem } from "@kanon/shared";
+import {
+  workCaptureFailureNotificationPayloadSchema,
+  type NotificationDashboardItem,
+} from "@kanon/shared";
 
 const KIND_KEYS: Record<NotificationDashboardItem["kind"], string> = {
   mention: "notifMention",
   assignment: "notifAssignment",
   subscribed_activity: "notifSubscribed",
   cycle_closed: "notifCycleClosed",
+  work_capture_failure: "notifWorkCaptureFailure",
 };
 
 export interface NotificationRowProps {
@@ -15,9 +19,22 @@ export interface NotificationRowProps {
   isMarkingRead?: boolean;
 }
 
-export function NotificationRow({ notification, onMarkRead, isMarkingRead = false }: NotificationRowProps) {
+export function NotificationRow({
+  notification,
+  onMarkRead,
+  isMarkingRead = false,
+}: NotificationRowProps) {
   const { t } = useTranslation("inbox");
-  const label = t(KIND_KEYS[notification.kind]);
+  const failurePayload =
+    notification.kind === "work_capture_failure"
+      ? workCaptureFailureNotificationPayloadSchema.safeParse(notification.payload)
+      : null;
+  const label =
+    notification.kind === "work_capture_failure"
+      ? failurePayload?.success
+        ? t(KIND_KEYS.work_capture_failure, { issueKey: failurePayload.data.issueKey })
+        : t("notifGeneric")
+      : t(KIND_KEYS[notification.kind]);
   const isUnread = !notification.read;
 
   return (
@@ -64,10 +81,7 @@ export function NotificationRow({ notification, onMarkRead, isMarkingRead = fals
         >
           {label}
         </div>
-        <div
-          className="mono"
-          style={{ fontSize: 10.5, color: "var(--ink-4)", marginTop: 1 }}
-        >
+        <div className="mono" style={{ fontSize: 10.5, color: "var(--ink-4)", marginTop: 1 }}>
           {new Date(notification.createdAt).toLocaleDateString(undefined, {
             month: "short",
             day: "numeric",
@@ -94,9 +108,7 @@ export function NotificationRow({ notification, onMarkRead, isMarkingRead = fals
           onMouseEnter={(e) =>
             (e.currentTarget.style.background = isMarkingRead ? "transparent" : "var(--bg-3)")
           }
-          onMouseLeave={(e) =>
-            (e.currentTarget.style.background = "transparent")
-          }
+          onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
         >
           {t("markReadShort")}
         </button>

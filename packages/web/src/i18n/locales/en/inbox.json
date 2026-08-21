@@ -39,6 +39,8 @@
   "notifAssignment": "Assigned to you",
   "notifSubscribed": "Update on subscribed issue",
   "notifCycleClosed": "Cycle closed",
+  "notifWorkCaptureFailure": "Work capture delayed for {{issueKey}}",
+  "notifGeneric": "Notification",
   "markAsRead": "Mark as read",
   "proposalApplied": "APPLIED",
   "proposalDismissed": "DISMISSED",

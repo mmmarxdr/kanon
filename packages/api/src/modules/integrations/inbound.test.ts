@@ -1,6 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "../../config/prisma.js";
+import { eventBus } from "../../services/event-bus/index.js";
+import { drainDomainEventOutbox } from "../../services/event-bus/outbox.js";
+import type {
+  DomainEvent,
+  WorkCaptureTransitionObservedPayload,
+} from "../../services/event-bus/types.js";
 import {
   cleanDatabase,
   disconnectTestDb,
@@ -11,14 +17,12 @@ import {
 } from "../../test/helpers.js";
 import { createComment, listComments } from "../comment/service.js";
 import { transitionIssue } from "../issue/service.js";
+import { registerTransitionListener } from "../work-session/transition-listener.js";
 import type { InboundCursor, InboundIssueStatusChange } from "./core/types.js";
 import { runInboundSyncCycle, type InboundIssueDetailOptions } from "./inbound.js";
 import { withIssueMutationTx } from "./issue-tx.js";
 import { getConnection } from "./service.js";
-import type {
-  RedmineCommentChange,
-  RedmineIssueChange,
-} from "./providers/redmine/decoder.js";
+import type { RedmineCommentChange, RedmineIssueChange } from "./providers/redmine/decoder.js";
 
 const baseline = new Date("2026-08-01T10:00:00.000Z");
 
@@ -125,7 +129,7 @@ async function fixture(state = "review" as const) {
 function change(
   changedAt: Date,
   state: InboundIssueStatusChange["state"],
-  entityId = "100",
+  entityId = "100"
 ): InboundIssueStatusChange {
   return {
     entityType: "issue",
@@ -140,7 +144,7 @@ function change(
 
 function detailChange(
   changedAt: Date,
-  overrides: Partial<RedmineIssueChange> = {},
+  overrides: Partial<RedmineIssueChange> = {}
 ): RedmineIssueChange {
   return {
     identity: { type: "issue", remoteId: "999", remoteProjectId: "41" },
@@ -164,25 +168,28 @@ function detailChange(
 }
 
 function dependencies(changes: readonly InboundIssueStatusChange[]) {
-  const loadIssueDetail = vi.fn(async (options: InboundIssueDetailOptions): Promise<RedmineIssueChange> => {
-    const observed = changes.find(({ entityId }) => entityId === options.remoteIssueId);
-    if (!observed) throw new Error("Unexpected Redmine issue detail request");
-    const statusId = observed.state === "done" ? "closed" : observed.state === "review" ? "review" : "open";
-    return detailChange(observed.changedAt, {
-      identity: { type: "issue", remoteId: observed.entityId, remoteProjectId: "41" },
-      ...(observed.state === "done" ? { closedAt: observed.changedAt } : {}),
-      fields: {
-        title: "Linked issue",
-        description: null,
-        statusId,
-        priorityId: "3",
-        assignee: null,
-        startDate: null,
-        dueDate: null,
-        progress: observed.state === "done" ? 100 : 0,
-      },
-    });
-  });
+  const loadIssueDetail = vi.fn(
+    async (options: InboundIssueDetailOptions): Promise<RedmineIssueChange> => {
+      const observed = changes.find(({ entityId }) => entityId === options.remoteIssueId);
+      if (!observed) throw new Error("Unexpected Redmine issue detail request");
+      const statusId =
+        observed.state === "done" ? "closed" : observed.state === "review" ? "review" : "open";
+      return detailChange(observed.changedAt, {
+        identity: { type: "issue", remoteId: observed.entityId, remoteProjectId: "41" },
+        ...(observed.state === "done" ? { closedAt: observed.changedAt } : {}),
+        fields: {
+          title: "Linked issue",
+          description: null,
+          statusId,
+          priorityId: "3",
+          assignee: null,
+          startDate: null,
+          dueDate: null,
+          progress: observed.state === "done" ? 100 : 0,
+        },
+      });
+    }
+  );
   return {
     limit: 1,
     now: () => baseline,
@@ -213,7 +220,7 @@ function resumableDependencies(changes: readonly InboundIssueStatusChange[]) {
             (change) =>
               change.changedAt > cursor.updatedAt ||
               (change.changedAt.getTime() === cursor.updatedAt.getTime() &&
-                Number(change.entityId) > Number(cursor.entityId)),
+                Number(change.entityId) > Number(cursor.entityId))
           )
         : changes;
       const last = pending.at(-1);
@@ -230,6 +237,202 @@ function resumableDependencies(changes: readonly InboundIssueStatusChange[]) {
 describe("Redmine inbound sync", () => {
   beforeEach(cleanDatabase);
   afterAll(disconnectTestDb);
+
+  it("durably enqueues an actual inbound transition observation and keeps the public projection", async () => {
+    const { workspace, owner, project, issue } = await fixture();
+    const changedAt = new Date("2026-08-01T10:01:00.000Z");
+    const delivered: DomainEvent[] = [];
+    const unsubscribe = eventBus.subscribe((event) => delivered.push(event));
+    const before = Date.now();
+    const setup = dependencies([change(changedAt, "in_progress")]);
+
+    try {
+      await runInboundSyncCycle(prisma, setup);
+    } finally {
+      unsubscribe();
+    }
+    expect(setup.logger.error).not.toHaveBeenCalled();
+
+    const row = await prisma.domainEventOutbox.findFirstOrThrow({
+      where: { eventType: "work_capture.transition_observed" },
+    });
+    const payload = row.payload as unknown as WorkCaptureTransitionObservedPayload;
+    const observedAt = Date.parse(payload.observedAt);
+    expect(row).toMatchObject({
+      deliveryKey: expect.stringMatching(
+        /^work-capture-transition:v1:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+      ),
+      laneKey: `work-capture-transition:${issue.id}`,
+    });
+    expect(payload).toEqual({
+      issueKey: issue.key,
+      issueId: issue.id,
+      projectId: project.id,
+      projectKey: project.key,
+      workspaceId: workspace.id,
+      from: "review",
+      to: "in_progress",
+      actorMemberId: owner.id,
+      actorUserId: owner.userId,
+      observedAt: payload.observedAt,
+    });
+    expect(observedAt).toBeGreaterThanOrEqual(before);
+    expect(observedAt).toBeLessThanOrEqual(Date.now());
+    expect(payload.observedAt).not.toBe(changedAt.toISOString());
+    expect(
+      delivered.some(
+        (event) => event.type === "issue.transitioned" && event.payload.issueId === issue.id
+      )
+    ).toBe(true);
+  });
+
+  it("rolls back inbound convergence when transition observation enqueue fails", async () => {
+    const { binding, issue, ref } = await fixture();
+    const changedAt = new Date("2026-08-01T10:01:00.000Z");
+    await prisma.$executeRawUnsafe(`
+      CREATE FUNCTION "kan243_fail_inbound_transition_observation"()
+      RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        RAISE EXCEPTION 'KAN243 forced inbound observation rollback';
+      END;
+      $$
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TRIGGER "kan243_fail_inbound_transition_observation"
+      BEFORE INSERT ON "domain_event_outbox"
+      FOR EACH ROW EXECUTE FUNCTION "kan243_fail_inbound_transition_observation"()
+    `);
+
+    try {
+      await runInboundSyncCycle(prisma, dependencies([change(changedAt, "in_progress")]));
+    } finally {
+      await prisma.$executeRawUnsafe(
+        'DROP TRIGGER IF EXISTS "kan243_fail_inbound_transition_observation" ON "domain_event_outbox"'
+      );
+      await prisma.$executeRawUnsafe(
+        'DROP FUNCTION IF EXISTS "kan243_fail_inbound_transition_observation"()'
+      );
+    }
+
+    await expect(
+      prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })
+    ).resolves.toMatchObject({ state: "review" });
+    await expect(
+      prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })
+    ).resolves.toMatchObject({ remoteUpdatedAt: baseline });
+    await expect(
+      prisma.integrationInboundApplication.count({
+        where: { bindingId: binding.id },
+      })
+    ).resolves.toBe(0);
+    await expect(
+      prisma.domainEventOutbox.count({
+        where: { eventType: "work_capture.transition_observed" },
+      })
+    ).resolves.toBe(0);
+  });
+
+  it("keeps a committed inbound transition pending after delivery failure and retry converges", async () => {
+    const { owner, issue } = await fixture();
+    const observed: Array<{
+      deliveryKey: string | undefined;
+      payload: WorkCaptureTransitionObservedPayload;
+    }> = [];
+    const unsubscribeObserver = eventBus.subscribe((event) => {
+      if (event.type !== "work_capture.transition_observed") return;
+      observed.push({
+        deliveryKey: event.deliveryKey,
+        payload: event.payload as WorkCaptureTransitionObservedPayload,
+      });
+    });
+    const unsubscribeListener = registerTransitionListener(eventBus);
+    await prisma.$executeRawUnsafe(`
+      CREATE FUNCTION "kan243_fail_inbound_transition_listener"()
+      RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        RAISE EXCEPTION 'KAN243 forced inbound transition listener failure';
+      END;
+      $$
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE TRIGGER "kan243_fail_inbound_transition_listener"
+      BEFORE INSERT ON "work_transition_lifecycles"
+      FOR EACH ROW EXECUTE FUNCTION "kan243_fail_inbound_transition_listener"()
+    `);
+
+    try {
+      const activeAt = new Date("2026-08-01T10:01:00.000Z");
+      await runInboundSyncCycle(prisma, dependencies([change(activeAt, "in_progress")]));
+      await expect(
+        prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })
+      ).resolves.toMatchObject({ state: "in_progress" });
+      const startRow = await prisma.domainEventOutbox.findFirstOrThrow({
+        where: {
+          eventType: "work_capture.transition_observed",
+          acknowledgedAt: null,
+        },
+      });
+      expect(observed).toHaveLength(1);
+      expect(observed[0]!.deliveryKey).toBe(startRow.deliveryKey);
+      await prisma.domainEventOutbox.update({
+        where: { id: startRow.id },
+        data: { availableAt: new Date("2999-01-01T00:00:00.000Z") },
+      });
+
+      await prisma.$executeRawUnsafe(
+        'DROP TRIGGER IF EXISTS "kan243_fail_inbound_transition_listener" ON "work_transition_lifecycles"'
+      );
+      await prisma.$executeRawUnsafe(
+        'DROP FUNCTION IF EXISTS "kan243_fail_inbound_transition_listener"()'
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      const closeAt = new Date("2026-08-01T10:02:00.000Z");
+      await runInboundSyncCycle(prisma, dependencies([change(closeAt, "review")]));
+      const pending = await prisma.domainEventOutbox.findMany({
+        where: {
+          eventType: "work_capture.transition_observed",
+          acknowledgedAt: null,
+        },
+        orderBy: { position: "asc" },
+      });
+      expect(pending).toHaveLength(2);
+      expect(new Set(pending.map(({ laneKey }) => laneKey))).toEqual(
+        new Set([`work-capture-transition:${issue.id}`])
+      );
+
+      await prisma.domainEventOutbox.updateMany({
+        where: { id: { in: pending.map(({ id }) => id) } },
+        data: { availableAt: new Date(0) },
+      });
+      await expect(drainDomainEventOutbox()).resolves.toBe(2);
+
+      expect(observed.map(({ payload }) => payload.to)).toEqual([
+        "in_progress",
+        "in_progress",
+        "review",
+      ]);
+      expect(observed[1]!.deliveryKey).toBe(observed[0]!.deliveryKey);
+      expect(observed[1]!.payload.observedAt).toBe(observed[0]!.payload.observedAt);
+      await expect(
+        prisma.workTransitionLifecycle.count({
+          where: { issueId: issue.id },
+        })
+      ).resolves.toBe(1);
+      await expect(prisma.workLog.count({ where: { issueId: issue.id } })).resolves.toBe(1);
+      await expect(prisma.workSession.count({ where: { issueId: issue.id } })).resolves.toBe(0);
+      expect(owner.userId).toBe(observed[0]!.payload.actorUserId);
+    } finally {
+      await prisma.$executeRawUnsafe(
+        'DROP TRIGGER IF EXISTS "kan243_fail_inbound_transition_listener" ON "work_transition_lifecycles"'
+      );
+      await prisma.$executeRawUnsafe(
+        'DROP FUNCTION IF EXISTS "kan243_fail_inbound_transition_listener"()'
+      );
+      unsubscribeListener();
+      unsubscribeObserver();
+    }
+  });
 
   it("claims only inbound-enabled bindings with a ready bootstrap", async () => {
     const { binding } = await fixture();
@@ -253,7 +456,7 @@ describe("Redmine inbound sync", () => {
 
     expect(pending.createSource).not.toHaveBeenCalled();
     await expect(
-      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })
     ).resolves.toMatchObject({ pollLeaseToken: null, pollFence: 0 });
   });
 
@@ -262,30 +465,38 @@ describe("Redmine inbound sync", () => {
 
     await runInboundSyncCycle(prisma, dependencies([change(baseline, "done")]));
 
-    await expect(prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })
+    ).resolves.toMatchObject({
       state: "review",
     });
     await expect(
       prisma.integrationInboundApplication.findFirstOrThrow({
         where: { bindingId: binding.id, remoteUpdatedAt: baseline },
-      }),
+      })
     ).resolves.toMatchObject({
       state: "skipped",
       outcome: expect.objectContaining({ reason: "stale-or-correlated-echo" }),
     });
-    await expect(prisma.integrationSyncWork.count({ where: { entityId: issue.id } })).resolves.toBe(0);
+    await expect(prisma.integrationSyncWork.count({ where: { entityId: issue.id } })).resolves.toBe(
+      0
+    );
 
     const greater = new Date("2026-08-01T10:01:00.000Z");
     await runInboundSyncCycle(prisma, dependencies([change(greater, "in_progress")]));
 
-    await expect(prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })
+    ).resolves.toMatchObject({
       state: "in_progress",
     });
-    await expect(prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })
+    ).resolves.toMatchObject({
       remoteUpdatedAt: greater,
     });
     await expect(
-      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })
     ).resolves.toMatchObject({ cursorUpdatedAt: greater, cursorRemoteId: "100" });
   });
 
@@ -381,7 +592,7 @@ describe("Redmine inbound sync", () => {
     await expect(
       prisma.activityLog.findFirstOrThrow({
         where: { issueId: issue.id, action: "commented" },
-      }),
+      })
     ).resolves.toMatchObject({
       memberId: null,
       remoteActorId: remoteAuthor.id,
@@ -390,7 +601,7 @@ describe("Redmine inbound sync", () => {
     await expect(
       prisma.integrationSyncWork.count({
         where: { entityType: "comment", entityId: comment.id },
-      }),
+      })
     ).resolves.toBe(0);
     await expect(
       prisma.externalRef.findUniqueOrThrow({
@@ -401,14 +612,14 @@ describe("Redmine inbound sync", () => {
             externalId: "900",
           },
         },
-      }),
+      })
     ).resolves.toMatchObject({ bindingId: binding.id, entityId: comment.id });
     await expect(
       prisma.integrationInboundApplication.findMany({
         where: { bindingId: binding.id, remoteEntityType: "comment" },
         orderBy: { remoteId: "asc" },
         select: { remoteId: true, state: true, outcome: true },
-      }),
+      })
     ).resolves.toEqual([
       {
         remoteId: "900",
@@ -540,7 +751,9 @@ describe("Redmine inbound sync", () => {
       fields: { reason: "private" },
     };
     const privateCorrelationId = createHash("sha256")
-      .update(`${binding.id}|comment|${privateComment.identity.remoteId}|${privateComment.sourceVersion}`)
+      .update(
+        `${binding.id}|comment|${privateComment.identity.remoteId}|${privateComment.sourceVersion}`
+      )
       .digest("hex");
     await prisma.integrationInboundApplication.create({
       data: {
@@ -567,7 +780,9 @@ describe("Redmine inbound sync", () => {
     await runInboundSyncCycle(prisma, privateSetup);
 
     const bodySha256 = createHash("sha256").update(body).digest("hex");
-    await expect(prisma.comment.findUniqueOrThrow({ where: { id: comment.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.comment.findUniqueOrThrow({ where: { id: comment.id } })
+    ).resolves.toMatchObject({
       body: "[Redacted private Redmine comment]",
       remoteAuthorId: comment.remoteAuthorId,
     });
@@ -575,16 +790,22 @@ describe("Redmine inbound sync", () => {
       expect.objectContaining({ id: comment.id, body: "[Redacted private Redmine comment]" }),
     ]);
     await expect(prisma.mention.count({ where: { commentId: comment.id } })).resolves.toBe(0);
-    await expect(prisma.notification.findUnique({ where: { id: notification.id } })).resolves.toBeNull();
+    await expect(
+      prisma.notification.findUnique({ where: { id: notification.id } })
+    ).resolves.toBeNull();
     const activities = await prisma.activityLog.findMany({
       where: { issueId: issue.id, details: { path: ["commentId"], equals: comment.id } },
     });
     expect(JSON.stringify(activities)).not.toContain(body);
-    await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })
+    ).resolves.toMatchObject({
       state: "superseded",
       payload: { version: 1, redacted: true, bodySha256 },
     });
-    const uncertain = await prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: uncertainWork.id } });
+    const uncertain = await prisma.integrationSyncWork.findUniqueOrThrow({
+      where: { id: uncertainWork.id },
+    });
     expect(uncertain).toMatchObject({
       state: "dead",
       skippedReason: "private-comment-write-uncertain",
@@ -593,7 +814,9 @@ describe("Redmine inbound sync", () => {
       payload: { version: 1, redacted: true, bodySha256 },
     });
     expect(uncertain.payload).not.toHaveProperty("body");
-    await expect(prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })
+    ).resolves.toMatchObject({
       metadata: expect.objectContaining({
         remoteVersion: privateComment.sourceVersion,
         remoteActorId: "5",
@@ -648,7 +871,7 @@ describe("Redmine inbound sync", () => {
     await expect(
       prisma.integrationConflict.count({
         where: { refId: ref.id, kind: "inbound-comment-privacy" },
-      }),
+      })
     ).resolves.toBe(1);
 
     const newerPrivateAt = new Date("2026-08-01T10:04:00.000Z");
@@ -667,13 +890,15 @@ describe("Redmine inbound sync", () => {
     });
     await runInboundSyncCycle(prisma, newerPrivateSetup);
 
-    await expect(prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })
+    ).resolves.toMatchObject({
       metadata: expect.objectContaining({ bodySha256 }),
     });
     await expect(
       prisma.integrationConflict.count({
         where: { refId: ref.id, kind: "inbound-comment-privacy" },
-      }),
+      })
     ).resolves.toBe(1);
     const latestConflict = await prisma.integrationConflict.findFirstOrThrow({
       where: { refId: ref.id, kind: "inbound-comment-privacy" },
@@ -704,7 +929,7 @@ describe("Redmine inbound sync", () => {
       { body: "Locally owned body", source: "human" },
       owner.id,
       null,
-      false,
+      false
     );
     const ref = await prisma.externalRef.create({
       data: {
@@ -741,12 +966,16 @@ describe("Redmine inbound sync", () => {
 
     await runInboundSyncCycle(prisma, setup);
 
-    await expect(prisma.comment.findUniqueOrThrow({ where: { id: local.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.comment.findUniqueOrThrow({ where: { id: local.id } })
+    ).resolves.toMatchObject({
       body: "Locally owned body",
       authorId: owner.id,
       remoteAuthorId: null,
     });
-    await expect(prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })
+    ).resolves.toMatchObject({
       metadata: expect.objectContaining({
         marker: `<!-- kanon-comment:${local.id} -->`,
         privacy: "private",
@@ -760,7 +989,7 @@ describe("Redmine inbound sync", () => {
           remoteEntityType: "comment",
           remoteId: "local-export",
         },
-      }),
+      })
     ).resolves.toMatchObject({
       state: "skipped",
       refId: ref.id,
@@ -769,7 +998,7 @@ describe("Redmine inbound sync", () => {
     await expect(
       prisma.integrationConflict.count({
         where: { refId: ref.id, kind: "inbound-comment-privacy" },
-      }),
+      })
     ).resolves.toBe(0);
   });
 
@@ -944,7 +1173,9 @@ describe("Redmine inbound sync", () => {
 
     await runInboundSyncCycle(prisma, privateSetup);
 
-    await expect(prisma.comment.findUniqueOrThrow({ where: { id: comment.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.comment.findUniqueOrThrow({ where: { id: comment.id } })
+    ).resolves.toMatchObject({
       body: "Newest public body",
     });
     await expect(
@@ -955,7 +1186,7 @@ describe("Redmine inbound sync", () => {
           remoteId: "stale-private",
           sourceVersion: "sha256:stale-private-v1",
         },
-      }),
+      })
     ).resolves.toMatchObject({
       state: "skipped",
       outcome: {
@@ -966,7 +1197,7 @@ describe("Redmine inbound sync", () => {
     await expect(
       prisma.integrationConflict.count({
         where: { kind: "inbound-comment-privacy" },
-      }),
+      })
     ).resolves.toBe(0);
   });
 
@@ -1038,15 +1269,19 @@ describe("Redmine inbound sync", () => {
       ],
     });
     await prisma.$executeRawUnsafe(
-      `ALTER TABLE "comments" ADD CONSTRAINT "test_private_comment_redaction_rollback" CHECK ("body" <> '[Redacted private Redmine comment]')`,
+      `ALTER TABLE "comments" ADD CONSTRAINT "test_private_comment_redaction_rollback" CHECK ("body" <> '[Redacted private Redmine comment]')`
     );
 
     try {
       await runInboundSyncCycle(prisma, privateSetup);
 
-      await expect(prisma.comment.findUniqueOrThrow({ where: { id: comment.id } })).resolves.toMatchObject({ body });
+      await expect(
+        prisma.comment.findUniqueOrThrow({ where: { id: comment.id } })
+      ).resolves.toMatchObject({ body });
       await expect(prisma.mention.count({ where: { commentId: comment.id } })).resolves.toBe(1);
-      await expect(prisma.notification.count({ where: { commentId: comment.id } })).resolves.toBe(1);
+      await expect(prisma.notification.count({ where: { commentId: comment.id } })).resolves.toBe(
+        1
+      );
       await expect(
         prisma.integrationInboundApplication.count({
           where: {
@@ -1055,11 +1290,11 @@ describe("Redmine inbound sync", () => {
             remoteId: "private-rollback",
             sourceVersion: "sha256:private-rollback-private",
           },
-        }),
+        })
       ).resolves.toBe(0);
     } finally {
       await prisma.$executeRawUnsafe(
-        'ALTER TABLE "comments" DROP CONSTRAINT IF EXISTS "test_private_comment_redaction_rollback"',
+        'ALTER TABLE "comments" DROP CONSTRAINT IF EXISTS "test_private_comment_redaction_rollback"'
       );
     }
   });
@@ -1100,7 +1335,7 @@ describe("Redmine inbound sync", () => {
           remoteEntityType: "comment",
           remoteId: "actorless",
         },
-      }),
+      })
     ).resolves.toMatchObject({
       state: "skipped",
       outcome: { reason: "remote-comment-author-missing" },
@@ -1125,7 +1360,7 @@ describe("Redmine inbound sync", () => {
           authorId: null,
           remoteAuthorId: null,
         },
-      }),
+      })
     ).rejects.toThrow();
     await expect(
       prisma.comment.create({
@@ -1135,7 +1370,7 @@ describe("Redmine inbound sync", () => {
           authorId: owner.id,
           remoteAuthorId: remote.id,
         },
-      }),
+      })
     ).rejects.toThrow();
     await expect(
       prisma.activityLog.create({
@@ -1145,7 +1380,7 @@ describe("Redmine inbound sync", () => {
           memberId: null,
           remoteActorId: null,
         },
-      }),
+      })
     ).rejects.toThrow();
     await expect(
       prisma.activityLog.create({
@@ -1155,14 +1390,14 @@ describe("Redmine inbound sync", () => {
           memberId: owner.id,
           remoteActorId: remote.id,
         },
-      }),
+      })
     ).rejects.toThrow();
   });
 
   it("rolls back a local comment when its shadow activity fails", async () => {
     const { owner, issue } = await fixture();
     await prisma.$executeRawUnsafe(
-      `ALTER TABLE "activity_logs" ADD CONSTRAINT "test_local_comment_activity_rollback" CHECK ("action" <> 'commented')`,
+      `ALTER TABLE "activity_logs" ADD CONSTRAINT "test_local_comment_activity_rollback" CHECK ("action" <> 'commented')`
     );
 
     try {
@@ -1172,17 +1407,17 @@ describe("Redmine inbound sync", () => {
           { body: "Rollback local comment", source: "human" },
           owner.id,
           null,
-          false,
-        ),
+          false
+        )
       ).rejects.toThrow();
       await expect(
         prisma.comment.count({
           where: { issueId: issue.id, body: "Rollback local comment" },
-        }),
+        })
       ).resolves.toBe(0);
     } finally {
       await prisma.$executeRawUnsafe(
-        'ALTER TABLE "activity_logs" DROP CONSTRAINT IF EXISTS "test_local_comment_activity_rollback"',
+        'ALTER TABLE "activity_logs" DROP CONSTRAINT IF EXISTS "test_local_comment_activity_rollback"'
       );
     }
   });
@@ -1217,7 +1452,7 @@ describe("Redmine inbound sync", () => {
     };
     setup.loadIssueDetail.mockResolvedValue(detail);
     await prisma.$executeRawUnsafe(
-      `ALTER TABLE "external_refs" ADD CONSTRAINT "test_remote_comment_ref_rollback" CHECK ("external_id" <> 'rollback-comment')`,
+      `ALTER TABLE "external_refs" ADD CONSTRAINT "test_remote_comment_ref_rollback" CHECK ("external_id" <> 'rollback-comment')`
     );
 
     try {
@@ -1226,20 +1461,18 @@ describe("Redmine inbound sync", () => {
       await expect(
         prisma.integrationExternalIdentity.count({
           where: { bindingId: binding.id, remoteUserId: "rollback-author" },
-        }),
+        })
       ).resolves.toBe(0);
-      await expect(
-        prisma.comment.count({ where: { issueId: issue.id } }),
-      ).resolves.toBe(0);
+      await expect(prisma.comment.count({ where: { issueId: issue.id } })).resolves.toBe(0);
       await expect(
         prisma.activityLog.count({
           where: { issueId: issue.id, action: "commented" },
-        }),
+        })
       ).resolves.toBe(0);
       await expect(
         prisma.externalRef.count({
           where: { bindingId: binding.id, externalId: "rollback-comment" },
-        }),
+        })
       ).resolves.toBe(0);
       await expect(
         prisma.integrationInboundApplication.count({
@@ -1248,11 +1481,11 @@ describe("Redmine inbound sync", () => {
             remoteEntityType: "comment",
             remoteId: "rollback-comment",
           },
-        }),
+        })
       ).resolves.toBe(0);
     } finally {
       await prisma.$executeRawUnsafe(
-        'ALTER TABLE "external_refs" DROP CONSTRAINT IF EXISTS "test_remote_comment_ref_rollback"',
+        'ALTER TABLE "external_refs" DROP CONSTRAINT IF EXISTS "test_remote_comment_ref_rollback"'
       );
     }
 
@@ -1265,20 +1498,18 @@ describe("Redmine inbound sync", () => {
     await expect(
       prisma.integrationExternalIdentity.count({
         where: { bindingId: binding.id, remoteUserId: "rollback-author" },
-      }),
+      })
     ).resolves.toBe(1);
-    await expect(
-      prisma.comment.count({ where: { issueId: issue.id } }),
-    ).resolves.toBe(1);
+    await expect(prisma.comment.count({ where: { issueId: issue.id } })).resolves.toBe(1);
     await expect(
       prisma.activityLog.count({
         where: { issueId: issue.id, action: "commented" },
-      }),
+      })
     ).resolves.toBe(1);
     await expect(
       prisma.externalRef.count({
         where: { bindingId: binding.id, externalId: "rollback-comment" },
-      }),
+      })
     ).resolves.toBe(1);
     await expect(
       prisma.integrationInboundApplication.findFirstOrThrow({
@@ -1287,7 +1518,7 @@ describe("Redmine inbound sync", () => {
           remoteEntityType: "comment",
           remoteId: "rollback-comment",
         },
-      }),
+      })
     ).resolves.toMatchObject({ state: "applied" });
   });
 
@@ -1329,24 +1560,30 @@ describe("Redmine inbound sync", () => {
           dueDate: "2026-08-20",
           progress: 70,
         },
-      }),
+      })
     );
 
     await runInboundSyncCycle(prisma, setup);
 
-    await expect(prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })
+    ).resolves.toMatchObject({
       title: "Remote title",
       description: "Remote body",
       state: "in_progress",
       priority: "high",
       assigneeId: assignee.id,
     });
-    await expect(prisma.issueSchedule.findUniqueOrThrow({ where: { issueId: issue.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.issueSchedule.findUniqueOrThrow({ where: { issueId: issue.id } })
+    ).resolves.toMatchObject({
       startDate: new Date("2026-08-02T00:00:00.000Z"),
       dueDate: new Date("2026-08-20T00:00:00.000Z"),
       progress: 70,
     });
-    await expect(prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })
+    ).resolves.toMatchObject({
       remoteUpdatedAt: observedAt,
       metadata: expect.objectContaining({
         baseline: expect.objectContaining({
@@ -1364,7 +1601,9 @@ describe("Redmine inbound sync", () => {
       }),
     });
     await expect(
-      prisma.integrationInboundApplication.findFirstOrThrow({ where: { refId: ref.id, remoteUpdatedAt: observedAt } }),
+      prisma.integrationInboundApplication.findFirstOrThrow({
+        where: { refId: ref.id, remoteUpdatedAt: observedAt },
+      })
     ).resolves.toMatchObject({
       state: "applied",
       outcome: expect.objectContaining({
@@ -1385,7 +1624,7 @@ describe("Redmine inbound sync", () => {
       prisma.integrationSyncWork.findMany({
         where: { entityId: issue.id },
         select: { direction: true, state: true },
-      }),
+      })
     ).resolves.toEqual([{ direction: "inbound", state: "done" }]);
   });
 
@@ -1442,25 +1681,33 @@ describe("Redmine inbound sync", () => {
           dueDate: null,
           progress: 0,
         },
-      }),
+      })
     );
 
     await runInboundSyncCycle(prisma, setup);
 
-    await expect(prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })
+    ).resolves.toMatchObject({
       title: "Local title",
       description: "Remote-only body",
     });
-    await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: outbound.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: outbound.id } })
+    ).resolves.toMatchObject({
       state: "queued",
       payload: { version: 1, fields: { priority: "high" } },
     });
-    await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: titleOnly.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: titleOnly.id } })
+    ).resolves.toMatchObject({
       state: "dead",
       skippedReason: "inbound_field_conflict",
     });
     await expect(
-      prisma.integrationInboundApplication.findFirstOrThrow({ where: { refId: ref.id, remoteUpdatedAt: observedAt } }),
+      prisma.integrationInboundApplication.findFirstOrThrow({
+        where: { refId: ref.id, remoteUpdatedAt: observedAt },
+      })
     ).resolves.toMatchObject({
       state: "conflict",
       outcome: expect.objectContaining({
@@ -1498,15 +1745,17 @@ describe("Redmine inbound sync", () => {
         };
       },
       prisma,
-      binding.id,
+      binding.id
     );
     await expect(
       prisma.integrationSyncWork.findFirstOrThrow({
         where: { correlationId: "blocked-local-edit" },
-      }),
-    ).resolves.toMatchObject({ payload: expect.objectContaining({ fields: { priority: "critical" } }) });
+      })
+    ).resolves.toMatchObject({
+      payload: expect.objectContaining({ fields: { priority: "critical" } }),
+    });
     await expect(
-      prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } }),
+      prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } })
     ).resolves.toMatchObject({
       localEvidence: expect.objectContaining({
         blockedFields: ["title"],
@@ -1539,15 +1788,15 @@ describe("Redmine inbound sync", () => {
         };
       },
       prisma,
-      binding.id,
+      binding.id
     );
     await expect(
       prisma.integrationSyncWork.count({
         where: { correlationId: "blocked-title-only-edit" },
-      }),
+      })
     ).resolves.toBe(0);
     await expect(
-      prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } }),
+      prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } })
     ).resolves.toMatchObject({
       localEvidence: expect.objectContaining({
         fields: expect.objectContaining({
@@ -1604,20 +1853,24 @@ describe("Redmine inbound sync", () => {
           dueDate: "2026-08-30",
           progress: 0,
         },
-      }),
+      })
     );
 
     await runInboundSyncCycle(prisma, later);
 
-    await expect(prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })
+    ).resolves.toMatchObject({
       title: "Newest local title",
       description: "Later remote-only body",
       priority: "critical",
     });
     await expect(
-      prisma.issueSchedule.findUnique({ where: { issueId: issue.id } }),
+      prisma.issueSchedule.findUnique({ where: { issueId: issue.id } })
     ).resolves.toBeNull();
-    await expect(prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })
+    ).resolves.toMatchObject({
       metadata: expect.objectContaining({
         baseline: expect.objectContaining({
           fields: expect.objectContaining({ dueDate: null }),
@@ -1627,10 +1880,10 @@ describe("Redmine inbound sync", () => {
     await expect(
       prisma.integrationConflict.count({
         where: { refId: ref.id, kind: "inbound-field-convergence", state: "open" },
-      }),
+      })
     ).resolves.toBe(1);
     await expect(
-      prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } }),
+      prisma.integrationConflict.findUniqueOrThrow({ where: { id: conflict.id } })
     ).resolves.toMatchObject({
       remoteEvidence: expect.objectContaining({
         remoteVersion: `sha256:${laterAt.getTime()}`,
@@ -1660,19 +1913,23 @@ describe("Redmine inbound sync", () => {
           dueDate: null,
           progress: 0,
         },
-      }),
+      })
     );
 
     await runInboundSyncCycle(prisma, setup);
 
-    await expect(prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })
+    ).resolves.toMatchObject({
       title: "Mapped remote title",
       state: "review",
       priority: "medium",
       assigneeId: null,
     });
     await expect(
-      prisma.integrationInboundApplication.findFirstOrThrow({ where: { refId: ref.id, remoteUpdatedAt: observedAt } }),
+      prisma.integrationInboundApplication.findFirstOrThrow({
+        where: { refId: ref.id, remoteUpdatedAt: observedAt },
+      })
     ).resolves.toMatchObject({
       state: "conflict",
       outcome: expect.objectContaining({
@@ -1683,7 +1940,7 @@ describe("Redmine inbound sync", () => {
     await expect(
       prisma.integrationConflict.findFirstOrThrow({
         where: { refId: ref.id, kind: "inbound-field-convergence" },
-      }),
+      })
     ).resolves.toMatchObject({
       localEvidence: expect.objectContaining({
         blockedFields: ["state", "priority", "assigneeId"],
@@ -1708,16 +1965,16 @@ describe("Redmine inbound sync", () => {
           dueDate: "2026-08-02",
           progress: 0,
         },
-      }),
+      })
     );
 
     await runInboundSyncCycle(prisma, setup);
 
     await expect(
-      prisma.issueSchedule.findUnique({ where: { issueId: issue.id } }),
+      prisma.issueSchedule.findUnique({ where: { issueId: issue.id } })
     ).resolves.toBeNull();
     await expect(
-      prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } }),
+      prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })
     ).resolves.toMatchObject({
       metadata: expect.objectContaining({
         baseline: expect.objectContaining({
@@ -1728,7 +1985,7 @@ describe("Redmine inbound sync", () => {
     await expect(
       prisma.integrationInboundApplication.findFirstOrThrow({
         where: { refId: ref.id, remoteUpdatedAt: observedAt },
-      }),
+      })
     ).resolves.toMatchObject({
       state: "conflict",
       outcome: expect.objectContaining({
@@ -1739,7 +1996,7 @@ describe("Redmine inbound sync", () => {
     await expect(
       prisma.integrationConflict.findFirstOrThrow({
         where: { refId: ref.id, kind: "inbound-field-convergence" },
-      }),
+      })
     ).resolves.toMatchObject({
       localEvidence: {
         issueId: issue.id,
@@ -1790,15 +2047,21 @@ describe("Redmine inbound sync", () => {
 
     await runInboundSyncCycle(prisma, setup);
 
-    await expect(prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })
+    ).resolves.toMatchObject({
       title: "Linked issue",
       state: "review",
     });
-    await expect(prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.externalRef.findUniqueOrThrow({ where: { id: ref.id } })
+    ).resolves.toMatchObject({
       remoteUpdatedAt: baseline,
     });
     await expect(prisma.integrationInboundApplication.count()).resolves.toBe(0);
-    await expect(prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })
+    ).resolves.toMatchObject({
       cursorUpdatedAt: null,
       cursorRemoteId: null,
     });
@@ -1809,13 +2072,15 @@ describe("Redmine inbound sync", () => {
     const observedAt = new Date("2026-08-01T10:02:55.000Z");
     const setup = dependencies([change(observedAt, "review")]);
     setup.loadIssueDetail.mockRejectedValue(
-      Object.assign(new Error("provider secret body"), { apiKey: "must-not-log" }),
+      Object.assign(new Error("provider secret body"), { apiKey: "must-not-log" })
     );
 
     await runInboundSyncCycle(prisma, setup);
 
     await expect(
-      prisma.integrationInboundApplication.findFirstOrThrow({ where: { refId: ref.id, remoteUpdatedAt: observedAt } }),
+      prisma.integrationInboundApplication.findFirstOrThrow({
+        where: { refId: ref.id, remoteUpdatedAt: observedAt },
+      })
     ).resolves.toMatchObject({
       state: "conflict",
       outcome: expect.objectContaining({ reason: "INBOUND_OBSERVATION_FAILED" }),
@@ -1823,14 +2088,14 @@ describe("Redmine inbound sync", () => {
     await expect(
       prisma.integrationConflict.findFirstOrThrow({
         where: { refId: ref.id, kind: "inbound-observation-failure" },
-      }),
+      })
     ).resolves.toMatchObject({ remoteEvidence: expect.objectContaining({ remoteIssueId: "100" }) });
     await expect(
-      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })
     ).resolves.toMatchObject({ cursorUpdatedAt: observedAt, cursorRemoteId: "100" });
-    expect(JSON.stringify([...setup.logger.warn.mock.calls, ...setup.logger.error.mock.calls])).not.toMatch(
-      /provider secret body|must-not-log|service-secret/,
-    );
+    expect(
+      JSON.stringify([...setup.logger.warn.mock.calls, ...setup.logger.error.mock.calls])
+    ).not.toMatch(/provider secret body|must-not-log|service-secret/);
   });
 
   it("records a mismatched linked detail and advances past the poison observation", async () => {
@@ -1840,7 +2105,7 @@ describe("Redmine inbound sync", () => {
     setup.loadIssueDetail.mockResolvedValue(
       detailChange(observedAt, {
         identity: { type: "issue", remoteId: "different", remoteProjectId: "41" },
-      }),
+      })
     );
 
     await runInboundSyncCycle(prisma, setup);
@@ -1848,13 +2113,13 @@ describe("Redmine inbound sync", () => {
     await expect(
       prisma.integrationInboundApplication.findFirstOrThrow({
         where: { refId: ref.id, remoteUpdatedAt: observedAt },
-      }),
+      })
     ).resolves.toMatchObject({
       state: "conflict",
       outcome: expect.objectContaining({ reason: "INBOUND_OBSERVATION_FAILED" }),
     });
     await expect(
-      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })
     ).resolves.toMatchObject({ cursorUpdatedAt: observedAt, cursorRemoteId: "100" });
   });
 
@@ -1867,7 +2132,9 @@ describe("Redmine inbound sync", () => {
 
     await runInboundSyncCycle(prisma, setup);
 
-    await expect(prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })
+    ).resolves.toMatchObject({
       state: "review",
     });
     const imported = await prisma.issue.findFirstOrThrow({
@@ -1887,7 +2154,7 @@ describe("Redmine inbound sync", () => {
       metadata: expect.objectContaining({ remoteVersion: detail.sourceVersion }),
     });
     await expect(
-      prisma.integrationInboundApplication.findFirstOrThrow({ where: { refId: ref.id } }),
+      prisma.integrationInboundApplication.findFirstOrThrow({ where: { refId: ref.id } })
     ).resolves.toMatchObject({
       sourceVersion: detail.sourceVersion,
       state: "applied",
@@ -1897,16 +2164,16 @@ describe("Redmine inbound sync", () => {
       prisma.integrationSyncWork.findMany({
         where: { entityId: imported.id },
         select: { direction: true, operation: true, state: true },
-      }),
+      })
     ).resolves.toEqual([{ direction: "inbound", operation: "create", state: "done" }]);
     await expect(
-      prisma.integrationSyncWork.count({ where: { entityId: imported.id, direction: "outbound" } }),
+      prisma.integrationSyncWork.count({ where: { entityId: imported.id, direction: "outbound" } })
     ).resolves.toBe(0);
     await expect(
-      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })
     ).resolves.toMatchObject({ cursorUpdatedAt: unlinkedAt, cursorRemoteId: "999" });
     expect(setup.loadIssueDetail).toHaveBeenCalledWith(
-      expect.objectContaining({ remoteProjectId: "41", remoteIssueId: "999" }),
+      expect.objectContaining({ remoteProjectId: "41", remoteIssueId: "999" })
     );
   });
 
@@ -1933,7 +2200,7 @@ describe("Redmine inbound sync", () => {
     await runInboundSyncCycle(prisma, setup);
 
     await expect(
-      prisma.issue.findFirstOrThrow({ where: { projectId: project.id, id: { not: issue.id } } }),
+      prisma.issue.findFirstOrThrow({ where: { projectId: project.id, id: { not: issue.id } } })
     ).resolves.toMatchObject({ state: "done", completedAt: closedAt });
   });
 
@@ -1973,7 +2240,7 @@ describe("Redmine inbound sync", () => {
     await expect(
       prisma.integrationInboundApplication.findFirstOrThrow({
         where: { bindingId: binding.id, remoteId: "999" },
-      }),
+      })
     ).resolves.toMatchObject({
       state: "skipped",
       sourceVersion: expect.stringMatching(/^sha256:/),
@@ -1998,16 +2265,18 @@ describe("Redmine inbound sync", () => {
           dueDate: null,
           progress: 50,
         },
-      }),
+      })
     );
 
     await runInboundSyncCycle(prisma, reopened);
 
     await expect(
-      prisma.issue.findFirstOrThrow({ where: { projectId: project.id, id: { not: issue.id } } }),
+      prisma.issue.findFirstOrThrow({ where: { projectId: project.id, id: { not: issue.id } } })
     ).resolves.toMatchObject({ title: "Reopened historical issue", state: "review" });
     await expect(
-      prisma.integrationInboundApplication.count({ where: { bindingId: binding.id, remoteId: "999" } }),
+      prisma.integrationInboundApplication.count({
+        where: { bindingId: binding.id, remoteId: "999" },
+      })
     ).resolves.toBe(2);
   });
 
@@ -2020,7 +2289,7 @@ describe("Redmine inbound sync", () => {
         operation: "tombstone",
         actor: undefined,
         fields: { reason: "private" },
-      }),
+      })
     );
 
     await runInboundSyncCycle(prisma, hidden);
@@ -2030,7 +2299,7 @@ describe("Redmine inbound sync", () => {
     await expect(prisma.integrationExternalIdentity.count()).resolves.toBe(0);
     await expect(prisma.integrationInboundApplication.count()).resolves.toBe(0);
     await expect(
-      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })
     ).resolves.toMatchObject({ cursorUpdatedAt: privateAt, cursorRemoteId: "999" });
 
     const publicAt = new Date("2026-08-01T10:06:00.000Z");
@@ -2054,7 +2323,7 @@ describe("Redmine inbound sync", () => {
     await expect(prisma.issue.count()).resolves.toBe(2);
     await expect(prisma.externalRef.count()).resolves.toBe(2);
     await expect(
-      prisma.issue.findFirstOrThrow({ where: { projectId: project.id, title: "Now public" } }),
+      prisma.issue.findFirstOrThrow({ where: { projectId: project.id, title: "Now public" } })
     ).resolves.toMatchObject({ state: "review" });
     await expect(prisma.integrationInboundApplication.count()).resolves.toBe(1);
   });
@@ -2071,10 +2340,10 @@ describe("Redmine inbound sync", () => {
     await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(2);
     await expect(prisma.externalRef.count({ where: { externalId: "999" } })).resolves.toBe(1);
     await expect(
-      prisma.integrationInboundApplication.count({ where: { remoteId: "999" } }),
+      prisma.integrationInboundApplication.count({ where: { remoteId: "999" } })
     ).resolves.toBe(1);
     await expect(
-      prisma.integrationSyncWork.count({ where: { direction: "outbound" } }),
+      prisma.integrationSyncWork.count({ where: { direction: "outbound" } })
     ).resolves.toBe(0);
     expect(setup.loadIssueDetail).toHaveBeenCalledOnce();
   });
@@ -2129,7 +2398,7 @@ describe("Redmine inbound sync", () => {
           dueDate: null,
           progress: 0,
         },
-      }),
+      })
     );
 
     await runInboundSyncCycle(prisma, setup);
@@ -2138,10 +2407,10 @@ describe("Redmine inbound sync", () => {
     await expect(prisma.externalRef.count({ where: { externalId: "999" } })).resolves.toBe(0);
     await expect(prisma.integrationInboundApplication.count()).resolves.toBe(0);
     await expect(
-      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: outbound.id } }),
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: outbound.id } })
     ).resolves.toMatchObject({ state: "leased", leaseToken: "provider-succeeded", refId: null });
     await expect(
-      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })
     ).resolves.toMatchObject({
       cursorUpdatedAt: null,
       cursorRemoteId: null,
@@ -2154,7 +2423,7 @@ describe("Redmine inbound sync", () => {
         remoteIssueId: "999",
         error: { name: "AppError", code: "OUTBOUND_CREATE_UNSETTLED", statusCode: 409 },
       },
-      "Inbound Redmine issue processing failed",
+      "Inbound Redmine issue processing failed"
     );
     expect(JSON.stringify(setup.logger.warn.mock.calls)).not.toContain("Provider body");
   });
@@ -2196,7 +2465,7 @@ describe("Redmine inbound sync", () => {
       await expect(prisma.externalRef.count({ where: { externalId: "999" } })).resolves.toBe(0);
       await expect(prisma.integrationInboundApplication.count()).resolves.toBe(0);
       await expect(
-        prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+        prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })
       ).resolves.toMatchObject({
         cursorUpdatedAt: null,
         cursorRemoteId: null,
@@ -2221,14 +2490,14 @@ describe("Redmine inbound sync", () => {
           remoteIssueId: "999",
           error: { name: "AppError", code: "INBOUND_CREDENTIAL_STALE", statusCode: 409 },
         },
-        "Inbound Redmine issue processing failed",
+        "Inbound Redmine issue processing failed"
       );
       const logs = JSON.stringify([
         ...setup.logger.warn.mock.calls,
         ...setup.logger.error.mock.calls,
       ]);
       expect(logs).not.toMatch(/replacement-secret|Credential race provider|service-secret/);
-    },
+    }
   );
 
   it("rejects a credential replacement during source polling before applying any changes", async () => {
@@ -2261,7 +2530,9 @@ describe("Redmine inbound sync", () => {
 
     await runInboundSyncCycle(prisma, setup);
 
-    await expect(prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })
+    ).resolves.toMatchObject({
       state: "review",
     });
     await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(1);
@@ -2269,7 +2540,7 @@ describe("Redmine inbound sync", () => {
     await expect(prisma.integrationInboundApplication.count()).resolves.toBe(0);
     expect(setup.loadIssueDetail).not.toHaveBeenCalled();
     await expect(
-      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })
     ).resolves.toMatchObject({
       cursorUpdatedAt: null,
       cursorRemoteId: null,
@@ -2277,14 +2548,14 @@ describe("Redmine inbound sync", () => {
       pollLeaseUntil: new Date(baseline.getTime() + 60_000),
     });
     await expect(
-      prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: credential.id } }),
+      prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: credential.id } })
     ).resolves.toMatchObject({
       encryptedKey: "source-poll-replacement-key",
       lastAuthStatus: "valid",
       revokedAt: null,
     });
     expect(JSON.stringify(setup.logger.error.mock.calls)).not.toMatch(
-      /source-poll-replacement-key|source-provider-body|service-secret/,
+      /source-poll-replacement-key|source-provider-body|service-secret/
     );
   });
 
@@ -2315,7 +2586,7 @@ describe("Redmine inbound sync", () => {
     await expect(prisma.integrationExternalIdentity.count()).resolves.toBe(0);
     await expect(prisma.integrationInboundApplication.count()).resolves.toBe(0);
     await expect(
-      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })
     ).resolves.toMatchObject({
       cursorUpdatedAt: null,
       cursorRemoteId: null,
@@ -2323,21 +2594,25 @@ describe("Redmine inbound sync", () => {
       pollLeaseUntil: new Date(baseline.getTime() + 60_000),
     });
     await expect(
-      prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: credential.id } }),
+      prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: credential.id } })
     ).resolves.toMatchObject({
       encryptedKey: "private-detail-replacement-key",
       lastAuthStatus: "valid",
       revokedAt: null,
     });
     expect(JSON.stringify(setup.logger.error.mock.calls)).not.toMatch(
-      /private-detail-replacement-key|private-provider-body|service-secret/,
+      /private-detail-replacement-key|private-provider-body|service-secret/
     );
   });
 
   it("caps discovery at ten detail reads and resumes the remaining observations", async () => {
     const { project, binding } = await fixture();
     const changes = Array.from({ length: 15 }, (_, index) =>
-      change(new Date(baseline.getTime() + (index + 1) * 60_000), "in_progress", String(1000 + index)),
+      change(
+        new Date(baseline.getTime() + (index + 1) * 60_000),
+        "in_progress",
+        String(1000 + index)
+      )
     );
     const setup = resumableDependencies(changes);
     const details = new Map(
@@ -2347,19 +2622,21 @@ describe("Redmine inbound sync", () => {
           identity: { type: "issue", remoteId: observed.entityId, remoteProjectId: "41" },
           sourceVersion: `sha256:${observed.entityId}`,
         }),
-      ]),
+      ])
     );
-    setup.loadIssueDetail.mockImplementation(async ({ remoteIssueId }) => details.get(remoteIssueId)!);
+    setup.loadIssueDetail.mockImplementation(
+      async ({ remoteIssueId }) => details.get(remoteIssueId)!
+    );
 
     await runInboundSyncCycle(prisma, setup);
 
     expect(setup.loadIssueDetail).toHaveBeenCalledTimes(10);
     await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(11);
     await expect(
-      prisma.integrationInboundApplication.count({ where: { bindingId: binding.id } }),
+      prisma.integrationInboundApplication.count({ where: { bindingId: binding.id } })
     ).resolves.toBe(10);
     await expect(
-      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })
     ).resolves.toMatchObject({
       cursorUpdatedAt: changes[9]!.changedAt,
       cursorRemoteId: changes[9]!.entityId,
@@ -2370,10 +2647,10 @@ describe("Redmine inbound sync", () => {
     expect(setup.loadIssueDetail).toHaveBeenCalledTimes(15);
     await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(16);
     await expect(
-      prisma.integrationInboundApplication.count({ where: { bindingId: binding.id } }),
+      prisma.integrationInboundApplication.count({ where: { bindingId: binding.id } })
     ).resolves.toBe(15);
     await expect(
-      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })
     ).resolves.toMatchObject({
       cursorUpdatedAt: changes[14]!.changedAt,
       cursorRemoteId: changes[14]!.entityId,
@@ -2383,7 +2660,11 @@ describe("Redmine inbound sync", () => {
   it("counts private issue detail reads against the discovery cap", async () => {
     const { project, binding } = await fixture();
     const changes = Array.from({ length: 11 }, (_, index) =>
-      change(new Date(baseline.getTime() + (index + 1) * 60_000), "in_progress", String(2000 + index)),
+      change(
+        new Date(baseline.getTime() + (index + 1) * 60_000),
+        "in_progress",
+        String(2000 + index)
+      )
     );
     const setup = resumableDependencies(changes);
     setup.loadIssueDetail.mockImplementation(async ({ remoteIssueId }) => {
@@ -2405,7 +2686,7 @@ describe("Redmine inbound sync", () => {
     expect(setup.loadIssueDetail).toHaveBeenCalledTimes(10);
     await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(1);
     await expect(
-      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })
     ).resolves.toMatchObject({
       cursorUpdatedAt: changes[9]!.changedAt,
       cursorRemoteId: changes[9]!.entityId,
@@ -2436,7 +2717,7 @@ describe("Redmine inbound sync", () => {
     await expect(prisma.externalRef.count({ where: { externalId: "999" } })).resolves.toBe(0);
     await expect(prisma.integrationInboundApplication.count()).resolves.toBe(0);
     await expect(
-      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })
     ).resolves.toMatchObject({
       cursorUpdatedAt: null,
       cursorRemoteId: null,
@@ -2464,17 +2745,17 @@ describe("Redmine inbound sync", () => {
               dueDate: null,
               progress: 0,
             },
-          }),
+          })
         );
       } else if (failure === "detail") {
         setup.loadIssueDetail.mockRejectedValue(
-          Object.assign(new Error("detail secret"), { apiKey: "must-not-be-logged" }),
+          Object.assign(new Error("detail secret"), { apiKey: "must-not-be-logged" })
         );
       } else {
         setup.loadIssueDetail.mockResolvedValue(
           detailChange(observedAt, {
             identity: { type: "issue", remoteId: "1000", remoteProjectId: "41" },
-          }),
+          })
         );
       }
 
@@ -2483,7 +2764,7 @@ describe("Redmine inbound sync", () => {
       await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(1);
       await expect(prisma.externalRef.count({ where: { externalId: "999" } })).resolves.toBe(0);
       await expect(
-        prisma.integrationInboundApplication.findFirstOrThrow({ where: { remoteId: "999" } }),
+        prisma.integrationInboundApplication.findFirstOrThrow({ where: { remoteId: "999" } })
       ).resolves.toMatchObject({
         state: "conflict",
         outcome: expect.objectContaining({ reason: "INBOUND_OBSERVATION_FAILED" }),
@@ -2491,13 +2772,13 @@ describe("Redmine inbound sync", () => {
       await expect(
         prisma.integrationConflict.findFirstOrThrow({
           where: { bindingId: binding.id, kind: "inbound-observation-failure" },
-        }),
+        })
       ).resolves.toMatchObject({
         refId: null,
         remoteEvidence: expect.objectContaining({ remoteIssueId: "999" }),
       });
       await expect(
-        prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+        prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })
       ).resolves.toMatchObject({
         cursorUpdatedAt: observedAt,
         cursorRemoteId: "999",
@@ -2509,7 +2790,7 @@ describe("Redmine inbound sync", () => {
         ...setup.logger.error.mock.calls,
       ]);
       expect(logs).not.toMatch(/must-not-be-logged|detail secret|Unmapped issue/);
-    },
+    }
   );
 
   it("does not overwrite a pre-import application claimed by an owner retry", async () => {
@@ -2550,10 +2831,10 @@ describe("Redmine inbound sync", () => {
 
     expect(setup.loadIssueDetail).toHaveBeenCalled();
     await expect(
-      prisma.integrationInboundApplication.count({ where: { bindingId: binding.id } }),
+      prisma.integrationInboundApplication.count({ where: { bindingId: binding.id } })
     ).resolves.toBe(1);
     await expect(
-      prisma.integrationInboundApplication.findUniqueOrThrow({ where: { id: application.id } }),
+      prisma.integrationInboundApplication.findUniqueOrThrow({ where: { id: application.id } })
     ).resolves.toMatchObject({
       state: "claimed",
       leaseToken: "owner-retry",
@@ -2562,7 +2843,7 @@ describe("Redmine inbound sync", () => {
       refId: null,
     });
     await expect(
-      prisma.integrationConflict.count({ where: { applicationId: application.id } }),
+      prisma.integrationConflict.count({ where: { applicationId: application.id } })
     ).resolves.toBe(1);
     await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(1);
   });
@@ -2605,10 +2886,10 @@ describe("Redmine inbound sync", () => {
 
     expect(setup.loadIssueDetail).toHaveBeenCalled();
     await expect(
-      prisma.integrationInboundApplication.findUniqueOrThrow({ where: { id: application.id } }),
+      prisma.integrationInboundApplication.findUniqueOrThrow({ where: { id: application.id } })
     ).resolves.toMatchObject({ state: "conflict", leaseToken: null, leaseUntil: null, fence: 1 });
     await expect(
-      prisma.integrationConflict.count({ where: { applicationId: application.id, state: "open" } }),
+      prisma.integrationConflict.count({ where: { applicationId: application.id, state: "open" } })
     ).resolves.toBe(1);
   });
 
@@ -2628,10 +2909,10 @@ describe("Redmine inbound sync", () => {
           dueDate: null,
           progress: 0,
         },
-      }),
+      })
     );
     await prisma.$executeRawUnsafe(
-      'ALTER TABLE "issues" ADD CONSTRAINT "test_redmine_discovery_rollback" CHECK ("title" <> \'force-discovery-rollback\')',
+      'ALTER TABLE "issues" ADD CONSTRAINT "test_redmine_discovery_rollback" CHECK ("title" <> \'force-discovery-rollback\')'
     );
 
     try {
@@ -2642,11 +2923,13 @@ describe("Redmine inbound sync", () => {
       await expect(prisma.integrationExternalIdentity.count()).resolves.toBe(0);
       await expect(prisma.integrationInboundApplication.count()).resolves.toBe(0);
       await expect(prisma.integrationSyncWork.count()).resolves.toBe(0);
-      await expect(prisma.project.findUniqueOrThrow({ where: { id: project.id } })).resolves.toMatchObject({
+      await expect(
+        prisma.project.findUniqueOrThrow({ where: { id: project.id } })
+      ).resolves.toMatchObject({
         lastSequenceNum: 1,
       });
       await expect(
-        prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+        prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })
       ).resolves.toMatchObject({
         cursorUpdatedAt: null,
         cursorRemoteId: null,
@@ -2654,7 +2937,7 @@ describe("Redmine inbound sync", () => {
       });
     } finally {
       await prisma.$executeRawUnsafe(
-        'ALTER TABLE "issues" DROP CONSTRAINT IF EXISTS "test_redmine_discovery_rollback"',
+        'ALTER TABLE "issues" DROP CONSTRAINT IF EXISTS "test_redmine_discovery_rollback"'
       );
     }
   });
@@ -2675,13 +2958,15 @@ describe("Redmine inbound sync", () => {
 
     await runInboundSyncCycle(prisma, dependencies([change(closedAt, "done")]));
 
-    await expect(prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })
+    ).resolves.toMatchObject({
       state: "done",
     });
     await expect(
       prisma.integrationInboundApplication.findFirstOrThrow({
         where: { refId: ref.id, remoteUpdatedAt: closedAt },
-      }),
+      })
     ).resolves.toMatchObject({
       state: "applied",
       outcome: expect.objectContaining({ conflictFields: [] }),
@@ -2704,7 +2989,9 @@ describe("Redmine inbound sync", () => {
 
     await runInboundSyncCycle(prisma, dependencies([change(closedAt, "done")]));
 
-    await expect(prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).resolves.toMatchObject({
+    await expect(
+      prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })
+    ).resolves.toMatchObject({
       state: "done",
       completedAt: expect.any(Date),
       timeConfirmedAt: expect.any(Date),
@@ -2739,12 +3026,12 @@ describe("Redmine inbound sync", () => {
       prisma.integrationSyncWork.findMany({
         where: { entityId: issue.id },
         select: { direction: true, operation: true, state: true, actorKind: true },
-      }),
+      })
     ).resolves.toEqual([
       { direction: "inbound", operation: "close", state: "done", actorKind: "remote" },
     ]);
     await expect(
-      prisma.activityLog.count({ where: { issueId: issue.id, via: "redmine-inbound" } }),
+      prisma.activityLog.count({ where: { issueId: issue.id, via: "redmine-inbound" } })
     ).resolves.toBe(3);
 
     await transitionIssue(issue.key, "review", owner.id);
@@ -2753,7 +3040,7 @@ describe("Redmine inbound sync", () => {
         where: { entityId: issue.id },
         orderBy: { sequence: "asc" },
         select: { direction: true, state: true, correlationId: true },
-      }),
+      })
     ).resolves.toEqual([
       { direction: "inbound", state: "done", correlationId: application.correlationId },
       { direction: "outbound", state: "queued", correlationId: expect.any(String) },
@@ -2786,12 +3073,15 @@ describe("Redmine inbound sync", () => {
 
     expect(poll).toHaveBeenCalledOnce();
     await expect(
-      prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: credential.id } }),
+      prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: credential.id } })
     ).resolves.toMatchObject({ lastAuthStatus: "invalid" });
     await expect(
       prisma.integrationProjectBinding.count({
-        where: { connectionId: connection.id, OR: [{ pollLeaseToken: { not: null } }, { pollLeaseUntil: { not: null } }] },
-      }),
+        where: {
+          connectionId: connection.id,
+          OR: [{ pollLeaseToken: { not: null } }, { pollLeaseUntil: { not: null } }],
+        },
+      })
     ).resolves.toBe(0);
 
     expect(JSON.stringify(setup.logger.error.mock.calls)).not.toContain("must-not-be-logged");
@@ -2813,12 +3103,12 @@ describe("Redmine inbound sync", () => {
     await runInboundSyncCycle(prisma, setup);
 
     await expect(
-      prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: credential.id } }),
+      prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: credential.id } })
     ).resolves.toMatchObject({
       lastAuthStatus: "valid",
     });
     await expect(
-      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })
     ).resolves.toMatchObject({ pollLeaseToken: null, pollLeaseUntil: null });
   });
 
@@ -2842,10 +3132,10 @@ describe("Redmine inbound sync", () => {
 
     await expect(runInboundSyncCycle(prisma, setup)).resolves.toBeUndefined();
     expect(
-      await prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: credential.id } }),
+      await prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: credential.id } })
     ).toMatchObject({ lastAuthStatus: "invalid" });
     expect(
-      await prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+      await prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })
     ).toMatchObject({
       pollLeaseToken: "new-owner",
       pollLeaseUntil: newLeaseUntil,
@@ -2855,9 +3145,11 @@ describe("Redmine inbound sync", () => {
   });
 
   it.each([
-      Object.assign(new Error("forbidden secret"), { statusCode: 403, apiKey: "forbidden-key" }),
-      Object.assign(new Error("network secret"), { code: "ECONNRESET", apiKey: "network-key" }),
-    ])("keeps non-auth failures on the normal failed-poll delay without leaking errors", async (error) => {
+    Object.assign(new Error("forbidden secret"), { statusCode: 403, apiKey: "forbidden-key" }),
+    Object.assign(new Error("network secret"), { code: "ECONNRESET", apiKey: "network-key" }),
+  ])(
+    "keeps non-auth failures on the normal failed-poll delay without leaking errors",
+    async (error) => {
       const { credential, binding } = await fixture();
       const setup = dependencies([]);
       setup.createSource.mockReturnValue({ poll: vi.fn().mockRejectedValue(error) });
@@ -2865,16 +3157,17 @@ describe("Redmine inbound sync", () => {
       await runInboundSyncCycle(prisma, setup);
 
       await expect(
-        prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: credential.id } }),
+        prisma.memberIntegrationCredential.findUniqueOrThrow({ where: { id: credential.id } })
       ).resolves.toMatchObject({ lastAuthStatus: "valid" });
       await expect(
-        prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+        prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })
       ).resolves.toMatchObject({
         pollLeaseToken: null,
         pollLeaseUntil: new Date(baseline.getTime() + 60_000),
       });
       expect(JSON.stringify(setup.logger.error.mock.calls)).not.toMatch(/secret|-key/);
-    });
+    }
+  );
 });
 
 describe("Redmine inbound comment echoes", () => {
@@ -2900,67 +3193,80 @@ describe("Redmine inbound comment echoes", () => {
     };
   }
 
-  it.each(["leased", "ambiguous", "done"] as const)("attaches a marked journal with %s outbound proof", async (state) => {
-    const { owner, binding, connection, issue, ref } = await fixture();
-    const local = await prisma.comment.create({
-      data: { id: commentUuid, issueId: issue.id, authorId: owner.id, body: "Delivered body" },
-    });
-    const work = await prisma.integrationSyncWork.create({
-      data: {
-        bindingId: binding.id,
-        entityType: "comment",
-        entityId: local.id,
-        direction: "outbound",
-        operation: "create",
-        dedupeKey: "comment-echo-work",
-        laneKey: issue.id,
-        actorKey: `member:${owner.id}`,
-        actorKind: "user",
-        payload: {
-          version: 1,
-          issueId: issue.id,
-          parentRefId: ref.id,
-          parentRemoteIssueId: "100",
-          credentialRemoteUserId: "5",
+  it.each(["leased", "ambiguous", "done"] as const)(
+    "attaches a marked journal with %s outbound proof",
+    async (state) => {
+      const { owner, binding, connection, issue, ref } = await fixture();
+      const local = await prisma.comment.create({
+        data: { id: commentUuid, issueId: issue.id, authorId: owner.id, body: "Delivered body" },
+      });
+      const work = await prisma.integrationSyncWork.create({
+        data: {
+          bindingId: binding.id,
+          entityType: "comment",
+          entityId: local.id,
+          direction: "outbound",
+          operation: "create",
+          dedupeKey: "comment-echo-work",
+          laneKey: issue.id,
+          actorKey: `member:${owner.id}`,
+          actorKind: "user",
+          payload: {
+            version: 1,
+            issueId: issue.id,
+            parentRefId: ref.id,
+            parentRemoteIssueId: "100",
+            credentialRemoteUserId: "5",
+          },
+          correlationId: local.id,
+          epoch: binding.lifecycleEpoch,
+          refId: null,
+          marker,
+          state,
         },
-        correlationId: local.id,
-        epoch: binding.lifecycleEpoch,
-        refId: null,
-        marker,
-        state,
-      },
-    });
-    const observedAt = new Date("2026-08-01T10:01:00.000Z");
-    const setup = dependencies([change(observedAt, "review")]);
-    setup.loadIssueDetail.mockResolvedValue({
-      ...detailChange(observedAt, { identity: { type: "issue", remoteId: "100", remoteProjectId: "41" } }),
-      comments: [markedJournal(observedAt)],
-    });
+      });
+      const observedAt = new Date("2026-08-01T10:01:00.000Z");
+      const setup = dependencies([change(observedAt, "review")]);
+      setup.loadIssueDetail.mockResolvedValue({
+        ...detailChange(observedAt, {
+          identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+        }),
+        comments: [markedJournal(observedAt)],
+      });
 
-    await runInboundSyncCycle(prisma, setup);
+      await runInboundSyncCycle(prisma, setup);
 
-    await expect(prisma.comment.count({ where: { issueId: issue.id } })).resolves.toBe(1);
-    await expect(prisma.comment.findUniqueOrThrow({ where: { id: local.id } })).resolves.toMatchObject({
-      authorId: owner.id,
-      remoteAuthorId: null,
-    });
-    await expect(
-      prisma.externalRef.findUniqueOrThrow({
-        where: { connectionId_entityType_externalId: { connectionId: connection.id, entityType: "comment", externalId: "902" } },
-      }),
-    ).resolves.toMatchObject({ entityId: local.id, bindingId: binding.id });
-    await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({ state: "done", refId: expect.any(String) });
-    await expect(prisma.integrationInboundApplication.findFirstOrThrow({ where: { workId: work.id } })).resolves.toMatchObject({
-      outcome: expect.objectContaining({ provenance: "redmine-inbound-echo", marker }),
-    });
-  });
+      await expect(prisma.comment.count({ where: { issueId: issue.id } })).resolves.toBe(1);
+      await expect(
+        prisma.comment.findUniqueOrThrow({ where: { id: local.id } })
+      ).resolves.toMatchObject({
+        authorId: owner.id,
+        remoteAuthorId: null,
+      });
+      await expect(
+        prisma.externalRef.findUniqueOrThrow({
+          where: {
+            connectionId_entityType_externalId: {
+              connectionId: connection.id,
+              entityType: "comment",
+              externalId: "902",
+            },
+          },
+        })
+      ).resolves.toMatchObject({ entityId: local.id, bindingId: binding.id });
+      await expect(
+        prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })
+      ).resolves.toMatchObject({ state: "done", refId: expect.any(String) });
+      await expect(
+        prisma.integrationInboundApplication.findFirstOrThrow({ where: { workId: work.id } })
+      ).resolves.toMatchObject({
+        outcome: expect.objectContaining({ provenance: "redmine-inbound-echo", marker }),
+      });
+    }
+  );
 
   it.each([
-    [
-      "mismatched",
-      { remoteId: "6", displayName: "Different remote author" },
-      2,
-    ],
+    ["mismatched", { remoteId: "6", displayName: "Different remote author" }, 2],
     ["missing", undefined, 1],
   ] as const)(
     "does not accept a %s remote actor as outbound echo proof",
@@ -3014,13 +3320,13 @@ describe("Redmine inbound comment echoes", () => {
 
       await runInboundSyncCycle(prisma, setup);
 
-      await expect(
-        prisma.comment.count({ where: { issueId: issue.id } }),
-      ).resolves.toBe(expectedComments);
+      await expect(prisma.comment.count({ where: { issueId: issue.id } })).resolves.toBe(
+        expectedComments
+      );
       await expect(
         prisma.integrationSyncWork.findUniqueOrThrow({
           where: { id: work.id },
-        }),
+        })
       ).resolves.toMatchObject({ state: "leased", refId: null });
       await expect(
         prisma.externalRef.findFirst({
@@ -3029,13 +3335,13 @@ describe("Redmine inbound comment echoes", () => {
             entityType: "comment",
             entityId: local.id,
           },
-        }),
+        })
       ).resolves.toBeNull();
       if (actor) {
         await expect(
           prisma.integrationInboundApplication.findFirstOrThrow({
             where: { bindingId: binding.id, remoteId: "902" },
-          }),
+          })
         ).resolves.toMatchObject({
           workId: null,
           outcome: { provenance: "redmine-inbound" },
@@ -3044,13 +3350,13 @@ describe("Redmine inbound comment echoes", () => {
         await expect(
           prisma.integrationInboundApplication.findFirstOrThrow({
             where: { bindingId: binding.id, remoteId: "902" },
-          }),
+          })
         ).resolves.toMatchObject({
           state: "skipped",
           outcome: { reason: "remote-comment-author-missing" },
         });
       }
-    },
+    }
   );
 
   it("imports an altered marked journal without claiming its local comment proof", async () => {
@@ -3081,7 +3387,9 @@ describe("Redmine inbound comment echoes", () => {
     const alteredBody = `Altered remote body\n\n${marker}`;
     const setup = dependencies([change(observedAt, "review")]);
     setup.loadIssueDetail.mockResolvedValue({
-      ...detailChange(observedAt, { identity: { type: "issue", remoteId: "100", remoteProjectId: "41" } }),
+      ...detailChange(observedAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+      }),
       comments: [{ ...markedJournal(observedAt), fields: { body: alteredBody } }],
     });
 
@@ -3089,19 +3397,31 @@ describe("Redmine inbound comment echoes", () => {
 
     await expect(prisma.comment.count({ where: { issueId: issue.id } })).resolves.toBe(2);
     const remoteRef = await prisma.externalRef.findUniqueOrThrow({
-      where: { connectionId_entityType_externalId: { connectionId: connection.id, entityType: "comment", externalId: "902" } },
+      where: {
+        connectionId_entityType_externalId: {
+          connectionId: connection.id,
+          entityType: "comment",
+          externalId: "902",
+        },
+      },
     });
     expect(remoteRef.entityId).not.toBe(local.id);
-    await expect(prisma.comment.findUniqueOrThrow({ where: { id: remoteRef.entityId } })).resolves.toMatchObject({
+    await expect(
+      prisma.comment.findUniqueOrThrow({ where: { id: remoteRef.entityId } })
+    ).resolves.toMatchObject({
       body: alteredBody,
       source: "system",
       via: "redmine-inbound",
       authorId: null,
       remoteAuthorId: expect.any(String),
     });
-    await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({ state: "leased" });
     await expect(
-      prisma.integrationInboundApplication.findFirstOrThrow({ where: { bindingId: binding.id, remoteId: "902" } }),
+      prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })
+    ).resolves.toMatchObject({ state: "leased" });
+    await expect(
+      prisma.integrationInboundApplication.findFirstOrThrow({
+        where: { bindingId: binding.id, remoteId: "902" },
+      })
     ).resolves.toMatchObject({ workId: null, outcome: { provenance: "redmine-inbound" } });
   });
 
@@ -3142,7 +3462,9 @@ describe("Redmine inbound comment echoes", () => {
     const observedAt = new Date("2026-08-01T10:01:00.000Z");
     const setup = dependencies([change(observedAt, "review")]);
     setup.loadIssueDetail.mockResolvedValue({
-      ...detailChange(observedAt, { identity: { type: "issue", remoteId: "100", remoteProjectId: "41" } }),
+      ...detailChange(observedAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+      }),
       comments: [markedJournal(observedAt, "903")],
     });
 
@@ -3151,11 +3473,22 @@ describe("Redmine inbound comment echoes", () => {
     await expect(prisma.comment.count({ where: { issueId: issue.id } })).resolves.toBe(2);
     await expect(
       prisma.externalRef.findUniqueOrThrow({
-        where: { connectionId_entityType_externalId: { connectionId: connection.id, entityType: "comment", externalId: "903" } },
-      }),
-    ).resolves.toMatchObject({ bindingId: binding.id, entityId: expect.not.stringMatching(commentUuid) });
+        where: {
+          connectionId_entityType_externalId: {
+            connectionId: connection.id,
+            entityType: "comment",
+            externalId: "903",
+          },
+        },
+      })
+    ).resolves.toMatchObject({
+      bindingId: binding.id,
+      entityId: expect.not.stringMatching(commentUuid),
+    });
     await expect(
-      prisma.integrationInboundApplication.findFirstOrThrow({ where: { bindingId: binding.id, remoteId: "903" } }),
+      prisma.integrationInboundApplication.findFirstOrThrow({
+        where: { bindingId: binding.id, remoteId: "903" },
+      })
     ).resolves.toMatchObject({ workId: null, outcome: { provenance: "redmine-inbound" } });
   });
 
@@ -3202,13 +3535,21 @@ describe("Redmine inbound comment echoes", () => {
       });
       if (proof === "open conflict") {
         await prisma.integrationConflict.create({
-          data: { kind: "outbound-create-ambiguity", bindingId: binding.id, workId: work.id, localEvidence: {}, remoteEvidence: {} },
+          data: {
+            kind: "outbound-create-ambiguity",
+            bindingId: binding.id,
+            workId: work.id,
+            localEvidence: {},
+            remoteEvidence: {},
+          },
         });
       }
       const observedAt = new Date("2026-08-01T10:01:00.000Z");
       const setup = dependencies([change(observedAt, "review")]);
       setup.loadIssueDetail.mockResolvedValue({
-        ...detailChange(observedAt, { identity: { type: "issue", remoteId: "100", remoteProjectId: "41" } }),
+        ...detailChange(observedAt, {
+          identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+        }),
         comments: [markedJournal(observedAt)],
       });
 
@@ -3217,33 +3558,52 @@ describe("Redmine inbound comment echoes", () => {
       await expect(prisma.comment.count({ where: { issueId: issue.id } })).resolves.toBe(2);
       await expect(
         prisma.externalRef.findUniqueOrThrow({
-          where: { connectionId_entityType_externalId: { connectionId: connection.id, entityType: "comment", externalId: "902" } },
-        }),
+          where: {
+            connectionId_entityType_externalId: {
+              connectionId: connection.id,
+              entityType: "comment",
+              externalId: "902",
+            },
+          },
+        })
       ).resolves.toMatchObject({ entityId: expect.not.stringMatching(commentUuid) });
-      await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({ state });
-    },
+      await expect(
+        prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })
+      ).resolves.toMatchObject({ state });
+    }
   );
 
   it("does not attach a copied marker without its matching outbound work", async () => {
     const { owner, binding, connection, issue } = await fixture();
     await prisma.comment.create({
-      data: { id: commentUuid, issueId: issue.id, authorId: owner.id, body: "Original local comment" },
+      data: {
+        id: commentUuid,
+        issueId: issue.id,
+        authorId: owner.id,
+        body: "Original local comment",
+      },
     });
     const observedAt = new Date("2026-08-01T10:01:00.000Z");
     const setup = dependencies([change(observedAt, "review")]);
     setup.loadIssueDetail.mockResolvedValue({
-      ...detailChange(observedAt, { identity: { type: "issue", remoteId: "100", remoteProjectId: "41" } }),
+      ...detailChange(observedAt, {
+        identity: { type: "issue", remoteId: "100", remoteProjectId: "41" },
+      }),
       comments: [markedJournal(observedAt)],
     });
 
     await runInboundSyncCycle(prisma, setup);
 
     await expect(
-      prisma.externalRef.findFirst({ where: { connectionId: connection.id, entityType: "comment", entityId: commentUuid } }),
+      prisma.externalRef.findFirst({
+        where: { connectionId: connection.id, entityType: "comment", entityId: commentUuid },
+      })
     ).resolves.toBeNull();
     await expect(prisma.comment.count({ where: { issueId: issue.id } })).resolves.toBe(2);
     await expect(
-      prisma.integrationInboundApplication.findFirstOrThrow({ where: { bindingId: binding.id, remoteId: "902" } }),
+      prisma.integrationInboundApplication.findFirstOrThrow({
+        where: { bindingId: binding.id, remoteId: "902" },
+      })
     ).resolves.toMatchObject({ workId: null, outcome: { provenance: "redmine-inbound" } });
   });
 });

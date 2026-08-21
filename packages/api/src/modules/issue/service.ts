@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 
 import { AppError } from "../../shared/types.js";
@@ -30,7 +30,10 @@ import {
 } from "../cycle/service.js";
 import { parseAndUpsertMentions, emitMentionEvents } from "../mentions/service.js";
 import { checkReconciliation } from "./reconcile.js";
-import { autoSubscribe, getStatus as getSubscriptionStatus } from "../issue-subscription/service.js";
+import {
+  autoSubscribe,
+  getStatus as getSubscriptionStatus,
+} from "../issue-subscription/service.js";
 import type {
   IssueCaptureFields,
   IssueCaptureIntent,
@@ -43,6 +46,14 @@ import {
   resolveIssueCaptureContext,
   withIssueMutationTx,
 } from "../integrations/issue-tx.js";
+import {
+  enqueueTransitionObservationTx,
+  publishTransitionObservationLanes,
+  resolveTransitionObservationContext,
+  transitionObservationLane,
+  type TransitionObservationIssue,
+  type TransitionObservationProject,
+} from "./transition-observation.js";
 
 type IssueDatabase = Pick<Prisma.TransactionClient, "issue">;
 
@@ -54,13 +65,16 @@ async function mutateIssueWithCapture(
   mutate: (database: IssueDatabase) => Promise<IssueMutationRow>,
   captureOverride?: IssueCaptureOverride,
   beforeMutate?: (transaction: Prisma.TransactionClient) => Promise<void>,
+  afterMutate?: (transaction: Prisma.TransactionClient, result: IssueMutationRow) => Promise<void>
 ): Promise<IssueMutationRow> {
   const capture = captureOverride ?? (await resolveIssueCaptureContext(projectId, memberId));
   if (!capture) {
-    if (!beforeMutate) return mutate(prisma);
+    if (!beforeMutate && !afterMutate) return mutate(prisma);
     return prisma.$transaction(async (transaction) => {
-      await beforeMutate(transaction);
-      return mutate(transaction);
+      await beforeMutate?.(transaction);
+      const result = await mutate(transaction);
+      await afterMutate?.(transaction, result);
+      return result;
     });
   }
 
@@ -68,6 +82,7 @@ async function mutateIssueWithCapture(
     async (transaction) => {
       await beforeMutate?.(transaction);
       const result = await mutate(transaction);
+      await afterMutate?.(transaction, result);
       return {
         result,
         capture: {
@@ -79,22 +94,27 @@ async function mutateIssueWithCapture(
       };
     },
     prisma,
-    capture.bindingId,
+    capture.bindingId
   );
 }
 
 async function transitionIssuesWithCapture(
-  projectId: string,
+  project: TransitionObservationProject,
   memberId: string,
-  issues: readonly { id: string; state: IssueState }[],
+  issues: readonly TransitionObservationIssue[],
   targetState: IssueState,
   activityDetails: Readonly<Record<string, string>>,
-): Promise<{ count: number; issueIds: string[] }> {
-  const capture = await resolveIssueCaptureContext(projectId, memberId);
+  beforeWrite?: (transaction: Prisma.TransactionClient) => Promise<void>
+): Promise<{ count: number; issueIds: string[]; laneKeys: string[] }> {
+  const capture = await resolveIssueCaptureContext(project.id, memberId);
+  const occurrenceIds = new Map(issues.map((issue) => [issue.id, randomUUID()] as const));
 
   return prisma.$transaction(async (transaction) => {
     if (capture) await lockIssueCaptureBindingTx(transaction, capture.bindingId);
-    const transitioned: Array<{ id: string; state: IssueState }> = [];
+    await beforeWrite?.(transaction);
+    const transitioned: TransitionObservationIssue[] = [];
+    const laneKeys: string[] = [];
+    let observationContext: { actorUserId: string; observedAt: Date } | undefined;
     for (const issue of issues) {
       // The expected-state predicate turns concurrent transitions into no-ops.
       const update = await transaction.issue.updateMany({
@@ -106,6 +126,23 @@ async function transitionIssuesWithCapture(
       });
       if (update.count === 0) continue;
       transitioned.push(issue);
+
+      observationContext ??= await resolveTransitionObservationContext(transaction, memberId);
+      laneKeys.push(
+        await enqueueTransitionObservationTx(transaction, {
+          occurrenceId: occurrenceIds.get(issue.id)!,
+          issue: {
+            id: issue.id,
+            key: issue.key,
+            from: issue.state,
+            to: targetState,
+          },
+          project,
+          memberId,
+          actorUserId: observationContext.actorUserId,
+          observedAt: observationContext.observedAt,
+        })
+      );
 
       if (capture) {
         const result = await transaction.issue.findUniqueOrThrow({
@@ -142,8 +179,81 @@ async function transitionIssuesWithCapture(
     return {
       count: transitioned.length,
       issueIds: transitioned.map(({ id }) => id),
+      laneKeys,
     };
   });
+}
+
+type ReconciliationTransitionIssue = TransitionObservationIssue & {
+  timeConfirmedAt: Date | null;
+};
+
+async function recheckTransitionReconciliationBeforeWrite(
+  transaction: Prisma.TransactionClient,
+  issues: readonly ReconciliationTransitionIssue[]
+): Promise<Array<{ key: string; totalHours: number }>> {
+  const orderedIssues = [...issues].sort((left, right) =>
+    left.id < right.id ? -1 : left.id > right.id ? 1 : 0
+  );
+  if (orderedIssues.length === 0) return [];
+
+  const issueIds = Prisma.join(orderedIssues.map(({ id }) => Prisma.sql`${id}::uuid`));
+  const lockedIssues = await transaction.$queryRaw<
+    Array<{ id: string; state: IssueState; timeConfirmedAt: Date | null }>
+  >(Prisma.sql`
+    SELECT "id", "state", "time_confirmed_at" AS "timeConfirmedAt"
+    FROM "issues"
+    WHERE "id" IN (${issueIds})
+    ORDER BY "id"
+    FOR UPDATE
+  `);
+
+  await transaction.$queryRaw(
+    Prisma.sql`
+      SELECT "id"
+      FROM "work_capture_intents"
+      WHERE "issue_id" IN (${issueIds})
+      ORDER BY "issue_id", "id"
+      FOR UPDATE
+    `
+  );
+
+  const lockedById = new Map(lockedIssues.map((issue) => [issue.id, issue] as const));
+  const blockedIssues: Array<{ key: string; totalHours: number }> = [];
+  for (const issue of orderedIssues) {
+    const locked = lockedById.get(issue.id);
+    if (!locked || locked.state !== issue.state) continue;
+    const reconciliation = await checkReconciliation(issue.id, locked.timeConfirmedAt, transaction);
+    if (reconciliation.needed) {
+      blockedIssues.push({ key: issue.key, totalHours: reconciliation.totalHours });
+    }
+  }
+  return blockedIssues;
+}
+
+function assertGroupReconciliationComplete(
+  groupKey: string,
+  blockedIssues: Array<{ key: string; totalHours: number }>
+): void {
+  if (blockedIssues.length === 0) return;
+  throw new AppError(
+    409,
+    "RECONCILIATION_REQUIRED",
+    `${blockedIssues.length} issue(s) in group "${groupKey}" have unconfirmed captured time: ${blockedIssues.map((issue) => issue.key).join(", ")}`,
+    { groupKey, blockedIssues }
+  );
+}
+
+function assertBatchReconciliationComplete(
+  blockedIssues: Array<{ key: string; totalHours: number }>
+): void {
+  if (blockedIssues.length === 0) return;
+  throw new AppError(
+    409,
+    "RECONCILIATION_REQUIRED",
+    `${blockedIssues.length} issue(s) have unconfirmed captured time and cannot be moved to done: ${blockedIssues.map((issue) => issue.key).join(", ")}`,
+    { blockedIssues }
+  );
 }
 
 export type StartWorkIssueMutationEffects = {
@@ -165,7 +275,7 @@ export type StartWorkIssueMutationEffects = {
 
 /** Publish the non-transactional projections of an atomic start-work mutation. */
 export async function publishStartWorkIssueMutationEffects(
-  input: StartWorkIssueMutationEffects,
+  input: StartWorkIssueMutationEffects
 ): Promise<void> {
   if (input.autoAssigned) {
     void autoSubscribe(input.issue.id, input.memberId, "assignee");
@@ -240,7 +350,7 @@ export async function publishStartWorkIssueMutationEffects(
  */
 async function nextIssueKey(
   projectId: string,
-  projectKey: string,
+  projectKey: string
 ): Promise<{ key: string; sequenceNum: number }> {
   const updated = await prisma.project.update({
     where: { id: projectId },
@@ -267,17 +377,13 @@ export async function createIssue(
   projectId: string,
   body: CreateIssueBody,
   memberId: string,
-  via?: string | null,
+  via?: string | null
 ) {
   const project = await prisma.project.findUnique({
     where: { id: projectId },
   });
   if (!project) {
-    throw new AppError(
-      404,
-      "PROJECT_NOT_FOUND",
-      `Project not found`,
-    );
+    throw new AppError(404, "PROJECT_NOT_FOUND", `Project not found`);
   }
 
   // Resolve template defaults — user-supplied fields win, then template, then schema defaults
@@ -292,31 +398,27 @@ export async function createIssue(
       throw new AppError(
         400,
         "INVALID_TEMPLATE_KEY",
-        `Unknown template key: "${body.templateKey}"`,
+        `Unknown template key: "${body.templateKey}"`
       );
     }
     resolvedType = body.type ?? tmpl.type;
     resolvedPriority = body.priority ?? tmpl.priority;
-    resolvedLabels = body.labels !== undefined && body.labels.length > 0 ? body.labels : tmpl.labels;
+    resolvedLabels =
+      body.labels !== undefined && body.labels.length > 0 ? body.labels : tmpl.labels;
     resolvedDescription = body.description ?? tmpl.descriptionTemplate;
   }
 
   // Cross-project guard for cycleId — runs BEFORE nextIssueKey so a rejection
   // does not burn a sequence number. Also returns the loaded cycle so we can
   // compute `day` once for the scope event below without a second findUnique.
-  let validatedCycle:
-    | {
-        id: string;
-        projectId: string;
-        startDate: Date;
-        endDate: Date;
-      }
-    | null = null;
+  let validatedCycle: {
+    id: string;
+    projectId: string;
+    startDate: Date;
+    endDate: Date;
+  } | null = null;
   if (body.cycleId !== undefined && body.cycleId !== null) {
-    validatedCycle = await validateCycleBelongsToProject(
-      body.cycleId,
-      project.id,
-    );
+    validatedCycle = await validateCycleBelongsToProject(body.cycleId, project.id);
   }
 
   const { key, sequenceNum } = await nextIssueKey(project.id, project.key);
@@ -350,7 +452,7 @@ export async function createIssue(
           cycleId: body.cycleId,
           parentId: body.parentId,
         },
-      }),
+      })
   );
 
   // Auto-create activity log for issue creation
@@ -387,7 +489,12 @@ export async function createIssue(
       type: "issue.created",
       workspaceId: project.workspaceId,
       actorId: memberId,
-      payload: { issueKey: issue.key, issueId: issue.id, projectKey: project.key, title: issue.title },
+      payload: {
+        issueKey: issue.key,
+        issueId: issue.id,
+        projectKey: project.key,
+        title: issue.title,
+      },
       via,
     });
   } catch {
@@ -427,19 +534,12 @@ export async function createIssue(
  *
  * @param projectId - Gate-resolved project UUID (KAN-16 security fix).
  */
-export async function listIssues(
-  projectId: string,
-  filters: IssueFilterQuery,
-) {
+export async function listIssues(projectId: string, filters: IssueFilterQuery) {
   const project = await prisma.project.findUnique({
     where: { id: projectId },
   });
   if (!project) {
-    throw new AppError(
-      404,
-      "PROJECT_NOT_FOUND",
-      `Project not found`,
-    );
+    throw new AppError(404, "PROJECT_NOT_FOUND", `Project not found`);
   }
 
   const where: Prisma.IssueWhereInput = {
@@ -469,7 +569,7 @@ export async function listIssues(
       throw new AppError(
         400,
         "KEY_LIMIT_EXCEEDED",
-        `Maximum 100 keys per request (received ${parsed.length})`,
+        `Maximum 100 keys per request (received ${parsed.length})`
       );
     }
     if (parsed.length > 0) {
@@ -540,11 +640,7 @@ export async function listIssueGroups(projectId: string) {
     where: { id: projectId },
   });
   if (!project) {
-    throw new AppError(
-      404,
-      "PROJECT_NOT_FOUND",
-      `Project not found`,
-    );
+    throw new AppError(404, "PROJECT_NOT_FOUND", `Project not found`);
   }
 
   // Step 1: Aggregate with groupBy — get count, max updatedAt per groupKey
@@ -578,7 +674,7 @@ export async function listIssueGroups(projectId: string) {
 
   // Build a lookup map
   const repMap = new Map(
-    representatives.map((r) => [r.group_key, { title: r.title, state: r.state }]),
+    representatives.map((r) => [r.group_key, { title: r.title, state: r.state }])
   );
 
   // Step 3: Merge results
@@ -643,9 +739,7 @@ export async function getIssue(key: string, memberId?: string, canDelete = false
 
   const [activeWorkers, subscriptionStatus, redmineReference] = await Promise.all([
     getActiveWorkers(issue.id),
-    memberId
-      ? getSubscriptionStatus(issue.id, memberId).catch(() => null)
-      : Promise.resolve(null),
+    memberId ? getSubscriptionStatus(issue.id, memberId).catch(() => null) : Promise.resolve(null),
     prisma.externalRef.findFirst({
       where: {
         entityType: "issue",
@@ -671,7 +765,7 @@ export async function updateIssue(
   key: string,
   body: UpdateIssueBody,
   memberId: string,
-  via?: string | null,
+  via?: string | null
 ) {
   const issue = await prisma.issue.findUnique({
     where: { key },
@@ -715,14 +809,12 @@ export async function updateIssue(
   // Track cycleId change so we can emit scope events AFTER update.
   const prevCycleId: string | null = issue.cycleId;
   let cycleChanged = false;
-  let validatedNewCycle:
-    | {
-        id: string;
-        projectId: string;
-        startDate: Date;
-        endDate: Date;
-      }
-    | null = null;
+  let validatedNewCycle: {
+    id: string;
+    projectId: string;
+    startDate: Date;
+    endDate: Date;
+  } | null = null;
   if (body.cycleId !== undefined) {
     if (body.cycleId === null) {
       data.cycle = { disconnect: true };
@@ -732,10 +824,7 @@ export async function updateIssue(
       // leaves the issue untouched. Only validate when value actually
       // differs (no-op writes don't need a DB roundtrip).
       if (body.cycleId !== prevCycleId) {
-        validatedNewCycle = await validateCycleBelongsToProject(
-          body.cycleId,
-          issue.projectId,
-        );
+        validatedNewCycle = await validateCycleBelongsToProject(body.cycleId, issue.projectId);
       }
       data.cycle = { connect: { id: body.cycleId } };
       cycleChanged = body.cycleId !== prevCycleId;
@@ -767,7 +856,7 @@ export async function updateIssue(
       ...(body.assigneeId !== undefined ? { assigneeId: result.assigneeId } : {}),
       ...(body.cycleId !== undefined ? { cycleId: result.cycleId } : {}),
     }),
-    (database) => database.issue.update({ where: { key }, data }),
+    (database) => database.issue.update({ where: { key }, data })
   );
 
   // Auto-subscribe new assignee AFTER successful update (Fix 5 / KAN-28).
@@ -795,10 +884,7 @@ export async function updateIssue(
           kind: "add",
           issueKey: key,
           authorId: memberId,
-          day: dayIndex(
-            validatedNewCycle.startDate,
-            validatedNewCycle.endDate,
-          ),
+          day: dayIndex(validatedNewCycle.startDate, validatedNewCycle.endDate),
         });
       }
     } catch {
@@ -821,7 +907,12 @@ export async function updateIssue(
       type: "issue.updated",
       workspaceId: issue.project.workspaceId,
       actorId: memberId,
-      payload: { issueKey: key, issueId: issue.id, projectKey: issue.project.key, fields: Object.keys(body) },
+      payload: {
+        issueKey: key,
+        issueId: issue.id,
+        projectKey: issue.project.key,
+        fields: Object.keys(body),
+      },
       via,
     });
 
@@ -831,7 +922,14 @@ export async function updateIssue(
         type: "issue.assigned",
         workspaceId: issue.project.workspaceId,
         actorId: memberId,
-        payload: { issueKey: key, issueId: issue.id, projectKey: issue.project.key, issueTitle: issue.title, from: issue.assigneeId, to: body.assigneeId },
+        payload: {
+          issueKey: key,
+          issueId: issue.id,
+          projectKey: issue.project.key,
+          issueTitle: issue.title,
+          from: issue.assigneeId,
+          to: body.assigneeId,
+        },
         via,
       });
     }
@@ -872,10 +970,9 @@ export async function updateIssue(
 /**
  * Transition an issue to a new state.
  *
- * @param cause - Optional cause tag threaded into the `issue.transitioned` payload.
- *   Used by the work-session transition listener (KAN-156) to detect transitions
- *   triggered by `start_work` (cause="start_work") and skip them to avoid the
- *   KAN-143 circular feedback loop.
+ * @param cause - Optional cause tag threaded into public projection and durable
+ *   work-capture observation payloads. The listener skips `start_work` to avoid
+ *   circular lifecycle capture.
  */
 export async function transitionIssue(
   key: string,
@@ -883,7 +980,7 @@ export async function transitionIssue(
   memberId: string,
   via?: string | null,
   cause?: string,
-  captureOverride?: IssueCaptureOverride,
+  captureOverride?: IssueCaptureOverride
 ) {
   const issue = await prisma.issue.findUnique({
     where: { key },
@@ -907,6 +1004,9 @@ export async function transitionIssue(
     await stopActiveWorkSessions(key);
   }
 
+  const observationOccurrenceId = randomUUID();
+  const observationLaneKey = transitionObservationLane(issue.id);
+
   // KAN-35 completion-timestamp contract: set completedAt when entering done, clear on any other transition.
   const updated = await mutateIssueWithCapture(
     issue.projectId,
@@ -920,45 +1020,64 @@ export async function transitionIssue(
           state: toState as any,
           completedAt: toState === "done" ? new Date() : null,
         },
-    }),
+      }),
     captureOverride,
-    toState === "done"
-      ? async (transaction) => {
-          await transaction.$queryRaw`SELECT "id" FROM "issues" WHERE "id" = ${issue.id}::uuid FOR UPDATE`;
-          const current = await transaction.issue.findUnique({
-            where: { id: issue.id },
-            select: { state: true, timeConfirmedAt: true },
-          });
-          if (!current) {
-            throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${key}" not found`);
-          }
-          fromState = current.state;
-          result = validateTransition(fromState, toState as any);
-          if (!result.allowed) {
-            throw new AppError(400, "INVALID_TRANSITION", result.reason);
-          }
+    async (transaction) => {
+      await transaction.$queryRaw`SELECT "id" FROM "issues" WHERE "id" = ${issue.id}::uuid FOR UPDATE`;
+      const current = await transaction.issue.findUnique({
+        where: { id: issue.id },
+        select: { state: true, timeConfirmedAt: true },
+      });
+      if (!current) {
+        throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${key}" not found`);
+      }
+      fromState = current.state;
+      result = validateTransition(fromState, toState as IssueState);
+      if (!result.allowed) {
+        throw new AppError(400, "INVALID_TRANSITION", result.reason);
+      }
 
-          const rec = await checkReconciliation(
-            issue.id,
-            current.timeConfirmedAt,
-            transaction,
+      if (toState === "done") {
+        const rec = await checkReconciliation(issue.id, current.timeConfirmedAt, transaction);
+        if (rec.needed) {
+          throw new AppError(
+            409,
+            "RECONCILIATION_REQUIRED",
+            `Issue "${key}" has unconfirmed captured time. Call POST /api/issues/${key}/reconcile-time before transitioning to done.`,
+            {
+              issueKey: key,
+              workLogs: rec.workLogs,
+              timeEntries: rec.timeEntries,
+              totalHours: rec.totalHours,
+            }
           );
-          if (rec.needed) {
-            throw new AppError(
-              409,
-              "RECONCILIATION_REQUIRED",
-              `Issue "${key}" has unconfirmed captured time. Call POST /api/issues/${key}/reconcile-time before transitioning to done.`,
-              {
-                issueKey: key,
-                workLogs: rec.workLogs,
-                timeEntries: rec.timeEntries,
-                totalHours: rec.totalHours,
-              },
-            );
-          }
         }
-      : undefined,
+      }
+    },
+    async (transaction) => {
+      const observationContext = await resolveTransitionObservationContext(transaction, memberId);
+      await enqueueTransitionObservationTx(transaction, {
+        occurrenceId: observationOccurrenceId,
+        issue: {
+          id: issue.id,
+          key: issue.key,
+          from: fromState,
+          to: toState as IssueState,
+        },
+        project: {
+          id: issue.projectId,
+          key: issue.project.key,
+          workspaceId: issue.project.workspaceId,
+        },
+        memberId,
+        actorUserId: observationContext.actorUserId,
+        observedAt: observationContext.observedAt,
+        cause,
+      });
+    }
   );
+
+  await publishTransitionObservationLanes([observationLaneKey]);
 
   // Create activity log for state change
   await createActivityLog({
@@ -979,9 +1098,8 @@ export async function transitionIssue(
   // Sync roadmap item status based on aggregate issue states
   await syncRoadmapItemStatus(prisma, updated.id);
 
-  // Emit domain event (fire-and-forget)
-  // KAN-156: enrich payload with actor identity so the work-session transition
-  // listener can attribute sessions without a redundant DB lookup in the hot path.
+  // Emit the public projection event (fire-and-forget). Durable work capture is
+  // driven exclusively by work_capture.transition_observed above.
   try {
     const actor = await prisma.member.findUnique({
       where: { id: memberId },
@@ -993,13 +1111,10 @@ export async function transitionIssue(
       projectKey: issue.project.key,
       from: fromState,
       to: toState,
-      // KAN-156: actor identity for the work-session transition listener.
-      // actorUserId is null when the member row is not found (deleted between
-      // transition and emit); the listener's falsy-check handles null safely.
+      // Preserve actor identity for existing projection/notification consumers.
       actorMemberId: memberId,
       actorUserId: actor?.userId ?? null,
-      // KAN-156 / KAN-143 circular guard: thread the cause tag so the
-      // work-session listener can skip transitions triggered by start_work.
+      // Preserve the public event's existing cause contract.
       ...(cause !== undefined ? { cause } : {}),
     };
     eventBus.emit({
@@ -1030,17 +1145,13 @@ export async function transitionGroup(
   projectId: string,
   groupKey: string,
   toState: string,
-  memberId: string,
+  memberId: string
 ) {
   const project = await prisma.project.findUnique({
     where: { id: projectId },
   });
   if (!project) {
-    throw new AppError(
-      404,
-      "PROJECT_NOT_FOUND",
-      `Project not found`,
-    );
+    throw new AppError(404, "PROJECT_NOT_FOUND", `Project not found`);
   }
 
   // Find all issues in the group
@@ -1050,14 +1161,21 @@ export async function transitionGroup(
       projectId: project.id,
       groupKey,
     },
-    select: { id: true, key: true, state: true, parentId: true, roadmapItemId: true, timeConfirmedAt: true },
+    select: {
+      id: true,
+      key: true,
+      state: true,
+      parentId: true,
+      roadmapItemId: true,
+      timeConfirmedAt: true,
+    },
   });
 
   if (issues.length === 0) {
     throw new AppError(
       404,
       "GROUP_NOT_FOUND",
-      `No issues found with groupKey "${groupKey}" in project "${project.key}"`,
+      `No issues found with groupKey "${groupKey}" in project "${project.key}"`
     );
   }
 
@@ -1065,7 +1183,7 @@ export async function transitionGroup(
     throw new AppError(
       400,
       "GROUP_TOO_LARGE",
-      `Group "${groupKey}" has ${issues.length} issues, exceeding the limit of ${MAX_GROUP_TRANSITION_SIZE}. Transition issues individually.`,
+      `Group "${groupKey}" has ${issues.length} issues, exceeding the limit of ${MAX_GROUP_TRANSITION_SIZE}. Transition issues individually.`
     );
   }
 
@@ -1079,7 +1197,7 @@ export async function transitionGroup(
   const issuesToTransition = issues.filter((i) => i.state !== targetState);
 
   if (issuesToTransition.length === 0) {
-    return { count: 0, groupKey, state: targetState };
+    return { count: 0, keys: [] as string[], groupKey, state: targetState };
   }
 
   // Validate each transition (some may be same-state, which we already filtered)
@@ -1089,7 +1207,7 @@ export async function transitionGroup(
       throw new AppError(
         400,
         "INVALID_TRANSITION",
-        `Cannot transition issue "${issue.key}" from "${issue.state}" to "${targetState}": ${result.reason}`,
+        `Cannot transition issue "${issue.key}" from "${issue.state}" to "${targetState}": ${result.reason}`
       );
     }
   }
@@ -1105,28 +1223,31 @@ export async function transitionGroup(
         blockedIssues.push({ key: issue.key, totalHours: rec.totalHours });
       }
     }
-    if (blockedIssues.length > 0) {
-      throw new AppError(
-        409,
-        "RECONCILIATION_REQUIRED",
-        `${blockedIssues.length} issue(s) in group "${groupKey}" have unconfirmed captured time: ${blockedIssues.map((i) => i.key).join(", ")}`,
-        { groupKey, blockedIssues },
-      );
-    }
+    assertGroupReconciliationComplete(groupKey, blockedIssues);
   }
 
   const result = await transitionIssuesWithCapture(
-    project.id,
+    project,
     memberId,
     issuesToTransition,
     targetState,
     { groupKey },
+    targetState === "done"
+      ? async (transaction) => {
+          const blockedIssues = await recheckTransitionReconciliationBeforeWrite(
+            transaction,
+            issuesToTransition
+          );
+          assertGroupReconciliationComplete(groupKey, blockedIssues);
+        }
+      : undefined
   );
-  if (result.count === 0) return { count: 0, groupKey, state: targetState };
+  await publishTransitionObservationLanes(result.laneKeys);
+  if (result.count === 0) {
+    return { count: 0, keys: [] as string[], groupKey, state: targetState };
+  }
   const transitionedIds = new Set(result.issueIds);
-  const transitionedIssues = issuesToTransition.filter(({ id }) =>
-    transitionedIds.has(id),
-  );
+  const transitionedIssues = issuesToTransition.filter(({ id }) => transitionedIds.has(id));
 
   // Auto-advance parents for any issues that had parent relationships
   const issuesWithParents = transitionedIssues.filter((i) => i.parentId);
@@ -1140,9 +1261,7 @@ export async function transitionGroup(
   // Sync roadmap item status — deduplicate roadmapItemIds across the batch
   const uniqueRoadmapItemIds = [
     ...new Set(
-      transitionedIssues
-        .map((i) => i.roadmapItemId)
-        .filter((id): id is string => id !== null),
+      transitionedIssues.map((i) => i.roadmapItemId).filter((id): id is string => id !== null)
     ),
   ];
   for (const roadmapItemId of uniqueRoadmapItemIds) {
@@ -1151,8 +1270,7 @@ export async function transitionGroup(
     await syncRoadmapItemStatus(prisma, rep.id);
   }
 
-  // KAN-156 BUG-2/6: emit per-issue issue.transitioned events so the transition-listener
-  // can open/close sessions for group transitions. Fire-and-forget.
+  // Emit public per-issue projections for group transitions. Fire-and-forget.
   // Each emit is wrapped in its own try/catch so one failure does not skip the rest.
   let groupActorUserId: string | null = null;
   try {
@@ -1187,12 +1305,17 @@ export async function transitionGroup(
       // Never let event emission break the mutation; isolate per-issue failures.
       console.error(
         { groupKey, issueKey: issue.key, err },
-        "transitionGroup: per-issue event emission failed",
+        "transitionGroup: per-issue event emission failed"
       );
     }
   }
 
-  return { count: result.count, groupKey, state: targetState };
+  return {
+    count: result.count,
+    keys: transitionedIssues.map(({ key }) => key),
+    groupKey,
+    state: targetState,
+  };
 }
 
 /**
@@ -1210,17 +1333,13 @@ export async function transitionGroup(
 export async function batchTransitionByKeys(
   projectId: string,
   body: BatchTransitionByKeysBody,
-  memberId: string,
+  memberId: string
 ) {
   const project = await prisma.project.findUnique({
     where: { id: projectId },
   });
   if (!project) {
-    throw new AppError(
-      404,
-      "PROJECT_NOT_FOUND",
-      `Project not found`,
-    );
+    throw new AppError(404, "PROJECT_NOT_FOUND", `Project not found`);
   }
 
   const targetState = body.to_state as IssueState;
@@ -1246,15 +1365,13 @@ export async function batchTransitionByKeys(
   // Existence + cross-project guard (mirror cycle/service.attachIssues semantics).
   const foundKeySet = new Set(issues.map((i) => i.key));
   const missingKeys = body.keys.filter((k) => !foundKeySet.has(k));
-  const crossProjectKeys = issues
-    .filter((i) => i.projectId !== project.id)
-    .map((i) => i.key);
+  const crossProjectKeys = issues.filter((i) => i.projectId !== project.id).map((i) => i.key);
   const offendingKeys = [...new Set([...missingKeys, ...crossProjectKeys])];
   if (offendingKeys.length > 0) {
     throw new AppError(
       400,
       "CROSS_PROJECT_ISSUE",
-      `The following issue keys do not belong to project "${project.key}": ${offendingKeys.join(", ")}`,
+      `The following issue keys do not belong to project "${project.key}": ${offendingKeys.join(", ")}`
     );
   }
 
@@ -1266,7 +1383,7 @@ export async function batchTransitionByKeys(
       throw new AppError(
         400,
         "INVALID_TRANSITION",
-        `Cannot transition issue "${issue.key}" from "${issue.state}" to "${targetState}": ${result.reason}`,
+        `Cannot transition issue "${issue.key}" from "${issue.state}" to "${targetState}": ${result.reason}`
       );
     }
   }
@@ -1290,36 +1407,35 @@ export async function batchTransitionByKeys(
         blockedIssues.push({ key: issue.key, totalHours: rec.totalHours });
       }
     }
-    if (blockedIssues.length > 0) {
-      throw new AppError(
-        409,
-        "RECONCILIATION_REQUIRED",
-        `${blockedIssues.length} issue(s) have unconfirmed captured time and cannot be moved to done: ${blockedIssues.map((i) => i.key).join(", ")}`,
-        { blockedIssues },
-      );
-    }
+    assertBatchReconciliationComplete(blockedIssues);
   }
 
   const result = await transitionIssuesWithCapture(
-    project.id,
+    project,
     memberId,
     issuesToTransition,
     targetState,
     { mode: "keys" },
+    targetState === "done"
+      ? async (transaction) => {
+          const blockedIssues = await recheckTransitionReconciliationBeforeWrite(
+            transaction,
+            issuesToTransition
+          );
+          assertBatchReconciliationComplete(blockedIssues);
+        }
+      : undefined
   );
+  await publishTransitionObservationLanes(result.laneKeys);
   if (result.count === 0) {
     return { count: 0, keys: [], state: targetState };
   }
   const transitionedIds = new Set(result.issueIds);
-  const transitionedIssues = issuesToTransition.filter(({ id }) =>
-    transitionedIds.has(id),
-  );
+  const transitionedIssues = issuesToTransition.filter(({ id }) => transitionedIds.has(id));
 
   // Auto-advance parents + sync roadmap items (mirrors transitionGroup).
   const issuesWithParents = transitionedIssues.filter((i) => i.parentId);
-  const uniqueParentIds = [
-    ...new Set(issuesWithParents.map((i) => i.parentId!)),
-  ];
+  const uniqueParentIds = [...new Set(issuesWithParents.map((i) => i.parentId!))];
   for (const _parentId of uniqueParentIds) {
     const rep = issuesWithParents.find((i) => i.parentId === _parentId)!;
     await checkAndAdvanceParent(prisma, { parentId: rep.parentId }, memberId);
@@ -1327,9 +1443,7 @@ export async function batchTransitionByKeys(
 
   const uniqueRoadmapItemIds = [
     ...new Set(
-      transitionedIssues
-        .map((i) => i.roadmapItemId)
-        .filter((id): id is string => id !== null),
+      transitionedIssues.map((i) => i.roadmapItemId).filter((id): id is string => id !== null)
     ),
   ];
   for (const roadmapItemId of uniqueRoadmapItemIds) {
@@ -1352,8 +1466,7 @@ export async function batchTransitionByKeys(
   // Emit per-issue issue.transitioned events for SSE consumers (fire-and-forget).
   // These carry _skipSubscribedActivity=true because the single issue.batch_transitioned
   // event below handles the fan-out in ONE grouped DB query instead of one per issue (Fix 3 / KAN-28).
-  // KAN-156 BUG-2/6: include actorMemberId/actorUserId so the transition-listener
-  // can open/close sessions for batch transitions.
+  // Preserve actor identity on public per-issue projections.
   try {
     for (const issue of transitionedIssues) {
       const batchPayload: IssueTransitionedPayload & { _skipSubscribedActivity: boolean } = {
@@ -1379,7 +1492,7 @@ export async function batchTransitionByKeys(
     // Never let per-issue event emission break the mutation; swallowed failures are logged.
     console.error(
       { issueIds: transitionedIssues.map((i) => i.id), err },
-      "batchTransitionByKeys: per-issue event emission failed",
+      "batchTransitionByKeys: per-issue event emission failed"
     );
   }
 
@@ -1403,7 +1516,7 @@ export async function batchTransitionByKeys(
     // Never let batch event emission break the mutation; log so failures are observable.
     console.error(
       { issueIds: transitionedIssues.map((i) => i.id), err },
-      "batchTransitionByKeys: batch event emission failed",
+      "batchTransitionByKeys: batch event emission failed"
     );
   }
 

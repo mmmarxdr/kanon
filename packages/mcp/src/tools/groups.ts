@@ -8,8 +8,53 @@ import { formatList } from "../transforms.js";
 import { resolveProjectKey } from "../binding-resolver.js";
 import type { InvalidBinding } from "../binding-resolver.js";
 import type { KanonBinding } from "../kanon-binding.js";
+import {
+  adoptCaptureByHeartbeat,
+  forgetTrackedCapture,
+  withIssueCaptureOperations,
+} from "../heartbeat.js";
 
-export function registerGroupTools(server: McpServer, client: KanonClient, binding: KanonBinding | InvalidBinding | null = null): void {
+function exactTransitionedKeys(result: unknown): string[] {
+  if (Array.isArray(result)) {
+    return result
+      .map((issue) =>
+        issue && typeof issue === "object" ? (issue as Record<string, unknown>)["key"] : undefined
+      )
+      .filter((key): key is string => typeof key === "string");
+  }
+  if (!result || typeof result !== "object") return [];
+  const keys = (result as Record<string, unknown>)["keys"];
+  return Array.isArray(keys) ? keys.filter((key): key is string => typeof key === "string") : [];
+}
+
+async function applyCapturePolicy(
+  keys: readonly string[],
+  state: string,
+  client: KanonClient
+): Promise<void> {
+  await Promise.all(
+    keys.map(async (key) => {
+      if (state === "analysis" || state === "in_progress") {
+        try {
+          await adoptCaptureByHeartbeat(key, client);
+        } catch (error) {
+          console.error(
+            `[heartbeat] Batch transition committed but capture adoption failed for ${key}:`,
+            error
+          );
+        }
+      } else {
+        forgetTrackedCapture(key);
+      }
+    })
+  );
+}
+
+export function registerGroupTools(
+  server: McpServer,
+  client: KanonClient,
+  binding: KanonBinding | InvalidBinding | null = null
+): void {
   server.tool(
     "list_groups",
     "List issue groups for projectKey. Call before create_issue for valid groupKey values.",
@@ -19,11 +64,11 @@ export function registerGroupTools(server: McpServer, client: KanonClient, bindi
         const resolved = resolveProjectKey(projectKey, binding);
         if (!resolved.ok) return errorResult(new Error(resolved.error));
         const groups = await client.listIssueGroups(resolved.projectKey);
-        return dataResult(formatList(groups, "group", (format ?? "compact"), limit, offset));
+        return dataResult(formatList(groups, "group", format ?? "compact", limit, offset));
       } catch (err) {
         return errorResult(err);
       }
-    },
+    }
   );
 
   server.tool(
@@ -49,9 +94,18 @@ export function registerGroupTools(server: McpServer, client: KanonClient, bindi
         // detail) is deferred and tracked separately.
         let result: unknown;
         if (keys && keys.length > 0) {
-          result = await client.batchTransitionByKeys(projectKey, keys, state);
+          const orderedKeys = [...new Set(keys)].sort();
+          result = await withIssueCaptureOperations(orderedKeys, async () => {
+            const response = await client.batchTransitionByKeys(projectKey, keys, state);
+            await applyCapturePolicy(exactTransitionedKeys(response), state, client);
+            return response;
+          });
         } else {
           result = await client.batchTransition(projectKey, groupKey!, state);
+          const transitionedKeys = exactTransitionedKeys(result);
+          await withIssueCaptureOperations(transitionedKeys, () =>
+            applyCapturePolicy(transitionedKeys, state, client)
+          );
         }
 
         if (format === "full") return dataResult(result);
@@ -64,6 +118,6 @@ export function registerGroupTools(server: McpServer, client: KanonClient, bindi
       } catch (err) {
         return errorResult(err);
       }
-    },
+    }
   );
 }

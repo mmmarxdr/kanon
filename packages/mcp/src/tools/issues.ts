@@ -20,6 +20,7 @@ import type { InvalidBinding } from "../binding-resolver.js";
 import { normalizeDate } from "./cycles.js";
 import type { KanonBinding } from "../kanon-binding.js";
 import { KanonApiError } from "../kanon-client.js";
+import { adoptCaptureByHeartbeat, forgetTrackedCapture } from "../heartbeat.js";
 
 // Extend CreateIssueInput's shape with the new write-format field. The legacy
 // `format: FormatParam.optional()` (slim/full/compact) is overridden to the
@@ -39,12 +40,29 @@ function toFiniteHours(value: unknown): number | null {
   return null;
 }
 
-export function registerIssueTools(server: McpServer, client: KanonClient, binding: KanonBinding | InvalidBinding | null = null): void {
+export function registerIssueTools(
+  server: McpServer,
+  client: KanonClient,
+  binding: KanonBinding | InvalidBinding | null = null
+): void {
   server.tool(
     "list_issues",
     "List issues with filters (state,type,priority,assigneeId,cycleId,label,groupKey,keys[]). Returns slim list.",
     ListIssuesInput.shape,
-    async ({ projectKey, state, type, priority, assigneeId, cycleId, label, groupKey, keys, format, limit, offset }) => {
+    async ({
+      projectKey,
+      state,
+      type,
+      priority,
+      assigneeId,
+      cycleId,
+      label,
+      groupKey,
+      keys,
+      format,
+      limit,
+      offset,
+    }) => {
       try {
         const resolved = resolveProjectKey(projectKey, binding);
         if (!resolved.ok) return errorResult(new Error(resolved.error));
@@ -65,13 +83,13 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
           "issue",
           (format ?? "compact") as Format,
           limit ?? undefined,
-          offset ?? undefined,
+          offset ?? undefined
         );
         return dataResult(result);
       } catch (err) {
         return errorResult(err);
       }
-    },
+    }
   );
 
   server.tool(
@@ -86,7 +104,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
       } catch (err) {
         return errorResult(err);
       }
-    },
+    }
   );
 
   // ─── Write Tools ────────────────────────────────────────────────────────
@@ -98,8 +116,18 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
     async (input) => {
       try {
         const {
-          projectKey: explicitProjectKey, title, description, type, priority, labels, groupKey,
-          assigneeId, cycleId, parentId, template, format,
+          projectKey: explicitProjectKey,
+          title,
+          description,
+          type,
+          priority,
+          labels,
+          groupKey,
+          assigneeId,
+          cycleId,
+          parentId,
+          template,
+          format,
         } = input as z.infer<typeof CreateIssueInput> & { format?: "ack" | "slim" | "full" };
         const resolved = resolveProjectKey(explicitProjectKey, binding);
         if (!resolved.ok) return errorResult(new Error(resolved.error));
@@ -124,7 +152,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
       } catch (err) {
         return errorResult(err);
       }
-    },
+    }
   );
 
   server.tool(
@@ -166,9 +194,10 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
           ...(dueDate !== undefined ? { dueDate: normalizeDate(dueDate) } : {}),
           ...(progress !== undefined ? { progress } : {}),
         };
-        let issue = Object.keys(body).length > 0
-          ? await client.updateIssue(issueKey, body)
-          : await client.getIssue(issueKey);
+        let issue =
+          Object.keys(body).length > 0
+            ? await client.updateIssue(issueKey, body)
+            : await client.getIssue(issueKey);
         if (Object.keys(schedule).length > 0) {
           await client.updateIssueSchedule(issueKey, schedule);
           issue = await client.getIssue(issueKey);
@@ -179,7 +208,7 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
       } catch (err) {
         return errorResult(err);
       }
-    },
+    }
   );
 
   server.tool(
@@ -189,6 +218,18 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
     async ({ issueKey, state, format }) => {
       try {
         const issue = await client.transitionIssue(issueKey, state);
+        if (issue.state === "analysis" || issue.state === "in_progress") {
+          try {
+            await adoptCaptureByHeartbeat(issue.key, client);
+          } catch (error) {
+            console.error(
+              `[heartbeat] Transition committed but capture adoption failed for ${issue.key}:`,
+              error
+            );
+          }
+        } else {
+          forgetTrackedCapture(issue.key);
+        }
         const fmt = format ?? "ack";
         if (fmt === "ack") return dataResult(formatAck(issue, "issue"));
         return dataResult(formatEntity(issue, "issue-write", fmt as Format));
@@ -212,13 +253,11 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
               : `This ticket has unconfirmed reported time that must be confirmed before it can move to done. ` +
                 `Call reconcile_time with issueKey "${issueKey}" (optionally set confirmedTotalHours to ` +
                 `correct the total), then retry the transition to done.`;
-          return errorResult(
-            new KanonApiError(err.statusCode, err.code, message, err.details),
-          );
+          return errorResult(new KanonApiError(err.statusCode, err.code, message, err.details));
         }
         return errorResult(err);
       }
-    },
+    }
   );
 
   server.tool(
@@ -235,7 +274,6 @@ export function registerIssueTools(server: McpServer, client: KanonClient, bindi
       } catch (err) {
         return errorResult(err);
       }
-    },
+    }
   );
-
 }

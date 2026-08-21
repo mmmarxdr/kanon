@@ -25,7 +25,7 @@ export default function IssuePage() {
   const issue = state.kind === "ready" ? d.issue : undefined;
   const deleteCapability: { allowed: boolean; redmineLinked: boolean } | undefined = issue && "deleteCapability" in issue ? issue.deleteCapability as { allowed: boolean; redmineLinked: boolean } : undefined;
 
-  return <div className="issue-page">
+  return <div className="issue-page" data-current-issue-key={issue?.key ?? issueKey}>
     {issue && <><div className="issue-subtoolbar"><button type="button" onClick={d.onBack}><Icon.ChevL /> {t("back")}</button><span /><SubscribeButton isSubscribed={d.isSubscribed} isSubscriptionPending={d.isSubscriptionPending} onToggle={d.onSubscribeToggle} /><IssueDeleteAction issueKey={issue.key} priority={issue.priority} capability={deleteCapability ?? { allowed: false, redmineLinked: false }} projectKey={d.projectKey} onDeleted={d.onDeleted} /></div><IssueDetailHeader issueKey={issue.key} title={issue.title} type={issue.type} priority={issue.priority} state={issue.state} hasAgent={(issue.activeWorkers ?? []).some((worker) => worker.isAgent)} onTitleChange={d.onTitleChange} onClose={d.onBack} /></>}
     <div className="issue-detail-layout">
       <IssueDetailWorkspace state={state} onRetry={d.refetch} onBack={d.onBack}

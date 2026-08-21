@@ -10,6 +10,7 @@ import {
   reconcileTime,
   toFiniteHours,
 } from "./reconcile-api";
+import { workCaptureRegistry } from "@/lib/work-capture-lifecycle";
 
 interface TransitionVars {
   issueKey: string;
@@ -43,13 +44,17 @@ export function useTransitionMutation(projectKey: string) {
 
   const mutation = useMutation({
     mutationFn: ({ issueKey, toState }: TransitionVars) =>
-      fetchApi<void>(
+      fetchApi<Issue>(
         `/api/issues/${encodeURIComponent(issueKey)}/transition`,
         {
           method: "POST",
           body: JSON.stringify({ to_state: toState }),
         },
       ),
+
+    onSuccess: (issue) => {
+      workCaptureRegistry.recordTransitionResult(issue);
+    },
 
     onMutate: async ({ issueKey, toState }) => {
       // Cancel outgoing refetches so they don't overwrite our optimistic update

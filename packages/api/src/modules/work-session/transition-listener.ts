@@ -1,8 +1,8 @@
 /**
  * Work-session transition listener — KAN-156 Slice 1.
  *
- * Subscribes to `issue.transitioned` domain events and manages WorkSession
- * lifecycle based on the issue state machine:
+ * Subscribes to durable `work_capture.transition_observed` events and manages
+ * WorkSession lifecycle based on the issue state machine:
  *
  *   - First entry into active-work state (analysis | in_progress) where `from`
  *     was NOT already an active-work state → open a session for the actor member.
@@ -12,29 +12,28 @@
  *   - Idempotent: startWork upserts so re-entering an open state is safe;
  *     stopWork returns ok:true/deleted:false when none open (no-op).
  *
- * Fire-and-forget: a session failure MUST NEVER break the transition emitter.
+ * A handler failure rejects durable delivery so the outbox can retry it.
  * Lifecycle effects are serialized per issue so an older transition cannot
  * finish after a newer close/rework signal and mutate the wrong generation.
  *
  * KAN-143 circular guard SEAM: if the event carries `cause: "start_work"`,
  * the listener skips it to avoid the loop where start_work auto-advances the
  * issue state, which would re-trigger this listener.
- * TODO(KAN-143): once start_work emits cause on the transition event, this seam
- * will activate automatically — no further change needed here.
  */
 
 import { prisma } from "../../config/prisma.js";
 import {
   captureTransitionClose,
   captureTransitionInterval,
-  drainTransitionLifecycleEffects,
   stageTransitionStart,
   startWork,
   stopWork,
-  TRANSITION_EFFECT_RECOVERY_INTERVAL_MS,
 } from "./service.js";
 import type { IEventBus } from "../../services/event-bus/interface.js";
-import type { DomainEvent, IssueTransitionedPayload } from "../../services/event-bus/types.js";
+import type {
+  DomainEvent,
+  WorkCaptureTransitionObservedPayload,
+} from "../../services/event-bus/types.js";
 
 // ─── Logger interface (minimal — compatible with pino and console) ─────────
 
@@ -63,9 +62,8 @@ function isCloseState(state: string): boolean {
 /**
  * Register the work-session transition listener on the event bus.
  *
- * Subscribes to all domain events and reacts only to `issue.transitioned`
- * with the right state classification. All session operations are
- * fire-and-forget: errors are caught and logged but never propagate.
+ * Subscribes to all domain events and reacts only to the durable internal
+ * transition observation with the right state classification.
  *
  * @param bus    - The application EventBus instance.
  * @param logger - Optional logger (pino-compatible). Defaults to console.
@@ -81,36 +79,18 @@ export function registerTransitionListener(
   const issueQueues = new Map<string, Promise<void>>();
   const pendingTransitions = new Map<string, DomainEvent[]>();
 
-  const recoverEffects = () => {
-    void drainTransitionLifecycleEffects().catch((err: unknown) => {
-      logger.error(
-        { err },
-        "transition-listener: lifecycle effect recovery failed",
-      );
-    });
-  };
-  recoverEffects();
-  const effectRecoveryTimer = setInterval(
-    recoverEffects,
-    TRANSITION_EFFECT_RECOVERY_INTERVAL_MS,
-  );
-  effectRecoveryTimer.unref();
-
-  function queuedCloseBoundary(
-    queueKey: string,
-    currentEvent: DomainEvent,
-  ): Date | null {
+  function queuedCloseBoundary(queueKey: string, currentEvent: DomainEvent): Date | null {
     const pending = pendingTransitions.get(queueKey) ?? [];
     const currentIndex = pending.indexOf(currentEvent);
     if (currentIndex < 0) return null;
 
     for (const candidate of pending.slice(currentIndex + 1)) {
-      if (candidate.type !== "issue.transitioned") continue;
-      const payload = candidate.payload as unknown as IssueTransitionedPayload;
+      if (candidate.type !== "work_capture.transition_observed") continue;
+      const payload = candidate.payload as unknown as WorkCaptureTransitionObservedPayload;
       const toIsActive = isActiveWork(payload.to);
       const fromIsActive = isActiveWork(payload.from);
       if (isCloseState(payload.to) || (fromIsActive && !toIsActive)) {
-        return new Date(candidate.timestamp);
+        return new Date(payload.observedAt);
       }
     }
 
@@ -119,19 +99,16 @@ export function registerTransitionListener(
 
   async function handleEvent(event: DomainEvent): Promise<void> {
     if (!active) return;
-    if (event.type !== "issue.transitioned") return;
+    if (event.type !== "work_capture.transition_observed") return;
 
-    const p = event.payload as unknown as IssueTransitionedPayload;
+    const p = event.payload as unknown as WorkCaptureTransitionObservedPayload;
 
     // ── KAN-143 circular guard seam ──────────────────────────────────────
     // If the transition was caused by start_work itself, skip to avoid loop.
-    // TODO(KAN-143): this seam activates automatically once KAN-143 emits
-    // cause="start_work" on the auto-advance transition event.
     if (p.cause === "start_work") return;
 
     // ── Guard: actorMemberId required ─────────────────────────────────────
-    // Pre-enrichment events (before KAN-156 deploy) lack actorMemberId.
-    // Skip them safely — no actor means no session attribution.
+    // Defend against malformed/replayed rows that cannot be attributed.
     if (!p.actorMemberId) return;
 
     // actorMemberId is non-null here — the guard above returned if falsy.
@@ -146,8 +123,7 @@ export function registerTransitionListener(
 
     if (toIsActive && !fromIsActive) {
       // First entry into active-work: open a session for the actor.
-      // We need userId for startWork. Prefer actorUserId from payload (fast
-      // path); fall back to a member DB lookup if absent (pre-enrichment events).
+      // Prefer the durable actorUserId, with a defensive lookup for legacy rows.
       let userId = p.actorUserId;
       if (!userId) {
         const member = await prisma.member.findUnique({
@@ -160,7 +136,7 @@ export function registerTransitionListener(
 
       if (!active) return; // re-check after await
 
-      const activeSignalAt = new Date(event.timestamp);
+      const activeSignalAt = new Date(p.observedAt);
       // Persist the stable start identity BEFORE any live-session decision.
       // This is the cross-process ordering primitive: an earlier close can
       // already be waiting in the database, and an exact completed replay is
@@ -170,7 +146,7 @@ export function registerTransitionListener(
         userId,
         actorMemberId,
         activeSignalAt,
-        "transition-listener",
+        "transition-listener"
       );
       if (!active || staged.lifecycle.completed) return;
 
@@ -188,7 +164,7 @@ export function registerTransitionListener(
           actorMemberId,
           activeSignalAt,
           queuedCloseAt,
-          "transition-listener",
+          "transition-listener"
         );
         return;
       }
@@ -208,8 +184,7 @@ export function registerTransitionListener(
         autoAssign: false,
         onConflict: "skip",
         transitionObservedAt: activeSignalAt,
-        transitionLifecycleIdentity:
-          staged.lifecycle.startIdentity ?? undefined,
+        transitionLifecycleIdentity: staged.lifecycle.startIdentity ?? undefined,
       });
 
       // A close can arrive while startWork is awaiting its locked transaction.
@@ -222,7 +197,7 @@ export function registerTransitionListener(
           actorMemberId,
           activeSignalAt,
           closeAfterOpen,
-          "transition-listener",
+          "transition-listener"
         );
         return;
       }
@@ -245,41 +220,46 @@ export function registerTransitionListener(
 
       if (!active) return; // re-check after await
 
-      await captureTransitionClose(
-        issueKey,
-        new Date(event.timestamp),
-        "transition-listener",
-      );
+      await captureTransitionClose(issueKey, new Date(p.observedAt), "transition-listener");
 
       if (!active) return; // re-check after durable close capture
 
-      const openSessions = await prisma.workSession.findMany({
-        // Close every remaining window, including an expired lease that cleanup
-        // has not finalized yet. stopWork applies the same lease cap for both.
-        where: { issueId: issueRow.id },
-        select: { id: true, userId: true, memberId: true },
-      });
+      const [openSessions, openIntents] = await Promise.all([
+        prisma.workSession.findMany({
+          // Close every remaining window, including an expired lease that cleanup
+          // has not finalized yet. stopWork applies the same lease cap for both.
+          where: { issueId: issueRow.id },
+          select: { id: true, userId: true, memberId: true },
+        }),
+        prisma.workCaptureIntent.findMany({
+          where: { issueId: issueRow.id, state: { not: "closed" } },
+          select: {
+            userId: true,
+            memberId: true,
+            epoch: true,
+            leaseGeneration: true,
+          },
+        }),
+      ]);
 
       if (!active) return; // re-check after await
 
-      // Fire-and-forget each stopWork; errors per session are caught individually
-      // so one failure does not block the others.
-      const observedAt = new Date(event.timestamp);
+      const observedAt = new Date(p.observedAt);
+      const sessionsByUser = new Map(openSessions.map((session) => [session.userId, session]));
+      const durableUsers = new Set<string>();
+      for (const intent of openIntents) {
+        durableUsers.add(intent.userId);
+        const session = sessionsByUser.get(intent.userId);
+        if (!active) break;
+        await stopWork(issueKey, intent.userId, intent.memberId, null, observedAt, session?.id, {
+          epoch: intent.epoch,
+          leaseGeneration: intent.leaseGeneration,
+        });
+      }
       for (const session of openSessions) {
         if (!active) break;
-        await stopWork(
-          issueKey,
-          session.userId,
-          session.memberId,
-          null,
-          observedAt,
-          session.id,
-        ).catch((err: unknown) => {
-          logger.error(
-            { err, issueKey, sessionId: session.id },
-            "transition-listener: stopWork failed for session"
-          );
-        });
+        if (durableUsers.has(session.userId)) continue;
+        await stopWork(issueKey, session.userId, session.memberId, null, observedAt, session.id);
       }
       return;
     }
@@ -289,23 +269,23 @@ export function registerTransitionListener(
 
   // ── Subscribe — single handler for all domain events ──────────────────
   const unsubscribeBus = bus.subscribe((event) => {
-    if (event.type !== "issue.transitioned") return;
+    if (event.type !== "work_capture.transition_observed") return;
 
-    const payload = event.payload as unknown as IssueTransitionedPayload;
+    const payload = event.payload as unknown as WorkCaptureTransitionObservedPayload;
     const queueKey = payload.issueId || payload.issueKey;
     const pending = pendingTransitions.get(queueKey) ?? [];
     pending.push(event);
     pendingTransitions.set(queueKey, pending);
     const previous = issueQueues.get(queueKey) ?? Promise.resolve();
     const next = previous.catch(() => undefined).then(() => handleEvent(event));
-    issueQueues.set(queueKey, next);
 
-    void next
+    const handled = next
       .catch((err: unknown) => {
         logger.error(
           { err, eventType: event.type, eventId: event.id },
           "transition-listener event handler failed"
         );
+        throw err;
       })
       .finally(() => {
         const remaining = pendingTransitions.get(queueKey);
@@ -314,14 +294,15 @@ export function registerTransitionListener(
           if (index >= 0) remaining.splice(index, 1);
           if (remaining.length === 0) pendingTransitions.delete(queueKey);
         }
-        if (issueQueues.get(queueKey) === next) issueQueues.delete(queueKey);
+        if (issueQueues.get(queueKey) === handled) issueQueues.delete(queueKey);
       });
+    issueQueues.set(queueKey, handled);
+    return handled;
   }, "work-session-transition-listener");
 
   // ── Return unsubscribe ────────────────────────────────────────────────
   return function unsubscribe(): void {
     active = false;
-    clearInterval(effectRecoveryTimer);
     unsubscribeBus();
   };
 }
