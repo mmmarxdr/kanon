@@ -5,7 +5,7 @@ describe("privacy hold schema foundation", () => {
   it("adds generation-based hold state without exposing quarantine through Prisma", async () => {
     const schema = await readFile(new URL("./schema.prisma", import.meta.url), "utf8");
     expect(schema).toMatch(/privacyHeldAt\s+DateTime\?\s+@map\("privacy_held_at"\)/);
-    expect(schema).toMatch(/privacyHoldGeneration\s+Int\s+@default\(0\)\s+@map\("privacy_hold_generation"\)/);
+    expect(schema).toMatch(/privacyHoldGeneration\s+Int\s+@default\(dbgenerated\(\)\)\s+@map\("privacy_hold_generation"\)/);
     expect(schema).not.toMatch(/model\s+PrivacyQuarantine/);
   });
   it("records typed provenance separately from quarantine payloads", async () => {
@@ -16,7 +16,7 @@ describe("privacy hold schema foundation", () => {
   });
   it("isolates encrypted snapshots in a non-public SQL schema", async () => {
     const sql = await readFile(migration, "utf8");
-    expect(sql).toContain('CREATE SCHEMA "privacy_quarantine"');
+    expect(sql).toMatch(/ADD COLUMN "privacy_hold_generation" INTEGER NOT NULL DEFAULT 0;[\s\S]*CREATE SCHEMA "privacy_quarantine"/);
     expect(sql).toContain('CREATE TABLE "privacy_quarantine"."issue_content"');
     expect(sql).toContain('REVOKE ALL ON SCHEMA "privacy_quarantine" FROM PUBLIC');
     expect(sql).toContain('REVOKE ALL ON TABLE "privacy_quarantine"."issue_content" FROM PUBLIC');
