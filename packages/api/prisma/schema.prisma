@@ -211,6 +211,12 @@ enum WorkCaptureEffectKind {
   close
 }
 
+enum WorkCaptureOwnerKind {
+  web
+  mcp
+  implicit
+}
+
 enum WorkCaptureFailureStage {
   effect_apply
 }
@@ -902,6 +908,7 @@ model WorkCaptureIntent {
 
   memberId String @map("member_id") @db.Uuid
   member   Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  ownerLeases WorkCaptureOwnerLease[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -911,6 +918,25 @@ model WorkCaptureIntent {
   @@index([issueId, failureResolvedAt])
   @@index([memberId, state, updatedAt])
   @@map("work_capture_intents")
+}
+
+/// Independent client ownership of one singleton capture intent. Expiry is
+/// always derived from PostgreSQL time; clients never submit timestamps.
+model WorkCaptureOwnerLease {
+  id              String               @id @default(uuid()) @db.Uuid
+  intentId        String               @map("intent_id") @db.Uuid
+  intent          WorkCaptureIntent    @relation(fields: [intentId], references: [id], onDelete: Cascade)
+  ownerId         String               @map("owner_id") @db.Uuid
+  epoch           String               @db.Uuid
+  leaseGeneration Int                  @map("lease_generation")
+  ownerKind       WorkCaptureOwnerKind @map("owner_kind")
+  firstSeenAt     DateTime             @default(now()) @map("first_seen_at")
+  lastSeenAt      DateTime             @default(now()) @map("last_seen_at")
+  expiresAt       DateTime             @map("expires_at")
+
+  @@unique([intentId, ownerId], map: "work_capture_owner_intent_owner_key")
+  @@index([intentId, epoch, leaseGeneration, expiresAt], map: "work_capture_owner_fence_expiry_idx")
+  @@map("work_capture_owner_leases")
 }
 
 /// Durable identity and pairing state for transition-driven work capture.

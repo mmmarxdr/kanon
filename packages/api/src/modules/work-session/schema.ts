@@ -27,8 +27,25 @@ export type StartWorkSessionBody = z.infer<typeof StartWorkSessionBody>;
 export const WorkCaptureCommandBody = workCaptureCommandSchema;
 export type WorkCaptureCommandBody = z.infer<typeof WorkCaptureCommandBody>;
 
+/** Owner-scoped command. ownerId is mandatory and never inferred by Web. */
+export const WorkCaptureOwnerCommandBody = workCaptureCommandSchema
+  .extend({ ownerId: z.string().uuid() })
+  .strict();
+export type WorkCaptureOwnerCommandBody = z.infer<typeof WorkCaptureOwnerCommandBody>;
+
+/** Explicit compatibility union: strict v2 owner command or strict v1 command. */
+export const VersionedWorkCaptureCommandBody = z.union([
+  WorkCaptureOwnerCommandBody,
+  workCaptureCommandSchema,
+]);
+export type VersionedWorkCaptureCommandBody = z.infer<typeof VersionedWorkCaptureCommandBody>;
+
 /** Heartbeat remains body-optional; a full command opts into durable activity. */
-export const WorkSessionHeartbeatBody = z.union([z.object({}).strict(), workCaptureCommandSchema]);
+export const WorkSessionHeartbeatBody = z.union([
+  z.object({}).strict(),
+  WorkCaptureOwnerCommandBody,
+  workCaptureCommandSchema,
+]);
 export type WorkSessionHeartbeatBody = z.infer<typeof WorkSessionHeartbeatBody>;
 
 export const WorkCaptureIntentSnapshot = workCaptureIntentSnapshotSchema;

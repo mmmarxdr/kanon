@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-06-24
-- Amended: 2026-08-19 (KAN-243 durable intent delivery and failure evidence)
+- Amended: 2026-08-19 (KAN-243 durable intent delivery, owner leases, and failure evidence)
 - Epic: ppm-foundation (work capture)
 - Issue: KAN-156 (+ companion reconciliation ticket, + editor-extension roadmap item)
 - Related: ADR-0001 (canonical hours & approval flow — amended here), KAN-143 (start_work→auto-advance, inverse coupling), KAN-144 (activity-gated heartbeat), KAN-33 (synced-from-tools rail)
@@ -59,6 +59,36 @@ issue-context activity owns the corresponding local release signal. The MCP
 journal stores immutable, fully fenced commands and removes only the exact
 command acknowledged by the server. Reconciliation stays blocked while a
 pending effect (and therefore any unresolved matching episode) exists.
+
+### Owner-safe multi-client capture
+
+`WorkCaptureIntent` and `WorkSession` remain singletons for one
+principal-and-issue, but release authority is no longer inferred from that
+singleton. Each locally active client holds a server-visible
+`WorkCaptureOwnerLease`. The intent fence remains the command boundary; an
+independent owner UUID identifies which lease an activity or release command
+may renew or retire.
+
+| Concern | Decision |
+| --- | --- |
+| Owner set | Store one lease per `(intentId, ownerId)`, fenced by epoch and lease generation. Owner kinds are `web`, `mcp`, and `implicit`. |
+| Time authority | PostgreSQL time sets first seen, last seen, and expiry. Expired owners are ignored and pruned opportunistically; inactivity cleanup remains the crash fallback. |
+| Release | Owner-scoped release retires only that owner. The singleton session ends only when no live owner and no live implicit anchor remain. Authoritative close clears every owner. |
+| Compatibility | The new owner command requires `ownerId`. Existing versioned commands remain accepted as one implicit compatibility anchor; explicit `start_work` and bodyless legacy heartbeat also renew that anchor. Web never falls back to an ownerless command. |
+| Ordering | Mutations lock the intent first, owner rows in deterministic order second, and the session/effect state last. Stale fences cannot renew or release, and concurrent final releases converge on one terminal effect. |
+| MCP durability | One MCP process UUID is written into immutable v3 journal commands. Retry and restart recovery replay the exact `commandId` and `ownerId`; a new process uses a new owner. Old-server validation fallback remains explicit and visible. |
+| Web ownership | Hydrated intents are passive. Only activity under the exact local issue marker creates a Web claim; transition integrations use only issue keys returned by the backend. A durable browser-profile owner is shared across transactionally coordinated tabs, and only the final live tab records release. |
+
+The Web registry is independent of React. React subscribes and installs DOM
+listeners; effect cleanup only unregisters those listeners. In particular,
+React Strict Mode's setup-cleanup-setup sequence is **not** an ownership
+release signal.
+
+Normal logout and principal/workspace changes record owner release before
+leaving the old scope. `pagehide` may attempt a keepalive release, but browsers
+provide no synchronous unload guarantee. Abrupt exit, offline shutdown, and
+crash therefore converge through the server-timed owner lease and the existing
+inactivity cleanup rather than through a claimed client acknowledgement.
 
 ## ADR-0001 amendment
 

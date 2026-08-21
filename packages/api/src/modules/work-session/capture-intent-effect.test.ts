@@ -17,6 +17,11 @@ const migrationUrl = new URL(
   "../../../prisma/migrations/20260818150000_work_capture_intent_effects/migration.sql",
   import.meta.url
 );
+const ownerLeaseMigrationName = "20260819150000_work_capture_owner_leases";
+const ownerLeaseMigrationUrl = new URL(
+  "../../../prisma/migrations/20260819150000_work_capture_owner_leases/migration.sql",
+  import.meta.url
+);
 
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replaceAll('"', '""')}"`;
@@ -185,6 +190,134 @@ describe("WorkCaptureIntent effect migration", () => {
               "pending_effect_command_id" = gen_random_uuid()
         `)
       ).toBe(1);
+    } finally {
+      await database.$disconnect();
+      await admin.$executeRawUnsafe(`DROP SCHEMA IF EXISTS ${quoteIdentifier(schemaName)} CASCADE`);
+      await admin.$disconnect();
+      await rm(temporaryDirectory, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
+
+describe("WorkCaptureOwnerLease migration", () => {
+  it("adds the owner lease set with the exact identity and fence indexes", async () => {
+    const sql = await readFile(fileURLToPath(ownerLeaseMigrationUrl), "utf8");
+
+    expect(sql).toContain('CREATE TYPE "WorkCaptureOwnerKind" AS ENUM');
+    for (const kind of ["web", "mcp", "implicit"]) expect(sql).toContain(`'${kind}'`);
+    expect(sql).toContain('CREATE TABLE "work_capture_owner_leases"');
+    for (const column of [
+      "intent_id",
+      "owner_id",
+      "epoch",
+      "lease_generation",
+      "owner_kind",
+      "first_seen_at",
+      "last_seen_at",
+      "expires_at",
+    ]) {
+      expect(sql).toContain(`"${column}"`);
+    }
+    expect(sql).toContain('CREATE UNIQUE INDEX "work_capture_owner_intent_owner_key"');
+    expect(sql).toContain('CREATE INDEX "work_capture_owner_fence_expiry_idx"');
+    expect(sql).toMatch(/CURRENT_TIMESTAMP\s*\+\s*INTERVAL '5 minutes'/);
+    expect(sql).toContain("00000000-0000-4000-8000-000000000001");
+  });
+
+  it("backfills one live implicit anchor without changing the existing capture intent", async () => {
+    const baseUrl = new URL(process.env["DATABASE_URL"]!);
+    const schemaName = `kan243_owner_lease_upgrade_${randomUUID().replaceAll("-", "")}`;
+    const adminUrl = new URL(baseUrl);
+    adminUrl.searchParams.set("schema", "public");
+    const isolatedUrl = new URL(baseUrl);
+    isolatedUrl.searchParams.set("schema", schemaName);
+    const admin = new PrismaClient({ datasourceUrl: adminUrl.toString() });
+    const database = new PrismaClient({ datasourceUrl: isolatedUrl.toString() });
+    const temporaryDirectory = await mkdtemp(join(tmpdir(), "kan243-owner-lease-migration-"));
+
+    try {
+      await admin.$executeRawUnsafe(`CREATE SCHEMA ${quoteIdentifier(schemaName)}`);
+      await cp(join(prismaDirectory, "schema.prisma"), join(temporaryDirectory, "schema.prisma"));
+      const temporaryMigrations = join(temporaryDirectory, "migrations");
+      await mkdir(temporaryMigrations, { recursive: true });
+      await cp(
+        join(migrationsDirectory, "migration_lock.toml"),
+        join(temporaryMigrations, "migration_lock.toml")
+      );
+      const names = (await readdir(migrationsDirectory, { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort();
+      const targetIndex = names.indexOf(ownerLeaseMigrationName);
+      expect(targetIndex).toBeGreaterThan(0);
+      for (const name of names.slice(0, targetIndex)) {
+        await cp(join(migrationsDirectory, name), join(temporaryMigrations, name), {
+          recursive: true,
+        });
+      }
+      await deployMigrations(temporaryDirectory, isolatedUrl.toString());
+
+      const workspace = await database.workspace.create({
+        data: { name: "Owner lease migration", slug: `owner-${randomUUID()}` },
+      });
+      const user = await database.user.create({
+        data: { email: `owner-${randomUUID()}@kanon.test`, passwordHash: "unused" },
+      });
+      const member = await database.member.create({
+        data: { username: "owner-member", workspaceId: workspace.id, userId: user.id },
+      });
+      const project = await database.project.create({
+        data: { key: "OWNER", name: "Owner", workspaceId: workspace.id },
+      });
+      const issue = await database.issue.create({
+        data: {
+          key: "OWNER-1",
+          title: "Owner",
+          projectId: project.id,
+          sequenceNum: 1,
+        },
+      });
+      const intent = await database.workCaptureIntent.create({
+        data: { userId: user.id, issueId: issue.id, memberId: member.id, state: "capturing" },
+      });
+      await database.workSession.create({
+        data: { userId: user.id, issueId: issue.id, memberId: member.id, source: "mcp" },
+      });
+      const before = await database.workCaptureIntent.findUniqueOrThrow({ where: { id: intent.id } });
+
+      await cp(
+        join(migrationsDirectory, ownerLeaseMigrationName),
+        join(temporaryMigrations, ownerLeaseMigrationName),
+        { recursive: true }
+      );
+      await deployMigrations(temporaryDirectory, isolatedUrl.toString());
+
+      const rows = await database.$queryRawUnsafe<
+        Array<{
+          intentId: string;
+          ownerId: string;
+          epoch: string;
+          leaseGeneration: number;
+          ownerKind: string;
+          lastSeenAt: Date;
+          expiresAt: Date;
+        }>
+      >(`
+        SELECT "intent_id" AS "intentId", "owner_id" AS "ownerId", "epoch",
+               "lease_generation" AS "leaseGeneration", "owner_kind"::text AS "ownerKind",
+               "last_seen_at" AS "lastSeenAt", "expires_at" AS "expiresAt"
+        FROM "work_capture_owner_leases"
+      `);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        intentId: intent.id,
+        ownerId: "00000000-0000-4000-8000-000000000001",
+        epoch: intent.epoch,
+        leaseGeneration: intent.leaseGeneration,
+        ownerKind: "implicit",
+      });
+      expect(rows[0]!.expiresAt.getTime()).toBeGreaterThan(rows[0]!.lastSeenAt.getTime());
+      expect(await database.workCaptureIntent.findUniqueOrThrow({ where: { id: intent.id } })).toEqual(before);
     } finally {
       await database.$disconnect();
       await admin.$executeRawUnsafe(`DROP SCHEMA IF EXISTS ${quoteIdentifier(schemaName)} CASCADE`);

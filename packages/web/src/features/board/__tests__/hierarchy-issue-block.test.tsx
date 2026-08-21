@@ -84,6 +84,7 @@ describe("HierarchyIssueBlock", () => {
 
     fireEvent.click(screen.getByTestId("hierarchy-toggle-R"));
     expect(screen.getByTestId("hierarchy-child-C")).toBeTruthy();
+    expect(screen.getByTestId("hierarchy-child-C")).toHaveAttribute("data-issue-key", "C");
     expect(screen.getByText("Title C")).toBeTruthy();
 
     fireEvent.click(screen.getByTestId("hierarchy-child-C"));
