@@ -177,16 +177,27 @@ export class WorkCaptureBrowserStore {
     }
   }
 
-  async joinScope(scope: CaptureScope, tabId: string): Promise<{ ownerId: string }> {
+  async joinScope(
+    scope: CaptureScope,
+    tabId: string
+  ): Promise<{ ownerId: string; tabId: string }> {
     return this.transaction((state) => {
       const now = this.now();
       const key = captureScopeKey(scope);
       const members = state.memberships[key] ?? {};
       this.pruneMembership(members, now);
-      members[tabId] = now;
+      let effectiveTabId = tabId;
+      if (effectiveTabId in members) {
+        const generatedTabId = this.randomUUID();
+        effectiveTabId = generatedTabId;
+        for (let suffix = 1; effectiveTabId in members; suffix += 1) {
+          effectiveTabId = `${generatedTabId}:${suffix}`;
+        }
+      }
+      members[effectiveTabId] = now;
       state.memberships[key] = members;
       state.ownerId ??= this.randomUUID();
-      return { ownerId: state.ownerId };
+      return { ownerId: state.ownerId, tabId: effectiveTabId };
     });
   }
 

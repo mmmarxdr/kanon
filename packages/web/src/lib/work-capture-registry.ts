@@ -290,7 +290,9 @@ export class WorkCaptureRegistry {
   }
 
   async releaseScope(scope: CaptureScope, options: { keepalive: boolean }): Promise<void> {
-    this.closingScopes.set(captureScopeKey(scope), options.keepalive);
+    const key = captureScopeKey(scope);
+    this.closingScopes.set(key, options.keepalive);
+    if (this.hydratedScopeKey === key) this.hydratedScopeKey = null;
     await this.releaseEntries(scope, options, this.snapshot.generation);
   }
 

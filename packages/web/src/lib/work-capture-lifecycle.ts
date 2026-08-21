@@ -23,6 +23,7 @@ interface WorkCaptureLifecycleOptions {
   registry: CaptureRegistryPort;
   store: WorkCaptureBrowserStore;
   tabId: string;
+  persistTabId?: (tabId: string) => void;
   documentTarget: Document;
   windowTarget: Window;
   membershipHeartbeatMs?: number;
@@ -38,6 +39,7 @@ function sameScope(left: CaptureScope | null, right: CaptureScope | null): boole
 
 export function createWorkCaptureLifecycle(options: WorkCaptureLifecycleOptions) {
   let currentScope: CaptureScope | null = null;
+  let tabId = options.tabId;
   let activation: { scopeKey: string; promise: Promise<void> } | null = null;
   let hydratedScopeKey: string | null = null;
   let operationTail = Promise.resolve();
@@ -52,7 +54,7 @@ export function createWorkCaptureLifecycle(options: WorkCaptureLifecycleOptions)
   const startMembershipHeartbeat = () => {
     stopMembershipHeartbeat();
     membershipTimer = setInterval(() => {
-      if (currentScope) void options.store.touchScope(currentScope, options.tabId);
+      if (currentScope) void options.store.touchScope(currentScope, tabId);
     }, heartbeatMs);
   };
 
@@ -68,7 +70,7 @@ export function createWorkCaptureLifecycle(options: WorkCaptureLifecycleOptions)
     currentScope = null;
     hydratedScopeKey = null;
     stopMembershipHeartbeat();
-    const { isFinal } = await options.store.leaveScope(scope, options.tabId);
+    const { isFinal } = await options.store.leaveScope(scope, tabId);
     if (isFinal) {
       await options.registry.releaseScope(scope, { keepalive: reason === "pagehide" });
     }
@@ -90,12 +92,16 @@ export function createWorkCaptureLifecycle(options: WorkCaptureLifecycleOptions)
       }
       const previous = currentScope;
       if (previous && !sameScope(previous, scope)) {
-        const { isFinal } = await options.store.leaveScope(previous, options.tabId);
+        const { isFinal } = await options.store.leaveScope(previous, tabId);
         if (isFinal) {
           await options.registry.releaseScope(previous, { keepalive: false });
         }
       }
-      await options.store.joinScope(scope, options.tabId);
+      const membership = await options.store.joinScope(scope, tabId);
+      if (membership.tabId !== tabId) {
+        tabId = membership.tabId;
+        options.persistTabId?.(tabId);
+      }
       currentScope = scope;
       startMembershipHeartbeat();
       await options.registry.activateScope(scope, { releasePrevious: false });
@@ -177,6 +183,7 @@ export const workCaptureLifecycle = createWorkCaptureLifecycle({
   registry: workCaptureRegistry,
   store: defaultBrowserStore,
   tabId: browserTabId(),
+  persistTabId: (tabId) => sessionStorage.setItem("kanon.work-capture.tab.v1", tabId),
   documentTarget: document,
   windowTarget: window,
 });

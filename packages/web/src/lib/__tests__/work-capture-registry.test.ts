@@ -301,6 +301,26 @@ describe("WorkCaptureRegistry", () => {
     expect(request.mock.calls[1]?.[0]).toBe("/api/issues/KAN-1/work-captures/release");
   });
 
+  it("rehydrates and can reclaim the same scope after it was released", async () => {
+    const { registry, request } = harness(vi.fn());
+    await hydrateOne(registry, request);
+    request.mockResolvedValueOnce(response(commandIds[0]!));
+    await registry.recordActivity("KAN-1");
+    request.mockResolvedValueOnce(response(commandIds[1]!));
+    await registry.releaseScope(scopeA, { keepalive: false });
+
+    request.mockResolvedValueOnce(
+      page(scopeA, [{ issueKey: "KAN-1", epoch: epoch1, leaseGeneration: 1 }])
+    );
+    await registry.activateScope(scopeA);
+    request.mockResolvedValueOnce(response(commandIds[2]!));
+    await registry.recordActivity("KAN-1");
+
+    expect(request.mock.calls[3]?.[0]).toContain("/api/me/work-captures?");
+    expect(request.mock.calls[4]?.[0]).toBe("/api/issues/KAN-1/work-sessions/heartbeat");
+    expect(registry.getSnapshot().entries["KAN-1"]?.status).toBe("owned");
+  });
+
   it("reconciles only current well-formed work-session events and ignores intent requests", async () => {
     const { registry, request } = harness(vi.fn());
     await hydrateOne(registry, request);

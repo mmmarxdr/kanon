@@ -42,6 +42,22 @@ describe("WorkCaptureBrowserStore", () => {
     await expect(second.leaveScope(scope, "tab-b")).resolves.toEqual({ isFinal: true });
   });
 
+  it("allocates distinct live memberships when session storage cloned a tab id", async () => {
+    const { first, second } = stores();
+
+    const firstMembership = await first.joinScope(scope, "cloned-tab");
+    const secondMembership = await second.joinScope(scope, "cloned-tab");
+
+    expect(firstMembership.tabId).toBe("cloned-tab");
+    expect(secondMembership.tabId).not.toBe(firstMembership.tabId);
+    await expect(first.leaveScope(scope, firstMembership.tabId)).resolves.toEqual({
+      isFinal: false,
+    });
+    await expect(second.leaveScope(scope, secondMembership.tabId)).resolves.toEqual({
+      isFinal: true,
+    });
+  });
+
   it("prunes crashed tab membership using the injected clock", async () => {
     let current = 1_000;
     const { first, second } = stores(() => current);
