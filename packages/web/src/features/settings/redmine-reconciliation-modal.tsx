@@ -1,22 +1,29 @@
-import { useCallback, useReducer, useRef } from "react";
+import { useCallback, useReducer, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FocusTrap } from "focus-trap-react";
 import { useBackdropClose } from "@/hooks/use-backdrop-close";
 import { useEscapeKey } from "@/hooks/use-escape-key";
-import { classifyRedmineReconciliationFailure, createRedmineReconciliationFlowState, redmineReconciliationFlowReducer, type RedmineReconciliationFailure, type RedmineReconciliationPreviewMode } from "./redmine-reconciliation-flow";
+import { classifyRedmineReconciliationFailure, createRedmineReconciliationFlowState, redmineReconciliationFlowReducer, type RedmineReconciliationFailure, type RedmineReconciliationPreviewMode, type RedmineReconciliationReviewItem } from "./redmine-reconciliation-flow";
 import { useRedmineReconciliationDecisionMutation, useRedmineReconciliationMaterializeMutation, useRedmineReconciliationPreviewMutation, useRedmineReconciliationReviewPageMutation, type RedmineReconciliationDecisionInput } from "./use-redmine-reconciliation";
 import { RedmineReconciliationReviewCard } from "./redmine-reconciliation-review-card";
+import { RedmineReconciliationManualLink, type ManualIssueSummary } from "./redmine-reconciliation-manual-link";
 
-export interface RedmineReconciliationQueueItem { readonly bindingId: string; readonly projectId: string; readonly remoteProjectId: string; readonly projectName: string; readonly remoteProjectName: string; }
+export interface RedmineReconciliationQueueItem { readonly bindingId: string; readonly projectId: string; readonly projectKey: string | null; readonly remoteProjectId: string; readonly projectName: string; readonly remoteProjectName: string; }
 interface Props { workspaceId: string; connectionId: string; queue: readonly RedmineReconciliationQueueItem[]; onClose: () => void; }
 type RefreshFailure = Pick<RedmineReconciliationFailure, "stage" | "code" | "message">;
-type LastOperation = { kind: "preview"; mode: RedmineReconciliationPreviewMode } | { kind: "review"; cursor?: string } | { kind: "decision"; input: RedmineReconciliationDecisionInput } | { kind: "materialize"; remoteIssueId: string; refreshFailure: RefreshFailure };
+type ManualCandidate = NonNullable<RedmineReconciliationReviewItem["manualCandidate"]>;
+type ManualState = { remoteIssueId: string; excludedIssueIds: readonly string[]; selectedIssueId: string | null; candidate: ManualCandidate | null; failure: { message: string; retryable: boolean } | null };
+type MaterializeTarget = { remoteIssueId: string; candidateIssueId?: string };
+type MaterializePurpose = { kind: "suggested"; refreshFailure: RefreshFailure } | { kind: "manual-select" } | { kind: "manual-refresh"; refreshFailure: RefreshFailure; fallbackItem: RedmineReconciliationReviewItem };
+type LastOperation = { kind: "preview"; mode: RedmineReconciliationPreviewMode } | { kind: "review"; cursor?: string } | { kind: "decision"; input: RedmineReconciliationDecisionInput } | { kind: "materialize"; target: MaterializeTarget; purpose: MaterializePurpose };
+const MANUAL_CANDIDATE_UNAVAILABLE = new Set(["REDMINE_RECONCILIATION_CANDIDATE_INVALID", "REDMINE_RECONCILIATION_CANDIDATE_LINKED", "REDMINE_RECONCILIATION_ALREADY_LINKED", "REDMINE_RECONCILIATION_LINK_CONFLICT"]);
 
 export function RedmineReconciliationModal({ workspaceId, connectionId, queue, onClose }: Props) {
   const first = queue[0]!;
   const { t } = useTranslation("settings");
   const { t: common } = useTranslation("common");
   const [state, dispatch] = useReducer(redmineReconciliationFlowReducer, first.bindingId, createRedmineReconciliationFlowState);
+  const [manual, setManual] = useState<ManualState | null>(null);
   const preview = useRedmineReconciliationPreviewMutation(workspaceId, connectionId, first.bindingId);
   const review = useRedmineReconciliationReviewPageMutation(workspaceId, connectionId, first.bindingId);
   const decision = useRedmineReconciliationDecisionMutation(workspaceId, connectionId, first.bindingId);
@@ -34,20 +41,42 @@ export function RedmineReconciliationModal({ workspaceId, connectionId, queue, o
     return { stage, code: failure.code ?? "UNKNOWN", message: failure.message };
   };
 
-  const runMaterialize = (remoteIssueId: string, refreshFailure: RefreshFailure) => {
+  const runMaterialize = (target: MaterializeTarget, purpose: MaterializePurpose) => {
     if (!begin()) return;
-    lastOperation.current = { kind: "materialize", remoteIssueId, refreshFailure };
-    materialize.mutate({ remoteIssueId }, {
-      onSuccess: (item) => { finish(); dispatch({ type: "failed", ...refreshFailure }); dispatch({ type: "item-refreshed", item }); },
-      onError: (error) => { finish(); dispatch({ type: "failed", ...failureFrom("decision", error) }); },
+    lastOperation.current = { kind: "materialize", target, purpose };
+    materialize.mutate(target, {
+      onSuccess: (item) => {
+        finish();
+        if (purpose.kind === "suggested") { dispatch({ type: "failed", ...purpose.refreshFailure }); dispatch({ type: "item-refreshed", item }); return; }
+        const candidate = item.manualCandidate;
+        setManual((current) => current?.remoteIssueId === target.remoteIssueId ? { ...current, selectedIssueId: candidate?.localIssue.id ?? null, candidate, failure: candidate ? null : { message: t("redmineReconciliation.candidateUnavailable"), retryable: false } } : current);
+        if (purpose.kind === "manual-refresh") { dispatch({ type: "failed", ...purpose.refreshFailure }); dispatch({ type: "item-refreshed", item }); }
+      },
+      onError: (error) => {
+        finish(); const failure = failureFrom("decision", error);
+        if (purpose.kind !== "suggested" && MANUAL_CANDIDATE_UNAVAILABLE.has(failure.code)) {
+          setManual((current) => current?.remoteIssueId === target.remoteIssueId ? { ...current, selectedIssueId: null, candidate: null, failure: { message: failure.message, retryable: false } } : current);
+          if (purpose.kind === "manual-refresh") { dispatch({ type: "failed", ...purpose.refreshFailure }); dispatch({ type: "item-refreshed", item: purpose.fallbackItem }); }
+        } else if (purpose.kind === "manual-select" && classifyRedmineReconciliationFailure(failure.code) === "retry") setManual((current) => current ? { ...current, failure: { message: failure.message, retryable: true } } : current);
+        else dispatch({ type: "failed", ...failure });
+      },
     });
   };
   const runDecision = (input: RedmineReconciliationDecisionInput) => {
     if (!begin()) return;
     lastOperation.current = { kind: "decision", input };
     decision.mutate(input, {
-      onSuccess: () => { finish(); dispatch({ type: "remote-resolved", remoteIssueId: input.remoteIssueId }); },
-      onError: (error) => { finish(); const failure = failureFrom("decision", error); dispatch({ type: "failed", ...failure }); if (classifyRedmineReconciliationFailure(failure.code) === "refresh-item") runMaterialize(input.remoteIssueId, failure); },
+      onSuccess: () => { finish(); setManual((current) => current?.remoteIssueId === input.remoteIssueId ? null : current); dispatch({ type: "remote-resolved", remoteIssueId: input.remoteIssueId }); },
+      onError: (error) => {
+        finish(); const failure = failureFrom("decision", error); dispatch({ type: "failed", ...failure });
+        if (classifyRedmineReconciliationFailure(failure.code) !== "refresh-item") return;
+        const item = state.unresolvedItems.find((candidate) => candidate.remote.id === input.remoteIssueId);
+        const candidateIssueId = input.decision.kind === "manual-link" ? input.decision.candidateIssueId : null;
+        if (candidateIssueId && item) {
+          setManual((current) => current ? { ...current, selectedIssueId: candidateIssueId, candidate: null, failure: null } : current);
+          runMaterialize({ remoteIssueId: input.remoteIssueId, candidateIssueId }, { kind: "manual-refresh", refreshFailure: failure, fallbackItem: item });
+        } else runMaterialize({ remoteIssueId: input.remoteIssueId }, { kind: "suggested", refreshFailure: failure });
+      },
     });
   };
   const runReview = (cursor = state.expectedNextCursor) => {
@@ -72,9 +101,12 @@ export function RedmineReconciliationModal({ workspaceId, connectionId, queue, o
     if (operation.kind === "preview") runPreview(operation.mode);
     else if (operation.kind === "review") runReview(operation.cursor);
     else if (operation.kind === "decision") runDecision(operation.input);
-    else runMaterialize(operation.remoteIssueId, operation.refreshFailure);
+    else runMaterialize(operation.target, operation.purpose);
   };
-  const restartPreview = () => { const mode = state.selectedMode; if (!mode) return; lastOperation.current = null; inFlight.current = false; dispatch({ type: "mode-selected", mode }); runPreview(mode); };
+  const restartPreview = () => { const mode = state.selectedMode; if (!mode) return; lastOperation.current = null; inFlight.current = false; setManual(null); dispatch({ type: "mode-selected", mode }); runPreview(mode); };
+  const selectManual = (issue: ManualIssueSummary) => { if (!manual) return; setManual({ ...manual, selectedIssueId: issue.id, candidate: null, failure: null }); runMaterialize({ remoteIssueId: manual.remoteIssueId, candidateIssueId: issue.id }, { kind: "manual-select" }); };
+  const confirmManual = () => { if (!manual?.candidate) return; const candidate = manual.candidate; runDecision({ remoteIssueId: manual.remoteIssueId, decision: { kind: "manual-link", candidateIssueId: candidate.localIssue.id, localFingerprint: candidate.factorEvidence.localFingerprint, remoteFingerprint: candidate.factorEvidence.remoteFingerprint } }); };
+  const clearManualSelection = () => setManual((current) => current ? { ...current, selectedIssueId: null, candidate: null, failure: null } : current);
   const choose = (mode: RedmineReconciliationPreviewMode) => dispatch({ type: "mode-selected", mode });
   const failure = state.failure;
   const progress = state.previewProgress;
@@ -97,7 +129,8 @@ export function RedmineReconciliationModal({ workspaceId, connectionId, queue, o
               {progress && <p className="text-sm text-muted-foreground">{t("redmineReconciliation.counts", { scanned: progress.scannedCount, remaining: progress.remainingCount, eligible: progress.eligibleUnlinkedCount, private: progress.excludedPrivateCount, linked: progress.linkedCount })}</p>}
               {state.phase === "mapping-blocked" && <p role="alert" className="text-sm text-amber-700">{t("redmineReconciliation.mappingBlocked")}</p>}
               {state.phase === "review" && <><p className="text-sm">{t("redmineReconciliation.reviewRequired", { count: state.remainingCandidateCount + state.unresolvedItems.length })}</p>
-                {state.unresolvedItems.map((item) => <RedmineReconciliationReviewCard key={item.remote.id} item={item} disabled={busy} onAccept={(remoteIssueId, recommendationId) => runDecision({ remoteIssueId, decision: { kind: "accept", recommendationId } })} onRejectAll={(remoteIssueId) => runDecision({ remoteIssueId, decision: { kind: "reject-all" } })} />)}
+                {state.unresolvedItems.map((item) => <RedmineReconciliationReviewCard key={item.remote.id} item={item} disabled={busy} manualAvailable={first.projectKey !== null} onManualLink={(remoteIssueId, excludedIssueIds) => setManual({ remoteIssueId, excludedIssueIds, selectedIssueId: null, candidate: null, failure: null })} onAccept={(remoteIssueId, recommendationId) => runDecision({ remoteIssueId, decision: { kind: "accept", recommendationId } })} onRejectAll={(remoteIssueId) => runDecision({ remoteIssueId, decision: { kind: "reject-all" } })} />)}
+                {manual && state.unresolvedItems.some((item) => item.remote.id === manual.remoteIssueId) && <RedmineReconciliationManualLink key={manual.remoteIssueId} remoteIssueId={manual.remoteIssueId} projectKey={first.projectKey} excludedIssueIds={manual.excludedIssueIds} candidate={manual.candidate} disabled={busy} failure={manual.failure} onSelect={selectManual} onConfirm={confirmManual} onCancel={() => setManual(null)} onQueryChange={clearManualSelection} onRetry={retryLast} />}
                 {state.expectedNextCursor !== null && <button type="button" disabled={busy || state.unresolvedItems.length > 0} onClick={() => runReview()}>{t(state.expectedNextCursor === undefined ? "redmineReconciliation.loadRecommendations" : "redmineReconciliation.loadNextRecommendations")}</button>}
               </>}
               {state.phase === "activation-ready" && <p className="text-sm text-success">{t("redmineReconciliation.ready")}</p>}

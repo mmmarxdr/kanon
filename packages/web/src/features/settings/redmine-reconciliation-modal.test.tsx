@@ -1,14 +1,17 @@
 import type { ReactNode } from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RedmineReconciliationPreviewProgress, RedmineReconciliationReviewItem, RedmineReconciliationReviewPage } from "./redmine-reconciliation-flow";
 import { RedmineReconciliationModal, type RedmineReconciliationQueueItem } from "./redmine-reconciliation-modal";
+import { RedmineReconciliationManualLink } from "./redmine-reconciliation-manual-link";
 
 const commands = vi.hoisted(() => {
   const command = () => ({ mutate: vi.fn(), hook: vi.fn(), pending: false });
   return { preview: command(), review: command(), decision: command(), materialize: command() };
 });
+const issueSearch = vi.hoisted(() => ({ hook: vi.fn(), data: [] as Array<{ id: string; key: string; title: string }>, fetching: false }));
 vi.mock("focus-trap-react", () => ({ FocusTrap: ({ children }: { children: ReactNode }) => children }));
+vi.mock("@/features/board/use-issue-search-query", () => ({ useIssueSearchQuery: (...args: unknown[]) => { issueSearch.hook(...args); return { data: issueSearch.data, isFetching: issueSearch.fetching }; } }));
 vi.mock("./use-redmine-reconciliation", () => ({
   useRedmineReconciliationPreviewMutation: (...args: string[]) => { commands.preview.hook(...args); return { mutate: commands.preview.mutate, isPending: commands.preview.pending }; },
   useRedmineReconciliationReviewPageMutation: (...args: string[]) => { commands.review.hook(...args); return { mutate: commands.review.mutate, isPending: commands.review.pending }; },
@@ -17,8 +20,8 @@ vi.mock("./use-redmine-reconciliation", () => ({
 }));
 
 const queue: readonly RedmineReconciliationQueueItem[] = [
-  { bindingId: "11111111-1111-4111-8111-111111111111", projectId: "p1", remoteProjectId: "r1", projectName: "Kanon One", remoteProjectName: "Redmine One" },
-  { bindingId: "22222222-2222-4222-8222-222222222222", projectId: "p2", remoteProjectId: "r2", projectName: "Kanon Two", remoteProjectName: "Redmine Two" },
+  { bindingId: "11111111-1111-4111-8111-111111111111", projectId: "p1", projectKey: "KAN", remoteProjectId: "r1", projectName: "Kanon One", remoteProjectName: "Redmine One" },
+  { bindingId: "22222222-2222-4222-8222-222222222222", projectId: "p2", projectKey: null, remoteProjectId: "r2", projectName: "Kanon Two", remoteProjectName: "Redmine Two" },
 ];
 const progress = (overrides: Partial<RedmineReconciliationPreviewProgress> = {}): RedmineReconciliationPreviewProgress => ({ previewIdentity: "33333333-3333-4333-8333-333333333333", mode: "full", cutoff: "2026-08-24T12:00:00.000Z", checkpoint: null, complete: false, scannedCount: 100, remainingCount: 1, eligibleUnlinkedCount: 4, excludedPrivateCount: 2, linkedCount: 3, mappingGaps: { statusIds: [], priorityIds: [], assigneeRemoteUserIds: [] }, ...overrides });
 const hash = (character: string) => `sha256:${character.repeat(64)}`;
@@ -28,17 +31,20 @@ const reviewItem = (remoteTitle = "Remote title", localTitle = "Local title", ti
   manualCandidate: null,
 });
 const reviewPage = (items: RedmineReconciliationReviewItem[] = [reviewItem()], overrides: Partial<RedmineReconciliationReviewPage> = {}): RedmineReconciliationReviewPage => ({ previewIdentity: progress().previewIdentity, processedCandidateCount: items.length, remainingCandidateCount: 0, hiddenCount: 0, linkedCount: 0, items, nextCursor: null, ...overrides });
+const manualCandidate = (title = "Manual title", titleContribution = 30, localHash = "d", remoteHash = "e"): NonNullable<RedmineReconciliationReviewItem["manualCandidate"]> => ({ score: titleContribution + 33, factorEvidence: { ...reviewItem().recommendations[0]!.factorEvidence, titleContribution, score: titleContribution + 33, localFingerprint: hash(localHash), remoteFingerprint: hash(remoteHash) }, localIssue: { id: "77777777-7777-4777-8777-777777777777", key: "KAN-9", title } });
+const manualResult = (candidate = manualCandidate()): RedmineReconciliationReviewItem => ({ ...reviewItem(), manualCandidate: candidate });
 type CommandName = keyof typeof commands;
 type Callbacks = { onSuccess: (value: unknown) => void; onError: (error: { code: string; message: string }) => void };
 const callbacks = (name: CommandName) => commands[name].mutate.mock.calls.at(-1)?.[1] as Callbacks;
 const succeed = (name: CommandName, value: unknown) => act(() => callbacks(name).onSuccess(value));
 const fail = (name: CommandName, code: string) => act(() => callbacks(name).onError({ code, message: code }));
-const renderModal = (onClose = vi.fn()) => ({ onClose, ...render(<RedmineReconciliationModal workspaceId="workspace" connectionId="connection" queue={queue} onClose={onClose} />) });
-const enterReview = () => { const view = renderModal(); fireEvent.click(screen.getByRole("radio", { name: "Import existing issues" })); fireEvent.click(screen.getByRole("button", { name: "Start preview" })); succeed("preview", progress({ complete: true, remainingCount: 0, eligibleUnlinkedCount: 1 })); return view; };
-const loadReview = (page = reviewPage()) => { const view = enterReview(); fireEvent.click(screen.getByRole("button", { name: "Load recommendations" })); succeed("review", page); return view; };
+const renderModal = (onClose = vi.fn(), modalQueue = queue) => ({ onClose, ...render(<RedmineReconciliationModal workspaceId="workspace" connectionId="connection" queue={modalQueue} onClose={onClose} />) });
+const enterReview = (modalQueue = queue) => { const view = renderModal(vi.fn(), modalQueue); fireEvent.click(screen.getByRole("radio", { name: "Import existing issues" })); fireEvent.click(screen.getByRole("button", { name: "Start preview" })); succeed("preview", progress({ complete: true, remainingCount: 0, eligibleUnlinkedCount: 1 })); return view; };
+const loadReview = (page = reviewPage(), modalQueue = queue) => { const view = enterReview(modalQueue); fireEvent.click(screen.getByRole("button", { name: "Load recommendations" })); succeed("review", page); return view; };
+const selectManual = () => { const view = loadReview(); fireEvent.click(screen.getByRole("button", { name: "Search for another Kanon issue" })); fireEvent.change(screen.getByRole("textbox", { name: "Search Kanon issues" }), { target: { value: "manual" } }); fireEvent.click(screen.getByRole("button", { name: "KAN-9 — Manual result" })); return view; };
 
 describe("RedmineReconciliationModal", () => {
-  beforeEach(() => { vi.clearAllMocks(); Object.values(commands).forEach((command) => { command.pending = false; }); });
+  beforeEach(() => { vi.clearAllMocks(); Object.values(commands).forEach((command) => { command.pending = false; }); issueSearch.fetching = false; issueSearch.data = [{ id: "77777777-7777-4777-8777-777777777777", key: "KAN-9", title: "Manual result" }]; });
 
   it("starts explicitly for the first binding and continues incomplete full previews", () => {
     renderModal();
@@ -173,5 +179,60 @@ describe("RedmineReconciliationModal", () => {
     commands.review.pending = true; view.rerender(<RedmineReconciliationModal workspaceId="workspace" connectionId="connection" queue={queue} onClose={view.onClose} />);
     fireEvent.keyDown(document, { key: "Escape" }); fireEvent.click(screen.getByTestId("redmine-reconciliation-backdrop"));
     expect(view.onClose).not.toHaveBeenCalled();
+  });
+
+  it("mounts scoped search only after three trimmed characters and hides stale results while fetching", () => {
+    const onSelect = vi.fn();
+    const props = { remoteIssueId: "42", projectKey: "KAN", excludedIssueIds: ["excluded"], candidate: null, disabled: false, failure: null, onSelect, onConfirm: vi.fn(), onCancel: vi.fn(), onQueryChange: vi.fn(), onRetry: vi.fn() };
+    issueSearch.data = [{ id: "excluded", key: "KAN-1", title: "Suggested" }, ...Array.from({ length: 12 }, (_, index) => ({ id: `id-${index}`, key: `KAN-${index + 2}`, title: `Issue ${index}` }))];
+    const view = render(<RedmineReconciliationManualLink {...props} />);
+    const input = screen.getByRole("textbox", { name: "Search Kanon issues" });
+    fireEvent.change(input, { target: { value: "  ab  " } }); expect(issueSearch.hook).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: " raw " } }); expect(issueSearch.hook).toHaveBeenLastCalledWith("KAN", " raw ", {});
+    const results = within(screen.getByRole("list")).getAllByRole("button");
+    expect(results).toHaveLength(10); expect(screen.queryByText("Suggested")).not.toBeInTheDocument();
+    issueSearch.fetching = true; view.rerender(<RedmineReconciliationManualLink {...props} />);
+    expect(screen.getByText("Searching…")).toBeInTheDocument(); expect(screen.queryByRole("list")).not.toBeInTheDocument();
+  });
+
+  it("materializes a selected candidate and confirms only with server fingerprints", () => {
+    selectManual();
+    expect(commands.materialize.mutate.mock.calls[0]?.[0]).toEqual({ remoteIssueId: "42", candidateIssueId: "77777777-7777-4777-8777-777777777777" });
+    expect(screen.queryByRole("button", { name: "Confirm link to KAN-9" })).not.toBeInTheDocument();
+    succeed("materialize", manualResult());
+    expect(screen.getByText("Heuristic score: 63 points")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm link to KAN-9" }));
+    expect(commands.decision.mutate.mock.calls[0]?.[0]).toEqual({ remoteIssueId: "42", decision: { kind: "manual-link", candidateIssueId: "77777777-7777-4777-8777-777777777777", localFingerprint: hash("d"), remoteFingerprint: hash("e") } });
+    succeed("decision", { remoteIssueId: "42", candidateIssueId: "77777777-7777-4777-8777-777777777777", recommendationId: "88888888-8888-4888-8888-888888888888", refId: "99999999-9999-4999-8999-999999999999", replayed: true });
+    expect(screen.getByText("This project is ready for activation.")).toBeInTheDocument();
+  });
+
+  it("retries exact manual inputs and refreshes stale evidence without auto-linking", () => {
+    selectManual(); const target = commands.materialize.mutate.mock.calls[0]?.[0];
+    fail("materialize", "REDMINE_CONNECTION_FAILED"); fireEvent.click(screen.getByRole("button", { name: "Retry" })); expect(commands.materialize.mutate.mock.calls[1]?.[0]).toEqual(target);
+    succeed("materialize", manualResult()); fireEvent.click(screen.getByRole("button", { name: "Confirm link to KAN-9" }));
+    const decision = commands.decision.mutate.mock.calls[0]?.[0]; fail("decision", "REDMINE_CONNECTION_FAILED"); fireEvent.click(screen.getByRole("button", { name: "Retry" })); expect(commands.decision.mutate.mock.calls[1]?.[0]).toEqual(decision);
+    fail("decision", "REDMINE_RECONCILIATION_LOCAL_STALE"); expect(commands.materialize.mutate.mock.calls.at(-1)?.[0]).toEqual(target);
+    succeed("materialize", manualResult(manualCandidate("Updated manual", 25, "f", "0")));
+    expect(commands.decision.mutate).toHaveBeenCalledTimes(2); expect(screen.getByText("KAN-9 — Updated manual")).toBeInTheDocument(); expect(screen.getByText("Heuristic score: 58 points")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm link to KAN-9" }));
+    expect(commands.decision.mutate.mock.calls[2]?.[0]).toEqual({ remoteIssueId: "42", decision: { kind: "manual-link", candidateIssueId: "77777777-7777-4777-8777-777777777777", localFingerprint: hash("f"), remoteFingerprint: hash("0") } });
+  });
+
+  it.each(["REDMINE_RECONCILIATION_CANDIDATE_INVALID", "REDMINE_RECONCILIATION_ALREADY_LINKED"])("clears unavailable manual candidates for %s", (code) => {
+    selectManual(); fail("materialize", code);
+    expect(screen.queryByRole("button", { name: "Confirm link to KAN-9" })).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(code);
+    fireEvent.change(screen.getByRole("textbox", { name: "Search Kanon issues" }), { target: { value: "changed" } });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps suggested decisions available when the project key is unavailable", () => {
+    loadReview(reviewPage(), [{ ...queue[0]!, projectKey: null }]);
+    expect(issueSearch.hook).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Search for another Kanon issue" })).toBeDisabled();
+    expect(screen.getByText("Manual search is unavailable because this project key could not be resolved.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Link Redmine #42 to KAN-7" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "None of these suggestions match" })).toBeEnabled();
   });
 });

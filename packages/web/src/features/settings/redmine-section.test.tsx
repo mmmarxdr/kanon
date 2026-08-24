@@ -652,8 +652,8 @@ describe("RedmineSection", () => {
     expect(select.value).toBe("draft");
     const props = modalRender.mock.lastCall?.[0] as { queue: Array<Record<string, string>> };
     expect(props.queue).toEqual([
-      expect.objectContaining({ bindingId: binding.id, projectName: "Kanon One", remoteProjectName: "Redmine One" }),
-      expect.objectContaining({ bindingId: second.id, projectName: second.projectId, remoteProjectName: second.remoteProjectId }),
+      expect.objectContaining({ bindingId: binding.id, projectName: "Kanon One", projectKey: "KAN", remoteProjectName: "Redmine One" }),
+      expect.objectContaining({ bindingId: second.id, projectName: second.projectId, projectKey: null, remoteProjectName: second.remoteProjectId }),
     ]);
     view.unmount();
     vi.mocked(useRedmineConnectionQuery).mockReturnValue({ data: { ...connection, lifecycle: "paused" }, isLoading: false, error: null } as unknown as ReturnType<typeof useRedmineConnectionQuery>);

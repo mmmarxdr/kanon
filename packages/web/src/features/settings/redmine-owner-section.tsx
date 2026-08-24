@@ -499,20 +499,22 @@ function ConnectedOwnerPanel({
                   if (!canActivate) return;
                   setReconciliationQueue(
                     Object.freeze(
-                      availableBindings.map((binding) =>
-                        Object.freeze({
+                      availableBindings.map((binding) => {
+                        const project = projects.data?.find(
+                          (candidate) => candidate.id === binding.projectId,
+                        );
+                        return Object.freeze({
                           bindingId: binding.id,
                           projectId: binding.projectId,
+                          projectKey: project?.key ?? null,
                           remoteProjectId: binding.remoteProjectId,
-                          projectName:
-                            projects.data?.find((project) => project.id === binding.projectId)
-                              ?.name ?? binding.projectId,
+                          projectName: project?.name ?? binding.projectId,
                           remoteProjectName:
                             discovery.data?.projects.find(
                               (project) => project.id === binding.remoteProjectId,
                             )?.name ?? binding.remoteProjectId,
-                        }),
-                      ),
+                        });
+                      }),
                     ),
                   );
                   return;

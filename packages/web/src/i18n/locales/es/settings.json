@@ -193,6 +193,13 @@
     "notCompared": "Sin comparar",
     "accept": "Vincular Redmine #{{remoteId}} con {{key}}",
     "rejectAll": "Ninguna de estas sugerencias coincide",
+    "searchAnother": "Buscar otra incidencia de Kanon",
+    "manualUnavailable": "La búsqueda manual no está disponible porque no se pudo resolver la clave del proyecto.",
+    "manualTitle": "Vinculación manual para Redmine #{{id}}",
+    "searchLabel": "Buscar incidencias de Kanon",
+    "searching": "Buscando…",
+    "confirmManual": "Confirmar vínculo con {{key}}",
+    "candidateUnavailable": "Esta incidencia de Kanon ya no está disponible para vincular.",
     "ready": "Este proyecto está listo para la activación.",
     "blocked": "La vista previa está bloqueada hasta corregir la configuración de la conexión.",
     "restart": "Reiniciar vista previa"
