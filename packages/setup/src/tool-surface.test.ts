@@ -89,7 +89,7 @@ describe("Cursor tool surface upgrades", () => {
     expect(fs.existsSync(path.join(rulesDir, "kanon.mdc"))).toBe(false);
   });
 
-  it("reuses a Windows-only workspace ID for both WSL targets", () => {
+  it("keeps a Windows-only workspace ID outside legacy WSL targets", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-cursor-workspace-"));
     roots.push(root);
     const ctx: PlatformContext = {
@@ -110,7 +110,7 @@ describe("Cursor tool surface upgrades", () => {
     }));
 
     const workspaceId = resolveExistingToolWorkspaceId(cursor, ctx);
-    expect(workspaceId).toBe("workspace-from-windows");
+    expect(workspaceId).toBeUndefined();
     installToolSurface({
       tool: cursor,
       ctx,
@@ -125,11 +125,11 @@ describe("Cursor tool surface upgrades", () => {
       ),
     });
 
-    const [local, windows] = resolveToolTargets(cursor, ctx).map((target) =>
+    const [local] = resolveToolTargets(cursor, ctx).map((target) =>
       JSON.parse(fs.readFileSync(target.config(ctx), "utf8")).mcpServers["kanon"],
     );
-    expect(local.env.KANON_WORKSPACE_ID).toBe("workspace-from-windows");
-    expect(windows.args).toContain("KANON_WORKSPACE_ID=workspace-from-windows");
+    expect(local.env.KANON_WORKSPACE_ID).toBeUndefined();
+    expect(resolveToolTargets(cursor, ctx)).toHaveLength(1);
   });
 });
 

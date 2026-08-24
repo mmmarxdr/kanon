@@ -106,6 +106,8 @@ export type EvidenceState =
 
 export interface WslBridge {
   distribution: string;
+  /** Exact absolute Node executable validated in this WSL distribution. */
+  nodePath?: string;
 }
 
 export interface SurfaceEvidence {

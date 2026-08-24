@@ -229,7 +229,7 @@ describe("mcp-config", () => {
       expect(result.apiKey).toBe("test-key-123");
     });
 
-    it("should extract auth from WSL bridge-mode config (args array)", () => {
+    it("does not read auth from an unvalidated WSL bridge config", () => {
       // WSL bridge mode puts env vars in the args array as KEY=VALUE
       // Cursor on WSL uses `${winHome}/.cursor/mcp.json`
       const cursorDir = path.join(tmpDir, ".cursor");
@@ -259,8 +259,7 @@ describe("mcp-config", () => {
 
       const result = extractExistingAuth(ctx);
 
-      expect(result.apiUrl).toBe("http://localhost:4001");
-      expect(result.apiKey).toBe("bridge-key-456");
+      expect(result).toEqual({});
     });
 
     it("should return empty object when no kanon entry exists", () => {

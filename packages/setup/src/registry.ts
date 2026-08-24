@@ -2,8 +2,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { ToolDefinition, PlatformContext, PlatformPaths } from "./types.js";
-import { commandExists } from "./detect.js";
+import type { ToolDefinition, PlatformContext, PlatformPaths, SurfaceEvidence } from "./types.js";
+import { commandExists, resolveCommand } from "./detect.js";
+import { discoverCursorSurfaces } from "./cursor-surfaces.js";
 
 /**
  * Resolve Codex CLI home directory, respecting CODEX_HOME override.
@@ -75,30 +76,18 @@ const ANTIGRAVITY_CLI_PATHS: PlatformPaths = {
   mcpMode: "direct",
 };
 
+export function hasDirectCursorEvidence(surfaces: readonly SurfaceEvidence[]): boolean {
+  return surfaces.some((surface) => surface.host === "local" && surface.state === "executable-valid");
+}
+
 const CURSOR_DIRECT_PATHS: PlatformPaths = {
-  detect: async (ctx) =>
-    commandExists("cursor", ctx.platform) ||
-    fs.existsSync(path.join(ctx.homedir, ".cursor")),
+  detect: async (ctx) => hasDirectCursorEvidence(discoverCursorSurfaces(ctx, {
+    resolveCommand: (command) => resolveCommand(command, ctx.platform),
+  })),
   config: (ctx) => path.join(ctx.homedir, ".cursor", "mcp.json"),
   skills: (ctx) => path.join(ctx.homedir, ".cursor", "skills"),
   agents: (ctx) => path.join(ctx.homedir, ".cursor", "agents"),
   mcpMode: "direct",
-};
-
-const CURSOR_WSL_PATHS: PlatformPaths = {
-  ...CURSOR_DIRECT_PATHS,
-  detect: async (ctx) =>
-    (await CURSOR_DIRECT_PATHS.detect(ctx)) ||
-    (!!ctx.winHome && fs.existsSync(path.join(ctx.winHome, ".cursor"))),
-};
-
-const CURSOR_WSL_WINDOWS_PATHS: PlatformPaths = {
-  detect: async (ctx) =>
-    !!ctx.winHome && fs.existsSync(path.join(ctx.winHome, ".cursor")),
-  config: (ctx) => path.join(ctx.winHome!, ".cursor", "mcp.json"),
-  skills: (ctx) => path.join(ctx.winHome!, ".cursor", "skills"),
-  agents: (ctx) => path.join(ctx.winHome!, ".cursor", "agents"),
-  mcpMode: "wsl-bridge",
 };
 
 export const toolRegistry: ToolDefinition[] = [
@@ -151,7 +140,7 @@ export const toolRegistry: ToolDefinition[] = [
       darwin: CURSOR_DIRECT_PATHS,
       linux: CURSOR_DIRECT_PATHS,
       win32: CURSOR_DIRECT_PATHS,
-      wsl: CURSOR_WSL_PATHS,
+      wsl: CURSOR_DIRECT_PATHS,
     },
   },
 
@@ -316,21 +305,13 @@ export function getToolByName(name: string): ToolDefinition | undefined {
   return toolRegistry.find((t) => t.name === name);
 }
 
-/** Cursor remains one tool while WSL installs its Windows IDE and Linux CLI homes. */
+/** Cursor remains one tool; cross-host writes wait for execution planning. */
 export function resolveToolTargets(
   tool: ToolDefinition,
   ctx: PlatformContext,
 ): PlatformPaths[] {
   const paths = tool.platforms[ctx.platform];
   if (!paths) return [];
-  if (
-    tool.name === "cursor" &&
-    ctx.platform === "wsl" &&
-    ctx.winHome &&
-    fs.existsSync(path.join(ctx.winHome, ".cursor"))
-  ) {
-    return [paths, CURSOR_WSL_WINDOWS_PATHS];
-  }
   return [paths];
 }
 

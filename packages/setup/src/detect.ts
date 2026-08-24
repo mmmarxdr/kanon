@@ -92,12 +92,19 @@ export async function buildPlatformContext(
  * Check if a command exists on the system.
  * Uses `where` on win32 and `which` on linux/wsl.
  */
-export function commandExists(cmd: string, platform?: Platform): boolean {
+/** Resolve the first executable exactly as the host PATH resolver reported it. */
+export function resolveCommand(cmd: string, platform?: Platform): string | undefined {
   const whichCmd = platform === "win32" ? "where" : "which";
   try {
-    execSync(`${whichCmd} ${cmd}`, { stdio: ["pipe", "pipe", "pipe"] });
-    return true;
+    const output = execSync(`${whichCmd} ${cmd}`, {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return String(output).split(/\r?\n/).map((entry) => entry.trim()).find(Boolean);
   } catch {
-    return false;
+    return undefined;
   }
+}
+
+export function commandExists(cmd: string, platform?: Platform): boolean {
+  return resolveCommand(cmd, platform) !== undefined;
 }
