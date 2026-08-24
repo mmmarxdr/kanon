@@ -40,6 +40,7 @@ import type {
   IssueMutationRow,
 } from "../integrations/issue-mutation-contract.js";
 import {
+  captureChangedIssueFields,
   captureIssueMutationTx,
   lockIssueCaptureBindingTx,
   type IssueCaptureOverride,
@@ -65,7 +66,8 @@ async function mutateIssueWithCapture(
   mutate: (database: IssueDatabase) => Promise<IssueMutationRow>,
   captureOverride?: IssueCaptureOverride,
   beforeMutate?: (transaction: Prisma.TransactionClient) => Promise<void>,
-  afterMutate?: (transaction: Prisma.TransactionClient, result: IssueMutationRow) => Promise<void>
+  afterMutate?: (transaction: Prisma.TransactionClient, result: IssueMutationRow) => Promise<void>,
+  beforeCaptureMutate?: (transaction: Prisma.TransactionClient) => Promise<void>
 ): Promise<IssueMutationRow> {
   const capture = captureOverride ?? (await resolveIssueCaptureContext(projectId, memberId));
   if (!capture) {
@@ -80,6 +82,7 @@ async function mutateIssueWithCapture(
 
   return withIssueMutationTx(
     async (transaction) => {
+      await beforeCaptureMutate?.(transaction);
       await beforeMutate?.(transaction);
       const result = await mutate(transaction);
       await afterMutate?.(transaction, result);
@@ -845,18 +848,33 @@ export async function updateIssue(
     }
   }
 
+  let contentPreimage: Pick<IssueMutationRow, "title" | "description"> = issue;
   const updated = await mutateIssueWithCapture(
     issue.projectId,
     memberId,
     "update",
-    (result) => ({
-      ...(body.title !== undefined ? { title: result.title } : {}),
-      ...(body.description !== undefined ? { description: result.description } : {}),
-      ...(body.priority !== undefined ? { priority: result.priority } : {}),
-      ...(body.assigneeId !== undefined ? { assigneeId: result.assigneeId } : {}),
-      ...(body.cycleId !== undefined ? { cycleId: result.cycleId } : {}),
-    }),
-    (database) => database.issue.update({ where: { key }, data })
+    (result) =>
+      captureChangedIssueFields(
+        {
+          ...(body.title !== undefined ? { title: result.title } : {}),
+          ...(body.description !== undefined ? { description: result.description } : {}),
+          ...(body.priority !== undefined ? { priority: result.priority } : {}),
+          ...(body.assigneeId !== undefined ? { assigneeId: result.assigneeId } : {}),
+          ...(body.cycleId !== undefined ? { cycleId: result.cycleId } : {}),
+        },
+        contentPreimage
+      ),
+    (database) => database.issue.update({ where: { key }, data }),
+    undefined,
+    undefined,
+    undefined,
+    async (transaction) => {
+      const [locked] = await transaction.$queryRaw<
+        Array<Pick<IssueMutationRow, "title" | "description">>
+      >(Prisma.sql`SELECT "title", "description" FROM "issues" WHERE "key" = ${key} FOR UPDATE`);
+      if (!locked) throw new AppError(404, "ISSUE_NOT_FOUND", `Issue "${key}" not found`);
+      contentPreimage = locked;
+    }
   );
 
   // Auto-subscribe new assignee AFTER successful update (Fix 5 / KAN-28).

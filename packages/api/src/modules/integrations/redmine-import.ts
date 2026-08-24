@@ -429,6 +429,7 @@ export async function persistRedmineIssueImportsTx(
         actorKind: "remote",
         correlationId,
         refId: ref.id,
+        sourceVersion: change.sourceVersion,
         fields: {
           title: issue.title,
           description: issue.description,

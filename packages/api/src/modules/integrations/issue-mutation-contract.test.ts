@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  captureChangedIssueFields,
   canonicalizeIssueMutationDraft,
   type IssueCaptureFields,
   type IssueMutationDraft,
@@ -48,6 +49,19 @@ function draft(
   };
 }
 const rejected = (action: () => unknown): void => expect(action).toThrow(TypeError);
+describe("captureChangedIssueFields", () => {
+  it("omits unchanged legacy content and keeps genuine changes", () => {
+    const before = { title: "Same title", description: "Old description" };
+    expect(
+      captureChangedIssueFields(
+        { title: "Same title", description: "New description", priority: "high" },
+        before
+      )
+    ).toEqual({ description: "New description", priority: "high" });
+    expect(captureChangedIssueFields({ title: "New title", description: "Old description" }, before))
+      .toEqual({ title: "New title" });
+  });
+});
 describe("canonicalizeIssueMutationDraft", () => {
   it("returns a detached settled row and exact frozen six-field payload", () => {
     const input = draft();
@@ -102,6 +116,29 @@ describe("canonicalizeIssueMutationDraft", () => {
     expect(datedResult.capture.availableAt).not.toBe(availableAt);
     expect(datedResult.payload.issue.completedAt).toBe("2026-01-03T00:00:00.000Z");
   });
+  it("accepts only a non-empty remote source version", () => {
+    const input = draft();
+    const accepted = canonicalizeIssueMutationDraft({
+      ...input,
+      capture: {
+        ...input.capture,
+        direction: "inbound",
+        actorKind: "remote",
+        sourceVersion: "sha256:remote-version",
+      },
+    });
+    expect(accepted.capture.sourceVersion).toBe("sha256:remote-version");
+
+    for (const sourceVersion of ["", 42]) {
+      rejected(() =>
+        canonicalizeIssueMutationDraft({
+          ...input,
+          capture: { ...input.capture, sourceVersion },
+        }),
+      );
+    }
+  });
+
   it("rejects invalid values, descriptors, prototypes, thenables, and JSON graphs", () => {
     for (const fields of [{ title: null }, { state: null }, { estimate: 1.5 }]) {
       rejected(() => canonicalizeIssueMutationDraft(draft(issue(), fields as never)));
