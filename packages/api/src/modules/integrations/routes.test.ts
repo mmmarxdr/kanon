@@ -15,11 +15,12 @@ import { prisma } from "../../config/prisma.js";
 import { retryRedmineIssueImport } from "./inbound.js";
 import { decrypt } from "./core/crypto.js";
 import { decodeRedmineIssueDetail } from "./providers/redmine/decoder.js";
-import { RedmineHttpClient } from "./providers/redmine/http-client.js";
+import { RedmineHttpClient, RedmineHttpError } from "./providers/redmine/http-client.js";
 import { activateRedmineIssueImport, previewRedmineIssueImport } from "./redmine-import.js";
 import {
   decideRedmineReconciliationRecommendations,
   materializeRedmineReconciliationRecommendations,
+  reviewRedmineReconciliationPage,
 } from "./redmine-reconciliation.js";
 import { auditHealthForScope, getBindingAuditHealth } from "./service.js";
 import { createAuditScopeFingerprint } from "./core/audit-evidence.js";
@@ -41,6 +42,7 @@ vi.mock("./redmine-reconciliation.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./redmine-reconciliation.js")>()),
   decideRedmineReconciliationRecommendations: vi.fn(),
   materializeRedmineReconciliationRecommendations: vi.fn(),
+  reviewRedmineReconciliationPage: vi.fn(),
 }));
 
 const retry = vi.mocked(retryRedmineIssueImport);
@@ -48,6 +50,7 @@ const activate = vi.mocked(activateRedmineIssueImport);
 const preview = vi.mocked(previewRedmineIssueImport);
 const decide = vi.mocked(decideRedmineReconciliationRecommendations);
 const materialize = vi.mocked(materializeRedmineReconciliationRecommendations);
+const reviewPage = vi.mocked(reviewRedmineReconciliationPage);
 const decryptCredential = vi.mocked(decrypt);
 const remoteGet = vi.spyOn(RedmineHttpClient.prototype, "get");
 const hash = `sha256:${"a".repeat(64)}`;
@@ -324,7 +327,7 @@ describe("Redmine reconciliation routes", () => {
   let app: FastifyInstance;
   beforeAll(async () => { app = await createTestApp(); });
   beforeEach(async () => {
-    [activate, preview, decide, materialize].forEach((mock) => mock.mockReset());
+    [activate, preview, decide, materialize, reviewPage].forEach((mock) => mock.mockReset());
     decryptCredential.mockReset().mockReturnValue("api-key");
     remoteGet.mockReset();
     await cleanDatabase();
@@ -390,6 +393,49 @@ describe("Redmine reconciliation routes", () => {
     const invalid = await app.inject({ method: "POST", url: `${scope.base}/reconciliation/issues/7/decision`, headers: { authorization: `Bearer ${scope.owner.token}` }, payload: { kind: "manual-link", candidateIssueId: randomUUID(), localFingerprint: "bad", remoteFingerprint: hash } });
     expect(invalid.statusCode).toBe(400);
     expect(decide).not.toHaveBeenCalled();
+  });
+
+  it("forwards owner review pages and denies member or foreign project scope before provider I/O", async () => {
+    const scope = await reconciliationFixture();
+    const url = `${scope.base}/reconciliation/review-page`;
+    const item = { remote: { id: "7", title: "Match", sourceVersion }, recommendations: [{ id: recommendationId, score: 0, factorEvidence, decisionState: "rejected" as const, decisionKind: "owner-reject", decidedById: scope.owner.id, decidedAt: new Date("2026-08-21T12:00:00.000Z"), acceptedRefId: null, localIssue: { id: localId, key: "KAN-1", title: "Local" } }], manualCandidate: null };
+    reviewPage.mockResolvedValue({ previewIdentity: scope.previewIdentity, processedCandidateCount: 1, remainingCandidateCount: 0, hiddenCount: 0, linkedCount: 0, items: [item], nextCursor: null });
+    const owner = await app.inject({ method: "POST", url, headers: { authorization: `Bearer ${scope.owner.token}` }, payload: {} });
+    expect(owner.json()).toMatchObject({ previewIdentity: scope.previewIdentity, processedCandidateCount: 1, items: [{ remote: { id: "7", title: "Match" }, recommendations: [{ decidedAt: "2026-08-21T12:00:00.000Z" }] }] });
+    expect(reviewPage).toHaveBeenCalledWith({ connectionId: scope.connection.id, bindingId: scope.binding.id, userId: scope.owner.userId }, expect.objectContaining({ limit: 5, workspaceId: scope.workspace.id, loadRemoteIssue: expect.any(Function) }));
+
+    const member = await seedTestMemberWithRole(scope.workspace.id, "member");
+    expect((await app.inject({ method: "POST", url, headers: { authorization: `Bearer ${member.token}` }, payload: {} })).statusCode).toBe(403);
+    reviewPage.mockImplementation(async (_request, dependencies) => { await dependencies.loadRemoteIssue("7"); throw new Error("unreachable"); });
+    const scoped = generateTestToken({ userId: scope.owner.userId, email: scope.owner.email, allowedProjectIds: [randomUUID()] });
+    expect((await app.inject({ method: "POST", url, headers: { authorization: `Bearer ${scoped}` }, payload: {} })).statusCode).toBe(404);
+    expect(remoteGet).not.toHaveBeenCalled();
+  });
+
+  it("turns only a definitive Redmine 404 into a hidden review slot", async () => {
+    const scope = await reconciliationFixture();
+    const url = `${scope.base}/reconciliation/review-page`;
+    const headers = { authorization: `Bearer ${scope.owner.token}` };
+    reviewPage.mockImplementation(async (_request, dependencies) => {
+      const detail = await dependencies.loadRemoteIssue("7");
+      expect(detail).toMatchObject({ remoteIssueId: "7", remoteProjectId: "42", sourceVersion, previewIdentity: scope.previewIdentity, scopeFingerprint: hash, visible: false, title: null });
+      return { previewIdentity: scope.previewIdentity, processedCandidateCount: 1, remainingCandidateCount: 0, hiddenCount: 1, linkedCount: 0, items: [], nextCursor: null };
+    });
+
+    remoteGet.mockRejectedValueOnce(new RedmineHttpError(404));
+    const hidden = await app.inject({ method: "POST", url, headers, payload: {} });
+    expect(hidden.statusCode).toBe(200);
+    expect(hidden.json()).toEqual({ previewIdentity: scope.previewIdentity, processedCandidateCount: 1, remainingCandidateCount: 0, hiddenCount: 1, linkedCount: 0, items: [], nextCursor: null });
+    expect(JSON.stringify(hidden.json())).not.toContain('"id":"7"');
+
+    remoteGet.mockRejectedValueOnce(new RedmineHttpError(401));
+    const unauthorized = await app.inject({ method: "POST", url, headers, payload: {} });
+    expect(unauthorized.statusCode).toBe(502);
+    expect(unauthorized.json()).toMatchObject({ error: "REDMINE_CONNECTION_FAILED" });
+    remoteGet.mockRejectedValueOnce(new Error("timeout"));
+    const transient = await app.inject({ method: "POST", url, headers, payload: {} });
+    expect(transient.statusCode).toBe(502);
+    expect(transient.json()).toMatchObject({ error: "REDMINE_CONNECTION_FAILED" });
   });
 
   it("lists bounded recommendations and fails closed for another project scope", async () => {

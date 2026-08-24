@@ -10,6 +10,8 @@ import {
   redmineReconciliationPreviewRequestSchema,
   redmineReconciliationRecommendationPageSchema,
   redmineReconciliationRecommendationQuerySchema,
+  redmineReconciliationReviewPageRequestSchema,
+  redmineReconciliationReviewPageResultSchema,
 } from "./integrations.js";
 
 const credential = {
@@ -236,6 +238,21 @@ describe("Redmine reconciliation contracts", () => {
     expect(redmineReconciliationMaterializeResultSchema.safeParse({ ...result, recommendations: [{ ...recommendation, description: "secret" }] }).success).toBe(false);
     expect(redmineReconciliationMaterializeResultSchema.safeParse({ ...result, recommendations: Array(4).fill(recommendation) }).success).toBe(false);
     expect(redmineReconciliationMaterializeResultSchema.safeParse({ ...result, providerMetadata: {} }).success).toBe(false);
+  });
+
+  it("bounds strict review-page requests and content-safe responses", async () => {
+    const recommendation = { id: "11111111-1111-4111-8111-111111111111", score: 100, factorEvidence: evidence, decisionState: "pending", decisionKind: null, decidedById: null, decidedAt: null, acceptedRefId: null, localIssue: { id: "22222222-2222-4222-8222-222222222222", key: "KAN-1", title: "Local" } };
+    const item = { remote: { id: "42", title: "Remote", sourceVersion: hash }, recommendations: [recommendation], manualCandidate: null };
+    const page = { previewIdentity: "33333333-3333-4333-8333-333333333333", processedCandidateCount: 1, remainingCandidateCount: 0, hiddenCount: 0, linkedCount: 0, items: [item], nextCursor: null };
+    expect(redmineReconciliationReviewPageRequestSchema.parse({})).toEqual({ limit: 5 });
+    expect(redmineReconciliationReviewPageResultSchema.parse(page)).toEqual(page);
+    expect(redmineReconciliationReviewPageRequestSchema.safeParse({ limit: 6 }).success).toBe(false);
+    expect(redmineReconciliationReviewPageRequestSchema.safeParse({ cursor: "bad+cursor" }).success).toBe(false);
+    expect(redmineReconciliationReviewPageResultSchema.safeParse({ ...page, items: Array(6).fill(item), processedCandidateCount: 6 }).success).toBe(false);
+    expect(redmineReconciliationReviewPageResultSchema.safeParse({ ...page, items: [{ ...item, remote: { ...item.remote, description: "secret" } }] }).success).toBe(false);
+    expect(redmineReconciliationReviewPageResultSchema.safeParse({ ...page, hiddenCount: 1 }).success).toBe(false);
+    expect((await import("./index.js")).redmineReconciliationReviewPageRequestSchema).toBe(redmineReconciliationReviewPageRequestSchema);
+    expect((await import("./index.js")).redmineReconciliationReviewPageResultSchema).toBe(redmineReconciliationReviewPageResultSchema);
   });
 
   it("rejects malformed, unbounded, or content-bearing reconciliation data", () => {

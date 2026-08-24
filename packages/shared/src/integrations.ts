@@ -129,6 +129,7 @@ const reconciliationUuid = z.string().uuid();
 const reconciliationRemoteId = z.string().regex(/^\d+$/).max(64);
 const reconciliationHash = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const reconciliationCount = z.number().int().nonnegative();
+const reconciliationOpaqueCursor = z.string().min(1).max(512).regex(/^[A-Za-z0-9_-]+$/);
 export const redmineReconciliationPreviewModeSchema = z.enum(["full", "future_only"]);
 export const redmineReconciliationPreviewRequestSchema = z.object({ mode: redmineReconciliationPreviewModeSchema }).strict();
 export const redmineReconciliationMaterializeTargetSchema = z
@@ -228,6 +229,21 @@ export const redmineReconciliationMaterializeResultSchema = z.object({
   recommendations: z.array(hydratedRecommendationSchema).max(3),
   manualCandidate: z.object(scoredLocalIssueShape).strict().nullable(),
 }).strict();
+export const redmineReconciliationReviewPageRequestSchema = z.object({
+  cursor: reconciliationOpaqueCursor.optional(),
+  limit: z.number().int().min(1).max(5).default(5),
+}).strict();
+export const redmineReconciliationReviewPageResultSchema = z.object({
+  previewIdentity: reconciliationUuid,
+  processedCandidateCount: reconciliationCount.max(5),
+  remainingCandidateCount: reconciliationCount,
+  hiddenCount: reconciliationCount.max(5),
+  linkedCount: reconciliationCount.max(5),
+  items: z.array(redmineReconciliationMaterializeResultSchema).max(5),
+  nextCursor: reconciliationOpaqueCursor.nullable(),
+}).strict().superRefine((value, context) => {
+  if (value.processedCandidateCount !== value.items.length + value.hiddenCount + value.linkedCount || (value.remainingCandidateCount === 0) !== (value.nextCursor === null)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid reconciliation review progress" });
+});
 export const redmineReconciliationDecisionResultSchema = z.union([
   z.object({ remoteIssueId: reconciliationRemoteId, recommendationId: reconciliationUuid.optional(), rejectedCount: reconciliationCount, replayed: z.boolean() }).strict(),
   z.object({ remoteIssueId: reconciliationRemoteId, candidateIssueId: reconciliationUuid, recommendationId: reconciliationUuid, refId: reconciliationUuid, replayed: z.boolean() }).strict(),

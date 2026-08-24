@@ -8,6 +8,8 @@ import {
   redmineReconciliationPreviewRequestSchema,
   redmineReconciliationRecommendationPageSchema,
   redmineReconciliationRecommendationQuerySchema,
+  redmineReconciliationReviewPageRequestSchema,
+  redmineReconciliationReviewPageResultSchema,
 } from "@kanon/shared";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
@@ -25,11 +27,12 @@ import { retryRedmineIssueImport } from "./inbound.js";
 import { decrypt } from "./core/crypto.js";
 import { priorityReadKey } from "./issue-convergence.js";
 import { decodeRedmineIssueDetail } from "./providers/redmine/decoder.js";
-import { RedmineHttpClient } from "./providers/redmine/http-client.js";
+import { RedmineHttpClient, RedmineHttpError } from "./providers/redmine/http-client.js";
 import {
   decideRedmineReconciliationRecommendations,
   listRedmineReconciliationRecommendations,
   materializeRedmineReconciliationRecommendations,
+  reviewRedmineReconciliationPage,
   type RedmineReconciliationRemoteDetail,
 } from "./redmine-reconciliation.js";
 import {
@@ -120,7 +123,9 @@ export async function loadRedmineReconciliationIssue(input: ReconciliationRouteS
   });
   if (!binding) throw new AppError(404, "INTEGRATION_BINDING_NOT_FOUND", "Integration project binding not found");
   const preview = ReconciliationPreviewEvidence.safeParse(binding.bootstrapPageToken);
-  if (!preview.success || !preview.data.candidates.some(({ remoteId }) => remoteId === input.remoteIssueId)) throw new AppError(409, "REDMINE_RECONCILIATION_UNLISTED", "The Redmine issue is not in this preview");
+  if (!preview.success) throw new AppError(409, "REDMINE_RECONCILIATION_UNLISTED", "The Redmine issue is not in this preview");
+  const candidate = preview.data.candidates.find(({ remoteId }) => remoteId === input.remoteIssueId);
+  if (!candidate) throw new AppError(409, "REDMINE_RECONCILIATION_UNLISTED", "The Redmine issue is not in this preview");
   const credential = await serviceCredential(prisma, connection);
   let apiKey: string;
   try { apiKey = decrypt(credential.encryptedKey); } catch { throw new AppError(409, "INTEGRATION_NOT_READY", "A valid service credential is required"); }
@@ -128,7 +133,10 @@ export async function loadRedmineReconciliationIssue(input: ReconciliationRouteS
   try {
     const client = new RedmineHttpClient(connection.baseUrl, apiKey, { endpointAllowlist: env.REDMINE_ENDPOINT_ALLOWLIST });
     issue = decodeRedmineIssueDetail(await client.get<unknown>(`/issues/${encodeURIComponent(input.remoteIssueId)}.json?include=journals`), binding.remoteProjectId, input.remoteIssueId).issue;
-  } catch { throw new AppError(502, "REDMINE_CONNECTION_FAILED", "Redmine reconciliation failed while reading the remote issue"); }
+  } catch (error) {
+    if (error instanceof RedmineHttpError && error.statusCode === 404) return { remoteIssueId: input.remoteIssueId, remoteProjectId: binding.remoteProjectId, sourceVersion: candidate.sourceVersion, previewIdentity: preview.data.previewIdentity, scopeFingerprint: preview.data.scopeFingerprint, visible: false, title: null };
+    throw new AppError(502, "REDMINE_CONNECTION_FAILED", "Redmine reconciliation failed while reading the remote issue");
+  }
   const common = { remoteIssueId: issue.identity.remoteId, remoteProjectId: issue.identity.remoteProjectId, sourceVersion: issue.sourceVersion, previewIdentity: preview.data.previewIdentity, scopeFingerprint: preview.data.scopeFingerprint };
   if (issue.operation !== "upsert" || !("statusId" in issue.fields)) return { ...common, visible: false, title: null };
   const readMap = binding.readMap && typeof binding.readMap === "object" && !Array.isArray(binding.readMap) ? binding.readMap as Record<string, unknown> : {};
@@ -359,6 +367,16 @@ export default async function integrationRoutes(fastify: FastifyInstance, option
       const scope = { connectionId: request.params.id, bindingId: request.params.bindingId, userId: request.user.userId, workspaceId: request.params.wid, allowedProjectIds: scopedProjectIds(request.user.allowedProjectIds) };
       const result = await materializeRedmineReconciliationRecommendations({ connectionId: scope.connectionId, bindingId: scope.bindingId, userId: scope.userId, remoteIssueId: request.body.remoteIssueId, candidateIssueId: request.body.candidateIssueId }, reconciliationDependencies(options, scope));
       return { ...result, recommendations: result.recommendations.map((item) => ({ ...item, decidedAt: item.decidedAt?.toISOString() ?? null })) };
+    },
+  );
+
+  app.post(
+    "/workspaces/:wid/connections/:id/bindings/:bindingId/reconciliation/review-page",
+    { preHandler: [requireRole("wid", "owner")], schema: { params: ConnectionBindingId, body: redmineReconciliationReviewPageRequestSchema, response: { 200: redmineReconciliationReviewPageResultSchema } } },
+    async (request) => {
+      const scope = { connectionId: request.params.id, bindingId: request.params.bindingId, userId: request.user.userId, workspaceId: request.params.wid, allowedProjectIds: scopedProjectIds(request.user.allowedProjectIds) };
+      const page = await reviewRedmineReconciliationPage({ connectionId: scope.connectionId, bindingId: scope.bindingId, userId: scope.userId }, { ...reconciliationDependencies(options, scope), ...request.body });
+      return { ...page, items: page.items.map((item) => ({ ...item, recommendations: item.recommendations.map((recommendation) => ({ ...recommendation, decidedAt: recommendation.decidedAt?.toISOString() ?? null })) })) };
     },
   );
 

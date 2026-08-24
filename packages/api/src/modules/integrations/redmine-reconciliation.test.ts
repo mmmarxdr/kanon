@@ -12,6 +12,7 @@ import {
   decideRedmineReconciliationRecommendations,
   listRedmineReconciliationRecommendations,
   materializeRedmineReconciliationRecommendations,
+  reviewRedmineReconciliationPage,
   type RedmineReconciliationRemoteDetail,
 } from "./redmine-reconciliation.js";
 import { rankRedmineReconciliationCandidates } from "./redmine-reconciliation-score.js";
@@ -183,6 +184,62 @@ describe("Redmine reconciliation recommendations", () => {
     await expect(context.run({}, foreign.id)).rejects.toMatchObject({ code: "REDMINE_RECONCILIATION_CANDIDATE_INVALID" });
     await prisma.externalRef.create({ data: { connectionId: context.connection.id, bindingId: context.binding.id, entityType: "issue", entityId: context.issues[3]!.id, externalId: "999" } });
     await expect(context.run({}, context.issues[3]!.id)).rejects.toMatchObject({ code: "REDMINE_RECONCILIATION_CANDIDATE_LINKED" });
+  });
+  it("reviews persisted preview candidates in stable bounded pages", async () => {
+    const context = await fixture();
+    const candidates = Array.from({ length: 7 }, (_, index) => ({ remoteId: `${42 + index}`, sourceVersion: SOURCE }));
+    await prisma.integrationProjectBinding.update({ where: { id: context.binding.id }, data: { bootstrapPageToken: previewEvidence({ candidates }) } });
+    const calls: string[] = [];
+    const loadRemoteIssue = async (remoteIssueId: string) => { calls.push(remoteIssueId); return { ...context.remote, remoteIssueId, title: `Remote ${remoteIssueId}` }; };
+    const request = { connectionId: context.connection.id, bindingId: context.binding.id, userId: context.owner.userId };
+    const first = await reviewRedmineReconciliationPage(request, { loadRemoteIssue, limit: 5 });
+    expect(first).toMatchObject({ previewIdentity: PREVIEW_ID, processedCandidateCount: 5, remainingCandidateCount: 2, hiddenCount: 0, linkedCount: 0 });
+    expect(first.items.map(({ remote }) => remote.id)).toEqual(["42", "43", "44", "45", "46"]);
+    expect(calls).toEqual(["42", "43", "44", "45", "46"]);
+    const second = await reviewRedmineReconciliationPage(request, { loadRemoteIssue, cursor: first.nextCursor!, limit: 5 });
+    expect(second.items.map(({ remote }) => remote.id)).toEqual(["47", "48"]);
+    expect(second).toMatchObject({ processedCandidateCount: 2, remainingCandidateCount: 0, nextCursor: null });
+    expect(calls.slice(5)).toEqual(["47", "48"]);
+  });
+  it("rejects stale or out-of-range review cursors before loading providers", async () => {
+    const context = await fixture();
+    const request = { connectionId: context.connection.id, bindingId: context.binding.id, userId: context.owner.userId };
+    const loadRemoteIssue = vi.fn(async () => context.remote);
+    const cursor = (previewIdentity: string, offset: number) => Buffer.from(JSON.stringify({ previewIdentity, offset })).toString("base64url");
+    await expect(reviewRedmineReconciliationPage(request, { loadRemoteIssue, cursor: "" })).rejects.toMatchObject({ code: "REDMINE_RECONCILIATION_CURSOR_INVALID" });
+    await expect(reviewRedmineReconciliationPage(request, { loadRemoteIssue, cursor: cursor("20000000-0000-4000-8000-000000000002", 0) })).rejects.toMatchObject({ code: "REDMINE_RECONCILIATION_CURSOR_STALE" });
+    await expect(reviewRedmineReconciliationPage(request, { loadRemoteIssue, cursor: cursor(PREVIEW_ID, 1) })).rejects.toMatchObject({ code: "REDMINE_RECONCILIATION_CURSOR_INVALID" });
+    await prisma.integrationProjectBinding.update({ where: { id: context.binding.id }, data: { bootstrapPageToken: previewEvidence({ mode: "future_only" }) } });
+    await expect(reviewRedmineReconciliationPage(request, { loadRemoteIssue })).rejects.toMatchObject({ code: "REDMINE_RECONCILIATION_PREVIEW_REQUIRED" });
+    expect(loadRemoteIssue).not.toHaveBeenCalled();
+  });
+  it("consumes hidden and linked slots without disclosure or unnecessary provider calls", async () => {
+    const context = await fixture();
+    const candidates = Array.from({ length: 6 }, (_, index) => ({ remoteId: `${42 + index}`, sourceVersion: SOURCE }));
+    await prisma.integrationProjectBinding.update({ where: { id: context.binding.id }, data: { bootstrapPageToken: previewEvidence({ candidates }) } });
+    await prisma.externalRef.create({ data: { connectionId: context.connection.id, bindingId: context.binding.id, entityType: "issue", entityId: context.issues[0]!.id, externalId: "43" } });
+    const loadRemoteIssue = vi.fn(async (remoteIssueId: string) => ({ ...context.remote, remoteIssueId, sourceVersion: remoteIssueId === "44" ? OTHER_HASH : SOURCE, visible: remoteIssueId !== "44", title: remoteIssueId === "44" ? "Private secret" : `Remote ${remoteIssueId}` }));
+    const page = await reviewRedmineReconciliationPage({ connectionId: context.connection.id, bindingId: context.binding.id, userId: context.owner.userId }, { loadRemoteIssue });
+    expect(page).toMatchObject({ processedCandidateCount: 5, remainingCandidateCount: 1, hiddenCount: 1, linkedCount: 1, nextCursor: expect.any(String) });
+    expect(page.items.map(({ remote }) => remote.id)).toEqual(["42", "45", "46"]);
+    expect(loadRemoteIssue.mock.calls.map(([id]) => id)).toEqual(["42", "44", "45", "46"]);
+    expect(JSON.stringify(page)).not.toContain("Private secret");
+    await expect(prisma.integrationReconciliationRecommendation.count({ where: { bindingId: context.binding.id, remoteIssueId: "44" } })).resolves.toBe(0);
+  });
+  it("keeps earlier writes and decisions replay-safe after a partial review-page failure", async () => {
+    const context = await fixture();
+    const candidates = ["42", "43", "44"].map((remoteId) => ({ remoteId, sourceVersion: SOURCE }));
+    await prisma.integrationProjectBinding.update({ where: { id: context.binding.id }, data: { bootstrapPageToken: previewEvidence({ candidates }) } });
+    let fail = true;
+    const loadRemoteIssue = async (remoteIssueId: string) => { if (remoteIssueId === "43" && fail) throw new Error("provider failed"); return { ...context.remote, remoteIssueId }; };
+    const request = { connectionId: context.connection.id, bindingId: context.binding.id, userId: context.owner.userId };
+    await expect(reviewRedmineReconciliationPage(request, { loadRemoteIssue })).rejects.toThrow("provider failed");
+    const decided = await prisma.integrationReconciliationRecommendation.findFirstOrThrow({ where: { bindingId: context.binding.id, remoteIssueId: "42" } });
+    await prisma.integrationReconciliationRecommendation.update({ where: { id: decided.id }, data: { decisionState: "rejected", decisionKind: "owner-reject", decidedById: context.owner.id, decidedAt } });
+    fail = false;
+    await expect(reviewRedmineReconciliationPage(request, { loadRemoteIssue })).resolves.toMatchObject({ processedCandidateCount: 3, remainingCandidateCount: 0 });
+    await expect(prisma.integrationReconciliationRecommendation.count({ where: { bindingId: context.binding.id } })).resolves.toBe(9);
+    await expect(prisma.integrationReconciliationRecommendation.findUniqueOrThrow({ where: { id: decided.id } })).resolves.toMatchObject({ decisionState: "rejected", decisionKind: "owner-reject", decidedById: context.owner.id });
   });
   it("rejects invalid preview, source, project, scope, visibility, listing, and existing links before writes", async () => {
     const context = await fixture();

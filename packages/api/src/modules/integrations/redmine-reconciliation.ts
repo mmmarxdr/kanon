@@ -23,7 +23,9 @@ const FullPreview = z
   .passthrough();
 const DecisionState = z.enum(["pending", "accepted", "rejected"]);
 const Cursor = z.object({ score: z.number().int(), id: z.string().uuid() }).strict();
+const ReviewCursor = z.object({ previewIdentity: z.string().uuid(), offset: z.number().int().nonnegative() }).strict();
 const MAX_PAGE = 50;
+const MAX_REVIEW_PAGE = 5;
 type Database = Prisma.TransactionClient;
 export type RedmineReconciliationRequest = Readonly<{ connectionId: string; bindingId: string; userId: string; remoteIssueId: string }>;
 export type RedmineReconciliationMaterializeRequest = RedmineReconciliationRequest & Readonly<{ candidateIssueId?: string }>;
@@ -78,18 +80,12 @@ async function bindingScope(database: Database, request: Pick<RedmineReconciliat
   }
   return { connection, binding, preview: preview.data };
 }
-function validateRemote(scope: Awaited<ReturnType<typeof bindingScope>>, requestedId: string, detail: RedmineReconciliationRemoteDetail) {
-  if (!detail.visible) {
-    throw new AppError(409, "REDMINE_RECONCILIATION_NOT_VISIBLE", "The Redmine issue is not visible");
-  }
+function validateRemoteIdentity(scope: Awaited<ReturnType<typeof bindingScope>>, requestedId: string, detail: RedmineReconciliationRemoteDetail) {
   const listed = scope.preview.candidates.find(
     ({ remoteId }) => remoteId === requestedId && detail.remoteIssueId === requestedId,
   );
   if (!listed) {
     throw new AppError(409, "REDMINE_RECONCILIATION_UNLISTED", "The Redmine issue is not in this preview");
-  }
-  if (listed.sourceVersion !== detail.sourceVersion) {
-    throw new AppError(409, "REDMINE_RECONCILIATION_SOURCE_STALE", "The Redmine issue changed after preview");
   }
   if (detail.remoteProjectId !== scope.binding.remoteProjectId) {
     throw new AppError(409, "REDMINE_RECONCILIATION_PROJECT_MISMATCH", "The Redmine issue belongs to another project");
@@ -99,6 +95,16 @@ function validateRemote(scope: Awaited<ReturnType<typeof bindingScope>>, request
     detail.scopeFingerprint !== scope.preview.scopeFingerprint
   ) {
     throw new AppError(409, "REDMINE_RECONCILIATION_SCOPE_STALE", "The reconciliation scope changed");
+  }
+  return listed;
+}
+function validateRemote(scope: Awaited<ReturnType<typeof bindingScope>>, requestedId: string, detail: RedmineReconciliationRemoteDetail) {
+  const listed = validateRemoteIdentity(scope, requestedId, detail);
+  if (!detail.visible) {
+    throw new AppError(409, "REDMINE_RECONCILIATION_NOT_VISIBLE", "The Redmine issue is not visible");
+  }
+  if (listed.sourceVersion !== detail.sourceVersion) {
+    throw new AppError(409, "REDMINE_RECONCILIATION_SOURCE_STALE", "The Redmine issue changed after preview");
   }
 }
 export async function materializeRedmineReconciliationRecommendations(request: RedmineReconciliationMaterializeRequest, dependencies: RedmineReconciliationDependencies) {
@@ -204,6 +210,63 @@ export async function materializeRedmineReconciliationRecommendations(request: R
         : null,
     };
   });
+}
+function reviewOffset(value: string | undefined, previewIdentity: string, candidateCount: number) {
+  if (value === undefined) return 0;
+  if (value.length < 1 || value.length > 512 || !/^[A-Za-z0-9_-]+$/.test(value)) throw new AppError(400, "REDMINE_RECONCILIATION_CURSOR_INVALID", "Invalid review cursor");
+  let cursor: z.infer<typeof ReviewCursor> | null = null;
+  try {
+    const decoded = ReviewCursor.safeParse(JSON.parse(Buffer.from(value, "base64url").toString("utf8")));
+    if (decoded.success) cursor = decoded.data;
+  } catch { /* Use the bounded cursor error below. */ }
+  if (!cursor) throw new AppError(400, "REDMINE_RECONCILIATION_CURSOR_INVALID", "Invalid review cursor");
+  if (cursor.previewIdentity !== previewIdentity) throw new AppError(409, "REDMINE_RECONCILIATION_CURSOR_STALE", "The Redmine preview changed");
+  if (cursor.offset >= candidateCount) throw new AppError(400, "REDMINE_RECONCILIATION_CURSOR_INVALID", "Invalid review cursor");
+  return cursor.offset;
+}
+function encodeReviewCursor(previewIdentity: string, offset: number) {
+  return Buffer.from(JSON.stringify({ previewIdentity, offset })).toString("base64url");
+}
+export async function reviewRedmineReconciliationPage(
+  request: Pick<RedmineReconciliationRequest, "connectionId" | "bindingId" | "userId">,
+  options: RedmineReconciliationDependencies & Readonly<{ cursor?: string; limit?: number }>,
+) {
+  const scope = await bindingScope(prisma, request, options);
+  const limit = options.limit ?? MAX_REVIEW_PAGE;
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_REVIEW_PAGE) throw new AppError(400, "REDMINE_RECONCILIATION_PAGE_INVALID", "Invalid review page");
+  const offset = reviewOffset(options.cursor, scope.preview.previewIdentity, scope.preview.candidates.length);
+  const candidates = scope.preview.candidates.slice(offset, offset + limit);
+  const linked = candidates.length ? await prisma.externalRef.findMany({
+    where: { connectionId: request.connectionId, entityType: "issue", externalId: { in: candidates.map(({ remoteId }) => remoteId) } },
+    select: { externalId: true },
+  }) : [];
+  const linkedIds = new Set(linked.map(({ externalId }) => externalId));
+  const items: Awaited<ReturnType<typeof materializeRedmineReconciliationRecommendations>>[] = [];
+  let hiddenCount = 0;
+  let linkedCount = 0;
+  for (const candidate of candidates) {
+    if (linkedIds.has(candidate.remoteId)) { linkedCount += 1; continue; }
+    const detail = await options.loadRemoteIssue(candidate.remoteId);
+    validateRemoteIdentity(scope, candidate.remoteId, detail);
+    if (!detail.visible) { hiddenCount += 1; continue; }
+    items.push(await materializeRedmineReconciliationRecommendations(
+      { ...request, remoteIssueId: candidate.remoteId },
+      { ...options, loadRemoteIssue: async () => detail },
+    ));
+  }
+  const current = await bindingScope(prisma, request, options);
+  if (current.preview.previewIdentity !== scope.preview.previewIdentity || current.preview.scopeFingerprint !== scope.preview.scopeFingerprint || JSON.stringify(current.preview.candidates) !== JSON.stringify(scope.preview.candidates)) throw new AppError(409, "REDMINE_RECONCILIATION_SCOPE_STALE", "The reconciliation scope changed");
+  const nextOffset = offset + candidates.length;
+  const remainingCandidateCount = scope.preview.candidates.length - nextOffset;
+  return {
+    previewIdentity: scope.preview.previewIdentity,
+    processedCandidateCount: candidates.length,
+    remainingCandidateCount,
+    hiddenCount,
+    linkedCount,
+    items,
+    nextCursor: remainingCandidateCount ? encodeReviewCursor(scope.preview.previewIdentity, nextOffset) : null,
+  };
 }
 function decodeCursor(value?: string) {
   if (!value) return null;
