@@ -2,7 +2,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { ToolDefinition, PlatformContext, PlatformPaths, SurfaceEvidence } from "./types.js";
+import type {
+  ToolDefinition,
+  PlatformContext,
+  PlatformPaths,
+  SurfaceEvidence,
+  SurfaceMutationPlan,
+} from "./types.js";
 import { commandExists, resolveCommand } from "./detect.js";
 import { discoverCursorSurfaces } from "./cursor-surfaces.js";
 
@@ -88,6 +94,14 @@ const CURSOR_DIRECT_PATHS: PlatformPaths = {
   skills: (ctx) => path.join(ctx.homedir, ".cursor", "skills"),
   agents: (ctx) => path.join(ctx.homedir, ".cursor", "agents"),
   mcpMode: "direct",
+};
+
+const CURSOR_WSL_WINDOWS_PATHS: PlatformPaths = {
+  detect: async (ctx) => !!ctx.winHome && fs.existsSync(path.join(ctx.winHome, ".cursor", "mcp.json")),
+  config: (ctx) => path.join(ctx.winHome!, ".cursor", "mcp.json"),
+  skills: (ctx) => path.join(ctx.winHome!, ".cursor", "skills"),
+  agents: (ctx) => path.join(ctx.winHome!, ".cursor", "agents"),
+  mcpMode: "wsl-bridge",
 };
 
 export const toolRegistry: ToolDefinition[] = [
@@ -313,6 +327,46 @@ export function resolveToolTargets(
   const paths = tool.platforms[ctx.platform];
   if (!paths) return [];
   return [paths];
+}
+
+function resolvePlatformLocalTarget(
+  tool: ToolDefinition,
+  ctx: PlatformContext,
+): PlatformPaths[] {
+  const paths = tool.platforms[ctx.platform];
+  return paths ? [paths] : [];
+}
+
+/** Resolve writable targets. The Windows Cursor target is available only from an
+ * already-authorized execution plan carrying an exact validated WSL distro. */
+export function resolveCursorWritableTargets(
+  tool: ToolDefinition,
+  ctx: PlatformContext,
+  writeCapability?: Pick<SurfaceMutationPlan, "decision" | "bridge">,
+): PlatformPaths[] {
+  const paths = resolvePlatformLocalTarget(tool, ctx);
+  if (
+    tool.name === "cursor" &&
+    ctx.platform === "wsl" &&
+    ctx.winHome &&
+    writeCapability?.decision === "write" &&
+    writeCapability.bridge?.distribution
+  ) {
+    return [...paths, CURSOR_WSL_WINDOWS_PATHS];
+  }
+  return paths;
+}
+
+export function resolveCursorInventoryTargets(
+  tool: ToolDefinition,
+  ctx: PlatformContext,
+): PlatformPaths[] {
+  const paths = resolvePlatformLocalTarget(tool, ctx);
+  // Removal may be requested after Cursor/Node disappeared. For WSL this
+  // enumerates both owned homes without relying on runtime discovery.
+  return tool.name === "cursor" && ctx.platform === "wsl" && ctx.winHome
+    ? [...paths, CURSOR_WSL_WINDOWS_PATHS]
+    : paths;
 }
 
 export function resolveToolLegacyConfigPaths(
