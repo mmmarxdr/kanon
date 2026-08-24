@@ -79,6 +79,12 @@ enum IntegrationReconciliationDecisionState {
   rejected
 }
 
+enum IntegrationReconciliationDispositionState {
+  pending
+  import_as_new
+  linked
+}
+
 enum CredentialAuthStatus {
   unknown
   valid
@@ -725,6 +731,7 @@ model Member {
   integrationCredentials       MemberIntegrationCredential[]
   integrationExternalIdentities IntegrationExternalIdentity[]
   integrationReconciliationDecisions IntegrationReconciliationRecommendation[]
+  integrationReconciliationDispositionDecisions IntegrationReconciliationDisposition[]
 
   @@unique([userId, workspaceId])
   @@unique([workspaceId, username])
@@ -1460,6 +1467,7 @@ model IntegrationProjectBinding {
   provenance        IntegrationContentProvenance[]
   auditRuns         IntegrationAuditRun[]
   reconciliationRecommendations IntegrationReconciliationRecommendation[]
+  reconciliationDispositions    IntegrationReconciliationDisposition[]
 
   @@unique([connectionId, projectId])
   @@unique([connectionId, remoteProjectId])
@@ -1646,6 +1654,27 @@ model IntegrationReconciliationRecommendation {
   @@index([bindingId, decisionState, score(sort: Desc), id(sort: Desc)], map: "integration_reconciliation_binding_state_score_id_idx")
   @@index([bindingId, remoteIssueId, score(sort: Desc), id(sort: Desc)], map: "integration_reconciliation_binding_remote_score_id_idx")
   @@map("integration_reconciliation_recommendations")
+}
+
+model IntegrationReconciliationDisposition {
+  id                  String                                    @id @default(uuid()) @db.Uuid
+  previewIdentity     String                                    @map("preview_identity") @db.Uuid
+  remoteIssueId       String                                    @map("remote_issue_id")
+  remoteSourceVersion String                                    @map("remote_source_version")
+  state               IntegrationReconciliationDispositionState @default(pending)
+  decisionKind        String?                                   @map("decision_kind")
+  decidedAt           DateTime?                                 @map("decided_at")
+  decidedById         String?                                   @map("decided_by_id") @db.Uuid
+  createdAt           DateTime                                  @default(now()) @map("created_at")
+  updatedAt           DateTime                                  @updatedAt @map("updated_at")
+
+  bindingId String                    @map("binding_id") @db.Uuid
+  binding   IntegrationProjectBinding @relation(fields: [bindingId], references: [id], onDelete: Restrict, map: "integration_reconciliation_disposition_binding_fkey")
+  decidedBy Member?                   @relation(fields: [decidedById], references: [id], onDelete: SetNull, map: "integration_reconciliation_disposition_decider_fkey")
+
+  @@unique([bindingId, previewIdentity, remoteIssueId], map: "uq_reconciliation_disposition_preview_remote")
+  @@index([bindingId, previewIdentity, state], map: "integration_reconciliation_disposition_preview_state_idx")
+  @@map("integration_reconciliation_dispositions")
 }
 
 model IntegrationSyncWork {

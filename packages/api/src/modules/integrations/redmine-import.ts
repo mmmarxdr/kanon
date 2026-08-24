@@ -796,6 +796,7 @@ export async function previewRedmineIssueImport(
       : [];
     const linkedIds = new Set(linked.map((ref) => ref.externalId));
     const candidates = [...evidence.candidates];
+    const pageCandidates: { remoteId: string; sourceVersion: string }[] = [];
     const unmappedStatusIds = new Set(evidence.unmappedStatusIds);
     const unmappedPriorityIds = new Set(evidence.unmappedPriorityIds);
     const assigneeIds = new Set(
@@ -835,6 +836,12 @@ export async function previewRedmineIssueImport(
         remoteId: change.identity.remoteId,
         sourceVersion: change.sourceVersion,
       });
+      if (evidence.version === 2 && evidence.mode === "full") {
+        pageCandidates.push({
+          remoteId: change.identity.remoteId,
+          sourceVersion: change.sourceVersion,
+        });
+      }
       if (!IssueState.safeParse(readMap[change.fields.statusId]).success) {
         unmappedStatusIds.add(change.fields.statusId);
       }
@@ -911,7 +918,29 @@ export async function previewRedmineIssueImport(
         );
         await assertReconciliationScope(transaction, current, evidence);
       }
-      return transaction.integrationProjectBinding.updateMany({
+      if (evidence.version === 2 && evidence.mode === "full") {
+        await Promise.all(
+          pageCandidates.map(({ remoteId, sourceVersion }) =>
+            transaction.integrationReconciliationDisposition.upsert({
+              where: {
+                bindingId_previewIdentity_remoteIssueId: {
+                  bindingId,
+                  previewIdentity: evidence.previewIdentity,
+                  remoteIssueId: remoteId,
+                },
+              },
+              create: {
+                bindingId,
+                previewIdentity: evidence.previewIdentity,
+                remoteIssueId: remoteId,
+                remoteSourceVersion: sourceVersion,
+              },
+              update: { remoteSourceVersion: sourceVersion },
+            }),
+          ),
+        );
+      }
+      const persisted = await transaction.integrationProjectBinding.updateMany({
         where: {
           id: bindingId,
           connectionId,
@@ -929,10 +958,11 @@ export async function previewRedmineIssueImport(
           bootstrapLeaseUntil: null,
         },
       });
+      if (persisted.count !== 1) {
+        throw new AppError(409, "REDMINE_PREVIEW_STALE", "The Redmine project binding changed");
+      }
+      return persisted;
     });
-    if (persisted.count !== 1) {
-      throw new AppError(409, "REDMINE_PREVIEW_STALE", "The Redmine project binding changed");
-    }
     if (evidence.version === 1 && !evidence.complete) {
       throw new AppError(
         409,
@@ -1363,7 +1393,19 @@ export async function activateRedmineIssueImport(
           ...(restartPreview
             ? {
                 bootstrapState: "pending" as const,
-                bootstrapPageToken: emptyEvidence() as unknown as Prisma.InputJsonValue,
+                bootstrapPageToken:
+                  claim.evidence.version === 2
+                    ? (emptyEvidence({
+                        mode: claim.evidence.mode,
+                        cutoff: claim.current.binding.bootstrapCutoff!,
+                        scopeFingerprint: reconciliationScopeFingerprint(
+                          claim.current,
+                          claim.evidence.mode,
+                          [],
+                          [],
+                        ),
+                      }) as unknown as Prisma.InputJsonValue)
+                    : (emptyEvidence() as unknown as Prisma.InputJsonValue),
               }
             : {}),
         },

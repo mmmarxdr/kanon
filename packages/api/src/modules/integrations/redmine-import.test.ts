@@ -237,6 +237,16 @@ describe("Redmine-created issue import", () => {
     expect(JSON.stringify(stored.bootstrapPageToken)).not.toMatch(
       /Private subject|Private body|Imported issue|Imported description/,
     );
+    const previewIdentity = (stored.bootstrapPageToken as { previewIdentity: string }).previewIdentity;
+    await expect(
+      prisma.integrationReconciliationDisposition.findMany({
+        where: { bindingId: binding.id, previewIdentity },
+        orderBy: { remoteIssueId: "asc" },
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({ remoteIssueId: "42", state: "pending" }),
+      expect.objectContaining({ remoteIssueId: "44", state: "pending" }),
+    ]);
   });
 
   it("records a stable checkpoint without candidates in future-only mode", async () => {
@@ -266,6 +276,9 @@ describe("Redmine-created issue import", () => {
       eligibleUnlinkedCount: 0,
       checkpoint: { remoteId: "42", pageToken: null },
     });
+    await expect(
+      prisma.integrationReconciliationDisposition.count({ where: { bindingId: binding.id } }),
+    ).resolves.toBe(0);
     const stored = await prisma.integrationProjectBinding.findUniqueOrThrow({
       where: { id: binding.id },
     });
@@ -336,6 +349,31 @@ describe("Redmine-created issue import", () => {
     await expect(prisma.issue.count()).resolves.toBe(0);
   });
 
+  it("rolls back full-preview dispositions when its fenced checkpoint cannot persist", async () => {
+    const { owner, connection, binding } = await fixture();
+    await setImportLifecycle(connection.id, binding.id, "paused");
+    const transport = remote({ issues: [redmineIssue({ assigned_to: null })], total_count: 1, offset: 0, limit: 100 });
+    const drift = {
+      ...transport.dependencies,
+      client: () => ({
+        get: async <T>(path: string) => {
+          await prisma.integrationProjectBinding.update({
+            where: { id: binding.id },
+            data: { bootstrapFence: { increment: 1 } },
+          });
+          return transport.get(path) as Promise<T>;
+        },
+      }),
+    };
+
+    await expect(fullPreview(connection.id, binding.id, owner.userId, drift)).rejects.toMatchObject({
+      code: "REDMINE_PREVIEW_STALE",
+    });
+    await expect(
+      prisma.integrationReconciliationDisposition.count({ where: { bindingId: binding.id } }),
+    ).resolves.toBe(0);
+  });
+
   it("resumes preview and activation beyond the first 100 issues", async () => {
     const { owner, project, connection, binding } = await fixture();
     await setImportLifecycle(connection.id, binding.id, "paused");
@@ -383,6 +421,7 @@ describe("Redmine-created issue import", () => {
       scannedCount: 100,
       checkpoint: { remoteId: "100", pageToken: expect.any(String) },
     });
+    const previewIdentity = (stored.bootstrapPageToken as { previewIdentity: string }).previewIdentity;
     await expect(prisma.issue.count()).resolves.toBe(0);
 
     await expect(
@@ -398,6 +437,12 @@ describe("Redmine-created issue import", () => {
       scannedCount: 101,
       checkpoint: { remoteId: "101", pageToken: null },
     });
+    expect((completed.bootstrapPageToken as { previewIdentity: string }).previewIdentity).toBe(
+      previewIdentity,
+    );
+    await expect(
+      prisma.integrationReconciliationDisposition.count({ where: { bindingId: binding.id, previewIdentity } }),
+    ).resolves.toBe(101);
     const batches = [];
     while (batches.length < 20) {
       const batch = await activateRedmineIssueImport(
@@ -1181,17 +1226,13 @@ describe("Redmine-created issue import", () => {
 
   it("restarts preview when an activation candidate was deleted remotely", async () => {
     const { owner, project, connection, binding } = await fixture();
-    const issue = redmineIssue();
+    const issue = redmineIssue({ assigned_to: null });
     const transport = remote(
       { issues: [issue], total_count: 1, offset: 0, limit: 100 },
       { "42": { issue: { ...issue, journals: [] } } },
     );
-    await previewRedmineIssueImport(
-      connection.id,
-      binding.id,
-      owner.userId,
-      transport.dependencies,
-    );
+    await setImportLifecycle(connection.id, binding.id, "paused");
+    const first = await fullPreview(connection.id, binding.id, owner.userId, transport.dependencies);
 
     await expect(
       activateRedmineIssueImport(connection.id, binding.id, owner.userId, {
@@ -1208,17 +1249,17 @@ describe("Redmine-created issue import", () => {
     ).resolves.toMatchObject({
       inboundEnabled: false,
       bootstrapState: "pending",
-      bootstrapPageToken: expect.objectContaining({ nextOffset: 0, candidates: [] }),
+      bootstrapPageToken: expect.objectContaining({
+        version: 2,
+        previewIdentity: expect.not.stringMatching(first.previewIdentity),
+        nextOffset: 0,
+        candidates: [],
+      }),
       bootstrapLeaseToken: null,
       bootstrapLeaseUntil: null,
     });
 
-    await previewRedmineIssueImport(
-      connection.id,
-      binding.id,
-      owner.userId,
-      transport.dependencies,
-    );
+    await fullPreview(connection.id, binding.id, owner.userId, transport.dependencies);
     await expect(
       activateRedmineIssueImport(
         connection.id,
