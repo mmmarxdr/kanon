@@ -46,6 +46,7 @@ const unbindMutate = vi.fn();
 const configureMutate = vi.fn();
 const replaceServiceMutate = vi.fn();
 const lifecycleMutate = vi.fn();
+const lifecycleMutateAsync = vi.fn();
 const idleMutation = (mutate: ReturnType<typeof vi.fn>) => ({
   mutate,
   isPending: false,
@@ -143,10 +144,11 @@ describe("RedmineSection", () => {
       >,
     );
     vi.mocked(useSetRedmineLifecycleMutation).mockReturnValue(
-      idleMutation(lifecycleMutate) as unknown as ReturnType<
+      { ...idleMutation(lifecycleMutate), mutateAsync: lifecycleMutateAsync } as unknown as ReturnType<
         typeof useSetRedmineLifecycleMutation
       >,
     );
+    lifecycleMutateAsync.mockResolvedValue(undefined);
     vi.mocked(useRedmineDiscoveryQuery).mockReturnValue({
       data: undefined,
       isLoading: false,
@@ -637,7 +639,7 @@ describe("RedmineSection", () => {
     expect(lifecycleMutate).toHaveBeenCalledWith("paused");
   });
 
-  it("queues draft activation bindings in server order while paused activation stays direct", () => {
+  it("coordinates frozen draft bindings in order and activates globally only after the final one", async () => {
     const binding = { id: "99999999-9999-4999-8999-999999999999", projectId: PROJECT_ID, remoteProjectId: "remote-project", readMap: {}, writeMap: {}, timeActivityId: "1", lifecycle: "draft" as const, lifecycleEpoch: 0, commentCaptureEnabled: false, commentDispatchEnabled: false, releasePending: false };
     const releasing = { ...binding, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", releasePending: true };
     const second = { ...binding, id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", projectId: "44444444-4444-4444-8444-444444444444", remoteProjectId: "remote-2" };
@@ -650,16 +652,29 @@ describe("RedmineSection", () => {
     fireEvent.change(select, { target: { value: "active" } });
     expect(lifecycleMutate).not.toHaveBeenCalled();
     expect(select.value).toBe("draft");
-    const props = modalRender.mock.lastCall?.[0] as { queue: Array<Record<string, string>> };
-    expect(props.queue).toEqual([
-      expect.objectContaining({ bindingId: binding.id, projectName: "Kanon One", projectKey: "KAN", remoteProjectName: "Redmine One" }),
-      expect.objectContaining({ bindingId: second.id, projectName: second.projectId, projectKey: null, remoteProjectName: second.remoteProjectId }),
-    ]);
+    let props = modalRender.mock.lastCall?.[0] as { binding: Record<string, unknown>; current: number; total: number; onBindingComplete: () => Promise<void> };
+    expect(props).toMatchObject({ binding: { bindingId: binding.id, projectName: "Kanon One", projectKey: "KAN", remoteProjectName: "Redmine One" }, current: 1, total: 2 }); expect(Object.isFrozen(props.binding)).toBe(true);
+    await act(async () => props.onBindingComplete()); expect(lifecycleMutateAsync).not.toHaveBeenCalled();
+    props = modalRender.mock.lastCall?.[0] as typeof props; expect(props).toMatchObject({ binding: { bindingId: second.id, projectName: second.projectId, projectKey: null, remoteProjectName: second.remoteProjectId }, current: 2, total: 2 });
+    lifecycleMutateAsync.mockRejectedValueOnce(new Error("Final failed")); await expect(props.onBindingComplete()).rejects.toThrow("Final failed"); expect(screen.getByTestId("redmine-reconciliation-modal")).toBeInTheDocument();
+    await act(async () => props.onBindingComplete()); expect(lifecycleMutateAsync).toHaveBeenNthCalledWith(2, "active"); expect(screen.queryByTestId("redmine-reconciliation-modal")).not.toBeInTheDocument();
     view.unmount();
     vi.mocked(useRedmineConnectionQuery).mockReturnValue({ data: { ...connection, lifecycle: "paused" }, isLoading: false, error: null } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
     render(<RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />);
     fireEvent.change(screen.getByLabelText("Connection lifecycle"), { target: { value: "active" } });
     expect(lifecycleMutate).toHaveBeenCalledWith("active");
+  });
+
+  it("rebuilds a restarted session from an authoritative connection refetch", async () => {
+    const binding = { id: "99999999-9999-4999-8999-999999999999", projectId: PROJECT_ID, remoteProjectId: "remote-project", readMap: {}, writeMap: {}, timeActivityId: "1", lifecycle: "draft" as const, lifecycleEpoch: 0, commentCaptureEnabled: false, commentDispatchEnabled: false, releasePending: false };
+    const refreshed = { ...healthyConnection, lifecycle: "draft" as const, providerMaps: { readMap: null, writeMap: null, priorityReadMap: null, priorityWriteMap: null, timeActivityId: "1" }, bindings: [{ ...binding, id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", projectId: "unknown", remoteProjectId: "unknown-remote" }, binding] };
+    const refetch = vi.fn().mockResolvedValue({ data: refreshed }); const connection = { ...refreshed, bindings: [binding] };
+    vi.mocked(useRedmineConnectionQuery).mockReturnValue({ data: connection, isLoading: false, error: null, refetch } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
+    render(<RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />); fireEvent.change(screen.getByLabelText("Connection lifecycle"), { target: { value: "active" } });
+    let props = modalRender.mock.lastCall?.[0] as { binding: Record<string, unknown>; current: number; total: number; onRestartSession: () => Promise<void> };
+    await act(async () => props.onRestartSession()); expect(refetch).toHaveBeenCalledWith({ throwOnError: true }); props = modalRender.mock.lastCall?.[0] as typeof props;
+    expect(props).toMatchObject({ binding: { bindingId: refreshed.bindings[0]!.id, projectName: "unknown", projectKey: null, remoteProjectName: "unknown-remote" }, current: 1, total: 2 });
+    refetch.mockResolvedValueOnce({ data: { ...refreshed, lifecycle: "active" } }); await act(async () => props.onRestartSession()); expect(screen.queryByTestId("redmine-reconciliation-modal")).not.toBeInTheDocument();
   });
 
   it("replaces stale outbound priority mappings with discovered priorities", () => {

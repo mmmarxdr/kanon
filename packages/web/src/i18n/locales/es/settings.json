@@ -201,6 +201,9 @@
     "confirmManual": "Confirmar vínculo con {{key}}",
     "candidateUnavailable": "Esta incidencia de Kanon ya no está disponible para vincular.",
     "ready": "Este proyecto está listo para la activación.",
+    "startActivation": "Iniciar importación",
+    "continueActivation": "Continuar importación",
+    "activationCounts": "Importadas: {{imported}} · Procesadas: {{processed}} · Restantes: {{remaining}}",
     "blocked": "La vista previa está bloqueada hasta corregir la configuración de la conexión.",
     "restart": "Reiniciar vista previa"
   },

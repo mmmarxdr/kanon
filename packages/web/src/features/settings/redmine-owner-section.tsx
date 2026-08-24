@@ -398,9 +398,11 @@ function ProviderMapsForm({
 function ConnectedOwnerPanel({
   workspaceId,
   connection,
+  refreshConnection,
 }: {
   workspaceId: string;
   connection: IntegrationConnection;
+  refreshConnection: () => Promise<IntegrationConnection | null>;
 }) {
   const { t } = useTranslation("settings");
   const discovery = useRedmineDiscoveryQuery(workspaceId, connection.id, true);
@@ -408,13 +410,25 @@ function ConnectedOwnerPanel({
   const replace = useReplaceRedmineServiceCredentialMutation(workspaceId, connection.id);
   const lifecycle = useSetRedmineLifecycleMutation(workspaceId, connection.id);
   const [apiKey, setApiKey] = useState("");
-  const [reconciliationQueue, setReconciliationQueue] = useState<
-    readonly RedmineReconciliationQueueItem[] | null
-  >(null);
+  const [reconciliationSession, setReconciliationSession] = useState<Readonly<{ queue: readonly RedmineReconciliationQueueItem[]; activeIndex: number }> | null>(null);
   const availableBindings = connection.bindings.filter((binding) => !binding.releasePending);
   const canActivate = Boolean(
     availableBindings.length > 0 && connection.providerMaps?.timeActivityId,
   );
+  const buildQueue = (source: IntegrationConnection) => Object.freeze(source.bindings.filter((binding) => !binding.releasePending).map((binding) => {
+    const project = projects.data?.find((candidate) => candidate.id === binding.projectId);
+    return Object.freeze({ bindingId: binding.id, projectId: binding.projectId, projectKey: project?.key ?? null, remoteProjectId: binding.remoteProjectId, projectName: project?.name ?? binding.projectId, remoteProjectName: discovery.data?.projects.find((candidate) => candidate.id === binding.remoteProjectId)?.name ?? binding.remoteProjectId });
+  }));
+  const completeBinding = async () => {
+    const session = reconciliationSession; if (!session) return;
+    if (session.activeIndex < session.queue.length - 1) { setReconciliationSession((current) => current === session ? Object.freeze({ queue: session.queue, activeIndex: session.activeIndex + 1 }) : current); return; }
+    await lifecycle.mutateAsync("active"); setReconciliationSession((current) => current === session ? null : current);
+  };
+  const restartSession = async () => {
+    const refreshed = await refreshConnection();
+    if (!refreshed || refreshed.lifecycle === "active") { setReconciliationSession(null); return; }
+    const queue = buildQueue(refreshed); setReconciliationSession(queue.length ? Object.freeze({ queue, activeIndex: 0 }) : null);
+  };
 
   return (
     <div className="mt-4">
@@ -492,31 +506,12 @@ function ConnectedOwnerPanel({
           <label className="block text-sm font-medium text-foreground">
             {t("redmineLifecycleControl")}
             <select
-              value={reconciliationQueue ? "draft" : connection.lifecycle}
+              value={reconciliationSession ? "draft" : connection.lifecycle}
               onChange={(event) => {
                 const next = event.target.value as "active" | "paused" | "disabled";
                 if (next === "active" && connection.lifecycle === "draft") {
                   if (!canActivate) return;
-                  setReconciliationQueue(
-                    Object.freeze(
-                      availableBindings.map((binding) => {
-                        const project = projects.data?.find(
-                          (candidate) => candidate.id === binding.projectId,
-                        );
-                        return Object.freeze({
-                          bindingId: binding.id,
-                          projectId: binding.projectId,
-                          projectKey: project?.key ?? null,
-                          remoteProjectId: binding.remoteProjectId,
-                          projectName: project?.name ?? binding.projectId,
-                          remoteProjectName:
-                            discovery.data?.projects.find(
-                              (project) => project.id === binding.remoteProjectId,
-                            )?.name ?? binding.remoteProjectId,
-                        });
-                      }),
-                    ),
-                  );
+                  const queue = buildQueue(connection); setReconciliationSession(Object.freeze({ queue, activeIndex: 0 }));
                   return;
                 }
                 lifecycle.mutate(next);
@@ -551,12 +546,17 @@ function ConnectedOwnerPanel({
           discovery={discovery.data}
         />
       )}
-      {reconciliationQueue && (
+      {reconciliationSession && (
         <RedmineReconciliationModal
+          key={reconciliationSession.queue[reconciliationSession.activeIndex]!.bindingId}
           workspaceId={workspaceId}
           connectionId={connection.id}
-          queue={reconciliationQueue}
-          onClose={() => setReconciliationQueue(null)}
+          binding={reconciliationSession.queue[reconciliationSession.activeIndex]!}
+          current={reconciliationSession.activeIndex + 1}
+          total={reconciliationSession.queue.length}
+          onBindingComplete={completeBinding}
+          onRestartSession={restartSession}
+          onClose={() => setReconciliationSession(null)}
         />
       )}
     </div>
@@ -566,9 +566,11 @@ function ConnectedOwnerPanel({
 export function RedmineOwnerSection({
   workspaceId,
   connection,
+  refreshConnection,
 }: {
   workspaceId: string;
   connection: IntegrationConnection | null;
+  refreshConnection: () => Promise<IntegrationConnection | null>;
 }) {
   const { t } = useTranslation("settings");
 
@@ -577,7 +579,7 @@ export function RedmineOwnerSection({
       <h2 className="text-lg font-semibold text-foreground">{t("redmineOwnerTitle")}</h2>
       <p className="mt-1 text-sm text-muted-foreground">{t("redmineOwnerHelp")}</p>
       {connection ? (
-        <ConnectedOwnerPanel workspaceId={workspaceId} connection={connection} />
+        <ConnectedOwnerPanel workspaceId={workspaceId} connection={connection} refreshConnection={refreshConnection} />
       ) : (
         <ConnectionSetup workspaceId={workspaceId} />
       )}
