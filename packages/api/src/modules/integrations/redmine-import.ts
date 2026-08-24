@@ -919,19 +919,20 @@ export async function previewRedmineIssueImport(
         await assertReconciliationScope(transaction, current, evidence);
       }
       if (evidence.version === 2 && evidence.mode === "full") {
+        const previewIdentity = evidence.previewIdentity;
         await Promise.all(
           pageCandidates.map(({ remoteId, sourceVersion }) =>
             transaction.integrationReconciliationDisposition.upsert({
               where: {
                 bindingId_previewIdentity_remoteIssueId: {
                   bindingId,
-                  previewIdentity: evidence.previewIdentity,
+                  previewIdentity,
                   remoteIssueId: remoteId,
                 },
               },
               create: {
                 bindingId,
-                previewIdentity: evidence.previewIdentity,
+                previewIdentity,
                 remoteIssueId: remoteId,
                 remoteSourceVersion: sourceVersion,
               },
@@ -1097,14 +1098,19 @@ export async function activateRedmineIssueImport(
       if (mappingGap) {
         throw new AppError(409, mappingGap[0]!, `Configure Redmine ${mappingGap[1]} mappings and run the preview again`);
       }
-      const pending = await transaction.integrationReconciliationRecommendation.count({
-        where: {
-          bindingId,
-          remoteIssueId: { in: evidence.candidates.map(({ remoteId }) => remoteId) },
-          decisionState: "pending",
-        },
+      const dispositions = await transaction.integrationReconciliationDisposition.findMany({
+        where: { bindingId, previewIdentity: evidence.previewIdentity, remoteIssueId: { in: evidence.candidates.map(({ remoteId }) => remoteId) } },
       });
-      if (pending > 0) {
+      const byRemote = new Map(dispositions.map((row) => [row.remoteIssueId, row]));
+      const reviewed = await Promise.all(evidence.candidates.map(async ({ remoteId, sourceVersion }) => {
+        const row = byRemote.get(remoteId);
+        if (!row || row.remoteSourceVersion !== sourceVersion || row.state === "pending") return false;
+        if (row.state === "import_as_new") return true;
+        if (row.state !== "linked" || !row.acceptedRefId) return false;
+        const ref = await transaction.externalRef.findFirst({ where: { id: row.acceptedRefId, connectionId, bindingId, entityType: "issue", externalId: remoteId } });
+        return Boolean(ref);
+      }));
+      if (dispositions.length !== evidence.candidates.length || reviewed.some((value) => !value)) {
         throw new AppError(409, "REDMINE_RECONCILIATION_PENDING", "Resolve pending Redmine reconciliation recommendations before importing");
       }
     }

@@ -124,6 +124,18 @@ async function fixture(readMap: Record<string, string> = { "2": "in_progress" })
   return { workspace, owner, assignee, project, connection, credential, binding };
 }
 
+async function settleCurrentPreviewImports(bindingId: string, userId: string) {
+  await prisma.integrationReconciliationDisposition.updateMany({
+    where: { bindingId, state: "pending" },
+    data: {
+      state: "import_as_new",
+      decisionKind: "test-import",
+      decidedAt: cutoff,
+      decidedById: userId,
+    },
+  });
+}
+
 async function setImportLifecycle(
   connectionId: string,
   bindingId: string,
@@ -302,6 +314,24 @@ describe("Redmine-created issue import", () => {
     await expect(prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })).resolves.toMatchObject({ lifecycle: "paused", inboundEnabled: true, bootstrapState: "ready", cursorRemoteId: "42", bootstrapPageToken: expect.objectContaining({ version: 2, mode: "future_only" }) });
   });
 
+  it("blocks a full-v2 preview with pending dispositions before provider transport", async () => {
+    const { owner, connection, binding } = await fixture();
+    await setImportLifecycle(connection.id, binding.id, "paused");
+    const issue = redmineIssue({ assigned_to: null });
+    const transport = remote(
+      { issues: [issue], total_count: 1, offset: 0, limit: 100 },
+      { "42": { issue: { ...issue, journals: [] } } },
+    );
+
+    await fullPreview(connection.id, binding.id, owner.userId, transport.dependencies);
+    transport.get.mockClear();
+
+    await expect(
+      activateImport(connection.id, binding.id, owner.userId, transport.dependencies),
+    ).rejects.toMatchObject({ code: "REDMINE_RECONCILIATION_PENDING" });
+    expect(transport.get).not.toHaveBeenCalled();
+  });
+
   it("applies eleven v2 candidates in two bounded calls with explicit replay progress", async () => {
     const { owner, project, connection, binding } = await fixture();
     await setImportLifecycle(connection.id, binding.id, "paused");
@@ -324,6 +354,7 @@ describe("Redmine-created issue import", () => {
     await expect(activateImport(connection.id, binding.id, owner.userId, transport.dependencies)).rejects.toMatchObject({ code: "REDMINE_PREVIEW_LIFECYCLE" });
     expect(transport.get).not.toHaveBeenCalled();
     await setImportLifecycle(connection.id, binding.id, "paused");
+    await settleCurrentPreviewImports(binding.id, owner.id);
 
     const first = await activateImport(connection.id, binding.id, owner.userId, transport.dependencies);
     const second = await activateImport(connection.id, binding.id, owner.userId, transport.dependencies);
@@ -344,6 +375,7 @@ describe("Redmine-created issue import", () => {
     const issue = redmineIssue({ assigned_to: null });
     const transport = remote({ issues: [issue], total_count: 1, offset: 0, limit: 100 }, { "42": { issue: { ...issue, journals: [] } } });
     await fullPreview(connection.id, binding.id, owner.userId, transport.dependencies);
+    await settleCurrentPreviewImports(binding.id, owner.id);
     const drift = { ...transport.dependencies, client: () => ({ get: async <T>(path: string) => { await prisma.integrationProjectBinding.update({ where: { id: binding.id }, data: { readMap: { "2": "in_progress", "priority:3": "high", drift: "todo" } } }); return transport.get(path) as Promise<T>; } }) };
     await expect(activateImport(connection.id, binding.id, owner.userId, drift)).rejects.toMatchObject({ code: "REDMINE_PREVIEW_STALE" });
     await expect(prisma.issue.count()).resolves.toBe(0);
@@ -443,6 +475,7 @@ describe("Redmine-created issue import", () => {
     await expect(
       prisma.integrationReconciliationDisposition.count({ where: { bindingId: binding.id, previewIdentity } }),
     ).resolves.toBe(101);
+    await settleCurrentPreviewImports(binding.id, owner.id);
     const batches = [];
     while (batches.length < 20) {
       const batch = await activateRedmineIssueImport(
@@ -1019,7 +1052,7 @@ describe("Redmine-created issue import", () => {
     });
   });
 
-  it("blocks pending review before transport, skips accepted links, and imports rejected remotes", async () => {
+  it("requires terminal dispositions before transport and skips accepted links", async () => {
     const { owner, project, connection, binding } = await fixture();
     await setImportLifecycle(connection.id, binding.id, "paused");
     const issues = [
@@ -1035,33 +1068,17 @@ describe("Redmine-created issue import", () => {
     await fullPreview(connection.id, binding.id, owner.userId, transport.dependencies);
     const evidence = (await prisma.integrationProjectBinding.findUniqueOrThrow({
       where: { id: binding.id },
-    })).bootstrapPageToken as unknown as {
-      candidates: { remoteId: string; sourceVersion: string }[];
-    };
+    })).bootstrapPageToken as unknown as { previewIdentity: string };
     const candidate = await prisma.issue.create({
       data: { projectId: project.id, key: `${project.key}-local`, sequenceNum: 0, title: "Local" },
     });
-    await prisma.externalRef.create({
+    const linkedRef = await prisma.externalRef.create({
       data: {
         connectionId: connection.id,
         bindingId: binding.id,
         entityType: "issue",
         entityId: candidate.id,
         externalId: "42",
-      },
-    });
-    await prisma.integrationReconciliationRecommendation.create({
-      data: {
-        bindingId: binding.id,
-        remoteIssueId: "43",
-        remoteSourceVersion: evidence.candidates.find(({ remoteId }) => remoteId === "43")!
-          .sourceVersion,
-        candidateIssueId: candidate.id,
-        score: 50,
-        scoringVersion: "redmine-reconciliation-v1",
-        factorEvidence: { version: 1 },
-        localFingerprint: "sha256:local",
-        remoteFingerprint: "sha256:remote",
       },
     });
     transport.get.mockClear();
@@ -1071,15 +1088,17 @@ describe("Redmine-created issue import", () => {
     ).rejects.toMatchObject({ code: "REDMINE_RECONCILIATION_PENDING" });
     expect(transport.get).not.toHaveBeenCalled();
 
-    await prisma.integrationReconciliationRecommendation.updateMany({
-      where: { bindingId: binding.id, decisionState: "pending" },
-      data: {
-        decisionState: "rejected",
-        decisionKind: "owner-reject",
-        decidedAt: cutoff,
-        decidedById: owner.id,
+    await prisma.integrationReconciliationDisposition.update({
+      where: {
+        bindingId_previewIdentity_remoteIssueId: {
+          bindingId: binding.id,
+          previewIdentity: evidence.previewIdentity,
+          remoteIssueId: "42",
+        },
       },
+      data: { state: "linked", decisionKind: "owner-link", decidedAt: cutoff, decidedById: owner.id, acceptedRefId: linkedRef.id },
     });
+    await settleCurrentPreviewImports(binding.id, owner.id);
     await expect(
       activateImport(connection.id, binding.id, owner.userId, transport.dependencies),
     ).resolves.toMatchObject({ importedCount: 1, complete: true, remainingCount: 0 });
@@ -1233,6 +1252,7 @@ describe("Redmine-created issue import", () => {
     );
     await setImportLifecycle(connection.id, binding.id, "paused");
     const first = await fullPreview(connection.id, binding.id, owner.userId, transport.dependencies);
+    await settleCurrentPreviewImports(binding.id, owner.id);
 
     await expect(
       activateRedmineIssueImport(connection.id, binding.id, owner.userId, {
@@ -1260,6 +1280,7 @@ describe("Redmine-created issue import", () => {
     });
 
     await fullPreview(connection.id, binding.id, owner.userId, transport.dependencies);
+    await settleCurrentPreviewImports(binding.id, owner.id);
     await expect(
       activateRedmineIssueImport(
         connection.id,
@@ -1305,6 +1326,7 @@ describe("Redmine-created issue import", () => {
       data: { readMap: { "9": "in_progress", "priority:3": "high" } },
     });
     await fullPreview(connection.id, binding.id, owner.userId, transport.dependencies);
+    await settleCurrentPreviewImports(binding.id, owner.id);
     await expect(
       activateRedmineIssueImport(
         connection.id,
