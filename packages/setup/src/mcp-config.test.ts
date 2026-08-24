@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 /**
  * mcp-config.test.ts — characterization tests for buildWrapperMcpEntry
  * + key-parity proof: setup write-key === mcp read-key (byte-identical).
@@ -8,7 +11,9 @@
  */
 import { describe, it, expect } from "vitest";
 import { canonicalizeApiUrl } from "./canonical-url.js";
-import { buildMcpEntry, buildWrapperMcpEntry } from "./mcp-config.js";
+import { buildMcpEntry, buildWrapperMcpEntry, removeToolMcpConfig } from "./mcp-config.js";
+import { getToolByName } from "./registry.js";
+import { removeToolMcpSurface } from "./tool-surface.js";
 
 describe("canonicalizeApiUrl parity: setup write-key === mcp read-key", () => {
   /**
@@ -128,4 +133,94 @@ it("uses the validated WSL Node path for static-key bridge entries too", () => {
   const entry = buildMcpEntry({ mode: "local", path: "/mcp.js" }, "https://server.example.com", "key", { platform: "wsl", homedir: "/home/me", winHome: "/mnt/c/Users/me" }, "wsl-bridge", "/usr/bin/node", "static-key", "cursor", undefined, "Ubuntu", "/home/me/.nvm/versions/node/v24/bin/node");
   expect(entry.args).toContain("/home/me/.nvm/versions/node/v24/bin/node");
   expect(entry.args).not.toContain("/usr/bin/node");
+});
+
+
+describe("removal failures preserve malformed config bytes", () => {
+  it("throws for malformed JSON instead of treating it as missing", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-remove-malformed-"));
+    try {
+      const file = path.join(root, "mcp.json");
+      const raw = "{ malformed";
+      fs.writeFileSync(file, raw);
+      expect(() => removeToolMcpConfig(file, { rootKey: "mcpServers" })).toThrow(/Invalid JSON/);
+      expect(fs.readFileSync(file, "utf8")).toBe(raw);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("throws for malformed TOML without rewriting the file", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-remove-malformed-"));
+    try {
+      const file = path.join(root, "config.toml");
+      const raw = "[mcp_servers.kanon\ncommand = \"node\"\n";
+      fs.writeFileSync(file, raw);
+      expect(() => removeToolMcpConfig(file, {
+        rootKey: "mcp_servers", configFormat: "toml",
+      })).toThrow(/Invalid TOML/);
+      expect(fs.readFileSync(file, "utf8")).toBe(raw);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+
+describe("surface removal preflight", () => {
+  const cursor = getToolByName("cursor")!;
+
+  it("does not remove a valid local Cursor entry before a malformed Windows target fails", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-remove-preflight-"));
+    try {
+      const ctx = { platform: "wsl" as const, homedir: path.join(root, "linux"), winHome: path.join(root, "windows") };
+      const local = path.join(ctx.homedir, ".cursor", "mcp.json");
+      const windows = path.join(ctx.winHome, ".cursor", "mcp.json");
+      const localRaw = '{"mcpServers":{"kanon":{"command":"node"}}}';
+      const windowsRaw = "{ malformed";
+      fs.mkdirSync(path.dirname(local), { recursive: true });
+      fs.mkdirSync(path.dirname(windows), { recursive: true });
+      fs.writeFileSync(local, localRaw); fs.writeFileSync(windows, windowsRaw);
+
+      expect(() => removeToolMcpSurface(cursor, ctx)).toThrow(/Invalid JSON/);
+      expect(fs.readFileSync(local, "utf8")).toBe(localRaw);
+      expect(fs.readFileSync(windows, "utf8")).toBe(windowsRaw);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("does not remove a valid local Cursor entry before a top-level null Windows target fails", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-remove-preflight-"));
+    try {
+      const ctx = { platform: "wsl" as const, homedir: path.join(root, "linux"), winHome: path.join(root, "windows") };
+      const local = path.join(ctx.homedir, ".cursor", "mcp.json");
+      const windows = path.join(ctx.winHome, ".cursor", "mcp.json");
+      const localRaw = '{"mcpServers":{"kanon":{"command":"node"}}}';
+      const windowsRaw = "null";
+      fs.mkdirSync(path.dirname(local), { recursive: true });
+      fs.mkdirSync(path.dirname(windows), { recursive: true });
+      fs.writeFileSync(local, localRaw); fs.writeFileSync(windows, windowsRaw);
+
+      expect(() => removeToolMcpSurface(cursor, ctx)).toThrow();
+      expect(fs.readFileSync(local, "utf8")).toBe(localRaw);
+      expect(fs.readFileSync(windows, "utf8")).toBe(windowsRaw);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("does not remove a valid current Cursor entry before malformed legacy config fails", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-remove-preflight-"));
+    try {
+      const ctx = { platform: "win32" as const, homedir: path.join(root, "home"), appDataDir: path.join(root, "appdata") };
+      const current = path.join(ctx.homedir, ".cursor", "mcp.json");
+      const legacy = path.join(ctx.appDataDir, "Cursor", "User", "mcp.json");
+      const currentRaw = '{"mcpServers":{"kanon":{"command":"node"}}}';
+      const legacyRaw = "{ malformed";
+      fs.mkdirSync(path.dirname(current), { recursive: true });
+      fs.mkdirSync(path.dirname(legacy), { recursive: true });
+      fs.writeFileSync(current, currentRaw); fs.writeFileSync(legacy, legacyRaw);
+
+      expect(() => removeToolMcpSurface(cursor, ctx)).toThrow(/Invalid JSON/);
+      expect(fs.readFileSync(current, "utf8")).toBe(currentRaw);
+      expect(fs.readFileSync(legacy, "utf8")).toBe(legacyRaw);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
 });

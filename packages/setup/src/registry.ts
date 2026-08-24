@@ -369,6 +369,15 @@ export function resolveCursorInventoryTargets(
     : paths;
 }
 
+export function resolveToolInventoryTargets(
+  tool: ToolDefinition,
+  ctx: PlatformContext,
+): PlatformPaths[] {
+  return tool.name === "cursor"
+    ? resolveCursorInventoryTargets(tool, ctx)
+    : resolveToolTargets(tool, ctx);
+}
+
 export function resolveToolLegacyConfigPaths(
   tool: ToolDefinition,
   ctx: PlatformContext,
