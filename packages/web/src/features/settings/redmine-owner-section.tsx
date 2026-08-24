@@ -9,6 +9,11 @@ import {
   type IssueState,
 } from "@kanon/shared";
 import { SettingsCard } from "@/components/ui/settings-card";
+import { useProjectsQuery } from "@/hooks/use-projects-query";
+import {
+  RedmineReconciliationModal,
+  type RedmineReconciliationQueueItem,
+} from "./redmine-reconciliation-modal";
 import {
   useConfigureRedmineProviderMapsMutation,
   useCreateRedmineConnectionMutation,
@@ -399,11 +404,16 @@ function ConnectedOwnerPanel({
 }) {
   const { t } = useTranslation("settings");
   const discovery = useRedmineDiscoveryQuery(workspaceId, connection.id, true);
+  const projects = useProjectsQuery(workspaceId);
   const replace = useReplaceRedmineServiceCredentialMutation(workspaceId, connection.id);
   const lifecycle = useSetRedmineLifecycleMutation(workspaceId, connection.id);
   const [apiKey, setApiKey] = useState("");
+  const [reconciliationQueue, setReconciliationQueue] = useState<
+    readonly RedmineReconciliationQueueItem[] | null
+  >(null);
+  const availableBindings = connection.bindings.filter((binding) => !binding.releasePending);
   const canActivate = Boolean(
-    connection.bindings.length > 0 && connection.providerMaps?.timeActivityId,
+    availableBindings.length > 0 && connection.providerMaps?.timeActivityId,
   );
 
   return (
@@ -482,10 +492,33 @@ function ConnectedOwnerPanel({
           <label className="block text-sm font-medium text-foreground">
             {t("redmineLifecycleControl")}
             <select
-              value={connection.lifecycle}
-              onChange={(event) =>
-                lifecycle.mutate(event.target.value as "active" | "paused" | "disabled")
-              }
+              value={reconciliationQueue ? "draft" : connection.lifecycle}
+              onChange={(event) => {
+                const next = event.target.value as "active" | "paused" | "disabled";
+                if (next === "active" && connection.lifecycle === "draft") {
+                  if (!canActivate) return;
+                  setReconciliationQueue(
+                    Object.freeze(
+                      availableBindings.map((binding) =>
+                        Object.freeze({
+                          bindingId: binding.id,
+                          projectId: binding.projectId,
+                          remoteProjectId: binding.remoteProjectId,
+                          projectName:
+                            projects.data?.find((project) => project.id === binding.projectId)
+                              ?.name ?? binding.projectId,
+                          remoteProjectName:
+                            discovery.data?.projects.find(
+                              (project) => project.id === binding.remoteProjectId,
+                            )?.name ?? binding.remoteProjectId,
+                        }),
+                      ),
+                    ),
+                  );
+                  return;
+                }
+                lifecycle.mutate(next);
+              }}
               disabled={lifecycle.isPending}
               className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2"
             >
@@ -514,6 +547,14 @@ function ConnectedOwnerPanel({
           workspaceId={workspaceId}
           connection={connection}
           discovery={discovery.data}
+        />
+      )}
+      {reconciliationQueue && (
+        <RedmineReconciliationModal
+          workspaceId={workspaceId}
+          connectionId={connection.id}
+          queue={reconciliationQueue}
+          onClose={() => setReconciliationQueue(null)}
         />
       )}
     </div>

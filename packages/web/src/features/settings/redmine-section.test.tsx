@@ -17,6 +17,9 @@ import {
 } from "./use-redmine-integration";
 import { RedmineSection } from "./redmine-section";
 
+const modalRender = vi.hoisted(() => vi.fn());
+vi.mock("./redmine-reconciliation-modal", () => ({ RedmineReconciliationModal: (props: unknown) => { modalRender(props); return <div data-testid="redmine-reconciliation-modal" />; } }));
+
 vi.mock("./use-redmine-integration", () => ({
   useBindRedmineProjectMutation: vi.fn(),
   useClearRedmineCredentialMutation: vi.fn(),
@@ -632,6 +635,31 @@ describe("RedmineSection", () => {
     });
 
     expect(lifecycleMutate).toHaveBeenCalledWith("paused");
+  });
+
+  it("queues draft activation bindings in server order while paused activation stays direct", () => {
+    const binding = { id: "99999999-9999-4999-8999-999999999999", projectId: PROJECT_ID, remoteProjectId: "remote-project", readMap: {}, writeMap: {}, timeActivityId: "1", lifecycle: "draft" as const, lifecycleEpoch: 0, commentCaptureEnabled: false, commentDispatchEnabled: false, releasePending: false };
+    const releasing = { ...binding, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", releasePending: true };
+    const second = { ...binding, id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", projectId: "44444444-4444-4444-8444-444444444444", remoteProjectId: "remote-2" };
+    const connection = { ...healthyConnection, lifecycle: "draft" as const, providerMaps: { readMap: null, writeMap: null, priorityReadMap: null, priorityWriteMap: null, timeActivityId: "1" }, bindings: [binding, releasing, second] };
+    vi.mocked(useRedmineConnectionQuery).mockReturnValue({ data: connection, isLoading: false, error: null } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
+    vi.mocked(useProjectsQuery).mockReturnValue({ data: [{ id: PROJECT_ID, key: "KAN", name: "Kanon One", description: null }], isLoading: false, error: null } as unknown as ReturnType<typeof useProjectsQuery>);
+    vi.mocked(useRedmineDiscoveryQuery).mockReturnValue({ data: { statuses: [], priorities: [], projects: [{ id: "remote-project", name: "Redmine One" }], timeEntryActivities: [] }, isLoading: false, isFetching: false, error: null, refetch: vi.fn() } as unknown as ReturnType<typeof useRedmineDiscoveryQuery>);
+    const view = render(<RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />);
+    const select = screen.getByLabelText("Connection lifecycle") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "active" } });
+    expect(lifecycleMutate).not.toHaveBeenCalled();
+    expect(select.value).toBe("draft");
+    const props = modalRender.mock.lastCall?.[0] as { queue: Array<Record<string, string>> };
+    expect(props.queue).toEqual([
+      expect.objectContaining({ bindingId: binding.id, projectName: "Kanon One", remoteProjectName: "Redmine One" }),
+      expect.objectContaining({ bindingId: second.id, projectName: second.projectId, remoteProjectName: second.remoteProjectId }),
+    ]);
+    view.unmount();
+    vi.mocked(useRedmineConnectionQuery).mockReturnValue({ data: { ...connection, lifecycle: "paused" }, isLoading: false, error: null } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
+    render(<RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />);
+    fireEvent.change(screen.getByLabelText("Connection lifecycle"), { target: { value: "active" } });
+    expect(lifecycleMutate).toHaveBeenCalledWith("active");
   });
 
   it("replaces stale outbound priority mappings with discovered priorities", () => {

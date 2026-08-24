@@ -170,6 +170,21 @@
   "redmineDisconnectedBadge": "Not connected",
   "redmineProjectsMapped_one": "{{count}} project mapped",
   "redmineProjectsMapped_other": "{{count}} projects mapped",
+  "redmineReconciliation": {
+    "title": "Prepare Redmine synchronization",
+    "projectProgress": "Project {{current}} of {{total}}",
+    "chooseMode": "Choose how to start",
+    "full": "Import existing issues",
+    "futureOnly": "Only sync future changes",
+    "start": "Start preview",
+    "continue": "Continue preview",
+    "counts": "Scanned {{scanned}} · Remaining {{remaining}} · Eligible {{eligible}} · Private {{private}} · Linked {{linked}}",
+    "mappingBlocked": "Complete the missing status, priority, or assignee mappings before continuing.",
+    "reviewRequired": "{{count}} issues require review before activation.",
+    "ready": "This project is ready for activation.",
+    "blocked": "Preview is blocked until the connection configuration is corrected.",
+    "restart": "Restart preview"
+  },
   "redmineLifecycle": {
     "draft": "Draft",
     "active": "Active",
