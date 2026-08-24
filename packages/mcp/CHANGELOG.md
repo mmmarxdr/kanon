@@ -1,5 +1,11 @@
 # Changelog — @kanon/mcp
 
+## v0.14.0 (2026-08-21)
+
+- Recovers interrupted automatic work captures after MCP restarts through a durable local journal and fenced replay.
+- Retries capture lifecycle actions safely after response loss or transient API failures while remaining compatible with older servers.
+- Coordinates capture ownership across MCP and Web clients so tabs and processes cannot stop one another's active work.
+
 ## v0.13.0 (2026-08-06)
 
 - Adds native Codex CLI setup with TOML MCP config, a `kanon.toml` agent, and shared skills.

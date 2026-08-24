@@ -51,8 +51,12 @@ vi.mock("./service.js", () => ({
   getActiveWorkers: vi.fn(),
   getActiveWorkersForIssues: vi.fn(),
   recordInterruption: vi.fn(),
-  drainTransitionLifecycleEffects: vi.fn().mockResolvedValue(undefined),
-  TRANSITION_EFFECT_RECOVERY_INTERVAL_MS: 30_000,
+}));
+
+vi.mock("../../services/event-bus/outbox.js", () => ({
+  startDomainEventOutboxRecovery: vi.fn(() => ({
+    stop: vi.fn().mockResolvedValue(undefined),
+  })),
 }));
 
 const CLEANUP_INTERVAL_MS = 60_000;

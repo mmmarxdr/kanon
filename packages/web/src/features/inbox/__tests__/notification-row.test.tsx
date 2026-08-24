@@ -53,6 +53,24 @@ const NOTIF_READ: NotificationDashboardItem = {
   createdAt: "2026-06-02T10:00:00.000Z",
 };
 
+const CAPTURE_FAILURE = {
+  id: "notif-capture-failure",
+  kind: "work_capture_failure",
+  issueId: "issue-uuid-243",
+  actorId: null,
+  mentionId: null,
+  payload: {
+    issueKey: "KAN-243",
+    stage: "effect_apply",
+    code: "WORK_CAPTURE_RETRYABLE",
+    message: "Work capture was delayed. Kanon retries automatically.",
+    details: { retryable: true, effectKind: "activity" },
+  },
+  read: false,
+  via: "codex",
+  createdAt: "2026-08-19T14:00:00.000Z",
+} as NotificationDashboardItem;
+
 // ─── NotificationRow unit tests ───────────────────────────────────────────────
 
 describe("NotificationRow", () => {
@@ -87,7 +105,7 @@ describe("NotificationRow", () => {
 
   it("data-read attribute reflects notification.read value", () => {
     const { rerender } = render(
-      <NotificationRow notification={NOTIF_UNREAD} onMarkRead={vi.fn()} />,
+      <NotificationRow notification={NOTIF_UNREAD} onMarkRead={vi.fn()} />
     );
     const row = screen.getByTestId("notification-row");
     expect(row.getAttribute("data-read")).toBe("false");
@@ -99,11 +117,7 @@ describe("NotificationRow", () => {
   it("isMarkingRead=true: button is disabled and does not fire onMarkRead on click", () => {
     const onMarkRead = vi.fn();
     render(
-      <NotificationRow
-        notification={NOTIF_UNREAD}
-        onMarkRead={onMarkRead}
-        isMarkingRead={true}
-      />,
+      <NotificationRow notification={NOTIF_UNREAD} onMarkRead={onMarkRead} isMarkingRead={true} />
     );
 
     const btn = screen.getByTestId("mark-read-btn") as HTMLButtonElement;
@@ -117,11 +131,7 @@ describe("NotificationRow", () => {
   it("isMarkingRead=false (default): button is enabled and fires onMarkRead on click", () => {
     const onMarkRead = vi.fn();
     render(
-      <NotificationRow
-        notification={NOTIF_UNREAD}
-        onMarkRead={onMarkRead}
-        isMarkingRead={false}
-      />,
+      <NotificationRow notification={NOTIF_UNREAD} onMarkRead={onMarkRead} isMarkingRead={false} />
     );
 
     const btn = screen.getByTestId("mark-read-btn") as HTMLButtonElement;
@@ -130,6 +140,36 @@ describe("NotificationRow", () => {
     fireEvent.click(btn);
     expect(onMarkRead).toHaveBeenCalledOnce();
     expect(onMarkRead).toHaveBeenCalledWith("notif-1");
+  });
+
+  it("renders localized safe work-capture copy and ignores the persisted server message", () => {
+    const { container } = render(
+      <NotificationRow notification={CAPTURE_FAILURE} onMarkRead={vi.fn()} />
+    );
+
+    expect(screen.getByText("Work capture delayed for KAN-243")).toBeTruthy();
+    expect(container.textContent).not.toContain(
+      "Work capture was delayed. Kanon retries automatically."
+    );
+    expect(container.textContent).not.toContain("effect_apply");
+    expect(container.textContent).not.toContain("WORK_CAPTURE_RETRYABLE");
+  });
+
+  it("uses a generic localized fallback for malformed failure payloads without rendering raw text", () => {
+    const rawMarker = "KAN243_RAW_CAPTURE_EFFECT_MARKER";
+    const malformed = {
+      ...CAPTURE_FAILURE,
+      payload: {
+        issueKey: "KAN-243",
+        message: rawMarker,
+        epoch: "11111111-1111-4111-8111-111111111111",
+      },
+    } as NotificationDashboardItem;
+    const { container } = render(<NotificationRow notification={malformed} onMarkRead={vi.fn()} />);
+
+    expect(screen.getByText("Notification")).toBeTruthy();
+    expect(container.textContent).not.toContain(rawMarker);
+    expect(container.textContent).not.toContain("11111111-1111-4111-8111-111111111111");
   });
 });
 
@@ -179,19 +219,13 @@ const DASHBOARD_EMPTY = {
   unreadCount: 0,
 };
 
-function createWrapper(
-  dashboardData: unknown,
-  notificationsData: NotificationDashboardItem[],
-) {
+function createWrapper(dashboardData: unknown, notificationsData: NotificationDashboardItem[]) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   queryClient.setQueryData(["dashboard", "detail", "ws-test-123"], dashboardData);
   // Seed notifications query (notificationKeys.list("ws-test-123"))
-  queryClient.setQueryData(
-    ["notifications", "list", "ws-test-123"],
-    notificationsData,
-  );
+  queryClient.setQueryData(["notifications", "list", "ws-test-123"], notificationsData);
   // Sync the module-level mock so useNotificationsQuery returns the same data.
   // (InboxView reads from the mock, not directly from the cache.)
   mockNotificationsQueryResult.data = notificationsData;

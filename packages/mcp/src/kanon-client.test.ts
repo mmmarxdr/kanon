@@ -103,10 +103,7 @@ describe("KanonClient.createProject", () => {
   });
 
   it("throws KanonApiError with conflict details on 409", async () => {
-    const fetchMock = mockFetch(
-      { code: "CONFLICT", message: "Key already exists" },
-      409,
-    );
+    const fetchMock = mockFetch({ code: "CONFLICT", message: "Key already exists" }, 409);
     vi.stubGlobal("fetch", fetchMock);
 
     try {
@@ -137,10 +134,7 @@ describe("KanonClient.updateProject", () => {
   });
 
   it("throws KanonApiError on 404", async () => {
-    const fetchMock = mockFetch(
-      { code: "NOT_FOUND", message: "Project not found" },
-      404,
-    );
+    const fetchMock = mockFetch({ code: "NOT_FOUND", message: "Project not found" }, 404);
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(client.updateProject("NOPE", { name: "X" })).rejects.toThrow(KanonApiError);
@@ -152,7 +146,13 @@ describe("KanonClient.updateProject", () => {
 describe("KanonClient.listCycles", () => {
   it("calls GET /api/projects/:key/cycles", async () => {
     const cycles = [
-      { id: "c1", name: "Sprint 1", state: "active", startDate: "2026-01-01", endDate: "2026-01-14" },
+      {
+        id: "c1",
+        name: "Sprint 1",
+        state: "active",
+        startDate: "2026-01-01",
+        endDate: "2026-01-14",
+      },
     ];
     const fetchMock = mockFetch(cycles);
     vi.stubGlobal("fetch", fetchMock);
@@ -185,8 +185,11 @@ describe("KanonClient.getCycle", () => {
 describe("KanonClient.createCycle", () => {
   it("calls POST /api/projects/:key/cycles with body", async () => {
     const created = {
-      id: "c1", name: "Sprint 1", state: "upcoming",
-      startDate: "2026-01-01T00:00:00.000Z", endDate: "2026-01-14T00:00:00.000Z",
+      id: "c1",
+      name: "Sprint 1",
+      state: "upcoming",
+      startDate: "2026-01-01T00:00:00.000Z",
+      endDate: "2026-01-14T00:00:00.000Z",
     };
     const fetchMock = mockFetch(created, 201);
     vi.stubGlobal("fetch", fetchMock);
@@ -281,6 +284,139 @@ describe("KanonClient.batchTransitionByKeys (D9)", () => {
   });
 });
 
+describe("KanonClient versioned work-capture adapter", () => {
+  const captureIntent = {
+    epoch: "550e8400-e29b-41d4-a716-446655440000",
+    leaseGeneration: 3,
+    state: "capturing",
+  };
+  const command = {
+    commandId: "550e8400-e29b-41d4-a716-446655440001",
+    epoch: captureIntent.epoch,
+    leaseGeneration: captureIntent.leaseGeneration,
+  };
+  const ownerCommand = {
+    ...command,
+    ownerId: "550e8400-e29b-41d4-a716-446655440002",
+  };
+  const accepted = {
+    ok: true,
+    commandId: command.commandId,
+    deliveryStatus: "pending",
+    captureIntent,
+  };
+
+  it("returns the capture snapshot from startWork", async () => {
+    const response = {
+      session: { id: "session-1" },
+      warnings: [],
+      autoAssigned: false,
+      captureIntent,
+    };
+    vi.stubGlobal("fetch", mockFetch(response, 201));
+
+    await expect(client.startWork("KAN-1", "mcp")).resolves.toEqual(response);
+  });
+
+  it("normalizes captureIntent omitted by a preceding API on legacy calls", async () => {
+    const legacyStart = { session: { id: "session-1" }, warnings: [], autoAssigned: false };
+    vi.stubGlobal("fetch", mockFetch(legacyStart, 201));
+    await expect(client.startWork("KAN-1", "mcp")).resolves.toEqual({
+      ...legacyStart,
+      captureIntent: null,
+    });
+
+    vi.stubGlobal("fetch", mockFetch({ ok: true }));
+    await expect(client.heartbeat("KAN-1")).resolves.toEqual({
+      ok: true,
+      captureIntent: null,
+    });
+  });
+
+  it("keeps legacy heartbeat bodyless and sends the full durable command when supplied", async () => {
+    const fetchMock = mockFetch(accepted, 202);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(client.heartbeat("KAN-1", command)).resolves.toEqual(accepted);
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/api/issues/KAN-1/work-sessions/heartbeat`);
+    expect(options.method).toBe("POST");
+    expect(JSON.parse(options.body as string)).toEqual(command);
+
+    const legacyFetch = mockFetch({ ok: true, captureIntent });
+    vi.stubGlobal("fetch", legacyFetch);
+    await client.heartbeat("KAN-1");
+    expect((legacyFetch.mock.calls[0] as [string, RequestInit])[1].body).toBeUndefined();
+  });
+
+  it("sends the complete owner-scoped command unchanged", async () => {
+    const fetchMock = mockFetch(accepted, 202);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await client.heartbeat("KAN-1", ownerCommand);
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(options.body as string)).toEqual(ownerCommand);
+  });
+
+  it("falls back visibly to the legacy command on an old API validation response", async () => {
+    const legacyAccepted = { ...accepted, commandId: ownerCommand.commandId };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        json: () => Promise.resolve({ code: "VALIDATION_ERROR" }),
+        text: () =>
+          Promise.resolve(JSON.stringify({ code: "VALIDATION_ERROR", message: "Unknown ownerId" })),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 202,
+        json: () => Promise.resolve(legacyAccepted),
+        text: () => Promise.resolve(JSON.stringify(legacyAccepted)),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(client.heartbeat("KAN-1", ownerCommand)).resolves.toEqual(legacyAccepted);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string)).toEqual(
+      ownerCommand
+    );
+    expect(JSON.parse((fetchMock.mock.calls[1]![1] as RequestInit).body as string)).toEqual(
+      command
+    );
+  });
+
+  it.each([
+    ["releaseWork", "release"],
+    ["closeWork", "close"],
+  ] as const)("%s accepts 202 and validates the strict response", async (method, route) => {
+    const fetchMock = mockFetch(accepted, 202);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(client[method]("KAN-1", command)).resolves.toEqual(accepted);
+
+    const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/api/issues/KAN-1/work-captures/${route}`);
+    expect(JSON.parse(options.body as string)).toEqual(command);
+  });
+
+  it("rejects an effect response with unknown fields", async () => {
+    vi.stubGlobal("fetch", mockFetch({ ...accepted, intentId: "private" }, 202));
+
+    await expect(client.releaseWork("KAN-1", command)).rejects.toThrow();
+  });
+
+  it("keeps durable command responses strict during staggered upgrades", async () => {
+    const { captureIntent: _captureIntent, ...legacyShape } = accepted;
+    vi.stubGlobal("fetch", mockFetch(legacyShape, 202));
+
+    await expect(client.releaseWork("KAN-1", command)).rejects.toThrow();
+  });
+});
+
 // ─── D5: createCycle passes attachIssueKeys in body ─────────────────────────
 
 describe("KanonClient.createCycle — attachIssueKeys (D5)", () => {
@@ -331,7 +467,10 @@ describe("KanonClient.getCycle — includeAllScopeEvents (D7)", () => {
 
 describe("KanonClient.listIssues — keys[] filter (D3)", () => {
   it("appends keys as CSV query param when provided", async () => {
-    const issues = [{ id: "i1", key: "KAN-1" }, { id: "i2", key: "KAN-2" }];
+    const issues = [
+      { id: "i1", key: "KAN-1" },
+      { id: "i2", key: "KAN-2" },
+    ];
     const fetchMock = mockFetch(issues);
     vi.stubGlobal("fetch", fetchMock);
 
@@ -407,9 +546,7 @@ describe("KanonClient 204 No Content", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(
-      client.deleteRoadmapItem("KAN", "abc-123"),
-    ).resolves.toBeUndefined();
+    await expect(client.deleteRoadmapItem("KAN", "abc-123")).resolves.toBeUndefined();
     expect(jsonSpy).not.toHaveBeenCalled();
   });
 
@@ -423,9 +560,7 @@ describe("KanonClient 204 No Content", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(
-      client.removeDependency("KAN", "src-1", "dep-1"),
-    ).resolves.toBeUndefined();
+    await expect(client.removeDependency("KAN", "src-1", "dep-1")).resolves.toBeUndefined();
     expect(jsonSpy).not.toHaveBeenCalled();
   });
 });
@@ -488,9 +623,9 @@ describe("KanonClient 401-retry (R1)", () => {
   // R1a: 401 → exchange(200) → retry(200) → resolves; exchange called once; retry uses new token
   it("R1a: 401 → successful exchange → retry with new token → resolves", async () => {
     const fetchMock = sequencedFetch([
-      { ok: false, status: 401, body: { code: "TOKEN_EXPIRED" } },           // original request 401
-      { ok: true,  status: 200, body: EXCHANGE_RESPONSE },                   // exchange succeeds
-      { ok: true,  status: 200, body: [{ id: "ws1", name: "Acme" }] },       // retry succeeds
+      { ok: false, status: 401, body: { code: "TOKEN_EXPIRED" } }, // original request 401
+      { ok: true, status: 200, body: EXCHANGE_RESPONSE }, // exchange succeeds
+      { ok: true, status: 200, body: [{ id: "ws1", name: "Acme" }] }, // retry succeeds
     ]);
     vi.stubGlobal("fetch", fetchMock);
 
@@ -519,7 +654,9 @@ describe("KanonClient 401-retry (R1)", () => {
     await expect(refreshClient.listWorkspaces()).rejects.toMatchObject({
       code: "REFRESH_FAILED",
     });
-    await expect(refreshClient.listWorkspaces().catch(e => e)).resolves.toBeInstanceOf(McpAuthError);
+    await expect(refreshClient.listWorkspaces().catch((e) => e)).resolves.toBeInstanceOf(
+      McpAuthError
+    );
 
     // Only 2 fetch calls total (original + exchange); no retry of original
     expect(fetchMock).toHaveBeenCalledTimes(4); // 2 calls per listWorkspaces above
@@ -547,12 +684,12 @@ describe("KanonClient 401-retry (R1)", () => {
   it("R1d: 401 → exchange succeeds → retry also 401 → McpAuthError; exchange called once", async () => {
     const fetchMock = sequencedFetch([
       { ok: false, status: 401, body: { code: "TOKEN_EXPIRED" } },
-      { ok: true,  status: 200, body: EXCHANGE_RESPONSE },
+      { ok: true, status: 200, body: EXCHANGE_RESPONSE },
       { ok: false, status: 401, body: { code: "TOKEN_EXPIRED" } }, // retry also 401
     ]);
     vi.stubGlobal("fetch", fetchMock);
 
-    const err = await refreshClient.listWorkspaces().catch(e => e);
+    const err = await refreshClient.listWorkspaces().catch((e) => e);
     expect(err).toBeInstanceOf(McpAuthError);
     expect(err.code).toBe("REFRESH_FAILED");
 
@@ -570,7 +707,7 @@ describe("KanonClient 401-retry (R1)", () => {
     ]);
     vi.stubGlobal("fetch", fetchMock);
 
-    const err = await refreshClient.listWorkspaces().catch(e => e);
+    const err = await refreshClient.listWorkspaces().catch((e) => e);
     expect(err).toBeInstanceOf(McpAuthError);
     expect(err.code).toBe("REFRESH_FAILED");
     expect(fetchMock).toHaveBeenCalledTimes(2); // original + exchange only
@@ -589,7 +726,7 @@ describe("KanonClient 401-retry (R1)", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const err = await noRefreshClient.listWorkspaces().catch(e => e);
+    const err = await noRefreshClient.listWorkspaces().catch((e) => e);
     expect(err).toBeInstanceOf(KanonApiError);
     expect(err).not.toBeInstanceOf(McpAuthError);
     expect(fetchMock).toHaveBeenCalledTimes(1); // no exchange call
@@ -623,7 +760,8 @@ describe("KanonClient single-flight exchange guard (R2)", () => {
           ok: true,
           status: 200,
           json: () => Promise.resolve({ accessToken: NEW_ACCESS_TOKEN, expiresIn: 3600 }),
-          text: () => Promise.resolve(JSON.stringify({ accessToken: NEW_ACCESS_TOKEN, expiresIn: 3600 })),
+          text: () =>
+            Promise.resolve(JSON.stringify({ accessToken: NEW_ACCESS_TOKEN, expiresIn: 3600 })),
         });
       }
       // All original requests 401
@@ -657,7 +795,7 @@ describe("KanonClient single-flight exchange guard (R2)", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const results = await Promise.all(
-      Array.from({ length: N }, () => refreshClient.listWorkspaces()),
+      Array.from({ length: N }, () => refreshClient.listWorkspaces())
     );
 
     expect(exchangeCallCount).toBe(1);
@@ -672,13 +810,15 @@ describe("KanonClient single-flight exchange guard (R2)", () => {
       if ((url as string).includes("/api/auth/exchange")) {
         exchangeCallCount++;
         return Promise.resolve({
-          ok: true, status: 200,
+          ok: true,
+          status: 200,
           json: () => Promise.resolve({ accessToken: NEW_ACCESS_TOKEN, expiresIn: 3600 }),
           text: () => Promise.resolve(""),
         });
       }
       return Promise.resolve({
-        ok: false, status: 401,
+        ok: false,
+        status: 401,
         json: () => Promise.resolve({ code: "TOKEN_EXPIRED" }),
         text: () => Promise.resolve(""),
       });
@@ -702,13 +842,15 @@ describe("KanonClient single-flight exchange guard (R2)", () => {
       if ((url as string).includes("/api/auth/exchange")) {
         exchangeCallCount++;
         return Promise.resolve({
-          ok: false, status: 401,
+          ok: false,
+          status: 401,
           json: () => Promise.resolve({ code: "REVOKED" }),
           text: () => Promise.resolve(""),
         });
       }
       return Promise.resolve({
-        ok: false, status: 401,
+        ok: false,
+        status: 401,
         json: () => Promise.resolve({ code: "TOKEN_EXPIRED" }),
         text: () => Promise.resolve(""),
       });
@@ -789,7 +931,11 @@ describe("KanonClient logging hygiene (W2)", () => {
 
 describe("KanonClient.reconcileTime (KAN-188)", () => {
   it("calls POST /api/issues/:key/reconcile-time with confirmedTotalHours", async () => {
-    const summary = { issueKey: "KAN-1", confirmedTotalHours: "5.00", timeConfirmedAt: "2026-07-06T00:00:00.000Z" };
+    const summary = {
+      issueKey: "KAN-1",
+      confirmedTotalHours: "5.00",
+      timeConfirmedAt: "2026-07-06T00:00:00.000Z",
+    };
     const fetchMock = mockFetch(summary);
     vi.stubGlobal("fetch", fetchMock);
 
@@ -803,7 +949,11 @@ describe("KanonClient.reconcileTime (KAN-188)", () => {
   });
 
   it("calls POST /api/issues/:key/reconcile-time with addHours", async () => {
-    const summary = { issueKey: "KAN-1", confirmedTotalHours: "8.00", timeConfirmedAt: "2026-07-06T00:00:00.000Z" };
+    const summary = {
+      issueKey: "KAN-1",
+      confirmedTotalHours: "8.00",
+      timeConfirmedAt: "2026-07-06T00:00:00.000Z",
+    };
     const fetchMock = mockFetch(summary);
     vi.stubGlobal("fetch", fetchMock);
 
@@ -828,8 +978,12 @@ describe("KanonClient.reconcileTime (KAN-188)", () => {
 
   it("throws KanonApiError with details on a 409 conflict", async () => {
     const fetchMock = mockFetch(
-      { code: "RECONCILE_NO_ANCHOR", message: "No approved anchor entry", details: { issueKey: "KAN-1" } },
-      409,
+      {
+        code: "RECONCILE_NO_ANCHOR",
+        message: "No approved anchor entry",
+        details: { issueKey: "KAN-1" },
+      },
+      409
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -844,8 +998,11 @@ describe("KanonClient.reconcileTime (KAN-188)", () => {
   // needs to propagate the server's rejection faithfully.
   it("propagates a 400 as KanonApiError when both confirmedTotalHours and addHours are passed", async () => {
     const fetchMock = mockFetch(
-      { code: "RECONCILE_MUTUALLY_EXCLUSIVE", message: "Provide either addHours or confirmedTotalHours, not both" },
-      400,
+      {
+        code: "RECONCILE_MUTUALLY_EXCLUSIVE",
+        message: "Provide either addHours or confirmedTotalHours, not both",
+      },
+      400
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -870,10 +1027,11 @@ describe("KanonApiError — details plumbing (KAN-188)", () => {
     const fetchMock = mockFetch(
       {
         code: "RECONCILIATION_REQUIRED",
-        message: "Unconfirmed captured time must be reconciled before this issue can be marked done",
+        message:
+          "Unconfirmed captured time must be reconciled before this issue can be marked done",
         details: { totalHours: 5, issueKey: "KAN-1" },
       },
-      409,
+      409
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -961,7 +1119,7 @@ describe("KanonClient triage methods", () => {
     await client.previewIssueTriage(
       "KAN-42",
       { phase: "prepare", aiIntent: "none" },
-      { timeoutMs: 2900, correlationId },
+      { timeoutMs: 2900, correlationId }
     );
 
     const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -1012,7 +1170,7 @@ describe("KanonClient triage methods", () => {
 
     await client.getTriageProposal(id, "compact");
     expect((fetchMock.mock.calls[0] as [string])[0]).toContain(
-      `/api/triage-proposals/${id}?format=compact`,
+      `/api/triage-proposals/${id}?format=compact`
     );
 
     await client.dismissTriageProposal(id, { reason: "duplicate" }, { timeoutMs: 2000 });
@@ -1031,13 +1189,11 @@ describe("KanonClient triage methods", () => {
         correlationId,
         apiContractVersion: "triage-api.v1",
       },
-      409,
+      409
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const err = await client
-      .previewIssueTriage("KAN-42", { phase: "prepare" })
-      .catch((e) => e);
+    const err = await client.previewIssueTriage("KAN-42", { phase: "prepare" }).catch((e) => e);
     expect(err).toBeInstanceOf(KanonApiError);
     expect(err.category).toBe("source_conflict");
     expect(err.retry).toBe("rerun_preview");
@@ -1051,7 +1207,7 @@ describe("KanonClient triage methods", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
-      refreshClient.persistTriageProposal("KAN-42", { preview: {}, previewSeal: "s" }),
+      refreshClient.persistTriageProposal("KAN-42", { preview: {}, previewSeal: "s" })
     ).rejects.toBeInstanceOf(KanonApiError);
     expect(fetchMock).toHaveBeenCalledOnce();
     delete process.env["KANON_REFRESH_TOKEN"];
@@ -1072,7 +1228,7 @@ describe("KanonClient triage methods", () => {
     await client.listTriageProposals(
       "KAN",
       { cursor: "opaque", limit: 20 },
-      { correlationId, timeoutMs: 2900 },
+      { correlationId, timeoutMs: 2900 }
     );
     const [, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
     const headers = opts.headers as Record<string, string>;
@@ -1082,5 +1238,54 @@ describe("KanonClient triage methods", () => {
     expect(headers["X-Model"]).toBeUndefined();
     // Cursor stays in the query string (API wire), never as a metric/log label here.
     expect((fetchMock.mock.calls[0] as [string])[0]).toContain("cursor=");
+  });
+});
+
+describe("KanonClient capture hydration", () => {
+  it("lists one strict hydration page with workspace, cursor, and limit", async () => {
+    const page = {
+      principalId: "11111111-1111-4111-8111-111111111111",
+      workspaceId: "22222222-2222-4222-8222-222222222222",
+      intents: [
+        {
+          issueKey: "KAN-42",
+          epoch: "33333333-3333-4333-8333-333333333333",
+          leaseGeneration: 1,
+          state: "capturing",
+        },
+      ],
+      nextCursor: "44444444-4444-4444-8444-444444444444",
+    };
+    const fetchMock = mockFetch(page);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      client.listWorkCaptures(page.workspaceId, "55555555-5555-4555-8555-555555555555", 100)
+    ).resolves.toEqual(page);
+    expect((fetchMock.mock.calls[0] as [string])[0]).toBe(
+      `${BASE_URL}/api/me/work-captures?workspaceId=${page.workspaceId}&cursor=55555555-5555-4555-8555-555555555555&limit=100`
+    );
+  });
+
+  it("rejects hydration pages that expose internal intent fields", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetch({
+        principalId: "11111111-1111-4111-8111-111111111111",
+        workspaceId: "22222222-2222-4222-8222-222222222222",
+        intents: [
+          {
+            issueKey: "KAN-42",
+            epoch: "33333333-3333-4333-8333-333333333333",
+            leaseGeneration: 1,
+            state: "capturing",
+            intentId: "private",
+          },
+        ],
+        nextCursor: null,
+      })
+    );
+
+    await expect(client.listWorkCaptures("22222222-2222-4222-8222-222222222222")).rejects.toThrow();
   });
 });

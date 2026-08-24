@@ -346,11 +346,10 @@ describe("envSchema — audit operations", () => {
 });
 
 describe("envSchema — privacy quarantine keyring", () => {
-  const base = {
-    DATABASE_URL: "postgresql://user:pass@localhost:5432/kanon",
-    JWT_SECRET: "a".repeat(16),
-    JWT_REFRESH_SECRET: "b".repeat(16),
-  };
+  it("allows production startup without an unused keyring", () => {
+    const productionWithoutKeyring = { ...base, COOKIE_SECRET: "c".repeat(32), METRICS_TOKEN: "metrics-token", INTEGRATION_ENCRYPTION_KEY: Buffer.alloc(32, 3).toString("base64"), PRIVACY_OPERATOR_DATABASE_URL: "postgresql://privacy_operator:operator-password@localhost:5432/kanon" };
+    expect(envSchemaWithProductionChecks.safeParse(productionWithoutKeyring).success).toBe(true);
+  });
 
   it("accepts a current AES-256 key and retained historical key", () => {
     const current = Buffer.alloc(32, 1).toString("base64");

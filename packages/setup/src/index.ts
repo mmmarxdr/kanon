@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // ─── Kanon Setup ───────────────────────────────────────────────────────────────
 
+import { pathToFileURL } from "node:url";
 import { Command } from "commander";
 import chalk from "chalk";
 import { buildPlatformContext } from "./detect.js";
@@ -456,4 +457,6 @@ async function run(options: {
   console.log("");
 }
 
-program.parse();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  program.parse();
+}

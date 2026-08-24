@@ -6,7 +6,11 @@ import * as nodeFs from "node:fs";
 import { KanonClient } from "./kanon-client.js";
 import { isTriageToolsEnabled } from "./tools/triage.js";
 import { registerKanonTools } from "./register-tools.js";
-import { shutdownAllHeartbeats, wrapHandlerWithActivity } from "./heartbeat.js";
+import {
+  getToolActivityPolicy,
+  shutdownAllHeartbeats,
+  wrapHandlerWithActivity,
+} from "./heartbeat.js";
 import { startSseClient, stopSseClient } from "./sse-client.js";
 import {
   DEFERRED_TOOLS,
@@ -19,6 +23,7 @@ import { findKanonConfig } from "./kanon-binding.js";
 import type { KanonBinding } from "./kanon-binding.js";
 import type { InvalidBinding } from "./binding-resolver.js";
 import { resolveClientIdentity } from "./client-identity.js";
+import { recoverWorkCaptures } from "./capture-recovery.js";
 
 // ─── Env Validation (fail-fast) ────────────────────────────────────────────
 
@@ -76,7 +81,7 @@ const server = new McpServer(
   },
   {
     instructions: triageToolsEnabled ? SERVER_INSTRUCTIONS : LEGACY_SERVER_INSTRUCTIONS,
-  },
+  }
 );
 
 // ─── Activity seam ──────────────────────────────────────────────────────────
@@ -93,7 +98,12 @@ const server = new McpServer(
   (server as any).tool = (...args: any[]): any => {
     const last = args[args.length - 1];
     if (typeof last === "function") {
-      args[args.length - 1] = wrapHandlerWithActivity(last);
+      const toolName = typeof args[0] === "string" ? args[0] : "";
+      args[args.length - 1] = wrapHandlerWithActivity(
+        last,
+        undefined,
+        getToolActivityPolicy(toolName)
+      );
     }
     return origTool(...args);
   };
@@ -106,20 +116,38 @@ registerKanonTools(server, client, kanonBinding, triageToolsEnabled);
 // ─── Connect ────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
+  const workspaceId =
+    process.env["KANON_WORKSPACE_ID"] ??
+    (kanonBinding && !("invalid" in kanonBinding) ? kanonBinding.workspaceId : undefined);
+  if (workspaceId) {
+    try {
+      await recoverWorkCaptures({
+        client,
+        apiUrl: KANON_API_URL!,
+        apiKey: KANON_API_KEY!,
+        workspaceId,
+      });
+    } catch (error) {
+      console.error(
+        "[capture-recovery] Startup recovery failed; capture recovery is degraded",
+        error
+      );
+    }
+  } else {
+    console.error("[capture-recovery] Workspace unavailable; capture hydration is disabled");
+  }
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // _registeredTools is private SDK state — banner-only observability, degrade to "?" if it moves.
   const toolCount =
     Object.keys(
-      (server as unknown as { _registeredTools?: Record<string, unknown> })
-        ._registeredTools ?? {},
+      (server as unknown as { _registeredTools?: Record<string, unknown> })._registeredTools ?? {}
     ).length || "?";
   console.error(
-    `Kanon MCP ${MCP_VERSION} — ${toolCount} tools registered, ${runtimeDeferredTools.length} declared deferred via instructions`,
+    `Kanon MCP ${MCP_VERSION} — ${toolCount} tools registered, ${runtimeDeferredTools.length} declared deferred via instructions`
   );
 
   // Start background SSE client if workspace ID is configured
-  const workspaceId = process.env["KANON_WORKSPACE_ID"];
   if (workspaceId && KANON_API_URL && KANON_API_KEY) {
     startSseClient(KANON_API_URL, workspaceId, KANON_API_KEY);
     console.error(`SSE client started for workspace ${workspaceId}`);
