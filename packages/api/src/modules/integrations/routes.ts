@@ -366,7 +366,7 @@ export default async function integrationRoutes(fastify: FastifyInstance, option
     async (request) => {
       const scope = { connectionId: request.params.id, bindingId: request.params.bindingId, userId: request.user.userId, workspaceId: request.params.wid, allowedProjectIds: scopedProjectIds(request.user.allowedProjectIds) };
       const result = await materializeRedmineReconciliationRecommendations({ connectionId: scope.connectionId, bindingId: scope.bindingId, userId: scope.userId, remoteIssueId: request.body.remoteIssueId, candidateIssueId: request.body.candidateIssueId }, reconciliationDependencies(options, scope));
-      return { ...result, recommendations: result.recommendations.map((item) => ({ ...item, decidedAt: item.decidedAt?.toISOString() ?? null })) };
+      return redmineReconciliationMaterializeResultSchema.parse({ ...result, recommendations: result.recommendations.map((item) => ({ ...item, decidedAt: item.decidedAt?.toISOString() ?? null })) });
     },
   );
 
@@ -376,7 +376,7 @@ export default async function integrationRoutes(fastify: FastifyInstance, option
     async (request) => {
       const scope = { connectionId: request.params.id, bindingId: request.params.bindingId, userId: request.user.userId, workspaceId: request.params.wid, allowedProjectIds: scopedProjectIds(request.user.allowedProjectIds) };
       const page = await reviewRedmineReconciliationPage({ connectionId: scope.connectionId, bindingId: scope.bindingId, userId: scope.userId }, { ...reconciliationDependencies(options, scope), ...request.body });
-      return { ...page, items: page.items.map((item) => ({ ...item, recommendations: item.recommendations.map((recommendation) => ({ ...recommendation, decidedAt: recommendation.decidedAt?.toISOString() ?? null })) })) };
+      return redmineReconciliationReviewPageResultSchema.parse({ ...page, items: page.items.map((item) => ({ ...item, recommendations: item.recommendations.map((recommendation) => ({ ...recommendation, decidedAt: recommendation.decidedAt?.toISOString() ?? null })) })) });
     },
   );
 
@@ -388,7 +388,7 @@ export default async function integrationRoutes(fastify: FastifyInstance, option
         { connectionId: request.params.id, bindingId: request.params.bindingId, userId: request.user.userId },
         { workspaceId: request.params.wid, allowedProjectIds: scopedProjectIds(request.user.allowedProjectIds), ...request.query },
       );
-      return { ...page, items: page.items.map((item) => ({ ...item, decidedAt: item.decidedAt?.toISOString() ?? null, createdAt: item.createdAt.toISOString(), updatedAt: item.updatedAt.toISOString() })) };
+      return redmineReconciliationRecommendationPageSchema.parse({ ...page, items: page.items.map((item) => ({ ...item, decidedAt: item.decidedAt?.toISOString() ?? null, createdAt: item.createdAt.toISOString(), updatedAt: item.updatedAt.toISOString() })) });
     },
   );
 

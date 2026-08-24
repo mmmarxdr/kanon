@@ -38,19 +38,19 @@ export function RedmineReconciliationModal({ workspaceId, connectionId, binding:
   const guardedClose = useCallback(() => { if (!busy && !inFlight.current) onClose(); }, [busy, onClose]);
   useEscapeKey(guardedClose);
   const backdropClose = useBackdropClose(guardedClose);
-  const begin = () => { if (busy || inFlight.current) return false; inFlight.current = true; return true; };
-  const finish = () => { inFlight.current = false; };
+  const begin = useCallback(() => { if (busy || inFlight.current) return false; inFlight.current = true; return true; }, [busy]);
+  const finish = useCallback(() => { inFlight.current = false; }, []);
   const failureFrom = (stage: RefreshFailure["stage"], error: unknown): RefreshFailure => {
     const failure = error as Error & { code?: string };
     return { stage, code: failure.code ?? "UNKNOWN", message: failure.message };
   };
-  const restartSession = async () => {
+  const restartSession = useCallback(async () => {
     if (!begin()) return;
     setCoordination({ kind: "restart", pending: true, error: null });
     try { await onRestartSession(); finish(); handoffStarted.current = false; lastOperation.current = null; setManual(null); dispatch({ type: "reset" }); setCoordination(null); }
     catch (error) { finish(); setCoordination({ kind: "restart", pending: false, error: failureFrom("activation", error).message }); }
-  };
-  const completeBinding = async (retry = false) => {
+  }, [begin, finish, onRestartSession]);
+  const completeBinding = useCallback(async (retry = false) => {
     if ((handoffStarted.current && !retry) || !begin()) return;
     handoffStarted.current = true; setCoordination({ kind: "handoff", pending: true, error: null });
     try { await onBindingComplete(); finish(); setCoordination(null); }
@@ -59,7 +59,7 @@ export function RedmineReconciliationModal({ workspaceId, connectionId, binding:
       if (RESTART_SESSION_CODES.has(failure.code)) { handoffStarted.current = false; setCoordination(null); void restartSession(); }
       else setCoordination({ kind: "handoff", pending: false, error: failure.message });
     }
-  };
+  }, [begin, finish, onBindingComplete, restartSession]);
 
   const runMaterialize = (target: MaterializeTarget, purpose: MaterializePurpose) => {
     if (!begin()) return;
@@ -139,7 +139,7 @@ export function RedmineReconciliationModal({ workspaceId, connectionId, binding:
   const choose = (mode: RedmineReconciliationPreviewMode) => dispatch({ type: "mode-selected", mode });
   const failure = state.failure;
   const progress = state.previewProgress;
-  useEffect(() => { if (state.phase === "complete" && !busy && !coordination) void completeBinding(); }, [state.phase, busy, coordination]);
+  useEffect(() => { if (state.phase === "complete" && !busy && !coordination) void completeBinding(); }, [state.phase, busy, coordination, completeBinding]);
 
   return (
     <FocusTrap focusTrapOptions={{ escapeDeactivates: false, allowOutsideClick: true, clickOutsideDeactivates: false, initialFocus: false }}>

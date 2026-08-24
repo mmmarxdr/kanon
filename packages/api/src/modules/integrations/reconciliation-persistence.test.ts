@@ -172,4 +172,19 @@ describe("integration reconciliation recommendation persistence", () => {
     await expect(prisma.integrationReconciliationRecommendation.findUniqueOrThrow({ where: { id } }))
       .resolves.toMatchObject({ decidedById: null, acceptedRefId: null });
   });
+
+  it("cleans recommendations before their restricted candidate issues", async () => {
+    const { binding, issues } = await fixture();
+    await insertRecommendation({
+      bindingId: binding.id,
+      candidateIssueId: issues[0]!.id,
+      remoteIssueId: "100",
+      remoteSourceVersion: "sha256:remote-v1",
+    });
+
+    await cleanDatabase();
+
+    await expect(prisma.integrationReconciliationRecommendation.count()).resolves.toBe(0);
+    await expect(prisma.issue.count()).resolves.toBe(0);
+  });
 });
