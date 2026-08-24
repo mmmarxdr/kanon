@@ -125,7 +125,7 @@ export interface SurfaceEvidence {
 }
 
 export interface SurfaceAuthorization {
-  source: "explicit" | "all" | "autodetect" | "prompt";
+  source: "explicit" | "all" | "autodetect" | "prompt" | "inventory";
   crossHost: "authorized" | "denied";
   bridge?: WslBridge;
 }
