@@ -1,4 +1,5 @@
 import { Prisma, PrismaClient } from "@prisma/client";
+import { redmineReconciliationRecommendationPageSchema } from "@kanon/shared";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "../../config/prisma.js";
 import {
@@ -63,6 +64,9 @@ async function fixture() {
       bootstrapCutoff: new Date("2026-08-04T12:00:00.000Z"),
       bootstrapPageToken: previewEvidence(),
     },
+  });
+  await prisma.integrationReconciliationDisposition.create({
+    data: { bindingId: binding.id, previewIdentity: PREVIEW_ID, remoteIssueId: "42", remoteSourceVersion: SOURCE },
   });
   const titles = ["Alpha sync issue", "Alpha sync", "sync issue", "unrelated"];
   const issues = await Promise.all(
@@ -282,6 +286,17 @@ describe("Redmine reconciliation recommendations", () => {
     expect(new Set([...first.items, ...second.items].map(({ id }) => id))).toHaveProperty("size", 3);
     expect([...first.items, ...second.items].map(({ id }) => id)).not.toContain(leaked.id);
   });
+  it("returns a non-empty strict public recommendation page without preview identity", async () => {
+    const context = await fixture();
+    await context.run();
+    const page = await listRedmineReconciliationRecommendations(context.request);
+    expect(page.items).toHaveLength(3);
+    expect(page.items[0]).not.toHaveProperty("previewIdentity");
+    expect(() => redmineReconciliationRecommendationPageSchema.parse({
+      ...page,
+      items: page.items.map((item) => ({ ...item, decidedAt: item.decidedAt?.toISOString() ?? null, createdAt: item.createdAt.toISOString(), updatedAt: item.updatedAt.toISOString() })),
+    })).not.toThrow();
+  });
   it("audits reject and reject-all idempotently without rewriting prior decisions", async () => {
     const context = await fixture();
     await context.run();
@@ -295,6 +310,20 @@ describe("Redmine reconciliation recommendations", () => {
     const all = await prisma.integrationReconciliationRecommendation.findMany({ where: { bindingId: context.binding.id } });
     expect(all).toHaveLength(3);
     expect(all.every(({ decisionState, decidedById, decidedAt: at }) => decisionState === "rejected" && decidedById === context.owner.id && at?.getTime() === decidedAt.getTime())).toBe(true);
+  });
+  it("settles an unmaterialized remote through reject-all without retaining provider content", async () => {
+    const context = await fixture();
+    await expect(context.decide({ kind: "reject-all" })).resolves.toMatchObject({ rejectedCount: 0 });
+    await expect(prisma.integrationReconciliationDisposition.findFirstOrThrow({ where: { bindingId: context.binding.id, previewIdentity: PREVIEW_ID, remoteIssueId: "42" } })).resolves.toMatchObject({ state: "import_as_new", decisionKind: "owner-reject-all", decidedById: context.owner.id, decidedAt });
+  });
+  it("preserves terminal disposition audit metadata and rejects conflicting terminal commands", async () => {
+    const context = await fixture();
+    await context.decide({ kind: "reject-all" });
+    const settled = await prisma.integrationReconciliationDisposition.findFirstOrThrow({ where: { bindingId: context.binding.id, previewIdentity: PREVIEW_ID, remoteIssueId: "42" } });
+    await expect(context.decide({ kind: "reject-all" })).resolves.toMatchObject({ replayed: true });
+    await expect(prisma.integrationReconciliationDisposition.findUniqueOrThrow({ where: { id: settled.id } })).resolves.toMatchObject({ state: "import_as_new", decisionKind: settled.decisionKind, decidedById: settled.decidedById, decidedAt: settled.decidedAt });
+    const manual = rankRedmineReconciliationCandidates({ id: "42", projectId: context.project.id, title: context.remote.title, description: context.remote.description, createdAt: context.remote.createdAt, mappedAssigneeId: context.remote.mappedAssigneeId, mappedState: context.remote.mappedState }, [context.issues[0]!])[0]!;
+    await expect(context.decide({ kind: "manual-link", candidateIssueId: context.issues[0]!.id, localFingerprint: manual.evidence.localFingerprint, remoteFingerprint: manual.evidence.remoteFingerprint })).rejects.toMatchObject({ statusCode: 409 });
   });
   it("accepts a suggestion atomically with baseline, replay guard, and alternative audits", async () => {
     const context = await fixture();

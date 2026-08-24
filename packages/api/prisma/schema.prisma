@@ -1626,6 +1626,7 @@ model ExternalRef {
 
 model IntegrationReconciliationRecommendation {
   id                  String                                 @id @default(uuid()) @db.Uuid
+  previewIdentity     String?                                @map("preview_identity") @db.Uuid
   remoteIssueId       String                                 @map("remote_issue_id")
   remoteSourceVersion String                                 @map("remote_source_version")
   score               Int
@@ -1649,10 +1650,11 @@ model IntegrationReconciliationRecommendation {
   acceptedRefId    String?                   @unique @map("accepted_ref_id") @db.Uuid
   acceptedRef      ExternalRef?              @relation(fields: [acceptedRefId], references: [id], onDelete: SetNull, map: "integration_reconciliation_accepted_ref_fkey")
 
-  @@unique([bindingId, remoteIssueId, remoteSourceVersion, candidateIssueId, scoringVersion, localFingerprint, remoteFingerprint], map: "uq_reconciliation_candidate_snapshot")
+  @@unique([bindingId, previewIdentity, remoteIssueId, remoteSourceVersion, candidateIssueId, scoringVersion, localFingerprint, remoteFingerprint], map: "uq_reconciliation_candidate_snapshot")
   // Accepted remote/local identity is one-to-one via partial unique indexes in the migration.
   @@index([bindingId, decisionState, score(sort: Desc), id(sort: Desc)], map: "integration_reconciliation_binding_state_score_id_idx")
   @@index([bindingId, remoteIssueId, score(sort: Desc), id(sort: Desc)], map: "integration_reconciliation_binding_remote_score_id_idx")
+  @@index([bindingId, previewIdentity, remoteIssueId], map: "integration_reconciliation_preview_remote_idx")
   @@map("integration_reconciliation_recommendations")
 }
 
@@ -1665,6 +1667,7 @@ model IntegrationReconciliationDisposition {
   decisionKind        String?                                   @map("decision_kind")
   decidedAt           DateTime?                                 @map("decided_at")
   decidedById         String?                                   @map("decided_by_id") @db.Uuid
+  acceptedRefId       String?                                   @map("accepted_ref_id") @db.Uuid
   createdAt           DateTime                                  @default(now()) @map("created_at")
   updatedAt           DateTime                                  @updatedAt @map("updated_at")
 

@@ -144,6 +144,13 @@ describe("integration reconciliation recommendation persistence", () => {
     })).resolves.toEqual(expect.any(String));
   });
 
+  it("keeps exact legacy null-preview snapshots unique", async () => {
+    const { binding, issues } = await fixture();
+    const exact = { bindingId: binding.id, candidateIssueId: issues[0]!.id, remoteIssueId: "100", remoteSourceVersion: "sha256:legacy" };
+    await insertRecommendation(exact);
+    await expect(insertRecommendation(exact)).rejects.toMatchObject({ code: "P2002" });
+  });
+
   it("retains decisions across actor/ref deletion and protects binding/candidate identity", async () => {
     const { binding, connection, issues, member } = await fixture();
     const ref = await prisma.externalRef.create({

@@ -164,6 +164,7 @@ export async function materializeRedmineReconciliationRecommendations(request: R
     await transaction.integrationReconciliationRecommendation.deleteMany({
       where: {
         bindingId: scope.binding.id,
+        previewIdentity: scope.preview.previewIdentity,
         remoteIssueId: detail.remoteIssueId,
         decisionState: "pending",
         ...(snapshots.length ? { NOT: { OR: snapshots } } : {}),
@@ -172,6 +173,7 @@ export async function materializeRedmineReconciliationRecommendations(request: R
     await transaction.integrationReconciliationRecommendation.createMany({
       data: ranked.map(({ candidateIssueId, score, evidence }) => ({
         bindingId: scope.binding.id,
+        previewIdentity: scope.preview.previewIdentity,
         remoteIssueId: detail.remoteIssueId,
         remoteSourceVersion: detail.sourceVersion,
         candidateIssueId,
@@ -187,6 +189,7 @@ export async function materializeRedmineReconciliationRecommendations(request: R
       ? await transaction.integrationReconciliationRecommendation.findMany({
           where: {
             bindingId: scope.binding.id,
+            previewIdentity: scope.preview.previewIdentity,
             remoteIssueId: detail.remoteIssueId,
             remoteSourceVersion: detail.sourceVersion,
             scoringVersion: REDMINE_RECONCILIATION_SCORER_VERSION,
@@ -289,6 +292,7 @@ export async function listRedmineReconciliationRecommendations(request: Pick<Red
   const rows = await prisma.integrationReconciliationRecommendation.findMany({
     where: {
       bindingId: scope.binding.id,
+      previewIdentity: scope.preview.previewIdentity,
       decisionState: state.data,
       ...(cursor
         ? { OR: [{ score: { lt: cursor.score } }, { score: cursor.score, id: { lt: cursor.id } }] }
@@ -304,7 +308,14 @@ export async function listRedmineReconciliationRecommendations(request: Pick<Red
     } catch {
       throw new AppError(500, "REDMINE_RECONCILIATION_EVIDENCE_INVALID", "Invalid recommendation evidence");
     }
-    return { ...row, factorEvidence: row.factorEvidence };
+    return {
+      id: row.id, bindingId: row.bindingId, remoteIssueId: row.remoteIssueId,
+      remoteSourceVersion: row.remoteSourceVersion, candidateIssueId: row.candidateIssueId,
+      score: row.score, scoringVersion: row.scoringVersion, factorEvidence: row.factorEvidence,
+      localFingerprint: row.localFingerprint, remoteFingerprint: row.remoteFingerprint,
+      decisionState: row.decisionState, decisionKind: row.decisionKind, decidedById: row.decidedById,
+      decidedAt: row.decidedAt, acceptedRefId: row.acceptedRefId, createdAt: row.createdAt, updatedAt: row.updatedAt,
+    };
   });
   const last = items.at(-1);
   return {
@@ -376,12 +387,26 @@ export async function decideRedmineReconciliationRecommendations(request: Redmin
       if (!scope.preview.candidates.some(({ remoteId }) => remoteId === request.remoteIssueId)) throw decisionConflict("REDMINE_RECONCILIATION_UNLISTED", "The Redmine issue is not in this preview");
       const member = await transaction.member.findUniqueOrThrow({ where: { userId_workspaceId: { userId: request.userId, workspaceId: scope.connection.workspaceId } }, select: { id: true } });
       const now = dependencies.now?.() ?? new Date();
+      const disposition = await transaction.integrationReconciliationDisposition.findFirst({ where: { bindingId: scope.binding.id, previewIdentity: scope.preview.previewIdentity, remoteIssueId: request.remoteIssueId } });
+      if (!disposition || disposition.remoteSourceVersion !== scope.preview.candidates.find(({ remoteId }) => remoteId === request.remoteIssueId)?.sourceVersion) {
+        throw decisionConflict("REDMINE_RECONCILIATION_PREVIEW_STALE", "The reconciliation preview changed");
+      }
       if (decision.kind === "reject-all") {
-        const rejected = await transaction.integrationReconciliationRecommendation.updateMany({ where: { bindingId: scope.binding.id, remoteIssueId: request.remoteIssueId, decisionState: "pending" }, data: { decisionState: "rejected", decisionKind: "owner-reject-all", decidedById: member.id, decidedAt: now } });
+        if (disposition.state !== "pending") {
+          if (disposition.state === "import_as_new" && disposition.decisionKind === "owner-reject-all") {
+            return { remoteIssueId: request.remoteIssueId, rejectedCount: 0, replayed: true };
+          }
+          throw decisionConflict("REDMINE_RECONCILIATION_PREVIEW_STALE", "The reconciliation decision was already settled");
+        }
+        const rejected = await transaction.integrationReconciliationRecommendation.updateMany({ where: { bindingId: scope.binding.id, previewIdentity: scope.preview.previewIdentity, remoteIssueId: request.remoteIssueId, decisionState: "pending" }, data: { decisionState: "rejected", decisionKind: "owner-reject-all", decidedById: member.id, decidedAt: now } });
+        await transaction.integrationReconciliationDisposition.update({ where: { id: disposition.id }, data: { state: "import_as_new", decisionKind: "owner-reject-all", decidedById: member.id, decidedAt: now, acceptedRefId: null } });
         return { remoteIssueId: request.remoteIssueId, rejectedCount: rejected.count, replayed: rejected.count === 0 };
       }
-      const recommendation = decision.kind === "manual-link" ? null : await transaction.integrationReconciliationRecommendation.findFirst({ where: { id: decision.recommendationId, bindingId: scope.binding.id, remoteIssueId: request.remoteIssueId } });
+      const recommendation = decision.kind === "manual-link" ? null : await transaction.integrationReconciliationRecommendation.findFirst({ where: { id: decision.recommendationId, bindingId: scope.binding.id, previewIdentity: scope.preview.previewIdentity, remoteIssueId: request.remoteIssueId } });
       if (decision.kind !== "manual-link" && !recommendation) throw new AppError(404, "REDMINE_RECONCILIATION_RECOMMENDATION_NOT_FOUND", "Recommendation not found");
+      if (disposition.state !== "pending" && disposition.state !== "linked") {
+        throw decisionConflict("REDMINE_RECONCILIATION_PREVIEW_STALE", "The reconciliation decision was already settled");
+      }
       const candidateIssueId = decision.kind === "manual-link" ? decision.candidateIssueId : recommendation!.candidateIssueId;
       const issue = await lockCandidate(transaction, scope.binding.projectId, candidateIssueId);
       if (decision.kind === "reject") {
@@ -407,12 +432,12 @@ export async function decideRedmineReconciliationRecommendations(request: Redmin
         transaction.externalRef.findUnique({ where: { connectionId_entityType_externalId: { connectionId: request.connectionId, entityType: "issue", externalId: request.remoteIssueId } } }),
       ]);
       if (localRef && remoteRef?.id === localRef.id) {
-        const accepted = await transaction.integrationReconciliationRecommendation.findFirst({ where: { bindingId: scope.binding.id, remoteIssueId: request.remoteIssueId, candidateIssueId: issue.id, decisionState: "accepted", acceptedRefId: localRef.id } });
+        const accepted = await transaction.integrationReconciliationRecommendation.findFirst({ where: { bindingId: scope.binding.id, previewIdentity: scope.preview.previewIdentity, remoteIssueId: request.remoteIssueId, candidateIssueId: issue.id, decisionState: "accepted", acceptedRefId: localRef.id } });
         if (accepted) return { remoteIssueId: request.remoteIssueId, candidateIssueId: issue.id, recommendationId: accepted.id, refId: localRef.id, replayed: true };
       }
       if (localRef || remoteRef) throw decisionConflict();
       await cancelSafeCreate(transaction, scope.binding.id, issue.id);
-      const exact = decision.kind === "manual-link" ? await transaction.integrationReconciliationRecommendation.findFirst({ where: { bindingId: scope.binding.id, remoteIssueId: request.remoteIssueId, remoteSourceVersion: detail!.sourceVersion, candidateIssueId: issue.id, scoringVersion: REDMINE_RECONCILIATION_SCORER_VERSION, localFingerprint: match.evidence.localFingerprint, remoteFingerprint: match.evidence.remoteFingerprint } }) : recommendation;
+      const exact = decision.kind === "manual-link" ? await transaction.integrationReconciliationRecommendation.findFirst({ where: { bindingId: scope.binding.id, previewIdentity: scope.preview.previewIdentity, remoteIssueId: request.remoteIssueId, remoteSourceVersion: detail!.sourceVersion, candidateIssueId: issue.id, scoringVersion: REDMINE_RECONCILIATION_SCORER_VERSION, localFingerprint: match.evidence.localFingerprint, remoteFingerprint: match.evidence.remoteFingerprint } }) : recommendation;
       if (exact && exact.decisionState !== "pending") throw decisionConflict("REDMINE_RECONCILIATION_RECOMMENDATION_STALE", "The recommendation was already decided");
       const correlationId = applicationKey(scope.binding.id, request.remoteIssueId, detail!.sourceVersion);
       const ref = await transaction.externalRef.create({ data: { connectionId: request.connectionId, bindingId: scope.binding.id, entityType: "issue", entityId: issue.id, externalId: request.remoteIssueId, remoteUpdatedAt: snapshot.changedAt, localVersion: 1, lastCorrelationId: correlationId, metadata: issueSyncMetadata(null, { sourceVersion: detail!.sourceVersion, ...snapshot }) } });
@@ -420,8 +445,10 @@ export async function decideRedmineReconciliationRecommendations(request: Redmin
       const decisionKind = decision.kind === "manual-link" ? "owner-manual-link" : "owner-accept-suggested";
       const selected = exact
         ? await transaction.integrationReconciliationRecommendation.update({ where: { id: exact.id }, data: { decisionState: "accepted", decisionKind, decidedById: member.id, decidedAt: now, acceptedRefId: ref.id } })
-        : await transaction.integrationReconciliationRecommendation.create({ data: { bindingId: scope.binding.id, remoteIssueId: request.remoteIssueId, remoteSourceVersion: detail!.sourceVersion, candidateIssueId: issue.id, score: match.score, scoringVersion: REDMINE_RECONCILIATION_SCORER_VERSION, factorEvidence: match.evidence as unknown as Prisma.InputJsonValue, localFingerprint: match.evidence.localFingerprint, remoteFingerprint: match.evidence.remoteFingerprint, decisionState: "accepted", decisionKind, decidedById: member.id, decidedAt: now, acceptedRefId: ref.id } });
-      await transaction.integrationReconciliationRecommendation.updateMany({ where: { bindingId: scope.binding.id, remoteIssueId: request.remoteIssueId, decisionState: "pending", id: { not: selected.id } }, data: { decisionState: "rejected", decisionKind: "owner-link-alternative", decidedById: member.id, decidedAt: now } });
+        : await transaction.integrationReconciliationRecommendation.create({ data: { bindingId: scope.binding.id, previewIdentity: scope.preview.previewIdentity, remoteIssueId: request.remoteIssueId, remoteSourceVersion: detail!.sourceVersion, candidateIssueId: issue.id, score: match.score, scoringVersion: REDMINE_RECONCILIATION_SCORER_VERSION, factorEvidence: match.evidence as unknown as Prisma.InputJsonValue, localFingerprint: match.evidence.localFingerprint, remoteFingerprint: match.evidence.remoteFingerprint, decisionState: "accepted", decisionKind, decidedById: member.id, decidedAt: now, acceptedRefId: ref.id } });
+      await transaction.integrationReconciliationRecommendation.updateMany({ where: { bindingId: scope.binding.id, previewIdentity: scope.preview.previewIdentity, remoteIssueId: request.remoteIssueId, decisionState: "pending", id: { not: selected.id } }, data: { decisionState: "rejected", decisionKind: "owner-link-alternative", decidedById: member.id, decidedAt: now } });
+      const settled = await transaction.integrationReconciliationDisposition.updateMany({ where: { id: disposition.id, state: "pending" }, data: { state: "linked", decisionKind, decidedById: member.id, decidedAt: now, acceptedRefId: ref.id } });
+      if (settled.count !== 1) throw decisionConflict("REDMINE_RECONCILIATION_PREVIEW_STALE", "The reconciliation decision was already settled");
       return { remoteIssueId: request.remoteIssueId, candidateIssueId: issue.id, recommendationId: selected.id, refId: ref.id, replayed: false };
     }, { timeout: 10_000 });
   } catch (error) {
