@@ -118,6 +118,7 @@ describe("WorkCaptureIntent effect migration", () => {
             projectId: project.id,
             sequenceNum: 1,
           },
+          select: { id: true },
         });
         await database.$executeRawUnsafe(
           `INSERT INTO "work_capture_intents" ("user_id", "issue_id", "member_id") VALUES ($1::uuid, $2::uuid, $3::uuid)`,
@@ -276,6 +277,7 @@ describe("WorkCaptureOwnerLease migration", () => {
           projectId: project.id,
           sequenceNum: 1,
         },
+        select: { id: true },
       });
       const intent = await database.workCaptureIntent.create({
         data: { userId: user.id, issueId: issue.id, memberId: member.id, state: "capturing" },

@@ -344,3 +344,21 @@ describe("envSchema — audit operations", () => {
     expect(envSchema.safeParse({ ...base, INTEGRATION_AUDIT_PAGE_SIZE: "101" }).success).toBe(false);
   });
 });
+
+describe("envSchema — privacy quarantine keyring", () => {
+  it("allows production startup without an unused keyring", () => {
+    const productionWithoutKeyring = { ...base, COOKIE_SECRET: "c".repeat(32), METRICS_TOKEN: "metrics-token", INTEGRATION_ENCRYPTION_KEY: Buffer.alloc(32, 3).toString("base64") };
+    expect(envSchemaWithProductionChecks.safeParse(productionWithoutKeyring).success).toBe(true);
+  });
+
+  it("accepts a current AES-256 key and retained historical key", () => {
+    const current = Buffer.alloc(32, 1).toString("base64");
+    const old = Buffer.alloc(32, 2).toString("base64");
+    expect(envSchema.parse({ ...base, PRIVACY_QUARANTINE_KEYRING: JSON.stringify({ currentKeyId: "v2", keys: { v1: old, v2: current } }) }).PRIVACY_QUARANTINE_KEYRING)
+      .toEqual({ currentKeyId: "v2", keys: { v1: old, v2: current } });
+  });
+
+  it("rejects a keyring whose current key is absent or invalid", () => {
+    expect(envSchema.safeParse({ ...base, PRIVACY_QUARANTINE_KEYRING: JSON.stringify({ currentKeyId: "v2", keys: { v1: "not-a-key" } }) }).success).toBe(false);
+  });
+});

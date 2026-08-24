@@ -55,7 +55,7 @@ export interface CanonicalIssueMutationDraft {
   readonly payload: IssueMutationPayload;
 }
 const ROW =
-  "id key sequenceNum title description type priority state labels completedAt timeConfirmedAt createdAt updatedAt groupKey engramContext specArtifacts projectId assigneeId estimate cycleId parentId roadmapItemId".split(
+  "id key sequenceNum title description type priority state labels completedAt timeConfirmedAt privacyHeldAt privacyHoldGeneration createdAt updatedAt groupKey engramContext specArtifacts projectId assigneeId estimate cycleId parentId roadmapItemId".split(
     " "
   );
 const CAPTURE =
@@ -207,10 +207,10 @@ function rowValue(key: string, value: unknown): unknown {
     return Object.freeze(labels) as unknown as string[];
   }
   if (ROW_CHOICES[key]) return scalar(value, "choice", ROW_CHOICES[key]);
-  if (key === "sequenceNum") return scalar(value, "integer");
+  if (key === "sequenceNum" || key === "privacyHoldGeneration") return scalar(value, "integer");
   if (key === "estimate") return value === null ? null : scalar(value, "integer");
   if (JSON_FIELDS.includes(key)) return jsonValue(value, new WeakSet());
-  if (["completedAt", "timeConfirmedAt"].includes(key)) {
+  if (["completedAt", "timeConfirmedAt", "privacyHeldAt"].includes(key)) {
     return value === null ? null : scalar(value, "date");
   }
   if (["createdAt", "updatedAt"].includes(key)) return scalar(value, "date");

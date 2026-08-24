@@ -1,9 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  encrypt,
-  decrypt,
-  decodeKey,
-  generateEncryptionKey,
+  encrypt, decrypt, decodeKey, generateEncryptionKey,
+  decryptPrivacyQuarantine, encryptPrivacyQuarantine, parsePrivacyQuarantineKeyring, QuarantineUnavailableError,
 } from "./crypto.js";
 
 // Explicit key per test so these never depend on env.INTEGRATION_ENCRYPTION_KEY
@@ -112,5 +110,28 @@ describe("integrations/core/crypto — AES-256-GCM", () => {
     const b = generateEncryptionKey();
     expect(Buffer.from(a, "base64")).toHaveLength(32);
     expect(a).not.toBe(b);
+  });
+});
+
+
+describe("privacy quarantine keyring envelopes", () => {
+  const keyring = parsePrivacyQuarantineKeyring({
+    currentKeyId: "v2",
+    keys: { v1: generateEncryptionKey(), v2: generateEncryptionKey() },
+  });
+  const aad = { issueId: "issue-1", bindingId: "binding-1", generation: 4 };
+
+  it("uses the current key and binds issue, binding, and generation as AAD", () => {
+    const envelope = encryptPrivacyQuarantine('{"title":"secret"}', aad, keyring);
+    expect(envelope.startsWith("pq.gcm.v1:v2:1:")).toBe(true);
+    expect(decryptPrivacyQuarantine(envelope, aad, keyring)).toBe('{"title":"secret"}');
+    expect(() => decryptPrivacyQuarantine(envelope, { ...aad, generation: 5 }, keyring)).toThrow(QuarantineUnavailableError);
+  });
+
+  it("retains old keys but returns a secret-free failure for missing or tampered data", () => {
+    const oldEnvelope = encryptPrivacyQuarantine("old", aad, { ...keyring, currentKeyId: "v1" });
+    expect(decryptPrivacyQuarantine(oldEnvelope, aad, keyring)).toBe("old");
+    expect(() => decryptPrivacyQuarantine(oldEnvelope, aad, { ...keyring, keys: { v2: keyring.keys.v2 } })).toThrow("quarantine_unavailable");
+    expect(() => decryptPrivacyQuarantine(`${oldEnvelope}x`, aad, keyring)).toThrow("quarantine_unavailable");
   });
 });

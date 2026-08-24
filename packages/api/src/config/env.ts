@@ -1,6 +1,14 @@
 import { z } from "zod";
 import { isIP } from "node:net";
 
+const BASE64_AES_256_KEY = /^[A-Za-z0-9+/]{43}=$/;
+const PRIVACY_QUARANTINE_KEYRING_SCHEMA = z.object({
+  currentKeyId: z.string().regex(/^[A-Za-z0-9._-]{1,64}$/),
+  keys: z.record(z.string().regex(/^[A-Za-z0-9._-]{1,64}$/), z.string().regex(BASE64_AES_256_KEY)),
+}).superRefine((keyring, ctx) => {
+  if (!keyring.keys[keyring.currentKeyId]) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["currentKeyId"], message: "currentKeyId must reference a configured key" });
+});
+
 const TRUST_PROXY_PRESETS = new Set(["loopback", "linklocal", "uniquelocal"]);
 // Permissive IP / CIDR token check (v4 or v6, optional /mask). Full validation
 // is left to proxy-addr at boot; this just rejects obvious garbage early.
@@ -161,6 +169,15 @@ export const envSchema = z.object({
   // required and validated as exactly 32 decoded bytes in production via
   // superRefine below. Generate with: `openssl rand -base64 32`.
   INTEGRATION_ENCRYPTION_KEY: z.string().optional(),
+  PRIVACY_QUARANTINE_KEYRING: z.string().optional().transform((value, ctx) => {
+    if (value === undefined) return undefined;
+    try {
+      const result = PRIVACY_QUARANTINE_KEYRING_SCHEMA.safeParse(JSON.parse(value));
+      if (result.success) return result.data;
+    } catch { /* validation error below */ }
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "PRIVACY_QUARANTINE_KEYRING must be valid JSON with a current AES-256 key" });
+    return z.NEVER;
+  }),
   INTEGRATION_SYNC_DEBOUNCE_MS: z
     .string()
     .optional()

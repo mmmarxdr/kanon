@@ -129,6 +129,12 @@ enum ConflictState {
   resolved
 }
 
+enum IntegrationContentOrigin {
+  kanon
+  redmine
+  unknown
+}
+
 enum CycleScopeEventKind {
   add
   remove
@@ -399,6 +405,8 @@ model Issue {
   /// KAN-157: stamped by reconcileIssueTime() when the dev confirms captured hours before →done.
   /// Considered STALE if any WorkLog or TimeEntry for the issue was created after this timestamp.
   timeConfirmedAt  DateTime?  @map("time_confirmed_at")
+  privacyHeldAt DateTime? @map("privacy_held_at")
+  privacyHoldGeneration Int @default(dbgenerated()) @map("privacy_hold_generation")
   createdAt        DateTime   @default(now()) @map("created_at")
   updatedAt        DateTime   @updatedAt @map("updated_at")
 
@@ -1441,6 +1449,7 @@ model IntegrationProjectBinding {
   works             IntegrationSyncWork[]
   applications      IntegrationInboundApplication[]
   conflicts         IntegrationConflict[]
+  provenance        IntegrationContentProvenance[]
   auditRuns         IntegrationAuditRun[]
 
   @@unique([connectionId, projectId])
@@ -1667,6 +1676,26 @@ model IntegrationInboundApplication {
 
   @@unique([bindingId, remoteEntityType, remoteParentType, remoteParentId, remoteId, sourceVersion], map: "uq_inbound_application_source")
   @@map("integration_inbound_applications")
+}
+
+/// Durable field-level origin evidence; unknown/conflicting origins remain explicit.
+model IntegrationContentProvenance {
+  id            String                   @id @default(uuid()) @db.Uuid
+  entityType    String                   @map("entity_type")
+  entityId      String                   @map("entity_id") @db.Uuid
+  field         String
+  origin        IntegrationContentOrigin @default(unknown)
+  sourceVersion String?                  @map("source_version")
+  contentHash   String?                  @map("content_hash")
+  createdAt     DateTime                 @default(now()) @map("created_at")
+  updatedAt     DateTime                 @updatedAt @map("updated_at")
+
+  bindingId String                    @map("binding_id") @db.Uuid
+  binding   IntegrationProjectBinding @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+
+  @@unique([bindingId, entityType, entityId, field])
+  @@index([entityType, entityId])
+  @@map("integration_content_provenance")
 }
 
 model IntegrationConflict {
