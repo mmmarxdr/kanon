@@ -28,6 +28,7 @@ RUN pnpm --filter @kanon/api db:generate
 
 # Build TypeScript
 RUN pnpm --filter @kanon/api build
+RUN test -f /app/packages/api/dist/scripts/one-shot-migrator.js
 
 # Collect generated Prisma client to a known location for the runtime stage.
 # pnpm hoists it under a versioned path that varies, so we find it dynamically.
@@ -82,4 +83,4 @@ EXPOSE 3000
 # Install prisma CLI for runtime migrations
 RUN npm install -g prisma@6
 
-CMD ["sh", "-c", "prisma generate --schema=prisma/schema.prisma && node dist/modules/integrations/backfill.js && prisma migrate deploy --schema=prisma/schema.prisma && node dist/index.js"]
+CMD ["node", "dist/index.js"]

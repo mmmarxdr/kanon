@@ -62,6 +62,7 @@ function isValidProxyTrust(val: string): boolean {
  */
 export const envSchema = z.object({
   DATABASE_URL: z.string().url("DATABASE_URL must be a valid URL"),
+  PRIVACY_OPERATOR_DATABASE_URL: z.string().url("PRIVACY_OPERATOR_DATABASE_URL must be a valid URL").optional(),
   JWT_SECRET: z.string().min(16, "JWT_SECRET must be at least 16 characters"),
   JWT_REFRESH_SECRET: z.string().min(16, "JWT_REFRESH_SECRET must be at least 16 characters"),
   PORT: z
@@ -356,6 +357,12 @@ export const envSchemaWithProductionChecks = envSchema.superRefine((data, ctx) =
       path: ["METRICS_TOKEN"],
       message: "METRICS_TOKEN is required in production",
     });
+  }
+
+  if (!data.PRIVACY_OPERATOR_DATABASE_URL) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["PRIVACY_OPERATOR_DATABASE_URL"], message: "PRIVACY_OPERATOR_DATABASE_URL is required in production" });
+  } else if (new URL(data.DATABASE_URL).username === new URL(data.PRIVACY_OPERATOR_DATABASE_URL).username) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["PRIVACY_OPERATOR_DATABASE_URL"], message: "Database principal URLs must use distinct login names" });
   }
 
   // ADR-0012: integration credential encryption key. Required in production and
