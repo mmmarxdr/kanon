@@ -8,7 +8,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { canonicalizeApiUrl } from "./canonical-url.js";
-import { buildWrapperMcpEntry } from "./mcp-config.js";
+import { buildMcpEntry, buildWrapperMcpEntry } from "./mcp-config.js";
 
 describe("canonicalizeApiUrl parity: setup write-key === mcp read-key", () => {
   /**
@@ -109,4 +109,23 @@ describe("buildWrapperMcpEntry includes canonicalized --server arg", () => {
       "https://server.example.com",
     ]);
   });
+});
+
+
+it("pins the validated WSL distro in a Windows Cursor wrapper entry", () => {
+  const entry = buildWrapperMcpEntry("https://server.example.com", "wsl-bridge", "/usr/bin/node", { mode: "local", path: "/wrapper.js" }, undefined, "cursor", "Ubuntu-24.04");
+  expect(entry.command).toBe("wsl");
+  expect(entry.args.slice(0, 5)).toEqual(["--distribution", "Ubuntu-24.04", "--", "env", "KANON_CLIENT_IDENTITY=cursor"]);
+});
+
+it("uses the validated WSL Node path in the pinned bridge wrapper argv", () => {
+  const entry = buildWrapperMcpEntry("https://server.example.com", "wsl-bridge", "/usr/bin/node", { mode: "local", path: "/wrapper.js" }, undefined, "cursor", "Ubuntu", "/home/me/.nvm/versions/node/v24/bin/node");
+  expect(entry.args).toContain("/home/me/.nvm/versions/node/v24/bin/node");
+  expect(entry.args).not.toContain("/usr/bin/node");
+});
+
+it("uses the validated WSL Node path for static-key bridge entries too", () => {
+  const entry = buildMcpEntry({ mode: "local", path: "/mcp.js" }, "https://server.example.com", "key", { platform: "wsl", homedir: "/home/me", winHome: "/mnt/c/Users/me" }, "wsl-bridge", "/usr/bin/node", "static-key", "cursor", undefined, "Ubuntu", "/home/me/.nvm/versions/node/v24/bin/node");
+  expect(entry.args).toContain("/home/me/.nvm/versions/node/v24/bin/node");
+  expect(entry.args).not.toContain("/usr/bin/node");
 });
