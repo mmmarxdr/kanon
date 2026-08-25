@@ -40,6 +40,7 @@ import {
   type IssueSyncValue,
 } from "./issue-convergence.js";
 import { captureIntegrationWorkTx } from "./outbox.js";
+import { recordIssueContentProvenanceTx } from "./privacy-hold/content-provenance.js";
 import {
   completeRetriedApplicationTx,
   isEligibleRedmineIssueImport,
@@ -1428,6 +1429,19 @@ async function convergeLinkedIssue(
       }
       if (Object.keys(issueData).length) {
         await transaction.issue.update({ where: { id: issue.id }, data: issueData });
+        await recordIssueContentProvenanceTx(transaction, {
+          bindingId: binding.id,
+          issueId: issue.id,
+          direction: "inbound",
+          actorKind: "remote",
+          sourceVersion: detail.sourceVersion,
+          fields: {
+            ...(typeof patch.title === "string" ? { title: patch.title } : {}),
+            ...(typeof patch.description === "string" || patch.description === null
+              ? { description: patch.description }
+              : {}),
+          },
+        });
       }
       if (Object.prototype.hasOwnProperty.call(patch, "state")) {
         await transaction.activityLog.create({

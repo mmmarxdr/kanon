@@ -700,6 +700,27 @@ describe("Redmine-created issue import", () => {
     await expect(
       prisma.integrationSyncWork.count({ where: { entityId: imported.id, direction: "outbound" } }),
     ).resolves.toBe(0);
+    const remoteVersion = (ref.metadata as { remoteVersion: string }).remoteVersion;
+    await expect(
+      prisma.integrationContentProvenance.findMany({
+        where: { bindingId: binding.id, entityType: "issue", entityId: imported.id },
+        orderBy: { field: "asc" },
+        select: { field: true, origin: true, sourceVersion: true, contentHash: true },
+      }),
+    ).resolves.toEqual([
+      {
+        field: "description",
+        origin: "redmine",
+        sourceVersion: remoteVersion,
+        contentHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+      },
+      {
+        field: "title",
+        origin: "redmine",
+        sourceVersion: remoteVersion,
+        contentHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+      },
+    ]);
     await expect(
       prisma.integrationInboundApplication.findFirstOrThrow({ where: { refId: ref.id } }),
     ).resolves.toMatchObject({

@@ -1626,6 +1626,26 @@ describe("Redmine inbound sync", () => {
         select: { direction: true, state: true },
       })
     ).resolves.toEqual([{ direction: "inbound", state: "done" }]);
+    await expect(
+      prisma.integrationContentProvenance.findMany({
+        where: { bindingId: binding.id, entityType: "issue", entityId: issue.id },
+        orderBy: { field: "asc" },
+        select: { field: true, origin: true, sourceVersion: true, contentHash: true },
+      }),
+    ).resolves.toEqual([
+      {
+        field: "description",
+        origin: "redmine",
+        sourceVersion: `sha256:${observedAt.getTime()}`,
+        contentHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+      },
+      {
+        field: "title",
+        origin: "redmine",
+        sourceVersion: `sha256:${observedAt.getTime()}`,
+        contentHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+      },
+    ]);
   });
 
   it("applies unrelated remote fields and quarantines an outbound field conflict", async () => {

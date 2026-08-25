@@ -150,9 +150,10 @@ describe("withIssueMutationTx", () => {
       });
       return {
         result,
-        capture: capture(fixture.binding.id, "update-correlation", {
-          title: result.title,
-        }),
+        capture: {
+          ...capture(fixture.binding.id, "update-correlation", { title: result.title }),
+          sourceVersion: "untrusted-remote-version",
+        },
       };
     });
     const transitioned = await withIssueMutationTx(async (transaction) => {
@@ -223,6 +224,35 @@ describe("withIssueMutationTx", () => {
         estimate: 8,
         completedAt: null,
         updatedAt: created.updatedAt.toISOString(),
+      },
+    });
+    const provenance = await prisma.integrationContentProvenance.findMany({
+      where: { entityId: { in: [created.id, updated.id, transitioned.id] } },
+    });
+    expect(
+      Object.fromEntries(
+        provenance.map((row) => [
+          row.entityId,
+          {
+            field: row.field,
+            origin: row.origin,
+            sourceVersion: row.sourceVersion,
+            contentHash: row.contentHash,
+          },
+        ]),
+      ),
+    ).toEqual({
+      [created.id]: {
+        field: "title",
+        origin: "kanon",
+        sourceVersion: created.updatedAt.toISOString(),
+        contentHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+      },
+      [updated.id]: {
+        field: "title",
+        origin: "kanon",
+        sourceVersion: updated.updatedAt.toISOString(),
+        contentHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
       },
     });
   });
@@ -410,5 +440,21 @@ describe("withIssueMutationTx", () => {
     await expect(
       prisma.integrationSyncWork.count({ where: { entityId: fixture.issue.id } }),
     ).resolves.toBe(0);
+    await expect(
+      prisma.integrationContentProvenance.findUnique({
+        where: {
+          bindingId_entityType_entityId_field: {
+            bindingId: fixture.binding.id,
+            entityType: "issue",
+            entityId: fixture.issue.id,
+            field: "title",
+          },
+        },
+      }),
+    ).resolves.toMatchObject({
+      origin: "kanon",
+      sourceVersion: title.updatedAt.toISOString(),
+      contentHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+    });
   });
 });

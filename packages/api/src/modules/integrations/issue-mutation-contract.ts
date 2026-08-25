@@ -18,6 +18,17 @@ export const ISSUE_SCHEDULE_CAPTURE_FIELDS = [
 export type IssueMutationRow = Prisma.IssueGetPayload<{}>;
 export type IssueCaptureField = (typeof ISSUE_CAPTURE_FIELDS)[number];
 export type IssueCaptureFields = Readonly<Partial<Pick<IssueMutationRow, IssueCaptureField>>>;
+export function captureChangedIssueFields(
+  fields: IssueCaptureFields,
+  before: Pick<IssueMutationRow, "title" | "description">
+): IssueCaptureFields {
+  const { title, description, ...other } = fields;
+  return {
+    ...other,
+    ...(title !== undefined && title !== before.title ? { title } : {}),
+    ...(description !== undefined && description !== before.description ? { description } : {}),
+  };
+}
 export type IssueCaptureIntent = Readonly<
   Record<"bindingId" | "actorKey" | "correlationId", string> &
     Record<"direction", "outbound" | "inbound"> &
@@ -25,7 +36,9 @@ export type IssueCaptureIntent = Readonly<
     Record<"actorKind", "user" | "system" | "ai" | "remote"> &
     Record<"fields", IssueCaptureFields> &
     Partial<
-      Record<"refId" | "authCredentialId" | "marker", string | null> & Record<"availableAt", Date>
+      Record<"refId" | "authCredentialId" | "marker", string | null> &
+        Record<"sourceVersion", string> &
+        Record<"availableAt", Date>
     >
 >;
 export interface IssueMutationDraft {
@@ -59,7 +72,7 @@ const ROW =
     " "
   );
 const CAPTURE =
-  "bindingId direction operation actorKey actorKind correlationId fields refId authCredentialId availableAt marker".split(
+  "bindingId direction operation actorKey actorKind correlationId fields refId authCredentialId availableAt marker sourceVersion".split(
     " "
   );
 const STATES = "backlog analysis todo in_progress review done".split(" ");
@@ -235,6 +248,7 @@ function captureValue(key: string, value: unknown): unknown {
   if (key === "availableAt") return scalar(value, "date");
   if (key === "refId" || key === "authCredentialId") return nullable(value, "required");
   if (key === "marker") return nullable(value, "string");
+  if (key === "sourceVersion") return scalar(value, "required");
   return scalar(
     value,
     ["bindingId", "actorKey", "correlationId"].includes(key) ? "required" : "string"

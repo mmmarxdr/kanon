@@ -9,6 +9,8 @@ import {
 } from "./issue-mutation-contract.js";
 import { readBlockedIssueFields } from "./issue-convergence.js";
 import { captureIntegrationWorkTx } from "./outbox.js";
+import { recordIssueContentProvenanceTx } from "./privacy-hold/content-provenance.js";
+export { captureChangedIssueFields } from "./issue-mutation-contract.js";
 
 export type IssueCaptureContext = Omit<
   IssueCaptureIntent,
@@ -198,6 +200,16 @@ export async function captureIssueMutationTx(
   mutation: IssueMutationDraft,
 ): Promise<IssueMutationRow> {
   const { capture, payload, result } = canonicalizeIssueMutationDraft(mutation);
+  const recordContentProvenance = () =>
+    recordIssueContentProvenanceTx(transaction, {
+      bindingId: capture.bindingId,
+      issueId: result.id,
+      direction: capture.direction,
+      actorKind: capture.actorKind,
+      sourceVersion:
+        capture.direction === "outbound" ? payload.issue.updatedAt : (capture.sourceVersion ?? null),
+      fields: payload.fields,
+    });
 
   if (capture.operation === "update" && Object.keys(payload.fields).length === 0) return result;
   const fields =
@@ -210,7 +222,10 @@ export async function captureIssueMutationTx(
           payload.issue.updatedAt,
         )
       : payload.fields;
-  if (capture.operation === "update" && Object.keys(fields).length === 0) return result;
+  if (capture.operation === "update" && Object.keys(fields).length === 0) {
+    await recordContentProvenance();
+    return result;
+  }
 
   const work = await captureIntegrationWorkTx(transaction, {
     bindingId: capture.bindingId,
@@ -227,6 +242,7 @@ export async function captureIssueMutationTx(
     availableAt: capture.availableAt,
     marker: capture.marker,
   });
+  await recordContentProvenance();
   if (capture.direction === "inbound") {
     await transaction.integrationSyncWork.update({
       where: { id: work.id },
