@@ -73,6 +73,10 @@ async function fixture() {
     deps,
     workspace.id,
   );
+  await prisma.integrationProjectBinding.update({
+    where: { id: binding.id },
+    data: { bootstrapState: "ready", inboundEnabled: true },
+  });
   await setConnectionLifecycle(connection.id, "active", owner.userId, deps, workspace.id);
   const credential = await prisma.memberIntegrationCredential.findFirstOrThrow({
     where: { connectionId: connection.id, memberId: owner.id },

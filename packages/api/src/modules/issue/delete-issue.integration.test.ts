@@ -135,6 +135,17 @@ describe("deleteIssue", () => {
     );
   });
 
+  it("hard-deletes an issue that was only a reconciliation candidate", async () => {
+    const value = await fixture();
+    const recommendation = await prisma.integrationReconciliationRecommendation.create({
+      data: { bindingId: value.binding.id, previewIdentity: randomUUID(), remoteIssueId: "42", remoteSourceVersion: `sha256:${"a".repeat(64)}`, candidateIssueId: value.issue.id, score: 50, scoringVersion: "test-v1", factorEvidence: {}, localFingerprint: `sha256:${"b".repeat(64)}`, remoteFingerprint: `sha256:${"c".repeat(64)}` },
+    });
+
+    await expect(deleteIssue(value.issue.id, value.issue.key, {}, value.member.id)).resolves.toMatchObject({ deletedIssueId: value.issue.id });
+    await expect(prisma.issue.findUnique({ where: { id: value.issue.id } })).resolves.toBeNull();
+    await expect(prisma.integrationReconciliationRecommendation.findUnique({ where: { id: recommendation.id } })).resolves.toBeNull();
+  });
+
   it("captures linked Redmine deletion before hard-deleting locally", async () => {
     const value = await fixture();
     const ref = await prisma.externalRef.create({
