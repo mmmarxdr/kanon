@@ -184,6 +184,9 @@ export async function cleanDatabase(): Promise<void> {
   // WorkLog depends on Issue (Cascade) — delete before issues for explicit ordering
   await prisma.workLog.deleteMany();
   await prisma.externalRef.deleteMany();
+  // Reconciliation records restrict candidate issues and bindings, so delete them first.
+  await prisma.integrationReconciliationDisposition.deleteMany();
+  await prisma.integrationReconciliationRecommendation.deleteMany();
   await prisma.issue.deleteMany();
   await prisma.roadmapItem.deleteMany();
   await prisma.cycle.deleteMany();
