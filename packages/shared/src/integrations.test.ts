@@ -71,6 +71,7 @@ const connection = {
       commentCaptureEnabled: false,
       commentDispatchEnabled: false,
       releasePending: false,
+      inboundReady: true,
     },
   ],
   callerCredential: credential,

@@ -161,6 +161,7 @@
   "redmineLifecycleControl": "Connection lifecycle",
   "redmineActivate": "Activate synchronization",
   "redmineAlreadyActive": "Synchronization active",
+  "redmineResumeReconciliation": "Resume reconciliation",
   "redmineActivateHelp": "Activate after at least one Kanon project is linked in workspace settings.",
   "redmineSaving": "Saving...",
   "redmineMappingSaved": "Mapping saved and synchronization activated.",
@@ -201,6 +202,9 @@
     "confirmManual": "Confirm link to {{key}}",
     "candidateUnavailable": "That Kanon issue is no longer available for linking.",
     "ready": "This project is ready for activation.",
+    "startActivation": "Start import",
+    "continueActivation": "Continue import",
+    "activationCounts": "Imported {{imported}} · Processed {{processed}} · Remaining {{remaining}}",
     "blocked": "Preview is blocked until the connection configuration is corrected.",
     "restart": "Restart preview"
   },

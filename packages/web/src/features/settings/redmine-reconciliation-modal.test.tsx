@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RedmineReconciliationPreviewProgress, RedmineReconciliationReviewItem, RedmineReconciliationReviewPage } from "./redmine-reconciliation-flow";
 import { RedmineReconciliationModal, type RedmineReconciliationQueueItem } from "./redmine-reconciliation-modal";
@@ -7,7 +7,7 @@ import { RedmineReconciliationManualLink } from "./redmine-reconciliation-manual
 
 const commands = vi.hoisted(() => {
   const command = () => ({ mutate: vi.fn(), hook: vi.fn(), pending: false });
-  return { preview: command(), review: command(), decision: command(), materialize: command() };
+  return { preview: command(), review: command(), decision: command(), materialize: command(), activation: command() };
 });
 const issueSearch = vi.hoisted(() => ({ hook: vi.fn(), data: [] as Array<{ id: string; key: string; title: string }>, fetching: false }));
 vi.mock("focus-trap-react", () => ({ FocusTrap: ({ children }: { children: ReactNode }) => children }));
@@ -17,6 +17,7 @@ vi.mock("./use-redmine-reconciliation", () => ({
   useRedmineReconciliationReviewPageMutation: (...args: string[]) => { commands.review.hook(...args); return { mutate: commands.review.mutate, isPending: commands.review.pending }; },
   useRedmineReconciliationDecisionMutation: (...args: string[]) => { commands.decision.hook(...args); return { mutate: commands.decision.mutate, isPending: commands.decision.pending }; },
   useRedmineReconciliationMaterializeMutation: (...args: string[]) => { commands.materialize.hook(...args); return { mutate: commands.materialize.mutate, isPending: commands.materialize.pending }; },
+  useRedmineReconciliationActivationMutation: (...args: string[]) => { commands.activation.hook(...args); return { mutate: commands.activation.mutate, isPending: commands.activation.pending }; },
 }));
 
 const queue: readonly RedmineReconciliationQueueItem[] = [
@@ -33,14 +34,17 @@ const reviewItem = (remoteTitle = "Remote title", localTitle = "Local title", ti
 const reviewPage = (items: RedmineReconciliationReviewItem[] = [reviewItem()], overrides: Partial<RedmineReconciliationReviewPage> = {}): RedmineReconciliationReviewPage => ({ previewIdentity: progress().previewIdentity, processedCandidateCount: items.length, remainingCandidateCount: 0, hiddenCount: 0, linkedCount: 0, items, nextCursor: null, ...overrides });
 const manualCandidate = (title = "Manual title", titleContribution = 30, localHash = "d", remoteHash = "e"): NonNullable<RedmineReconciliationReviewItem["manualCandidate"]> => ({ score: titleContribution + 33, factorEvidence: { ...reviewItem().recommendations[0]!.factorEvidence, titleContribution, score: titleContribution + 33, localFingerprint: hash(localHash), remoteFingerprint: hash(remoteHash) }, localIssue: { id: "77777777-7777-4777-8777-777777777777", key: "KAN-9", title } });
 const manualResult = (candidate = manualCandidate()): RedmineReconciliationReviewItem => ({ ...reviewItem(), manualCandidate: candidate });
+const activationProgress = (complete: boolean, replayed = false) => ({ importedCount: complete ? 4 : 2, issueKeys: complete ? ["KAN-1"] : [], replayed, complete, processedCount: complete ? 4 : 2, remainingCount: complete ? 0 : 3 });
 type CommandName = keyof typeof commands;
 type Callbacks = { onSuccess: (value: unknown) => void; onError: (error: { code: string; message: string }) => void };
 const callbacks = (name: CommandName) => commands[name].mutate.mock.calls.at(-1)?.[1] as Callbacks;
 const succeed = (name: CommandName, value: unknown) => act(() => callbacks(name).onSuccess(value));
 const fail = (name: CommandName, code: string) => act(() => callbacks(name).onError({ code, message: code }));
-const renderModal = (onClose = vi.fn(), modalQueue = queue) => ({ onClose, ...render(<RedmineReconciliationModal workspaceId="workspace" connectionId="connection" queue={modalQueue} onClose={onClose} />) });
-const enterReview = (modalQueue = queue) => { const view = renderModal(vi.fn(), modalQueue); fireEvent.click(screen.getByRole("radio", { name: "Import existing issues" })); fireEvent.click(screen.getByRole("button", { name: "Start preview" })); succeed("preview", progress({ complete: true, remainingCount: 0, eligibleUnlinkedCount: 1 })); return view; };
-const loadReview = (page = reviewPage(), modalQueue = queue) => { const view = enterReview(modalQueue); fireEvent.click(screen.getByRole("button", { name: "Load recommendations" })); succeed("review", page); return view; };
+type ModalHarnessProps = { workspaceId: string; connectionId: string; binding: RedmineReconciliationQueueItem; current: number; total: number; onBindingComplete: () => Promise<void>; onRestartSession: () => Promise<void>; onClose: () => void };
+const renderModal = (overrides: Partial<ModalHarnessProps> = {}) => { const props: ModalHarnessProps = { workspaceId: "workspace", connectionId: "connection", binding: queue[0]!, current: 1, total: 2, onBindingComplete: vi.fn().mockResolvedValue(undefined), onRestartSession: vi.fn().mockResolvedValue(undefined), onClose: vi.fn(), ...overrides }; return { props, ...render(<RedmineReconciliationModal {...props} />) }; };
+const enterReview = (binding = queue[0]!) => { const view = renderModal({ binding }); fireEvent.click(screen.getByRole("radio", { name: "Import existing issues" })); fireEvent.click(screen.getByRole("button", { name: "Start preview" })); succeed("preview", progress({ complete: true, remainingCount: 0, eligibleUnlinkedCount: 1 })); return view; };
+const loadReview = (page = reviewPage(), binding = queue[0]!) => { const view = enterReview(binding); fireEvent.click(screen.getByRole("button", { name: "Load recommendations" })); succeed("review", page); return view; };
+const enterActivationReady = (overrides: Partial<ModalHarnessProps> = {}) => { const view = renderModal(overrides); fireEvent.click(screen.getByRole("radio", { name: "Only sync future changes" })); fireEvent.click(screen.getByRole("button", { name: "Start preview" })); succeed("preview", progress({ mode: "future_only", complete: true, remainingCount: 0, eligibleUnlinkedCount: 0 })); return view; };
 const selectManual = () => { const view = loadReview(); fireEvent.click(screen.getByRole("button", { name: "Search for another Kanon issue" })); fireEvent.change(screen.getByRole("textbox", { name: "Search Kanon issues" }), { target: { value: "manual" } }); fireEvent.click(screen.getByRole("button", { name: "KAN-9 — Manual result" })); return view; };
 
 describe("RedmineReconciliationModal", () => {
@@ -68,6 +72,51 @@ describe("RedmineReconciliationModal", () => {
     expect(screen.getByText("This project is ready for activation.")).toBeInTheDocument();
   });
 
+  it("runs one bounded activation batch per explicit click and shows incomplete progress", () => {
+    enterActivationReady();
+    expect(commands.activation.mutate).not.toHaveBeenCalled();
+    const start = screen.getByRole("button", { name: "Start import" }); fireEvent.click(start); fireEvent.click(start);
+    expect(commands.activation.hook).toHaveBeenCalledWith("workspace", "connection", queue[0]!.bindingId); expect(commands.activation.mutate).toHaveBeenCalledTimes(1); expect(commands.activation.mutate.mock.calls[0]?.[0]).toBeUndefined();
+    succeed("activation", activationProgress(false));
+    expect(screen.getByText("Imported 2 · Processed 2 · Remaining 3")).toBeInTheDocument();
+    const next = screen.getByRole("button", { name: "Continue import" }); fireEvent.click(next); fireEvent.click(next);
+    expect(commands.activation.mutate).toHaveBeenCalledTimes(2);
+  });
+
+  it("hands a completed or replayed binding off once and retries only failed finalization", async () => {
+    let rejectFinal!: (error: Error) => void; const finalization = new Promise<void>((_, reject) => { rejectFinal = reject; });
+    const onBindingComplete = vi.fn().mockReturnValueOnce(finalization).mockResolvedValue(undefined); const view = enterActivationReady({ current: 2, total: 2, onBindingComplete }); expect(screen.getByText("Project 2 of 2")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Start import" })); succeed("activation", activationProgress(true, true));
+    await waitFor(() => expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true")); fireEvent.click(screen.getByRole("button", { name: "Close" })); fireEvent.keyDown(document, { key: "Escape" }); fireEvent.click(screen.getByTestId("redmine-reconciliation-backdrop")); expect(view.props.onClose).not.toHaveBeenCalled();
+    rejectFinal(Object.assign(new Error("Final activation failed"), { code: "BINDING_RELEASE_IN_PROGRESS" }));
+    await screen.findByText("Final activation failed"); expect(onBindingComplete).toHaveBeenCalledTimes(1); expect(commands.activation.mutate).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" })); await waitFor(() => expect(onBindingComplete).toHaveBeenCalledTimes(2));
+    expect(commands.activation.mutate).toHaveBeenCalledTimes(1); succeed("activation", activationProgress(true, true)); expect(onBindingComplete).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a failed authoritative refresh without repeating finalization", async () => {
+    let rejectRefresh!: (error: Error) => void; const refresh = new Promise<void>((_, reject) => { rejectRefresh = reject; });
+    const onBindingComplete = vi.fn().mockRejectedValueOnce(Object.assign(new Error("Bootstrap changed"), { code: "INTEGRATION_BOOTSTRAP_REQUIRED" })).mockResolvedValue(undefined); const onRestartSession = vi.fn().mockReturnValueOnce(refresh).mockResolvedValue(undefined);
+    enterActivationReady({ onBindingComplete, onRestartSession }); fireEvent.click(screen.getByRole("button", { name: "Start import" })); succeed("activation", activationProgress(true)); await waitFor(() => expect(onRestartSession).toHaveBeenCalledTimes(1));
+    await act(async () => { rejectRefresh(new Error("Refresh failed")); await Promise.resolve(); }); expect(screen.getByRole("alert")).toHaveTextContent("Refresh failed"); expect(onBindingComplete).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" })); await waitFor(() => expect(onRestartSession).toHaveBeenCalledTimes(2)); expect(screen.getByRole("radio", { name: "Only sync future changes" })).not.toBeChecked(); expect(onBindingComplete).toHaveBeenCalledTimes(1); expect(commands.activation.mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers interrupted imports explicitly and skips already-active imports", async () => {
+    const interrupted = renderModal(); fireEvent.click(screen.getByRole("radio", { name: "Import existing issues" })); fireEvent.click(screen.getByRole("button", { name: "Start preview" })); fail("preview", "REDMINE_IMPORT_IN_PROGRESS");
+    fireEvent.click(screen.getByRole("button", { name: "Continue import" })); expect(commands.activation.mutate).toHaveBeenCalledTimes(1); interrupted.unmount(); vi.clearAllMocks();
+    const onBindingComplete = vi.fn().mockResolvedValue(undefined); renderModal({ onBindingComplete }); fireEvent.click(screen.getByRole("radio", { name: "Import existing issues" })); fireEvent.click(screen.getByRole("button", { name: "Start preview" })); fail("preview", "REDMINE_IMPORT_ACTIVE");
+    await waitFor(() => expect(onBindingComplete).toHaveBeenCalledTimes(1)); expect(commands.activation.mutate).not.toHaveBeenCalled();
+  });
+
+  it.each(["INTEGRATION_BOOTSTRAP_REQUIRED", "INTEGRATION_BINDING_NOT_FOUND"])("refreshes the session for activation error %s", async (code) => {
+    let rejectRefresh!: (error: Error) => void; const firstRefresh = new Promise<void>((_, reject) => { rejectRefresh = reject; });
+    const onRestartSession = vi.fn().mockReturnValueOnce(firstRefresh).mockResolvedValue(undefined); const view = enterActivationReady({ onRestartSession });
+    fireEvent.click(screen.getByRole("button", { name: "Start import" })); fail("activation", code);
+    await waitFor(() => expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true")); fireEvent.click(screen.getByRole("button", { name: "Close" })); fireEvent.keyDown(document, { key: "Escape" }); fireEvent.click(screen.getByTestId("redmine-reconciliation-backdrop")); expect(view.props.onClose).not.toHaveBeenCalled();
+    rejectRefresh(new Error("Refresh failed")); await screen.findByText("Refresh failed"); fireEvent.click(screen.getByRole("button", { name: "Retry" })); await waitFor(() => expect(onRestartSession).toHaveBeenCalledTimes(2)); expect(commands.activation.mutate).toHaveBeenCalledTimes(1);
+  });
+
   it("offers reducer-directed retry or restart and stops on mapping blockers", () => {
     renderModal();
     fireEvent.click(screen.getByRole("radio", { name: "Import existing issues" }));
@@ -88,15 +137,15 @@ describe("RedmineReconciliationModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.keyDown(document, { key: "Escape" });
     fireEvent.click(screen.getByTestId("redmine-reconciliation-backdrop"));
-    expect(view.onClose).toHaveBeenCalledTimes(3);
+    expect(view.props.onClose).toHaveBeenCalledTimes(3);
     commands.preview.pending = true;
-    view.rerender(<RedmineReconciliationModal workspaceId="workspace" connectionId="connection" queue={queue} onClose={view.onClose} />);
+    view.rerender(<RedmineReconciliationModal {...view.props} />);
     expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.keyDown(document, { key: "Escape" });
     fireEvent.click(screen.getByTestId("redmine-reconciliation-backdrop"));
-    expect(view.onClose).toHaveBeenCalledTimes(3);
+    expect(view.props.onClose).toHaveBeenCalledTimes(3);
   });
 
   it("loads a bounded page explicitly and explains additive recommendation evidence", () => {
@@ -169,16 +218,16 @@ describe("RedmineReconciliationModal", () => {
   it("treats every command as one busy boundary for controls and closing", () => {
     const view = loadReview(reviewPage([reviewItem()], { remainingCandidateCount: 1, nextCursor: "Opaque_busy" }));
     for (const name of Object.keys(commands) as CommandName[]) {
-      commands[name].pending = true; view.rerender(<RedmineReconciliationModal workspaceId="workspace" connectionId="connection" queue={queue} onClose={view.onClose} />);
+      commands[name].pending = true; view.rerender(<RedmineReconciliationModal {...view.props} />);
       expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
       expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
       expect(screen.getByRole("button", { name: "Link Redmine #42 to KAN-7" })).toBeDisabled();
       expect(screen.getByRole("radio", { name: "Import existing issues" })).toBeDisabled();
       commands[name].pending = false;
     }
-    commands.review.pending = true; view.rerender(<RedmineReconciliationModal workspaceId="workspace" connectionId="connection" queue={queue} onClose={view.onClose} />);
+    commands.review.pending = true; view.rerender(<RedmineReconciliationModal {...view.props} />);
     fireEvent.keyDown(document, { key: "Escape" }); fireEvent.click(screen.getByTestId("redmine-reconciliation-backdrop"));
-    expect(view.onClose).not.toHaveBeenCalled();
+    expect(view.props.onClose).not.toHaveBeenCalled();
   });
 
   it("mounts scoped search only after three trimmed characters and hides stale results while fetching", () => {
@@ -228,7 +277,7 @@ describe("RedmineReconciliationModal", () => {
   });
 
   it("keeps suggested decisions available when the project key is unavailable", () => {
-    loadReview(reviewPage(), [{ ...queue[0]!, projectKey: null }]);
+    loadReview(reviewPage(), { ...queue[0]!, projectKey: null });
     expect(issueSearch.hook).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Search for another Kanon issue" })).toBeDisabled();
     expect(screen.getByText("Manual search is unavailable because this project key could not be resolved.")).toBeInTheDocument();

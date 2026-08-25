@@ -1283,6 +1283,15 @@ export async function configureConnection(
   );
 }
 
+function bindingInboundReady(binding: {
+  bootstrapState: string;
+  inboundEnabled: boolean;
+  releaseRequestedAt?: Date | null;
+  releasedAt?: Date | null;
+}): boolean {
+  return binding.releaseRequestedAt === null && binding.releasedAt === null && binding.bootstrapState === "ready" && binding.inboundEnabled;
+}
+
 async function assertActivationReady(
   database: Database,
   connection: {
@@ -1301,9 +1310,7 @@ async function assertActivationReady(
   });
   if (
     bindings.length === 0 ||
-    bindings.some(
-      (binding) => binding.bootstrapState !== "ready" || !binding.inboundEnabled,
-    )
+    bindings.some((binding) => !bindingInboundReady(binding))
   ) {
     throw new AppError(
       409,
@@ -1801,6 +1808,9 @@ export async function getConnection(
           commentCaptureEnabled: true,
           commentDispatchEnabled: true,
           releaseRequestedAt: true,
+          releasedAt: true,
+          bootstrapState: true,
+          inboundEnabled: true,
         },
       }),
       prisma.member.count({ where: { workspaceId: connection.workspaceId } }),
@@ -1987,6 +1997,7 @@ export async function getConnection(
       commentCaptureEnabled: binding.commentCaptureEnabled,
       commentDispatchEnabled: binding.commentDispatchEnabled,
       releasePending: binding.releaseRequestedAt !== null,
+      inboundReady: bindingInboundReady(binding),
     })),
     callerCredential: publicCredential(credential),
     connectedMemberIds: connectedCredentials.map(({ memberId }) => memberId),
