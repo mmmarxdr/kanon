@@ -738,7 +738,7 @@ export async function previewRedmineIssueImport(
         else throw error;
       }
     }
-    if ((incompatibleResume || staleScope) && mode !== undefined && resumable?.version === 2) {
+    if ((incompatibleResume || staleScope) && mode !== undefined) {
       const restartCutoff = new Date(Math.floor(claimedAt.getTime() / 1_000) * 1_000);
       const restartEvidence = emptyEvidence({ mode, cutoff: restartCutoff, scopeFingerprint: reconciliationScopeFingerprint(current, mode, [], []) });
       await assertBootstrapMutationAvailable(transaction, bindingId);

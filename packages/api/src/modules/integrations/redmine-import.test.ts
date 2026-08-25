@@ -704,6 +704,61 @@ describe("Redmine-created issue import", () => {
     expect(transport.get).toHaveBeenLastCalledWith(expect.stringContaining("offset=0"));
   });
 
+  it("replaces a pending legacy preview before restarting an explicit preview", async () => {
+    const { owner, connection, binding } = await fixture();
+    const issues = Array.from({ length: 100 }, (_, index) =>
+      redmineIssue({ id: index + 1, assigned_to: null }),
+    );
+    let providerReads = 0;
+    const transport = remote(() =>
+      providerReads++ === 0
+        ? { issues, total_count: 101, offset: 0, limit: 100 }
+        : {
+            issues: [redmineIssue({ id: 101, assigned_to: null })],
+            total_count: 1,
+            offset: 0,
+            limit: 100,
+          },
+    );
+
+    await expect(
+      previewRedmineIssueImport(connection.id, binding.id, owner.userId, transport.dependencies),
+    ).rejects.toMatchObject({ code: "REDMINE_IMPORT_LIMIT" });
+    await expect(
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+    ).resolves.toMatchObject({
+      bootstrapState: "pending",
+      bootstrapPageToken: expect.objectContaining({ version: 1, nextOffset: 100 }),
+    });
+    await setImportLifecycle(connection.id, binding.id, "paused");
+    transport.get.mockClear();
+
+    await expect(
+      fullPreview(connection.id, binding.id, owner.userId, transport.dependencies),
+    ).rejects.toMatchObject({ code: "REDMINE_PREVIEW_STALE" });
+    expect(transport.get).not.toHaveBeenCalled();
+    await expect(
+      prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+    ).resolves.toMatchObject({
+      bootstrapState: "pending",
+      bootstrapCutoff: cutoff,
+      bootstrapPageToken: expect.objectContaining({
+        version: 2,
+        mode: "full",
+        nextOffset: 0,
+        candidates: [],
+      }),
+      bootstrapLeaseToken: null,
+      bootstrapLeaseUntil: null,
+    });
+
+    await expect(
+      fullPreview(connection.id, binding.id, owner.userId, transport.dependencies),
+    ).resolves.toMatchObject({ complete: true, scannedCount: 1, eligibleUnlinkedCount: 1 });
+    expect(transport.get).toHaveBeenCalledOnce();
+    expect(transport.get).toHaveBeenCalledWith(expect.stringContaining("offset=0"));
+  });
+
   it("recovers scope drift after a nonfinal activation batch and preserves imported links", async () => {
     const { owner, project, connection, binding } = await fixture();
     await setImportLifecycle(connection.id, binding.id, "paused");
