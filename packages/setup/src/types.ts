@@ -94,3 +94,70 @@ export interface InteractiveOptions {
   yes: boolean;
   interactive: boolean;
 }
+
+// ─── Surface Lifecycle Types ────────────────────────────────────────────────
+
+export type EvidenceState =
+  | "executable-valid"
+  | "configured-only/stale"
+  | "wsl-only/bridge"
+  | "ambiguous"
+  | "absent";
+
+export interface WslBridge {
+  distribution: string;
+}
+
+export interface SurfaceEvidence {
+  tool: string;
+  surface: string;
+  host: "local" | "windows";
+  state: EvidenceState;
+  bridge?: WslBridge;
+  executable?: {
+    path: string;
+    command: string;
+    version: string;
+  };
+  targetKey?: string;
+}
+
+export interface SurfaceAuthorization {
+  source: "explicit" | "all" | "autodetect" | "prompt";
+  crossHost: "authorized" | "denied";
+  bridge?: WslBridge;
+}
+
+export interface SurfaceOwnership {
+  targetKey: string;
+  configPath: string;
+  state: "owned" | "unowned" | "missing" | "invalid";
+  bridge?: WslBridge;
+}
+
+export interface SurfaceMutationPlan {
+  operation: "configure" | "repair" | "remove";
+  evidence: SurfaceEvidence;
+  authorization: SurfaceAuthorization;
+  ownership: SurfaceOwnership;
+  decision: "write" | "skip";
+  mutations: readonly string[];
+  bridge?: WslBridge;
+  reason: string;
+}
+
+export interface SurfaceResult {
+  surface: string;
+  host: string;
+  evidence: EvidenceState;
+  outcome: "ready" | "removed" | "skipped" | "failed";
+  paths: readonly string[];
+  message: string;
+}
+
+export interface SetupOutcome {
+  kind: "configured" | "manual-fallback" | "explicit-non-success";
+  exitCode: 0 | 1;
+  manualMcpPath?: string;
+  surfaces: readonly SurfaceResult[];
+}
