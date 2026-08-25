@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { integrationConnectionSchema } from "./integrations.js";
+import {
+  integrationConnectionSchema,
+  redmineReconciliationActivationProgressSchema,
+  redmineReconciliationDecisionSchema,
+  redmineReconciliationFactorEvidenceSchema,
+  redmineReconciliationMaterializeResultSchema,
+  redmineReconciliationMaterializeTargetSchema,
+  redmineReconciliationPreviewProgressSchema,
+  redmineReconciliationPreviewRequestSchema,
+  redmineReconciliationRecommendationPageSchema,
+  redmineReconciliationRecommendationQuerySchema,
+  redmineReconciliationReviewPageRequestSchema,
+  redmineReconciliationReviewPageResultSchema,
+} from "./integrations.js";
 
 const credential = {
   connected: true,
@@ -58,6 +71,7 @@ const connection = {
       commentCaptureEnabled: false,
       commentDispatchEnabled: false,
       releasePending: false,
+      inboundReady: true,
     },
   ],
   callerCredential: credential,
@@ -201,4 +215,55 @@ it("exports owner-safe audit health through the public shared contract", async (
     fresh: false,
     reasonCode: null,
   })).toMatchObject({ state: "unknown", fresh: false });
+});
+
+describe("Redmine reconciliation contracts", () => {
+  const hash = `sha256:${"a".repeat(64)}`;
+  const evidence = { scorerVersion: "redmine-reconciliation-score.v1", projectEligible: true, titleContribution: 50, descriptionContribution: 25, dateComparable: true, dateContribution: 10, assigneeComparable: true, assigneeContribution: 10, stateComparable: true, stateContribution: 5, score: 100, localFingerprint: hash, remoteFingerprint: hash } as const;
+
+  it("accepts bounded preview, target, query, decision, and progress inputs", () => {
+    expect(redmineReconciliationPreviewRequestSchema.parse({ mode: "full" })).toEqual({ mode: "full" });
+    expect(redmineReconciliationMaterializeTargetSchema.parse({ remoteIssueId: "42" })).toEqual({ remoteIssueId: "42" });
+    expect(redmineReconciliationRecommendationQuerySchema.parse({ limit: "50" })).toMatchObject({ limit: 50, state: "pending" });
+    expect(redmineReconciliationDecisionSchema.parse({ kind: "manual-link", candidateIssueId: "11111111-1111-4111-8111-111111111111", localFingerprint: hash, remoteFingerprint: hash })).toMatchObject({ kind: "manual-link" });
+    expect(redmineReconciliationPreviewProgressSchema.parse({ previewIdentity: "22222222-2222-4222-8222-222222222222", mode: "future_only", cutoff: new Date("2026-08-21T12:00:00.000Z"), checkpoint: null, complete: true, scannedCount: 3, remainingCount: 0, eligibleUnlinkedCount: 0, excludedPrivateCount: 1, linkedCount: 2, mappingGaps: { statusIds: [], priorityIds: [], assigneeRemoteUserIds: [] } })).toMatchObject({ complete: true, mode: "future_only" });
+    expect(redmineReconciliationActivationProgressSchema.parse({ importedCount: 1, issueKeys: ["KAN-1"], replayed: false, complete: false, processedCount: 10, remainingCount: 1 })).toMatchObject({ complete: false, remainingCount: 1 });
+    expect(redmineReconciliationMaterializeTargetSchema.parse({ remoteIssueId: "42", candidateIssueId: "11111111-1111-4111-8111-111111111111" })).toMatchObject({ candidateIssueId: "11111111-1111-4111-8111-111111111111" });
+  });
+
+  it("accepts only strict content-safe hydrated materialization results", () => {
+    const recommendation = { id: "11111111-1111-4111-8111-111111111111", score: 100, factorEvidence: evidence, decisionState: "pending", decisionKind: null, decidedById: null, decidedAt: null, acceptedRefId: null, localIssue: { id: "22222222-2222-4222-8222-222222222222", key: "KAN-1", title: "Local title" } };
+    const result = { remote: { id: "42", title: "Remote title", sourceVersion: hash }, recommendations: [recommendation], manualCandidate: { score: 100, factorEvidence: evidence, localIssue: recommendation.localIssue } };
+    expect(redmineReconciliationMaterializeResultSchema.parse(result)).toEqual(result);
+    expect(redmineReconciliationMaterializeResultSchema.safeParse({ ...result, remote: { ...result.remote, description: "secret" } }).success).toBe(false);
+    expect(redmineReconciliationMaterializeResultSchema.safeParse({ ...result, recommendations: [{ ...recommendation, description: "secret" }] }).success).toBe(false);
+    expect(redmineReconciliationMaterializeResultSchema.safeParse({ ...result, recommendations: Array(4).fill(recommendation) }).success).toBe(false);
+    expect(redmineReconciliationMaterializeResultSchema.safeParse({ ...result, providerMetadata: {} }).success).toBe(false);
+  });
+
+  it("bounds strict review-page requests and content-safe responses", async () => {
+    const recommendation = { id: "11111111-1111-4111-8111-111111111111", score: 100, factorEvidence: evidence, decisionState: "pending", decisionKind: null, decidedById: null, decidedAt: null, acceptedRefId: null, localIssue: { id: "22222222-2222-4222-8222-222222222222", key: "KAN-1", title: "Local" } };
+    const item = { remote: { id: "42", title: "Remote", sourceVersion: hash }, recommendations: [recommendation], manualCandidate: null };
+    const page = { previewIdentity: "33333333-3333-4333-8333-333333333333", processedCandidateCount: 1, remainingCandidateCount: 0, hiddenCount: 0, linkedCount: 0, items: [item], nextCursor: null };
+    expect(redmineReconciliationReviewPageRequestSchema.parse({})).toEqual({ limit: 5 });
+    expect(redmineReconciliationReviewPageResultSchema.parse(page)).toEqual(page);
+    expect(redmineReconciliationReviewPageRequestSchema.safeParse({ limit: 6 }).success).toBe(false);
+    expect(redmineReconciliationReviewPageRequestSchema.safeParse({ cursor: "bad+cursor" }).success).toBe(false);
+    expect(redmineReconciliationReviewPageResultSchema.safeParse({ ...page, items: Array(6).fill(item), processedCandidateCount: 6 }).success).toBe(false);
+    expect(redmineReconciliationReviewPageResultSchema.safeParse({ ...page, items: [{ ...item, remote: { ...item.remote, description: "secret" } }] }).success).toBe(false);
+    expect(redmineReconciliationReviewPageResultSchema.safeParse({ ...page, hiddenCount: 1 }).success).toBe(false);
+    expect((await import("./index.js")).redmineReconciliationReviewPageRequestSchema).toBe(redmineReconciliationReviewPageRequestSchema);
+    expect((await import("./index.js")).redmineReconciliationReviewPageResultSchema).toBe(redmineReconciliationReviewPageResultSchema);
+  });
+
+  it("rejects malformed, unbounded, or content-bearing reconciliation data", () => {
+    expect(redmineReconciliationPreviewRequestSchema.safeParse({ mode: "all" }).success).toBe(false);
+    expect(redmineReconciliationMaterializeTargetSchema.safeParse({ remoteIssueId: "issue-42" }).success).toBe(false);
+    expect(redmineReconciliationMaterializeTargetSchema.safeParse({ remoteIssueId: "42", candidateIssueId: "bad" }).success).toBe(false);
+    expect(redmineReconciliationRecommendationQuerySchema.safeParse({ limit: 51 }).success).toBe(false);
+    expect(redmineReconciliationRecommendationQuerySchema.safeParse({ cursor: "x".repeat(513) }).success).toBe(false);
+    expect(redmineReconciliationDecisionSchema.safeParse({ kind: "manual-link", candidateIssueId: "11111111-1111-4111-8111-111111111111", localFingerprint: "bad", remoteFingerprint: hash }).success).toBe(false);
+    expect(redmineReconciliationRecommendationPageSchema.safeParse({ items: [], nextCursor: null }).success).toBe(true);
+    expect(redmineReconciliationFactorEvidenceSchema.safeParse({ ...evidence, title: "secret" }).success).toBe(false);
+  });
 });
