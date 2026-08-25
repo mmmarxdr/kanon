@@ -343,6 +343,7 @@ export function RedmineSection({
   const { t } = useTranslation("settings");
   const connection = useRedmineConnectionQuery(workspaceId);
   const isOwner = currentUserRole === "owner";
+  const refreshConnection = async () => (await connection.refetch({ throwOnError: true })).data ?? null;
 
   if (connection.isLoading) {
     return <SettingsCard><p className="text-sm text-muted-foreground">{t("redmineLoading")}</p></SettingsCard>;
@@ -352,7 +353,7 @@ export function RedmineSection({
   }
   if (!connection.data) {
     return isOwner ? (
-      <RedmineOwnerSection workspaceId={workspaceId} connection={null} />
+      <RedmineOwnerSection workspaceId={workspaceId} connection={null} refreshConnection={refreshConnection} />
     ) : (
       <SettingsCard>
         <h2 className="text-lg font-semibold text-foreground">Redmine</h2>
@@ -378,7 +379,7 @@ export function RedmineSection({
       <CredentialCard workspaceId={workspaceId} connection={connection.data} />
       {isOwner && <ProjectBindCard workspaceId={workspaceId} connection={connection.data} />}
       {isOwner && (
-        <RedmineOwnerSection workspaceId={workspaceId} connection={connection.data} />
+        <RedmineOwnerSection workspaceId={workspaceId} connection={connection.data} refreshConnection={refreshConnection} />
       )}
       <CoverageCard connection={connection.data} members={members} />
     </div>
