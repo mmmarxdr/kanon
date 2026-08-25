@@ -9,7 +9,9 @@ import {
   REDMINE_RECONCILIATION_SCORER_VERSION,
 } from "./redmine-reconciliation-score.js";
 import { issueSyncMetadata } from "./issue-convergence.js";
-import { ownedConnection } from "./service.js";
+import { recordIssueContentProvenanceTx } from "./privacy-hold/content-provenance.js";
+import { reconciliationScopeFingerprint } from "./redmine-import.js";
+import { ownedConnection, serviceCredential } from "./service.js";
 const Hash = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const FullPreview = z
   .object({
@@ -19,6 +21,7 @@ const FullPreview = z
     previewIdentity: z.string().uuid(),
     scopeFingerprint: Hash,
     candidates: z.array(z.object({ remoteId: z.string().regex(/^\d+$/), sourceVersion: Hash }).strict()),
+    assigneeRemoteIds: z.array(z.string().regex(/^\d+$/)).default([]),
   })
   .passthrough();
 const DecisionState = z.enum(["pending", "accepted", "rejected"]);
@@ -247,18 +250,27 @@ export async function reviewRedmineReconciliationPage(
   const items: Awaited<ReturnType<typeof materializeRedmineReconciliationRecommendations>>[] = [];
   let hiddenCount = 0;
   let linkedCount = 0;
+  const skipped: Array<{ remoteId: string; sourceVersion: string; decisionKind: "system-not-visible" | "system-already-linked" }> = [];
   for (const candidate of candidates) {
-    if (linkedIds.has(candidate.remoteId)) { linkedCount += 1; continue; }
+    if (linkedIds.has(candidate.remoteId)) { linkedCount += 1; skipped.push({ ...candidate, decisionKind: "system-already-linked" }); continue; }
     const detail = await options.loadRemoteIssue(candidate.remoteId);
     validateRemoteIdentity(scope, candidate.remoteId, detail);
-    if (!detail.visible) { hiddenCount += 1; continue; }
+    if (!detail.visible) { hiddenCount += 1; skipped.push({ ...candidate, decisionKind: "system-not-visible" }); continue; }
     items.push(await materializeRedmineReconciliationRecommendations(
       { ...request, remoteIssueId: candidate.remoteId },
       { ...options, loadRemoteIssue: async () => detail },
     ));
   }
-  const current = await bindingScope(prisma, request, options);
-  if (current.preview.previewIdentity !== scope.preview.previewIdentity || current.preview.scopeFingerprint !== scope.preview.scopeFingerprint || JSON.stringify(current.preview.candidates) !== JSON.stringify(scope.preview.candidates)) throw new AppError(409, "REDMINE_RECONCILIATION_SCOPE_STALE", "The reconciliation scope changed");
+  await prisma.$transaction(async (transaction) => {
+    await transaction.$queryRaw(Prisma.sql`SELECT "id" FROM "integration_project_bindings" WHERE "id" = ${request.bindingId}::uuid FOR UPDATE`);
+    const current = await bindingScope(transaction, request, options);
+    if (current.preview.previewIdentity !== scope.preview.previewIdentity || current.preview.scopeFingerprint !== scope.preview.scopeFingerprint || JSON.stringify(current.preview.candidates) !== JSON.stringify(scope.preview.candidates)) throw new AppError(409, "REDMINE_RECONCILIATION_SCOPE_STALE", "The reconciliation scope changed");
+    const decidedAt = new Date();
+    for (const candidate of skipped) {
+      await transaction.integrationReconciliationDisposition.updateMany({ where: { bindingId: scope.binding.id, previewIdentity: scope.preview.previewIdentity, remoteIssueId: candidate.remoteId, remoteSourceVersion: candidate.sourceVersion, state: "pending" }, data: { state: "skipped", decisionKind: candidate.decisionKind, decidedAt, acceptedRefId: null } });
+      await transaction.integrationReconciliationRecommendation.updateMany({ where: { bindingId: scope.binding.id, previewIdentity: scope.preview.previewIdentity, remoteIssueId: candidate.remoteId, decisionState: "pending" }, data: { decisionState: "rejected", decisionKind: candidate.decisionKind, decidedAt, acceptedRefId: null } });
+    }
+  });
   const nextOffset = offset + candidates.length;
   const remainingCandidateCount = scope.preview.candidates.length - nextOffset;
   return {
@@ -362,6 +374,12 @@ async function lockDecisionScope(transaction: Prisma.TransactionClient, request:
   await transaction.$queryRaw(Prisma.sql`SELECT "id" FROM "integration_project_bindings" WHERE "id" = ${request.bindingId}::uuid FOR UPDATE`);
   return bindingScope(transaction, request, options);
 }
+async function assertCurrentDecisionScope(transaction: Prisma.TransactionClient, scope: Awaited<ReturnType<typeof bindingScope>>) {
+  const credential = await serviceCredential(transaction, scope.connection);
+  const identities = scope.preview.assigneeRemoteIds.length ? await transaction.integrationExternalIdentity.findMany({ where: { bindingId: scope.binding.id, remoteUserId: { in: scope.preview.assigneeRemoteIds } }, select: { remoteUserId: true, memberId: true, member: { select: { workspaceId: true } } } }) : [];
+  const current = reconciliationScopeFingerprint({ connection: scope.connection, binding: scope.binding, credential }, scope.preview.mode, scope.preview.assigneeRemoteIds, identities);
+  if (current !== scope.preview.scopeFingerprint) throw decisionConflict("REDMINE_RECONCILIATION_SCOPE_STALE", "The reconciliation scope changed");
+}
 async function lockCandidate(transaction: Prisma.TransactionClient, projectId: string, issueId: string) {
   await transaction.$queryRaw(Prisma.sql`SELECT "id" FROM "issues" WHERE "id" = ${issueId}::uuid FOR UPDATE`);
   const issue = await transaction.issue.findFirst({ where: { id: issueId, projectId } });
@@ -384,6 +402,7 @@ export async function decideRedmineReconciliationRecommendations(request: Redmin
   try {
     return await prisma.$transaction(async (transaction) => {
       const scope = await lockDecisionScope(transaction, request, dependencies);
+      if (linking) await assertCurrentDecisionScope(transaction, scope);
       if (!scope.preview.candidates.some(({ remoteId }) => remoteId === request.remoteIssueId)) throw decisionConflict("REDMINE_RECONCILIATION_UNLISTED", "The Redmine issue is not in this preview");
       const member = await transaction.member.findUniqueOrThrow({ where: { userId_workspaceId: { userId: request.userId, workspaceId: scope.connection.workspaceId } }, select: { id: true } });
       const now = dependencies.now?.() ?? new Date();
@@ -439,6 +458,21 @@ export async function decideRedmineReconciliationRecommendations(request: Redmin
       await cancelSafeCreate(transaction, scope.binding.id, issue.id);
       const exact = decision.kind === "manual-link" ? await transaction.integrationReconciliationRecommendation.findFirst({ where: { bindingId: scope.binding.id, previewIdentity: scope.preview.previewIdentity, remoteIssueId: request.remoteIssueId, remoteSourceVersion: detail!.sourceVersion, candidateIssueId: issue.id, scoringVersion: REDMINE_RECONCILIATION_SCORER_VERSION, localFingerprint: match.evidence.localFingerprint, remoteFingerprint: match.evidence.remoteFingerprint } }) : recommendation;
       if (exact && exact.decisionState !== "pending") throw decisionConflict("REDMINE_RECONCILIATION_RECOMMENDATION_STALE", "The recommendation was already decided");
+      const classifiedFields = new Set((await transaction.integrationContentProvenance.findMany({
+        where: { bindingId: scope.binding.id, entityType: "issue", entityId: issue.id, field: { in: ["title", "description"] } },
+        select: { field: true },
+      })).map(({ field }) => field));
+      await recordIssueContentProvenanceTx(transaction, {
+        bindingId: scope.binding.id,
+        issueId: issue.id,
+        direction: "outbound",
+        actorKind: "user",
+        sourceVersion: issue.updatedAt.toISOString(),
+        fields: {
+          ...(!classifiedFields.has("title") ? { title: issue.title } : {}),
+          ...(!classifiedFields.has("description") ? { description: issue.description } : {}),
+        },
+      });
       const correlationId = applicationKey(scope.binding.id, request.remoteIssueId, detail!.sourceVersion);
       const ref = await transaction.externalRef.create({ data: { connectionId: request.connectionId, bindingId: scope.binding.id, entityType: "issue", entityId: issue.id, externalId: request.remoteIssueId, remoteUpdatedAt: snapshot.changedAt, localVersion: 1, lastCorrelationId: correlationId, metadata: issueSyncMetadata(null, { sourceVersion: detail!.sourceVersion, ...snapshot }) } });
       await transaction.integrationInboundApplication.create({ data: { bindingId: scope.binding.id, remoteEntityType: "issue", remoteId: request.remoteIssueId, remoteUpdatedAt: snapshot.changedAt, sourceVersion: detail!.sourceVersion, applicationKey: correlationId, correlationId, state: "applied", refId: ref.id, outcome: { provenance: "reconciliation-link", decisionKind: decision.kind, issueKey: issue.key } } });
