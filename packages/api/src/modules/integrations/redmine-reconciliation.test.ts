@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { redmineReconciliationRecommendationPageSchema } from "@kanon/shared";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "../../config/prisma.js";
 import {
@@ -15,6 +17,7 @@ import {
   reviewRedmineReconciliationPage,
   type RedmineReconciliationRemoteDetail,
 } from "./redmine-reconciliation.js";
+import { activateRedmineIssueImport } from "./redmine-import.js";
 import { rankRedmineReconciliationCandidates } from "./redmine-reconciliation-score.js";
 const SOURCE = `sha256:${"a".repeat(64)}`;
 const OTHER_HASH = `sha256:${"b".repeat(64)}`;
@@ -22,12 +25,17 @@ const PREVIEW_ID = "10000000-0000-4000-8000-000000000001";
 const createdAt = new Date("2026-08-01T10:00:00.000Z");
 const decidedAt = new Date("2026-08-21T12:00:00.000Z");
 const concurrentPrisma = new PrismaClient();
+const sha256 = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
+let currentScopeFingerprint = OTHER_HASH;
+function scopeFingerprint(input: { connectionEpoch: number; bindingEpoch: number; remoteProjectId: string; credentialId: string; encryptedKey: string; readMap: Record<string, string> }) {
+  return sha256(JSON.stringify({ mode: "full", baseUrl: "https://redmine.test", connectionEpoch: input.connectionEpoch, bindingEpoch: input.bindingEpoch, remoteProjectId: input.remoteProjectId, credentialId: input.credentialId, credentialFingerprint: sha256(input.encryptedKey), readMap: input.readMap, assignees: [] }));
+}
 function previewEvidence(overrides: Record<string, unknown> = {}) {
   return {
     version: 2,
     previewIdentity: PREVIEW_ID,
     mode: "full",
-    scopeFingerprint: OTHER_HASH,
+    scopeFingerprint: currentScopeFingerprint,
     cutoff: "2026-08-04T12:00:00.000Z",
     complete: true,
     nextOffset: 1,
@@ -51,18 +59,26 @@ async function fixture() {
   const connection = await prisma.integrationConnection.create({
     data: { provider: "redmine", baseUrl: "https://redmine.test", workspaceId: workspace.id, lifecycle: "paused" },
   });
-  const binding = await prisma.integrationProjectBinding.create({
+  const credential = await prisma.memberIntegrationCredential.create({ data: { connectionId: connection.id, memberId: owner.id, encryptedKey: "cipher-one", lastAuthStatus: "valid" } });
+  await prisma.integrationConnection.update({ where: { id: connection.id }, data: { serviceCredentialId: credential.id } });
+  const readMap = { "priority:3": "high" };
+  let binding = await prisma.integrationProjectBinding.create({
     data: {
       connectionId: connection.id,
       projectId: project.id,
       remoteProjectId: "7",
-      readMap: {},
+      readMap,
       writeMap: {},
       lifecycle: "paused",
       bootstrapState: "previewed",
       bootstrapCutoff: new Date("2026-08-04T12:00:00.000Z"),
       bootstrapPageToken: previewEvidence(),
     },
+  });
+  currentScopeFingerprint = scopeFingerprint({ connectionEpoch: connection.lifecycleEpoch, bindingEpoch: binding.lifecycleEpoch, remoteProjectId: binding.remoteProjectId, credentialId: credential.id, encryptedKey: credential.encryptedKey, readMap });
+  binding = await prisma.integrationProjectBinding.update({ where: { id: binding.id }, data: { bootstrapPageToken: previewEvidence() } });
+  await prisma.integrationReconciliationDisposition.create({
+    data: { bindingId: binding.id, previewIdentity: PREVIEW_ID, remoteIssueId: "42", remoteSourceVersion: SOURCE },
   });
   const titles = ["Alpha sync issue", "Alpha sync", "sync issue", "unrelated"];
   const issues = await Promise.all(
@@ -78,7 +94,7 @@ async function fixture() {
     remoteProjectId: "7",
     sourceVersion: SOURCE,
     previewIdentity: PREVIEW_ID,
-    scopeFingerprint: OTHER_HASH,
+    scopeFingerprint: currentScopeFingerprint,
     visible: true,
     title: "Alpha sync issue",
     description: "shared body",
@@ -98,7 +114,7 @@ async function fixture() {
     });
   const decide = (decision: Parameters<typeof decideRedmineReconciliationRecommendations>[1], overrides: Partial<RedmineReconciliationRemoteDetail> = {}) =>
     decideRedmineReconciliationRecommendations(request, decision, { loadRemoteIssue: async () => ({ ...remote, ...overrides }), now: () => decidedAt });
-  return { workspace, owner, project, connection, binding, issues, request, remote, run, decide };
+  return { workspace, owner, project, connection, credential, binding, issues, request, remote, run, decide };
 }
 function queueCreate(bindingId: string, issueId: string, state: "queued" | "retry" = "queued", attempts = 0, operation: "create" | "update" = "create") {
   return prisma.integrationSyncWork.create({ data: { bindingId, entityType: "issue", entityId: issueId, direction: "outbound", operation, dedupeKey: `reconcile:${issueId}:${state}:${operation}`, laneKey: `issue:${issueId}`, actorKey: "member:owner", actorKind: "user", payload: {}, correlationId: `reconcile:${issueId}:${state}:${operation}`, state, attempts, epoch: 0 } });
@@ -226,6 +242,23 @@ describe("Redmine reconciliation recommendations", () => {
     expect(JSON.stringify(page)).not.toContain("Private secret");
     await expect(prisma.integrationReconciliationRecommendation.count({ where: { bindingId: context.binding.id, remoteIssueId: "44" } })).resolves.toBe(0);
   });
+  it("durably skips hidden and already-linked candidates before activation", async () => {
+    const context = await fixture();
+    const candidates = ["42", "43"].map((remoteId) => ({ remoteId, sourceVersion: SOURCE }));
+    await prisma.integrationProjectBinding.update({ where: { id: context.binding.id }, data: { bootstrapPageToken: previewEvidence({ candidates }) } });
+    await prisma.integrationReconciliationDisposition.create({ data: { bindingId: context.binding.id, previewIdentity: PREVIEW_ID, remoteIssueId: "43", remoteSourceVersion: SOURCE } });
+    await prisma.externalRef.create({ data: { connectionId: context.connection.id, bindingId: context.binding.id, entityType: "issue", entityId: context.issues[0]!.id, externalId: "43" } });
+    const loadRemoteIssue = vi.fn(async (remoteIssueId: string) => ({ ...context.remote, remoteIssueId, visible: false, title: null }));
+
+    await expect(reviewRedmineReconciliationPage({ connectionId: context.connection.id, bindingId: context.binding.id, userId: context.owner.userId }, { loadRemoteIssue })).resolves.toMatchObject({ processedCandidateCount: 2, remainingCandidateCount: 0, hiddenCount: 1, linkedCount: 1 });
+    await expect(prisma.integrationReconciliationDisposition.findMany({ where: { bindingId: context.binding.id }, orderBy: { remoteIssueId: "asc" }, select: { remoteIssueId: true, state: true, decisionKind: true } })).resolves.toEqual([
+      { remoteIssueId: "42", state: "skipped", decisionKind: "system-not-visible" },
+      { remoteIssueId: "43", state: "skipped", decisionKind: "system-already-linked" },
+    ]);
+    const get = vi.fn(async () => { throw new Error("activation must not read skipped candidates"); });
+    await expect(activateRedmineIssueImport(context.connection.id, context.binding.id, context.owner.userId, { now: () => decidedAt, decrypt: () => "key", client: () => ({ get }) })).resolves.toMatchObject({ importedCount: 0, complete: true, remainingCount: 0 });
+    expect(get).not.toHaveBeenCalled();
+  });
   it("keeps earlier writes and decisions replay-safe after a partial review-page failure", async () => {
     const context = await fixture();
     const candidates = ["42", "43", "44"].map((remoteId) => ({ remoteId, sourceVersion: SOURCE }));
@@ -262,6 +295,37 @@ describe("Redmine reconciliation recommendations", () => {
     await expect(context.run()).rejects.toMatchObject({ code: "REDMINE_RECONCILIATION_ALREADY_LINKED" });
     await expect(prisma.integrationReconciliationRecommendation.count()).resolves.toBe(0);
   });
+  it("rejects credential drift under the decision locks before link mutation", async () => {
+    const context = await fixture();
+    const materialized = await context.run();
+    await prisma.memberIntegrationCredential.update({ where: { id: context.credential.id }, data: { encryptedKey: "cipher-two" } });
+
+    await expect(context.decide({ kind: "accept", recommendationId: materialized.recommendations[0]!.id })).rejects.toMatchObject({ code: "REDMINE_RECONCILIATION_SCOPE_STALE" });
+    await expect(prisma.externalRef.count({ where: { connectionId: context.connection.id } })).resolves.toBe(0);
+    await expect(prisma.integrationInboundApplication.count({ where: { bindingId: context.binding.id } })).resolves.toBe(0);
+    await expect(prisma.integrationReconciliationRecommendation.findUniqueOrThrow({ where: { id: materialized.recommendations[0]!.id } })).resolves.toMatchObject({ decisionState: "pending", acceptedRefId: null });
+    await expect(prisma.integrationReconciliationDisposition.findFirstOrThrow({ where: { bindingId: context.binding.id, remoteIssueId: "42" } })).resolves.toMatchObject({ state: "pending", acceptedRefId: null });
+  });
+  it("loads the provider before locking and rejects scope drift before link mutation", async () => {
+    const context = await fixture();
+    const materialized = await context.run();
+    const changedReadMap = { "priority:3": "urgent" };
+    const loadRemoteIssue = vi.fn(async () => {
+      await concurrentPrisma.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL lock_timeout = '250ms'");
+        await transaction.integrationProjectBinding.update({ where: { id: context.binding.id }, data: { readMap: changedReadMap } });
+      });
+      return context.remote;
+    });
+
+    await expect(decideRedmineReconciliationRecommendations(context.request, { kind: "accept", recommendationId: materialized.recommendations[0]!.id }, { loadRemoteIssue, now: () => decidedAt })).rejects.toMatchObject({ code: "REDMINE_RECONCILIATION_SCOPE_STALE" });
+    expect(loadRemoteIssue).toHaveBeenCalledOnce();
+    await expect(prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: context.binding.id } })).resolves.toMatchObject({ readMap: changedReadMap });
+    await expect(prisma.externalRef.count({ where: { connectionId: context.connection.id } })).resolves.toBe(0);
+    await expect(prisma.integrationInboundApplication.count({ where: { bindingId: context.binding.id } })).resolves.toBe(0);
+    await expect(prisma.integrationReconciliationRecommendation.findUniqueOrThrow({ where: { id: materialized.recommendations[0]!.id } })).resolves.toMatchObject({ decisionState: "pending", acceptedRefId: null });
+    await expect(prisma.integrationReconciliationDisposition.findFirstOrThrow({ where: { bindingId: context.binding.id, remoteIssueId: "42" } })).resolves.toMatchObject({ state: "pending", acceptedRefId: null });
+  });
   it("pages deterministically without leaking another binding", async () => {
     const context = await fixture();
     await context.run();
@@ -282,6 +346,17 @@ describe("Redmine reconciliation recommendations", () => {
     expect(new Set([...first.items, ...second.items].map(({ id }) => id))).toHaveProperty("size", 3);
     expect([...first.items, ...second.items].map(({ id }) => id)).not.toContain(leaked.id);
   });
+  it("returns a non-empty strict public recommendation page without preview identity", async () => {
+    const context = await fixture();
+    await context.run();
+    const page = await listRedmineReconciliationRecommendations(context.request);
+    expect(page.items).toHaveLength(3);
+    expect(page.items[0]).not.toHaveProperty("previewIdentity");
+    expect(() => redmineReconciliationRecommendationPageSchema.parse({
+      ...page,
+      items: page.items.map((item) => ({ ...item, decidedAt: item.decidedAt?.toISOString() ?? null, createdAt: item.createdAt.toISOString(), updatedAt: item.updatedAt.toISOString() })),
+    })).not.toThrow();
+  });
   it("audits reject and reject-all idempotently without rewriting prior decisions", async () => {
     const context = await fixture();
     await context.run();
@@ -296,17 +371,49 @@ describe("Redmine reconciliation recommendations", () => {
     expect(all).toHaveLength(3);
     expect(all.every(({ decisionState, decidedById, decidedAt: at }) => decisionState === "rejected" && decidedById === context.owner.id && at?.getTime() === decidedAt.getTime())).toBe(true);
   });
+  it("settles an unmaterialized remote through reject-all without retaining provider content", async () => {
+    const context = await fixture();
+    await expect(context.decide({ kind: "reject-all" })).resolves.toMatchObject({ rejectedCount: 0 });
+    await expect(prisma.integrationReconciliationDisposition.findFirstOrThrow({ where: { bindingId: context.binding.id, previewIdentity: PREVIEW_ID, remoteIssueId: "42" } })).resolves.toMatchObject({ state: "import_as_new", decisionKind: "owner-reject-all", decidedById: context.owner.id, decidedAt });
+  });
+  it("preserves terminal disposition audit metadata and rejects conflicting terminal commands", async () => {
+    const context = await fixture();
+    await context.decide({ kind: "reject-all" });
+    const settled = await prisma.integrationReconciliationDisposition.findFirstOrThrow({ where: { bindingId: context.binding.id, previewIdentity: PREVIEW_ID, remoteIssueId: "42" } });
+    await expect(context.decide({ kind: "reject-all" })).resolves.toMatchObject({ replayed: true });
+    await expect(prisma.integrationReconciliationDisposition.findUniqueOrThrow({ where: { id: settled.id } })).resolves.toMatchObject({ state: "import_as_new", decisionKind: settled.decisionKind, decidedById: settled.decidedById, decidedAt: settled.decidedAt });
+    const manual = rankRedmineReconciliationCandidates({ id: "42", projectId: context.project.id, title: context.remote.title, description: context.remote.description, createdAt: context.remote.createdAt, mappedAssigneeId: context.remote.mappedAssigneeId, mappedState: context.remote.mappedState }, [context.issues[0]!])[0]!;
+    await expect(context.decide({ kind: "manual-link", candidateIssueId: context.issues[0]!.id, localFingerprint: manual.evidence.localFingerprint, remoteFingerprint: manual.evidence.remoteFingerprint })).rejects.toMatchObject({ statusCode: 409 });
+  });
   it("accepts a suggestion atomically with baseline, replay guard, and alternative audits", async () => {
     const context = await fixture();
     await context.run();
     const recommendations = await prisma.integrationReconciliationRecommendation.findMany({ where: { bindingId: context.binding.id }, orderBy: { score: "desc" } });
     const selected = recommendations[0]!;
     const before = await prisma.issue.findUniqueOrThrow({ where: { id: selected.candidateIssueId } });
+    const preservedTitle = await prisma.integrationContentProvenance.create({
+      data: {
+        bindingId: context.binding.id,
+        entityType: "issue",
+        entityId: selected.candidateIssueId,
+        field: "title",
+        origin: "redmine",
+        sourceVersion: OTHER_HASH,
+        contentHash: `sha256:${"c".repeat(64)}`,
+      },
+    });
     await expect(context.decide({ kind: "accept", recommendationId: selected.id })).resolves.toMatchObject({ replayed: false, candidateIssueId: selected.candidateIssueId });
     expect(await prisma.issue.findUniqueOrThrow({ where: { id: selected.candidateIssueId } })).toEqual(before);
     const ref = await prisma.externalRef.findUniqueOrThrow({ where: { connectionId_entityType_entityId: { connectionId: context.connection.id, entityType: "issue", entityId: selected.candidateIssueId } } });
     expect(ref.metadata).toMatchObject({ remoteVersion: SOURCE, baseline: { version: 1, sourceVersion: SOURCE, fields: { title: context.remote.title, description: context.remote.description, state: "in_progress", priority: "medium", assigneeId: context.owner.id, startDate: null, dueDate: null, progress: 0 } } });
     await expect(prisma.integrationInboundApplication.findFirstOrThrow({ where: { refId: ref.id } })).resolves.toMatchObject({ state: "applied", sourceVersion: SOURCE, remoteId: "42", outcome: { provenance: "reconciliation-link" } });
+    await expect(prisma.integrationContentProvenance.findMany({
+      where: { bindingId: context.binding.id, entityType: "issue", entityId: selected.candidateIssueId },
+      orderBy: { field: "asc" },
+    })).resolves.toMatchObject([
+      { field: "description", origin: "kanon", sourceVersion: before.updatedAt.toISOString() },
+      { id: preservedTitle.id, field: "title", origin: "redmine", sourceVersion: OTHER_HASH, contentHash: preservedTitle.contentHash },
+    ]);
     expect(await prisma.integrationReconciliationRecommendation.findUniqueOrThrow({ where: { id: selected.id } })).toMatchObject({ decisionState: "accepted", decisionKind: "owner-accept-suggested", decidedById: context.owner.id, acceptedRefId: ref.id });
     const alternatives = await prisma.integrationReconciliationRecommendation.findMany({ where: { bindingId: context.binding.id, id: { not: selected.id } } });
     expect(alternatives.every(({ decisionState, decisionKind, decidedById }) => decisionState === "rejected" && decisionKind === "owner-link-alternative" && decidedById === context.owner.id)).toBe(true);
@@ -323,14 +430,37 @@ describe("Redmine reconciliation recommendations", () => {
     const redmineCandidates = await prisma.integrationReconciliationRecommendation.findMany({ where: { bindingId: context.binding.id } });
     expect(redmineCandidates.map(({ candidateIssueId }) => candidateIssueId)).toContain(context.issues[0]!.id);
     expect(redmineCandidates.map(({ candidateIssueId }) => candidateIssueId)).not.toContain(context.issues[3]!.id);
-    const manual = rankRedmineReconciliationCandidates({ id: "42", projectId: context.project.id, title: context.remote.title, description: context.remote.description, createdAt: context.remote.createdAt, mappedAssigneeId: context.remote.mappedAssigneeId, mappedState: context.remote.mappedState }, [context.issues[3]!])[0]!;
+    const manualIssue = await prisma.issue.update({ where: { id: context.issues[3]!.id }, data: { description: null } });
+    const manual = rankRedmineReconciliationCandidates({ id: "42", projectId: context.project.id, title: context.remote.title, description: context.remote.description, createdAt: context.remote.createdAt, mappedAssigneeId: context.remote.mappedAssigneeId, mappedState: context.remote.mappedState }, [manualIssue])[0]!;
     const work = await queueCreate(context.binding.id, context.issues[3]!.id, "queued", 0, "update");
     const before = await prisma.issue.findUniqueOrThrow({ where: { id: context.issues[3]!.id } });
     const linked = await context.decide({ kind: "manual-link", candidateIssueId: context.issues[3]!.id, localFingerprint: manual.evidence.localFingerprint, remoteFingerprint: manual.evidence.remoteFingerprint });
     expect(await prisma.issue.findUniqueOrThrow({ where: { id: context.issues[3]!.id } })).toEqual(before);
     await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({ state: "superseded", skippedReason: "reconciliation-linked" });
     await expect(prisma.integrationReconciliationRecommendation.findFirstOrThrow({ where: { bindingId: context.binding.id, candidateIssueId: context.issues[3]!.id } })).resolves.toMatchObject({ decisionState: "accepted", decisionKind: "owner-manual-link", acceptedRefId: linked.refId });
+    await expect(prisma.integrationContentProvenance.findMany({ where: { bindingId: context.binding.id, entityType: "issue", entityId: manualIssue.id }, orderBy: { field: "asc" } })).resolves.toMatchObject([
+      { field: "description", origin: "kanon", sourceVersion: manualIssue.updatedAt.toISOString(), contentHash: "sha256:ae7fb1437c48256120c471c7f7b40c9c24dee6e0191d34766fea3ed9e5f3ece1" },
+      { field: "title", origin: "kanon", sourceVersion: manualIssue.updatedAt.toISOString() },
+    ]);
     await expect(prisma.externalRef.count({ where: { entityType: "issue", entityId: context.issues[3]!.id } })).resolves.toBe(2);
+  });
+  it("rolls back the complete link decision when provenance storage fails", async () => {
+    const context = await fixture();
+    const materialized = await context.run();
+    const selected = materialized.recommendations[0]!;
+    await prisma.$executeRawUnsafe(`CREATE FUNCTION reject_reconciliation_provenance() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'provenance unavailable'; END $$`);
+    await prisma.$executeRawUnsafe(`CREATE TRIGGER reject_reconciliation_provenance BEFORE INSERT OR UPDATE ON integration_content_provenance FOR EACH ROW EXECUTE FUNCTION reject_reconciliation_provenance()`);
+    try {
+      await expect(context.decide({ kind: "accept", recommendationId: selected.id })).rejects.toThrow(/provenance unavailable/i);
+    } finally {
+      await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS reject_reconciliation_provenance ON integration_content_provenance`);
+      await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS reject_reconciliation_provenance()`);
+    }
+    await expect(prisma.integrationContentProvenance.count({ where: { bindingId: context.binding.id } })).resolves.toBe(0);
+    await expect(prisma.externalRef.count({ where: { connectionId: context.connection.id } })).resolves.toBe(0);
+    await expect(prisma.integrationInboundApplication.count({ where: { bindingId: context.binding.id } })).resolves.toBe(0);
+    await expect(prisma.integrationReconciliationRecommendation.findUniqueOrThrow({ where: { id: selected.id } })).resolves.toMatchObject({ decisionState: "pending", acceptedRefId: null });
+    await expect(prisma.integrationReconciliationDisposition.findFirstOrThrow({ where: { bindingId: context.binding.id, remoteIssueId: "42" } })).resolves.toMatchObject({ state: "pending", acceptedRefId: null });
   });
   it("rejects source or local drift and uncertain outbound creates without partial decisions", async () => {
     const context = await fixture();

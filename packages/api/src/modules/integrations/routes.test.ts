@@ -16,7 +16,7 @@ import { retryRedmineIssueImport } from "./inbound.js";
 import { decrypt } from "./core/crypto.js";
 import { decodeRedmineIssueDetail } from "./providers/redmine/decoder.js";
 import { RedmineHttpClient, RedmineHttpError } from "./providers/redmine/http-client.js";
-import { activateRedmineIssueImport, previewRedmineIssueImport } from "./redmine-import.js";
+import { activateRedmineIssueImport, previewRedmineIssueImport, reconciliationScopeFingerprint } from "./redmine-import.js";
 import {
   decideRedmineReconciliationRecommendations,
   materializeRedmineReconciliationRecommendations,
@@ -66,7 +66,7 @@ async function reconciliationFixture() {
   const connection = await prisma.integrationConnection.create({
     data: { workspaceId: workspace.id, provider: "redmine", baseUrl: "https://redmine.test" },
   });
-  const binding = await prisma.integrationProjectBinding.create({
+  let binding = await prisma.integrationProjectBinding.create({
     data: {
       connectionId: connection.id,
       projectId: project.id,
@@ -87,12 +87,15 @@ async function reconciliationFixture() {
   });
   const credential = await prisma.memberIntegrationCredential.create({ data: { connectionId: connection.id, memberId: owner.id, encryptedKey: "cipher", lastAuthStatus: "valid" } });
   await prisma.integrationConnection.update({ where: { id: connection.id }, data: { serviceCredentialId: credential.id } });
+  const scopeFingerprint = reconciliationScopeFingerprint({ connection, binding, credential }, "full", [], []);
+  binding = await prisma.integrationProjectBinding.update({ where: { id: binding.id }, data: { bootstrapPageToken: { ...(binding.bootstrapPageToken as object), scopeFingerprint } } });
   return {
     workspace,
     owner,
     project,
     connection,
     binding,
+    scopeFingerprint,
     previewIdentity: (binding.bootstrapPageToken as { previewIdentity: string }).previewIdentity,
     base: `/api/integrations/workspaces/${workspace.id}/connections/${connection.id}/bindings/${binding.id}`,
   };
@@ -360,7 +363,7 @@ describe("Redmine reconciliation routes", () => {
     remoteGet.mockResolvedValue(remotePayload);
     materialize.mockImplementation(async (request, dependencies) => {
       const detail = await dependencies.loadRemoteIssue(request.remoteIssueId);
-      expect(detail).toMatchObject({ remoteIssueId: "7", sourceVersion, previewIdentity: scope.previewIdentity, scopeFingerprint: hash, mappedState: "todo", mappedPriority: "high", mappedAssigneeId: null });
+      expect(detail).toMatchObject({ remoteIssueId: "7", sourceVersion, previewIdentity: scope.previewIdentity, scopeFingerprint: scope.scopeFingerprint, mappedState: "todo", mappedPriority: "high", mappedAssigneeId: null });
       return { remote: { id: "7", title: detail.title!, sourceVersion }, recommendations: [{ id: recommendationId, score: 0, factorEvidence, decisionState: "pending" as const, decisionKind: null, decidedById: null, decidedAt: null, acceptedRefId: null, localIssue: { id: localId, key: "KAN-1", title: "Local" } }], manualCandidate: { score: 0, factorEvidence, localIssue: { id: localId, key: "KAN-1", title: "Local" } } };
     });
     decide.mockResolvedValue({ remoteIssueId: "7", rejectedCount: 1, replayed: false });
@@ -418,7 +421,7 @@ describe("Redmine reconciliation routes", () => {
     const headers = { authorization: `Bearer ${scope.owner.token}` };
     reviewPage.mockImplementation(async (_request, dependencies) => {
       const detail = await dependencies.loadRemoteIssue("7");
-      expect(detail).toMatchObject({ remoteIssueId: "7", remoteProjectId: "42", sourceVersion, previewIdentity: scope.previewIdentity, scopeFingerprint: hash, visible: false, title: null });
+      expect(detail).toMatchObject({ remoteIssueId: "7", remoteProjectId: "42", sourceVersion, previewIdentity: scope.previewIdentity, scopeFingerprint: scope.scopeFingerprint, visible: false, title: null });
       return { previewIdentity: scope.previewIdentity, processedCandidateCount: 1, remainingCandidateCount: 0, hiddenCount: 1, linkedCount: 0, items: [], nextCursor: null };
     });
 
