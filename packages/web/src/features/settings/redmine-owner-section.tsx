@@ -412,16 +412,19 @@ function ConnectedOwnerPanel({
   const [apiKey, setApiKey] = useState("");
   const [reconciliationSession, setReconciliationSession] = useState<Readonly<{ queue: readonly RedmineReconciliationQueueItem[]; activeIndex: number; generation: number }> | null>(null);
   const availableBindings = connection.bindings.filter((binding) => !binding.releasePending);
+  const reconciliationMetadataReady = projects.data !== undefined;
   const canActivate = Boolean(
-    availableBindings.length > 0 && connection.providerMaps?.timeActivityId,
+    reconciliationMetadataReady &&
+      availableBindings.length > 0 &&
+      connection.providerMaps?.timeActivityId,
   );
   const hasAvailableBindings = (source: IntegrationConnection) => source.bindings.some((binding) => !binding.releasePending);
   const buildQueue = (source: IntegrationConnection) => Object.freeze(source.bindings.filter((binding) => !binding.releasePending && !binding.inboundReady).map((binding) => {
     const project = projects.data?.find((candidate) => candidate.id === binding.projectId);
     return Object.freeze({ bindingId: binding.id, projectId: binding.projectId, projectKey: project?.key ?? null, remoteProjectId: binding.remoteProjectId, projectName: project?.name ?? binding.projectId, remoteProjectName: discovery.data?.projects.find((candidate) => candidate.id === binding.remoteProjectId)?.name ?? binding.remoteProjectId });
   }));
-  const startReconciliation = async () => { let refreshed = await refreshConnection(); if (!refreshed) return; if (refreshed.lifecycle === "active" && buildQueue(refreshed).length) { await lifecycle.mutateAsync("paused"); refreshed = await refreshConnection(); if (!refreshed) return; } const queue = buildQueue(refreshed); if (queue.length) setReconciliationSession((current) => Object.freeze({ queue, activeIndex: 0, generation: (current?.generation ?? 0) + 1 })); else { if (hasAvailableBindings(refreshed) && refreshed.lifecycle !== "active") await lifecycle.mutateAsync("active"); setReconciliationSession((current) => current ? null : current); } };
-  const completeBinding = async () => { const session = reconciliationSession; if (!session) return; if (session.activeIndex < session.queue.length - 1) { setReconciliationSession((current) => current === session ? Object.freeze({ queue: session.queue, activeIndex: session.activeIndex + 1, generation: session.generation }) : current); return; } const refreshed = await refreshConnection(); if (!refreshed) return; const queue = buildQueue(refreshed); if (queue.length) { setReconciliationSession((current) => Object.freeze({ queue, activeIndex: 0, generation: (current?.generation ?? 0) + 1 })); return; } if (hasAvailableBindings(refreshed) && refreshed.lifecycle !== "active") await lifecycle.mutateAsync("active"); setReconciliationSession((current) => current === session ? null : current); };
+  const startReconciliation = async () => { if (!reconciliationMetadataReady) return; let refreshed = await refreshConnection(); if (!refreshed) return; if (refreshed.lifecycle === "active" && buildQueue(refreshed).length) { await lifecycle.mutateAsync("paused"); refreshed = await refreshConnection(); if (!refreshed) return; } const queue = buildQueue(refreshed); if (queue.length) setReconciliationSession((current) => Object.freeze({ queue, activeIndex: 0, generation: (current?.generation ?? 0) + 1 })); else { if (hasAvailableBindings(refreshed) && refreshed.lifecycle !== "active") await lifecycle.mutateAsync("active"); setReconciliationSession((current) => current ? null : current); } };
+  const completeBinding = async () => { const session = reconciliationSession; if (!session) return; if (session.activeIndex < session.queue.length - 1) { setReconciliationSession((current) => current === session ? Object.freeze({ queue: session.queue, activeIndex: session.activeIndex + 1, generation: session.generation }) : current); return; } if (!reconciliationMetadataReady) return; const refreshed = await refreshConnection(); if (!refreshed) return; const queue = buildQueue(refreshed); if (queue.length) { setReconciliationSession((current) => Object.freeze({ queue, activeIndex: 0, generation: (current?.generation ?? 0) + 1 })); return; } if (hasAvailableBindings(refreshed) && refreshed.lifecycle !== "active") await lifecycle.mutateAsync("active"); setReconciliationSession((current) => current === session ? null : current); };
   const restartSession = startReconciliation;
 
   return (
@@ -521,7 +524,7 @@ function ConnectedOwnerPanel({
             </select>
           </label>
           <p className="mt-2 text-sm text-muted-foreground">{t("redmineActivateHelp")}</p>
-          {availableBindings.some((binding) => !binding.inboundReady) && (<button type="button" onClick={() => void startReconciliation().catch(() => undefined)} disabled={lifecycle.isPending} className="mt-3 rounded-md border border-border px-3 py-1.5 text-sm">{t("redmineResumeReconciliation")}</button>)}
+          {availableBindings.some((binding) => !binding.inboundReady) && (<button type="button" onClick={() => void startReconciliation().catch(() => undefined)} disabled={lifecycle.isPending || !reconciliationMetadataReady} className="mt-3 rounded-md border border-border px-3 py-1.5 text-sm">{t("redmineResumeReconciliation")}</button>)}
           {lifecycle.isError && (
             <p className="mt-2 text-sm text-destructive">{lifecycle.error.message}</p>
           )}

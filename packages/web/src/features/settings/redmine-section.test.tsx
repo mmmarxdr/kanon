@@ -639,6 +639,131 @@ describe("RedmineSection", () => {
     expect(lifecycleMutate).toHaveBeenCalledWith("paused");
   });
 
+  it("waits for project metadata before starting or rebuilding reconciliation", async () => {
+    const binding = {
+      id: "99999999-9999-4999-8999-999999999999",
+      projectId: PROJECT_ID,
+      remoteProjectId: "remote-project",
+      readMap: {},
+      writeMap: {},
+      timeActivityId: "1",
+      lifecycle: "draft" as const,
+      lifecycleEpoch: 0,
+      commentCaptureEnabled: false,
+      commentDispatchEnabled: false,
+      releasePending: false,
+      inboundReady: false,
+    };
+    const connection = {
+      ...healthyConnection,
+      lifecycle: "draft" as const,
+      providerMaps: {
+        readMap: null,
+        writeMap: null,
+        priorityReadMap: null,
+        priorityWriteMap: null,
+        timeActivityId: "1",
+      },
+      bindings: [binding],
+    };
+    const refetch = vi.fn().mockResolvedValue({ data: connection });
+    vi.mocked(useRedmineConnectionQuery).mockReturnValue({
+      data: connection,
+      isLoading: false,
+      error: null,
+      refetch,
+    } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
+    vi.mocked(useProjectsQuery).mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      error: null,
+    } as unknown as ReturnType<typeof useProjectsQuery>);
+    vi.mocked(useRedmineDiscoveryQuery).mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isFetching: true,
+      error: null,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useRedmineDiscoveryQuery>);
+
+    const view = render(
+      <RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />,
+    );
+    const select = screen.getByLabelText("Connection lifecycle");
+    const resume = screen.getByRole("button", { name: "Resume reconciliation" });
+    await act(async () => {
+      fireEvent.change(select, { target: { value: "active" } });
+      fireEvent.click(resume);
+    });
+
+    expect(refetch).not.toHaveBeenCalled();
+    expect(screen.getByRole("option", { name: "Active" })).toBeDisabled();
+    expect(resume).toBeDisabled();
+    expect(screen.queryByTestId("redmine-reconciliation-modal")).not.toBeInTheDocument();
+
+    vi.mocked(useProjectsQuery).mockReturnValue({
+      data: [{ id: PROJECT_ID, key: "KAN", name: "Kanon One", description: null }],
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useProjectsQuery>);
+    vi.mocked(useRedmineDiscoveryQuery).mockReturnValue({
+      data: {
+        statuses: [],
+        priorities: [],
+        projects: [{ id: "remote-project", name: "Redmine One" }],
+        timeEntryActivities: [],
+      },
+      isLoading: false,
+      isFetching: false,
+      error: null,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useRedmineDiscoveryQuery>);
+    view.rerender(
+      <RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />,
+    );
+
+    expect(screen.getByRole("option", { name: "Active" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Resume reconciliation" })).not.toBeDisabled();
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("Connection lifecycle"), {
+        target: { value: "active" },
+      });
+    });
+    expect(refetch).toHaveBeenCalledOnce();
+    expect(modalRender.mock.lastCall?.[0]).toMatchObject({
+      binding: {
+        projectKey: "KAN",
+        projectName: "Kanon One",
+        remoteProjectName: "Redmine One",
+      },
+    });
+
+    vi.mocked(useProjectsQuery).mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      error: null,
+    } as unknown as ReturnType<typeof useProjectsQuery>);
+    vi.mocked(useRedmineDiscoveryQuery).mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isFetching: true,
+      error: null,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useRedmineDiscoveryQuery>);
+    view.rerender(
+      <RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />,
+    );
+    refetch.mockClear();
+    await act(async () => {
+      await (
+        modalRender.mock.lastCall?.[0] as { onBindingComplete: () => Promise<void> }
+      ).onBindingComplete();
+    });
+
+    expect(refetch).not.toHaveBeenCalled();
+    expect(screen.getByTestId("redmine-reconciliation-modal")).toBeInTheDocument();
+  });
+
   it("coordinates frozen draft bindings in order and activates globally only after the final one", async () => {
     const binding = { id: "99999999-9999-4999-8999-999999999999", projectId: PROJECT_ID, remoteProjectId: "remote-project", readMap: {}, writeMap: {}, timeActivityId: "1", lifecycle: "draft" as const, lifecycleEpoch: 0, commentCaptureEnabled: false, commentDispatchEnabled: false, releasePending: false, inboundReady: false };
     const releasing = { ...binding, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", releasePending: true };
