@@ -144,7 +144,14 @@ describe("integration reconciliation recommendation persistence", () => {
     })).resolves.toEqual(expect.any(String));
   });
 
-  it("retains decisions across actor/ref deletion and protects binding/candidate identity", async () => {
+  it("keeps exact legacy null-preview snapshots unique", async () => {
+    const { binding, issues } = await fixture();
+    const exact = { bindingId: binding.id, candidateIssueId: issues[0]!.id, remoteIssueId: "100", remoteSourceVersion: "sha256:legacy" };
+    await insertRecommendation(exact);
+    await expect(insertRecommendation(exact)).rejects.toMatchObject({ code: "P2002" });
+  });
+
+  it("nulls deleted decision refs, protects the binding, and cascades candidate deletion", async () => {
     const { binding, connection, issues, member } = await fixture();
     const ref = await prisma.externalRef.create({
       data: {
@@ -167,9 +174,25 @@ describe("integration reconciliation recommendation persistence", () => {
 
     await prisma.member.delete({ where: { id: member.id } });
     await prisma.externalRef.delete({ where: { id: ref.id } });
-    await expect(prisma.issue.delete({ where: { id: issues[0]!.id } })).rejects.toMatchObject({ code: "P2003" });
-    await expect(prisma.integrationProjectBinding.delete({ where: { id: binding.id } })).rejects.toMatchObject({ code: "P2003" });
     await expect(prisma.integrationReconciliationRecommendation.findUniqueOrThrow({ where: { id } }))
       .resolves.toMatchObject({ decidedById: null, acceptedRefId: null });
+    await expect(prisma.integrationProjectBinding.delete({ where: { id: binding.id } })).rejects.toMatchObject({ code: "P2003" });
+    await expect(prisma.issue.delete({ where: { id: issues[0]!.id } })).resolves.toMatchObject({ id: issues[0]!.id });
+    await expect(prisma.integrationReconciliationRecommendation.findUnique({ where: { id } })).resolves.toBeNull();
+  });
+
+  it("cleans recommendations before their restricted candidate issues", async () => {
+    const { binding, issues } = await fixture();
+    await insertRecommendation({
+      bindingId: binding.id,
+      candidateIssueId: issues[0]!.id,
+      remoteIssueId: "100",
+      remoteSourceVersion: "sha256:remote-v1",
+    });
+
+    await cleanDatabase();
+
+    await expect(prisma.integrationReconciliationRecommendation.count()).resolves.toBe(0);
+    await expect(prisma.issue.count()).resolves.toBe(0);
   });
 });

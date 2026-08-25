@@ -9,6 +9,11 @@ import {
   type IssueState,
 } from "@kanon/shared";
 import { SettingsCard } from "@/components/ui/settings-card";
+import { useProjectsQuery } from "@/hooks/use-projects-query";
+import {
+  RedmineReconciliationModal,
+  type RedmineReconciliationQueueItem,
+} from "./redmine-reconciliation-modal";
 import {
   useConfigureRedmineProviderMapsMutation,
   useCreateRedmineConnectionMutation,
@@ -393,18 +398,31 @@ function ProviderMapsForm({
 function ConnectedOwnerPanel({
   workspaceId,
   connection,
+  refreshConnection,
 }: {
   workspaceId: string;
   connection: IntegrationConnection;
+  refreshConnection: () => Promise<IntegrationConnection | null>;
 }) {
   const { t } = useTranslation("settings");
   const discovery = useRedmineDiscoveryQuery(workspaceId, connection.id, true);
+  const projects = useProjectsQuery(workspaceId);
   const replace = useReplaceRedmineServiceCredentialMutation(workspaceId, connection.id);
   const lifecycle = useSetRedmineLifecycleMutation(workspaceId, connection.id);
   const [apiKey, setApiKey] = useState("");
+  const [reconciliationSession, setReconciliationSession] = useState<Readonly<{ queue: readonly RedmineReconciliationQueueItem[]; activeIndex: number; generation: number }> | null>(null);
+  const availableBindings = connection.bindings.filter((binding) => !binding.releasePending);
   const canActivate = Boolean(
-    connection.bindings.length > 0 && connection.providerMaps?.timeActivityId,
+    availableBindings.length > 0 && connection.providerMaps?.timeActivityId,
   );
+  const hasAvailableBindings = (source: IntegrationConnection) => source.bindings.some((binding) => !binding.releasePending);
+  const buildQueue = (source: IntegrationConnection) => Object.freeze(source.bindings.filter((binding) => !binding.releasePending && !binding.inboundReady).map((binding) => {
+    const project = projects.data?.find((candidate) => candidate.id === binding.projectId);
+    return Object.freeze({ bindingId: binding.id, projectId: binding.projectId, projectKey: project?.key ?? null, remoteProjectId: binding.remoteProjectId, projectName: project?.name ?? binding.projectId, remoteProjectName: discovery.data?.projects.find((candidate) => candidate.id === binding.remoteProjectId)?.name ?? binding.remoteProjectId });
+  }));
+  const startReconciliation = async () => { let refreshed = await refreshConnection(); if (!refreshed) return; if (refreshed.lifecycle === "active" && buildQueue(refreshed).length) { await lifecycle.mutateAsync("paused"); refreshed = await refreshConnection(); if (!refreshed) return; } const queue = buildQueue(refreshed); if (queue.length) setReconciliationSession((current) => Object.freeze({ queue, activeIndex: 0, generation: (current?.generation ?? 0) + 1 })); else { if (hasAvailableBindings(refreshed) && refreshed.lifecycle !== "active") await lifecycle.mutateAsync("active"); setReconciliationSession((current) => current ? null : current); } };
+  const completeBinding = async () => { const session = reconciliationSession; if (!session) return; if (session.activeIndex < session.queue.length - 1) { setReconciliationSession((current) => current === session ? Object.freeze({ queue: session.queue, activeIndex: session.activeIndex + 1, generation: session.generation }) : current); return; } const refreshed = await refreshConnection(); if (!refreshed) return; const queue = buildQueue(refreshed); if (queue.length) { setReconciliationSession((current) => Object.freeze({ queue, activeIndex: 0, generation: (current?.generation ?? 0) + 1 })); return; } if (hasAvailableBindings(refreshed) && refreshed.lifecycle !== "active") await lifecycle.mutateAsync("active"); setReconciliationSession((current) => current === session ? null : current); };
+  const restartSession = startReconciliation;
 
   return (
     <div className="mt-4">
@@ -482,10 +500,16 @@ function ConnectedOwnerPanel({
           <label className="block text-sm font-medium text-foreground">
             {t("redmineLifecycleControl")}
             <select
-              value={connection.lifecycle}
-              onChange={(event) =>
-                lifecycle.mutate(event.target.value as "active" | "paused" | "disabled")
-              }
+              value={reconciliationSession ? "draft" : connection.lifecycle}
+              onChange={(event) => {
+                const next = event.target.value as "active" | "paused" | "disabled";
+                if (next === "active") {
+                  if (!canActivate) return;
+                  void startReconciliation().catch(() => undefined);
+                  return;
+                }
+                lifecycle.mutate(next);
+              }}
               disabled={lifecycle.isPending}
               className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2"
             >
@@ -497,6 +521,7 @@ function ConnectedOwnerPanel({
             </select>
           </label>
           <p className="mt-2 text-sm text-muted-foreground">{t("redmineActivateHelp")}</p>
+          {availableBindings.some((binding) => !binding.inboundReady) && (<button type="button" onClick={() => void startReconciliation().catch(() => undefined)} disabled={lifecycle.isPending} className="mt-3 rounded-md border border-border px-3 py-1.5 text-sm">{t("redmineResumeReconciliation")}</button>)}
           {lifecycle.isError && (
             <p className="mt-2 text-sm text-destructive">{lifecycle.error.message}</p>
           )}
@@ -516,6 +541,19 @@ function ConnectedOwnerPanel({
           discovery={discovery.data}
         />
       )}
+      {reconciliationSession && (
+        <RedmineReconciliationModal
+          key={`${reconciliationSession.queue[reconciliationSession.activeIndex]!.bindingId}:${reconciliationSession.generation}`}
+          workspaceId={workspaceId}
+          connectionId={connection.id}
+          binding={reconciliationSession.queue[reconciliationSession.activeIndex]!}
+          current={reconciliationSession.activeIndex + 1}
+          total={reconciliationSession.queue.length}
+          onBindingComplete={completeBinding}
+          onRestartSession={restartSession}
+          onClose={() => setReconciliationSession(null)}
+        />
+      )}
     </div>
   );
 }
@@ -523,9 +561,11 @@ function ConnectedOwnerPanel({
 export function RedmineOwnerSection({
   workspaceId,
   connection,
+  refreshConnection,
 }: {
   workspaceId: string;
   connection: IntegrationConnection | null;
+  refreshConnection: () => Promise<IntegrationConnection | null>;
 }) {
   const { t } = useTranslation("settings");
 
@@ -534,7 +574,7 @@ export function RedmineOwnerSection({
       <h2 className="text-lg font-semibold text-foreground">{t("redmineOwnerTitle")}</h2>
       <p className="mt-1 text-sm text-muted-foreground">{t("redmineOwnerHelp")}</p>
       {connection ? (
-        <ConnectedOwnerPanel workspaceId={workspaceId} connection={connection} />
+        <ConnectedOwnerPanel workspaceId={workspaceId} connection={connection} refreshConnection={refreshConnection} />
       ) : (
         <ConnectionSetup workspaceId={workspaceId} />
       )}
