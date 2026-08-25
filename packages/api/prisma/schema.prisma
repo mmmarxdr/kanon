@@ -83,6 +83,7 @@ enum IntegrationReconciliationDispositionState {
   pending
   import_as_new
   linked
+  skipped
 }
 
 enum CredentialAuthStatus {
@@ -1644,7 +1645,7 @@ model IntegrationReconciliationRecommendation {
   bindingId       String                    @map("binding_id") @db.Uuid
   binding         IntegrationProjectBinding @relation(fields: [bindingId], references: [id], onDelete: Restrict, map: "integration_reconciliation_binding_fkey")
   candidateIssueId String                    @map("candidate_issue_id") @db.Uuid
-  candidateIssue   Issue                     @relation(fields: [candidateIssueId], references: [id], onDelete: Restrict, map: "integration_reconciliation_candidate_fkey")
+  candidateIssue   Issue                     @relation(fields: [candidateIssueId], references: [id], onDelete: Cascade, map: "integration_reconciliation_candidate_fkey")
   decidedById      String?                   @map("decided_by_id") @db.Uuid
   decidedBy        Member?                   @relation(fields: [decidedById], references: [id], onDelete: SetNull, map: "integration_reconciliation_decider_fkey")
   acceptedRefId    String?                   @unique @map("accepted_ref_id") @db.Uuid

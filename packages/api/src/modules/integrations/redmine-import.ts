@@ -261,8 +261,12 @@ function sha256(value: string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
-function reconciliationScopeFingerprint(
-  current: ImportBinding,
+export function reconciliationScopeFingerprint(
+  current: Readonly<{
+    connection: Readonly<{ workspaceId: string; baseUrl: string; lifecycleEpoch: number }>;
+    binding: Readonly<{ id: string; lifecycleEpoch: number; remoteProjectId: string; readMap: Prisma.JsonValue }>;
+    credential: Readonly<{ id: string; encryptedKey: string }>;
+  }>,
   mode: RedminePreviewMode,
   assigneeRemoteIds: readonly string[],
   identities: readonly AssigneeIdentity[],
@@ -718,17 +722,35 @@ export async function previewRedmineIssueImport(
     const cutoff = resumable
       ? current.binding.bootstrapCutoff!
       : new Date(Math.floor(claimedAt.getTime() / 1_000) * 1_000);
-    if (
+    const incompatibleResume = Boolean(
       resumable &&
       ((mode === undefined && resumable.version === 2) ||
         (mode !== undefined &&
           (resumable.version !== 2 ||
             resumable.mode !== mode ||
-            resumable.cutoff !== cutoff.toISOString())))
-    ) {
+            resumable.cutoff !== cutoff.toISOString()))),
+    );
+    let staleScope = false;
+    if (resumable && !incompatibleResume) {
+      try { await assertReconciliationScope(transaction, current, resumable); }
+      catch (error) {
+        if (error instanceof AppError && error.code === "REDMINE_PREVIEW_STALE") staleScope = true;
+        else throw error;
+      }
+    }
+    if ((incompatibleResume || staleScope) && mode !== undefined && resumable?.version === 2) {
+      const restartCutoff = new Date(Math.floor(claimedAt.getTime() / 1_000) * 1_000);
+      const restartEvidence = emptyEvidence({ mode, cutoff: restartCutoff, scopeFingerprint: reconciliationScopeFingerprint(current, mode, [], []) });
+      await assertBootstrapMutationAvailable(transaction, bindingId);
+      await transaction.integrationProjectBinding.update({
+        where: { id: bindingId },
+        data: { inboundEnabled: false, bootstrapState: "pending", bootstrapCutoff: restartCutoff, bootstrapPageToken: restartEvidence as unknown as Prisma.InputJsonValue, bootstrapLeaseToken: null, bootstrapLeaseUntil: null, bootstrapFence: { increment: 1 } },
+      });
+      return { kind: "restart-preview" as const };
+    }
+    if (incompatibleResume || staleScope) {
       throw new AppError(409, "REDMINE_PREVIEW_STALE", "The reconciliation preview scope changed");
     }
-    if (resumable) await assertReconciliationScope(transaction, current, resumable);
     const evidence = resumable?.complete
       ? emptyEvidence()
       : (resumable ??
@@ -755,6 +777,7 @@ export async function previewRedmineIssueImport(
       select: { bootstrapFence: true },
     });
     return {
+      kind: "claimed" as const,
       ...current,
       cutoff,
       evidence,
@@ -762,6 +785,8 @@ export async function previewRedmineIssueImport(
       fence: binding.bootstrapFence,
     };
   });
+
+  if (claim.kind === "restart-preview") throw new AppError(409, "REDMINE_PREVIEW_STALE", "The reconciliation preview scope changed; restart the preview");
 
   let evidence = claim.evidence;
   try {
@@ -1078,7 +1103,16 @@ export async function activateRedmineIssueImport(
     if (evidence.version === 1) assertLifecycle(current.connection, current.binding, false);
     else {
       assertLifecycle(current.connection, current.binding, true);
-      await assertReconciliationScope(transaction, current, evidence);
+      try { await assertReconciliationScope(transaction, current, evidence); }
+      catch (error) {
+        if (!(error instanceof AppError) || error.code !== "REDMINE_PREVIEW_STALE") throw error;
+        await assertBootstrapMutationAvailable(transaction, bindingId);
+        await transaction.integrationProjectBinding.update({
+          where: { id: bindingId },
+          data: { inboundEnabled: false, bootstrapState: "pending", bootstrapPageToken: emptyEvidence({ mode: evidence.mode, cutoff: current.binding.bootstrapCutoff, scopeFingerprint: reconciliationScopeFingerprint(current, evidence.mode, [], []) }) as unknown as Prisma.InputJsonValue, bootstrapLeaseToken: null, bootstrapLeaseUntil: null, bootstrapFence: { increment: 1 } },
+        });
+        return { kind: "restart-preview" as const };
+      }
     }
     if (!evidence.complete) {
       throw new AppError(
@@ -1087,6 +1121,7 @@ export async function activateRedmineIssueImport(
         "Complete a Redmine import preview first",
       );
     }
+    let skippedRemoteIds = new Set<string>();
     if (evidence.version === 2 && evidence.mode === "full") {
       const mappingGap = evidence.unmappedStatusIds.length
         ? ["REDMINE_STATUS_UNMAPPED", "status"]
@@ -1102,9 +1137,11 @@ export async function activateRedmineIssueImport(
         where: { bindingId, previewIdentity: evidence.previewIdentity, remoteIssueId: { in: evidence.candidates.map(({ remoteId }) => remoteId) } },
       });
       const byRemote = new Map(dispositions.map((row) => [row.remoteIssueId, row]));
+      skippedRemoteIds = new Set(dispositions.filter(({ state }) => state === "skipped").map(({ remoteIssueId }) => remoteIssueId));
       const reviewed = await Promise.all(evidence.candidates.map(async ({ remoteId, sourceVersion }) => {
         const row = byRemote.get(remoteId);
         if (!row || row.remoteSourceVersion !== sourceVersion || row.state === "pending") return false;
+        if (row.state === "skipped") return true;
         if (row.state === "import_as_new") return true;
         if (row.state !== "linked" || !row.acceptedRefId) return false;
         const ref = await transaction.externalRef.findFirst({ where: { id: row.acceptedRefId, connectionId, bindingId, entityType: "issue", externalId: remoteId } });
@@ -1164,7 +1201,7 @@ export async function activateRedmineIssueImport(
         ? {
             ...evidence,
             candidates: evidence.candidates.filter(
-              ({ remoteId }) => !linkedRemoteIds.has(remoteId),
+              ({ remoteId }) => !linkedRemoteIds.has(remoteId) && !skippedRemoteIds.has(remoteId),
             ),
           }
         : evidence;
@@ -1190,6 +1227,7 @@ export async function activateRedmineIssueImport(
       fence: binding.bootstrapFence,
     };
   });
+  if (claim.kind === "restart-preview") throw new AppError(409, "REDMINE_PREVIEW_STALE", "The reconciliation preview scope changed; restart the preview");
   if (claim.kind === "ready") {
     return {
       importedCount: 0,

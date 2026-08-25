@@ -306,7 +306,8 @@ describe("Redmine-created issue import", () => {
     transport.get.mockClear();
     await expect(activateImport(connection.id, binding.id, owner.userId, transport.dependencies)).rejects.toMatchObject({ code: "REDMINE_PREVIEW_STALE" });
     expect(transport.get).not.toHaveBeenCalled();
-    await prisma.integrationProjectBinding.update({ where: { id: binding.id }, data: { readMap: { "2": "in_progress", "priority:3": "high" } } });
+    await previewRedmineIssueImport(connection.id, binding.id, owner.userId, transport.dependencies, "future_only");
+    transport.get.mockClear();
 
     await expect(activateImport(connection.id, binding.id, owner.userId, transport.dependencies)).resolves.toMatchObject({ replayed: false, complete: true, processedCount: 0, remainingCount: 0 });
     expect(transport.get).not.toHaveBeenCalled();
@@ -684,6 +685,45 @@ describe("Redmine-created issue import", () => {
       fullPreview(connection.id, binding.id, owner.userId, transport.dependencies),
     ).rejects.toMatchObject({ code: "REDMINE_PREVIEW_STALE" });
     expect(transport.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("replaces stale resumable evidence so an explicit preview restart can succeed", async () => {
+    const { owner, connection, binding } = await fixture();
+    await setImportLifecycle(connection.id, binding.id, "paused");
+    const issues = Array.from({ length: 100 }, (_, index) => redmineIssue({ id: index + 1, assigned_to: null }));
+    let providerReads = 0;
+    const transport = remote(() => providerReads++ === 0 ? { issues, total_count: 101, offset: 0, limit: 100 } : { issues: [redmineIssue({ id: 101, assigned_to: null })], total_count: 1, offset: 0, limit: 100 });
+    const first = await fullPreview(connection.id, binding.id, owner.userId, transport.dependencies);
+    await prisma.integrationProjectBinding.update({ where: { id: binding.id }, data: { readMap: { "2": "in_progress", "priority:3": "high", drift: "todo" } } });
+
+    await expect(fullPreview(connection.id, binding.id, owner.userId, transport.dependencies)).rejects.toMatchObject({ code: "REDMINE_PREVIEW_STALE" });
+    const restarted = await fullPreview(connection.id, binding.id, owner.userId, transport.dependencies);
+
+    expect(restarted).toMatchObject({ complete: true, scannedCount: 1, eligibleUnlinkedCount: 1 });
+    expect(restarted.previewIdentity).not.toBe(first.previewIdentity);
+    expect(transport.get).toHaveBeenLastCalledWith(expect.stringContaining("offset=0"));
+  });
+
+  it("recovers scope drift after a nonfinal activation batch and preserves imported links", async () => {
+    const { owner, project, connection, binding } = await fixture();
+    await setImportLifecycle(connection.id, binding.id, "paused");
+    const issues = Array.from({ length: 11 }, (_, index) => redmineIssue({ id: index + 1, assigned_to: null, updated_on: `2026-08-02T10:00:${String(index).padStart(2, "0")}Z` }));
+    const transport = remote({ issues, total_count: 11, offset: 0, limit: 100 }, Object.fromEntries(issues.map((issue) => [String(issue.id), { issue: { ...issue, journals: [] } }])));
+    await fullPreview(connection.id, binding.id, owner.userId, transport.dependencies);
+    await settleCurrentPreviewImports(binding.id, owner.id);
+    await expect(activateImport(connection.id, binding.id, owner.userId, transport.dependencies)).resolves.toMatchObject({ complete: false, processedCount: 10, remainingCount: 1 });
+    const preservedRefs = await prisma.externalRef.findMany({ where: { bindingId: binding.id }, select: { id: true, externalId: true }, orderBy: { externalId: "asc" } });
+    await prisma.integrationProjectBinding.update({ where: { id: binding.id }, data: { readMap: { "2": "in_progress", "priority:3": "high", drift: "todo" } } });
+
+    await expect(activateImport(connection.id, binding.id, owner.userId, transport.dependencies)).rejects.toMatchObject({ code: "REDMINE_PREVIEW_STALE" });
+    await expect(prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: binding.id } })).resolves.toMatchObject({ bootstrapState: "pending", bootstrapPageToken: expect.objectContaining({ nextOffset: 0, candidates: [] }) });
+    await fullPreview(connection.id, binding.id, owner.userId, transport.dependencies);
+    await settleCurrentPreviewImports(binding.id, owner.id);
+    await expect(activateImport(connection.id, binding.id, owner.userId, transport.dependencies)).resolves.toMatchObject({ complete: true, importedCount: 1, remainingCount: 0 });
+
+    await expect(prisma.externalRef.findMany({ where: { id: { in: preservedRefs.map(({ id }) => id) } }, select: { id: true, externalId: true }, orderBy: { externalId: "asc" } })).resolves.toEqual(preservedRefs);
+    await expect(prisma.issue.count({ where: { projectId: project.id } })).resolves.toBe(11);
+    await expect(prisma.externalRef.count({ where: { bindingId: binding.id } })).resolves.toBe(11);
   });
 
   it("rejects final evidence when the read map changes during provider I/O", async () => {

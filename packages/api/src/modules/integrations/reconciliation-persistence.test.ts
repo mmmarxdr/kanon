@@ -151,7 +151,7 @@ describe("integration reconciliation recommendation persistence", () => {
     await expect(insertRecommendation(exact)).rejects.toMatchObject({ code: "P2002" });
   });
 
-  it("retains decisions across actor/ref deletion and protects binding/candidate identity", async () => {
+  it("nulls deleted decision refs, protects the binding, and cascades candidate deletion", async () => {
     const { binding, connection, issues, member } = await fixture();
     const ref = await prisma.externalRef.create({
       data: {
@@ -174,10 +174,11 @@ describe("integration reconciliation recommendation persistence", () => {
 
     await prisma.member.delete({ where: { id: member.id } });
     await prisma.externalRef.delete({ where: { id: ref.id } });
-    await expect(prisma.issue.delete({ where: { id: issues[0]!.id } })).rejects.toMatchObject({ code: "P2003" });
-    await expect(prisma.integrationProjectBinding.delete({ where: { id: binding.id } })).rejects.toMatchObject({ code: "P2003" });
     await expect(prisma.integrationReconciliationRecommendation.findUniqueOrThrow({ where: { id } }))
       .resolves.toMatchObject({ decidedById: null, acceptedRefId: null });
+    await expect(prisma.integrationProjectBinding.delete({ where: { id: binding.id } })).rejects.toMatchObject({ code: "P2003" });
+    await expect(prisma.issue.delete({ where: { id: issues[0]!.id } })).resolves.toMatchObject({ id: issues[0]!.id });
+    await expect(prisma.integrationReconciliationRecommendation.findUnique({ where: { id } })).resolves.toBeNull();
   });
 
   it("cleans recommendations before their restricted candidate issues", async () => {
