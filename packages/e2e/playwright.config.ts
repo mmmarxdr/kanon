@@ -1,19 +1,10 @@
 import { defineConfig, devices } from "@playwright/test";
-import dotenv from "dotenv";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Load E2E-specific environment variables
-dotenv.config({ path: path.resolve(__dirname, ".env.e2e") });
+import { establishControlledE2eEnvironment } from "./e2e-environment.js";
 
 const API_PORT = process.env["API_PORT"] ?? "3001";
 const WEB_PORT = process.env["WEB_PORT"] ?? "5174";
-const DATABASE_URL =
-  process.env["DATABASE_URL"] ??
-  "postgresql://kanon:kanon@localhost:5432/kanon_e2e?schema=public";
+// Validate the database before Playwright can start either web server.
+const DATABASE_URL = establishControlledE2eEnvironment();
 
 export default defineConfig({
   testDir: "./tests",
@@ -52,7 +43,7 @@ export default defineConfig({
         NODE_ENV: "test",
         HOST: "0.0.0.0",
       },
-      reuseExistingServer: !process.env["CI"],
+      reuseExistingServer: false,
       stdout: "pipe",
       stderr: "pipe",
     },
@@ -62,7 +53,7 @@ export default defineConfig({
       env: {
         API_URL: `http://localhost:${API_PORT}`,
       },
-      reuseExistingServer: !process.env["CI"],
+      reuseExistingServer: false,
       stdout: "pipe",
       stderr: "pipe",
     },
