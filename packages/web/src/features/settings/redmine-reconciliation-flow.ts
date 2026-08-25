@@ -107,6 +107,7 @@ export function redmineReconciliationFlowReducer(state: RedmineReconciliationFlo
   const activationRetry = state.phase === "error" && state.failure?.stage === "activation" && state.failure.recovery === "retry";
   if (action.type === "activation-started") return state.phase === "activation-ready" || activationRetry ? { ...state, phase: "activation", failure: null } : state;
   if (action.type === "activation-succeeded") return state.phase === "activation" || state.phase === "complete" || activationRetry ? { ...state, phase: action.progress.complete ? "complete" : "activation", activationProgress: action.progress, failure: null } : state;
+  if (action.stage === "preview" && ["REDMINE_IMPORT_IN_PROGRESS", "REDMINE_IMPORT_ACTIVE"].includes(action.code)) return { ...state, phase: action.code === "REDMINE_IMPORT_ACTIVE" ? "complete" : "activation", activationProgress: null, failure: null };
   const recovery = classifyRedmineReconciliationFailure(action.code);
   const failure = { stage: action.stage, code: action.code, message: action.message, recovery };
   if (recovery === "restart-preview") return { ...createRedmineReconciliationFlowState(state.bindingId), selectedMode: state.selectedMode, phase: "error", failure };

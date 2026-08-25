@@ -214,6 +214,14 @@ describe("redmineReconciliationFlowReducer", () => {
     ]) expect(redmineReconciliationFlowReducer(invalid, { type: "activation-started" })).toBe(invalid);
   });
 
+  it.each([
+    ["REDMINE_IMPORT_IN_PROGRESS", "activation"],
+    ["REDMINE_IMPORT_ACTIVE", "complete"],
+  ] as const)("recovers interrupted preview code %s as %s without invented progress", (code, phase) => {
+    const started = redmineReconciliationFlowReducer(createRedmineReconciliationFlowState("binding-a"), { type: "mode-selected", mode: "full" });
+    expect(redmineReconciliationFlowReducer(started, { type: "failed", stage: "preview", code, message: code })).toMatchObject({ phase, activationProgress: null, failure: null });
+  });
+
   it("refreshes the matching unresolved item in place and preserves page progress", () => {
     const progressed = redmineReconciliationFlowReducer(beginReview(), { type: "review-succeeded", requestedCursor: undefined, page: page([item("1"), item("2")], "next", 1, 1, 1) });
     const failed = redmineReconciliationFlowReducer(progressed, { type: "failed", stage: "review", code: "REDMINE_RECONCILIATION_LOCAL_STALE", message: "Refresh" });
