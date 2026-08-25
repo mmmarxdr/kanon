@@ -76,6 +76,8 @@ export {
   redmineReconciliationPreviewRequestSchema,
   redmineReconciliationRecommendationPageSchema,
   redmineReconciliationRecommendationQuerySchema,
+  redmineReconciliationReviewPageRequestSchema,
+  redmineReconciliationReviewPageResultSchema,
 } from "./integrations.js";
 export type {
   IntegrationAuditHealth,

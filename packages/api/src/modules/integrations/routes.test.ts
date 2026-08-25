@@ -15,11 +15,12 @@ import { prisma } from "../../config/prisma.js";
 import { retryRedmineIssueImport } from "./inbound.js";
 import { decrypt } from "./core/crypto.js";
 import { decodeRedmineIssueDetail } from "./providers/redmine/decoder.js";
-import { RedmineHttpClient } from "./providers/redmine/http-client.js";
-import { activateRedmineIssueImport, previewRedmineIssueImport } from "./redmine-import.js";
+import { RedmineHttpClient, RedmineHttpError } from "./providers/redmine/http-client.js";
+import { activateRedmineIssueImport, previewRedmineIssueImport, reconciliationScopeFingerprint } from "./redmine-import.js";
 import {
   decideRedmineReconciliationRecommendations,
   materializeRedmineReconciliationRecommendations,
+  reviewRedmineReconciliationPage,
 } from "./redmine-reconciliation.js";
 import { auditHealthForScope, getBindingAuditHealth } from "./service.js";
 import { createAuditScopeFingerprint } from "./core/audit-evidence.js";
@@ -41,6 +42,7 @@ vi.mock("./redmine-reconciliation.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./redmine-reconciliation.js")>()),
   decideRedmineReconciliationRecommendations: vi.fn(),
   materializeRedmineReconciliationRecommendations: vi.fn(),
+  reviewRedmineReconciliationPage: vi.fn(),
 }));
 
 const retry = vi.mocked(retryRedmineIssueImport);
@@ -48,9 +50,13 @@ const activate = vi.mocked(activateRedmineIssueImport);
 const preview = vi.mocked(previewRedmineIssueImport);
 const decide = vi.mocked(decideRedmineReconciliationRecommendations);
 const materialize = vi.mocked(materializeRedmineReconciliationRecommendations);
+const reviewPage = vi.mocked(reviewRedmineReconciliationPage);
 const decryptCredential = vi.mocked(decrypt);
 const remoteGet = vi.spyOn(RedmineHttpClient.prototype, "get");
 const hash = `sha256:${"a".repeat(64)}`;
+const localId = "11111111-1111-4111-8111-111111111111";
+const recommendationId = "22222222-2222-4222-8222-222222222222";
+const factorEvidence = { scorerVersion: "redmine-reconciliation-score.v1" as const, projectEligible: true as const, titleContribution: 0, descriptionContribution: 0, dateComparable: false, dateContribution: 0, assigneeComparable: false, assigneeContribution: 0, stateComparable: false, stateContribution: 0, score: 0, localFingerprint: hash, remoteFingerprint: hash };
 const remotePayload = { issue: { id: 7, project: { id: 42, name: "Project" }, tracker: { id: 1, name: "Task" }, status: { id: 1, name: "New" }, priority: { id: 2, name: "High" }, author: { id: 3, name: "Owner", login: "owner" }, assigned_to: null, subject: "Match", description: "Body", start_date: null, due_date: null, done_ratio: 0, is_private: false, created_on: "2026-08-20T10:00:00Z", updated_on: "2026-08-21T10:00:00Z", closed_on: null, journals: [] } };
 const sourceVersion = decodeRedmineIssueDetail(remotePayload, "42", "7").issue.sourceVersion;
 async function reconciliationFixture() {
@@ -60,7 +66,7 @@ async function reconciliationFixture() {
   const connection = await prisma.integrationConnection.create({
     data: { workspaceId: workspace.id, provider: "redmine", baseUrl: "https://redmine.test" },
   });
-  const binding = await prisma.integrationProjectBinding.create({
+  let binding = await prisma.integrationProjectBinding.create({
     data: {
       connectionId: connection.id,
       projectId: project.id,
@@ -81,12 +87,15 @@ async function reconciliationFixture() {
   });
   const credential = await prisma.memberIntegrationCredential.create({ data: { connectionId: connection.id, memberId: owner.id, encryptedKey: "cipher", lastAuthStatus: "valid" } });
   await prisma.integrationConnection.update({ where: { id: connection.id }, data: { serviceCredentialId: credential.id } });
+  const scopeFingerprint = reconciliationScopeFingerprint({ connection, binding, credential }, "full", [], []);
+  binding = await prisma.integrationProjectBinding.update({ where: { id: binding.id }, data: { bootstrapPageToken: { ...(binding.bootstrapPageToken as object), scopeFingerprint } } });
   return {
     workspace,
     owner,
     project,
     connection,
     binding,
+    scopeFingerprint,
     previewIdentity: (binding.bootstrapPageToken as { previewIdentity: string }).previewIdentity,
     base: `/api/integrations/workspaces/${workspace.id}/connections/${connection.id}/bindings/${binding.id}`,
   };
@@ -321,7 +330,7 @@ describe("Redmine reconciliation routes", () => {
   let app: FastifyInstance;
   beforeAll(async () => { app = await createTestApp(); });
   beforeEach(async () => {
-    [activate, preview, decide, materialize].forEach((mock) => mock.mockReset());
+    [activate, preview, decide, materialize, reviewPage].forEach((mock) => mock.mockReset());
     decryptCredential.mockReset().mockReturnValue("api-key");
     remoteGet.mockReset();
     await cleanDatabase();
@@ -348,29 +357,29 @@ describe("Redmine reconciliation routes", () => {
     expect(applied.json()).toMatchObject({ complete: true, remainingCount: 0 });
   });
 
-  it("forwards owner materialization and audited decisions without exposing remote content", async () => {
+  it("hydrates owner materialization without exposing remote descriptions", async () => {
     const scope = await reconciliationFixture();
     const headers = { authorization: `Bearer ${scope.owner.token}` };
     remoteGet.mockResolvedValue(remotePayload);
     materialize.mockImplementation(async (request, dependencies) => {
       const detail = await dependencies.loadRemoteIssue(request.remoteIssueId);
-      expect(detail).toMatchObject({ remoteIssueId: "7", sourceVersion, previewIdentity: scope.previewIdentity, scopeFingerprint: hash, mappedState: "todo", mappedPriority: "high", mappedAssigneeId: null });
-      return { remoteIssueId: "7", recommendationCount: 3 };
+      expect(detail).toMatchObject({ remoteIssueId: "7", sourceVersion, previewIdentity: scope.previewIdentity, scopeFingerprint: scope.scopeFingerprint, mappedState: "todo", mappedPriority: "high", mappedAssigneeId: null });
+      return { remote: { id: "7", title: detail.title!, sourceVersion }, recommendations: [{ id: recommendationId, score: 0, factorEvidence, decisionState: "pending" as const, decisionKind: null, decidedById: null, decidedAt: null, acceptedRefId: null, localIssue: { id: localId, key: "KAN-1", title: "Local" } }], manualCandidate: { score: 0, factorEvidence, localIssue: { id: localId, key: "KAN-1", title: "Local" } } };
     });
     decide.mockResolvedValue({ remoteIssueId: "7", rejectedCount: 1, replayed: false });
 
-    const made = await app.inject({ method: "POST", url: `${scope.base}/reconciliation/recommendations/materialize`, headers, payload: { remoteIssueId: "7" } });
+    const made = await app.inject({ method: "POST", url: `${scope.base}/reconciliation/recommendations/materialize`, headers, payload: { remoteIssueId: "7", candidateIssueId: localId } });
     const decided = await app.inject({ method: "POST", url: `${scope.base}/reconciliation/issues/7/decision`, headers, payload: { kind: "reject-all" } });
 
-    expect(made.json()).toEqual({ remoteIssueId: "7", recommendationCount: 3 });
+    expect(made.json()).toMatchObject({ remote: { id: "7", title: "Match", sourceVersion }, recommendations: [{ localIssue: { key: "KAN-1", title: "Local" } }], manualCandidate: { localIssue: { id: localId } } });
     expect(decided.json()).toEqual({ remoteIssueId: "7", rejectedCount: 1, replayed: false });
     expect(remoteGet).toHaveBeenCalledWith("/issues/7.json?include=journals");
     expect(materialize).toHaveBeenCalledWith(
-      { connectionId: scope.connection.id, bindingId: scope.binding.id, userId: scope.owner.userId, remoteIssueId: "7" },
+      { connectionId: scope.connection.id, bindingId: scope.binding.id, userId: scope.owner.userId, remoteIssueId: "7", candidateIssueId: localId },
       expect.objectContaining({ workspaceId: scope.workspace.id, allowedProjectIds: null, loadRemoteIssue: expect.any(Function) }),
     );
     expect(decide).toHaveBeenCalledWith(expect.objectContaining({ remoteIssueId: "7" }), { kind: "reject-all" }, expect.objectContaining({ workspaceId: scope.workspace.id, allowedProjectIds: null }));
-    expect(JSON.stringify([made.json(), decided.json()])).not.toContain("title");
+    expect(JSON.stringify([made.json(), decided.json()])).not.toContain('"description":');
   });
 
   it("denies members before materialization and rejects malformed manual links", async () => {
@@ -380,9 +389,56 @@ describe("Redmine reconciliation routes", () => {
     expect((await app.inject({ method: "POST", url, headers: { authorization: `Bearer ${member.token}` }, payload: { remoteIssueId: "7" } })).statusCode).toBe(403);
     expect(materialize).not.toHaveBeenCalled();
     expect(remoteGet).not.toHaveBeenCalled();
+    materialize.mockImplementation(async (request, dependencies) => { await dependencies.loadRemoteIssue(request.remoteIssueId); throw new Error("unreachable"); });
+    const scoped = generateTestToken({ userId: scope.owner.userId, email: scope.owner.email, allowedProjectIds: [randomUUID()] });
+    expect((await app.inject({ method: "POST", url, headers: { authorization: `Bearer ${scoped}` }, payload: { remoteIssueId: "7" } })).statusCode).toBe(404);
+    expect(remoteGet).not.toHaveBeenCalled();
     const invalid = await app.inject({ method: "POST", url: `${scope.base}/reconciliation/issues/7/decision`, headers: { authorization: `Bearer ${scope.owner.token}` }, payload: { kind: "manual-link", candidateIssueId: randomUUID(), localFingerprint: "bad", remoteFingerprint: hash } });
     expect(invalid.statusCode).toBe(400);
     expect(decide).not.toHaveBeenCalled();
+  });
+
+  it("forwards owner review pages and denies member or foreign project scope before provider I/O", async () => {
+    const scope = await reconciliationFixture();
+    const url = `${scope.base}/reconciliation/review-page`;
+    const item = { remote: { id: "7", title: "Match", sourceVersion }, recommendations: [{ id: recommendationId, score: 0, factorEvidence, decisionState: "rejected" as const, decisionKind: "owner-reject", decidedById: scope.owner.id, decidedAt: new Date("2026-08-21T12:00:00.000Z"), acceptedRefId: null, localIssue: { id: localId, key: "KAN-1", title: "Local" } }], manualCandidate: null };
+    reviewPage.mockResolvedValue({ previewIdentity: scope.previewIdentity, processedCandidateCount: 1, remainingCandidateCount: 0, hiddenCount: 0, linkedCount: 0, items: [item], nextCursor: null });
+    const owner = await app.inject({ method: "POST", url, headers: { authorization: `Bearer ${scope.owner.token}` }, payload: {} });
+    expect(owner.json()).toMatchObject({ previewIdentity: scope.previewIdentity, processedCandidateCount: 1, items: [{ remote: { id: "7", title: "Match" }, recommendations: [{ decidedAt: "2026-08-21T12:00:00.000Z" }] }] });
+    expect(reviewPage).toHaveBeenCalledWith({ connectionId: scope.connection.id, bindingId: scope.binding.id, userId: scope.owner.userId }, expect.objectContaining({ limit: 5, workspaceId: scope.workspace.id, loadRemoteIssue: expect.any(Function) }));
+
+    const member = await seedTestMemberWithRole(scope.workspace.id, "member");
+    expect((await app.inject({ method: "POST", url, headers: { authorization: `Bearer ${member.token}` }, payload: {} })).statusCode).toBe(403);
+    reviewPage.mockImplementation(async (_request, dependencies) => { await dependencies.loadRemoteIssue("7"); throw new Error("unreachable"); });
+    const scoped = generateTestToken({ userId: scope.owner.userId, email: scope.owner.email, allowedProjectIds: [randomUUID()] });
+    expect((await app.inject({ method: "POST", url, headers: { authorization: `Bearer ${scoped}` }, payload: {} })).statusCode).toBe(404);
+    expect(remoteGet).not.toHaveBeenCalled();
+  });
+
+  it("turns only a definitive Redmine 404 into a hidden review slot", async () => {
+    const scope = await reconciliationFixture();
+    const url = `${scope.base}/reconciliation/review-page`;
+    const headers = { authorization: `Bearer ${scope.owner.token}` };
+    reviewPage.mockImplementation(async (_request, dependencies) => {
+      const detail = await dependencies.loadRemoteIssue("7");
+      expect(detail).toMatchObject({ remoteIssueId: "7", remoteProjectId: "42", sourceVersion, previewIdentity: scope.previewIdentity, scopeFingerprint: scope.scopeFingerprint, visible: false, title: null });
+      return { previewIdentity: scope.previewIdentity, processedCandidateCount: 1, remainingCandidateCount: 0, hiddenCount: 1, linkedCount: 0, items: [], nextCursor: null };
+    });
+
+    remoteGet.mockRejectedValueOnce(new RedmineHttpError(404));
+    const hidden = await app.inject({ method: "POST", url, headers, payload: {} });
+    expect(hidden.statusCode).toBe(200);
+    expect(hidden.json()).toEqual({ previewIdentity: scope.previewIdentity, processedCandidateCount: 1, remainingCandidateCount: 0, hiddenCount: 1, linkedCount: 0, items: [], nextCursor: null });
+    expect(JSON.stringify(hidden.json())).not.toContain('"id":"7"');
+
+    remoteGet.mockRejectedValueOnce(new RedmineHttpError(401));
+    const unauthorized = await app.inject({ method: "POST", url, headers, payload: {} });
+    expect(unauthorized.statusCode).toBe(502);
+    expect(unauthorized.json()).toMatchObject({ error: "REDMINE_CONNECTION_FAILED" });
+    remoteGet.mockRejectedValueOnce(new Error("timeout"));
+    const transient = await app.inject({ method: "POST", url, headers, payload: {} });
+    expect(transient.statusCode).toBe(502);
+    expect(transient.json()).toMatchObject({ error: "REDMINE_CONNECTION_FAILED" });
   });
 
   it("lists bounded recommendations and fails closed for another project scope", async () => {
