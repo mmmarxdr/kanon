@@ -60,7 +60,7 @@ import {
   createIntegrationWorkerCycle,
   readIntegrationWorkerStartupSnapshot,
 } from "./modules/integrations/worker.js";
-import integrationRoutes from "./modules/integrations/routes.js";
+import integrationRoutes, { loadRedmineReconciliationIssue } from "./modules/integrations/routes.js";
 import { createInboundSyncCycle } from "./modules/integrations/inbound.js";
 import { runAuditOperationsCycle } from "./modules/integrations/audit-operations.js";
 import {
@@ -371,7 +371,7 @@ export async function buildApp(opts: BuildAppOptions = {}) {
   await app.register(projectMemberRoutes, { prefix: "/api/projects/:key/members" });
   await app.register(instanceRoutes, { prefix: "/api/instance" });
   await app.register(adminUsersRoutes, { prefix: "/api/admin/users" });
-  await app.register(integrationRoutes, { prefix: "/api/integrations" });
+  await app.register(integrationRoutes, { prefix: "/api/integrations", loadRedmineReconciliationIssue });
   await app.register(triageProposalReadRoutes, { prefix: "/" });
 
   // ─── Instance Setup Token (first-boot onReady hook) ───────────────────

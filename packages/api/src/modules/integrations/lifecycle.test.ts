@@ -71,6 +71,13 @@ const priorityWriteMap = {
   low: "normal",
 } as const;
 
+async function markBootstrapReady(connectionId: string) {
+  await prisma.integrationProjectBinding.updateMany({
+    where: { connectionId, releaseRequestedAt: null, releasedAt: null },
+    data: { bootstrapState: "ready", inboundEnabled: true },
+  });
+}
+
 describe("integration connection lifecycle", () => {
   let app: FastifyInstance;
 
@@ -78,6 +85,7 @@ describe("integration connection lifecycle", () => {
     app = await createTestApp();
   });
   beforeEach(async () => {
+    await prisma.integrationReconciliationRecommendation.deleteMany();
     await cleanDatabase();
     await prisma.instanceSettings.update({
       where: { id: INSTANCE_SETTINGS_ID },
@@ -310,6 +318,13 @@ describe("integration connection lifecycle", () => {
       owner.userId,
       deps,
     );
+    vi.clearAllMocks();
+    await expect(
+      setConnectionLifecycle(connection.id, "active", owner.userId, deps),
+    ).rejects.toMatchObject({ code: "INTEGRATION_BOOTSTRAP_REQUIRED" });
+    expect(deps.decrypt).not.toHaveBeenCalled();
+    expect(deps.remote).not.toHaveBeenCalled();
+    await markBootstrapReady(connection.id);
     const active = await setConnectionLifecycle(connection.id, "active", owner.userId, deps);
     await prisma.integrationProjectBinding.update({
       where: { id: binding.id },
@@ -354,6 +369,7 @@ describe("integration connection lifecycle", () => {
       owner.userId,
       deps,
     );
+    await markBootstrapReady(connection.id);
     await setConnectionLifecycle(connection.id, "active", owner.userId, deps);
     const credential = await prisma.memberIntegrationCredential.findFirstOrThrow({
       where: { connectionId: connection.id, memberId: owner.id },
@@ -515,6 +531,7 @@ describe("integration connection lifecycle", () => {
       deps,
     );
 
+    await markBootstrapReady(connection.id);
     await expect(setConnectionLifecycle(connection.id, "active", owner.userId)).rejects.toMatchObject({
       statusCode: 409,
       code: "INTEGRATION_NOT_READY",
@@ -730,6 +747,7 @@ describe("integration connection lifecycle", () => {
       admin.userId,
       deps,
     );
+    await markBootstrapReady(connection.id);
     await setConnectionLifecycle(connection.id, "active", admin.userId, deps);
 
     await configureProviderMaps(
@@ -849,6 +867,7 @@ describe("integration connection lifecycle", () => {
       deps,
       workspaceA.id,
     );
+    await markBootstrapReady(connectionA.id);
     await setConnectionLifecycle(connectionA.id, "active", owner.userId, deps, workspaceA.id);
     await prisma.integrationProjectBinding.update({
       where: { id: binding.id },
@@ -996,6 +1015,7 @@ describe("integration connection lifecycle", () => {
       deps,
       workspace.id,
     );
+    await markBootstrapReady(connection.id);
     await setConnectionLifecycle(connection.id, "active", owner.userId, deps, workspace.id);
     const activeBinding = await prisma.integrationProjectBinding.update({
       where: { id: binding.id },
@@ -1132,6 +1152,7 @@ describe("integration connection lifecycle", () => {
       deps,
       workspace.id,
     );
+    await markBootstrapReady(connection.id);
     await setConnectionLifecycle(connection.id, "active", owner.userId, deps, workspace.id);
     const application = await prisma.integrationInboundApplication.create({
       data: {
@@ -1200,6 +1221,7 @@ describe("integration connection lifecycle", () => {
       deps,
       workspace.id,
     );
+    await markBootstrapReady(connection.id);
     await setConnectionLifecycle(connection.id, "active", owner.userId, deps, workspace.id);
     const application = await prisma.integrationInboundApplication.create({
       data: {
@@ -1437,6 +1459,7 @@ describe("integration connection lifecycle", () => {
       deps,
       workspace.id,
     );
+    await markBootstrapReady(connection.id);
     await setConnectionLifecycle(connection.id, "active", owner.userId, deps, workspace.id);
     const application = await prisma.integrationInboundApplication.create({
       data: {
