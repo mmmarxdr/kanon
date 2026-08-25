@@ -9,6 +9,7 @@ import {
   REDMINE_RECONCILIATION_SCORER_VERSION,
 } from "./redmine-reconciliation-score.js";
 import { issueSyncMetadata } from "./issue-convergence.js";
+import { recordIssueContentProvenanceTx } from "./privacy-hold/content-provenance.js";
 import { reconciliationScopeFingerprint } from "./redmine-import.js";
 import { ownedConnection, serviceCredential } from "./service.js";
 const Hash = z.string().regex(/^sha256:[a-f0-9]{64}$/);
@@ -457,6 +458,21 @@ export async function decideRedmineReconciliationRecommendations(request: Redmin
       await cancelSafeCreate(transaction, scope.binding.id, issue.id);
       const exact = decision.kind === "manual-link" ? await transaction.integrationReconciliationRecommendation.findFirst({ where: { bindingId: scope.binding.id, previewIdentity: scope.preview.previewIdentity, remoteIssueId: request.remoteIssueId, remoteSourceVersion: detail!.sourceVersion, candidateIssueId: issue.id, scoringVersion: REDMINE_RECONCILIATION_SCORER_VERSION, localFingerprint: match.evidence.localFingerprint, remoteFingerprint: match.evidence.remoteFingerprint } }) : recommendation;
       if (exact && exact.decisionState !== "pending") throw decisionConflict("REDMINE_RECONCILIATION_RECOMMENDATION_STALE", "The recommendation was already decided");
+      const classifiedFields = new Set((await transaction.integrationContentProvenance.findMany({
+        where: { bindingId: scope.binding.id, entityType: "issue", entityId: issue.id, field: { in: ["title", "description"] } },
+        select: { field: true },
+      })).map(({ field }) => field));
+      await recordIssueContentProvenanceTx(transaction, {
+        bindingId: scope.binding.id,
+        issueId: issue.id,
+        direction: "outbound",
+        actorKind: "user",
+        sourceVersion: issue.updatedAt.toISOString(),
+        fields: {
+          ...(!classifiedFields.has("title") ? { title: issue.title } : {}),
+          ...(!classifiedFields.has("description") ? { description: issue.description } : {}),
+        },
+      });
       const correlationId = applicationKey(scope.binding.id, request.remoteIssueId, detail!.sourceVersion);
       const ref = await transaction.externalRef.create({ data: { connectionId: request.connectionId, bindingId: scope.binding.id, entityType: "issue", entityId: issue.id, externalId: request.remoteIssueId, remoteUpdatedAt: snapshot.changedAt, localVersion: 1, lastCorrelationId: correlationId, metadata: issueSyncMetadata(null, { sourceVersion: detail!.sourceVersion, ...snapshot }) } });
       await transaction.integrationInboundApplication.create({ data: { bindingId: scope.binding.id, remoteEntityType: "issue", remoteId: request.remoteIssueId, remoteUpdatedAt: snapshot.changedAt, sourceVersion: detail!.sourceVersion, applicationKey: correlationId, correlationId, state: "applied", refId: ref.id, outcome: { provenance: "reconciliation-link", decisionKind: decision.kind, issueKey: issue.key } } });

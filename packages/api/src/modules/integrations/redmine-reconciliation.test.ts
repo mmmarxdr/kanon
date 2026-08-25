@@ -391,11 +391,29 @@ describe("Redmine reconciliation recommendations", () => {
     const recommendations = await prisma.integrationReconciliationRecommendation.findMany({ where: { bindingId: context.binding.id }, orderBy: { score: "desc" } });
     const selected = recommendations[0]!;
     const before = await prisma.issue.findUniqueOrThrow({ where: { id: selected.candidateIssueId } });
+    const preservedTitle = await prisma.integrationContentProvenance.create({
+      data: {
+        bindingId: context.binding.id,
+        entityType: "issue",
+        entityId: selected.candidateIssueId,
+        field: "title",
+        origin: "redmine",
+        sourceVersion: OTHER_HASH,
+        contentHash: `sha256:${"c".repeat(64)}`,
+      },
+    });
     await expect(context.decide({ kind: "accept", recommendationId: selected.id })).resolves.toMatchObject({ replayed: false, candidateIssueId: selected.candidateIssueId });
     expect(await prisma.issue.findUniqueOrThrow({ where: { id: selected.candidateIssueId } })).toEqual(before);
     const ref = await prisma.externalRef.findUniqueOrThrow({ where: { connectionId_entityType_entityId: { connectionId: context.connection.id, entityType: "issue", entityId: selected.candidateIssueId } } });
     expect(ref.metadata).toMatchObject({ remoteVersion: SOURCE, baseline: { version: 1, sourceVersion: SOURCE, fields: { title: context.remote.title, description: context.remote.description, state: "in_progress", priority: "medium", assigneeId: context.owner.id, startDate: null, dueDate: null, progress: 0 } } });
     await expect(prisma.integrationInboundApplication.findFirstOrThrow({ where: { refId: ref.id } })).resolves.toMatchObject({ state: "applied", sourceVersion: SOURCE, remoteId: "42", outcome: { provenance: "reconciliation-link" } });
+    await expect(prisma.integrationContentProvenance.findMany({
+      where: { bindingId: context.binding.id, entityType: "issue", entityId: selected.candidateIssueId },
+      orderBy: { field: "asc" },
+    })).resolves.toMatchObject([
+      { field: "description", origin: "kanon", sourceVersion: before.updatedAt.toISOString() },
+      { id: preservedTitle.id, field: "title", origin: "redmine", sourceVersion: OTHER_HASH, contentHash: preservedTitle.contentHash },
+    ]);
     expect(await prisma.integrationReconciliationRecommendation.findUniqueOrThrow({ where: { id: selected.id } })).toMatchObject({ decisionState: "accepted", decisionKind: "owner-accept-suggested", decidedById: context.owner.id, acceptedRefId: ref.id });
     const alternatives = await prisma.integrationReconciliationRecommendation.findMany({ where: { bindingId: context.binding.id, id: { not: selected.id } } });
     expect(alternatives.every(({ decisionState, decisionKind, decidedById }) => decisionState === "rejected" && decisionKind === "owner-link-alternative" && decidedById === context.owner.id)).toBe(true);
@@ -412,14 +430,37 @@ describe("Redmine reconciliation recommendations", () => {
     const redmineCandidates = await prisma.integrationReconciliationRecommendation.findMany({ where: { bindingId: context.binding.id } });
     expect(redmineCandidates.map(({ candidateIssueId }) => candidateIssueId)).toContain(context.issues[0]!.id);
     expect(redmineCandidates.map(({ candidateIssueId }) => candidateIssueId)).not.toContain(context.issues[3]!.id);
-    const manual = rankRedmineReconciliationCandidates({ id: "42", projectId: context.project.id, title: context.remote.title, description: context.remote.description, createdAt: context.remote.createdAt, mappedAssigneeId: context.remote.mappedAssigneeId, mappedState: context.remote.mappedState }, [context.issues[3]!])[0]!;
+    const manualIssue = await prisma.issue.update({ where: { id: context.issues[3]!.id }, data: { description: null } });
+    const manual = rankRedmineReconciliationCandidates({ id: "42", projectId: context.project.id, title: context.remote.title, description: context.remote.description, createdAt: context.remote.createdAt, mappedAssigneeId: context.remote.mappedAssigneeId, mappedState: context.remote.mappedState }, [manualIssue])[0]!;
     const work = await queueCreate(context.binding.id, context.issues[3]!.id, "queued", 0, "update");
     const before = await prisma.issue.findUniqueOrThrow({ where: { id: context.issues[3]!.id } });
     const linked = await context.decide({ kind: "manual-link", candidateIssueId: context.issues[3]!.id, localFingerprint: manual.evidence.localFingerprint, remoteFingerprint: manual.evidence.remoteFingerprint });
     expect(await prisma.issue.findUniqueOrThrow({ where: { id: context.issues[3]!.id } })).toEqual(before);
     await expect(prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } })).resolves.toMatchObject({ state: "superseded", skippedReason: "reconciliation-linked" });
     await expect(prisma.integrationReconciliationRecommendation.findFirstOrThrow({ where: { bindingId: context.binding.id, candidateIssueId: context.issues[3]!.id } })).resolves.toMatchObject({ decisionState: "accepted", decisionKind: "owner-manual-link", acceptedRefId: linked.refId });
+    await expect(prisma.integrationContentProvenance.findMany({ where: { bindingId: context.binding.id, entityType: "issue", entityId: manualIssue.id }, orderBy: { field: "asc" } })).resolves.toMatchObject([
+      { field: "description", origin: "kanon", sourceVersion: manualIssue.updatedAt.toISOString(), contentHash: "sha256:ae7fb1437c48256120c471c7f7b40c9c24dee6e0191d34766fea3ed9e5f3ece1" },
+      { field: "title", origin: "kanon", sourceVersion: manualIssue.updatedAt.toISOString() },
+    ]);
     await expect(prisma.externalRef.count({ where: { entityType: "issue", entityId: context.issues[3]!.id } })).resolves.toBe(2);
+  });
+  it("rolls back the complete link decision when provenance storage fails", async () => {
+    const context = await fixture();
+    const materialized = await context.run();
+    const selected = materialized.recommendations[0]!;
+    await prisma.$executeRawUnsafe(`CREATE FUNCTION reject_reconciliation_provenance() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'provenance unavailable'; END $$`);
+    await prisma.$executeRawUnsafe(`CREATE TRIGGER reject_reconciliation_provenance BEFORE INSERT OR UPDATE ON integration_content_provenance FOR EACH ROW EXECUTE FUNCTION reject_reconciliation_provenance()`);
+    try {
+      await expect(context.decide({ kind: "accept", recommendationId: selected.id })).rejects.toThrow(/provenance unavailable/i);
+    } finally {
+      await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS reject_reconciliation_provenance ON integration_content_provenance`);
+      await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS reject_reconciliation_provenance()`);
+    }
+    await expect(prisma.integrationContentProvenance.count({ where: { bindingId: context.binding.id } })).resolves.toBe(0);
+    await expect(prisma.externalRef.count({ where: { connectionId: context.connection.id } })).resolves.toBe(0);
+    await expect(prisma.integrationInboundApplication.count({ where: { bindingId: context.binding.id } })).resolves.toBe(0);
+    await expect(prisma.integrationReconciliationRecommendation.findUniqueOrThrow({ where: { id: selected.id } })).resolves.toMatchObject({ decisionState: "pending", acceptedRefId: null });
+    await expect(prisma.integrationReconciliationDisposition.findFirstOrThrow({ where: { bindingId: context.binding.id, remoteIssueId: "42" } })).resolves.toMatchObject({ state: "pending", acceptedRefId: null });
   });
   it("rejects source or local drift and uncertain outbound creates without partial decisions", async () => {
     const context = await fixture();
