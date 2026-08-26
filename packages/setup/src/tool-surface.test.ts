@@ -89,7 +89,45 @@ describe("Cursor tool surface upgrades", () => {
     expect(fs.existsSync(path.join(rulesDir, "kanon.mdc"))).toBe(false);
   });
 
-  it("keeps a Windows-only workspace ID outside legacy WSL targets", () => {
+  it("preflights legacy Windows Cursor config before mutating current surfaces", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-cursor-install-preflight-"));
+    roots.push(root);
+    const ctx: PlatformContext = {
+      platform: "win32",
+      homedir: path.join(root, "home"),
+      appDataDir: path.join(root, "appdata"),
+    };
+    const cursor = getToolByName("cursor")!;
+    const currentConfig = path.join(ctx.homedir, ".cursor", "mcp.json");
+    const legacyConfig = path.join(ctx.appDataDir!, "Cursor", "User", "mcp.json");
+    const currentSkill = path.join(ctx.homedir, ".cursor", "skills", "kanon-agent", "SKILL.md");
+    const addedSkill = path.join(ctx.homedir, ".cursor", "skills", "kanon-init", "SKILL.md");
+    const currentRaw = JSON.stringify({ mcpServers: { other: { command: "other", args: [] } } });
+    fs.mkdirSync(path.dirname(currentConfig), { recursive: true });
+    fs.mkdirSync(path.dirname(currentSkill), { recursive: true });
+    fs.mkdirSync(path.dirname(legacyConfig), { recursive: true });
+    fs.writeFileSync(currentConfig, currentRaw);
+    fs.writeFileSync(currentSkill, "user-owned skill");
+    fs.writeFileSync(legacyConfig, "{ malformed");
+
+    expect(() => installToolSurface({
+      tool: cursor,
+      ctx,
+      assetsDir: makeAssets(root),
+      buildEntry: () => ({ command: "node", args: ["wrapper.js"] }),
+    })).toThrow(/Invalid JSON/);
+    expect({
+      current: fs.readFileSync(currentConfig, "utf8"),
+      currentSkill: fs.readFileSync(currentSkill, "utf8"),
+      addedSkill: fs.existsSync(addedSkill),
+    }).toEqual({
+      current: currentRaw,
+      currentSkill: "user-owned skill",
+      addedSkill: false,
+    });
+  });
+
+  it("recovers a Windows-only workspace ID without Windows write authorization", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-cursor-workspace-"));
     roots.push(root);
     const ctx: PlatformContext = {
@@ -110,7 +148,7 @@ describe("Cursor tool surface upgrades", () => {
     }));
 
     const workspaceId = resolveExistingToolWorkspaceId(cursor, ctx);
-    expect(workspaceId).toBeUndefined();
+    expect(workspaceId).toBe("workspace-from-windows");
     installToolSurface({
       tool: cursor,
       ctx,
@@ -128,7 +166,7 @@ describe("Cursor tool surface upgrades", () => {
     const [local] = resolveToolTargets(cursor, ctx).map((target) =>
       JSON.parse(fs.readFileSync(target.config(ctx), "utf8")).mcpServers["kanon"],
     );
-    expect(local.env.KANON_WORKSPACE_ID).toBeUndefined();
+    expect(local.env.KANON_WORKSPACE_ID).toBe("workspace-from-windows");
     expect(resolveToolTargets(cursor, ctx)).toHaveLength(1);
   });
 });
