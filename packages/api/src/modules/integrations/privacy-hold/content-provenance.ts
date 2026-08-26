@@ -4,7 +4,7 @@ import type { IntegrationContentOrigin, Prisma } from "@prisma/client";
 const CONTENT_FIELDS = ["title", "description"] as const;
 const HASH_DOMAIN = "kanon-content-provenance:v1";
 
-type ContentField = (typeof CONTENT_FIELDS)[number];
+export type ContentField = (typeof CONTENT_FIELDS)[number];
 type Database = Pick<Prisma.TransactionClient, "integrationContentProvenance">;
 
 export type IssueContentProvenanceInput = Readonly<{
@@ -16,7 +16,7 @@ export type IssueContentProvenanceInput = Readonly<{
   fields: Readonly<Partial<Record<ContentField, string | null>>>;
 }>;
 
-function contentHash(field: ContentField, value: string | null): string {
+export function contentHash(field: ContentField, value: string | null): string {
   const digest = createHash("sha256")
     .update(HASH_DOMAIN)
     .update("\0")
