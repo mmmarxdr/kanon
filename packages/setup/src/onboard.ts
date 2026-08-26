@@ -13,7 +13,7 @@ import type { CredentialStore } from "./credential-store/index.js";
 import { getCredentialStore } from "./credential-store/factory.js";
 import { OnboardResponseSchema } from "./api-types.js";
 import { buildPlatformContext } from "./detect.js";
-import { detectTools } from "./registry.js";
+import { detectTools, hasDirectCursorEvidence, hasSelectableWindowsCursorEvidence } from "./registry.js";
 import {
   buildWrapperMcpEntry,
   type McpResolution,
@@ -22,8 +22,11 @@ import {
 } from "./mcp-config.js";
 import { canonicalizeApiUrl } from "./canonical-url.js";
 import { getAssetsDir, installToolSurface } from "./tool-surface.js";
-import type { PlatformContext, ToolDefinition } from "./types.js";
-import { selectTools } from "./tool-selection.js";
+import { discoverCursorExecutionPlan, finalizeCursorSurfaceResults, planCursorSurfaceOutcomes } from "./cursor-plan.js";
+import { collectCursorOwnershipByTarget } from "./cursor-inventory.js";
+import { discoverCursorSurfaces } from "./cursor-surfaces.js";
+import type { PlatformContext, SurfaceResult, ToolDefinition } from "./types.js";
+import { selectTools, type SelectedTool } from "./tool-selection.js";
 
 export interface OnboardedTool {
   /** Tool registry name (e.g. "claude-code", "cursor"). */
@@ -34,6 +37,7 @@ export interface OnboardedTool {
   configPaths: string[];
   /** Present when this tool failed without blocking the remaining selections. */
   error?: string;
+  surfaceResults?: readonly SurfaceResult[];
 }
 
 export interface OnboardDeps {
@@ -58,21 +62,32 @@ export async function installOnboardedTools(
     wrapperResolution?: McpResolution;
     isInteractive?: boolean;
     promptTools?: (choices: Array<{ name: string; value: string; checked: boolean }>) => Promise<string[]>;
+    /** Test seam; production uses bounded Cursor discovery exactly once. */
+    cursorSurfaces?: readonly import("./types.js").SurfaceEvidence[];
   } = {},
 ): Promise<OnboardedTool[]> {
   const ctx = deps.ctx ?? await buildPlatformContext();
-  const detected = deps.tools ?? await detectTools(ctx);
-  const tools = deps.tools ?? (
+  const isInteractive = deps.isInteractive ?? !!process.stdin.isTTY;
+  const cursorSurfaces = deps.cursorSurfaces ?? (deps.tools ? undefined : discoverCursorSurfaces(ctx));
+  const detected = deps.tools ?? await detectTools(ctx, {
+    cursorSurfaces,
+    includeWindowsCursor: isInteractive && !hasDirectCursorEvidence(cursorSurfaces ?? []) && hasSelectableWindowsCursorEvidence(cursorSurfaces ?? []),
+  });
+  const tools: SelectedTool[] = deps.tools ?? (
     detected.length === 0
       ? []
       : await selectTools(
           detected,
           {},
-          deps.isInteractive ?? !!process.stdin.isTTY,
+          isInteractive,
           ctx,
           { promptTools: deps.promptTools },
         )
   );
+  // Do not probe runtime or wrapper locations when selection produced no work.
+  // The caller reports the established no-tools outcome after credentials save.
+  if (tools.length === 0) return [];
+
   const nodeBin = deps.nodeBin ?? resolveNodeBin();
   const assetsDir = deps.assetsDir ?? getAssetsDir();
   const wrapperResolution = deps.wrapperResolution ?? resolveWrapperPath();
@@ -80,10 +95,26 @@ export async function installOnboardedTools(
 
   for (const tool of tools) {
     try {
+      const cursorPlan = discoverCursorExecutionPlan({
+        tool, ctx, operation: "configure", flags: {}, isInteractive,
+        promptAccepted: tool.selectionAuthorization === "prompt", surfaces: cursorSurfaces,
+      });
+      const cursorOutcomes = tool.name === "cursor" ? planCursorSurfaceOutcomes({
+        operation: "configure", ctx, flags: {}, promptAccepted: tool.selectionAuthorization === "prompt",
+        surfaces: cursorPlan.surfaces ?? cursorSurfaces ?? discoverCursorSurfaces(ctx),
+        ownershipByTarget: collectCursorOwnershipByTarget(tool, ctx),
+        validatedBridge: cursorPlan.bridge,
+      }) : undefined;
+      const writableTargets = tool.name === "cursor"
+        ? cursorPlan.targets.filter((target) => cursorOutcomes?.results.some((result) =>
+            result.outcome === "ready" && result.paths.includes(target.config(ctx)),
+          ) ?? false)
+        : undefined;
       const targets = installToolSurface({
         tool,
         ctx,
         assetsDir,
+        targets: writableTargets,
         buildEntry: (target) => buildWrapperMcpEntry(
           apiUrl,
           target.mcpMode,
@@ -91,13 +122,23 @@ export async function installOnboardedTools(
           wrapperResolution,
           workspaceId,
           tool.clientIdentity,
+          cursorPlan.bridge?.distribution,
+          cursorPlan.bridge?.nodePath,
         ),
       });
 
+      const surfaceResults = cursorOutcomes
+        ? finalizeCursorSurfaceResults(cursorOutcomes.results, new Set(targets.map((target) => target.configPath)), "configure")
+        : undefined;
+      // A selected tool is configured only after at least one intended target
+      // was actually mutated. Keeping this as an error preserves credentials
+      // while making a repair path visible to the caller.
       written.push({
         name: tool.name,
         displayName: tool.displayName,
         configPaths: targets.map((target) => target.configPath),
+        ...(targets.length === 0 ? { error: `No writable ${tool.displayName} surface was configured; repair the tool and re-run kanon-setup --tool ${tool.name}.` } : {}),
+        ...(surfaceResults ? { surfaceResults } : {}),
       });
     } catch (err) {
       written.push({
@@ -281,6 +322,7 @@ export async function onboardFromLink(
   }
   for (const tool of configured) {
     stdout.write(`  - ${tool.displayName} (${tool.configPaths.join(", ")})\n`);
+    for (const result of tool.surfaceResults ?? []) stdout.write(`    ${result.outcome}: Cursor ${result.surface} — ${result.message}\n`);
   }
   for (const tool of failed) {
     stdout.write(`⚠  ${tool.displayName} was not configured: ${tool.error}\n`);
