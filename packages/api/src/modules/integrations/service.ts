@@ -1334,6 +1334,16 @@ function bindingReconciliationRequired(binding: {
   );
 }
 
+const reconciliationBindingSelect = {
+  id: true,
+  lifecycle: true,
+  inboundEnabled: true,
+  bootstrapState: true,
+  bootstrapPageToken: true,
+  releaseRequestedAt: true,
+  releasedAt: true,
+} satisfies Prisma.IntegrationProjectBindingSelect;
+
 async function assertActivationReady(
   database: Database,
   connection: {
@@ -1451,6 +1461,7 @@ export async function setConnectionLifecycle(
     await lockConnection(transaction, connectionId);
     const locked = await ownedConnection(transaction, connectionId, userId, workspaceId);
     if (locked.lifecycle === lifecycle) return locked;
+    if (options.requireSettledOutbound && locked.lifecycle === "disabled") throw new AppError(409, "REDMINE_RECONCILIATION_NOT_REQUIRED", "Redmine reconciliation is no longer available for this connection");
     if (lifecycle !== "active") {
       await assertNoUnresolvedIssueDeletes(transaction, connectionId);
     }
@@ -1519,31 +1530,16 @@ export async function prepareRedmineReconciliation(
   if (current.provider !== "redmine") {
     throw new AppError(400, "INVALID_INTEGRATION_PROVIDER", "Connection is not a Redmine integration");
   }
-  const releasePending = await prisma.integrationProjectBinding.count({
-    where: { connectionId, releaseRequestedAt: { not: null }, releasedAt: null },
-  });
-  if (releasePending > 0) {
-    throw new AppError(
-      409,
-      "BINDING_RELEASE_IN_PROGRESS",
-      "Wait for project disconnection to finish before preparing reconciliation",
-    );
-  }
   const candidates = await prisma.integrationProjectBinding.findMany({
-    where: { connectionId, releaseRequestedAt: null, releasedAt: null },
-    select: {
-      id: true,
-      lifecycle: true,
-      inboundEnabled: true,
-      bootstrapState: true,
-      bootstrapPageToken: true,
-      releaseRequestedAt: true,
-      releasedAt: true,
-    },
+    where: { connectionId, releasedAt: null },
+    select: reconciliationBindingSelect,
   });
-  if (!candidates.some(bindingReconciliationRequired)) {
-    return { preparedBindingIds: [] as string[] };
+  if (candidates.some(({ releaseRequestedAt }) => releaseRequestedAt)) {
+    throw new AppError(409, "BINDING_RELEASE_IN_PROGRESS", "Wait for project disconnection to finish before preparing reconciliation");
   }
+  const reconciliationRequired = candidates.some(bindingReconciliationRequired);
+  if (current.lifecycle === "disabled" || (!reconciliationRequired && (current.lifecycle !== "paused" || !candidates.some(({ bootstrapState }) => bootstrapState === "pending")))) throw new AppError(409, "REDMINE_RECONCILIATION_NOT_REQUIRED", "Redmine reconciliation is no longer available for this connection");
+  if (!reconciliationRequired) return { preparedBindingIds: [] as string[] };
 
   if (current.lifecycle !== "paused") {
     await setConnectionLifecycle(connectionId, "paused", userId, deps, workspaceId, { requireSettledOutbound: true });
@@ -1562,31 +1558,16 @@ export async function prepareRedmineReconciliation(
     await transaction.$queryRaw(
       Prisma.sql`SELECT "id" FROM "integration_project_bindings" WHERE "connection_id" = ${connectionId}::uuid AND "released_at" IS NULL ORDER BY "id" FOR UPDATE`,
     );
-    const lockedReleasePending = await transaction.integrationProjectBinding.count({
-      where: { connectionId, releaseRequestedAt: { not: null }, releasedAt: null },
+    const bindings = await transaction.integrationProjectBinding.findMany({
+      where: { connectionId, releasedAt: null },
+      orderBy: { id: "asc" },
+      select: reconciliationBindingSelect,
     });
-    if (lockedReleasePending > 0) {
-      throw new AppError(
-        409,
-        "BINDING_RELEASE_IN_PROGRESS",
-        "Wait for project disconnection to finish before preparing reconciliation",
-      );
+    if (bindings.some(({ releaseRequestedAt }) => releaseRequestedAt)) {
+      throw new AppError(409, "BINDING_RELEASE_IN_PROGRESS", "Wait for project disconnection to finish before preparing reconciliation");
     }
     await assertNoUnresolvedIssueDeletes(transaction, connectionId);
     await assertNoUnsettledOutbound(transaction, connectionId);
-    const bindings = await transaction.integrationProjectBinding.findMany({
-      where: { connectionId, releaseRequestedAt: null, releasedAt: null },
-      orderBy: { id: "asc" },
-      select: {
-        id: true,
-        lifecycle: true,
-        inboundEnabled: true,
-        bootstrapState: true,
-        bootstrapPageToken: true,
-        releaseRequestedAt: true,
-        releasedAt: true,
-      },
-    });
     const preparedBindingIds = bindings.filter(bindingReconciliationRequired).map(({ id }) => id);
     if (!preparedBindingIds.length) return { preparedBindingIds };
     await transaction.integrationProjectBinding.updateMany({

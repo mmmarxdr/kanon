@@ -811,7 +811,7 @@ describe("RedmineSection", () => {
     refetch.mockResolvedValueOnce({ data: { ...refreshed, lifecycle: "active" } }); await act(async () => props.onRestartSession()); expect(screen.getByTestId("redmine-reconciliation-modal")).toBeInTheDocument();
   });
 
-  it("offers an explicit upgrade action for a legacy ready binding and opens its prepared preview", async () => {
+  it("opens a prepared legacy preview without reactivating a later disabled no-op", async () => {
     const legacy = {
       id: "99999999-9999-4999-8999-999999999999",
       projectId: PROJECT_ID,
@@ -841,7 +841,8 @@ describe("RedmineSection", () => {
         reconciliationRequired: false,
       }],
     };
-    const refetch = vi.fn().mockResolvedValue({ data: prepared });
+    const disabled = { ...active, lifecycle: "disabled" as const, bindings: [{ ...legacy, lifecycle: "disabled" as const, reconciliationRequired: false }] };
+    const refetch = vi.fn().mockResolvedValueOnce({ data: prepared }).mockResolvedValueOnce({ data: disabled });
     vi.mocked(useRedmineConnectionQuery).mockReturnValue(
       { data: active, isLoading: false, error: null, refetch } as unknown as ReturnType<typeof useRedmineConnectionQuery>,
     );
@@ -849,7 +850,6 @@ describe("RedmineSection", () => {
     vi.mocked(useRedmineDiscoveryQuery).mockReturnValue(
       { data: undefined, isLoading: false, isFetching: false, error: null, refetch: discoveryRefetch } as unknown as ReturnType<typeof useRedmineDiscoveryQuery>,
     );
-
     render(<RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />);
     fireEvent.click(screen.getAllByRole("button", { name: "Refresh discovery" }).at(-1)!);
     expect(discoveryRefetch).toHaveBeenCalledTimes(1);
@@ -862,6 +862,10 @@ describe("RedmineSection", () => {
     expect(prepareReconciliationMutateAsync).toHaveBeenCalledTimes(1);
     expect(lifecycleMutateAsync).not.toHaveBeenCalledWith("paused");
     expect(screen.getByTestId("redmine-reconciliation-modal")).toBeInTheDocument();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Reconcile existing issues" })); });
+    expect(prepareReconciliationMutateAsync).toHaveBeenCalledTimes(2);
+    expect(lifecycleMutateAsync).not.toHaveBeenCalledWith("active");
+    expect(screen.queryByTestId("redmine-reconciliation-modal")).not.toBeInTheDocument();
   });
 
   it("pauses active reconciliation then queues the authoritative unready binding", async () => {
