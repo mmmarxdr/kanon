@@ -152,7 +152,7 @@ export interface SurfaceResult {
   surface: string;
   host: string;
   evidence: EvidenceState;
-  outcome: "ready" | "removed" | "skipped" | "failed";
+  outcome: "ready" | "configured" | "removed" | "skipped" | "failed";
   paths: readonly string[];
   message: string;
 }
