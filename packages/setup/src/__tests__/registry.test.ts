@@ -15,8 +15,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  detectTools,
   getToolByName,
   hasDirectCursorEvidence,
+  hasSelectableWindowsCursorEvidence,
   resolveCursorInventoryTargets,
   resolveToolInventoryTargets,
   resolveCursorWritableTargets,
@@ -68,13 +70,25 @@ describe("registry — cursor", () => {
     }
   });
 
-  it("does not auto-detect Cursor from Windows-only executable-valid evidence under WSL", () => {
-    expect(hasDirectCursorEvidence([
-      { tool: "cursor", surface: "ide", host: "windows", state: "executable-valid" },
-    ])).toBe(false);
-    expect(hasDirectCursorEvidence([
-      { tool: "cursor", surface: "cli", host: "local", state: "executable-valid" },
-    ])).toBe(true);
+  it("keeps default detection local while onboarding snapshots admit only executable-valid Windows Cursor", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-cursor-snapshot-"));
+    const previousPath = process.env.PATH;
+    const windows = [{ tool: "cursor", surface: "ide", host: "windows", state: "executable-valid" }] as const;
+    try {
+      process.env.PATH = path.join(root, "empty-bin");
+      const ctx: PlatformContext = { platform: "wsl", homedir: path.join(root, "linux"), winHome: path.join(root, "windows") };
+      expect((await detectTools(ctx)).some((tool) => tool.name === "cursor")).toBe(false);
+      expect((await detectTools(ctx, { cursorSurfaces: windows, includeWindowsCursor: true })).map((tool) => tool.name)).toContain("cursor");
+      expect(hasDirectCursorEvidence(windows)).toBe(false);
+      expect(hasSelectableWindowsCursorEvidence([
+        { tool: "cursor", surface: "ide", host: "windows", state: "configured-only/stale" },
+        { tool: "cursor", surface: "ide", host: "windows", state: "ambiguous" },
+      ])).toBe(false);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("does not create a phantom Windows target when only winHome resolves", () => {

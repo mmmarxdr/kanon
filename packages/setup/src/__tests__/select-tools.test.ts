@@ -282,3 +282,12 @@ describe("selectTools", () => {
     });
   });
 });
+
+describe("Cursor prompt authorization", () => {
+  it("records affirmative Cursor checkbox selection as prompt authorization", async () => {
+    const result = await selectTools([cursor], {}, true, ctx, {
+      promptTools: vi.fn().mockResolvedValue(["cursor"]),
+    });
+    expect(result[0]).toMatchObject({ name: "cursor", selectionAuthorization: "prompt" });
+  });
+});
