@@ -428,6 +428,22 @@ async function assertNoUnresolvedIssueDeletes(
   }
 }
 
+async function assertNoUnsettledOutbound(transaction: Prisma.TransactionClient, connectionId: string) {
+  const unsettled = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    SELECT work."id" FROM "integration_sync_work" AS work
+    JOIN "integration_project_bindings" AS binding ON binding."id" = work."binding_id"
+    WHERE binding."connection_id" = ${connectionId}::uuid
+      AND binding."released_at" IS NULL AND binding."release_requested_at" IS NULL
+      AND work."epoch" = binding."lifecycle_epoch"
+      AND work."direction" = 'outbound'::"SyncDirection"
+      AND work."state" IN ('leased'::"SyncWorkState", 'ambiguous'::"SyncWorkState")
+    LIMIT 1
+  `);
+  if (unsettled.length) {
+    throw new AppError(409, "REDMINE_OUTBOUND_UNSETTLED", "Resolve in-flight or ambiguous Redmine writes before previewing the import");
+  }
+}
+
 async function redriveAuthBlockedWork(
   transaction: Prisma.TransactionClient,
   connectionId: string,
@@ -1410,6 +1426,7 @@ export async function setConnectionLifecycle(
   userId: string,
   deps: ConnectionServiceDeps = defaultDeps,
   workspaceId?: string,
+  options: { requireSettledOutbound?: boolean } = {},
 ) {
   const current = await ownedConnection(prisma, connectionId, userId, workspaceId);
   if (current.lifecycle === lifecycle) return current;
@@ -1447,6 +1464,7 @@ export async function setConnectionLifecycle(
         "Wait for project disconnection to finish before changing integration lifecycle",
       );
     }
+    if (options.requireSettledOutbound) await assertNoUnsettledOutbound(transaction, connectionId);
     if (lifecycle === "active") await assertActivationReady(transaction, locked);
     const connection = await transaction.integrationConnection.update({
       where: { id: connectionId },
@@ -1528,7 +1546,7 @@ export async function prepareRedmineReconciliation(
   }
 
   if (current.lifecycle !== "paused") {
-    await setConnectionLifecycle(connectionId, "paused", userId, deps, workspaceId);
+    await setConnectionLifecycle(connectionId, "paused", userId, deps, workspaceId, { requireSettledOutbound: true });
   }
 
   return prisma.$transaction(async (transaction) => {
@@ -1555,6 +1573,7 @@ export async function prepareRedmineReconciliation(
       );
     }
     await assertNoUnresolvedIssueDeletes(transaction, connectionId);
+    await assertNoUnsettledOutbound(transaction, connectionId);
     const bindings = await transaction.integrationProjectBinding.findMany({
       where: { connectionId, releaseRequestedAt: null, releasedAt: null },
       orderBy: { id: "asc" },

@@ -829,42 +829,26 @@ describe("RedmineSection", () => {
     };
     const active = {
       ...healthyConnection,
-      providerMaps: {
-        readMap: null,
-        writeMap: null,
-        priorityReadMap: null,
-        priorityWriteMap: null,
-        timeActivityId: "1",
-      },
       bindings: [legacy],
     };
     const prepared = {
       ...active,
       lifecycle: "paused" as const,
-      bindings: [
-        {
-          ...legacy,
-          lifecycle: "paused" as const,
-          inboundReady: false,
-          reconciliationRequired: false,
-        },
-      ],
+      bindings: [{
+        ...legacy,
+        lifecycle: "paused" as const,
+        inboundReady: false,
+        reconciliationRequired: false,
+      }],
     };
     const refetch = vi.fn().mockResolvedValue({ data: prepared });
-    vi.mocked(useRedmineConnectionQuery).mockReturnValue({
-      data: active,
-      isLoading: false,
-      error: null,
-      refetch,
-    } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
+    vi.mocked(useRedmineConnectionQuery).mockReturnValue(
+      { data: active, isLoading: false, error: null, refetch } as unknown as ReturnType<typeof useRedmineConnectionQuery>,
+    );
     const discoveryRefetch = vi.fn();
-    vi.mocked(useRedmineDiscoveryQuery).mockReturnValue({
-      data: { statuses: [], priorities: [], projects: [], timeEntryActivities: [] },
-      isLoading: false,
-      isFetching: false,
-      error: null,
-      refetch: discoveryRefetch,
-    } as unknown as ReturnType<typeof useRedmineDiscoveryQuery>);
+    vi.mocked(useRedmineDiscoveryQuery).mockReturnValue(
+      { data: undefined, isLoading: false, isFetching: false, error: null, refetch: discoveryRefetch } as unknown as ReturnType<typeof useRedmineDiscoveryQuery>,
+    );
 
     render(<RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />);
     fireEvent.click(screen.getAllByRole("button", { name: "Refresh discovery" }).at(-1)!);
