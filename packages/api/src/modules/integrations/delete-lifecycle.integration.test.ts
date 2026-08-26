@@ -5,6 +5,7 @@ import { INSTANCE_SETTINGS_ID } from "../../shared/constants.js";
 import {
   cleanDatabase,
   disconnectTestDb,
+  seedTestIssue,
   seedTestMemberWithRole,
   seedTestProject,
   seedTestWorkspace,
@@ -88,7 +89,8 @@ async function createDeleteWork(
   value: Awaited<ReturnType<typeof fixture>>,
   state: "queued" | "retry" | "dead",
 ) {
-  const issueId = randomUUID();
+  const issue = await seedTestIssue(value.project.id);
+  const issueId = issue.id;
   const ref = await prisma.externalRef.create({
     data: {
       connectionId: value.connection.id,
@@ -98,7 +100,7 @@ async function createDeleteWork(
       externalId: randomUUID(),
     },
   });
-  return prisma.integrationSyncWork.create({
+  const work = await prisma.integrationSyncWork.create({
     data: {
       bindingId: value.binding.id,
       entityType: "issue",
@@ -119,6 +121,8 @@ async function createDeleteWork(
       availableAt: new Date("2026-08-10T00:00:00.000Z"),
     },
   });
+  await prisma.issue.delete({ where: { id: issue.id } });
+  return work;
 }
 
 beforeEach(async () => {
@@ -129,7 +133,7 @@ beforeEach(async () => {
   });
   vi.clearAllMocks();
 });
-afterAll(disconnectTestDb);
+afterAll(() => cleanDatabase().then(() => disconnectTestDb()));
 
 describe("issue-delete lifecycle safety", () => {
   it("keeps release draining for queued, retry, and credential-blocked delete cleanup", async () => {

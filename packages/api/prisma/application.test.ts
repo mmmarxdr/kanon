@@ -78,7 +78,7 @@ async function createFixture() {
   });
   const externalRef = await prisma.externalRef.create({
     data: {
-      entityType: "issue",
+      entityType: "legacy",
       entityId: randomUUID(),
       externalId: `remote-issue-${randomUUID()}`,
       connectionId: connection.id,
@@ -87,7 +87,7 @@ async function createFixture() {
   });
   const work = await prisma.integrationSyncWork.create({
     data: {
-      entityType: "issue",
+      entityType: "legacy",
       entityId: randomUUID(),
       direction: "inbound",
       operation: "close",
@@ -200,7 +200,7 @@ async function seedPreApplicationRows(database: PrismaClient) {
   await database.externalRef.create({
     data: {
       id: f.refId,
-      entityType: "issue",
+      entityType: "legacy",
       entityId: f.entityId,
       externalId: "remote-a15-issue",
       metadata: { source: "pre-a1.5" },
@@ -211,7 +211,7 @@ async function seedPreApplicationRows(database: PrismaClient) {
   await database.integrationSyncWork.create({
     data: {
       id: f.workId,
-      entityType: "issue",
+      entityType: "legacy",
       entityId: f.entityId,
       direction: "outbound",
       operation: "update",
@@ -226,6 +226,7 @@ async function seedPreApplicationRows(database: PrismaClient) {
       authCredentialId: f.credentialId,
       refId: f.refId,
     },
+    select: { id: true },
   });
 }
 
