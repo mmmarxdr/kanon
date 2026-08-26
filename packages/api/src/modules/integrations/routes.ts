@@ -48,6 +48,7 @@ import {
   getConnectionDiscovery,
   getWorkspaceConnection,
   ownedConnection,
+  prepareRedmineReconciliation,
   replaceServiceCredential,
   resolveBindingPrivacyByProject,
   resolveReleasedBindingPrivacy,
@@ -452,6 +453,23 @@ export default async function integrationRoutes(fastify: FastifyInstance, option
           allowedProjectIds: scopedProjectIds(request.user.allowedProjectIds),
         },
       );
+    },
+  );
+
+  app.post(
+    "/workspaces/:wid/connections/:id/reconciliation/prepare",
+    {
+      preHandler: [requireRole("wid", "owner"), requireUnscopedToken],
+      schema: { params: ConnectionId },
+    },
+    async (request, reply) => {
+      await prepareRedmineReconciliation(
+        request.params.id,
+        request.user.userId,
+        undefined,
+        request.params.wid,
+      );
+      return reply.status(204).send();
     },
   );
 

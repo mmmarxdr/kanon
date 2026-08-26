@@ -11,6 +11,7 @@ import {
   useRedmineConnectionQuery,
   useRedmineAuditHealthQuery,
   useRedmineDiscoveryQuery,
+  usePrepareRedmineReconciliationMutation,
   useReplaceRedmineServiceCredentialMutation,
   useSetRedmineLifecycleMutation,
   useUnbindRedmineProjectMutation,
@@ -29,6 +30,7 @@ vi.mock("./use-redmine-integration", () => ({
   useRedmineConnectionQuery: vi.fn(),
   useRedmineAuditHealthQuery: vi.fn(),
   useRedmineDiscoveryQuery: vi.fn(),
+  usePrepareRedmineReconciliationMutation: vi.fn(),
   useReplaceRedmineServiceCredentialMutation: vi.fn(),
   useSetRedmineLifecycleMutation: vi.fn(),
   useUnbindRedmineProjectMutation: vi.fn(),
@@ -45,6 +47,7 @@ const bindMutate = vi.fn();
 const unbindMutate = vi.fn();
 const configureMutate = vi.fn();
 const replaceServiceMutate = vi.fn();
+const prepareReconciliationMutateAsync = vi.fn();
 const lifecycleMutate = vi.fn();
 const lifecycleMutateAsync = vi.fn();
 const idleMutation = (mutate: ReturnType<typeof vi.fn>) => ({
@@ -143,6 +146,13 @@ describe("RedmineSection", () => {
         typeof useReplaceRedmineServiceCredentialMutation
       >,
     );
+    vi.mocked(usePrepareRedmineReconciliationMutation).mockReturnValue(
+      {
+        ...idleMutation(vi.fn()),
+        mutateAsync: prepareReconciliationMutateAsync,
+      } as unknown as ReturnType<typeof usePrepareRedmineReconciliationMutation>,
+    );
+    prepareReconciliationMutateAsync.mockResolvedValue(undefined);
     vi.mocked(useSetRedmineLifecycleMutation).mockReturnValue(
       { ...idleMutation(lifecycleMutate), mutateAsync: lifecycleMutateAsync } as unknown as ReturnType<
         typeof useSetRedmineLifecycleMutation
@@ -799,6 +809,75 @@ describe("RedmineSection", () => {
     await act(async () => props.onRestartSession()); expect(refetch).toHaveBeenCalledWith({ throwOnError: true }); props = modalRender.mock.lastCall?.[0] as typeof props;
     expect(props).toMatchObject({ binding: { bindingId: refreshed.bindings[0]!.id, projectName: "unknown", projectKey: null, remoteProjectName: "unknown-remote" }, current: 1, total: 2 });
     refetch.mockResolvedValueOnce({ data: { ...refreshed, lifecycle: "active" } }); await act(async () => props.onRestartSession()); expect(screen.getByTestId("redmine-reconciliation-modal")).toBeInTheDocument();
+  });
+
+  it("offers an explicit upgrade action for a legacy ready binding and opens its prepared preview", async () => {
+    const legacy = {
+      id: "99999999-9999-4999-8999-999999999999",
+      projectId: PROJECT_ID,
+      remoteProjectId: "remote-project",
+      readMap: {},
+      writeMap: {},
+      timeActivityId: "1",
+      lifecycle: "active" as const,
+      lifecycleEpoch: 4,
+      commentCaptureEnabled: false,
+      commentDispatchEnabled: false,
+      releasePending: false,
+      inboundReady: true,
+      reconciliationRequired: true,
+    };
+    const active = {
+      ...healthyConnection,
+      providerMaps: {
+        readMap: null,
+        writeMap: null,
+        priorityReadMap: null,
+        priorityWriteMap: null,
+        timeActivityId: "1",
+      },
+      bindings: [legacy],
+    };
+    const prepared = {
+      ...active,
+      lifecycle: "paused" as const,
+      bindings: [
+        {
+          ...legacy,
+          lifecycle: "paused" as const,
+          inboundReady: false,
+          reconciliationRequired: false,
+        },
+      ],
+    };
+    const refetch = vi.fn().mockResolvedValue({ data: prepared });
+    vi.mocked(useRedmineConnectionQuery).mockReturnValue({
+      data: active,
+      isLoading: false,
+      error: null,
+      refetch,
+    } as unknown as ReturnType<typeof useRedmineConnectionQuery>);
+    const discoveryRefetch = vi.fn();
+    vi.mocked(useRedmineDiscoveryQuery).mockReturnValue({
+      data: { statuses: [], priorities: [], projects: [], timeEntryActivities: [] },
+      isLoading: false,
+      isFetching: false,
+      error: null,
+      refetch: discoveryRefetch,
+    } as unknown as ReturnType<typeof useRedmineDiscoveryQuery>);
+
+    render(<RedmineSection workspaceId={WORKSPACE_ID} currentUserRole="owner" members={members} />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Refresh discovery" }).at(-1)!);
+    expect(discoveryRefetch).toHaveBeenCalledTimes(1);
+    expect(prepareReconciliationMutateAsync).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("redmine-reconciliation-modal")).not.toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Reconcile existing issues" }));
+    });
+
+    expect(prepareReconciliationMutateAsync).toHaveBeenCalledTimes(1);
+    expect(lifecycleMutateAsync).not.toHaveBeenCalledWith("paused");
+    expect(screen.getByTestId("redmine-reconciliation-modal")).toBeInTheDocument();
   });
 
   it("pauses active reconciliation then queues the authoritative unready binding", async () => {
