@@ -6,7 +6,6 @@ import {
   validateSurfaceMutationPlan,
 } from "./surface-lifecycle.js";
 import type {
-  EvidenceState,
   SurfaceAuthorization,
   SurfaceEvidence,
   SurfaceOwnership,
@@ -43,15 +42,17 @@ function ownership(
   };
 }
 describe("surface lifecycle contracts", () => {
-  it("exposes the complete evidence state union", () => {
-    const states: EvidenceState[] = [
-      "executable-valid",
-      "configured-only/stale",
-      "wsl-only/bridge",
-      "ambiguous",
-      "absent",
-    ];
-    expect(states).toHaveLength(5);
+  it("uses the production planner to reject stale evidence and accept executable-valid evidence", () => {
+    const stale = planSurfaceMutation({
+      operation: "configure", evidence: evidence({ state: "configured-only/stale", executable: undefined }),
+      authorization: authorization(), ownership: ownership({ state: "missing" }), mutations: ["write-mcp"],
+    });
+    const valid = planSurfaceMutation({
+      operation: "configure", evidence: evidence(), authorization: authorization(),
+      ownership: ownership({ state: "missing" }), mutations: ["write-mcp"],
+    });
+    expect(stale.decision).toBe("skip");
+    expect(valid.decision).toBe("write");
   });
   it("fails closed for an unauthorized cross-host configure plan", () => {
     const plan = planSurfaceMutation({
@@ -136,6 +137,53 @@ describe("surface lifecycle contracts", () => {
   });
 });
 describe("reliability regressions", () => {
+  it.each([
+    ["whitespace", { distribution: " ", nodePath: "/usr/bin/node" }],
+    ["empty", { distribution: "", nodePath: "/usr/bin/node" }],
+  ])("REL-001 rejects missing-ownership Windows configure with a %s bridge distribution", (_, bridge) => {
+    expect(planSurfaceMutation({
+      operation: "configure",
+      evidence: evidence({ host: "windows", targetKey: "windows", bridge }),
+      authorization: authorization({ bridge }),
+      ownership: ownership({ targetKey: "windows", state: "missing" }),
+      mutations: ["write-mcp"],
+    }).decision).toBe("skip");
+  });
+  it("permits Windows configure for missing ownership without a bridge, but rejects a mismatched supplied bridge", () => {
+    const bridge = { distribution: "Ubuntu-24.04", nodePath: "/usr/bin/node" };
+    const input = {
+      operation: "configure" as const,
+      evidence: evidence({ host: "windows", targetKey: "windows", bridge }),
+      authorization: authorization({ bridge }),
+      mutations: ["write-mcp"],
+    };
+    expect(planSurfaceMutation({ ...input, ownership: ownership({ targetKey: "windows", state: "missing" }) }).decision).toBe("write");
+    expect(planSurfaceMutation({
+      ...input,
+      ownership: ownership({ targetKey: "windows", state: "missing", bridge: { ...bridge, nodePath: "/opt/node" } }),
+    }).decision).toBe("skip");
+  });
+  it.each(["explicit", "prompt"] as const)("RES-001 rejects %s-authorized Windows removal without bridges", (source) => {
+    const plan = planSurfaceMutation({
+      operation: "remove",
+      evidence: evidence({ host: "windows", targetKey: "windows", state: "absent", executable: undefined }),
+      authorization: authorization({ source, crossHost: "authorized" }),
+      ownership: ownership({ targetKey: "windows" }),
+      mutations: ["remove-kanon"],
+    });
+    expect(plan.decision).toBe("skip");
+  });
+  it("REL-PR3-003 permits an inventory-authorized owned Windows removal without runtime evidence", () => {
+    const plan = planSurfaceMutation({
+      operation: "remove",
+      evidence: evidence({ host: "windows", targetKey: "windows", state: "configured-only/stale", executable: undefined }),
+      authorization: authorization({ source: "inventory", crossHost: "authorized" }),
+      ownership: ownership({ targetKey: "windows" }),
+      mutations: ["remove-kanon"],
+    });
+    expect(plan.decision).toBe("write");
+    expect(validateSurfaceMutationPlan(plan)).toEqual([]);
+  });
   it("REL-PR1-001 denies unauthorized Windows removal", () => {
     expect(planSurfaceMutation({
       operation: "remove", evidence: evidence({ host: "windows", targetKey: "windows" }),
@@ -155,6 +203,37 @@ describe("reliability regressions", () => {
     expect(validateSurfaceMutationPlan({ ...plan, decision: "write" })).toContain(
       "write plan must carry one exact cross-host bridge identity",
     );
+  });
+  it("requires matching Node paths for an exact Windows bridge identity", () => {
+    const plan = planSurfaceMutation({
+      operation: "configure",
+      evidence: evidence({
+        host: "windows", targetKey: "windows",
+        bridge: { distribution: "Ubuntu-24.04", nodePath: "/usr/bin/node" },
+      }),
+      authorization: authorization({
+        bridge: { distribution: "Ubuntu-24.04", nodePath: "/opt/node/bin/node" },
+      }),
+      ownership: ownership({
+        targetKey: "windows",
+        bridge: { distribution: "Ubuntu-24.04", nodePath: "/usr/bin/node" },
+      }),
+      mutations: ["write-mcp"],
+    });
+    expect(plan.decision).toBe("skip");
+    expect(plan.reason).toContain("identity is not exact");
+  });
+  it.each(["configure", "repair"] as const)("RISK-PR4-001 rejects Windows %s when exact bridge Node paths are absent", (operation) => {
+    const bridge = { distribution: "Ubuntu-24.04" };
+    const plan = planSurfaceMutation({
+      operation,
+      evidence: evidence({ host: "windows", targetKey: "windows", bridge }),
+      authorization: authorization({ bridge }),
+      ownership: ownership({ targetKey: "windows", bridge }),
+      mutations: ["write-mcp"],
+    });
+    expect(plan.decision).toBe("skip");
+    expect(plan.reason).toContain("Node path");
   });
   it.each([
     ["configure", "unowned", "cursor-cli"],

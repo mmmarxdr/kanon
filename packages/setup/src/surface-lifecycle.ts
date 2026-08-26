@@ -28,7 +28,7 @@ function freezeBridge(bridge: WslBridge | undefined): WslBridge | undefined {
   return bridge === undefined ? undefined : Object.freeze({ ...bridge });
 }
 function sameBridge(left: WslBridge | undefined, right: WslBridge | undefined): boolean {
-  return left?.distribution === right?.distribution;
+  return left?.distribution === right?.distribution && left?.nodePath === right?.nodePath;
 }
 function sameExecutable(
   left: SurfaceEvidence["executable"], right: SurfaceEvidence["executable"],
@@ -36,30 +36,71 @@ function sameExecutable(
   return left?.path === right?.path && left?.command === right?.command && left?.version === right?.version;
 }
 function isAuthorizedWindowsTarget(input: SurfaceMutationInput): string | undefined {
-  const { authorization, evidence } = input;
+  const { authorization, evidence, operation } = input;
   if (evidence.host !== "windows") return undefined;
-  if (
-    authorization.crossHost !== "authorized" ||
-    (authorization.source !== "explicit" && authorization.source !== "prompt")
-  ) return "cross-host target is not authorized";
-  return undefined;
+  if (authorization.crossHost !== "authorized") return "cross-host target is not authorized";
+  if (operation === "remove" && authorization.source === "inventory") return undefined;
+  if (authorization.source === "explicit" || authorization.source === "prompt") return undefined;
+  return "cross-host target is not authorized";
+}
+function isInventoryOwnedWindowsRemoval(input: SurfaceMutationInput): boolean {
+  const { authorization, evidence, operation, ownership } = input;
+  return evidence.host === "windows" && operation === "remove" &&
+    authorization.source === "inventory" && authorization.crossHost === "authorized" &&
+    ownership.state === "owned" && evidence.targetKey === ownership.targetKey;
+}
+function hasNodePath(bridge: WslBridge | undefined): boolean {
+  return (bridge?.nodePath?.trim().length ?? 0) > 0;
+}
+function hasDistribution(bridge: WslBridge | undefined): boolean {
+  return (bridge?.distribution.trim().length ?? 0) > 0;
+}
+function hasBridgeIdentity(bridge: WslBridge | undefined): boolean {
+  return hasNodePath(bridge) && hasDistribution(bridge);
+}
+function hasRequiredBridgeNodePaths(input: SurfaceMutationInput): boolean {
+  const { authorization, evidence, ownership } = input;
+  return hasBridgeIdentity(evidence.bridge) && hasBridgeIdentity(authorization.bridge) && hasBridgeIdentity(ownership.bridge);
+}
+function isMissingOwnershipWindowsConfigure(input: SurfaceMutationInput): boolean {
+  const { evidence, operation, ownership } = input;
+  return evidence.host === "windows" && operation === "configure" &&
+    ownership.state === "missing" && evidence.targetKey === ownership.targetKey;
+}
+function hasRequiredBridgeNodePathsForMutation(input: SurfaceMutationInput): boolean {
+  if (!isMissingOwnershipWindowsConfigure(input)) return hasRequiredBridgeNodePaths(input);
+  const { authorization, evidence, ownership } = input;
+  return hasBridgeIdentity(evidence.bridge) && hasBridgeIdentity(authorization.bridge) &&
+    (ownership.bridge === undefined || hasBridgeIdentity(ownership.bridge));
 }
 function hasExactBridge(input: SurfaceMutationInput): boolean {
   const { authorization, evidence, ownership } = input;
-  return evidence.bridge !== undefined &&
+  return hasRequiredBridgeNodePaths(input) &&
     sameBridge(evidence.bridge, authorization.bridge) &&
     sameBridge(evidence.bridge, ownership.bridge);
+}
+function hasExactBridgeForMutation(input: SurfaceMutationInput): boolean {
+  if (!isMissingOwnershipWindowsConfigure(input)) return hasExactBridge(input);
+  const { authorization, evidence, ownership } = input;
+  return hasRequiredBridgeNodePathsForMutation(input) &&
+    sameBridge(evidence.bridge, authorization.bridge) &&
+    (ownership.bridge === undefined || sameBridge(evidence.bridge, ownership.bridge));
 }
 function canWrite(input: SurfaceMutationInput): string | undefined {
   const { evidence, operation, ownership } = input;
   const authorizationFailure = isAuthorizedWindowsTarget(input);
   if (authorizationFailure !== undefined) return authorizationFailure;
   if (evidence.targetKey !== ownership.targetKey) return "evidence and ownership must identify the same target";
-  if (evidence.host === "windows" && !hasExactBridge(input)) return "cross-host bridge identity is not exact";
+  if (evidence.host === "windows" && !isInventoryOwnedWindowsRemoval(input)) {
+    if (!hasRequiredBridgeNodePathsForMutation(input)) return "cross-host bridge Node path is not exact";
+    if (!hasExactBridgeForMutation(input)) return "cross-host bridge identity is not exact";
+  }
   if (operation === "remove") {
     return ownership.state === "owned" ? undefined : "target is not Kanon-owned";
   }
-  if (evidence.state !== "executable-valid" || evidence.executable === undefined) {
+  if (
+    evidence.state !== "executable-valid" || evidence.executable === undefined
+  ) {
     return "target is not executable-valid";
   }
   if (operation === "repair" && ownership.state !== "owned") {
@@ -110,7 +151,8 @@ export function validateSurfaceMutationPlan(plan: SurfaceMutationPlan): readonly
   if (
     plan.decision === "write" &&
     plan.evidence.host === "windows" &&
-    (!sameBridge(plan.bridge, plan.evidence.bridge) || !hasExactBridge(plan))
+    !isInventoryOwnedWindowsRemoval(plan) &&
+    (!sameBridge(plan.bridge, plan.evidence.bridge) || !hasExactBridgeForMutation(plan))
   ) {
     issues.push("write plan must carry one exact cross-host bridge identity");
   }
