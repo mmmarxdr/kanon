@@ -17,6 +17,8 @@ import path from "node:path";
 import {
   getToolByName,
   hasDirectCursorEvidence,
+  resolveCursorInventoryTargets,
+  resolveCursorWritableTargets,
   resolveToolLegacyConfigPaths,
   resolveToolTargets,
   toolRegistry,
@@ -331,5 +333,109 @@ describe("registry — antigravity-cli", () => {
   it("appears in the toolRegistry", () => {
     const found = toolRegistry.find((t) => t.name === "antigravity-cli");
     expect(found).toBeDefined();
+  });
+});
+
+describe("registry — specialized Cursor targets", () => {
+  const cursor = getToolByName("cursor")!;
+  function wslContext(root: string): PlatformContext {
+    return {
+      platform: "wsl",
+      homedir: path.join(root, "linux-home"),
+      winHome: path.join(root, "windows-home"),
+    };
+  }
+
+  it("starts writable resolution from the local target despite legacy Windows config evidence", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-cursor-writable-"));
+    try {
+      const ctx = wslContext(root);
+      fs.mkdirSync(path.join(ctx.winHome!, ".cursor"), { recursive: true });
+      fs.writeFileSync(path.join(ctx.winHome!, ".cursor", "mcp.json"), "{}");
+
+      expect(resolveCursorWritableTargets(cursor, ctx, { decision: "skip" })
+        .map((target) => target.config(ctx))).toEqual([
+        path.join(ctx.homedir, ".cursor", "mcp.json"),
+      ]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a skipped lifecycle capability local despite its valid bridge", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-cursor-skipped-"));
+    try {
+      const ctx = wslContext(root);
+      fs.mkdirSync(path.join(ctx.winHome!, ".cursor"), { recursive: true });
+      const skippedCapability = {
+        decision: "skip" as const,
+        bridge: { distribution: "Ubuntu-24.04" },
+      };
+
+      expect(resolveCursorWritableTargets(cursor, ctx, skippedCapability)
+        .map((target) => target.config(ctx)))
+        .toEqual([path.join(ctx.homedir, ".cursor", "mcp.json")]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("excludes the Windows target without a writable capability and non-empty bridge", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-cursor-denied-"));
+    try {
+      const ctx = wslContext(root);
+      fs.mkdirSync(path.join(ctx.winHome!, ".cursor"), { recursive: true });
+
+      for (const capability of [
+        undefined,
+        { decision: "write" as const, bridge: { distribution: "" } },
+      ]) {
+        expect(resolveCursorWritableTargets(cursor, ctx, capability).map((target) => target.mcpMode))
+          .toEqual(["direct"]);
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("includes the authorized Windows writable target exactly once", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-cursor-authorized-"));
+    try {
+      const ctx = wslContext(root);
+      fs.mkdirSync(path.join(ctx.winHome!, ".cursor"), { recursive: true });
+      fs.writeFileSync(path.join(ctx.winHome!, ".cursor", "mcp.json"), "{}");
+      const targets = resolveCursorWritableTargets(cursor, ctx, {
+        decision: "write",
+        bridge: { distribution: "Ubuntu-24.04" },
+      });
+
+      expect(targets.map((target) => target.config(ctx))).toEqual([
+        path.join(ctx.homedir, ".cursor", "mcp.json"),
+        path.join(ctx.winHome!, ".cursor", "mcp.json"),
+      ]);
+      expect(new Set(targets.map((target) => target.config(ctx))).size).toBe(2);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("inventories each owned Cursor target once and safely omits the Windows target without winHome", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-cursor-inventory-"));
+    try {
+      const ctx = wslContext(root);
+      fs.mkdirSync(path.join(ctx.winHome!, ".cursor"), { recursive: true });
+      fs.writeFileSync(path.join(ctx.winHome!, ".cursor", "mcp.json"), "{}");
+      const targets = resolveCursorInventoryTargets(cursor, ctx);
+      expect(targets.map((target) => target.config(ctx))).toEqual([
+        path.join(ctx.homedir, ".cursor", "mcp.json"),
+        path.join(ctx.winHome!, ".cursor", "mcp.json"),
+      ]);
+      expect(new Set(targets.map((target) => target.config(ctx))).size).toBe(2);
+      expect(resolveCursorInventoryTargets(cursor, { platform: "wsl", homedir: path.join(root, "only-linux") })
+        .map((target) => target.config({ platform: "wsl", homedir: path.join(root, "only-linux") })))
+        .toEqual([path.join(root, "only-linux", ".cursor", "mcp.json")]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
