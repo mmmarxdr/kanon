@@ -264,8 +264,12 @@ afterAll(async () => {
 describe("integration worker retry and completion", () => {
   it("keeps ambiguous comments dark while unrelated work continues", async () => {
     const fixture = await createFixture();
+    const comment = await prisma.comment.create({
+      data: { body: "Ambiguous comment", issueId: fixture.issue.id, authorId: fixture.member.id },
+    });
     const ambiguous = await createWork(fixture, {
       entityType: "comment",
+      entityId: comment.id,
       laneKey: fixture.issue.id,
       operation: "create",
       state: "ambiguous",

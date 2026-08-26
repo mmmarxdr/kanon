@@ -4,6 +4,7 @@ import { prisma } from "../../config/prisma.js";
 import {
   cleanDatabase,
   disconnectTestDb,
+  seedTestIssue,
   seedTestMemberWithRole,
   seedTestProject,
   seedTestWorkspace,
@@ -840,7 +841,8 @@ describe("Redmine-created issue import", () => {
 
   it("keeps pending issue deletion claimable until finalization before preview", async () => {
     const { owner, project, connection, credential, binding } = await fixture();
-    const issueId = randomUUID();
+    const issue = await seedTestIssue(project.id);
+    const issueId = issue.id;
     const ref = await prisma.externalRef.create({
       data: {
         connectionId: connection.id,
@@ -873,6 +875,7 @@ describe("Redmine-created issue import", () => {
         epoch: binding.lifecycleEpoch,
       },
     });
+    await prisma.issue.delete({ where: { id: issue.id } });
     const transport = remote({ issues: [], total_count: 0, offset: 0, limit: 100 });
     const before = await prisma.integrationProjectBinding.findUniqueOrThrow({
       where: { id: binding.id },
