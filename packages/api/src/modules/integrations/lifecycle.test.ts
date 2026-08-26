@@ -9,6 +9,7 @@ import {
   disconnectTestDb,
   generateTestToken,
   seedInstanceAdminUser,
+  seedTestComment,
   seedTestMemberWithRole,
   seedTestProject,
   seedTestWorkspace,
@@ -1154,6 +1155,7 @@ describe("integration connection lifecycle", () => {
     );
     await markBootstrapReady(connection.id);
     await setConnectionLifecycle(connection.id, "active", owner.userId, deps, workspace.id);
+    const comment = await seedTestComment(project.id, owner.id);
     const application = await prisma.integrationInboundApplication.create({
       data: {
         bindingId: binding.id,
@@ -1172,7 +1174,7 @@ describe("integration connection lifecycle", () => {
       data: {
         bindingId: binding.id,
         entityType: "comment",
-        entityId: randomUUID(),
+        entityId: comment.id,
         direction: "outbound",
         operation: "create",
         dedupeKey: "private-release-work",
@@ -1223,6 +1225,7 @@ describe("integration connection lifecycle", () => {
     );
     await markBootstrapReady(connection.id);
     await setConnectionLifecycle(connection.id, "active", owner.userId, deps, workspace.id);
+    const comment = await seedTestComment(project.id, owner.id);
     const application = await prisma.integrationInboundApplication.create({
       data: {
         bindingId: binding.id,
@@ -1241,7 +1244,7 @@ describe("integration connection lifecycle", () => {
       data: {
         bindingId: binding.id,
         entityType: "comment",
-        entityId: randomUUID(),
+        entityId: comment.id,
         direction: "outbound",
         operation: "create",
         dedupeKey: "draining-private-work",
@@ -1320,6 +1323,7 @@ describe("integration connection lifecycle", () => {
       deps,
       workspace.id,
     );
+    const comment = await seedTestComment(project.id, owner.id);
     const application = await prisma.integrationInboundApplication.create({
       data: {
         bindingId: binding.id,
@@ -1338,7 +1342,7 @@ describe("integration connection lifecycle", () => {
       data: {
         bindingId: binding.id,
         entityType: "comment",
-        entityId: randomUUID(),
+        entityId: comment.id,
         direction: "outbound",
         operation: "create",
         dedupeKey: "released-discovery-private-work",
@@ -1478,7 +1482,7 @@ describe("integration connection lifecycle", () => {
     const work = await prisma.integrationSyncWork.create({
       data: {
         bindingId: binding.id,
-        entityType: "comment",
+        entityType: "legacy",
         entityId: randomUUID(),
         direction: "outbound",
         operation: "create",

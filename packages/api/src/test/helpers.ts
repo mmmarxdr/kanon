@@ -140,6 +140,24 @@ export async function seedTestProject(
   return { id: project.id, key: project.key };
 }
 
+export async function seedTestIssue(projectId: string) {
+  return prisma.issue.create({
+    data: {
+      key: `T-${randomUUID().slice(0, 8).toUpperCase()}`,
+      sequenceNum: Number.parseInt(randomUUID().slice(0, 6), 16),
+      title: "Test issue",
+      projectId,
+    },
+  });
+}
+
+export async function seedTestComment(projectId: string, authorId: string) {
+  const issue = await seedTestIssue(projectId);
+  return prisma.comment.create({
+    data: { body: "Test comment", issueId: issue.id, authorId },
+  });
+}
+
 /** Best-effort triage cleanup when the additive ledger migration is present. */
 async function deleteTriageLedgerIfPresent(): Promise<void> {
   try {

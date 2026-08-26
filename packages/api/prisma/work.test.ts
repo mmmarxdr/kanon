@@ -191,7 +191,7 @@ async function seedPreWorkRows(database: PrismaClient) {
   await database.externalRef.create({
     data: {
       id: f.refId,
-      entityType: "issue",
+      entityType: "legacy",
       entityId: f.entityId,
       externalId: "remote-a14-issue",
       metadata: { source: "pre-a1.4" },
@@ -295,7 +295,7 @@ async function runWorkUpgradePath() {
 
     const work = await upgradedDatabase.integrationSyncWork.create({
       data: {
-        entityType: "issue",
+        entityType: "legacy",
         entityId: upgradeFixture.entityId,
         direction: "outbound",
         operation: "create",
@@ -417,7 +417,7 @@ describe("integration sync work schema", () => {
     });
     const externalRef = await prisma.externalRef.create({
       data: {
-        entityType: "issue",
+        entityType: "legacy",
         entityId: randomUUID(),
         externalId: "remote-issue-1",
         connectionId: connection.id,
@@ -427,7 +427,7 @@ describe("integration sync work schema", () => {
 
     const first = await prisma.integrationSyncWork.create({
       data: {
-        entityType: "issue",
+        entityType: "legacy",
         entityId: randomUUID(),
         direction: "outbound",
         operation: "update",
@@ -446,7 +446,7 @@ describe("integration sync work schema", () => {
     });
     const second = await prisma.integrationSyncWork.create({
       data: {
-        entityType: "issue",
+        entityType: "legacy",
         entityId: randomUUID(),
         direction: "outbound",
         operation: "update",
@@ -509,7 +509,7 @@ describe("integration sync work schema", () => {
     });
     const externalRef = await prisma.externalRef.create({
       data: {
-        entityType: "issue",
+        entityType: "legacy",
         entityId: randomUUID(),
         externalId: "remote-issue-links",
         connectionId: connection.id,
@@ -518,7 +518,7 @@ describe("integration sync work schema", () => {
     });
 
     const workData = {
-      entityType: "issue",
+      entityType: "legacy",
       entityId: randomUUID(),
       direction: "outbound" as const,
       operation: "create" as const,
