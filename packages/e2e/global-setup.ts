@@ -2,20 +2,15 @@ import { execSync } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
-import dotenv from "dotenv";
+import { establishControlledE2eEnvironment } from "./e2e-environment.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// Load E2E env vars
-dotenv.config({ path: path.resolve(__dirname, ".env.e2e") });
-
-const DATABASE_URL =
-  process.env["DATABASE_URL"] ??
-  "postgresql://kanon:kanon@localhost:5432/kanon_e2e?schema=public";
 
 const API_PKG_DIR = path.resolve(__dirname, "../api");
 
 export default async function globalSetup(): Promise<void> {
+  const DATABASE_URL = establishControlledE2eEnvironment();
+
   console.log("\n[e2e] Global setup starting...");
   console.log(`[e2e] DATABASE_URL: ${DATABASE_URL.replace(/\/\/.*@/, "//***@")}`);
 
@@ -31,7 +26,10 @@ export default async function globalSetup(): Promise<void> {
   execSync("npx prisma db execute --stdin --schema prisma/schema.prisma", {
     cwd: API_PKG_DIR,
     env: prismaEnv,
-    input: 'DROP SCHEMA IF EXISTS "privacy_quarantine" CASCADE;',
+    // Prisma reset only resets the configured public schema. Drop every custom
+    // privacy schema first so migration replay starts from an empty database.
+    input:
+      'DROP SCHEMA IF EXISTS "privacy_authority" CASCADE;\nDROP SCHEMA IF EXISTS "privacy_quarantine" CASCADE;',
     stdio: "pipe",
   });
   console.log("[e2e] Running prisma migrate reset --force...");
