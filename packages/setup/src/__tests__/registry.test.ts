@@ -15,9 +15,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  detectTools,
   getToolByName,
   hasDirectCursorEvidence,
+  hasSelectableWindowsCursorEvidence,
   resolveCursorInventoryTargets,
+  resolveToolInventoryTargets,
   resolveCursorWritableTargets,
   resolveToolLegacyConfigPaths,
   resolveToolTargets,
@@ -67,13 +70,25 @@ describe("registry — cursor", () => {
     }
   });
 
-  it("does not auto-detect Cursor from Windows-only executable-valid evidence under WSL", () => {
-    expect(hasDirectCursorEvidence([
-      { tool: "cursor", surface: "ide", host: "windows", state: "executable-valid" },
-    ])).toBe(false);
-    expect(hasDirectCursorEvidence([
-      { tool: "cursor", surface: "cli", host: "local", state: "executable-valid" },
-    ])).toBe(true);
+  it("keeps default detection local while onboarding snapshots admit only executable-valid Windows Cursor", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-cursor-snapshot-"));
+    const previousPath = process.env.PATH;
+    const windows = [{ tool: "cursor", surface: "ide", host: "windows", state: "executable-valid" }] as const;
+    try {
+      process.env.PATH = path.join(root, "empty-bin");
+      const ctx: PlatformContext = { platform: "wsl", homedir: path.join(root, "linux"), winHome: path.join(root, "windows") };
+      expect((await detectTools(ctx)).some((tool) => tool.name === "cursor")).toBe(false);
+      expect((await detectTools(ctx, { cursorSurfaces: windows, includeWindowsCursor: true })).map((tool) => tool.name)).toContain("cursor");
+      expect(hasDirectCursorEvidence(windows)).toBe(false);
+      expect(hasSelectableWindowsCursorEvidence([
+        { tool: "cursor", surface: "ide", host: "windows", state: "configured-only/stale" },
+        { tool: "cursor", surface: "ide", host: "windows", state: "ambiguous" },
+      ])).toBe(false);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("does not create a phantom Windows target when only winHome resolves", () => {
@@ -84,6 +99,34 @@ describe("registry — cursor", () => {
     };
     expect(resolveToolTargets(cursor, ctx).map((target) => target.mcpMode))
       .toEqual(["direct"]);
+  });
+
+  it("inventories each Cursor WSL target once even when the Windows config already exists", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-cursor-inventory-"));
+    try {
+      const ctx: PlatformContext = {
+        platform: "wsl",
+        homedir: path.join(root, "linux-home"),
+        winHome: path.join(root, "windows-home"),
+      };
+      fs.mkdirSync(path.join(ctx.winHome!, ".cursor"), { recursive: true });
+      fs.writeFileSync(path.join(ctx.winHome!, ".cursor", "mcp.json"), "{}");
+
+      const targets = resolveToolInventoryTargets(cursor, ctx);
+      expect(targets.map((target) => target.config(ctx))).toEqual([
+        path.join(ctx.homedir, ".cursor", "mcp.json"),
+        path.join(ctx.winHome!, ".cursor", "mcp.json"),
+      ]);
+      expect(new Set(targets.map((target) => target.config(ctx))).size).toBe(2);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the local Cursor inventory target when WSL has no Windows home", () => {
+    const ctx: PlatformContext = { platform: "wsl", homedir: "/home/test" };
+    expect(resolveToolInventoryTargets(cursor, ctx).map((target) => target.config(ctx)))
+      .toEqual([path.join(ctx.homedir, ".cursor", "mcp.json")]);
   });
 
   it("declares Cursor MCP identity/type once and resolves only the win32 legacy config", () => {

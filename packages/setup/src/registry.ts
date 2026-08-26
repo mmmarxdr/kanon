@@ -86,6 +86,10 @@ export function hasDirectCursorEvidence(surfaces: readonly SurfaceEvidence[]): b
   return surfaces.some((surface) => surface.host === "local" && surface.state === "executable-valid");
 }
 
+export function hasSelectableWindowsCursorEvidence(surfaces: readonly SurfaceEvidence[]): boolean {
+  return surfaces.some((surface) => surface.tool === "cursor" && surface.host === "windows" && surface.state === "executable-valid");
+}
+
 const CURSOR_DIRECT_PATHS: PlatformPaths = {
   detect: async (ctx) => hasDirectCursorEvidence(discoverCursorSurfaces(ctx, {
     resolveCommand: (command) => resolveCommand(command, ctx.platform),
@@ -293,6 +297,7 @@ export const toolRegistry: ToolDefinition[] = [
  */
 export async function detectTools(
   ctx: PlatformContext,
+  options: { cursorSurfaces?: readonly SurfaceEvidence[]; includeWindowsCursor?: boolean } = {},
 ): Promise<ToolDefinition[]> {
   const detected: ToolDefinition[] = [];
 
@@ -303,7 +308,9 @@ export async function detectTools(
       continue;
     }
 
-    const found = await platformPaths.detect(ctx);
+    const found = tool.name === "cursor" && options.cursorSurfaces
+      ? hasDirectCursorEvidence(options.cursorSurfaces) || (options.includeWindowsCursor === true && hasSelectableWindowsCursorEvidence(options.cursorSurfaces))
+      : await platformPaths.detect(ctx);
     if (found) {
       detected.push(tool);
     }
@@ -367,6 +374,15 @@ export function resolveCursorInventoryTargets(
   return tool.name === "cursor" && ctx.platform === "wsl" && ctx.winHome
     ? [...paths, CURSOR_WSL_WINDOWS_PATHS]
     : paths;
+}
+
+export function resolveToolInventoryTargets(
+  tool: ToolDefinition,
+  ctx: PlatformContext,
+): PlatformPaths[] {
+  return tool.name === "cursor"
+    ? resolveCursorInventoryTargets(tool, ctx)
+    : resolveToolTargets(tool, ctx);
 }
 
 export function resolveToolLegacyConfigPaths(
