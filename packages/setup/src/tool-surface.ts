@@ -46,11 +46,17 @@ export function installToolSurface(options: {
   tool: ToolDefinition;
   ctx: PlatformContext;
   assetsDir: string;
+  /** Writable targets must come from the execution plan, never from inventory. */
+  targets?: readonly PlatformPaths[];
   buildEntry: (target: PlatformPaths, configPath: string) => McpServerEntry;
 }): InstalledToolTarget[] {
   const { tool, ctx, assetsDir, buildEntry } = options;
+  // An execution plan may intentionally authorize no writable targets. That is
+  // not permission to perform side-effectful legacy cleanup on another surface.
+  const targets = options.targets ?? resolveToolTargets(tool, ctx);
+  if (targets.length === 0) return [];
 
-  const installed = resolveToolTargets(tool, ctx).map((target) => {
+  const installed = targets.map((target) => {
     const configPath = target.config(ctx);
     const skillDir = target.skills(ctx);
     const rawEntry = buildEntry(target, configPath);
@@ -100,18 +106,19 @@ export function installToolSurface(options: {
     };
   });
 
-  cleanupLegacyToolSurface(tool, ctx);
+  cleanupLegacyToolSurface(tool, ctx, targets);
   return installed;
 }
 
 export function cleanupLegacyToolSurface(
   tool: ToolDefinition,
   ctx: PlatformContext,
+  targets: readonly PlatformPaths[] = resolveToolTargets(tool, ctx),
 ): void {
   for (const configPath of resolveToolLegacyConfigPaths(tool, ctx)) {
     removeToolMcpConfig(configPath, tool);
   }
-  for (const rulePath of resolveToolLegacyRulePaths(tool, ctx)) {
+  for (const rulePath of resolveToolLegacyRulePaths(tool, ctx, targets)) {
     fs.rmSync(rulePath, { force: true });
   }
   if (tool.name === "codex") {

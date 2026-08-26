@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildWrapperMcpEntry } from "./mcp-config.js";
-import { getToolByName, resolveToolTargets } from "./registry.js";
+import { getToolByName, resolveCursorWritableTargets, resolveToolTargets } from "./registry.js";
 import {
   cleanupLegacyToolSurface,
   installToolSurface,
@@ -173,4 +173,48 @@ describe("Codex tool surface upgrades", () => {
       else process.env.CODEX_HOME = previousCodexHome;
     }
   });
+});
+
+
+it("installs only the execution targets supplied by an authorized Cursor plan", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-cursor-plan-"));
+  try {
+    const ctx: PlatformContext = { platform: "wsl", homedir: path.join(root, "linux"), winHome: path.join(root, "windows") };
+    const cursor = getToolByName("cursor")!;
+    const targets = resolveCursorWritableTargets(cursor, ctx, {
+      decision: "write",
+      bridge: { distribution: "Ubuntu-24.04" },
+    });
+    installToolSurface({ tool: cursor, ctx, assetsDir: makeAssets(root), targets, buildEntry: () => ({ command: "node", args: [] }) });
+    expect(fs.existsSync(path.join(ctx.homedir, ".cursor", "mcp.json"))).toBe(true);
+    expect(fs.existsSync(path.join(ctx.winHome!, ".cursor", "mcp.json"))).toBe(true);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+it("treats an empty execution target list as a strict no-op", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-empty-targets-"));
+  try {
+    const ctx: PlatformContext = { platform: "linux", homedir: root };
+    const cursor = getToolByName("cursor")!;
+    const legacyRule = path.join(root, ".cursor", "rules", "kanon.mdc");
+    fs.mkdirSync(path.dirname(legacyRule), { recursive: true });
+    fs.writeFileSync(legacyRule, "preserve until a real target is installed");
+    expect(installToolSurface({ tool: cursor, ctx, assetsDir: makeAssets(root), targets: [], buildEntry: () => ({ command: "node", args: [] }) })).toEqual([]);
+    expect(fs.readFileSync(legacyRule, "utf8")).toContain("preserve");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+it("cleans Cursor legacy rules only for actual supplied WSL targets", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-cursor-owned-rule-targets-"));
+  try {
+    const ctx: PlatformContext = { platform: "wsl", homedir: path.join(root, "linux"), winHome: path.join(root, "windows") };
+    const cursor = getToolByName("cursor")!;
+    const localRule = path.join(ctx.homedir, ".cursor", "rules", "kanon.mdc");
+    const windowsRule = path.join(ctx.winHome!, ".cursor", "rules", "kanon.mdc");
+    fs.mkdirSync(path.dirname(localRule), { recursive: true }); fs.mkdirSync(path.dirname(windowsRule), { recursive: true });
+    fs.writeFileSync(localRule, "owned-local"); fs.writeFileSync(windowsRule, "owned-windows");
+    installToolSurface({ tool: cursor, ctx, assetsDir: makeAssets(root), targets: resolveCursorWritableTargets(cursor, ctx), buildEntry: () => ({ command: "node", args: [] }) });
+    expect(fs.existsSync(localRule)).toBe(false);
+    expect(fs.existsSync(windowsRule)).toBe(true);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
