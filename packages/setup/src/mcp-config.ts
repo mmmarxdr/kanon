@@ -456,6 +456,9 @@ export function buildMcpEntry(
   entryMode: McpEntryMode = "static-key",
   clientIdentity?: string,
   workspaceId?: string,
+  wslDistribution?: string,
+  /** Exact executable validated by the WSL bridge; overrides the local default for that target. */
+  wslNodeBin?: string,
 ): McpServerEntry {
   const identityEnv: Record<string, string> = {};
   if (clientIdentity) identityEnv["KANON_CLIENT_IDENTITY"] = clientIdentity;
@@ -467,9 +470,10 @@ export function buildMcpEntry(
       return {
         command: "wsl",
         args: [
+          ...(wslDistribution ? ["--distribution", wslDistribution, "--"] : []),
           "env",
           ...Object.entries(identityEnv).map(([key, value]) => `${key}=${value}`),
-          nodeBin,
+          wslNodeBin ?? nodeBin,
           resolution.path,
           "--server",
           apiUrl,
@@ -495,7 +499,10 @@ export function buildMcpEntry(
     );
     return {
       command: "wsl",
-      args: ["env", ...envArgs, nodeBin, resolution.path],
+      args: [
+        ...(wslDistribution ? ["--distribution", wslDistribution, "--"] : []),
+        "env", ...envArgs, wslNodeBin ?? nodeBin, resolution.path,
+      ],
     };
   }
 
@@ -558,6 +565,9 @@ export function buildWrapperMcpEntry(
   resolution: McpResolution = resolveWrapperPath(),
   workspaceId?: string,
   clientIdentity?: string,
+  wslDistribution?: string,
+  /** Exact executable validated by the WSL bridge; overrides the local default for that target. */
+  wslNodeBin?: string,
 ): McpServerEntry {
   const canonUrl = canonicalizeApiUrl(apiUrl);
   const env: Record<string, string> = {};
@@ -568,9 +578,10 @@ export function buildWrapperMcpEntry(
     return {
       command: "wsl",
       args: [
+        ...(wslDistribution ? ["--distribution", wslDistribution, "--"] : []),
         "env",
         ...Object.entries(env).map(([key, value]) => `${key}=${value}`),
-        nodeBin,
+        wslNodeBin ?? nodeBin,
         resolution.path,
         "--server",
         canonUrl,

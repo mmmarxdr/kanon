@@ -382,9 +382,10 @@ export function resolveToolLegacyConfigPaths(
 export function resolveToolLegacyRulePaths(
   tool: ToolDefinition,
   ctx: PlatformContext,
+  targets: readonly PlatformPaths[] = resolveToolTargets(tool, ctx),
 ): string[] {
   if (tool.name !== "cursor") return [];
-  return resolveToolTargets(tool, ctx).map((target) =>
+  return targets.map((target) =>
     path.join(path.dirname(target.config(ctx)), "rules", "kanon.mdc"),
   );
 }
