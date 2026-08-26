@@ -164,7 +164,7 @@ RETURNS integer LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path=pg_catalo
   WITH changed AS (
     UPDATE public.integration_sync_work SET provider_io_fence=CASE WHEN active THEN owned_fence ELSE NULL END
     WHERE id=work_id AND fence=owned_fence AND epoch=owned_epoch AND (
-      (active AND state='leased' AND lease_token=owned_token AND lease_until>clock_timestamp() AND provider_io_fence IS NULL)
+      (active AND state='leased' AND lease_token=owned_token AND provider_io_fence IS NULL)
       OR (NOT active AND provider_io_fence=owned_fence)) RETURNING 1
   ) SELECT count(*)::integer FROM changed
 $$;

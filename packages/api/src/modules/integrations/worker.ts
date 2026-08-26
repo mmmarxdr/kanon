@@ -192,8 +192,15 @@ async function withProviderIo<T>(database: Pick<PrismaClient, "$queryRaw">, work
     if (row?.count !== 1) throw new StaleFinalizeError();
   };
   await transition(true);
+  let providerFailed = false;
   try { return await operation(); }
-  finally { await transition(false); }
+  catch (error) { providerFailed = true; throw error; }
+  finally {
+    try { await transition(false); }
+    catch (error) {
+      if (!providerFailed || !(error instanceof StaleFinalizeError)) throw error;
+    }
+  }
 }
 async function lockWork(
   transaction: Prisma.TransactionClient,
