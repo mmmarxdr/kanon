@@ -30,7 +30,8 @@ const Checkpoint = z
     pageToken: z.string().nullable(),
   })
   .strict();
-const PreviewEvidence = z
+const PreviewMode = z.enum(["full", "future_only"]);
+const LegacyPreviewEvidence = z
   .object({
     version: z.literal(1),
     complete: z.boolean(),
@@ -57,8 +58,21 @@ const PreviewEvidence = z
     unmappedAssigneeIds: z.array(z.string().regex(/^\d+$/)).max(MAX_ISSUES_PER_PASS),
   })
   .strict();
+const ReconciliationPreviewEvidence = LegacyPreviewEvidence.omit({ version: true })
+  .extend({
+    version: z.literal(2),
+    previewIdentity: z.string().uuid(),
+    mode: PreviewMode,
+    scopeFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    cutoff: z.string().datetime(),
+    remainingCount: z.number().int().nonnegative().max(MAX_ISSUES_PER_PASS),
+    assigneeRemoteIds: z.array(z.string().regex(/^\d+$/)).max(MAX_ISSUES_PER_PASS),
+  })
+  .strict();
+const PreviewEvidence = z.union([LegacyPreviewEvidence, ReconciliationPreviewEvidence]);
 
 type PreviewEvidence = z.infer<typeof PreviewEvidence>;
+export type RedminePreviewMode = z.infer<typeof PreviewMode>;
 type Database = Prisma.TransactionClient;
 type Client = Pick<RedmineHttpClient, "get">;
 
@@ -123,9 +137,14 @@ function storedCheckpoint(value: PollCheckpoint | null): PreviewEvidence["checkp
     : null;
 }
 
-function emptyEvidence(): PreviewEvidence {
-  return {
-    version: 1,
+function emptyEvidence(
+  reconciliation?: Readonly<{
+    mode: RedminePreviewMode;
+    cutoff: Date;
+    scopeFingerprint: string;
+  }>,
+): PreviewEvidence {
+  const evidence = {
     complete: false,
     nextOffset: 0,
     scannedCount: 0,
@@ -137,9 +156,46 @@ function emptyEvidence(): PreviewEvidence {
     unmappedPriorityIds: [],
     unmappedAssigneeIds: [],
   };
+  return reconciliation
+    ? {
+        ...evidence,
+        version: 2,
+        previewIdentity: randomUUID(),
+        mode: reconciliation.mode,
+        scopeFingerprint: reconciliation.scopeFingerprint,
+        cutoff: reconciliation.cutoff.toISOString(),
+        remainingCount: 0,
+        assigneeRemoteIds: [],
+      }
+    : { ...evidence, version: 1 };
 }
 
-function assertActive(connection: { lifecycle: string }, binding: { lifecycle: string }): void {
+function assertLifecycle(
+  connection: { lifecycle: string },
+  binding: { lifecycle: string },
+  reconciliationPreview: boolean,
+  reconciliationActivation = false,
+): void {
+  if (
+    reconciliationActivation &&
+    ["active", "draft", "paused"].includes(connection.lifecycle) &&
+    ["active", "draft", "paused"].includes(binding.lifecycle)
+  ) {
+    return;
+  }
+  if (reconciliationPreview) {
+    if (
+      !["draft", "paused"].includes(connection.lifecycle) ||
+      !["draft", "paused"].includes(binding.lifecycle)
+    ) {
+      throw new AppError(
+        409,
+        "REDMINE_PREVIEW_LIFECYCLE",
+        "Reconciliation preview requires a draft or paused connection and project binding",
+      );
+    }
+    return;
+  }
   if (connection.lifecycle !== "active" || binding.lifecycle !== "active") {
     throw new AppError(
       409,
@@ -156,6 +212,8 @@ async function importBinding(
   userId: string,
   allowedProjectIds?: string[] | null,
   workspaceId?: string,
+  reconciliationPreview = false,
+  reconciliationActivation = false,
 ) {
   const connection = await ownedConnection(database, connectionId, userId, workspaceId);
   if (connection.provider !== "redmine") {
@@ -175,9 +233,85 @@ async function importBinding(
   if (!binding) {
     throw new AppError(404, "INTEGRATION_BINDING_NOT_FOUND", "Integration project binding not found");
   }
-  assertActive(connection, binding);
+  assertLifecycle(connection, binding, reconciliationPreview, reconciliationActivation);
   const credential = await serviceCredential(database, connection);
   return { connection, binding, credential };
+}
+
+type ImportBinding = Awaited<ReturnType<typeof importBinding>>;
+type AssigneeIdentity = {
+  remoteUserId: string;
+  memberId: string | null;
+  member: { workspaceId: string } | null;
+};
+
+function canonicalJson(value: Prisma.JsonValue): Prisma.JsonValue {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+        .map(([key, entry]) => [key, canonicalJson(entry ?? null)]),
+    );
+  }
+  return value;
+}
+
+function sha256(value: string): string {
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+export function reconciliationScopeFingerprint(
+  current: Readonly<{
+    connection: Readonly<{ workspaceId: string; baseUrl: string; lifecycleEpoch: number }>;
+    binding: Readonly<{ id: string; lifecycleEpoch: number; remoteProjectId: string; readMap: Prisma.JsonValue }>;
+    credential: Readonly<{ id: string; encryptedKey: string }>;
+  }>,
+  mode: RedminePreviewMode,
+  assigneeRemoteIds: readonly string[],
+  identities: readonly AssigneeIdentity[],
+): string {
+  const mapped = new Map(
+    identities
+      .filter((identity) => identity.member?.workspaceId === current.connection.workspaceId)
+      .map((identity) => [identity.remoteUserId, identity.memberId]),
+  );
+  const baseUrl = new URL(current.connection.baseUrl);
+  baseUrl.hash = "";
+  baseUrl.search = "";
+  return sha256(
+    JSON.stringify({
+      mode,
+      baseUrl: baseUrl.toString().replace(/\/+$/, ""),
+      connectionEpoch: current.connection.lifecycleEpoch,
+      bindingEpoch: current.binding.lifecycleEpoch,
+      remoteProjectId: current.binding.remoteProjectId,
+      credentialId: current.credential.id,
+      credentialFingerprint: sha256(current.credential.encryptedKey),
+      readMap: canonicalJson(current.binding.readMap),
+      assignees: sortRemoteIds(new Set(assigneeRemoteIds)).map((id) => [id, mapped.get(id) ?? null]),
+    }),
+  );
+}
+
+async function assertReconciliationScope(
+  database: Database,
+  current: ImportBinding,
+  evidence: PreviewEvidence,
+): Promise<void> {
+  if (evidence.version !== 2) return;
+  const identities = evidence.assigneeRemoteIds.length
+    ? await database.integrationExternalIdentity.findMany({
+        where: { bindingId: current.binding.id, remoteUserId: { in: evidence.assigneeRemoteIds } },
+        select: { remoteUserId: true, memberId: true, member: { select: { workspaceId: true } } },
+      })
+    : [];
+  if (
+    evidence.scopeFingerprint !==
+    reconciliationScopeFingerprint(current, evidence.mode, evidence.assigneeRemoteIds, identities)
+  ) {
+    throw new AppError(409, "REDMINE_PREVIEW_STALE", "The reconciliation preview scope changed");
+  }
 }
 
 function decryptServiceCredential(
@@ -517,6 +651,7 @@ export async function previewRedmineIssueImport(
   bindingId: string,
   userId: string,
   dependencies: RedmineImportDependencies = {},
+  mode?: RedminePreviewMode,
 ) {
   const now = dependencies.now ?? (() => new Date());
   const decrypt = dependencies.decrypt ?? decryptCredential;
@@ -529,6 +664,7 @@ export async function previewRedmineIssueImport(
     userId,
     dependencies.allowedProjectIds,
     dependencies.workspaceId,
+    mode !== undefined,
   );
   const claim = await prisma.$transaction(async (transaction) => {
     await transaction.$queryRaw(
@@ -541,6 +677,7 @@ export async function previewRedmineIssueImport(
       userId,
       dependencies.allowedProjectIds,
       dependencies.workspaceId,
+      mode !== undefined,
     );
     if (current.binding.inboundEnabled && current.binding.bootstrapState === "ready") {
       throw new AppError(409, "REDMINE_IMPORT_ACTIVE", "Redmine inbound import is already active");
@@ -582,11 +719,48 @@ export async function previewRedmineIssueImport(
         : null;
     const stored = storedEvidence?.success ? storedEvidence.data : null;
     const resumable = stored && stored.nextOffset < MAX_ISSUES_PER_PASS ? stored : null;
-    const evidence = resumable?.complete ? emptyEvidence() : (resumable ?? emptyEvidence());
-
     const cutoff = resumable
       ? current.binding.bootstrapCutoff!
       : new Date(Math.floor(claimedAt.getTime() / 1_000) * 1_000);
+    const incompatibleResume = Boolean(
+      resumable &&
+      ((mode === undefined && resumable.version === 2) ||
+        (mode !== undefined &&
+          (resumable.version !== 2 ||
+            resumable.mode !== mode ||
+            resumable.cutoff !== cutoff.toISOString()))),
+    );
+    let staleScope = false;
+    if (resumable && !incompatibleResume) {
+      try { await assertReconciliationScope(transaction, current, resumable); }
+      catch (error) {
+        if (error instanceof AppError && error.code === "REDMINE_PREVIEW_STALE") staleScope = true;
+        else throw error;
+      }
+    }
+    if ((incompatibleResume || staleScope) && mode !== undefined) {
+      const restartCutoff = new Date(Math.floor(claimedAt.getTime() / 1_000) * 1_000);
+      const restartEvidence = emptyEvidence({ mode, cutoff: restartCutoff, scopeFingerprint: reconciliationScopeFingerprint(current, mode, [], []) });
+      await assertBootstrapMutationAvailable(transaction, bindingId);
+      await transaction.integrationProjectBinding.update({
+        where: { id: bindingId },
+        data: { inboundEnabled: false, bootstrapState: "pending", bootstrapCutoff: restartCutoff, bootstrapPageToken: restartEvidence as unknown as Prisma.InputJsonValue, bootstrapLeaseToken: null, bootstrapLeaseUntil: null, bootstrapFence: { increment: 1 } },
+      });
+      return { kind: "restart-preview" as const };
+    }
+    if (incompatibleResume || staleScope) {
+      throw new AppError(409, "REDMINE_PREVIEW_STALE", "The reconciliation preview scope changed");
+    }
+    const evidence = resumable?.complete
+      ? emptyEvidence()
+      : (resumable ??
+        (mode
+          ? emptyEvidence({
+              mode,
+              cutoff,
+              scopeFingerprint: reconciliationScopeFingerprint(current, mode, [], []),
+            })
+          : emptyEvidence()));
     await assertBootstrapMutationAvailable(transaction, bindingId);
     const leaseToken = randomUUID();
     const binding = await transaction.integrationProjectBinding.update({
@@ -603,6 +777,7 @@ export async function previewRedmineIssueImport(
       select: { bootstrapFence: true },
     });
     return {
+      kind: "claimed" as const,
       ...current,
       cutoff,
       evidence,
@@ -610,6 +785,8 @@ export async function previewRedmineIssueImport(
       fence: binding.bootstrapFence,
     };
   });
+
+  if (claim.kind === "restart-preview") throw new AppError(409, "REDMINE_PREVIEW_STALE", "The reconciliation preview scope changed; restart the preview");
 
   let evidence = claim.evidence;
   try {
@@ -644,9 +821,12 @@ export async function previewRedmineIssueImport(
       : [];
     const linkedIds = new Set(linked.map((ref) => ref.externalId));
     const candidates = [...evidence.candidates];
+    const pageCandidates: { remoteId: string; sourceVersion: string }[] = [];
     const unmappedStatusIds = new Set(evidence.unmappedStatusIds);
     const unmappedPriorityIds = new Set(evidence.unmappedPriorityIds);
-    const assigneeIds = new Set<string>();
+    const assigneeIds = new Set(
+      evidence.version === 2 ? evidence.assigneeRemoteIds : ([] as string[]),
+    );
     let excludedPrivateCount = evidence.excludedPrivateCount;
     let linkedCount = evidence.linkedCount;
     const readMap =
@@ -665,7 +845,10 @@ export async function previewRedmineIssueImport(
         linkedCount += 1;
         continue;
       }
+      if (change.fields.assignee) assigneeIds.add(change.fields.assignee.remoteId);
+      if (mode === "future_only") continue;
       if (
+        mode === undefined &&
         !isEligibleRedmineIssueImport(
           change,
           readMap[change.fields.statusId],
@@ -678,13 +861,18 @@ export async function previewRedmineIssueImport(
         remoteId: change.identity.remoteId,
         sourceVersion: change.sourceVersion,
       });
+      if (evidence.version === 2 && evidence.mode === "full") {
+        pageCandidates.push({
+          remoteId: change.identity.remoteId,
+          sourceVersion: change.sourceVersion,
+        });
+      }
       if (!IssueState.safeParse(readMap[change.fields.statusId]).success) {
         unmappedStatusIds.add(change.fields.statusId);
       }
       if (!IssuePriority.safeParse(readMap[priorityReadKey(change.fields.priorityId)]).success) {
         unmappedPriorityIds.add(change.fields.priorityId);
       }
-      if (change.fields.assignee) assigneeIds.add(change.fields.assignee.remoteId);
     }
 
     const identities = assigneeIds.size
@@ -707,10 +895,10 @@ export async function previewRedmineIssueImport(
       if (!mappedAssignees.has(remoteId)) unmappedAssigneeIds.add(remoteId);
     }
 
-    evidence = {
-      version: 1,
+    const nextOffset = evidence.nextOffset + page.changes.length;
+    const commonEvidence = {
       complete: !page.hasMore,
-      nextOffset: evidence.nextOffset + page.changes.length,
+      nextOffset,
       scannedCount: evidence.scannedCount + page.changes.length,
       excludedPrivateCount,
       linkedCount,
@@ -720,41 +908,95 @@ export async function previewRedmineIssueImport(
       unmappedPriorityIds: sortRemoteIds(unmappedPriorityIds),
       unmappedAssigneeIds: sortRemoteIds(unmappedAssigneeIds),
     };
+    evidence =
+      evidence.version === 2
+        ? {
+            ...commonEvidence,
+            version: 2,
+            previewIdentity: evidence.previewIdentity,
+            mode: evidence.mode,
+            scopeFingerprint: reconciliationScopeFingerprint(
+              claim,
+              evidence.mode,
+              [...assigneeIds],
+              identities,
+            ),
+            cutoff: evidence.cutoff,
+            remainingCount: Math.max(
+              0,
+              (value as { total_count: number }).total_count - nextOffset,
+            ),
+            assigneeRemoteIds: sortRemoteIds(assigneeIds),
+          }
+        : { ...commonEvidence, version: 1 };
     const persisted = await prisma.$transaction(async (transaction) => {
       await assertBootstrapMutationAvailable(transaction, bindingId);
-      return transaction.integrationProjectBinding.updateMany({
+      if (evidence.version === 2) {
+        const current = await importBinding(
+          transaction,
+          connectionId,
+          bindingId,
+          userId,
+          dependencies.allowedProjectIds,
+          dependencies.workspaceId,
+          true,
+        );
+        await assertReconciliationScope(transaction, current, evidence);
+      }
+      if (evidence.version === 2 && evidence.mode === "full") {
+        const previewIdentity = evidence.previewIdentity;
+        await Promise.all(
+          pageCandidates.map(({ remoteId, sourceVersion }) =>
+            transaction.integrationReconciliationDisposition.upsert({
+              where: {
+                bindingId_previewIdentity_remoteIssueId: {
+                  bindingId,
+                  previewIdentity,
+                  remoteIssueId: remoteId,
+                },
+              },
+              create: {
+                bindingId,
+                previewIdentity,
+                remoteIssueId: remoteId,
+                remoteSourceVersion: sourceVersion,
+              },
+              update: { remoteSourceVersion: sourceVersion },
+            }),
+          ),
+        );
+      }
+      const persisted = await transaction.integrationProjectBinding.updateMany({
         where: {
           id: bindingId,
           connectionId,
-          lifecycle: "active",
+          lifecycle: claim.binding.lifecycle,
           lifecycleEpoch: claim.binding.lifecycleEpoch,
           bootstrapState: "pending",
           bootstrapLeaseToken: claim.leaseToken,
           bootstrapFence: claim.fence,
-          connection: { lifecycle: "active" },
+          connection: { lifecycle: claim.connection.lifecycle, lifecycleEpoch: claim.connection.lifecycleEpoch },
         },
         data: {
           bootstrapState: evidence.complete ? "previewed" : "pending",
           bootstrapPageToken: evidence as unknown as Prisma.InputJsonValue,
-          bootstrapLeaseToken: evidence.complete ? null : claim.leaseToken,
-          bootstrapLeaseUntil: evidence.complete
-            ? null
-            : new Date(now().getTime() + BOOTSTRAP_LEASE_MS),
+          bootstrapLeaseToken: null,
+          bootstrapLeaseUntil: null,
         },
       });
+      if (persisted.count !== 1) {
+        throw new AppError(409, "REDMINE_PREVIEW_STALE", "The Redmine project binding changed");
+      }
+      return persisted;
     });
-    if (persisted.count !== 1) {
-      throw new AppError(409, "REDMINE_PREVIEW_STALE", "The Redmine project binding changed");
-    }
-    if (!evidence.complete) {
+    if (evidence.version === 1 && !evidence.complete) {
       throw new AppError(
         409,
         "REDMINE_IMPORT_LIMIT",
-        `Redmine import preview paused after ${PAGE_SIZE} issues; run it again to continue`,
+        "Run the Redmine import preview again to continue",
       );
     }
-
-    return {
+    const result = {
       cutoff: claim.cutoff,
       eligibleUnlinkedCount: evidence.candidates.length,
       excludedPrivateCount: evidence.excludedPrivateCount,
@@ -765,6 +1007,17 @@ export async function previewRedmineIssueImport(
         assigneeRemoteUserIds: evidence.unmappedAssigneeIds,
       },
     };
+    return evidence.version === 2
+      ? {
+          ...result,
+          previewIdentity: evidence.previewIdentity,
+          mode: evidence.mode,
+          complete: evidence.complete,
+          scannedCount: evidence.scannedCount,
+          remainingCount: evidence.remainingCount,
+          checkpoint: evidence.checkpoint,
+        }
+      : result;
   } catch (error) {
     const drifted = error instanceof RedminePaginationDriftError;
     await prisma.$transaction(async (transaction) => {
@@ -782,7 +1035,13 @@ export async function previewRedmineIssueImport(
           ...(drifted
             ? {
                 bootstrapState: "pending" as const,
-                bootstrapPageToken: emptyEvidence() as unknown as Prisma.InputJsonValue,
+                bootstrapPageToken: (evidence.version === 2
+                  ? emptyEvidence({
+                      mode: evidence.mode,
+                      cutoff: claim.cutoff,
+                      scopeFingerprint: reconciliationScopeFingerprint(claim, evidence.mode, [], []),
+                    })
+                  : emptyEvidence()) as unknown as Prisma.InputJsonValue,
               }
             : {}),
         },
@@ -820,8 +1079,14 @@ export async function activateRedmineIssueImport(
       userId,
       dependencies.allowedProjectIds,
       dependencies.workspaceId,
+      false,
+      true,
     );
+    const storedEvidence = PreviewEvidence.safeParse(current.binding.bootstrapPageToken);
     if (current.binding.inboundEnabled && current.binding.bootstrapState === "ready") {
+      if (!storedEvidence.success || storedEvidence.data.version !== 2) {
+        assertLifecycle(current.connection, current.binding, false);
+      }
       return { kind: "ready" as const };
     }
     if (
@@ -835,12 +1100,56 @@ export async function activateRedmineIssueImport(
       );
     }
     const evidence = parseEvidence(current.binding.bootstrapPageToken);
+    if (evidence.version === 1) assertLifecycle(current.connection, current.binding, false);
+    else {
+      assertLifecycle(current.connection, current.binding, true);
+      try { await assertReconciliationScope(transaction, current, evidence); }
+      catch (error) {
+        if (!(error instanceof AppError) || error.code !== "REDMINE_PREVIEW_STALE") throw error;
+        await assertBootstrapMutationAvailable(transaction, bindingId);
+        await transaction.integrationProjectBinding.update({
+          where: { id: bindingId },
+          data: { inboundEnabled: false, bootstrapState: "pending", bootstrapPageToken: emptyEvidence({ mode: evidence.mode, cutoff: current.binding.bootstrapCutoff, scopeFingerprint: reconciliationScopeFingerprint(current, evidence.mode, [], []) }) as unknown as Prisma.InputJsonValue, bootstrapLeaseToken: null, bootstrapLeaseUntil: null, bootstrapFence: { increment: 1 } },
+        });
+        return { kind: "restart-preview" as const };
+      }
+    }
     if (!evidence.complete) {
       throw new AppError(
         409,
         "REDMINE_PREVIEW_REQUIRED",
         "Complete a Redmine import preview first",
       );
+    }
+    let skippedRemoteIds = new Set<string>();
+    if (evidence.version === 2 && evidence.mode === "full") {
+      const mappingGap = evidence.unmappedStatusIds.length
+        ? ["REDMINE_STATUS_UNMAPPED", "status"]
+        : evidence.unmappedPriorityIds.length
+          ? ["REDMINE_PRIORITY_UNMAPPED", "priority"]
+          : evidence.unmappedAssigneeIds.length
+            ? ["REDMINE_ASSIGNEE_UNMAPPED", "assignee"]
+            : null;
+      if (mappingGap) {
+        throw new AppError(409, mappingGap[0]!, `Configure Redmine ${mappingGap[1]} mappings and run the preview again`);
+      }
+      const dispositions = await transaction.integrationReconciliationDisposition.findMany({
+        where: { bindingId, previewIdentity: evidence.previewIdentity, remoteIssueId: { in: evidence.candidates.map(({ remoteId }) => remoteId) } },
+      });
+      const byRemote = new Map(dispositions.map((row) => [row.remoteIssueId, row]));
+      skippedRemoteIds = new Set(dispositions.filter(({ state }) => state === "skipped").map(({ remoteIssueId }) => remoteIssueId));
+      const reviewed = await Promise.all(evidence.candidates.map(async ({ remoteId, sourceVersion }) => {
+        const row = byRemote.get(remoteId);
+        if (!row || row.remoteSourceVersion !== sourceVersion || row.state === "pending") return false;
+        if (row.state === "skipped") return true;
+        if (row.state === "import_as_new") return true;
+        if (row.state !== "linked" || !row.acceptedRefId) return false;
+        const ref = await transaction.externalRef.findFirst({ where: { id: row.acceptedRefId, connectionId, bindingId, entityType: "issue", externalId: remoteId } });
+        return Boolean(ref);
+      }));
+      if (dispositions.length !== evidence.candidates.length || reviewed.some((value) => !value)) {
+        throw new AppError(409, "REDMINE_RECONCILIATION_PENDING", "Resolve pending Redmine reconciliation recommendations before importing");
+      }
     }
     const readMap =
       current.binding.readMap &&
@@ -849,16 +1158,15 @@ export async function activateRedmineIssueImport(
         ? (current.binding.readMap as Record<string, unknown>)
         : {};
     if (
-      evidence.unmappedPriorityIds.length > 0 ||
-      !Object.entries(readMap).some(
-        ([key, value]) => key.startsWith("priority:") && IssuePriority.safeParse(value).success,
+      (evidence.version === 1 || (evidence.version === 2 && evidence.mode === "full")) &&
+      (
+        evidence.unmappedPriorityIds.length > 0 ||
+        !Object.entries(readMap).some(
+          ([key, value]) => key.startsWith("priority:") && IssuePriority.safeParse(value).success,
+        )
       )
     ) {
-      throw new AppError(
-        409,
-        "REDMINE_PRIORITY_UNMAPPED",
-        "Configure Redmine priority mappings and run the preview again",
-      );
+      throw new AppError(409, "REDMINE_PRIORITY_UNMAPPED", "Configure Redmine priority mappings and run the preview again");
     }
     const claimedAt = now();
     if (
@@ -873,6 +1181,31 @@ export async function activateRedmineIssueImport(
       );
     }
     await assertBootstrapMutationAvailable(transaction, bindingId);
+    const linkedRemoteIds =
+      evidence.version === 2 && evidence.candidates.length
+        ? new Set(
+            (
+              await transaction.externalRef.findMany({
+                where: {
+                  connectionId,
+                  entityType: "issue",
+                  externalId: { in: evidence.candidates.map(({ remoteId }) => remoteId) },
+                },
+                select: { externalId: true },
+              })
+            ).map(({ externalId }) => externalId),
+          )
+        : new Set<string>();
+    const activationEvidence =
+      evidence.version === 2
+        ? {
+            ...evidence,
+            candidates: evidence.candidates.filter(
+              ({ remoteId }) => !linkedRemoteIds.has(remoteId) && !skippedRemoteIds.has(remoteId),
+            ),
+          }
+        : evidence;
+    const candidates = activationEvidence.candidates.slice(0, ACTIVATION_BATCH_SIZE);
     const leaseToken = randomUUID();
     const binding = await transaction.integrationProjectBinding.update({
       where: { id: bindingId },
@@ -881,58 +1214,69 @@ export async function activateRedmineIssueImport(
         bootstrapLeaseToken: leaseToken,
         bootstrapLeaseUntil: new Date(claimedAt.getTime() + BOOTSTRAP_LEASE_MS),
         bootstrapFence: { increment: 1 },
+        bootstrapPageToken: activationEvidence as unknown as Prisma.InputJsonValue,
       },
       select: { bootstrapFence: true },
     });
     return {
       kind: "claimed" as const,
       current,
-      evidence,
-      candidates: evidence.candidates.slice(0, ACTIVATION_BATCH_SIZE),
+      evidence: activationEvidence,
+      candidates,
       leaseToken,
       fence: binding.bootstrapFence,
     };
   });
+  if (claim.kind === "restart-preview") throw new AppError(409, "REDMINE_PREVIEW_STALE", "The reconciliation preview scope changed; restart the preview");
   if (claim.kind === "ready") {
-    return { importedCount: 0, issueKeys: [] as string[], replayed: true, complete: true };
+    return {
+      importedCount: 0,
+      issueKeys: [] as string[],
+      replayed: true,
+      complete: true,
+      processedCount: 0,
+      remainingCount: 0,
+    };
   }
 
   try {
-    const key = decryptServiceCredential(decrypt, claim.current.credential.encryptedKey);
-    const client = createClient(claim.current.connection.baseUrl, key);
     const changes: RedmineIssueChange[] = [];
-    try {
-      for (const candidate of claim.candidates) {
-        const value = await client.get<unknown>(
-          `/issues/${encodeURIComponent(candidate.remoteId)}.json?include=journals`,
-        );
-        const change = decodeRedmineIssueDetail(
-          value,
-          claim.current.binding.remoteProjectId,
-        ).issue;
-        if (
-          change.operation !== "upsert" ||
-          change.identity.remoteId !== candidate.remoteId ||
-          change.sourceVersion !== candidate.sourceVersion
-        ) {
+    if (claim.candidates.length) {
+      const key = decryptServiceCredential(decrypt, claim.current.credential.encryptedKey);
+      const client = createClient(claim.current.connection.baseUrl, key);
+      try {
+        for (const candidate of claim.candidates) {
+          const value = await client.get<unknown>(
+            `/issues/${encodeURIComponent(candidate.remoteId)}.json?include=journals`,
+          );
+          const change = decodeRedmineIssueDetail(
+            value,
+            claim.current.binding.remoteProjectId,
+          ).issue;
+          if (
+            change.operation !== "upsert" ||
+            change.identity.remoteId !== candidate.remoteId ||
+            change.sourceVersion !== candidate.sourceVersion
+          ) {
+            throw new AppError(
+              409,
+              "REDMINE_PREVIEW_STALE",
+              "A Redmine issue changed after preview; run the preview again",
+            );
+          }
+          changes.push(change);
+        }
+      } catch (error) {
+        if (error instanceof RedmineHttpError && error.statusCode === 404) {
           throw new AppError(
             409,
             "REDMINE_PREVIEW_STALE",
-            "A Redmine issue changed after preview; run the preview again",
+            "A previewed Redmine issue no longer exists; run the preview again",
           );
         }
-        changes.push(change);
+        if (error instanceof AppError) throw error;
+        throw remoteFailure();
       }
-    } catch (error) {
-      if (error instanceof RedmineHttpError && error.statusCode === 404) {
-        throw new AppError(
-          409,
-          "REDMINE_PREVIEW_STALE",
-          "A previewed Redmine issue no longer exists; run the preview again",
-        );
-      }
-      if (error instanceof AppError) throw error;
-      throw remoteFailure();
     }
 
     return await prisma.$transaction(
@@ -947,6 +1291,8 @@ export async function activateRedmineIssueImport(
           userId,
           dependencies.allowedProjectIds,
           dependencies.workspaceId,
+          false,
+          true,
         );
         if (locked.binding.inboundEnabled && locked.binding.bootstrapState === "ready") {
           return {
@@ -954,6 +1300,8 @@ export async function activateRedmineIssueImport(
             issueKeys: [] as string[],
             replayed: true,
             complete: true,
+            processedCount: 0,
+            remainingCount: 0,
           };
         }
         if (
@@ -969,6 +1317,11 @@ export async function activateRedmineIssueImport(
           throw new AppError(409, "REDMINE_PREVIEW_STALE", "The Redmine import preview changed");
         }
         const lockedEvidence = parseEvidence(locked.binding.bootstrapPageToken);
+        if (lockedEvidence.version === 1) assertLifecycle(locked.connection, locked.binding, false);
+        else {
+          assertLifecycle(locked.connection, locked.binding, true);
+          await assertReconciliationScope(transaction, locked, lockedEvidence);
+        }
         if (
           !lockedEvidence.complete ||
           JSON.stringify(lockedEvidence) !== JSON.stringify(claim.evidence) ||
@@ -1020,7 +1373,14 @@ export async function activateRedmineIssueImport(
               bootstrapLeaseUntil: null,
             },
           });
-          return { importedCount: issueKeys.length, issueKeys, replayed: false, complete: false };
+          return {
+            importedCount: issueKeys.length,
+            issueKeys,
+            replayed: false,
+            complete: false,
+            processedCount: claim.candidates.length,
+            remainingCount: remainingCandidates.length,
+          };
         }
 
         const activatedAt = now();
@@ -1034,7 +1394,10 @@ export async function activateRedmineIssueImport(
           data: {
             inboundEnabled: true,
             bootstrapState: "ready",
-            bootstrapPageToken: Prisma.DbNull,
+            bootstrapPageToken:
+              lockedEvidence.version === 2
+                ? ({ ...lockedEvidence, candidates: [] } as unknown as Prisma.InputJsonValue)
+                : Prisma.DbNull,
             bootstrapLeaseToken: null,
             bootstrapLeaseUntil: null,
             cursorUpdatedAt: cursor.updatedAt,
@@ -1046,7 +1409,14 @@ export async function activateRedmineIssueImport(
             auditCompletedAt: activatedAt,
           },
         });
-        return { importedCount: issueKeys.length, issueKeys, replayed: false, complete: true };
+        return {
+          importedCount: issueKeys.length,
+          issueKeys,
+          replayed: false,
+          complete: true,
+          processedCount: claim.candidates.length,
+          remainingCount: 0,
+        };
       },
       { timeout: 30_000 },
     );
@@ -1067,7 +1437,19 @@ export async function activateRedmineIssueImport(
           ...(restartPreview
             ? {
                 bootstrapState: "pending" as const,
-                bootstrapPageToken: emptyEvidence() as unknown as Prisma.InputJsonValue,
+                bootstrapPageToken:
+                  claim.evidence.version === 2
+                    ? (emptyEvidence({
+                        mode: claim.evidence.mode,
+                        cutoff: claim.current.binding.bootstrapCutoff!,
+                        scopeFingerprint: reconciliationScopeFingerprint(
+                          claim.current,
+                          claim.evidence.mode,
+                          [],
+                          [],
+                        ),
+                      }) as unknown as Prisma.InputJsonValue)
+                    : (emptyEvidence() as unknown as Prisma.InputJsonValue),
               }
             : {}),
         },
@@ -1078,7 +1460,14 @@ export async function activateRedmineIssueImport(
         where: { id: bindingId, releaseRequestedAt: null, releasedAt: null },
       });
       if (binding?.inboundEnabled && binding.bootstrapState === "ready") {
-        return { importedCount: 0, issueKeys: [] as string[], replayed: true, complete: true };
+        return {
+          importedCount: 0,
+          issueKeys: [] as string[],
+          replayed: true,
+          complete: true,
+          processedCount: 0,
+          remainingCount: 0,
+        };
       }
       throw new AppError(409, "REDMINE_IMPORT_RACE", "Redmine import raced with another write");
     }

@@ -16,6 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   getToolByName,
+  hasDirectCursorEvidence,
   resolveToolLegacyConfigPaths,
   resolveToolTargets,
   toolRegistry,
@@ -39,7 +40,7 @@ describe("registry — cursor", () => {
     }
   });
 
-  it("resolves Windows IDE and WSL CLI as two internal targets", () => {
+  it("keeps WSL legacy Cursor targets local when an unvalidated Windows directory exists", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-cursor-wsl-"));
     try {
       const ctx: PlatformContext = {
@@ -52,12 +53,8 @@ describe("registry — cursor", () => {
 
       expect(targets.map((target) => target.config(ctx))).toEqual([
         path.join(ctx.homedir, ".cursor", "mcp.json"),
-        path.join(ctx.winHome!, ".cursor", "mcp.json"),
       ]);
-      expect(targets.map((target) => target.mcpMode)).toEqual([
-        "direct",
-        "wsl-bridge",
-      ]);
+      expect(targets.map((target) => target.mcpMode)).toEqual(["direct"]);
       for (const target of targets) {
         expect(target.agents?.(ctx)).toBeDefined();
         expect(target.skills(ctx)).toContain(path.join(".cursor", "skills"));
@@ -66,6 +63,15 @@ describe("registry — cursor", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("does not auto-detect Cursor from Windows-only executable-valid evidence under WSL", () => {
+    expect(hasDirectCursorEvidence([
+      { tool: "cursor", surface: "ide", host: "windows", state: "executable-valid" },
+    ])).toBe(false);
+    expect(hasDirectCursorEvidence([
+      { tool: "cursor", surface: "cli", host: "local", state: "executable-valid" },
+    ])).toBe(true);
   });
 
   it("does not create a phantom Windows target when only winHome resolves", () => {
