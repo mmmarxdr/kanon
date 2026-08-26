@@ -17,6 +17,20 @@ import os from "node:os";
 import path from "node:path";
 import { parse } from "smol-toml";
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const cursorPlanSpy = vi.hoisted(() => ({ inputs: [] as Array<Record<string, unknown>> }));
+
+vi.mock("./cursor-plan.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./cursor-plan.js")>();
+  return {
+    ...actual,
+    planCursorSurfaceOutcomes: (input: Parameters<typeof actual.planCursorSurfaceOutcomes>[0]) => {
+      cursorPlanSpy.inputs.push(input as unknown as Record<string, unknown>);
+      return actual.planCursorSurfaceOutcomes(input);
+    },
+  };
+});
+
 import { installOnboardedTools, onboardFromLink } from "./onboard.js";
 import type { CredentialStore, Creds } from "./credential-store/index.js";
 import { getToolByName } from "./registry.js";
@@ -25,6 +39,10 @@ import { getToolByName } from "./registry.js";
 
 const VALID_LINK =
   "kanon://server.example.com/onboard?token=abc123.def456.ghi789jwt";
+
+beforeEach(() => {
+  cursorPlanSpy.inputs.length = 0;
+});
 
 const ONBOARD_RESPONSE = {
   refreshToken: "opaque-refresh-token-abc",
@@ -303,6 +321,7 @@ describe("onboardFromLink()", () => {
           assetsDir,
           nodeBin: "/usr/bin/node",
           wrapperResolution: { mode: "local", path: "/release/mcp/dist/wrapper-cli.js" },
+          cursorSurfaces: [{ tool: "cursor", surface: "cli", host: "local", state: "executable-valid", targetKey: path.join(home, ".cursor", "mcp.json"), executable: { path: "/usr/bin/cursor", command: "cursor", version: "1" } }],
         },
       );
 
@@ -358,6 +377,7 @@ describe("onboardFromLink()", () => {
           assetsDir,
           nodeBin: "/usr/bin/node",
           wrapperResolution: { mode: "local", path: "/release/mcp/dist/wrapper-cli.js" },
+          cursorSurfaces: [{ tool: "cursor", surface: "cli", host: "local", state: "executable-valid", targetKey: path.join(home, ".cursor", "mcp.json"), executable: { path: "/usr/bin/cursor", command: "cursor", version: "1" } }],
         },
       );
 
@@ -369,4 +389,107 @@ describe("onboardFromLink()", () => {
       fs.rmSync(home, { recursive: true, force: true });
     }
   });
+});
+
+describe("Cursor WSL inventory safety", () => {
+  it("returns the existing no-tools result before resolving onboarding runtime state", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-onboard-no-tools-"));
+    try {
+      await expect(installOnboardedTools("https://server.example.com", "workspace-1", {
+        ctx: { platform: "linux", homedir: home }, tools: [],
+      })).resolves.toEqual([]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("RED: authorized WSL onboarding carries the validated bridge into planning and writes the Windows Cursor target", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-onboard-wsl-bridge-local-"));
+    const winHome = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-onboard-wsl-bridge-windows-"));
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-onboard-wsl-bridge-bin-"));
+    const previousPath = process.env.PATH;
+    try {
+      fs.writeFileSync(path.join(binDir, "wsl.exe"), "#!/bin/sh\nprintf 'v22.0.0\\n'\n", { mode: 0o755 });
+      process.env.PATH = binDir;
+      const target = path.join(winHome, ".cursor", "mcp.json");
+      const installed = await installOnboardedTools("https://server.example.com", "workspace-1", {
+        ctx: { platform: "wsl", homedir: home, winHome }, assetsDir: path.join(home, "assets"),
+        isInteractive: true, promptTools: async () => ["cursor"],
+        nodeBin: "/usr/bin/node", wrapperResolution: { mode: "local", path: "/release/mcp/dist/wrapper-cli.js" },
+        cursorSurfaces: [{ tool: "cursor", surface: "ide", host: "windows", state: "executable-valid", targetKey: target, bridge: { distribution: "Ubuntu", nodePath: "/usr/bin/node" }, executable: { path: "C:\\Cursor.exe", command: "Cursor.exe", version: "1" } }],
+      });
+      expect(installed[0]?.configPaths).toEqual([target]);
+      expect(cursorPlanSpy.inputs).toHaveLength(1);
+      expect(cursorPlanSpy.inputs[0]).toEqual(expect.objectContaining({
+        ownershipByTarget: expect.objectContaining({
+          [target]: { targetKey: target, configPath: target, state: "missing" },
+        }),
+      }));
+      expect(JSON.parse(fs.readFileSync(target, "utf8")).mcpServers.kanon).toMatchObject({ command: "wsl", args: expect.arrayContaining(["--distribution", "Ubuntu", "/usr/bin/node"]) });
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(winHome, { recursive: true, force: true });
+      fs.rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
+  it("RED remediation: Windows-only Cursor inventory never synthesizes a local Linux config", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-onboard-wsl-local-"));
+    const winHome = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-onboard-wsl-windows-"));
+    const assetsDir = path.join(home, "assets");
+    const previousPath = process.env.PATH;
+    try {
+      process.env.PATH = path.join(home, "empty-bin");
+      fs.mkdirSync(path.join(winHome, ".cursor"), { recursive: true });
+      fs.mkdirSync(path.join(assetsDir, "skills"), { recursive: true });
+      const installed = await installOnboardedTools("https://server.example.com", "workspace-1", {
+        ctx: { platform: "wsl", homedir: home, winHome }, tools: [getToolByName("cursor")!], assetsDir,
+        nodeBin: "/usr/bin/node", wrapperResolution: { mode: "local", path: "/release/mcp/dist/wrapper-cli.js" },
+        cursorSurfaces: [{ tool: "cursor", surface: "ide", host: "windows", state: "configured-only/stale", targetKey: path.join(winHome, ".cursor", "mcp.json") }],
+      });
+      expect(installed[0]?.configPaths).toEqual([]);
+      expect(fs.existsSync(path.join(home, ".cursor", "mcp.json"))).toBe(false);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(winHome, { recursive: true, force: true });
+    }
+  });
+});
+
+it("JD-002: onboarding fails actionably when a selected Cursor surface has zero writable targets", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-onboard-zero-target-"));
+  const previousHome = process.env.HOME;
+  const previousInstallDir = process.env.KANON_INSTALL_DIR;
+  try {
+    process.env.HOME = home;
+    process.env.KANON_INSTALL_DIR = path.join(home, ".kanon", "mcp");
+    const cursor = getToolByName("cursor")!;
+    const installed = await installOnboardedTools("https://server.example.com", "workspace-1", {
+      ctx: { platform: "linux", homedir: home }, tools: [cursor], assetsDir: path.join(home, "assets"),
+      nodeBin: "/usr/bin/node", wrapperResolution: { mode: "local", path: "/release/mcp/dist/wrapper-cli.js" },
+      cursorSurfaces: [{ tool: "cursor", surface: "ide", host: "local", state: "configured-only/stale", targetKey: path.join(home, ".cursor", "mcp.json") }],
+    });
+    expect(installed).toEqual([expect.objectContaining({ name: "cursor", configPaths: [], error: expect.stringMatching(/no writable/i) })]);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousInstallDir === undefined) delete process.env.KANON_INSTALL_DIR;
+    else process.env.KANON_INSTALL_DIR = previousInstallDir;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+it("JD-002: credential-preserving onboarding never reports Configured when every selected surface is unwritable", async () => {
+  const output = { write: vi.fn() };
+  await expect(onboardFromLink(VALID_LINK, {
+    fetchFn: makeFetch(200, ONBOARD_RESPONSE), credentialStore: makeStore(), stdout: output,
+    installToolSurfaces: vi.fn().mockResolvedValue([{ name: "cursor", displayName: "Cursor", configPaths: [], error: "No writable Cursor surface" }]),
+  })).rejects.toThrow(/could not be configured/);
+  const text = output.write.mock.calls.map(([line]) => line).join("");
+  expect(text).not.toMatch(/Configured 1 tool/);
+  expect(text).toMatch(/not configured/i);
 });

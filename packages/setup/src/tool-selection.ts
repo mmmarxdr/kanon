@@ -5,6 +5,7 @@ import { getToolByName, resolveToolTargets, toolRegistry } from "./registry.js";
 import type { PlatformContext, ToolDefinition } from "./types.js";
 
 type ToolChoice = { name: string; value: string; checked: boolean };
+export type SelectedTool = ToolDefinition & { selectionAuthorization?: "prompt" };
 
 function getToolConfigState(tool: ToolDefinition, ctx: PlatformContext): ToolConfigState {
   const states = resolveToolTargets(tool, ctx).map((target) =>
@@ -39,7 +40,7 @@ export async function selectTools(
   isInteractive: boolean,
   ctx: PlatformContext,
   deps?: { promptTools?: (choices: ToolChoice[]) => Promise<string[]> },
-): Promise<ToolDefinition[]> {
+): Promise<SelectedTool[]> {
   if (flags.tool) {
     const tool = getToolByName(flags.tool);
     if (!tool) {
@@ -71,7 +72,9 @@ export async function selectTools(
     process.exit(0);
   }
 
-  return detected.filter((tool) => selectedNames.includes(tool.name));
+  return detected.filter((tool) => selectedNames.includes(tool.name)).map((tool) =>
+    tool.name === "cursor" ? { ...tool, selectionAuthorization: "prompt" } : tool,
+  );
 }
 
 async function defaultPromptTools(choices: ToolChoice[]): Promise<string[]> {
