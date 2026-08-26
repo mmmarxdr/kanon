@@ -30,6 +30,7 @@ function genuinelyClaimable(at: Prisma.Sql, excludeComments: boolean): Prisma.Sq
     AND work."direction" = 'outbound'::"SyncDirection"
     AND (work."entity_type" <> 'comment' OR (${!excludeComments} AND binding."comment_dispatch_enabled"))
     AND work."state" IN ('queued'::"SyncWorkState", 'retry'::"SyncWorkState")
+    AND work."provider_io_fence" IS NULL
     AND work."available_at" <= ${at}
     AND work."epoch" = binding."lifecycle_epoch"
     AND NOT EXISTS (
@@ -125,6 +126,7 @@ export async function claimIntegrationWork(
                    AND candidate."fence" = 0
                    AND candidate."lease_token" IS NULL
                    AND candidate."lease_until" IS NULL
+                   AND candidate."provider_io_fence" IS NULL
                    AND candidate."entity_type" = 'issue'
                    AND candidate."payload"->'version' = '1'::jsonb
                    AND jsonb_typeof(candidate."payload"->'fields') = 'object'

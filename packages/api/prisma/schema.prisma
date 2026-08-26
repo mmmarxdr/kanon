@@ -1700,6 +1700,7 @@ model IntegrationSyncWork {
   leaseToken      String?       @map("lease_token")
   leaseUntil      DateTime?     @map("lease_until")
   fence           Int           @default(0)
+  providerIoFence Int?          @map("provider_io_fence")
   epoch           Int
   authCredentialId String?      @map("auth_credential_id") @db.Uuid
   refId           String?       @map("ref_id") @db.Uuid
@@ -1707,6 +1708,8 @@ model IntegrationSyncWork {
   skippedReason   String?       @map("skipped_reason")
   requestedStatus String?       @map("requested_status")
   actualStatus    String?       @map("actual_status")
+  privacyIssueId  String?       @map("privacy_issue_id") @db.Uuid
+  privacyHoldGeneration Int?    @map("privacy_hold_generation")
   createdAt       DateTime      @default(now()) @map("created_at")
   updatedAt       DateTime      @updatedAt @map("updated_at")
 

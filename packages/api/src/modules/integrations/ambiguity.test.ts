@@ -149,7 +149,7 @@ function createLaterWork(
   });
 }
 
-function dependencies(reconcileCreate: ProviderCreateReconciler["reconcileCreate"]) {
+function dependencies(reconcileCreate: ProviderCreateReconciler["reconcileCreate"], now = () => NOW) {
   const provider: Pick<
     PmProviderAdapter,
     "ensureProject" | "ensureCycle" | "pushIssue" | "reconcileCreate"
@@ -160,7 +160,7 @@ function dependencies(reconcileCreate: ProviderCreateReconciler["reconcileCreate
     reconcileCreate,
   };
   return {
-    now: () => NOW,
+    now,
     jitter: () => 0,
     decrypt: () => "api-key-do-not-persist",
     createAdapter: () => provider,
@@ -185,9 +185,12 @@ afterAll(() => prisma.$disconnect());
 describe("integration ambiguity reconciliation", () => {
   it("attaches one exact remote match and completes the fenced work", async () => {
     const fixture = await createFixture();
-    const reconcileCreate = vi.fn().mockResolvedValue([evidence("remote-42")]);
+    const reconcileCreate = vi.fn(async () => {
+      await expect(prisma.$queryRaw`SELECT "state","provider_io_fence" FROM "integration_sync_work" WHERE "id"=${fixture.work.id}::uuid`).resolves.toEqual([{ state: "leased", provider_io_fence: 1 }]);
+      return [evidence("remote-42")];
+    });
 
-    await runIntegrationWorkerCycle(prisma, dependencies(reconcileCreate));
+    await runIntegrationWorkerCycle(prisma, dependencies(reconcileCreate, () => new Date()));
 
     expect(reconcileCreate).toHaveBeenCalledWith({
       entityType: "issue",
@@ -198,6 +201,7 @@ describe("integration ambiguity reconciliation", () => {
       where: { id: fixture.work.id },
     });
     expect(completed).toMatchObject({ state: "done", actualStatus: "2" });
+    await expect(prisma.$queryRaw`SELECT "provider_io_fence" FROM "integration_sync_work" WHERE "id"=${fixture.work.id}::uuid`).resolves.toEqual([{ provider_io_fence: null }]);
     await expect(
       prisma.externalRef.findUniqueOrThrow({ where: { id: completed.refId! } }),
     ).resolves.toMatchObject({
@@ -207,6 +211,16 @@ describe("integration ambiguity reconciliation", () => {
       entityId: fixture.entity.id,
       externalId: "remote-42",
     });
+  });
+
+  it("does not reconcile unresolved provider I/O", async () => {
+    const fixture = await createFixture();
+    await prisma.$executeRaw`UPDATE "integration_sync_work" SET "provider_io_fence"=0 WHERE "id"=${fixture.work.id}::uuid`;
+    const reconcileCreate = vi.fn();
+
+    await runIntegrationWorkerCycle(prisma, dependencies(reconcileCreate));
+
+    expect(reconcileCreate).not.toHaveBeenCalled();
   });
 
   it("persists one secret-free conflict for zero matches and keeps the lane ambiguous", async () => {

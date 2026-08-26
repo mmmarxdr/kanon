@@ -321,6 +321,14 @@ describe("claimIntegrationWork", () => {
     ).resolves.toMatchObject({ state: "queued", leaseToken: null });
   });
 
+  it("does not claim unresolved provider I/O", async () => {
+    const fixture = await createFixture();
+    const work = await createWork(fixture.binding, { entityId: fixture.issue.id, state: "retry" });
+    await prisma.$executeRaw`UPDATE "integration_sync_work" SET "provider_io_fence"=0 WHERE "id"=${work.id}::uuid`;
+
+    await expect(claimIntegrationWork(prisma, { limit: 1 })).resolves.toEqual([]);
+  });
+
   it("uses the oldest genuinely claimable head before the parent UUID", async () => {
     const fixtures = [await createFixture(), await createFixture(), await createFixture()].sort(
       (left, right) => left.connection.id.localeCompare(right.connection.id)

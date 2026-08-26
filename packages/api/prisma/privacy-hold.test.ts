@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { resolveSafeE2eDatabaseUrl } from "../../e2e/e2e-environment";
 const migration = new URL("./migrations/20260820130000_issue_privacy_hold/migration.sql", import.meta.url);
 const containment = new URL("./migrations/20260821132000_privacy_atomic_containment/migration.sql", import.meta.url);
+const writeFence = new URL("./migrations/20260826120000_privacy_write_dispatch_fencing/migration.sql", import.meta.url);
 const e2eGlobalSetup = new URL("../../e2e/global-setup.ts", import.meta.url);
 const apiDir = path.dirname(fileURLToPath(import.meta.url));
 const configPath = path.resolve(apiDir, "../../e2e/playwright.config.ts");
@@ -94,6 +95,17 @@ describe("privacy hold schema foundation", () => {
     expect(sql.indexOf("privacy_quarantine.issue_content")).toBeLessThan(sql.lastIndexOf("privacy_held_at"));
     for (const kind of ["external_refs", "integration_sync_work", "integration_content_provenance", "integration_conflict", "domain_event_outbox"])
       expect(sql).toContain(`'${kind}'`);
+  });
+  it("keeps synchronization privacy roots nullable in Prisma and server-managed in SQL", async () => {
+    const [schema, sql] = await Promise.all([
+      readFile(new URL("./schema.prisma", import.meta.url), "utf8"),
+      readFile(writeFence, "utf8"),
+    ]);
+    expect(schema).toMatch(/privacyIssueId\s+String\?\s+@map\("privacy_issue_id"\)\s+@db\.Uuid/);
+    expect(schema).toMatch(/privacyHoldGeneration\s+Int\?\s+@map\("privacy_hold_generation"\)/);
+    expect(sql).toMatch(/BEFORE INSERT OR UPDATE OF privacy_issue_id, privacy_hold_generation/);
+    expect(sql).toMatch(/ALTER TABLE public\.integration_sync_work FORCE ROW LEVEL SECURITY/);
+    expect(sql).not.toMatch(/REFERENCES public\.issues\(id\)/);
   });
   it("resets every custom privacy schema before Prisma replays migrations", async () => {
     const setup = await readFile(e2eGlobalSetup, "utf8");

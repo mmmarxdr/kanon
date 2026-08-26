@@ -565,6 +565,7 @@ describe("integration worker retry and completion", () => {
     const fixture = await createFixture();
     const work = await createWork(fixture);
     const pushIssue = vi.fn(async () => {
+      await expect(prisma.$queryRaw`SELECT "state","provider_io_fence" FROM "integration_sync_work" WHERE "id"=${work.id}::uuid`).resolves.toEqual([{ state: "leased", provider_io_fence: 1 }]);
       await concurrentPrisma.$transaction(async (transaction) => {
         await transaction.$executeRaw`SELECT set_config('statement_timeout', '250ms', true)`;
         await transaction.integrationConnection.update({
@@ -574,7 +575,7 @@ describe("integration worker retry and completion", () => {
       });
       return success();
     });
-    const { deps } = dependencies(adapter({ pushIssue }));
+    const { deps } = dependencies(adapter({ pushIssue }), { now: undefined });
 
     await runIntegrationWorkerCycle(prisma, deps);
 
@@ -584,6 +585,7 @@ describe("integration worker retry and completion", () => {
     ).resolves.toMatchObject({
       state: "done",
     });
+    await expect(prisma.$queryRaw`SELECT "provider_io_fence" FROM "integration_sync_work" WHERE "id"=${work.id}::uuid`).resolves.toEqual([{ provider_io_fence: null }]);
   });
 
   it("locks lifecycle parents before mutating the final external reference", async () => {

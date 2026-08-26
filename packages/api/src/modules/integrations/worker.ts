@@ -184,6 +184,17 @@ const leased = (current: IntegrationSyncWork, claimed: IntegrationSyncWork, now:
   current.epoch === claimed.epoch &&
   current.leaseUntil !== null &&
   current.leaseUntil > now;
+async function withProviderIo<T>(database: Pick<PrismaClient, "$queryRaw">, work: IntegrationSyncWork, operation: () => Promise<T>) {
+  const transition = async (active: boolean) => {
+    const [row] = await database.$queryRaw<Array<{ count: number }>>`
+      SELECT privacy_authority.transition_provider_io(${work.id}::uuid,${work.leaseToken},${work.fence}::integer,${work.epoch}::integer,${active}) AS "count"
+    `;
+    if (row?.count !== 1) throw new StaleFinalizeError();
+  };
+  await transition(true);
+  try { return await operation(); }
+  finally { await transition(false); }
+}
 async function lockWork(
   transaction: Prisma.TransactionClient,
   work: Pick<IntegrationSyncWork, "id" | "bindingId">,
@@ -916,6 +927,7 @@ async function claimAmbiguous(
        JOIN "projects" AS project ON project."id" = binding."project_id"
       WHERE work."direction" = 'outbound'::"SyncDirection"
         AND work."state" = 'ambiguous'::"SyncWorkState"
+        AND work."provider_io_fence" IS NULL
         AND (work."entity_type" <> 'comment' OR (${d.commentDispatchEnabled} AND binding."comment_dispatch_enabled"))
         AND work."skipped_reason" IS DISTINCT FROM 'credential_invalid'
         AND work."available_at" <= ${dueAt}
@@ -935,10 +947,12 @@ async function claimAmbiguous(
 
   return database.$transaction(async (transaction) => {
     const current = await lockWork(transaction, candidate);
+    const [providerIo] = await transaction.$queryRaw<Array<{ clear: boolean }>>`SELECT "provider_io_fence" IS NULL AS "clear" FROM "integration_sync_work" WHERE "id"=${candidate.id}::uuid`;
     const now = await databaseNow(transaction, d.now);
     if (
       !current ||
       current.state !== "ambiguous" ||
+      !providerIo?.clear ||
       current.skippedReason === "credential_invalid" ||
       current.availableAt > now ||
       current.binding.lifecycle !== "active" ||
@@ -1406,8 +1420,9 @@ async function reconcileAmbiguity(
 ) {
   let matches: readonly PushResult[];
   try {
-    matches = await d.createAdapter(prepared.adapter).reconcileCreate(prepared.request);
+    matches = await withProviderIo(database, prepared.work, () => d.createAdapter(prepared.adapter).reconcileCreate(prepared.request));
   } catch (error) {
+    if (error instanceof StaleFinalizeError) return;
     if (isProviderAuthenticationError(error)) {
       return failAuthentication(database, prepared.work, prepared.credential, error, "ambiguous", d);
     }
@@ -1692,7 +1707,7 @@ async function process(database: PrismaClient, work: IntegrationSyncWork, d: Dep
   let pushed: PushResult;
   try {
     const adapter = d.createAdapter(prepared.adapter);
-    pushed =
+    pushed = await withProviderIo(database, prepared.work, async () =>
       prepared.dispatch.kind === "issue-delete"
         ? adapter.deleteIssue
           ? await adapter.deleteIssue(prepared.dispatch.remoteIssueId)
@@ -1718,7 +1733,7 @@ async function process(database: PrismaClient, work: IntegrationSyncWork, d: Dep
               })()
         : prepared.dispatch.kind === "cycle"
           ? await adapter.ensureCycle(prepared.dispatch.entity)
-          : await adapter.ensureProject(prepared.dispatch.entity);
+          : await adapter.ensureProject(prepared.dispatch.entity));
     if (prepared.dispatch.kind === "comment" && !provesComment(prepared.dispatch.proof, pushed)) {
       throw new ProviderDispatchError("ambiguous", new Error("Redmine comment proof mismatch"));
     }
@@ -1726,6 +1741,8 @@ async function process(database: PrismaClient, work: IntegrationSyncWork, d: Dep
       throw new TerminalError("Integration adapter did not confirm issue deletion");
     }
   } catch (error) {
+    if (error instanceof StaleFinalizeError)
+      return log(d, "warn", { workId: work.id, state: "stale" }, "Integration work stale after provider I/O");
     return fail(database, prepared, work, error, d);
   }
   try {
