@@ -11,7 +11,7 @@ import type {
   PlatformContext,
   ToolDefinition,
 } from "./types.js";
-import { resolveToolTargets, toolRegistry } from "./registry.js";
+import { resolveToolInventoryTargets, toolRegistry } from "./registry.js";
 import { canonicalizeApiUrl } from "./canonical-url.js";
 
 const MCP_SERVER_NAME = "kanon";
@@ -257,8 +257,8 @@ export function removeTomlMcpConfig(
   let config: Record<string, unknown>;
   try {
     config = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
-  } catch {
-    return false;
+  } catch (err) {
+    throw new Error(`Invalid TOML in ${configPath}: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   const servers = config["mcp_servers"] as Record<string, unknown> | undefined;
@@ -300,6 +300,36 @@ export function installToolMcpConfig(
 /**
  * Remove MCP config using the correct path for the tool's config format.
  */
+export function validateToolMcpConfig(
+  configPath: string,
+  tool: Pick<ToolDefinition, "configFormat">,
+): void {
+  if (!fs.existsSync(configPath)) return;
+  const content = fs.readFileSync(configPath, "utf8");
+  const format = tool.configFormat === "toml" ? "TOML" : "JSON";
+  let config: unknown;
+  try {
+    if (tool.configFormat === "toml") {
+      try {
+        config = parse(content);
+      } catch (tomlError) {
+        try {
+          config = JSON.parse(content);
+        } catch {
+          throw tomlError;
+        }
+      }
+    } else {
+      config = JSON.parse(content);
+    }
+  } catch (err) {
+    throw new Error(`Invalid ${format} in ${configPath}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    throw new Error(`Invalid ${format} in ${configPath}: expected an object`);
+  }
+}
+
 export function removeToolMcpConfig(
   configPath: string,
   tool: Pick<ToolDefinition, "rootKey" | "configFormat">,
@@ -375,8 +405,8 @@ export function removeConfig(configPath: string, rootKey: string): boolean {
   try {
     const content = fs.readFileSync(configPath, "utf8");
     config = JSON.parse(content) as Record<string, unknown>;
-  } catch {
-    return false;
+  } catch (err) {
+    throw new Error(`Invalid JSON in ${configPath}: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   const servers = config[rootKey] as Record<string, unknown> | undefined;
@@ -721,7 +751,7 @@ export function extractExistingAuth(
   let apiKey: string | undefined;
 
   outer: for (const tool of toolRegistry) {
-    for (const platformPaths of resolveToolTargets(tool, ctx)) {
+    for (const platformPaths of resolveToolInventoryTargets(tool, ctx)) {
       const configPath = platformPaths.config(ctx);
 
       if (tool.configFormat === "toml") {
