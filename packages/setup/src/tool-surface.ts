@@ -7,11 +7,13 @@ import {
   extractExistingWorkspaceId,
   installToolMcpConfig,
   removeToolMcpConfig,
+  validateToolMcpConfig,
 } from "./mcp-config.js";
 import {
   resolveToolLegacyConfigPaths,
   resolveToolLegacyRulePaths,
   resolveToolTargets,
+  resolveToolInventoryTargets,
   resolveCodexHome,
 } from "./registry.js";
 import { installSkills, removeSkills } from "./skills.js";
@@ -55,6 +57,13 @@ export function installToolSurface(options: {
   // not permission to perform side-effectful legacy cleanup on another surface.
   const targets = options.targets ?? resolveToolTargets(tool, ctx);
   if (targets.length === 0) return [];
+
+  for (const configPath of [
+    ...targets.map((target) => target.config(ctx)),
+    ...resolveToolLegacyConfigPaths(tool, ctx),
+  ]) {
+    validateToolMcpConfig(configPath, tool);
+  }
 
   const installed = targets.map((target) => {
     const configPath = target.config(ctx);
@@ -132,10 +141,16 @@ export function removeToolMcpSurface(
   tool: ToolDefinition,
   ctx: PlatformContext,
 ): string[] {
-  const removed = resolveToolTargets(tool, ctx)
-    .map((target) => target.config(ctx))
-    .filter((configPath) => removeToolMcpConfig(configPath, tool));
-  cleanupLegacyToolSurface(tool, ctx);
+  const targets = tool.name === "cursor"
+    ? resolveToolInventoryTargets(tool, ctx)
+    : resolveToolTargets(tool, ctx);
+  const configPaths = targets.map((target) => target.config(ctx));
+  const legacyConfigPaths = resolveToolLegacyConfigPaths(tool, ctx);
+  for (const configPath of [...configPaths, ...legacyConfigPaths]) {
+    validateToolMcpConfig(configPath, tool);
+  }
+  const removed = configPaths.filter((configPath) => removeToolMcpConfig(configPath, tool));
+  cleanupLegacyToolSurface(tool, ctx, targets);
   return removed;
 }
 
@@ -143,8 +158,10 @@ export function resolveExistingToolWorkspaceId(
   tool: ToolDefinition,
   ctx: PlatformContext,
 ): string | undefined {
-  return resolveToolTargets(tool, ctx)
-    .map((target) =>
+  const targets = tool.name === "cursor"
+    ? resolveToolInventoryTargets(tool, ctx)
+    : resolveToolTargets(tool, ctx);
+  return targets.map((target) =>
       extractExistingWorkspaceId(
         target.config(ctx),
         tool.rootKey,
