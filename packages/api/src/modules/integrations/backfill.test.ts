@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "../../config/prisma.js";
-import { cleanDatabase, disconnectTestDb, seedTestMember } from "../../test/helpers.js";
+import { cleanDatabase, disconnectTestDb, seedTestIssue, seedTestMember } from "../../test/helpers.js";
 import {
   EXTERNAL_REF_BACKFILL_LOCK_KEY,
   ExternalRefBackfillInvariantError,
@@ -143,7 +143,8 @@ describe("external reference binding integrity", () => {
         lastAuthStatus: "valid",
       },
     });
-    const issueId = randomUUID();
+    const issue = await seedTestIssue(project.id);
+    const issueId = issue.id;
     const ref = await prisma.externalRef.create({
       data: {
         connectionId: connection.id,
@@ -176,6 +177,7 @@ describe("external reference binding integrity", () => {
         epoch: binding.lifecycleEpoch,
       },
     });
+    await prisma.issue.delete({ where: { id: issue.id } });
 
     await expect(proveExternalRefBindings(prisma)).resolves.toBeUndefined();
     await expect(withExternalRefBackfillWriteGate(prisma, async () => "valid"))

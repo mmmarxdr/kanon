@@ -74,7 +74,7 @@ function blockedWorkData(input: {
   return {
     id,
     bindingId: input.bindingId,
-    entityType: "issue",
+    entityType: "project",
     entityId: input.entityId,
     direction: "outbound",
     operation: input.operation ?? "update",
@@ -280,7 +280,7 @@ describe("integration credentials", () => {
       data: {
         connectionId: connection.id,
         bindingId: binding.id,
-        entityType: "issue",
+        entityType: "project",
         entityId: project.id,
         externalId: "remote-issue",
       },
