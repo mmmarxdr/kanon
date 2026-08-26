@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "../../config/prisma.js";
+import { seedTestComment } from "../../test/helpers.js";
 import { claimIntegrationWork } from "./claims.js";
 import { captureIntegrationWorkTx } from "./outbox.js";
 
@@ -55,15 +56,23 @@ async function createFixture(
   return { workspace, connection, binding, issue };
 }
 
-function createWork(
+async function createWork(
   binding: Awaited<ReturnType<typeof createFixture>>["binding"],
   overrides: Partial<Prisma.IntegrationSyncWorkUncheckedCreateInput> = {}
 ) {
+  const entityId =
+    overrides.entityId ??
+    (
+      await prisma.issue.findFirstOrThrow({
+        where: { projectId: binding.projectId },
+        select: { id: true },
+      })
+    ).id;
   return prisma.integrationSyncWork.create({
     data: {
       bindingId: binding.id,
       entityType: "issue",
-      entityId: randomUUID(),
+      entityId,
       direction: "outbound",
       operation: "update",
       dedupeKey: randomUUID(),
@@ -305,8 +314,20 @@ describe("claimIntegrationWork", () => {
       where: { id: canary.binding.id },
       data: { commentDispatchEnabled: true },
     });
-    const canaryComment = await createWork(canary.binding, { entityType: "comment" });
-    const otherComment = await createWork(other.binding, { entityType: "comment" });
+    const [canaryCredential, otherCredential] = await Promise.all([
+      createCredential(canary),
+      createCredential(other),
+    ]);
+    const canaryEntity = await seedTestComment(canary.binding.projectId, canaryCredential.memberId);
+    const otherEntity = await seedTestComment(other.binding.projectId, otherCredential.memberId);
+    const canaryComment = await createWork(canary.binding, {
+      entityType: "comment",
+      entityId: canaryEntity.id,
+    });
+    const otherComment = await createWork(other.binding, {
+      entityType: "comment",
+      entityId: otherEntity.id,
+    });
     const otherIssue = await createWork(other.binding);
 
     const claimed = await claimIntegrationWork(prisma, {
@@ -519,14 +540,14 @@ describe("claimIntegrationWork", () => {
   });
 
   it("bounds coalescing independently of the claim limit", async () => {
-    const { binding } = await createFixture();
+    const { binding, issue } = await createFixture();
     const laneKey = randomUUID();
     for (let start = 0; start < 10_000; start += 500) {
       await prisma.integrationSyncWork.createMany({
         data: Array.from({ length: 500 }, (_, offset) => ({
           bindingId: binding.id,
           entityType: "issue",
-          entityId: randomUUID(),
+          entityId: issue.id,
           direction: "outbound" as const,
           operation: "update" as const,
           dedupeKey: randomUUID(),

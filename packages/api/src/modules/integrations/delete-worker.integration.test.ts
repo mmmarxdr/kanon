@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "../../config/prisma.js";
+import { seedTestIssue } from "../../test/helpers.js";
 import { removeMember } from "../member/service.js";
 import { proveExternalRefBindings } from "./backfill.js";
 import { ProviderDispatchError } from "./core/types.js";
@@ -27,7 +28,8 @@ async function fixture() {
   userIds.add(actorUser.id);
   const actorMember = await prisma.member.create({ data: { username: `dw-owner-${randomUUID().slice(0, 6)}`, role: "owner", userId: actorUser.id, workspaceId: workspace.id } });
   const credential = await prisma.memberIntegrationCredential.create({ data: { encryptedKey: "encrypted", lastAuthStatus: "valid", connectionId: connection.id, memberId: member.id } });
-  const issueId = randomUUID();
+  const issue = await seedTestIssue(project.id);
+  const issueId = issue.id;
   const ref = await prisma.externalRef.create({ data: { connectionId: connection.id, bindingId: binding.id, entityType: "issue", entityId: issueId, externalId: "42" } });
   const work = await prisma.integrationSyncWork.create({
     data: {
@@ -48,6 +50,7 @@ async function fixture() {
       availableAt: new Date("2026-08-10T00:00:00.000Z"),
     },
   });
+  await prisma.issue.delete({ where: { id: issue.id } });
   return { workspace, project, connection, binding, user, member, actorUser, actorMember, credential, ref, work };
 }
 
