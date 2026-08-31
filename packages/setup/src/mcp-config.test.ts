@@ -11,7 +11,13 @@ import path from "node:path";
  */
 import { describe, it, expect } from "vitest";
 import { canonicalizeApiUrl } from "./canonical-url.js";
-import { buildMcpEntry, buildWrapperMcpEntry, removeToolMcpConfig } from "./mcp-config.js";
+import {
+  buildMcpEntry,
+  buildWrapperMcpEntry,
+  inspectToolMcpConfig,
+  removeToolMcpConfig,
+  validateToolMcpConfig,
+} from "./mcp-config.js";
 import { getToolByName } from "./registry.js";
 import { removeToolMcpSurface } from "./tool-surface.js";
 
@@ -133,6 +139,66 @@ it("uses the validated WSL Node path for static-key bridge entries too", () => {
   const entry = buildMcpEntry({ mode: "local", path: "/mcp.js" }, "https://server.example.com", "key", { platform: "wsl", homedir: "/home/me", winHome: "/mnt/c/Users/me" }, "wsl-bridge", "/usr/bin/node", "static-key", "cursor", undefined, "Ubuntu", "/home/me/.nvm/versions/node/v24/bin/node");
   expect(entry.args).toContain("/home/me/.nvm/versions/node/v24/bin/node");
   expect(entry.args).not.toContain("/usr/bin/node");
+});
+
+describe("Codex legacy JSON removal", () => {
+  const codex = { rootKey: "mcp_servers", configFormat: "toml" } as const;
+
+  it("does not classify unrelated JSON at the TOML path as legacy-owned", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-toml-ownership-"));
+    const file = path.join(root, "config.toml");
+    try {
+      fs.writeFileSync(
+        file,
+        JSON.stringify({ mcp_servers: { unrelated: { command: "node" } } }),
+      );
+
+      expect(inspectToolMcpConfig(file, codex)).toBe("unconfigured");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("removes owned legacy JSON without rewriting unrelated entries as TOML", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-toml-legacy-json-"));
+    const file = path.join(root, "config.toml");
+    try {
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          mcp_servers: {
+            "kanon-mcp": { command: "node" },
+            unrelated: { command: "other" },
+          },
+          other: { keep: true },
+        }),
+      );
+
+      expect(inspectToolMcpConfig(file, codex)).toBe("legacy");
+      expect(() => validateToolMcpConfig(file, codex)).not.toThrow();
+      expect(removeToolMcpConfig(file, codex)).toBe(true);
+      expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({
+        mcp_servers: { unrelated: { command: "other" } },
+        other: { keep: true },
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps rejecting ordinary JSON config that does not parse to an object", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "kanon-json-validation-"));
+    const file = path.join(root, "mcp.json");
+    try {
+      fs.writeFileSync(file, "null");
+
+      expect(() => validateToolMcpConfig(file, {})).toThrow(
+        /Invalid JSON.*expected an object/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 
