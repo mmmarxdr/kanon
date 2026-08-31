@@ -130,6 +130,34 @@ function parseTomlConfigFile(configPath: string): Record<string, unknown> {
   }
 }
 
+function parseTomlOrLegacyJson(
+  content: string,
+  configPath: string,
+): { config: Record<string, unknown>; legacyJson: boolean } {
+  try {
+    return {
+      config: parse(content) as Record<string, unknown>,
+      legacyJson: false,
+    };
+  } catch (tomlError) {
+    let legacy: unknown;
+    try {
+      legacy = JSON.parse(content);
+    } catch {
+      throw new Error(
+        `Invalid TOML in ${configPath}: ${tomlError instanceof Error ? tomlError.message : String(tomlError)}`,
+      );
+    }
+    if (!legacy || typeof legacy !== "object" || Array.isArray(legacy)) {
+      throw new Error(`Invalid TOML in ${configPath}: expected an object`);
+    }
+    return {
+      config: legacy as Record<string, unknown>,
+      legacyJson: true,
+    };
+  }
+}
+
 export type ToolConfigState = "configured" | "legacy" | "unconfigured" | "invalid";
 
 /** Inspect a tool config without modifying it, for interactive selection defaults. */
@@ -146,18 +174,12 @@ export function inspectToolMcpConfig(
   }
 
   let config: Record<string, unknown>;
+  let legacyJson = false;
   if (tool.configFormat === "toml") {
     try {
-      config = parse(content) as Record<string, unknown>;
+      ({ config, legacyJson } = parseTomlOrLegacyJson(content, configPath));
     } catch {
-      try {
-        const legacy = JSON.parse(content) as unknown;
-        return legacy && typeof legacy === "object" && !Array.isArray(legacy)
-          ? "legacy"
-          : "invalid";
-      } catch {
-        return "invalid";
-      }
+      return "invalid";
     }
   } else {
     try {
@@ -175,9 +197,10 @@ export function inspectToolMcpConfig(
   if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
     return "unconfigured";
   }
-  return MCP_SERVER_NAME in servers || LEGACY_MCP_SERVER_NAME in servers
-    ? "configured"
-    : "unconfigured";
+  if (!(MCP_SERVER_NAME in servers) && !(LEGACY_MCP_SERVER_NAME in servers)) {
+    return "unconfigured";
+  }
+  return legacyJson ? "legacy" : "configured";
 }
 
 /**
@@ -254,12 +277,10 @@ export function removeTomlMcpConfig(
     return false;
   }
 
-  let config: Record<string, unknown>;
-  try {
-    config = parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
-  } catch (err) {
-    throw new Error(`Invalid TOML in ${configPath}: ${err instanceof Error ? err.message : String(err)}`);
-  }
+  const { config, legacyJson } = parseTomlOrLegacyJson(
+    fs.readFileSync(configPath, "utf8"),
+    configPath,
+  );
 
   const servers = config["mcp_servers"] as Record<string, unknown> | undefined;
   if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
@@ -278,7 +299,10 @@ export function removeTomlMcpConfig(
   }
   if (!removed) return false;
   config["mcp_servers"] = servers;
-  fs.writeFileSync(configPath, stringify(config) + "\n");
+  fs.writeFileSync(
+    configPath,
+    legacyJson ? JSON.stringify(config, null, 2) + "\n" : stringify(config) + "\n",
+  );
   return true;
 }
 
@@ -306,27 +330,21 @@ export function validateToolMcpConfig(
 ): void {
   if (!fs.existsSync(configPath)) return;
   const content = fs.readFileSync(configPath, "utf8");
-  const format = tool.configFormat === "toml" ? "TOML" : "JSON";
+  if (tool.configFormat === "toml") {
+    parseTomlOrLegacyJson(content, configPath);
+    return;
+  }
+
   let config: unknown;
   try {
-    if (tool.configFormat === "toml") {
-      try {
-        config = parse(content);
-      } catch (tomlError) {
-        try {
-          config = JSON.parse(content);
-        } catch {
-          throw tomlError;
-        }
-      }
-    } else {
-      config = JSON.parse(content);
-    }
+    config = JSON.parse(content);
   } catch (err) {
-    throw new Error(`Invalid ${format} in ${configPath}: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `Invalid JSON in ${configPath}: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
   if (!config || typeof config !== "object" || Array.isArray(config)) {
-    throw new Error(`Invalid ${format} in ${configPath}: expected an object`);
+    throw new Error(`Invalid JSON in ${configPath}: expected an object`);
   }
 }
 
