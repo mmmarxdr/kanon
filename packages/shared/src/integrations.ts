@@ -102,6 +102,7 @@ export const integrationConnectionSchema = z.object({
       commentDispatchEnabled: z.boolean(),
       releasePending: z.boolean(),
       inboundReady: z.boolean(),
+      reconciliationRequired: z.boolean(),
     }),
   ),
   callerCredential: integrationCredentialSchema,

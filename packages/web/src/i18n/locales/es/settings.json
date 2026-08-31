@@ -162,6 +162,7 @@
   "redmineActivate": "Activar sincronización",
   "redmineAlreadyActive": "Sincronización activa",
   "redmineResumeReconciliation": "Reanudar conciliación",
+  "redmineReconcileExisting": "Conciliar incidencias existentes",
   "redmineActivateHelp": "Activá después de vincular al menos un proyecto Kanon en la configuración del workspace.",
   "redmineSaving": "Guardando...",
   "redmineMappingSaved": "Mapeo guardado y sincronización activada.",

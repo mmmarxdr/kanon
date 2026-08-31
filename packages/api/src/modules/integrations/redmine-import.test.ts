@@ -17,6 +17,7 @@ import {
 import { proveExternalRefBindings } from "./backfill.js";
 import { retryRedmineIssueImport } from "./inbound.js";
 import { RedmineHttpError } from "./providers/redmine/http-client.js";
+import { getConnection, prepareRedmineReconciliation, setConnectionLifecycle } from "./service.js";
 
 const cutoff = new Date("2026-08-04T12:00:00.000Z");
 
@@ -146,6 +147,23 @@ async function setImportLifecycle(
   await prisma.integrationProjectBinding.update({ where: { id: bindingId }, data: { lifecycle } });
 }
 
+function markLegacyReady(bindingId: string) {
+  return prisma.integrationProjectBinding.update({
+    where: { id: bindingId },
+    data: {
+      inboundEnabled: true,
+      bootstrapState: "ready",
+      bootstrapPageToken: { version: 1, complete: true },
+      bootstrapFence: 2,
+    },
+  });
+}
+
+const connectionBindingState = (connectionId: string, bindingId: string) => Promise.all([
+  prisma.integrationConnection.findUniqueOrThrow({ where: { id: connectionId } }),
+  prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: bindingId } }),
+]);
+
 async function preImportConflict(bindingId: string, remoteId = "42") {
   await prisma.integrationProjectBinding.update({
     where: { id: bindingId },
@@ -182,6 +200,137 @@ describe("Redmine-created issue import", () => {
     await cleanDatabase();
   });
   afterAll(disconnectTestDb);
+
+  describe("legacy reconciliation upgrade", () => {
+    it("prepares legacy readiness without resetting completed-v2 evidence", async () => {
+      const { workspace, owner, connection, binding: original } = await fixture();
+      const binding = await markLegacyReady(original.id);
+      const completedProject = await seedTestProject(workspace.id);
+      const completed = await prisma.integrationProjectBinding.create({
+        data: {
+          connectionId: connection.id,
+          projectId: completedProject.id,
+          remoteProjectId: "completed-project",
+          readMap: {},
+          writeMap: {},
+          lifecycle: "active",
+          lifecycleEpoch: binding.lifecycleEpoch,
+          inboundEnabled: true,
+          bootstrapState: "ready",
+          bootstrapPageToken: { version: 2, complete: true },
+          bootstrapFence: 7,
+        },
+      });
+      const detail = await getConnection(connection.id, owner.userId, workspace.id);
+      expect(detail.bindings.find(({ id }) => id === binding.id)).toMatchObject({
+        inboundReady: true,
+        reconciliationRequired: true,
+      });
+      expect(detail.bindings.find(({ id }) => id === completed.id)).toMatchObject({
+        inboundReady: true,
+        reconciliationRequired: false,
+      });
+      await expect(
+        prepareRedmineReconciliation(connection.id, owner.userId, undefined, workspace.id),
+      ).resolves.toEqual({ preparedBindingIds: [binding.id] });
+      await expect(prepareRedmineReconciliation(connection.id, owner.userId, undefined, workspace.id)).resolves.toEqual({ preparedBindingIds: [] });
+      const [[paused, prepared], preserved] = await Promise.all([
+        connectionBindingState(connection.id, binding.id),
+        prisma.integrationProjectBinding.findUniqueOrThrow({ where: { id: completed.id } }),
+      ]);
+      expect(paused).toMatchObject({ lifecycle: "paused", lifecycleEpoch: 2 });
+      expect(prepared).toEqual({
+        ...binding,
+        lifecycle: "paused",
+        lifecycleEpoch: 2,
+        inboundEnabled: false,
+        bootstrapState: "pending",
+        bootstrapPageToken: null,
+        bootstrapFence: 3,
+        updatedAt: expect.any(Date),
+      });
+      expect(preserved).toEqual({
+        ...completed,
+        lifecycle: "paused",
+        lifecycleEpoch: 2,
+        updatedAt: expect.any(Date),
+      });
+    });
+
+    it.each(["leased", "ambiguous"] as const)(
+      "rejects preparation with current-epoch %s outbound work without mutating state",
+      async (state) => {
+        const { workspace, owner, connection, project, binding: original } = await fixture();
+        const binding = await markLegacyReady(original.id);
+        const work = await prisma.integrationSyncWork.create({
+          data: {
+            bindingId: binding.id,
+            entityType: "project",
+            entityId: project.id,
+            direction: "outbound",
+            operation: "update",
+            dedupeKey: `${state}-${binding.id}`,
+            laneKey: `project:${project.id}`,
+            actorKey: `member:${owner.id}`,
+            actorKind: "user",
+            payload: {},
+            correlationId: `${state}-${binding.id}`,
+            state,
+            ...(state === "leased"
+              ? { leaseToken: "in-flight", leaseUntil: new Date("2999-01-01T00:00:00.000Z") }
+              : {}),
+            fence: 1,
+            epoch: binding.lifecycleEpoch,
+          },
+        });
+        const [connectionAndBinding, storedWork] = await Promise.all([
+          connectionBindingState(connection.id, binding.id),
+          prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } }),
+        ]);
+        await expect(
+          prepareRedmineReconciliation(connection.id, owner.userId, undefined, workspace.id),
+        ).rejects.toMatchObject({ statusCode: 409, code: "REDMINE_OUTBOUND_UNSETTLED" });
+        await expect(
+          Promise.all([
+            connectionBindingState(connection.id, binding.id),
+            prisma.integrationSyncWork.findUniqueOrThrow({ where: { id: work.id } }),
+          ]),
+        ).resolves.toEqual([connectionAndBinding, storedWork]);
+      },
+    );
+
+    it("refuses to cross a binding release fence", async () => {
+      const { workspace, owner, connection, binding: original } = await fixture();
+      const binding = await markLegacyReady(original.id);
+      await prisma.integrationProjectBinding.update({
+        where: { id: binding.id },
+        data: { releaseRequestedAt: cutoff },
+      });
+      const detail = await getConnection(connection.id, owner.userId, workspace.id);
+      expect(detail.bindings.find(({ id }) => id === binding.id)).toMatchObject({
+        releasePending: true,
+        inboundReady: false,
+        reconciliationRequired: false,
+      });
+      await expect(
+        prepareRedmineReconciliation(connection.id, owner.userId, undefined, workspace.id),
+      ).rejects.toMatchObject({ code: "BINDING_RELEASE_IN_PROGRESS" });
+      await expect(
+        prisma.integrationConnection.findUniqueOrThrow({ where: { id: connection.id } }),
+      ).resolves.toMatchObject({ lifecycle: "active", lifecycleEpoch: 1 });
+    });
+
+    it("rejects stale preparation against authoritative disabled state without mutations", async () => {
+      const { workspace, owner, connection, binding: original } = await fixture();
+      const binding = await markLegacyReady(original.id);
+      await setConnectionLifecycle(connection.id, "disabled", owner.userId, undefined, workspace.id);
+      const before = await connectionBindingState(connection.id, binding.id);
+      await expect(
+        prepareRedmineReconciliation(connection.id, owner.userId, undefined, workspace.id),
+      ).rejects.toMatchObject({ statusCode: 409, code: "REDMINE_RECONCILIATION_NOT_REQUIRED" });
+      await expect(connectionBindingState(connection.id, binding.id)).resolves.toEqual(before);
+    });
+  });
 
   it("previews full history without retaining private or provider content", async () => {
     const { owner, connection, binding } = await fixture({});
