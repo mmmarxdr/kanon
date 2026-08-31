@@ -14,7 +14,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { dispatch, run } from "./index.js";
+import {
+  dispatch,
+  inventoryConfigPaths,
+  run,
+  selectRemovalTools,
+} from "./index.js";
 
 // ── Mock onboardFromLink ───────────────────────────────────────────────────────
 vi.mock("./onboard.js", () => ({
@@ -184,10 +189,14 @@ describe("Commander dispatcher — dispatch()", () => {
 // KAN-256 configure-mode seams: all side-effectful collaborators are mocked so
 // these tests verify routing and planned arguments without touching user state.
 const setupMocks = vi.hoisted(() => ({
-  buildPlatformContext: vi.fn(), detectTools: vi.fn(), resolveToolTargets: vi.fn(),
+  buildPlatformContext: vi.fn(), detectTools: vi.fn(), getToolByName: vi.fn(),
+  registry: [] as any[], resolveToolInventoryTargets: vi.fn(),
+  resolveToolLegacyConfigPaths: vi.fn(), resolveToolTargets: vi.fn(),
   selectTools: vi.fn(), resolveAuth: vi.fn(), getCredentialStore: vi.fn(),
   resolveWrapperReuse: vi.fn(), resolveNodeBin: vi.fn(), resolveMcpServerPath: vi.fn(),
-  buildMcpEntry: vi.fn(), buildWrapperMcpEntry: vi.fn(), installToolSurface: vi.fn(),
+  buildMcpEntry: vi.fn(), buildWrapperMcpEntry: vi.fn(),
+  inspectToolMcpConfig: vi.fn(), validateToolMcpConfig: vi.fn(),
+  installToolSurface: vi.fn(),
   getAssetsDir: vi.fn(), resolveExistingToolWorkspaceId: vi.fn(), cleanupLegacyToolSurface: vi.fn(),
   discoverCursorExecutionPlan: vi.fn(), planCursorSurfaceOutcomes: vi.fn(),
   collectCursorOwnershipByTarget: vi.fn(),
@@ -197,12 +206,19 @@ const setupMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./detect.js", () => ({ buildPlatformContext: setupMocks.buildPlatformContext }));
-vi.mock("./registry.js", () => ({ detectTools: setupMocks.detectTools, resolveToolTargets: setupMocks.resolveToolTargets }));
+vi.mock("./registry.js", () => ({
+  detectTools: setupMocks.detectTools,
+  getToolByName: setupMocks.getToolByName,
+  resolveToolInventoryTargets: setupMocks.resolveToolInventoryTargets,
+  resolveToolLegacyConfigPaths: setupMocks.resolveToolLegacyConfigPaths,
+  resolveToolTargets: setupMocks.resolveToolTargets,
+  toolRegistry: setupMocks.registry,
+}));
 vi.mock("./tool-selection.js", () => ({ selectTools: setupMocks.selectTools }));
 vi.mock("./auth.js", () => ({ resolveAuth: setupMocks.resolveAuth }));
 vi.mock("./credential-store/factory.js", () => ({ getCredentialStore: setupMocks.getCredentialStore }));
 vi.mock("./wrapper-reuse.js", () => ({ resolveWrapperReuse: setupMocks.resolveWrapperReuse }));
-vi.mock("./mcp-config.js", () => ({ buildMcpEntry: setupMocks.buildMcpEntry, buildWrapperMcpEntry: setupMocks.buildWrapperMcpEntry, removeToolMcpConfig: setupMocks.removeToolMcpConfig, resolveMcpServerPath: setupMocks.resolveMcpServerPath, resolveNodeBin: setupMocks.resolveNodeBin }));
+vi.mock("./mcp-config.js", () => ({ buildMcpEntry: setupMocks.buildMcpEntry, buildWrapperMcpEntry: setupMocks.buildWrapperMcpEntry, inspectToolMcpConfig: setupMocks.inspectToolMcpConfig, validateToolMcpConfig: setupMocks.validateToolMcpConfig, removeToolMcpConfig: setupMocks.removeToolMcpConfig, resolveMcpServerPath: setupMocks.resolveMcpServerPath, resolveNodeBin: setupMocks.resolveNodeBin }));
 vi.mock("./tool-surface.js", () => ({ cleanupLegacyToolSurface: setupMocks.cleanupLegacyToolSurface, getAssetsDir: setupMocks.getAssetsDir, installToolSurface: setupMocks.installToolSurface, resolveExistingToolWorkspaceId: setupMocks.resolveExistingToolWorkspaceId }));
 vi.mock("./cursor-plan.js", () => ({ discoverCursorExecutionPlan: setupMocks.discoverCursorExecutionPlan, planCursorSurfaceOutcomes: setupMocks.planCursorSurfaceOutcomes, finalizeCursorSurfaceResults: setupMocks.finalizeCursorSurfaceResults }));
 vi.mock("./cursor-inventory.js", () => ({ collectCursorOwnershipByTarget: setupMocks.collectCursorOwnershipByTarget }));
@@ -219,6 +235,14 @@ const cursorTool = { name: "cursor", displayName: "Cursor", rootKey: "mcpServers
 
 beforeEach(() => {
   vi.resetAllMocks();
+  setupMocks.registry.splice(0, setupMocks.registry.length, cursorTool);
+  setupMocks.getToolByName.mockImplementation((name: string) =>
+    setupMocks.registry.find((tool) => tool.name === name),
+  );
+  setupMocks.resolveToolInventoryTargets.mockReturnValue([localTarget]);
+  setupMocks.resolveToolLegacyConfigPaths.mockReturnValue([]);
+  setupMocks.inspectToolMcpConfig.mockReturnValue("unconfigured");
+  setupMocks.validateToolMcpConfig.mockReturnValue(undefined);
   setupMocks.buildPlatformContext.mockResolvedValue({ platform: "wsl", homedir: "/home/dev", winHome: "/mnt/c/Users/dev" });
   setupMocks.getAssetsDir.mockReturnValue("/assets");
   setupMocks.resolveWrapperReuse.mockResolvedValue(undefined);
@@ -233,6 +257,94 @@ beforeEach(() => {
   });
   setupMocks.planCursorSurfaceOutcomes.mockReturnValue({ results: [], diagnostics: [] });
   setupMocks.finalizeCursorSurfaceResults.mockImplementation((results: unknown) => results);
+  setupMocks.removeToolMcpConfig.mockReturnValue(false);
+  setupMocks.removeSkills.mockReturnValue([]);
+  setupMocks.removeWorkflows.mockReturnValue([]);
+  setupMocks.removeAgents.mockReturnValue([]);
+  setupMocks.removeCommands.mockReturnValue([]);
+});
+
+describe("KAN-256 removal mode", () => {
+  const ctx = { platform: "wsl", homedir: "/home/dev", winHome: "/mnt/c/Users/dev" } as const;
+  const legacyConfig = "/mnt/c/Users/dev/AppData/Roaming/Cursor/User/mcp.json";
+
+  it("selects explicit, all, and legacy-owned defaults from inventory without detectors", () => {
+    const detector = vi.fn(async () => { throw new Error("detector must not run"); });
+    const unavailable = { ...cursorTool, name: "unavailable", platforms: { linux: localTarget } };
+    cursorTool.platforms.wsl.detect = detector;
+    setupMocks.registry.splice(0, setupMocks.registry.length, cursorTool, unavailable);
+    setupMocks.resolveToolInventoryTargets.mockImplementation((tool) =>
+      tool === cursorTool ? [localTarget] : [],
+    );
+    setupMocks.resolveToolLegacyConfigPaths.mockImplementation((tool) =>
+      tool === cursorTool ? [legacyConfig] : [],
+    );
+    setupMocks.inspectToolMcpConfig.mockImplementation((configPath) =>
+      configPath === legacyConfig ? "configured" : "unconfigured",
+    );
+
+    expect(inventoryConfigPaths(cursorTool, ctx, [localTarget])).toEqual([
+      localTarget.config(),
+      legacyConfig,
+    ]);
+    expect(selectRemovalTools({ tool: "cursor" }, ctx)).toEqual([cursorTool]);
+    expect(selectRemovalTools({ all: true }, ctx)).toEqual([cursorTool]);
+    expect(selectRemovalTools({}, ctx)).toEqual([cursorTool]);
+    expect(() => selectRemovalTools({ tool: "unknown" }, ctx)).toThrow("Unknown tool");
+    expect(() => selectRemovalTools({ tool: "unavailable" }, ctx)).toThrow("not supported");
+    expect(detector).not.toHaveBeenCalled();
+  });
+
+  it("routes removal before assets, discovery, selection, auth, runtime, or Cursor planning", async () => {
+    for (const seam of [
+      setupMocks.getAssetsDir, setupMocks.discoverCursorSurfaces,
+      setupMocks.detectTools, setupMocks.selectTools, setupMocks.getCredentialStore,
+      setupMocks.resolveWrapperReuse, setupMocks.resolveAuth, setupMocks.resolveNodeBin,
+      setupMocks.resolveMcpServerPath, setupMocks.discoverCursorExecutionPlan,
+      setupMocks.planCursorSurfaceOutcomes,
+    ]) seam.mockImplementation(() => { throw new Error("must not run"); });
+
+    await expect(run({ tool: "cursor", remove: true })).resolves.toBeUndefined();
+
+    expect(setupMocks.removeToolMcpConfig).toHaveBeenCalledWith(localTarget.config(), cursorTool);
+  });
+
+  it("preflights every current and legacy config before the first mutation", async () => {
+    setupMocks.resolveToolInventoryTargets.mockReturnValue([localTarget, windowsTarget]);
+    setupMocks.resolveToolLegacyConfigPaths.mockReturnValue([legacyConfig]);
+    setupMocks.validateToolMcpConfig.mockImplementation((configPath) => {
+      if (configPath === legacyConfig) throw new Error("malformed legacy config");
+    });
+
+    await expect(run({ tool: "cursor", remove: true })).rejects.toThrow("malformed legacy config");
+
+    expect(setupMocks.validateToolMcpConfig.mock.calls.map(([configPath]) => configPath)).toEqual([
+      localTarget.config(), windowsTarget.config(), legacyConfig,
+    ]);
+    expect(setupMocks.removeToolMcpConfig).not.toHaveBeenCalled();
+    expect(setupMocks.cleanupLegacyToolSurface).not.toHaveBeenCalled();
+  });
+
+  it("continues independent targets, preserves the snapshot for legacy cleanup, and aggregates failures", async () => {
+    const targets = [localTarget, windowsTarget];
+    setupMocks.resolveToolInventoryTargets.mockReturnValue(targets);
+    setupMocks.removeToolMcpConfig.mockImplementation((configPath) => {
+      if (configPath === localTarget.config()) throw new Error("local write failed");
+      return true;
+    });
+    setupMocks.cleanupLegacyToolSurface.mockImplementation(() => {
+      throw new Error("legacy cleanup failed");
+    });
+
+    await expect(run({ tool: "cursor", remove: true })).rejects.toThrow(
+      "2 removal surface mutation(s) failed",
+    );
+
+    expect(setupMocks.resolveToolInventoryTargets).toHaveBeenCalledOnce();
+    expect(setupMocks.removeToolMcpConfig).toHaveBeenCalledWith(windowsTarget.config(), cursorTool);
+    expect(setupMocks.removeSkills).toHaveBeenCalledWith(windowsTarget.skills());
+    expect(setupMocks.cleanupLegacyToolSurface).toHaveBeenCalledWith(cursorTool, ctx, targets);
+  });
 });
 
 describe("KAN-256 configure mode", () => {
@@ -327,22 +439,4 @@ describe("KAN-256 configure mode", () => {
     expect(setupMocks.finalizeCursorSurfaceResults).toHaveBeenCalledWith(expect.anything(), new Set([localTarget.config(), windowsTarget.config()]), "configure");
   });
 
-  it("RED: remove mode stays on the legacy branch without configure planner discovery", async () => {
-    setupMocks.detectTools.mockResolvedValue([cursorTool]);
-    setupMocks.selectTools.mockResolvedValue([cursorTool]);
-    setupMocks.resolveToolTargets.mockReturnValue([localTarget]);
-    setupMocks.removeToolMcpConfig.mockReturnValue(false);
-    setupMocks.removeSkills.mockReturnValue([]);
-    setupMocks.removeWorkflows.mockReturnValue([]);
-    setupMocks.removeAgents.mockReturnValue([]);
-    setupMocks.removeCommands.mockReturnValue([]);
-
-    await run({ tool: "cursor", remove: true });
-
-    expect(setupMocks.discoverCursorSurfaces).not.toHaveBeenCalled();
-    expect(setupMocks.detectTools).toHaveBeenCalledWith(expect.anything());
-    expect(setupMocks.resolveToolTargets).toHaveBeenCalledWith(cursorTool, expect.anything());
-    expect(setupMocks.discoverCursorExecutionPlan).not.toHaveBeenCalled();
-    expect(setupMocks.planCursorSurfaceOutcomes).not.toHaveBeenCalled();
-  });
 });
