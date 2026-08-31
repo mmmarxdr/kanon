@@ -380,9 +380,11 @@ export function resolveToolInventoryTargets(
   tool: ToolDefinition,
   ctx: PlatformContext,
 ): PlatformPaths[] {
-  return tool.name === "cursor"
-    ? resolveCursorInventoryTargets(tool, ctx)
-    : resolveToolTargets(tool, ctx);
+  if (tool.name === "cursor") return resolveCursorInventoryTargets(tool, ctx);
+  if (tool.name === "antigravity" && ctx.platform === "wsl" && !ctx.winHome) {
+    return [];
+  }
+  return resolveToolTargets(tool, ctx);
 }
 
 export function resolveToolLegacyConfigPaths(

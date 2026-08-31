@@ -482,3 +482,13 @@ describe("registry — specialized Cursor targets", () => {
     }
   });
 });
+
+describe("registry — owned removal inventory", () => {
+  it("omits WSL Antigravity when no Windows home is available", () => {
+    const antigravity = getToolByName("antigravity")!;
+    expect(resolveToolInventoryTargets(antigravity, {
+      platform: "wsl",
+      homedir: "/home/dev",
+    })).toEqual([]);
+  });
+});

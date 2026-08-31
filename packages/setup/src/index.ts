@@ -8,7 +8,11 @@ import { buildPlatformContext } from "./detect.js";
 import { resolveAuth } from "./auth.js";
 import {
   detectTools,
+  getToolByName,
+  resolveToolInventoryTargets,
+  resolveToolLegacyConfigPaths,
   resolveToolTargets,
+  toolRegistry,
 } from "./registry.js";
 import { discoverCursorExecutionPlan, finalizeCursorSurfaceResults, planCursorSurfaceOutcomes } from "./cursor-plan.js";
 import { collectCursorOwnershipByTarget } from "./cursor-inventory.js";
@@ -16,16 +20,23 @@ import { discoverCursorSurfaces } from "./cursor-surfaces.js";
 import {
   buildMcpEntry,
   buildWrapperMcpEntry,
+  inspectToolMcpConfig,
   removeToolMcpConfig,
   resolveMcpServerPath,
   resolveNodeBin,
+  validateToolMcpConfig,
 } from "./mcp-config.js";
 import { removeSkills } from "./skills.js";
 import { removeTemplate } from "./templates.js";
 import { removeWorkflows } from "./workflows.js";
 import { removeAgents } from "./agents.js";
 import { removeCommands } from "./commands.js";
-import type { AuthResult } from "./types.js";
+import type {
+  AuthResult,
+  PlatformContext,
+  PlatformPaths,
+  ToolDefinition,
+} from "./types.js";
 import { getCredentialStore } from "./credential-store/factory.js";
 import { resolveWrapperReuse } from "./wrapper-reuse.js";
 import {
@@ -38,6 +49,64 @@ import { SETUP_VERSION } from "./version.js";
 import { selectTools } from "./tool-selection.js";
 
 export { selectTools } from "./tool-selection.js";
+
+interface RemovalInventoryEntry {
+  readonly tool: ToolDefinition;
+  readonly targets: readonly PlatformPaths[];
+  readonly configPaths: readonly string[];
+}
+
+export function inventoryConfigPaths(
+  tool: ToolDefinition,
+  ctx: PlatformContext,
+  targets: readonly PlatformPaths[] = resolveToolInventoryTargets(tool, ctx),
+): string[] {
+  return [...new Set([
+    ...targets.map((target) => target.config(ctx)),
+    ...resolveToolLegacyConfigPaths(tool, ctx),
+  ])];
+}
+
+function snapshotRemovalInventory(
+  ctx: PlatformContext,
+): readonly RemovalInventoryEntry[] {
+  return Object.freeze(toolRegistry
+    .filter((tool) => tool.platforms[ctx.platform])
+    .map((tool) => {
+      const targets = Object.freeze([...resolveToolInventoryTargets(tool, ctx)]);
+      return Object.freeze({
+        tool,
+        targets,
+        configPaths: Object.freeze(inventoryConfigPaths(tool, ctx, targets)),
+      });
+    }));
+}
+
+/** Select removal candidates from owned paths only; tool detectors are forbidden. */
+export function selectRemovalTools(
+  options: { tool?: string; all?: boolean },
+  ctx: PlatformContext,
+  inventory: readonly RemovalInventoryEntry[] = snapshotRemovalInventory(ctx),
+): ToolDefinition[] {
+  if (options.tool) {
+    const tool = getToolByName(options.tool);
+    if (!tool) throw new Error(`Unknown tool: ${options.tool}`);
+    const entry = inventory.find((candidate) => candidate.tool === tool);
+    if (!entry || entry.targets.length === 0) {
+      throw new Error(`${tool.displayName} is not supported on ${ctx.platform}`);
+    }
+    return [tool];
+  }
+
+  const candidates = inventory.filter((entry) => entry.targets.length > 0);
+  if (options.all) return candidates.map((entry) => entry.tool);
+  return candidates
+    .filter((entry) => entry.configPaths.some((configPath) => {
+      const state = inspectToolMcpConfig(configPath, entry.tool);
+      return state === "configured" || state === "legacy";
+    }))
+    .map((entry) => entry.tool);
+}
 
 const program = new Command();
 
@@ -180,6 +249,82 @@ export async function dispatch(
   await deps.cascade();
 }
 
+/** Remove owned tool surfaces without executable, auth, or runtime discovery. */
+async function runRemoval(
+  options: { tool?: string; all?: boolean },
+  ctx: PlatformContext,
+): Promise<void> {
+  const inventory = snapshotRemovalInventory(ctx);
+  const selectedTools = new Set(selectRemovalTools(options, ctx, inventory));
+  const selectedInventory = inventory.filter(({ tool }) => selectedTools.has(tool));
+  if (selectedInventory.length === 0) {
+    console.log(chalk.yellow("No Kanon configuration found in supported AI tool configs."));
+    return;
+  }
+
+  // Preflight the complete operation before the first mutation.
+  for (const { tool, configPaths } of selectedInventory) {
+    for (const configPath of configPaths) validateToolMcpConfig(configPath, tool);
+  }
+
+  console.log("");
+  console.log(chalk.bold("Removing Kanon configuration from selected tools..."));
+  console.log("");
+
+  let successCount = 0;
+  let removalFailures = 0;
+  for (const { tool, targets } of selectedInventory) {
+    const failuresBeforeTool = removalFailures;
+    for (const target of targets) {
+      const configPath = target.config(ctx);
+      try {
+        const removed = removeToolMcpConfig(configPath, tool);
+        console.log(removed
+          ? chalk.green("  ✓") + ` Removed MCP config from ${chalk.bold(tool.displayName)} (${configPath})`
+          : chalk.yellow("  ⚠") + ` MCP config not found for ${tool.displayName} at ${configPath}`);
+      } catch (err) {
+        removalFailures++;
+        console.log(chalk.red("  ✗") + ` Failed to remove MCP config from ${tool.displayName} (${configPath}): ${err instanceof Error ? err.message : String(err)}`);
+        continue;
+      }
+
+      try {
+        const removedSkills = removeSkills(target.skills(ctx));
+        if (removedSkills.length > 0) console.log(chalk.green("  ✓") + ` Removed ${removedSkills.length} skills from ${chalk.bold(tool.displayName)}`);
+        const templatePath = target.template?.(ctx);
+        if (templatePath && removeTemplate(templatePath, tool.templateMode)) console.log(chalk.green("  ✓") + ` Removed template from ${chalk.bold(tool.displayName)}`);
+        const workflowDir = target.workflows?.(ctx);
+        const removedWorkflows = workflowDir ? removeWorkflows(workflowDir) : [];
+        if (removedWorkflows.length > 0) console.log(chalk.green("  ✓") + ` Removed ${removedWorkflows.length} workflows from ${chalk.bold(tool.displayName)}`);
+        const agentDir = target.agents?.(ctx);
+        const removedAgentFiles = agentDir ? removeAgents(agentDir, tool.name) : [];
+        if (removedAgentFiles.length > 0) console.log(chalk.green("  ✓") + ` Removed ${removedAgentFiles.length} agents from ${chalk.bold(tool.displayName)}`);
+        const commandDir = target.commands?.(ctx);
+        const removedCommands = commandDir ? removeCommands(commandDir) : [];
+        if (removedCommands.length > 0) console.log(chalk.green("  ✓") + ` Removed ${removedCommands.length} commands from ${chalk.bold(tool.displayName)}`);
+      } catch (err) {
+        removalFailures++;
+        console.log(chalk.red("  ✗") + ` Failed to remove ${tool.displayName} assets (${configPath}): ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    try {
+      cleanupLegacyToolSurface(tool, ctx, targets);
+    } catch (err) {
+      removalFailures++;
+      console.log(chalk.red("  ✗") + ` Failed to remove legacy ${tool.displayName} surface: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (removalFailures === failuresBeforeTool) successCount++;
+    console.log("");
+  }
+
+  if (removalFailures > 0) {
+    console.log(chalk.red(`✗ Removal completed with ${removalFailures} failed surface mutation(s); ${successCount} tool(s) fully removed.`));
+    throw new Error(`${removalFailures} removal surface mutation(s) failed`);
+  }
+  console.log(chalk.green(`✓ Removed Kanon configuration from ${successCount} tool(s).`));
+}
+
 export async function run(options: {
   apiUrl?: string;
   apiKey?: string;
@@ -189,7 +334,6 @@ export async function run(options: {
   yes?: boolean;
 }): Promise<void> {
   const removeMode = options.remove === true;
-  const assetsDir = getAssetsDir();
   const isInteractive =
     !options.yes && !options.tool && !options.all && !!process.stdin.isTTY;
 
@@ -213,6 +357,13 @@ export async function run(options: {
       );
     }
   }
+
+  if (removeMode) {
+    await runRemoval(options, ctx);
+    return;
+  }
+
+  const assetsDir = getAssetsDir();
 
   // ── 2. Detect all tools ────────────────────────────────────────────
   const cursorSurfaces = removeMode ? undefined : discoverCursorSurfaces(ctx);
