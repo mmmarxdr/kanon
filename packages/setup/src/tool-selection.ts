@@ -53,11 +53,9 @@ export async function selectTools(
     return [tool];
   }
 
-  if (detected.length === 0) {
-    throw new Error(
-      "No supported tools detected. Install at least one supported AI coding tool.",
-    );
-  }
+  // Empty auto-detection is a successful no-op; explicit --tool validation
+  // above remains unchanged.
+  if (detected.length === 0) return [];
 
   if (flags.all || flags.yes || !isInteractive) return detected;
 

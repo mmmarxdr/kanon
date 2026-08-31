@@ -148,10 +148,8 @@ describe("selectTools", () => {
   });
 
   describe("no tools detected", () => {
-    it("should throw when no tools are detected", async () => {
-      await expect(
-        selectTools([], {}, true, ctx),
-      ).rejects.toThrow("No supported tools detected");
+    it("returns an empty selection when no tools are detected", async () => {
+      await expect(selectTools([], {}, true, ctx)).resolves.toEqual([]);
     });
   });
 

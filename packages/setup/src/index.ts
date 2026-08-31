@@ -10,6 +10,9 @@ import {
   detectTools,
   resolveToolTargets,
 } from "./registry.js";
+import { discoverCursorExecutionPlan, finalizeCursorSurfaceResults, planCursorSurfaceOutcomes } from "./cursor-plan.js";
+import { collectCursorOwnershipByTarget } from "./cursor-inventory.js";
+import { discoverCursorSurfaces } from "./cursor-surfaces.js";
 import {
   buildMcpEntry,
   buildWrapperMcpEntry,
@@ -177,7 +180,7 @@ export async function dispatch(
   await deps.cascade();
 }
 
-async function run(options: {
+export async function run(options: {
   apiUrl?: string;
   apiKey?: string;
   tool?: string;
@@ -212,7 +215,10 @@ async function run(options: {
   }
 
   // ── 2. Detect all tools ────────────────────────────────────────────
-  const detectedTools = await detectTools(ctx);
+  const cursorSurfaces = removeMode ? undefined : discoverCursorSurfaces(ctx);
+  const detectedTools = removeMode
+    ? await detectTools(ctx)
+    : await detectTools(ctx, { cursorSurfaces });
 
   // ── 3. Select tools (interactive or flag-based) ────────────────────
   const selectedTools = await selectTools(
@@ -221,6 +227,31 @@ async function run(options: {
     isInteractive,
     ctx,
   );
+
+  // An empty auto-detection is an intentional no-op. It must return before
+  // credentials, Node, or Cursor planning can touch the host.
+  if (selectedTools.length === 0) {
+    console.log(chalk.yellow("No supported AI tools detected. Install Cursor, Claude Code, or Antigravity, then re-run kanon-setup."));
+    if (!removeMode) {
+      const mcpResolution = resolveMcpServerPath();
+      console.log(`  To configure Kanon manually, use MCP server: ${mcpResolution.path}`);
+    }
+    return;
+  }
+
+  const cursorTool = !removeMode
+    ? selectedTools.find((tool) => tool.name === "cursor")
+    : undefined;
+  const cursorPlan = cursorTool
+    ? discoverCursorExecutionPlan({
+        tool: cursorTool, ctx, operation: "configure", flags: { tool: options.tool, all: options.all },
+        isInteractive, promptAccepted: cursorTool.selectionAuthorization === "prompt", surfaces: cursorSurfaces!,
+      })
+    : undefined;
+  if (cursorPlan) {
+    for (const diagnostic of cursorPlan.diagnostics) console.log(chalk.yellow(`  ⚠ ${diagnostic}`));
+    if (cursorPlan.invalidSelection) throw new Error(cursorPlan.invalidSelection);
+  }
 
   // ── 4. Auth Resolution (skip for --remove) ─────────────────────────
   let apiUrl = "";
@@ -282,7 +313,24 @@ async function run(options: {
   let successCount = 0;
 
   for (const tool of selectedTools) {
-    const targets = resolveToolTargets(tool, ctx);
+    let targets = resolveToolTargets(tool, ctx);
+    let cursorOutcomes: ReturnType<typeof planCursorSurfaceOutcomes> | undefined;
+
+    // Configure-only Cursor writes must use the execution plan. Removal stays
+    // on the legacy branch until its dedicated migration slice.
+    if (!removeMode && tool.name === "cursor" && cursorPlan) {
+      cursorOutcomes = planCursorSurfaceOutcomes({
+        operation: "configure", ctx, flags: { tool: options.tool, all: options.all },
+        promptAccepted: tool.selectionAuthorization === "prompt",
+        surfaces: cursorPlan.surfaces ?? cursorSurfaces!,
+        ownershipByTarget: collectCursorOwnershipByTarget(tool, ctx),
+        validatedBridge: cursorPlan.bridge,
+      });
+      for (const diagnostic of cursorOutcomes.diagnostics) console.log(chalk.yellow(`  ⚠ ${diagnostic}`));
+      targets = cursorPlan.targets.filter((target) => cursorOutcomes!.results.some((result) =>
+        result.outcome === "ready" && result.paths.includes(target.config(ctx)),
+      ));
+    }
     if (targets.length === 0) {
       console.log(
         chalk.yellow("  ⚠") +
@@ -353,6 +401,7 @@ async function run(options: {
       }
       cleanupLegacyToolSurface(tool, ctx);
     } else {
+      const cursorBridge = tool.name === "cursor" ? cursorPlan?.bridge : undefined;
       const existingWorkspaceId = wrapperReuse
         ? resolveExistingToolWorkspaceId(tool, ctx)
         : undefined;
@@ -360,6 +409,7 @@ async function run(options: {
         tool,
         ctx,
         assetsDir,
+        targets,
         buildEntry: (target) => wrapperReuse
           ? buildWrapperMcpEntry(
               apiUrl,
@@ -368,6 +418,8 @@ async function run(options: {
               undefined,
               existingWorkspaceId,
               tool.clientIdentity,
+              cursorBridge?.distribution,
+              cursorBridge?.nodePath,
             )
           : buildMcpEntry(
               mcpResolution,
@@ -378,8 +430,22 @@ async function run(options: {
               nodeBin,
               "static-key",
               tool.clientIdentity,
+              undefined,
+              cursorBridge?.distribution,
+              cursorBridge?.nodePath,
             ),
       });
+
+      if (cursorOutcomes) {
+        const results = finalizeCursorSurfaceResults(
+          cursorOutcomes.results,
+          new Set(installedTargets.map((target) => target.configPath)),
+          "configure",
+        );
+        for (const result of results) {
+          console.log(`  ${result.outcome === "configured" ? "✓" : "⚠"} Cursor ${result.surface}: ${result.outcome} — ${result.message}`);
+        }
+      }
 
       for (const installed of installedTargets) {
         console.log(
