@@ -81,11 +81,12 @@ export class FileCredentialStore implements CredentialStore {
       `$target=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${targetBase64}'))`,
       "$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User",
       `$acl=[System.Security.AccessControl.${securityClass}]::new()`,
-      "$acl.SetOwner($sid)",
       "$acl.SetAccessRuleProtection($true,$false)",
       `$rule=[System.Security.AccessControl.FileSystemAccessRule]::new($sid,[System.Security.AccessControl.FileSystemRights]::FullControl,${inheritance},[System.Security.AccessControl.PropagationFlags]::None,[System.Security.AccessControl.AccessControlType]::Allow)`,
       "$acl.AddAccessRule($rule)",
-      "Set-Acl -LiteralPath $target -AclObject $acl",
+      directory
+        ? "[System.IO.Directory]::SetAccessControl($target,$acl)"
+        : "[System.IO.File]::SetAccessControl($target,$acl)",
     ].join(";");
     try {
       await this.runCommand(this.powerShellPath, [

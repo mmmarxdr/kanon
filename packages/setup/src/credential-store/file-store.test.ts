@@ -77,7 +77,7 @@ describe("FileCredentialStore", () => {
     expect(stat.mode & 0o777).toBe(0o600);
   });
 
-  it("replaces Windows DACLs with only the current SID via system PowerShell", async () => {
+  it("applies an owner-only Windows DACL without requesting ownership or audit privileges", async () => {
     const runCommand = vi.fn(async () => undefined);
     const powerShellPath = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
     const windowsStore = new FileCredentialStore(tmpDir, {
@@ -96,8 +96,12 @@ describe("FileCredentialStore", () => {
       const script = Buffer.from(encoded, "base64").toString("utf16le");
       expect(script).toContain("WindowsIdentity]::GetCurrent().User");
       expect(script).toContain("SetAccessRuleProtection($true,$false)");
+      expect(script).not.toContain("SetOwner(");
+      expect(script).not.toMatch(/AuditRule|Sacl|SecurityInfos.*Audit/i);
       expect(script).toContain("$acl.AddAccessRule($rule)");
       expect(script).not.toContain("icacls");
+      expect(script).not.toContain("Set-Acl");
+      expect(script).toMatch(/\[System\.IO\.(Directory|File)\]::SetAccessControl/);
     }
     const directoryScript = Buffer.from(
       runCommand.mock.calls[0]![1].at(-1)!,
