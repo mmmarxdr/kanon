@@ -207,11 +207,16 @@ describe("Schedule Timeline Routes (integration)", () => {
         },
       });
 
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+      const calendar = { workDays: [1, 2, 3, 4, 5], holidays: new Set<string>() };
+      const startDate = addWorkingDays(today, 5, calendar);
+      const dueDate = addWorkingDays(today, 20, calendar);
       await prisma.issueSchedule.create({
         data: {
           issueId: issue.id,
-          startDate: new Date("2026-08-01T00:00:00.000Z"),
-          dueDate: new Date("2026-08-31T00:00:00.000Z"),
+          startDate,
+          dueDate,
           progress: 0,
         },
       });
@@ -229,12 +234,12 @@ describe("Schedule Timeline Routes (integration)", () => {
 
       const row = body.rows[0];
       // Plan start is the raw stored date (not snapped).
-      expect(row.startDate).toBe("2026-08-01T00:00:00.000Z");
+      expect(row.startDate).toBe(startDate.toISOString());
       // KAN-161: the lazy bootstrap rebuilt the forecast on read. With no estimate,
       // forecastEnd falls back to the dueDate; forecastStart is populated (snapped
       // to a working day by the calendar engine). slip/critical are no longer null.
       expect(row.forecastStart).not.toBeNull();
-      expect(row.forecastEnd).toBe("2026-08-31T00:00:00.000Z");
+      expect(row.forecastEnd).toBe(dueDate.toISOString());
       expect(row.slipDays).toBe(0);
       expect(typeof row.critical).toBe("boolean");
     });
