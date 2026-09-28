@@ -173,6 +173,22 @@ export function useSetRedmineLifecycleMutation(workspaceId: string, connectionId
   });
 }
 
+export function usePrepareRedmineReconciliationMutation(
+  workspaceId: string,
+  connectionId: string,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      fetchApi<void>(
+        `/api/integrations/workspaces/${workspaceId}/connections/${connectionId}/reconciliation/prepare`,
+        { method: "POST" },
+      ),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: integrationKeys.connection(workspaceId) }),
+  });
+}
+
 export function useBindRedmineProjectMutation(workspaceId: string, connectionId: string) {
   const queryClient = useQueryClient();
   return useMutation({

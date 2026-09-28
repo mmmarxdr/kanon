@@ -72,6 +72,7 @@ const connection = {
       commentDispatchEnabled: false,
       releasePending: false,
       inboundReady: true,
+      reconciliationRequired: true,
     },
   ],
   callerCredential: credential,
@@ -88,6 +89,7 @@ describe("integrationConnectionSchema", () => {
     expect(result.bindings[0]).toMatchObject({
       commentCaptureEnabled: false,
       commentDispatchEnabled: false,
+      reconciliationRequired: true,
     });
     expect(result.providerMaps?.priorityReadMap).toEqual({ "4": "high" });
     expect(result.serviceCredentialStatus).toBe("invalid");

@@ -10,6 +10,7 @@ import {
   useConfigureRedmineProviderMapsMutation,
   useConnectRedmineCredentialMutation,
   useCreateRedmineConnectionMutation,
+  usePrepareRedmineReconciliationMutation,
   useRedmineConnectionQuery,
   useRedmineDiscoveryQuery,
   useReplaceRedmineServiceCredentialMutation,
@@ -97,6 +98,10 @@ describe("Redmine integration hooks", () => {
       () => useSetRedmineLifecycleMutation(WORKSPACE_ID, CONNECTION_ID),
       { wrapper },
     );
+    const prepareReconciliation = renderHook(
+      () => usePrepareRedmineReconciliationMutation(WORKSPACE_ID, CONNECTION_ID),
+      { wrapper },
+    );
     const mapInput = {
       timeActivityId: "9",
       readMap: {},
@@ -117,6 +122,7 @@ describe("Redmine integration hooks", () => {
       await replace.result.current.mutateAsync("replacement-key");
       await maps.result.current.mutateAsync(mapInput);
       await lifecycle.result.current.mutateAsync("paused");
+      await prepareReconciliation.result.current.mutateAsync();
     });
 
     const root = `/api/integrations/workspaces/${WORKSPACE_ID}/connections`;
@@ -136,6 +142,10 @@ describe("Redmine integration hooks", () => {
       method: "PATCH",
       body: JSON.stringify({ lifecycle: "paused" }),
     });
+    expect(fetchApi).toHaveBeenCalledWith(
+      `${root}/${CONNECTION_ID}/reconciliation/prepare`,
+      { method: "POST" },
+    );
   });
 
   it("invalidates connection audit-health after replacing its service credential", async () => {
